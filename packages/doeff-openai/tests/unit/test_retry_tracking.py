@@ -1,9 +1,10 @@
 """Tests to verify that retry attempts are properly tracked."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
-from doeff_openai import structured_llm__openai
+from doeff_openai import get_api_calls, structured_llm__openai
 from doeff_openai.client import OpenAIClient
 
 from doeff import (
@@ -43,36 +44,41 @@ async def test_retry_tracking_on_failure_then_success():
                 # First two calls fail
                 raise Exception(f"API Error attempt {call_count}")
             # Third call succeeds
-            response = MagicMock()
-            response.choices = [MagicMock()]
-            response.choices[0].message.content = "Success on third try"
-            response.usage = MagicMock()
-            response.usage.total_tokens = 100
-            response.usage.prompt_tokens = 10
-            response.usage.completion_tokens = 90
-            return response
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="Success on third try")
+                    )
+                ],
+                usage=SimpleNamespace(
+                    total_tokens=100,
+                    prompt_tokens=10,
+                    completion_tokens=90,
+                ),
+            )
 
         mock_async_client.chat.completions.create.side_effect = side_effect
 
         @do
-        def test_flow() -> EffectGenerator[str]:
+        def test_flow() -> EffectGenerator[dict[str, object]]:
             # Provide mock client in environment
             yield Ask("openai_client")
 
-            result = yield structured_llm__openai(
+            text_result = yield structured_llm__openai(
                 text="Test prompt",
                 model="gpt-4o",
                 max_tokens=100,
                 max_retries=3,  # Allow up to 3 attempts
             )
-            return result
+            api_calls = yield get_api_calls()
+            return {"text": text_result, "api_calls": api_calls}
 
         runtime = AsyncRuntime()
         result = await runtime.run(test_flow(), env={"openai_client": mock_client})
 
         # Should eventually succeed on third attempt
         assert result.is_ok()
-        assert result.value == "Success on third try"
+        assert result.value["text"] == "Success on third try"
 
         # Check that the API was called 3 times
         assert mock_async_client.chat.completions.create.call_count == 3
@@ -88,9 +94,8 @@ async def test_retry_tracking_on_failure_then_success():
         failure_logs = [log for log in log_messages if "OpenAI API error" in log]
         assert len(failure_logs) == 2
 
-        # Check state for API call tracking
-        assert "openai_api_calls" in result.state
-        api_calls = result.state["openai_api_calls"]
+        # Check API call tracking
+        api_calls = result.value["api_calls"]
 
         # Should have tracked all 3 attempts (2 failures + 1 success)
         assert len(api_calls) == 3
@@ -173,42 +178,47 @@ async def test_no_retry_on_immediate_success():
         mock_client.async_client = mock_async_client
 
         # Immediate success
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Immediate success"
-        mock_response.usage = MagicMock()
-        mock_response.usage.total_tokens = 50
-        mock_response.usage.prompt_tokens = 5
-        mock_response.usage.completion_tokens = 45
+        mock_response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Immediate success")
+                )
+            ],
+            usage=SimpleNamespace(
+                total_tokens=50,
+                prompt_tokens=5,
+                completion_tokens=45,
+            ),
+        )
 
         mock_async_client.chat.completions.create.return_value = mock_response
 
         @do
-        def test_flow() -> EffectGenerator[str]:
+        def test_flow() -> EffectGenerator[dict[str, object]]:
             # Provide mock client in environment
             yield Ask("openai_client")
 
-            result = yield structured_llm__openai(
+            text_result = yield structured_llm__openai(
                 text="Test prompt",
                 model="gpt-4o",
                 max_tokens=100,
                 max_retries=3,
             )
-            return result
+            api_calls = yield get_api_calls()
+            return {"text": text_result, "api_calls": api_calls}
 
         runtime = AsyncRuntime()
         result = await runtime.run(test_flow(), env={"openai_client": mock_client})
 
         # Should succeed immediately
         assert result.is_ok()
-        assert result.value == "Immediate success"
+        assert result.value["text"] == "Immediate success"
 
         # Check that the API was called only once
         assert mock_async_client.chat.completions.create.call_count == 1
 
-        # Check state for API call tracking
-        assert "openai_api_calls" in result.state
-        api_calls = result.state["openai_api_calls"]
+        # Check API call tracking
+        api_calls = result.value["api_calls"]
 
         # Should have tracked only one successful attempt (no double tracking for success)
         assert len(api_calls) == 1
