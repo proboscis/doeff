@@ -3,7 +3,23 @@
     "allow": [
       "Bash(cursor --install-extension:*)",
       "Bash(~/.local/bin/doeff-indexer find-env-chain:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(cargo test:*)",
+      "Bash(semgrep:*)",
+      "Bash(orch issue list:*)",
+      "Bash(orch issue create:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv run python3:*)",
+      "Bash(git stash:*)",
+      "Bash(git stash pop:*)",
+      "Bash(cargo build:*)",
+      "Bash(uv run maturin:*)",
+      "Bash(uv run:*)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }

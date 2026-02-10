@@ -14,7 +14,7 @@
         "specs/effects/SPEC-EFF-012-safe.md",
         "specs/effects/SPEC-EFF-013-result-types.md",
         "specs/effects/SPEC-EFF-100-combinations.md",
-"specs/vm-architecture/SPEC-SCHED-001-cooperative-scheduling.md",
+"specs/vm/SPEC-SCHED-001-cooperative-scheduling.md",
         "specs/core/SPEC-CORE-001-effect-boundaries.md"
       ],
       "implementation_directory": [
@@ -27,9 +27,9 @@
       "id": "SA-008",
       "date": "2026-02-08",
       "specs": [
-        "specs/vm-architecture/SPEC-008-rust-vm.md",
-        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
-        "specs/SPEC-TYPES-001-program-effect-separation.md"
+        "specs/vm/SPEC-008-rust-vm.md",
+        "specs/vm/SPEC-009-rust-vm-migration.md",
+        "specs/core/SPEC-TYPES-001-program-effect-separation.md"
       ],
       "implementation_directory": [
         "doeff",
@@ -42,9 +42,9 @@
       "id": "SA-007",
       "date": "2026-02-08",
       "specs": [
-        "specs/vm-architecture/SPEC-008-rust-vm.md",
-        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
-        "specs/SPEC-TYPES-001-program-effect-separation.md"
+        "specs/vm/SPEC-008-rust-vm.md",
+        "specs/vm/SPEC-009-rust-vm-migration.md",
+        "specs/core/SPEC-TYPES-001-program-effect-separation.md"
       ],
       "implementation_directory": [
         "doeff",
@@ -57,9 +57,9 @@
       "id": "SA-006",
       "date": "2026-02-08",
       "specs": [
-        "specs/vm-architecture/SPEC-008-rust-vm.md",
-        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
-        "specs/SPEC-TYPES-001-program-effect-separation.md"
+        "specs/vm/SPEC-008-rust-vm.md",
+        "specs/vm/SPEC-009-rust-vm-migration.md",
+        "specs/core/SPEC-TYPES-001-program-effect-separation.md"
       ],
       "implementation_directory": [
         "doeff",
@@ -71,9 +71,9 @@
       "id": "SA-005",
       "date": "2026-02-08",
       "specs": [
-        "specs/vm-architecture/SPEC-008-rust-vm.md",
-        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
-        "specs/SPEC-TYPES-001-program-effect-separation.md"
+        "specs/vm/SPEC-008-rust-vm.md",
+        "specs/vm/SPEC-009-rust-vm-migration.md",
+        "specs/core/SPEC-TYPES-001-program-effect-separation.md"
       ],
       "implementation_directory": [
         "doeff",
@@ -85,9 +85,9 @@
       "id": "SA-004",
       "date": "2026-02-08",
       "specs": [
-        "specs/vm-architecture/SPEC-008-rust-vm.md",
-        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
-        "specs/SPEC-TYPES-001-program-effect-separation.md"
+        "specs/vm/SPEC-008-rust-vm.md",
+        "specs/vm/SPEC-009-rust-vm-migration.md",
+        "specs/core/SPEC-TYPES-001-program-effect-separation.md"
       ],
       "implementation_directory": [
         "doeff",
@@ -99,9 +99,9 @@
       "id": "SA-003",
       "date": "2026-02-08",
       "specs": [
-        "specs/vm-architecture/SPEC-008-rust-vm.md",
-        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
-        "specs/SPEC-TYPES-001-program-effect-separation.md"
+        "specs/vm/SPEC-008-rust-vm.md",
+        "specs/vm/SPEC-009-rust-vm-migration.md",
+        "specs/core/SPEC-TYPES-001-program-effect-separation.md"
       ],
       "implementation_directory": [
         "doeff",
@@ -114,9 +114,9 @@
       "id": "SA-002",
       "date": "2026-02-08",
       "specs": [
-        "specs/vm-architecture/SPEC-008-rust-vm.md",
-        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
-        "specs/SPEC-TYPES-001-program-effect-separation.md"
+        "specs/vm/SPEC-008-rust-vm.md",
+        "specs/vm/SPEC-009-rust-vm-migration.md",
+        "specs/core/SPEC-TYPES-001-program-effect-separation.md"
       ],
       "implementation_directory": [
         "doeff",
@@ -129,9 +129,9 @@
       "id": "SA-001",
       "date": "2026-02-08",
       "specs": [
-        "specs/vm-architecture/SPEC-008-rust-vm.md",
-        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
-        "specs/SPEC-TYPES-001-program-effect-separation.md"
+        "specs/vm/SPEC-008-rust-vm.md",
+        "specs/vm/SPEC-009-rust-vm-migration.md",
+        "specs/core/SPEC-TYPES-001-program-effect-separation.md"
       ],
       "status": "complete",
       "result": "25/26 gaps resolved, 1 deferred (G13)"

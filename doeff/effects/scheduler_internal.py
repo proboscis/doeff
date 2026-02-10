@@ -78,15 +78,13 @@ class _SchedulerTaskComplete(EffectBase):
     Attributes:
         handle_id: The task's handle ID
         task_id: The internal task ID
-        result: The task's return value
-        error: The task's exception (None on success)
+        result: Canonical task result payload (Ok(value) or Err(error))
         store_snapshot: The task's final store (for isolated tasks)
     """
 
     handle_id: Any
     task_id: Any
-    result: Any = None
-    error: BaseException | None = None
+    result: Any
     store_snapshot: dict[str, Any] | None = None
 
 
@@ -170,7 +168,7 @@ class WaitForExternalCompletion(EffectBase):
     - sync_external_wait_handler: blocking queue.get()
     - async_external_wait_handler: PythonAsyncSyntaxEscape with run_in_executor
 
-    See SPEC-CESK-004-handler-owned-blocking.md for architecture.
+    See SPEC-SCHED-001 for architecture.
 
     Attributes:
         queue: The external completion queue (queue.Queue)

@@ -3,9 +3,9 @@
 - Date: 2026-02-08
 - Session: SA-005
 - Specs audited:
-  - `specs/vm-architecture/SPEC-008-rust-vm.md`
-  - `specs/vm-architecture/SPEC-009-rust-vm-migration.md`
-  - `specs/SPEC-TYPES-001-program-effect-separation.md`
+  - `specs/vm/SPEC-008-rust-vm.md`
+  - `specs/vm/SPEC-009-rust-vm-migration.md`
+  - `specs/core/SPEC-TYPES-001-program-effect-separation.md`
 - Implementation scope:
   - `packages/doeff-vm/src`
   - `doeff`
@@ -52,7 +52,7 @@
 
 | ID | Description | Spec refs | Impl chose | Resolution |
 |---|---|---|---|---|
-| SA-005-C01 | `SPEC-008` states Effect enum removed, but later scheduler snippets still use `Effect::...`/`&Effect` style signatures. | `specs/vm-architecture/SPEC-008-rust-vm.md:12`, `specs/vm-architecture/SPEC-008-rust-vm.md:1610` | Current code follows `DispatchEffect`/typed pyclass paths. | discuss |
+| SA-005-C01 | `SPEC-008` states Effect enum removed, but later scheduler snippets still use `Effect::...`/`&Effect` style signatures. | `specs/vm/SPEC-008-rust-vm.md:12`, `specs/vm/SPEC-008-rust-vm.md:1610` | Current code follows `DispatchEffect`/typed pyclass paths. | discuss |
 
 ## Gaps
 
@@ -60,24 +60,24 @@
 
 | ID | Description | Spec refs | Impl refs | Enforcement | Auto/default |
 |---|---|---|---|---|---|
-| SA-005-G01 | Standard effects are specified as typed payloaded pyclasses (`Get/Put/Modify/Ask/Tell`) but implementation uses zero-field marker-like forms in Rust effect structs. | `specs/vm-architecture/SPEC-008-rust-vm.md:823` | `packages/doeff-vm/src/effect.rs:16` | test + semgrep | auto-fix-code |
-| SA-005-G02 | Scheduler effects required as typed pyclasses are missing from `effect.rs`; scheduler handler relies on marker attrs/parsing path. | `specs/vm-architecture/SPEC-008-rust-vm.md:864` | `packages/doeff-vm/src/effect.rs:16`, `packages/doeff-vm/src/scheduler.rs:145` | test + semgrep | auto-fix-code |
-| SA-005-G04 | Spec says no Python-side normalization for top-level input; wrapper currently normalizes in Python before calling Rust VM. | `specs/vm-architecture/SPEC-009-rust-vm-migration.md:238` | `doeff/rust_vm.py:13`, `doeff/rust_vm.py:56` | test | auto-fix-code |
-| SA-005-G07 | SPEC-TYPES hierarchy says `Program = DoExpr` root model, but implementation keeps `Program = ProgramBase` (`DoThunk`) alias model. | `specs/SPEC-TYPES-001-program-effect-separation.md:111` | `doeff/program.py:248`, `doeff/program.py:565` | test + semgrep | discussion-required |
+| SA-005-G01 | Standard effects are specified as typed payloaded pyclasses (`Get/Put/Modify/Ask/Tell`) but implementation uses zero-field marker-like forms in Rust effect structs. | `specs/vm/SPEC-008-rust-vm.md:823` | `packages/doeff-vm/src/effect.rs:16` | test + semgrep | auto-fix-code |
+| SA-005-G02 | Scheduler effects required as typed pyclasses are missing from `effect.rs`; scheduler handler relies on marker attrs/parsing path. | `specs/vm/SPEC-008-rust-vm.md:864` | `packages/doeff-vm/src/effect.rs:16`, `packages/doeff-vm/src/scheduler.rs:145` | test + semgrep | auto-fix-code |
+| SA-005-G04 | Spec says no Python-side normalization for top-level input; wrapper currently normalizes in Python before calling Rust VM. | `specs/vm/SPEC-009-rust-vm-migration.md:238` | `doeff/rust_vm.py:13`, `doeff/rust_vm.py:56` | test | auto-fix-code |
+| SA-005-G07 | SPEC-TYPES hierarchy says `Program = DoExpr` root model, but implementation keeps `Program = ProgramBase` (`DoThunk`) alias model. | `specs/core/SPEC-TYPES-001-program-effect-separation.md:111` | `doeff/program.py:248`, `doeff/program.py:565` | test + semgrep | discussion-required |
 
 ### Moderate
 
 | ID | Description | Spec refs | Impl refs | Enforcement | Auto/default |
 |---|---|---|---|---|---|
-| SA-005-G03 | Handler trait/API still centered on `DispatchEffect` signatures, differing from SPEC-008 opaque-bound effect contract text. | `specs/vm-architecture/SPEC-008-rust-vm.md:1127` | `packages/doeff-vm/src/handler.rs:42` | test | discussion-required |
-| SA-005-G05 | `run` input/error contract differs from SPEC-009 wording (DoExpr acceptance boundary and error messaging expectations). | `specs/vm-architecture/SPEC-009-rust-vm-migration.md:203` | `doeff/rust_vm.py:27`, `packages/doeff-vm/src/pyvm.rs:508` | test | auto-fix-code |
-| SA-005-G06 | SPEC-009 import table expects `kpc` from `doeff.handlers`; current handlers export omits it. | `specs/vm-architecture/SPEC-009-rust-vm-migration.md:746` | `doeff/handlers.py:7` | test | auto-fix-code |
+| SA-005-G03 | Handler trait/API still centered on `DispatchEffect` signatures, differing from SPEC-008 opaque-bound effect contract text. | `specs/vm/SPEC-008-rust-vm.md:1127` | `packages/doeff-vm/src/handler.rs:42` | test | discussion-required |
+| SA-005-G05 | `run` input/error contract differs from SPEC-009 wording (DoExpr acceptance boundary and error messaging expectations). | `specs/vm/SPEC-009-rust-vm-migration.md:203` | `doeff/rust_vm.py:27`, `packages/doeff-vm/src/pyvm.rs:508` | test | auto-fix-code |
+| SA-005-G06 | SPEC-009 import table expects `kpc` from `doeff.handlers`; current handlers export omits it. | `specs/vm/SPEC-009-rust-vm-migration.md:746` | `doeff/handlers.py:7` | test | auto-fix-code |
 
 ### Minor
 
 | ID | Description | Spec refs | Impl refs | Enforcement | Auto/default |
 |---|---|---|---|---|---|
-| SA-005-G08 | `classify_yielded` flow shape differs from strict base-first ordering text (concrete DoCtrl type ladder before broad base gate). | `specs/SPEC-TYPES-001-program-effect-separation.md:744` | `packages/doeff-vm/src/pyvm.rs:548` | semgrep | auto-fix-code |
+| SA-005-G08 | `classify_yielded` flow shape differs from strict base-first ordering text (concrete DoCtrl type ladder before broad base gate). | `specs/core/SPEC-TYPES-001-program-effect-separation.md:744` | `packages/doeff-vm/src/pyvm.rs:548` | semgrep | auto-fix-code |
 
 ## Discussion
 

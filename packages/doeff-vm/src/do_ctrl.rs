@@ -3,6 +3,7 @@
 use pyo3::prelude::*;
 
 use crate::continuation::Continuation;
+use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
 use crate::handler::Handler;
@@ -32,6 +33,10 @@ pub enum DoCtrl {
     Transfer {
         continuation: Continuation,
         value: Value,
+    },
+    TransferThrow {
+        continuation: Continuation,
+        exception: PyException,
     },
     WithHandler {
         handler: Handler,
@@ -98,6 +103,13 @@ impl DoCtrl {
             } => DoCtrl::Transfer {
                 continuation: continuation.clone(),
                 value: value.clone(),
+            },
+            DoCtrl::TransferThrow {
+                continuation,
+                exception,
+            } => DoCtrl::TransferThrow {
+                continuation: continuation.clone(),
+                exception: exception.clone_ref(py),
             },
             DoCtrl::WithHandler {
                 handler,

@@ -228,6 +228,5 @@ All composition rules are verified by tests in `tests/effects/test_state_semanti
 
 - Implementation: `doeff/effects/state.py`
 - Handlers: `doeff/cesk/handlers/core.py`
-- Related spec: SPEC-CESK-001 (Separation of Concerns)
 - Related issue: gh#157 (async store snapshot)
 - Related issue: gh#175 (this spec)

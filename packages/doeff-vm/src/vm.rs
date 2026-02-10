@@ -57,6 +57,16 @@ pub struct DebugConfig {
     pub show_store: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct TraceEvent {
+    pub step: u64,
+    pub event: String,
+    pub mode: String,
+    pub pending: String,
+    pub dispatch_depth: usize,
+    pub result: Option<String>,
+}
+
 impl Default for DebugConfig {
     fn default() -> Self {
         DebugConfig {
@@ -103,6 +113,8 @@ pub struct VM {
     pub pending_python: Option<PendingPython>,
     pub debug: DebugConfig,
     pub step_counter: u64,
+    pub trace_enabled: bool,
+    pub trace_events: Vec<TraceEvent>,
     pub continuation_registry: HashMap<ContId, Continuation>,
 }
 
@@ -121,6 +133,8 @@ impl VM {
             pending_python: None,
             debug: DebugConfig::default(),
             step_counter: 0,
+            trace_enabled: false,
+            trace_events: Vec::new(),
             continuation_registry: HashMap::new(),
         }
     }
@@ -134,6 +148,15 @@ impl VM {
 
     pub fn set_debug(&mut self, config: DebugConfig) {
         self.debug = config;
+    }
+
+    pub fn enable_trace(&mut self, enabled: bool) {
+        self.trace_enabled = enabled;
+        self.trace_events.clear();
+    }
+
+    pub fn trace_events(&self) -> &[TraceEvent] {
+        &self.trace_events
     }
 
     pub fn py_store(&self) -> Option<&PyStore> {
@@ -178,6 +201,10 @@ impl VM {
     pub fn step(&mut self) -> StepEvent {
         self.step_counter += 1;
 
+        if self.trace_enabled {
+            self.record_trace_entry();
+        }
+
         if self.debug.is_enabled() {
             self.debug_step_entry();
         }
@@ -192,7 +219,100 @@ impl VM {
             self.debug_step_exit(&result);
         }
 
+        if self.trace_enabled {
+            self.record_trace_exit(&result);
+        }
+
         result
+    }
+
+    fn mode_kind(&self) -> &'static str {
+        match &self.mode {
+            Mode::Deliver(_) => "Deliver",
+            Mode::Throw(_) => "Throw",
+            Mode::HandleYield(y) => match y {
+                Yielded::DoCtrl(p) => match p {
+                    DoCtrl::Pure { .. } => "HandleYield(Pure)",
+                    DoCtrl::Map { .. } => "HandleYield(Map)",
+                    DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
+                    DoCtrl::Perform { .. } => "HandleYield(Perform)",
+                    DoCtrl::Resume { .. } => "HandleYield(Resume)",
+                    DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
+                    DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
+                    DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
+                    DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
+                    DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
+                    DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+                    DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
+                    DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
+                    DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
+                    DoCtrl::Call { .. } => "HandleYield(Call)",
+                    DoCtrl::Eval { .. } => "HandleYield(Eval)",
+                    DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
+                },
+            },
+            Mode::Return(_) => "Return",
+        }
+    }
+
+    fn pending_kind(&self) -> &'static str {
+        self.pending_python
+            .as_ref()
+            .map(|p| match p {
+                PendingPython::StartProgramFrame { .. } => "StartProgramFrame",
+                PendingPython::CallFuncReturn => "CallFuncReturn",
+                PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
+                PendingPython::CallPythonHandler { .. } => "CallPythonHandler",
+                PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
+                PendingPython::AsyncEscape => "AsyncEscape",
+            })
+            .unwrap_or("None")
+    }
+
+    fn result_kind(result: &StepEvent) -> String {
+        match result {
+            StepEvent::Continue => "Continue".to_string(),
+            StepEvent::Done(_) => "Done".to_string(),
+            StepEvent::Error(e) => format!("Error({e})"),
+            StepEvent::NeedsPython(call) => {
+                let call_kind = match call {
+                    PythonCall::StartProgram { .. } => "StartProgram",
+                    PythonCall::CallFunc { .. } => "CallFunc",
+                    PythonCall::CallHandler { .. } => "CallHandler",
+                    PythonCall::GenNext => "GenNext",
+                    PythonCall::GenSend { .. } => "GenSend",
+                    PythonCall::GenThrow { .. } => "GenThrow",
+                    PythonCall::CallAsync { .. } => "CallAsync",
+                };
+                format!("NeedsPython({call_kind})")
+            }
+        }
+    }
+
+    fn record_trace_entry(&mut self) {
+        let mode = self.mode_kind().to_string();
+        let pending = self.pending_kind().to_string();
+        self.trace_events.push(TraceEvent {
+            step: self.step_counter,
+            event: "enter".to_string(),
+            mode,
+            pending,
+            dispatch_depth: self.dispatch_stack.len(),
+            result: None,
+        });
+    }
+
+    fn record_trace_exit(&mut self, result: &StepEvent) {
+        let mode = self.mode_kind().to_string();
+        let pending = self.pending_kind().to_string();
+        self.trace_events.push(TraceEvent {
+            step: self.step_counter,
+            event: "exit".to_string(),
+            mode,
+            pending,
+            dispatch_depth: self.dispatch_stack.len(),
+            result: Some(Self::result_kind(result)),
+        });
     }
 
     fn debug_step_entry(&self) {
@@ -207,6 +327,7 @@ impl VM {
                     DoCtrl::Perform { .. } => "HandleYield(Perform)",
                     DoCtrl::Resume { .. } => "HandleYield(Resume)",
                     DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
+                    DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
                     DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
                     DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
                     DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
@@ -424,7 +545,7 @@ impl VM {
         use crate::handler::RustProgramStep;
         match step {
             RustProgramStep::Yield(yielded) => {
-                // Terminal DoCtrl variants (Resume, Transfer, Delegate) transfer control
+                // Terminal DoCtrl variants (Resume, Transfer, TransferThrow, Delegate) transfer control
                 // elsewhere — the handler is done and no value flows back. Do NOT re-push
                 // the RustProgram frame for these. Non-terminal variants (Eval, GetHandlers,
                 // GetCallStack) expect a result to be delivered back to this handler.
@@ -432,6 +553,7 @@ impl VM {
                     &yielded,
                     Yielded::DoCtrl(DoCtrl::Resume { .. })
                         | Yielded::DoCtrl(DoCtrl::Transfer { .. })
+                        | Yielded::DoCtrl(DoCtrl::TransferThrow { .. })
                         | Yielded::DoCtrl(DoCtrl::Delegate { .. })
                 );
                 if !is_terminal {
@@ -506,6 +628,10 @@ impl VM {
                         continuation,
                         value,
                     } => self.handle_transfer(continuation, value),
+                    DoCtrl::TransferThrow {
+                        continuation,
+                        exception,
+                    } => self.handle_transfer_throw(continuation, exception),
                     DoCtrl::WithHandler {
                         handler,
                         expr,
@@ -959,6 +1085,36 @@ impl VM {
 
         self.current_segment = Some(exec_seg_id);
         self.mode = Mode::Deliver(value);
+        StepEvent::Continue
+    }
+
+    fn handle_transfer_throw(&mut self, k: Continuation, exception: PyException) -> StepEvent {
+        if !k.started {
+            return self.throw_runtime_error(
+                "TransferThrow on unstarted continuation; use ResumeContinuation",
+            );
+        }
+        if self.is_one_shot_consumed(k.cont_id) {
+            return self.throw_runtime_error(&format!(
+                "one-shot violation: continuation {} already consumed",
+                k.cont_id.raw()
+            ));
+        }
+        self.mark_one_shot_consumed(k.cont_id);
+        self.lazy_pop_completed();
+        self.check_dispatch_completion(&k);
+
+        let exec_seg = Segment {
+            marker: k.marker,
+            frames: (*k.frames_snapshot).clone(),
+            caller: self.current_segment,
+            scope_chain: (*k.scope_chain).clone(),
+            kind: crate::segment::SegmentKind::Normal,
+        };
+        let exec_seg_id = self.alloc_segment(exec_seg);
+
+        self.current_segment = Some(exec_seg_id);
+        self.mode = Mode::Throw(exception);
         StepEvent::Continue
     }
 
