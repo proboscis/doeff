@@ -1,5 +1,5 @@
 from doeff import Program, do
-from doeff.effects import log
+from doeff.effects import tell
 
 from .combinators.advanced import (
     helper_eta,
@@ -47,5 +47,5 @@ def orchestrate():
         Program.dict(inner=Program.list(helper_beta(), helper_gamma())),
     )
 
-    yield log("orchestrate")
+    yield tell("orchestrate")
     return part_one, part_two, part_three, mapped, extra
