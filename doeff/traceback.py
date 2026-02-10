@@ -7,12 +7,12 @@ without knowing which interpreter executed their program.
 
 Usage:
     from doeff import Safe, do
-    from doeff._vendor import Err, Some
+    from doeff import Err, Some
 
     @do
     def main():
         result = yield Safe(risky_operation())
-        
+
         match result:
             case Err(error=ex, captured_traceback=Some(trace)):
                 print(trace.format())        # Full traceback
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 @runtime_checkable
 class EffectTraceback(Protocol):
     """Abstract traceback protocol - both interpreters implement this.
-    
+
     This protocol provides a consistent interface for traceback information
     regardless of which interpreter executed the program:
     - CESK: CapturedTraceback (rich - effect chain + Python chain)
@@ -49,7 +49,7 @@ class EffectTraceback(Protocol):
 
     def format(self) -> str:
         """Full human-readable traceback.
-        
+
         Returns:
             Multi-line string similar to Python's standard traceback format.
         """
@@ -57,7 +57,7 @@ class EffectTraceback(Protocol):
 
     def format_short(self) -> str:
         """One-line summary.
-        
+
         Returns:
             Single line summary like: "func1 -> func2 -> func3: ExceptionType: message"
         """
@@ -65,7 +65,7 @@ class EffectTraceback(Protocol):
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable representation.
-        
+
         Returns:
             Dict suitable for logging, transport, or serialization.
         """
@@ -75,11 +75,11 @@ class EffectTraceback(Protocol):
 @dataclass(frozen=True)
 class PythonTraceback:
     """Basic traceback implementation wrapping Python's exception traceback.
-    
+
     This class implements the EffectTraceback protocol for use with
     ProgramInterpreter. It wraps a standard Python traceback and provides
     formatted output similar to Python's traceback module.
-    
+
     Attributes:
         exception: The exception whose traceback is wrapped
         traceback_obj: The traceback object (exception.__traceback__)
@@ -98,7 +98,7 @@ class PythonTraceback:
 
     def format(self) -> str:
         """Full human-readable traceback.
-        
+
         Returns:
             Multi-line string in standard Python traceback format.
         """
@@ -125,9 +125,9 @@ class PythonTraceback:
 
     def format_short(self) -> str:
         """One-line summary of the traceback.
-        
+
         Format: <location>: ExceptionType: message
-        
+
         Returns:
             Single line summary.
         """
@@ -147,7 +147,7 @@ class PythonTraceback:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict.
-        
+
         Schema:
             {
                 "version": "1.0",
@@ -156,7 +156,7 @@ class PythonTraceback:
                 "exception": {...},
                 "metadata": {...}
             }
-        
+
         Returns:
             JSON-serializable dict.
         """
@@ -166,12 +166,14 @@ class PythonTraceback:
             tb = self.traceback_obj
             while tb is not None:
                 frame = tb.tb_frame
-                frames.append({
-                    "filename": frame.f_code.co_filename,
-                    "lineno": tb.tb_lineno,
-                    "function": frame.f_code.co_name,
-                    "code": None,
-                })
+                frames.append(
+                    {
+                        "filename": frame.f_code.co_filename,
+                        "lineno": tb.tb_lineno,
+                        "function": frame.f_code.co_name,
+                        "code": None,
+                    }
+                )
                 tb = tb.tb_next
 
         return {
@@ -193,13 +195,13 @@ class PythonTraceback:
 
 def capture_python_traceback(ex: BaseException) -> PythonTraceback:
     """Capture a PythonTraceback from an exception.
-    
+
     Convenience function for creating a PythonTraceback with proper
     timestamp and traceback capture.
-    
+
     Args:
         ex: The exception to capture traceback from
-        
+
     Returns:
         PythonTraceback instance
     """

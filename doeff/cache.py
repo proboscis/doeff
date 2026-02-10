@@ -9,7 +9,6 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from doeff._vendor import FrozenDict, Result
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
 from doeff.do import do
@@ -17,7 +16,7 @@ from doeff.effects.cache import CacheGet, CachePut
 from doeff.effects.callstack import ProgramCallStack
 from doeff.effects.result import Safe
 from doeff.effects.writer import slog
-from doeff.types import EffectCreationContext, EffectGenerator
+from doeff.types import EffectCreationContext, EffectGenerator, FrozenDict, Result
 
 
 class CacheComputationError(RuntimeError):
@@ -30,9 +29,7 @@ class CacheComputationError(RuntimeError):
         call_kwargs: dict[str, Any],
         call_site: EffectCreationContext | None = None,
     ) -> None:
-        location_suffix = (
-            f" at {call_site.format_location()}" if call_site is not None else ""
-        )
+        location_suffix = f" at {call_site.format_location()}" if call_site is not None else ""
         message = (
             f"Cache computation for {func_name} failed"
             f" with args={call_args!r} kwargs={call_kwargs!r}{location_suffix}"
@@ -44,9 +41,8 @@ class CacheComputationError(RuntimeError):
         self.call_site = call_site
 
         if call_site is not None and hasattr(self, "add_note"):
-            self.add_note(
-                f"Cache-decorated call originated at {call_site.format_location()}"
-            )
+            self.add_note(f"Cache-decorated call originated at {call_site.format_location()}")
+
 
 if TYPE_CHECKING:
     from doeff.kleisli import KleisliProgram
@@ -158,10 +154,11 @@ def cache(
         ...     yield Tell(f"Computing result for {x}")
         ...     return x * 2
         >>> await ProgramInterpreter().run(expensive_computation(5))
-        
+
         The first call will compute and cache the result. Subsequent calls within the TTL return
         the cached value, and the policy hints remain available to custom cache handlers.
     """
+
     def decorator(func: Callable[..., EffectGenerator[T]]) -> Callable[..., EffectGenerator[T]]:
         from doeff.kleisli import KleisliProgram
 
@@ -202,7 +199,9 @@ def cache(
 
             if log_success:
                 truncated_key = _truncate_for_log(key_obj)
-                log_kwargs: dict[str, Any] = {"msg": f"cache key serialization check passed for key:{truncated_key}"}
+                log_kwargs: dict[str, Any] = {
+                    "msg": f"cache key serialization check passed for key:{truncated_key}"
+                }
                 if level is not None:
                     log_kwargs["level"] = level
                 yield slog(**log_kwargs)
@@ -317,10 +316,10 @@ def cache(
                         metadata=metadata,
                         policy=policy,
                     )
-                    yield slog(msg=f"Cache: stored result for {func_name}",level="DEBUG")
+                    yield slog(msg=f"Cache: stored result for {func_name}", level="DEBUG")
                     return result.unwrap()
 
-                yield slog(msg=f"Computation for {func_name} failed, not caching.",level="error")
+                yield slog(msg=f"Computation for {func_name} failed, not caching.", level="error")
                 error = result.unwrap_err()
                 raise CacheComputationError(
                     func_name,
@@ -396,10 +395,10 @@ def clear_persistent_cache(path: str | os.PathLike[str] | None = None) -> Path:
 def cache_key(*key_args: str) -> Callable:
     """
     Create a key function that selects specific arguments for cache key.
-    
+
     Args:
         *key_args: Names of arguments to include in the cache key.
-    
+
     Example:
         >>> @cache(key_func=cache_key("user_id", "date"))
         ... @do
@@ -408,6 +407,7 @@ def cache_key(*key_args: str) -> Callable:
         ...     # include_details will be ignored for caching
         ...     pass
     """
+
     def key_function(func_name: str, args: tuple, kwargs: FrozenDict) -> tuple:
         """Extract specified arguments for cache key."""
         # For simplicity, assume key_args refer to positional arguments
