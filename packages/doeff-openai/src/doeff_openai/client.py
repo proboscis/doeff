@@ -253,7 +253,7 @@ def track_api_call(
     metadata = APICallMetadata(
         operation=operation,
         model=model,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.fromtimestamp(end_time, timezone.utc),
         request_id=request_id,
         latency_ms=latency_ms,
         token_usage=token_usage,
