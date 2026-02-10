@@ -24,8 +24,13 @@ from pydantic import BaseModel
 
 from doeff import (
     Ask,
-    AsyncRuntime,
+    AskEffect,
+    Delegate,
     EffectGenerator,
+    Resume,
+    WithHandler,
+    async_run,
+    default_handlers,
     do,
 )
 
@@ -41,6 +46,15 @@ class ComplexResponse(BaseModel):
     items: list[str]
     metadata: dict[str, Any]
     nested: SimpleResponse | None = None
+
+
+def _ask_override_handler(overrides: dict[str, object]):
+    def handler(effect, k):
+        if isinstance(effect, AskEffect) and effect.key in overrides:
+            return (yield Resume(k, overrides[effect.key]))
+        yield Delegate()
+
+    return handler
 
 
 # Model detection tests
@@ -125,9 +139,7 @@ async def test_build_messages_text_only():
     def test_flow() -> EffectGenerator[list]:
         messages = yield build_messages("Hello, world!")
         return messages
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow())
+    result = await async_run(test_flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert len(result.value) == 1
@@ -161,10 +173,7 @@ async def test_build_api_parameters_gpt4():
             response_format=None,
         )
         return params
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow())
-    print(result.format())
+    result = await async_run(test_flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value["model"] == "gpt-4o"
@@ -192,9 +201,7 @@ async def test_build_api_parameters_gpt5():
             response_format=None,
         )
         return params
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow())
+    result = await async_run(test_flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value["model"] == "gpt-5"
@@ -224,10 +231,7 @@ async def test_build_api_parameters_structured():
             response_format=SimpleResponse,
         )
         return params
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow())
-    print(result.format())
+    result = await async_run(test_flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert "response_format" in result.value
@@ -256,9 +260,7 @@ async def test_process_structured_response_success():
     def test_flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(mock_response, SimpleResponse)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow())
+    result = await async_run(test_flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert isinstance(result.value, SimpleResponse)
@@ -289,9 +291,7 @@ async def test_process_structured_response_list_payload():
     def test_flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(mock_response, SimpleResponse)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow())
+    result = await async_run(test_flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value.answer == "42"
@@ -319,9 +319,7 @@ async def test_process_unstructured_response_with_parts():
     def test_flow() -> EffectGenerator[str]:
         result = yield process_unstructured_response(mock_response)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow())
+    result = await async_run(test_flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value == "Hello world"
@@ -344,10 +342,7 @@ async def test_process_structured_response_invalid_json():
     def test_flow() -> EffectGenerator[Any]:
         result = yield process_structured_response(mock_response, SimpleResponse)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow())
-    print(result.format())
+    result = await async_run(test_flow(), handlers=default_handlers())
 
     assert result.is_err()
     assert "Expecting value" in str(result.error)
@@ -370,9 +365,7 @@ async def test_process_unstructured_response():
     def test_flow() -> EffectGenerator[str]:
         result = yield process_unstructured_response(mock_response)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow())
+    result = await async_run(test_flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value == "This is a test response."
@@ -412,8 +405,11 @@ async def test_structured_llm_text_only():
         api_calls = yield get_api_calls()
         return {"text": text_result, "api_calls": api_calls}
 
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow(), env={"openai_client": mock_client})
+    handler = _ask_override_handler({"openai_client": mock_client})
+    result = await async_run(
+        WithHandler(handler, test_flow()),
+        handlers=default_handlers(),
+    )
 
     assert result.is_ok()
     assert result.value["text"] == "Test response"
@@ -470,8 +466,11 @@ async def test_structured_llm_with_pydantic():
         )
         return result
 
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow(), env={"openai_client": mock_client})
+    handler = _ask_override_handler({"openai_client": mock_client})
+    result = await async_run(
+        WithHandler(handler, test_flow()),
+        handlers=default_handlers(),
+    )
 
     assert result.is_ok()
     assert isinstance(result.value, SimpleResponse)
@@ -520,8 +519,11 @@ async def test_gpt5_structured_convenience():
         )
         return result
 
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_flow(), env={"openai_client": mock_client})
+    handler = _ask_override_handler({"openai_client": mock_client})
+    result = await async_run(
+        WithHandler(handler, test_flow()),
+        handlers=default_handlers(),
+    )
 
     assert result.is_ok()
     assert result.value == "GPT-5 response"
@@ -562,13 +564,16 @@ async def test_structured_llm_integration():
         return api_key
 
     # First check if API key is available
-    runtime = AsyncRuntime()
-    key_result = await runtime.run(get_api_key(), env={})
+    key_result = await async_run(get_api_key(), handlers=default_handlers())
 
     if not key_result.is_ok() or not key_result.value:
         pytest.skip("OPENAI_API_KEY not set")
 
-    result = await runtime.run(test_flow(), env={"openai_api_key": key_result.value})
+    key_handler = _ask_override_handler({"openai_api_key": key_result.value})
+    result = await async_run(
+        WithHandler(key_handler, test_flow()),
+        handlers=default_handlers(),
+    )
 
     assert result.is_ok()
     assert isinstance(result.value, SimpleResponse)

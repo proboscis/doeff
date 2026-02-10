@@ -21,8 +21,9 @@ from doeff_openai import (
 )
 
 from doeff import (
-    AsyncRuntime,
     EffectGenerator,
+    async_run,
+    default_handlers,
     do,
 )
 
@@ -90,10 +91,7 @@ async def test_unstructured_response():
             temperature=0.1,
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
-    print(result.format())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     assert result.is_ok()
     assert isinstance(result.value, str)
@@ -119,9 +117,7 @@ async def test_structured_response_math():
             temperature=0.1,
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     assert result.is_ok()
     assert isinstance(result.value, MathAnswer)
@@ -165,9 +161,7 @@ def fibonacci(n):
             temperature=0.3,
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     assert result.is_ok()
     assert isinstance(result.value, CodeAnalysis)
@@ -197,9 +191,7 @@ async def test_with_image():
             temperature=0.5,
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     assert result.is_ok()
     assert isinstance(result.value, ImageDescription)
@@ -238,9 +230,7 @@ async def test_error_handling_invalid_json():
             temperature=1.0,  # High temperature for more randomness
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     # This might succeed or fail depending on the model's response
     # But it should handle errors gracefully
@@ -267,9 +257,7 @@ async def test_retry_on_failure():
             max_retries=2,  # Allow retries
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     # Should still succeed despite token limit
     assert result.is_ok()
@@ -289,9 +277,7 @@ async def test_gpt4o_convenience_function():
             temperature=0.1,
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     assert result.is_ok()
     assert isinstance(result.value, MathAnswer)
@@ -310,9 +296,7 @@ async def test_gpt5_with_reasoning():
             verbosity="low",
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     if result.is_ok():
         assert isinstance(result.value, str)
@@ -338,9 +322,7 @@ async def test_service_tier_parameter():
             service_tier="auto",  # Let OpenAI choose
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     assert result.is_ok()
     # Check that service tier was set
@@ -360,9 +342,7 @@ async def test_cost_tracking():
         )
         api_calls = yield get_api_calls()
         return {"text": text_result, "api_calls": api_calls}
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     assert result.is_ok()
 
@@ -397,9 +377,7 @@ async def test_multiple_images():
             temperature=0.3,
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     assert result.is_ok()
     # Should mention seeing two images
@@ -422,9 +400,7 @@ async def test_graph_tracking():
         )
         api_calls = yield get_api_calls()
         return {"text": text_result, "api_calls": api_calls}
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(test_program())
+    result = await async_run(test_program(), handlers=default_handlers())
 
     assert result.is_ok()
 
