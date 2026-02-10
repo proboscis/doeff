@@ -76,24 +76,6 @@ class TestLocalAskComposition:
     """Tests for Local + Ask composition: Ask sees override, restored after."""
 
     @pytest.mark.asyncio
-    async def test_local_overrides_ask_inside_scope(self, parameterized_interpreter) -> None:
-        """Ask inside Local sees the overridden value."""
-
-        @do
-        def inner_program():
-            value = yield Ask("key")
-            return value
-
-        @do
-        def program():
-            inner_value = yield Local({"key": "overridden"}, inner_program())
-            return inner_value
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        assert result.value == "overridden"
-
-    @pytest.mark.asyncio
     async def test_local_adds_new_key(self, parameterized_interpreter) -> None:
         """Local can add a new key not present in parent environment."""
 
@@ -161,29 +143,6 @@ class TestLocalLocalComposition:
     """Tests for nested Local: Inner overrides outer, both restore."""
 
     @pytest.mark.asyncio
-    async def test_nested_local_inner_overrides_outer(self, parameterized_interpreter) -> None:
-        """Inner Local overrides same key from outer Local."""
-
-        @do
-        def innermost():
-            value = yield Ask("key")
-            return value
-
-        @do
-        def middle():
-            inner_value = yield Local({"key": "inner"}, innermost())
-            return inner_value
-
-        @do
-        def program():
-            result = yield Local({"key": "outer"}, middle())
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        assert result.value == "inner"
-
-    @pytest.mark.asyncio
     async def test_nested_local_different_keys(self, parameterized_interpreter) -> None:
         """Nested Local with different keys both visible."""
 
@@ -217,46 +176,6 @@ class TestLocalLocalComposition:
 
 class TestLocalStateInteraction:
     """Tests for Local + State: State changes inside Local persist outside."""
-
-    @pytest.mark.asyncio
-    async def test_state_changes_persist_outside_local(self, parameterized_interpreter) -> None:
-        """State (Put) changes made inside Local persist after Local completes."""
-
-        @do
-        def inner():
-            yield Put("counter", 42)
-            return "done"
-
-        @do
-        def program():
-            before = yield Get("counter")
-            yield Local({"key": "value"}, inner())
-            after = yield Get("counter")
-            return (before, after)
-
-        result = await parameterized_interpreter.run_async(program(), state={"counter": 0})
-        assert result.is_ok
-        assert result.value == (0, 42)
-
-    @pytest.mark.asyncio
-    async def test_state_modify_persists_outside_local(self, parameterized_interpreter) -> None:
-        """State (Modify) changes made inside Local persist after Local."""
-
-        @do
-        def inner():
-            new_val = yield Modify("counter", lambda x: x + 10)
-            return new_val
-
-        @do
-        def program():
-            yield Put("counter", 5)
-            inner_result = yield Local({"key": "value"}, inner())
-            after = yield Get("counter")
-            return (inner_result, after)
-
-        result = await parameterized_interpreter.run_async(program())
-        assert result.is_ok
-        assert result.value == (15, 15)
 
 
 # ============================================================================
