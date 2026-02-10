@@ -1255,13 +1255,7 @@ impl VM {
         if let Value::Python(obj) = &value {
             let should_eval = Python::attach(|py| {
                 let bound = obj.bind(py);
-                if bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<PyEffectBase>() {
-                    return true;
-                }
-                bound
-                    .getattr("__doeff_effect_base__")
-                    .and_then(|v| v.is_truthy())
-                    .unwrap_or(false)
+                bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<PyEffectBase>()
             });
 
             if should_eval {
