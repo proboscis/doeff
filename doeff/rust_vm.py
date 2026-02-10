@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import concurrent.futures
 import importlib
 import inspect
-import asyncio
 from typing import Any
 
 
@@ -39,14 +37,6 @@ def _raise_unhandled_effect_if_present(run_result: Any) -> Any:
             if "unhandledeffect" in text or "unhandled effect" in text:
                 raise error
     return run_result
-
-
-def _run_awaitable_blocking(awaitable: Any) -> Any:
-    def _runner() -> Any:
-        return asyncio.run(awaitable)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        return executor.submit(_runner).result()
 
 
 def _run_call_kwargs(
@@ -118,20 +108,11 @@ async def _call_async_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) 
         raise
 
 
-def _await_handler(effect: Any, k: Any):
-    from doeff.effects.future import PythonAsyncioAwaitEffect
-
-    if isinstance(effect, PythonAsyncioAwaitEffect):
-        result = _run_awaitable_blocking(effect.awaitable)
-        return (yield _vm().Resume(k, result))
-    yield _vm().Delegate()
-
-
 def default_handlers() -> list[Any]:
     vm = _vm()
-    required = ("state", "reader", "writer", "scheduler", "kpc")
+    required = ("state", "reader", "writer", "scheduler", "kpc", "await_handler")
     if all(hasattr(vm, name) for name in required):
-        return [getattr(vm, name) for name in required] + [_await_handler]
+        return [getattr(vm, name) for name in required]
     missing = [name for name in required if not hasattr(vm, name)]
     missing_txt = ", ".join(missing)
     raise RuntimeError(
