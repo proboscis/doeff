@@ -1,253 +1,26 @@
-"""Tests for Ask lazy Program evaluation feature.
+"""Deferred lazy Ask edge cases from legacy CESK-era suites.
 
-This test file confirms the lazy Program evaluation feature defined in SPEC-EFF-001-reader.md:
-1. Basic lazy evaluation - Program values in env are evaluated on first Ask
-2. Caching - Results are cached, no re-evaluation on subsequent Asks
-3. Local override invalidation - Different Program = fresh evaluation
-4. Error propagation - Program failure causes entire run() to fail
-5. Concurrent access protection - Simultaneous Asks wait, don't re-execute
+Core lazy Ask behavior is now covered by active rust_vm tests in
+`tests/core/test_runtime_regressions_manual.py`.
 
-Reference: ISSUE-SPEC-004, gh#190, gh#191, gh#192
+These remaining cases are intentionally deferred and tracked by ISSUE-SPEC-009.
 """
 
 import pytest
 
-from doeff import Program, do
-from doeff.effects import Ask, Gather, Get, Local, Put, Safe, Spawn
+from doeff import Ask, do
 
 pytestmark = pytest.mark.skip(
     reason=(
-        "Legacy CESK-era lazy Ask semantics are not in the active rust_vm matrix; "
+        "Deferred lazy Ask edge cases are not in the active rust_vm matrix; "
         "tracked by ISSUE-SPEC-009 migration/drop plan."
     )
 )
 
-# ============================================================================
-# Basic Lazy Evaluation Tests
-# ============================================================================
 
-
-class TestAskLazyEvaluation:
-    """Tests for basic lazy Program evaluation behavior."""
-
-    @pytest.mark.asyncio
-    async def test_ask_evaluates_program_with_effects(self, parameterized_interpreter) -> None:
-        """Ask properly evaluates a Program that yields effects."""
-
-        @do
-        def program_with_effects():
-            yield Put("counter", 100)
-            counter = yield Get("counter")
-            return counter * 2
-
-        env = {"compute": program_with_effects()}
-
-        @do
-        def program():
-            result = yield Ask("compute")
-            final_counter = yield Get("counter")
-            return (result, final_counter)
-
-        result = await parameterized_interpreter.run_async(program(), env=env)
-        assert result.is_ok
-        assert result.value == (200, 100)
-
-    @pytest.mark.asyncio
-    async def test_ask_returns_regular_value_directly(self, parameterized_interpreter) -> None:
-        """Ask returns non-Program values directly without special handling."""
-
-        @do
-        def program():
-            value = yield Ask("simple")
-            return value
-
-        result = await parameterized_interpreter.run_async(program(), env={"simple": "hello"})
-        assert result.is_ok
-        assert result.value == "hello"
-
-
-# ============================================================================
-# Caching Tests
-# ============================================================================
-
-
-class TestAskCaching:
-    """Tests for result caching behavior."""
-
-    @pytest.mark.asyncio
-    async def test_different_keys_evaluated_separately(self, parameterized_interpreter) -> None:
-        """Different Ask keys are cached independently."""
-
-        @do
-        def program_a():
-            return (yield Program.pure("result_a"))
-
-        @do
-        def program_b():
-            return (yield Program.pure("result_b"))
-
-        env = {"key_a": program_a(), "key_b": program_b()}
-
-        @do
-        def program():
-            a1 = yield Ask("key_a")
-            b1 = yield Ask("key_b")
-            a2 = yield Ask("key_a")
-            b2 = yield Ask("key_b")
-            return (a1, b1, a2, b2)
-
-        result = await parameterized_interpreter.run_async(program(), env=env)
-        assert result.is_ok
-        assert result.value == ("result_a", "result_b", "result_a", "result_b")
-
-
-# ============================================================================
-# Error Propagation Tests
-# ============================================================================
-
-
-class TestErrorPropagation:
-    """Tests for error handling from lazy Program evaluation."""
-
-    @pytest.mark.asyncio
-    async def test_error_not_cached(self, parameterized_interpreter) -> None:
-        """Failed evaluation does not cache an error - subsequent Ask retries."""
-        attempt = [0]
-
-        @do
-        def sometimes_fails():
-            attempt[0] += 1
-            if attempt[0] == 1:
-                raise ValueError("First attempt fails")
-            return "success"
-
-        # Create two different program instances
-        first_program = sometimes_fails()
-        second_program = sometimes_fails()
-
-        @do
-        def program():
-            # First attempt with first_program - should fail
-            result1 = yield Safe(Ask("service"))
-            if result1.is_err():
-                # Replace with second_program
-                @do
-                def inner():
-                    return (yield Ask("service"))
-
-                result2 = yield Local({"service": second_program}, inner())
-                return result2
-            return None
-
-        result = await parameterized_interpreter.run_async(
-            program(), env={"service": first_program}
-        )
-
-        assert result.is_ok
-        assert result.value == "success"
-
-
-# ============================================================================
-# Concurrent Access Tests
-# ============================================================================
-
-
-class TestConcurrentAccess:
-    """Tests for concurrent Ask protection."""
-
-    @pytest.mark.asyncio
-    async def test_nested_ask_in_lazy_program(self, parameterized_interpreter) -> None:
-        """Lazy Program can itself Ask for other lazy Programs."""
-
-        @do
-        def inner_service():
-            return 10
-
-        @do
-        def outer_service():
-            inner = yield Ask("inner")
-            return inner * 2
-
-        env = {
-            "inner": inner_service(),
-            "outer": outer_service(),
-        }
-
-        @do
-        def program():
-            result = yield Ask("outer")
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env=env)
-        assert result.is_ok
-        assert result.value == 20
-
-
-# ============================================================================
-# Edge Cases
-# ============================================================================
-
-
-class TestEdgeCases:
-    """Tests for edge cases and special scenarios."""
-
-    @pytest.mark.asyncio
-    async def test_none_result_is_cached(self, parameterized_interpreter) -> None:
-        """None result from Program is properly cached."""
-        evaluation_count = [0]
-
-        @do
-        def returns_none():
-            evaluation_count[0] += 1
-
-        env = {"nullable": returns_none()}
-
-        @do
-        def program():
-            val1 = yield Ask("nullable")
-            val2 = yield Ask("nullable")
-            return (val1, val2)
-
-        result = await parameterized_interpreter.run_async(program(), env=env)
-        assert result.is_ok
-        assert result.value == (None, None)
-        assert evaluation_count[0] == 1
-
-    @pytest.mark.asyncio
-    async def test_program_returning_program_is_evaluated_once(
-        self, parameterized_interpreter
-    ) -> None:
-        """Program returning another Program - outer is evaluated, inner is returned."""
-
-        @do
-        def inner():
-            return 42
-
-        @do
-        def outer():
-            # Return a Program, not a value
-            return inner()
-
-        env = {"service": outer()}
-
-        @do
-        def program():
-            result = yield Ask("service")
-            # result should be the inner Program object, not 42
-            # unless the user explicitly yields it
-            if isinstance(result, Program):
-                final = yield result
-                return final
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env=env)
-        assert result.is_ok
-        assert result.value == 42
-
+class TestDeferredLazyAskEdgeCases:
     @pytest.mark.asyncio
     async def test_hashable_keys_work(self, parameterized_interpreter) -> None:
-        """Various hashable key types work correctly."""
-
         @do
         def make_prog(val):
             return val
@@ -269,22 +42,10 @@ class TestEdgeCases:
         assert result.is_ok
         assert result.value == ("string", "int", "tuple")
 
-
-# ============================================================================
-# Circular Dependency Tests
-# ============================================================================
-
-
-class TestCircularDependency:
-    """Tests for circular Ask dependency detection."""
-
     @pytest.mark.asyncio
     async def test_direct_circular_ask_raises_error(self, parameterized_interpreter) -> None:
-        """Direct circular dependency (A asks A) is detected and raises error."""
-
         @do
         def circular_program():
-            # This program asks for itself
             return (yield Ask("self"))
 
         env = {"self": circular_program()}
@@ -296,13 +57,9 @@ class TestCircularDependency:
         result = await parameterized_interpreter.run_async(program(), env=env)
         assert result.is_err()
         assert "circular" in str(result.error).lower()
-        if hasattr(result.error, "key"):
-            assert result.error.key == "self"
 
     @pytest.mark.asyncio
     async def test_indirect_circular_ask_raises_error(self, parameterized_interpreter) -> None:
-        """Indirect circular dependency (A asks B, B asks A) is detected."""
-
         @do
         def program_a():
             return (yield Ask("b"))
@@ -320,6 +77,3 @@ class TestCircularDependency:
         result = await parameterized_interpreter.run_async(program(), env=env)
         assert result.is_err()
         assert "circular" in str(result.error).lower()
-        # Either "a" or "b" will be the detected cycle point
-        if hasattr(result.error, "key"):
-            assert result.error.key in ("a", "b")
