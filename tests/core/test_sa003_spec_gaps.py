@@ -70,3 +70,20 @@ def test_SA_003_G06_python_async_syntax_escape_alias_exported() -> None:
     py_wrap = _read(ROOT / "doeff" / "rust_vm.py")
     assert "PythonAsyncSyntaxEscape" in py_ext
     assert "PythonAsyncSyntaxEscape" in py_wrap
+
+
+def test_SA_003_G07_safe_has_no_python_kernel_proxy() -> None:
+    src = _read(ROOT / "doeff" / "effects" / "result.py")
+    assert "_wrap_kernel_as_result" not in src
+    assert "_clone_kpc_with_kernel" not in src
+    assert "ResultSafeEffect(" in src
+
+
+def test_SA_003_G08_result_safe_handler_is_registered() -> None:
+    handler_src = _read(RUST_SRC / "handler.rs")
+    pyvm_src = _read(RUST_SRC / "pyvm.rs")
+    rust_vm_src = _read(ROOT / "doeff" / "rust_vm.py")
+
+    assert "ResultSafeHandlerFactory" in handler_src
+    assert '"result_safe"' in pyvm_src
+    assert '"result_safe"' in rust_vm_src
