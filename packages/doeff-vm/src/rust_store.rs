@@ -1,6 +1,6 @@
 //! Store model shared by handlers and VM.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::ids::PromiseId;
@@ -25,6 +25,7 @@ pub struct RustStore {
     pub log: Vec<Value>,
     lazy_cache: Arc<Mutex<HashMap<String, LazyCacheEntry>>>,
     lazy_inflight: Arc<Mutex<HashMap<String, LazyInflightEntry>>>,
+    lazy_active: Arc<Mutex<HashSet<(String, usize)>>>,
 }
 
 impl RustStore {
@@ -35,6 +36,7 @@ impl RustStore {
             log: Vec::new(),
             lazy_cache: Arc::new(Mutex::new(HashMap::new())),
             lazy_inflight: Arc::new(Mutex::new(HashMap::new())),
+            lazy_active: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -151,6 +153,21 @@ impl RustStore {
         if should_remove {
             inflight.remove(key);
         }
+    }
+
+    pub fn lazy_active_contains(&self, key: &str, source_id: usize) -> bool {
+        let active = self.lazy_active.lock().expect("lazy_active lock poisoned");
+        active.contains(&(key.to_string(), source_id))
+    }
+
+    pub fn lazy_active_insert(&self, key: String, source_id: usize) {
+        let mut active = self.lazy_active.lock().expect("lazy_active lock poisoned");
+        active.insert((key, source_id));
+    }
+
+    pub fn lazy_active_remove(&self, key: &str, source_id: usize) {
+        let mut active = self.lazy_active.lock().expect("lazy_active lock poisoned");
+        active.remove(&(key.to_string(), source_id));
     }
 }
 

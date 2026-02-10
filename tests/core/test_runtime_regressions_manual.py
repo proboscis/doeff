@@ -479,6 +479,67 @@ def test_lazy_ask_program_returning_program_can_be_resolved() -> None:
     assert result.value == 42
 
 
+def test_hashable_non_string_ask_keys_work() -> None:
+    @do
+    def make_prog(val):
+        if False:
+            yield
+        return val
+
+    env = {
+        "string_key": make_prog("string"),
+        42: make_prog("int"),
+        ("tuple", "key"): make_prog("tuple"),
+    }
+
+    @do
+    def program():
+        string_value = yield Ask("string_key")
+        int_value = yield Ask(42)
+        tuple_value = yield Ask(("tuple", "key"))
+        return (string_value, int_value, tuple_value)
+
+    result = run(program(), handlers=default_handlers(), env=env)
+    assert result.is_ok()
+    assert result.value == ("string", "int", "tuple")
+
+
+def test_direct_circular_lazy_ask_raises_error() -> None:
+    @do
+    def circular_program():
+        return (yield Ask("self"))
+
+    @do
+    def program():
+        return (yield Ask("self"))
+
+    result = run(program(), handlers=default_handlers(), env={"self": circular_program()})
+    assert result.is_err()
+    assert "circular" in str(result.error).lower()
+
+
+def test_indirect_circular_lazy_ask_raises_error() -> None:
+    @do
+    def program_a():
+        return (yield Ask("b"))
+
+    @do
+    def program_b():
+        return (yield Ask("a"))
+
+    @do
+    def program():
+        return (yield Ask("a"))
+
+    result = run(
+        program(),
+        handlers=default_handlers(),
+        env={"a": program_a(), "b": program_b()},
+    )
+    assert result.is_err()
+    assert "circular" in str(result.error).lower()
+
+
 def test_lazy_ask_spawned_tasks_share_single_evaluation() -> None:
     calls = {"service": 0}
 
