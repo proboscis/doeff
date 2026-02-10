@@ -1,6 +1,6 @@
 """doeff.handlers - Handler sentinels re-exported from doeff_vm.
 
-Provides: state, reader, writer, scheduler.
+Provides: state, reader, writer, scheduler, kpc, await_handler.
 """
 
 from __future__ import annotations
