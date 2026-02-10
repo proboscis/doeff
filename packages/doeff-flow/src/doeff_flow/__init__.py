@@ -53,8 +53,7 @@ from doeff_flow.trace import (
 )
 
 if TYPE_CHECKING:
-    from doeff.types import RunResult
-    from doeff.program import Program
+    from doeff import Program, RunResult
 
 T = TypeVar("T")
 
@@ -86,7 +85,7 @@ def run_workflow(
 
     Example:
         from doeff import do
-        from doeff.effects import Pure
+        from doeff import Pure
         from doeff_flow import run_workflow
 
         @do
