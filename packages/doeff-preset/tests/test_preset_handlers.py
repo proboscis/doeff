@@ -18,9 +18,12 @@ from doeff_preset import (
 
 from doeff import (
     Ask,
+    AskEffect,
     Delegate,
     EffectBase,
     MissingEnvKeyError,
+    Resume,
+    WithHandler,
     async_run_with_handler_map,
     do,
     run_with_handler_map,
@@ -146,6 +149,24 @@ class TestConfigHandlers:
         assert result.is_err()
         assert isinstance(result.error, MissingEnvKeyError)
 
+    def test_with_handler_can_mock_preset_config(self):
+        """Effect mocks should use WithHandler + Resume."""
+
+        @do
+        def workflow():
+            show_logs = yield Ask("preset.show_logs")
+            return show_logs
+
+        def mock_preset_config(effect, k):
+            if isinstance(effect, AskEffect) and effect.key == "preset.show_logs":
+                return (yield Resume(k, False))
+            yield Delegate()
+
+        program = WithHandler(mock_preset_config, workflow())
+        result = _run_with_handler_map(program, preset_handlers())
+
+        assert result.value is False
+
 
 class TestPresetHandlers:
     """Tests for the combined preset_handlers()."""
@@ -195,8 +216,6 @@ class TestPresetHandlers:
         """Preset handlers should merge with other handlers."""
         # Custom effect type for testing
         from dataclasses import dataclass
-
-        from doeff import Resume
 
         @dataclass(frozen=True)
         class CustomEffect(EffectBase):
