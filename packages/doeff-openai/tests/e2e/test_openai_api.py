@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 pytestmark = pytest.mark.e2e
 
 from doeff_openai import (
+    get_api_calls,
     gpt4o_structured,
     gpt5_nano_structured,
     structured_llm__openai,
@@ -71,7 +72,8 @@ def create_test_image():
 
 # Check if we should skip tests
 _api_key = get_test_api_key()
-skip_tests = not bool(_api_key)
+_run_e2e = os.environ.get("RUN_OPENAI_E2E") == "1"  # noqa: PINJ050
+skip_tests = not bool(_api_key and _run_e2e)
 
 
 @pytest.mark.skipif(skip_tests, reason="OPENAI_API_KEY not set in environment")
@@ -319,7 +321,7 @@ async def test_gpt5_with_reasoning():
         assert any("reasoning tokens" in str(log) for log in result.log)
     else:
         # Model might not be available
-        error_str = str(result.result.error).lower()
+        error_str = str(result.error).lower()
         assert "model" in error_str or "not found" in error_str
 
 
@@ -350,22 +352,22 @@ async def test_service_tier_parameter():
 async def test_cost_tracking():
     """Test that API costs are tracked properly."""
     @do
-    def test_program() -> EffectGenerator[str]:
-        result = yield structured_llm__openai(
+    def test_program() -> EffectGenerator[dict[str, object]]:
+        text_result = yield structured_llm__openai(
             text="Hi",
             model="gpt-4o-mini",
             max_tokens=10,
         )
-        return result
+        api_calls = yield get_api_calls()
+        return {"text": text_result, "api_calls": api_calls}
 
     runtime = AsyncRuntime()
     result = await runtime.run(test_program())
 
     assert result.is_ok()
 
-    # Check state for cost tracking
-    assert "openai_api_calls" in result.state
-    api_calls = result.state["openai_api_calls"]
+    # Check tracked API metadata
+    api_calls = result.value["api_calls"]
     assert len(api_calls) > 0
 
     # Check the tracked metadata
@@ -412,21 +414,22 @@ async def test_multiple_images():
 async def test_graph_tracking():
     """Test that graph nodes are created for observability."""
     @do
-    def test_program() -> EffectGenerator[str]:
-        result = yield structured_llm__openai(
+    def test_program() -> EffectGenerator[dict[str, object]]:
+        text_result = yield structured_llm__openai(
             text="Say hello",
             model="gpt-4o-mini",
             max_tokens=10,
         )
-        return result
+        api_calls = yield get_api_calls()
+        return {"text": text_result, "api_calls": api_calls}
 
     runtime = AsyncRuntime()
     result = await runtime.run(test_program())
 
     assert result.is_ok()
 
-    # Check that API calls were tracked in state (new runtime doesn't expose graph steps directly)
-    api_calls = result.state.get("openai_api_calls", [])
+    # Check that API calls were tracked (runtime doesn't expose graph steps directly)
+    api_calls = result.value["api_calls"]
     assert len(api_calls) > 0
 
     # Should have tracked the LLM call

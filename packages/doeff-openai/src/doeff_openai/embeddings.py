@@ -1,5 +1,6 @@
 """Embedding operations with comprehensive observability."""
 
+import asyncio
 import time
 from typing import Any, Literal
 
@@ -7,10 +8,9 @@ from openai.types import CreateEmbeddingResponse
 
 from doeff import (
     Await,
-    Delay,
     EffectGenerator,
     Gather,
-    Step,
+    Safe,
     Tell,
     do,
 )
@@ -61,8 +61,6 @@ def create_embedding(
 
     # Get OpenAI client
     client = yield get_openai_client()
-
-    from doeff import Safe
 
     # Define the main operation with retry support
     @do
@@ -120,7 +118,7 @@ def create_embedding(
         last_error = safe_result.error
         if attempt < max_attempts - 1:
             yield Tell(f"Embedding API call failed (attempt {attempt + 1}/{max_attempts}), retrying in {delay_seconds}s...")
-            yield Delay(seconds=delay_seconds)
+            yield Await(asyncio.sleep(delay_seconds))
     else:
         assert last_error is not None, "Should have an error if all retries failed"
         raise last_error
@@ -152,8 +150,6 @@ def create_embedding_async(
 
     # Track start time
     start_time = time.time()
-
-    from doeff import Safe
 
     # Define the main operation as a sub-program
     @do
@@ -216,7 +212,7 @@ def batch_embeddings(
     yield Tell(f"Processing {len(batches)} batches")
 
     # Process batches in parallel using Gather
-    batch_responses = yield Gather([
+    batch_responses = yield Gather(*[
         create_embedding(batch, model, **kwargs)
         for batch in batches
     ])
@@ -265,7 +261,7 @@ def cosine_similarity(
     yield Tell(f"Calculating cosine similarity using {model}")
 
     # Get embeddings in parallel
-    embeddings = yield Gather([
+    embeddings = yield Gather(*[
         get_single_embedding(text1, model),
         get_single_embedding(text2, model),
     ])
@@ -284,15 +280,7 @@ def cosine_similarity(
 
     yield Tell(f"Cosine similarity: {similarity:.4f}")
 
-    # Add to graph for tracking
-    yield Step(
-        {"similarity": similarity, "model": model},
-        {
-            "type": "similarity_calculation",
-            "model": model,
-            "similarity": similarity,
-        }
-    )
+    yield Tell(f"Similarity tracking: model={model}, similarity={similarity:.4f}")
 
     return similarity
 
@@ -338,21 +326,10 @@ def semantic_search(
 
     yield Tell(f"Search complete: top {len(results)} results, best similarity={results[0][1]:.4f}" if results else "No results")
 
-    # Track in graph
-    yield Step(
-        {
-            "search": "complete",
-            "query_length": len(query),
-            "documents": len(documents),
-            "results": len(results),
-        },
-        {
-            "type": "semantic_search",
-            "model": model,
-            "documents": len(documents),
-            "top_k": top_k,
-            "best_score": results[0][1] if results else 0.0,
-        }
+    best_score = results[0][1] if results else 0.0
+    yield Tell(
+        f"Semantic search tracking: model={model}, documents={len(documents)}, "
+        f"top_k={top_k}, best_score={best_score:.4f}"
     )
 
     return results
