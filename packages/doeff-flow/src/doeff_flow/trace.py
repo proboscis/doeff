@@ -344,10 +344,14 @@ def trace_observer(
         # Extract structured log (slog) if current effect is WriterTellEffect with dict
         last_slog = None
         if snapshot.current_effect is not None:
-            from doeff.effects.writer import WriterTellEffect
-
-            if isinstance(snapshot.current_effect, WriterTellEffect):
-                msg = snapshot.current_effect.message
+            current_effect = snapshot.current_effect
+            effect_cls = current_effect.__class__
+            is_writer_tell = (
+                effect_cls.__name__ == "WriterTellEffect"
+                and effect_cls.__module__.startswith("doeff")
+            )
+            if is_writer_tell and hasattr(current_effect, "message"):
+                msg = getattr(current_effect, "message")
                 if isinstance(msg, dict):
                     last_slog = msg
 

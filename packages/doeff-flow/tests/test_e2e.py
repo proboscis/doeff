@@ -13,9 +13,8 @@ from click.testing import CliRunner
 from doeff_flow import run_workflow, trace_observer
 from doeff_flow.cli import cli
 
-from doeff import do
+from doeff import Pure, do
 from doeff import run as run_sync
-from doeff.effects import Pure
 
 pytestmark = pytest.mark.skip(reason="doeff-flow step-level tracing requires removed CESK hooks")
 
@@ -314,7 +313,7 @@ class TestE2ETraceObserverComposability:
         with tempfile.TemporaryDirectory() as tmp_dir:
             trace_dir = Path(tmp_dir)
 
-            from doeff.effects import Ask
+            from doeff import Ask
 
             @do
             def workflow_with_env():
@@ -340,7 +339,7 @@ class TestE2ETraceObserverComposability:
         with tempfile.TemporaryDirectory() as tmp_dir:
             trace_dir = Path(tmp_dir)
 
-            from doeff.effects import Get, Put
+            from doeff import Get, Put
 
             @do
             def stateful_workflow():
