@@ -176,6 +176,18 @@ fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, Strin
                 .map_err(|e| e.to_string())?;
             return Ok(Some(key));
         }
+
+        if is_instance_from(obj, "doeff.effects.reader", "HashableAskEffect") {
+            let key_obj = obj.getattr("key").map_err(|e| e.to_string())?;
+            let key = key_obj
+                .str()
+                .map_err(|e| e.to_string())?
+                .to_str()
+                .map_err(|e| e.to_string())?
+                .to_string();
+            return Ok(Some(key));
+        }
+
         Ok(None)
     })
 }
@@ -927,6 +939,15 @@ impl ReaderHandlerProgram {
                 }));
             }
 
+            if store.lazy_active_contains(&key, source_id) {
+                return RustProgramStep::Throw(PyException::runtime_error(format!(
+                    "circular lazy Ask dependency detected for key '{}'",
+                    key
+                )));
+            }
+
+            store.lazy_active_insert(key.clone(), source_id);
+
             self.phase = ReaderPhase::AwaitHandlers {
                 key,
                 continuation,
@@ -1006,6 +1027,7 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                 continuation,
                 source_id,
             } => {
+                store.lazy_active_remove(&key, source_id);
                 store.env.insert(key.clone(), value.clone());
                 store.lazy_cache_put(key.clone(), source_id, value.clone());
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
@@ -1017,10 +1039,26 @@ impl RustHandlerProgram for ReaderHandlerProgram {
         }
     }
 
-    fn throw(&mut self, exc: PyException, _: &mut RustStore) -> RustProgramStep {
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep {
         match std::mem::replace(&mut self.phase, ReaderPhase::Idle) {
-            ReaderPhase::AwaitHandlers { continuation, .. }
-            | ReaderPhase::AwaitEval { continuation, .. } => {
+            ReaderPhase::AwaitHandlers {
+                key,
+                continuation,
+                source_id,
+                ..
+            } => {
+                store.lazy_active_remove(&key, source_id);
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+                    continuation,
+                    exception: exc,
+                }))
+            }
+            ReaderPhase::AwaitEval {
+                key,
+                continuation,
+                source_id,
+            } => {
+                store.lazy_active_remove(&key, source_id);
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
                     continuation,
                     exception: exc,
