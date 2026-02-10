@@ -802,7 +802,7 @@ impl PyVM {
                     {
                         let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_bound.extract()?;
                         (
-                            Handler::RustProgram(sentinel.factory.clone()),
+                            Handler::RustProgram(sentinel.factory_ref().clone_for_install()),
                             Some(PyShared::new(wh.handler.clone_ref(py))),
                         )
                     } else {
@@ -956,7 +956,9 @@ impl PyVM {
                         let item = item?;
                         if item.is_instance_of::<PyRustHandlerSentinel>() {
                             let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
-                            handlers.push(Handler::RustProgram(sentinel.factory.clone()));
+                            handlers.push(Handler::RustProgram(
+                                sentinel.factory_ref().clone_for_install(),
+                            ));
                             handler_identities.push(Some(PyShared::new(item.unbind())));
                         } else {
                             handlers.push(Handler::Python(PyShared::new(item.unbind())));
@@ -981,7 +983,9 @@ impl PyVM {
                         let item = item?;
                         if item.is_instance_of::<PyRustHandlerSentinel>() {
                             let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
-                            handlers.push(Handler::RustProgram(sentinel.factory.clone()));
+                            handlers.push(Handler::RustProgram(
+                                sentinel.factory_ref().clone_for_install(),
+                            ));
                         } else {
                             handlers.push(Handler::Python(PyShared::new(item.unbind())));
                         }

@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from doeff import async_run, default_handlers, do, run
-from doeff.effects import CreateExternalPromise, Wait, gather
+from doeff.effects import CreateExternalPromise, Gather, Spawn, Wait, gather
 
 
 def _run_with_timeout(program_factory, timeout: float = 1.0) -> Any:
@@ -207,3 +207,42 @@ class TestExternalPromiseMultiple:
         result = _run_with_timeout(program, timeout=1.0)
         assert result.is_ok
         assert result.value == ("one", "two")
+
+
+class TestExternalPromiseIsolation:
+    """Regression tests for scheduler state isolation between runs."""
+
+    def test_external_promise_not_contaminated_by_prior_scheduler_runs(self) -> None:
+        @do
+        def child(value: str):
+            return value
+
+        @do
+        def scheduler_warmup():
+            t1 = yield Spawn(child("left"))
+            t2 = yield Spawn(child("right"))
+            values = yield Gather(t1, t2)
+            return tuple(values)
+
+        warmup_result = run(scheduler_warmup(), handlers=default_handlers())
+        assert warmup_result.is_ok
+        assert warmup_result.value == ("left", "right")
+
+        @do
+        def external_program(expected: str):
+            promise = yield CreateExternalPromise()
+
+            def worker():
+                time.sleep(0.01)
+                promise.complete(expected)
+
+            threading.Thread(target=worker).start()
+            result = yield Wait(promise.future)
+            return result
+
+        first = _run_with_timeout(lambda: external_program("fresh"), timeout=1.0)
+        second = _run_with_timeout(lambda: external_program("next"), timeout=1.0)
+        assert first.is_ok
+        assert first.value == "fresh"
+        assert second.is_ok
+        assert second.value == "next"
