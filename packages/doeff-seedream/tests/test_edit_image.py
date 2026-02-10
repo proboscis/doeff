@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from PIL import Image
@@ -11,34 +12,58 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff_seedream import SeedreamClient, edit_image__seedream4
+from doeff_seedream import SeedreamClient, edit_image__seedream4, get_seedream_client
 
-from doeff import Get, Safe, async_run, default_handlers, do
+from doeff import AskEffect, Delegate, Get, Resume, Safe, WithHandler, async_run, default_handlers, do
 
 
-class DummySeedreamClient(SeedreamClient):
+class RecordingSeedreamClient(SeedreamClient):
+    def __init__(self, response: dict[str, Any]) -> None:
+        super().__init__(api_key="test-key")
+        self.response = response
+        self.calls: list[dict[str, Any]] = []
+
+    async def a_generate_images(self, payload, *, timeout=None, headers=None):  # type: ignore[override]
+        self.calls.append({"payload": payload, "timeout": timeout, "headers": headers})
+        return self.response
+
+
+class FailingSeedreamClient(SeedreamClient):
+    def __init__(self, error: Exception) -> None:
+        super().__init__(api_key="test-key")
+        self.error = error
+        self.calls = 0
+
     async def a_generate_images(self, payload, *, timeout=None, headers=None):  # type: ignore[override]
         del payload, timeout, headers
-        encoded = base64.b64encode(b"dummy-image-bytes").decode("ascii")
-        return {
-            "model": "dummy",
-            "data": [
-                {
-                    "b64_json": encoded,
-                    "size": "64x64",
-                }
-            ],
-            "usage": {"generated_images": 1},
-        }
+        self.calls += 1
+        raise self.error
+
+
+def _build_mock_seedream_handler(overrides: dict[str, Any]):
+    def _handler(effect, k):
+        if isinstance(effect, AskEffect) and effect.key in overrides:
+            return (yield Resume(k, overrides[effect.key]))
+        yield Delegate()
+
+    return _handler
+
+
+async def _run_with_handler(program, overrides: dict[str, Any]):
+    return await async_run(
+        WithHandler(_build_mock_seedream_handler(overrides), program),
+        handlers=default_handlers(),
+    )
 
 
 @do
-def _program():
+def _cost_tracking_program():
     result = yield edit_image__seedream4(
         prompt="A test prompt",
         model="dummy-model",
         images=[Image.new("RGB", (16, 16), color="red")],
         generation_config_overrides={"response_format": "b64_json"},
+        max_retries=1,
     )
     total_cost_result = yield Safe(Get("seedream_total_cost_usd"))
     model_cost_result = yield Safe(Get("seedream_cost_dummy-model"))
@@ -52,15 +77,23 @@ def _program():
 
 
 @pytest.mark.asyncio
-async def test_edit_image_seedream4_decodes_payload():
-    run_result = await async_run(
-        _program(),
-        handlers=default_handlers(),
-        env={
-            "seedream_client": DummySeedreamClient(api_key="test-key"),
+async def test_edit_image_seedream4_decodes_payload_and_tracks_cost_with_handler():
+    encoded = base64.b64encode(b"dummy-image-bytes").decode("ascii")
+    client = RecordingSeedreamClient(
+        {
+            "model": "dummy-model",
+            "data": [{"b64_json": encoded, "size": "64x64"}],
+            "usage": {"generated_images": 1},
+        }
+    )
+    run_result = await _run_with_handler(
+        _cost_tracking_program(),
+        {
+            "seedream_client": client,
             "seedream_cost_per_image_usd": 0.05,
         },
     )
+
     assert run_result.is_ok()
     value = run_result.value["result"]
     assert value.image_bytes == b"dummy-image-bytes"
@@ -69,4 +102,127 @@ async def test_edit_image_seedream4_decodes_payload():
     assert run_result.value["seedream_cost_dummy_model"] == pytest.approx(0.05)
     calls = run_result.value["seedream_api_calls"]
     assert calls and calls[-1]["total_cost"] == pytest.approx(0.05)
+    assert client.calls and client.calls[0]["payload"]["prompt"] == "A test prompt"
     assert any("estimated cost" in str(entry) for entry in run_result.log)
+
+
+@pytest.mark.asyncio
+async def test_edit_image_seedream4_surfaces_api_error_with_handler():
+    client = FailingSeedreamClient(RuntimeError("seedream api failure"))
+
+    @do
+    def program():
+        return (
+            yield edit_image__seedream4(
+                prompt="A failing prompt",
+                model="dummy-model",
+                max_retries=1,
+            )
+        )
+
+    run_result = await _run_with_handler(program(), {"seedream_client": client})
+    assert run_result.is_err()
+    assert isinstance(run_result.error, RuntimeError)
+    assert "seedream api failure" in str(run_result.error)
+    assert client.calls == 1
+    assert any("failed" in str(entry) for entry in run_result.log)
+
+
+@pytest.mark.asyncio
+async def test_edit_image_seedream4_invalid_base64_payload_returns_error_with_handler():
+    client = RecordingSeedreamClient(
+        {
+            "model": "dummy-model",
+            "data": [{"b64_json": "not-base64!!!", "size": "64x64"}],
+            "usage": {"generated_images": 1},
+        }
+    )
+
+    @do
+    def program():
+        return (
+            yield edit_image__seedream4(
+                prompt="invalid image data",
+                model="dummy-model",
+                max_retries=1,
+            )
+        )
+
+    run_result = await _run_with_handler(program(), {"seedream_client": client})
+    assert run_result.is_err()
+    assert isinstance(run_result.error, ValueError)
+    assert "Failed to decode Seedream base64 image payload" in str(run_result.error)
+
+
+@pytest.mark.asyncio
+async def test_edit_image_seedream4_missing_data_field_returns_error_with_handler():
+    client = RecordingSeedreamClient({"model": "dummy-model", "usage": {"generated_images": 1}})
+
+    @do
+    def program():
+        return (
+            yield edit_image__seedream4(
+                prompt="missing fields",
+                model="dummy-model",
+                max_retries=1,
+            )
+        )
+
+    run_result = await _run_with_handler(program(), {"seedream_client": client})
+    assert run_result.is_err()
+    assert isinstance(run_result.error, ValueError)
+    assert "Seedream response did not include image data" in str(run_result.error)
+
+
+@pytest.mark.asyncio
+async def test_get_seedream_client_initializes_and_caches_via_with_handler():
+    @do
+    def program():
+        first = yield get_seedream_client()
+        second = yield get_seedream_client()
+        cached_result = yield Safe(Get("seedream_client"))
+        return {
+            "first": first,
+            "second": second,
+            "cached": cached_result.value if cached_result.is_ok() else None,
+        }
+
+    run_result = await _run_with_handler(
+        program(),
+        {
+            "seedream_api_key": "fake-seedream-key",
+            "seedream_base_url": "https://seedream.test/v3",
+            "seedream_default_headers": {"X-Test": "seedream"},
+        },
+    )
+
+    assert run_result.is_ok()
+    first = run_result.value["first"]
+    second = run_result.value["second"]
+    assert isinstance(first, SeedreamClient)
+    assert first is second
+    assert run_result.value["cached"] is first
+    assert first.api_key == "fake-seedream-key"
+    assert first.base_url == "https://seedream.test/v3"
+    assert dict(first.default_headers or {}) == {"X-Test": "seedream"}
+
+
+@pytest.mark.asyncio
+async def test_get_seedream_client_prefers_injected_client_with_handler():
+    injected_client = SeedreamClient(api_key="injected-key", base_url="https://injected.test/v3")
+
+    @do
+    def program():
+        resolved = yield get_seedream_client()
+        cached_result = yield Safe(Get("seedream_client"))
+        return {
+            "resolved": resolved,
+            "cached": cached_result.value if cached_result.is_ok() else None,
+        }
+
+    run_result = await _run_with_handler(program(), {"seedream_client": injected_client})
+
+    assert run_result.is_ok()
+    assert run_result.value["resolved"] is injected_client
+    # A pre-injected client returns early, so get_seedream_client does not write state.
+    assert run_result.value["cached"] is None
