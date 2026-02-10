@@ -41,6 +41,7 @@ from doeff.errors import MissingEnvKeyError
 from doeff.effects import (
     Annotate,
     Ask,
+    AskEffect,
     Promise,
     AtomicGet,
     AtomicUpdate,
@@ -73,6 +74,7 @@ from doeff.effects import (
     StructuredLog,
     Task,
     Tell,
+    WriterTellEffect,
     Wait,
     annotate,
     ask,
@@ -109,7 +111,14 @@ from doeff.graph_snapshot import (
 from doeff.kleisli import KleisliProgram
 from doeff.program import DoCtrl, DoExpr, GeneratorProgram, KleisliProgramCall, Program, ProgramBase
 from doeff.run import ProgramRunResult, run_program
-from doeff.rust_vm import async_run, default_handlers, run
+from doeff.rust_vm import (
+    async_run,
+    async_run_with_handler_map,
+    default_handlers,
+    run,
+    run_with_handler_map,
+    wrap_with_handler_map,
+)
 from doeff.types import (
     DEFAULT_REPR_LIMIT,
     NOTHING,
@@ -217,6 +226,7 @@ __all__ = [
     "REPR_LIMIT_KEY",
     "Annotate",
     "Ask",
+    "AskEffect",
     "AtomicGet",
     "AtomicUpdate",
     "Await",
@@ -283,6 +293,7 @@ __all__ = [
     "StructuredLog",
     "Task",
     "Tell",
+    "WriterTellEffect",
     "Transfer",
     "TraceError",
     "WGraph",
@@ -324,12 +335,15 @@ __all__ = [
     "race",
     "run_program",
     "run",
+    "run_with_handler_map",
     "safe",
     "slog",
     "spawn",
     "step",
     "tell",
     "trace_err",
+    "async_run_with_handler_map",
+    "wrap_with_handler_map",
     "wait",
     "write_graph_html",
     "write_graph_html_async",
