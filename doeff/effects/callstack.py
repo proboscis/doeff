@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 
 from ._validators import ensure_non_negative_int
 from .base import EffectBase, create_effect_with_trace
@@ -36,7 +37,17 @@ class ProgramCallStackEffect(EffectBase):
 
 
 def ProgramCallStack() -> ProgramCallStackEffect:
-    """Create an effect that yields the current call stack as a tuple."""
+    """Create an effect that yields the current call stack as a tuple.
+
+    Deprecated:
+        Use ``ProgramTrace()`` for the full unified trace.
+    """
+
+    warnings.warn(
+        "ProgramCallStack is deprecated; use ProgramTrace()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     return create_effect_with_trace(ProgramCallStackEffect())
 

@@ -1490,6 +1490,7 @@ def test_tag_attribute_accessible():
     assert doeff_vm.TAG_GET_CONTINUATION == 9
     assert doeff_vm.TAG_GET_HANDLERS == 10
     assert doeff_vm.TAG_GET_CALL_STACK == 11
+    assert doeff_vm.TAG_GET_TRACE == 18
     assert doeff_vm.TAG_EVAL == 12
     assert doeff_vm.TAG_CREATE_CONTINUATION == 13
     assert doeff_vm.TAG_RESUME_CONTINUATION == 14
@@ -1504,9 +1505,11 @@ def test_tag_on_concrete_instances():
         Pure,
         GetHandlers,
         GetCallStack,
+        GetTrace,
         TAG_PURE,
         TAG_GET_HANDLERS,
         TAG_GET_CALL_STACK,
+        TAG_GET_TRACE,
     )
 
     pure = Pure(42)
@@ -1517,6 +1520,9 @@ def test_tag_on_concrete_instances():
 
     gcs = GetCallStack()
     assert gcs.tag == TAG_GET_CALL_STACK
+
+    gt = GetTrace()
+    assert gt.tag == TAG_GET_TRACE
 
 
 def test_tag_on_effect_base():

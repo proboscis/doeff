@@ -1546,6 +1546,10 @@ impl RustProgramHandler for SchedulerHandler {
         ))))
     }
 
+    fn handler_name(&self) -> &'static str {
+        "SchedulerHandler"
+    }
+
     fn on_run_end(&self, run_token: u64) {
         let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
         states.remove(&run_token);

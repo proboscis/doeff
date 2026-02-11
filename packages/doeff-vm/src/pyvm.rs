@@ -34,6 +34,7 @@ pub enum DoExprTag {
     GetContinuation = 9,
     GetHandlers = 10,
     GetCallStack = 11,
+    GetTrace = 18,
     Eval = 12,
     CreateContinuation = 13,
     ResumeContinuation = 14,
@@ -58,6 +59,7 @@ impl TryFrom<u8> for DoExprTag {
             9 => Ok(DoExprTag::GetContinuation),
             10 => Ok(DoExprTag::GetHandlers),
             11 => Ok(DoExprTag::GetCallStack),
+            18 => Ok(DoExprTag::GetTrace),
             12 => Ok(DoExprTag::Eval),
             13 => Ok(DoExprTag::CreateContinuation),
             14 => Ok(DoExprTag::ResumeContinuation),
@@ -91,17 +93,50 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
             PyTypeError::new_err(format!("UnhandledEffect: {}", e))
         }
         VMError::TypeError { .. } => PyTypeError::new_err(e.to_string()),
-        VMError::UncaughtException { exception } => {
+        VMError::UncaughtException { exception, trace } => {
             // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
             let py = unsafe { Python::assume_attached() };
-            exception.to_pyerr(py)
+            let exc_value = exception.value_clone_ref(py);
+            if let Ok(trace_obj) = Value::Trace(trace).to_pyobject(py) {
+                let _ = exc_value
+                    .bind(py)
+                    .setattr("__doeff_traceback_data__", trace_obj);
+            }
+            PyErr::from_value(exc_value.bind(py).clone())
         }
         _ => PyRuntimeError::new_err(e.to_string()),
     }
 }
 
+fn attach_doeff_traceback_best_effort(py: Python<'_>, exc_obj: &Bound<'_, PyAny>) {
+    if !exc_obj
+        .hasattr("__doeff_traceback_data__")
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let Ok(module) = py.import("doeff.traceback") else {
+        return;
+    };
+    let Ok(func) = module.getattr("attach_doeff_traceback") else {
+        return;
+    };
+    let _ = func.call1((exc_obj,));
+}
+
 fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     Ok(obj.is_instance_of::<PyEffectBase>())
+}
+
+fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
+    let py = obj.py();
+    let Ok(mod_) = py.import(module) else {
+        return false;
+    };
+    let Ok(cls) = mod_.getattr(class_name) else {
+        return false;
+    };
+    obj.is_instance(&cls).unwrap_or(false)
 }
 
 fn lift_effect_to_perform_expr(py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<PyAny>> {
@@ -572,6 +607,13 @@ impl PyVM {
 }
 
 impl PyVM {
+    fn is_python_generator_object(obj: &Bound<'_, PyAny>) -> bool {
+        obj.get_type()
+            .name()
+            .map(|n| n.to_string_lossy().as_ref() == "generator")
+            .unwrap_or(false)
+    }
+
     fn start_with_generator(&mut self, gen: Bound<'_, PyAny>) -> PyResult<()> {
         self.vm.end_active_run_session();
         self.vm.begin_run_session();
@@ -735,13 +777,23 @@ impl PyVM {
             return Ok(gen.unbind());
         }
 
-        let is_python_generator = program_bound
-            .get_type()
-            .name()
-            .map(|n| n.to_string_lossy().as_ref() == "generator")
-            .unwrap_or(false);
-        if is_python_generator {
+        if Self::is_python_generator_object(program_bound) {
             return Ok(program);
+        }
+
+        // ProgramBase path: objects may expose `to_generator()` without being
+        // direct DoCtrl expressions. We intentionally do not accept arbitrary
+        // callables here; strict mode still requires explicit program objects.
+        if let Ok(to_generator) = program_bound.getattr("to_generator") {
+            if to_generator.is_callable() {
+                let generated = to_generator.call0()?;
+                if !Self::is_python_generator_object(&generated) {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Expected ProgramBase.to_generator() to return a generator",
+                    ));
+                }
+                return Ok(generated.unbind());
+            }
         }
 
         if program_bound.is_instance_of::<PyDoExprBase>() {
@@ -864,7 +916,7 @@ impl PyVM {
                         f: PyShared::new(c.f.clone_ref(py)),
                         args,
                         kwargs,
-                        metadata: CallMetadata::anonymous(),
+                        metadata: call_metadata_from_pycall(py, &c),
                     }))
                 }
                 DoExprTag::Map => {
@@ -997,6 +1049,7 @@ impl PyVM {
                 DoExprTag::GetContinuation => Ok(Yielded::DoCtrl(DoCtrl::GetContinuation)),
                 DoExprTag::GetHandlers => Ok(Yielded::DoCtrl(DoCtrl::GetHandlers)),
                 DoExprTag::GetCallStack => Ok(Yielded::DoCtrl(DoCtrl::GetCallStack)),
+                DoExprTag::GetTrace => Ok(Yielded::DoCtrl(DoCtrl::GetTrace)),
                 DoExprTag::Eval => {
                     let eval: PyRef<'_, PyEval> = obj.extract()?;
                     let expr = eval.expr.clone_ref(py);
@@ -1014,6 +1067,7 @@ impl PyVM {
                     Ok(Yielded::DoCtrl(DoCtrl::Eval {
                         expr: PyShared::new(expr),
                         handlers,
+                        metadata: None,
                     }))
                 }
                 DoExprTag::AsyncEscape => {
@@ -1033,6 +1087,12 @@ impl PyVM {
 
         // Fallback: bare effect → auto-lift to Perform (R14-C)
         if is_effect_base_like(py, obj)? {
+            if is_instance_from(obj, "doeff.effects.trace", "ProgramTraceEffect") {
+                return Ok(Yielded::DoCtrl(DoCtrl::GetTrace));
+            }
+            if is_instance_from(obj, "doeff.effects.callstack", "ProgramCallStackEffect") {
+                return Ok(Yielded::DoCtrl(DoCtrl::GetCallStack));
+            }
             return Ok(Yielded::DoCtrl(DoCtrl::Perform {
                 effect: dispatch_from_shared(PyShared::new(obj.clone().unbind())),
             }));
@@ -1157,6 +1217,84 @@ fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
     Ok(Value::from_pyobject(&value))
 }
 
+fn metadata_attr_as_string(meta: &Bound<'_, PyAny>, key: &str) -> Option<String> {
+    if let Ok(dict) = meta.cast::<PyDict>() {
+        return dict
+            .get_item(key)
+            .ok()
+            .flatten()
+            .and_then(|v| v.extract::<String>().ok());
+    }
+    meta.getattr(key).ok().and_then(|v| v.extract::<String>().ok())
+}
+
+fn metadata_attr_as_u32(meta: &Bound<'_, PyAny>, key: &str) -> Option<u32> {
+    if let Ok(dict) = meta.cast::<PyDict>() {
+        return dict
+            .get_item(key)
+            .ok()
+            .flatten()
+            .and_then(|v| v.extract::<u32>().ok());
+    }
+    meta.getattr(key).ok().and_then(|v| v.extract::<u32>().ok())
+}
+
+fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<PyShared> {
+    if let Ok(dict) = meta.cast::<PyDict>() {
+        return dict
+            .get_item(key)
+            .ok()
+            .flatten()
+            .and_then(|v| if v.is_none() { None } else { Some(PyShared::new(v.unbind())) });
+    }
+    meta.getattr(key)
+        .ok()
+        .and_then(|v| if v.is_none() { None } else { Some(PyShared::new(v.unbind())) })
+}
+
+fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> CallMetadata {
+    if let Some(meta) = &call.meta {
+        let meta_obj = meta.bind(py);
+        let function_name = metadata_attr_as_string(meta_obj, "function_name")
+            .unwrap_or_else(|| "<anonymous>".to_string());
+        let source_file = metadata_attr_as_string(meta_obj, "source_file")
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let source_line = metadata_attr_as_u32(meta_obj, "source_line").unwrap_or(0);
+        let args_repr = metadata_attr_as_string(meta_obj, "args_repr");
+        let program_call = metadata_attr_as_py(meta_obj, "program_call");
+        return CallMetadata::new(
+            function_name,
+            source_file,
+            source_line,
+            args_repr,
+            program_call,
+        );
+    }
+
+    if let Ok(code) = call.f.bind(py).getattr("__code__") {
+        let function_name = call
+            .f
+            .bind(py)
+            .getattr("__name__")
+            .ok()
+            .and_then(|v| v.extract::<String>().ok())
+            .unwrap_or_else(|| "<anonymous>".to_string());
+        let source_file = code
+            .getattr("co_filename")
+            .ok()
+            .and_then(|v| v.extract::<String>().ok())
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let source_line = code
+            .getattr("co_firstlineno")
+            .ok()
+            .and_then(|v| v.extract::<u32>().ok())
+            .unwrap_or(0);
+        return CallMetadata::new(function_name, source_file, source_line, None, None);
+    }
+
+    CallMetadata::anonymous()
+}
+
 // ---------------------------------------------------------------------------
 // PyRunResult — execution output [R8-J]
 // ---------------------------------------------------------------------------
@@ -1226,7 +1364,9 @@ impl PyResultErr {
 
     #[getter]
     fn error(&self, py: Python<'_>) -> Py<PyAny> {
-        self.error.clone_ref(py)
+        let err = self.error.clone_ref(py);
+        attach_doeff_traceback_best_effort(py, err.bind(py));
+        err
     }
 
     #[getter]
@@ -1273,7 +1413,11 @@ impl PyRunResult {
     #[getter]
     fn error(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.result {
-            Err(e) => Ok(e.value_clone_ref(py)),
+            Err(e) => {
+                let err = e.value_clone_ref(py);
+                attach_doeff_traceback_best_effort(py, err.bind(py));
+                Ok(err)
+            }
             Ok(_) => Err(pyo3::exceptions::PyValueError::new_err(
                 "RunResult is Ok, not Err",
             )),
@@ -1294,11 +1438,18 @@ impl PyRunResult {
                 Ok(ok_obj.into_any().unbind())
             }
             Err(e) => {
+                let err_obj = e.value_clone_ref(py);
+                let err_bound = err_obj.bind(py);
+                attach_doeff_traceback_best_effort(py, err_bound);
+                let captured = err_bound
+                    .getattr("__doeff_traceback__")
+                    .map(|obj| obj.unbind())
+                    .unwrap_or_else(|_| py.None());
                 let err_obj = Bound::new(
                     py,
                     PyResultErr {
-                        error: e.value_clone_ref(py),
-                        captured_traceback: py.None(),
+                        error: err_obj,
+                        captured_traceback: captured,
                     },
                 )?;
                 Ok(err_obj.into_any().unbind())
@@ -1327,6 +1478,40 @@ impl PyRunResult {
 
     fn is_err(&self) -> bool {
         self.result.is_err()
+    }
+
+    #[pyo3(signature = (verbose=false))]
+    fn display(&self, py: Python<'_>, verbose: bool) -> PyResult<String> {
+        if let Err(err) = &self.result {
+            let err_obj = err.value_clone_ref(py);
+            let err_bound = err_obj.bind(py);
+            attach_doeff_traceback_best_effort(py, err_bound);
+
+            if let Ok(tb_obj) = err_bound.getattr("__doeff_traceback__") {
+                let method = if verbose {
+                    "format_chained"
+                } else {
+                    "format_sectioned"
+                };
+                if let Ok(rendered) = tb_obj.call_method0(method) {
+                    if let Ok(text) = rendered.extract::<String>() {
+                        return Ok(text);
+                    }
+                }
+            }
+
+            return Ok(format!("{:?}", err_obj));
+        }
+
+        let value_text = match &self.result {
+            Ok(value) => value
+                .bind(py)
+                .repr()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|_| "<value>".to_string()),
+            Err(_) => "<error>".to_string(),
+        };
+        Ok(format!("RunResult status: ok\nValue: {value_text}"))
     }
 }
 
@@ -1747,6 +1932,22 @@ impl PyGetCallStack {
                 tag: DoExprTag::GetCallStack as u8,
             })
             .add_subclass(PyGetCallStack)
+    }
+}
+
+/// Request the current unified execution trace.
+#[pyclass(name = "GetTrace", extends=PyDoCtrlBase)]
+pub struct PyGetTrace;
+
+#[pymethods]
+impl PyGetTrace {
+    #[new]
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::GetTrace as u8,
+            })
+            .add_subclass(PyGetTrace)
     }
 }
 
@@ -2635,6 +2836,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGetContinuation>()?;
     m.add_class::<PyGetHandlers>()?;
     m.add_class::<PyGetCallStack>()?;
+    m.add_class::<PyGetTrace>()?;
     m.add_class::<PyAsyncEscape>()?;
     m.add_class::<PyRustHandlerSentinel>()?;
     m.add_class::<NestingStep>()?;
@@ -2721,6 +2923,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_GET_CONTINUATION", DoExprTag::GetContinuation as u8)?;
     m.add("TAG_GET_HANDLERS", DoExprTag::GetHandlers as u8)?;
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
+    m.add("TAG_GET_TRACE", DoExprTag::GetTrace as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;
     m.add(
         "TAG_CREATE_CONTINUATION",

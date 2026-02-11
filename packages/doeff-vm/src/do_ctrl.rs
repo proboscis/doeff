@@ -69,8 +69,10 @@ pub enum DoCtrl {
     Eval {
         expr: PyShared,
         handlers: Vec<Handler>,
+        metadata: Option<CallMetadata>,
     },
     GetCallStack,
+    GetTrace,
 }
 
 impl DoCtrl {
@@ -155,11 +157,17 @@ impl DoCtrl {
                 kwargs: kwargs.clone(),
                 metadata: metadata.clone(),
             },
-            DoCtrl::Eval { expr, handlers } => DoCtrl::Eval {
+            DoCtrl::Eval {
+                expr,
+                handlers,
+                metadata,
+            } => DoCtrl::Eval {
                 expr: PyShared::new(expr.clone_ref(py)),
                 handlers: handlers.clone(),
+                metadata: metadata.clone(),
             },
             DoCtrl::GetCallStack => DoCtrl::GetCallStack,
+            DoCtrl::GetTrace => DoCtrl::GetTrace,
         }
     }
 }

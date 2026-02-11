@@ -2,6 +2,7 @@
 
 use crate::effect::DispatchEffect;
 use crate::ids::{ContId, Marker};
+use crate::capture::TraceEntry;
 use crate::step::PyException;
 
 #[derive(Debug, Clone)]
@@ -15,7 +16,10 @@ pub enum VMError {
     PythonError { message: String },
     InternalError { message: String },
     TypeError { message: String },
-    UncaughtException { exception: PyException },
+    UncaughtException {
+        exception: PyException,
+        trace: Vec<TraceEntry>,
+    },
 }
 
 impl std::fmt::Display for VMError {
@@ -96,8 +100,8 @@ impl VMError {
         }
     }
 
-    pub fn uncaught_exception(exception: PyException) -> Self {
-        VMError::UncaughtException { exception }
+    pub fn uncaught_exception(exception: PyException, trace: Vec<TraceEntry>) -> Self {
+        VMError::UncaughtException { exception, trace }
     }
 }
 

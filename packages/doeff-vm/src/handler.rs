@@ -58,6 +58,9 @@ pub trait RustHandlerProgram: std::fmt::Debug + Send {
 pub trait RustProgramHandler: std::fmt::Debug + Send + Sync {
     fn can_handle(&self, effect: &DispatchEffect) -> bool;
     fn create_program(&self) -> RustProgramRef;
+    fn handler_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
 
     /// Create a handler program for a specific VM run token.
     ///
@@ -385,6 +388,10 @@ impl RustProgramHandler for AwaitHandlerFactory {
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(AwaitHandlerProgram::new())))
     }
+
+    fn handler_name(&self) -> &'static str {
+        "AwaitHandler"
+    }
 }
 
 #[derive(Debug)]
@@ -520,6 +527,11 @@ fn extract_kpc_call_metadata(obj: &Bound<'_, PyAny>) -> Result<CallMetadata, Str
         .ok()
         .and_then(|v| v.extract::<String>().ok())
         .unwrap_or_else(|| "<anonymous>".to_string());
+    let args_repr = obj
+        .getattr("args_repr")
+        .ok()
+        .and_then(|v| v.extract::<String>().ok())
+        .or_else(|| fallback_kpc_args_repr(obj));
 
     if let Ok(kleisli) = obj.getattr("kleisli_source") {
         if let Ok(func) = kleisli.getattr("original_func") {
@@ -534,12 +546,13 @@ fn extract_kpc_call_metadata(obj: &Bound<'_, PyAny>) -> Result<CallMetadata, Str
                     .ok()
                     .and_then(|v| v.extract::<u32>().ok())
                     .unwrap_or(0);
-                return Ok(CallMetadata {
+                return Ok(CallMetadata::new(
                     function_name,
                     source_file,
                     source_line,
-                    program_call: Some(PyShared::new(obj.clone().unbind())),
-                });
+                    args_repr,
+                    Some(PyShared::new(obj.clone().unbind())),
+                ));
             }
         }
     }
@@ -555,12 +568,33 @@ fn extract_kpc_call_metadata(obj: &Bound<'_, PyAny>) -> Result<CallMetadata, Str
         .and_then(|v| v.extract::<u32>().ok())
         .unwrap_or(0);
 
-    Ok(CallMetadata {
+    Ok(CallMetadata::new(
         function_name,
         source_file,
         source_line,
-        program_call: Some(PyShared::new(obj.clone().unbind())),
-    })
+        args_repr,
+        Some(PyShared::new(obj.clone().unbind())),
+    ))
+}
+
+fn fallback_kpc_args_repr(obj: &Bound<'_, PyAny>) -> Option<String> {
+    let args_text = obj
+        .getattr("args")
+        .ok()
+        .and_then(|v| v.repr().ok())
+        .map(|v| v.to_string());
+    let kwargs_text = obj
+        .getattr("kwargs")
+        .ok()
+        .and_then(|v| v.repr().ok())
+        .map(|v| v.to_string());
+
+    match (args_text, kwargs_text) {
+        (Some(args), Some(kwargs)) if kwargs != "{}" => Some(format!("args={args}, kwargs={kwargs}")),
+        (Some(args), _) if args != "()" => Some(format!("args={args}")),
+        (_, Some(kwargs)) if kwargs != "{}" => Some(format!("kwargs={kwargs}")),
+        _ => None,
+    }
 }
 
 fn kpc_strategy_should_unwrap_positional(
@@ -617,6 +651,10 @@ impl RustProgramHandler for KpcHandlerFactory {
 
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(KpcHandlerProgram::new())))
+    }
+
+    fn handler_name(&self) -> &'static str {
+        "KpcHandler"
     }
 }
 
@@ -681,10 +719,12 @@ impl KpcHandlerProgram {
                             state.pending = Some(KpcPending::EvalResult);
                             let expr = PyShared::new(gen);
                             let handlers = state.handlers.clone();
+                            let metadata = Some(state.metadata.clone());
                             self.phase = KpcPhase::Running(state);
                             return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
                                 expr,
                                 handlers,
+                                metadata,
                             }));
                         }
                         other => {
@@ -725,6 +765,7 @@ impl KpcHandlerProgram {
                         return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
                             expr,
                             handlers,
+                            metadata: None,
                         }));
                     }
                 }
@@ -746,6 +787,7 @@ impl KpcHandlerProgram {
                         return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
                             expr,
                             handlers,
+                            metadata: None,
                         }));
                     }
                 }
@@ -868,6 +910,10 @@ impl RustProgramHandler for StateHandlerFactory {
 
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(StateHandlerProgram::new())))
+    }
+
+    fn handler_name(&self) -> &'static str {
+        "StateHandler"
     }
 }
 
@@ -1026,6 +1072,10 @@ impl RustProgramHandler for ReaderHandlerFactory {
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(ReaderHandlerProgram::new())))
     }
+
+    fn handler_name(&self) -> &'static str {
+        "ReaderHandler"
+    }
 }
 
 #[derive(Debug)]
@@ -1158,7 +1208,11 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                     continuation,
                     source_id,
                 };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval { expr, handlers }))
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                    expr,
+                    handlers,
+                    metadata: None,
+                }))
             }
             ReaderPhase::AwaitEval {
                 key,
@@ -1227,6 +1281,10 @@ impl RustProgramHandler for WriterHandlerFactory {
 
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(WriterHandlerProgram)))
+    }
+
+    fn handler_name(&self) -> &'static str {
+        "WriterHandler"
     }
 }
 
@@ -1305,6 +1363,10 @@ impl RustProgramHandler for ResultSafeHandlerFactory {
 
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(ResultSafeHandlerProgram::new())))
+    }
+
+    fn handler_name(&self) -> &'static str {
+        "ResultSafeHandler"
     }
 }
 
@@ -1406,6 +1468,7 @@ impl RustHandlerProgram for ResultSafeHandlerProgram {
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
                     expr: sub_program,
                     handlers,
+                    metadata: None,
                 }))
             }
             ResultSafePhase::AwaitEval { continuation } => self.finish_ok(continuation, value),
@@ -1445,6 +1508,10 @@ impl RustProgramHandler for DoubleCallHandlerFactory {
         Arc::new(Mutex::new(Box::new(DoubleCallHandlerProgram {
             phase: DoubleCallPhase::Init,
         })))
+    }
+
+    fn handler_name(&self) -> &'static str {
+        "DoubleCallHandler"
     }
 }
 
@@ -1553,6 +1620,10 @@ impl RustProgramHandler for ConcurrentKpcHandlerFactory {
 
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(ConcurrentKpcHandlerProgram::new())))
+    }
+
+    fn handler_name(&self) -> &'static str {
+        "ConcurrentKpcHandler"
     }
 }
 
@@ -1693,7 +1764,11 @@ impl ConcurrentKpcHandlerProgram {
                 results,
             };
 
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval { expr, handlers }))
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                expr,
+                handlers,
+                metadata: None,
+            }))
         } else {
             // All exprs evaluated — resolve slots and call kernel
             let (args, kwargs) = Self::resolve_slots(&positional_slots, &keyword_slots, &results);
@@ -1797,6 +1872,7 @@ impl RustHandlerProgram for ConcurrentKpcHandlerProgram {
                         RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
                             expr: PyShared::new(gen),
                             handlers,
+                            metadata: None,
                         }))
                     }
                     other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
