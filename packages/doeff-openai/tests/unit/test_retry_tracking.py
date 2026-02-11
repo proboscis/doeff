@@ -159,7 +159,7 @@ async def test_retry_exhaustion_tracking():
         assert "Persistent API Error" in str(result.error)
 
         # Note: State and logs are not preserved when program fails with exception
-        # in the current CESK runtime implementation. The important verification
+        # in the current runtime implementation. The important verification
         # is that all retry attempts were made (verified by mock call count)
         # and that the final error is correctly propagated.
 

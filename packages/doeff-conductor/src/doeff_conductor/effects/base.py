@@ -20,7 +20,7 @@ E = TypeVar("E", bound="ConductorEffectBase")
 class ConductorEffectBase(EffectBase):
     """Base class for conductor effects.
 
-    Inherits from doeff's EffectBase for CESK interpreter compatibility.
+    Inherits from doeff's EffectBase for effect interpreter compatibility.
     """
 
     def intercept(
