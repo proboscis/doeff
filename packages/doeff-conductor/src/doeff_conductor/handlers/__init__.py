@@ -22,11 +22,12 @@ import inspect
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from doeff import Delegate, default_handlers, run
+from doeff import Delegate, Resume, default_handlers, run
 
 from .agent_handler import AgentHandler
 from .git_handler import GitHandler
 from .issue_handler import IssueHandler
+from .testing import MockConductorRuntime, mock_handlers
 from .utils import (
     default_scheduled_handlers,
     make_async_scheduled_handler,
@@ -41,7 +42,27 @@ if TYPE_CHECKING:
     from doeff import Program, RunResult
 
 
-HandlerProtocol = Callable[[Any, Any], Any]
+HandlerProtocol = Callable[..., Any]
+
+
+def _supports_continuation(handler: HandlerProtocol) -> bool:
+    """Return True if callable appears to accept (effect, continuation)."""
+    try:
+        signature = inspect.signature(handler)
+    except (TypeError, ValueError):
+        return False
+
+    params = tuple(signature.parameters.values())
+    if any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in params):
+        return True
+
+    positional = [
+        param
+        for param in params
+        if param.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    return len(positional) >= 2
 
 
 def make_typed_handlers(
@@ -56,10 +77,20 @@ def make_typed_handlers(
 
     typed_handlers: list[HandlerProtocol] = []
     for effect_type, handler in (scheduled_handlers or {}).items():
+        uses_continuation = _supports_continuation(handler)
 
-        def typed_handler(effect, k, _effect_type=effect_type, _handler=handler):
+        def typed_handler(
+            effect,
+            k,
+            _effect_type=effect_type,
+            _handler=handler,
+            _uses_continuation=uses_continuation,
+        ):
             if isinstance(effect, _effect_type):
-                result = _handler(effect, k)
+                if _uses_continuation:
+                    result = _handler(effect, k)
+                else:
+                    result = yield Resume(k, _handler(effect))
                 if inspect.isgenerator(result):
                     return (yield from result)
                 return result
@@ -68,6 +99,21 @@ def make_typed_handlers(
         typed_handlers.append(typed_handler)
 
     return typed_handlers
+
+
+def production_handlers(
+    worktree_handler: WorktreeHandler | None = None,
+    issue_handler: IssueHandler | None = None,
+    agent_handler: AgentHandler | None = None,
+    git_handler: GitHandler | None = None,
+) -> dict[type, HandlerProtocol]:
+    """Build the default production handler map for all conductor effects."""
+    return default_scheduled_handlers(
+        worktree_handler=worktree_handler,
+        issue_handler=issue_handler,
+        agent_handler=agent_handler,
+        git_handler=git_handler,
+    )
 
 
 def run_sync(
@@ -101,6 +147,7 @@ __all__ = [
     "AgentHandler",
     "GitHandler",
     "IssueHandler",
+    "MockConductorRuntime",
     # Handlers
     "WorktreeHandler",
     "default_scheduled_handlers",
@@ -111,6 +158,8 @@ __all__ = [
     "make_scheduled_handler",
     "make_scheduled_handler_with_store",
     "make_typed_handlers",
+    "mock_handlers",
+    "production_handlers",
     # Testing utility
     "run_sync",
 ]

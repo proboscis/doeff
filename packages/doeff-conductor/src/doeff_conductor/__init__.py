@@ -97,6 +97,7 @@ from .handlers import (
     AgentHandler,
     GitHandler,
     IssueHandler,
+    MockConductorRuntime,
     WorktreeHandler,
     default_scheduled_handlers,
     make_async_scheduled_handler,
@@ -106,6 +107,8 @@ from .handlers import (
     make_scheduled_handler,
     make_scheduled_handler_with_store,
     make_typed_handlers,
+    mock_handlers,
+    production_handlers,
 )
 
 # Templates
@@ -170,6 +173,7 @@ __all__ = [
     "MergeBranches",
     "MergePR",
     "MergeStrategy",
+    "MockConductorRuntime",
     "PRError",
     "PRHandle",
     "Push",
@@ -196,10 +200,12 @@ __all__ = [
     "make_async_scheduled_handler",
     "make_blocking_scheduled_handler",
     "make_blocking_scheduled_handler_with_store",
-    # Handler utilities
     "make_scheduled_handler",
     "make_scheduled_handler_with_store",
     "make_typed_handlers",
+    # Handler utilities
+    "mock_handlers",
     "multi_agent",
+    "production_handlers",
     "reviewed_pr",
 ]

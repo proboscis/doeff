@@ -13,13 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff import (
-    Delegate,
-    Resume,
-    WithHandler,
-    default_handlers,
-    run,
-)
 from doeff_conductor import (
     Commit,
     CreatePR,
@@ -29,6 +22,8 @@ from doeff_conductor import (
     ResolveIssue,
     RunAgent,
 )
+from doeff_conductor.handlers import mock_handlers as build_mock_handlers
+from doeff_conductor.handlers import run_sync
 from doeff_conductor.templates import (
     TEMPLATES,
     basic_pr,
@@ -40,32 +35,16 @@ from doeff_conductor.templates import (
     multi_agent,
     reviewed_pr,
 )
-
-
-def _wrap_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]) -> Any:
-    wrapped = program
-    for effect_type, effect_handler in reversed(list(handlers.items())):
-
-        def typed_handler(effect, k, _effect_type=effect_type, _handler=effect_handler):
-            if isinstance(effect, _effect_type):
-                return (yield Resume(k, _handler(effect)))
-            yield Delegate()
-
-        wrapped = WithHandler(handler=typed_handler, expr=wrapped)
-    return wrapped
-
-
-def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
-    wrapped = _wrap_with_effect_handlers(program, handlers)
-    return run(wrapped, handlers=default_handlers())
-
-
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
     PRHandle,
     WorktreeEnv,
 )
+
+
+def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
+    return run_sync(program, scheduled_handlers=build_mock_handlers(overrides=handlers))
 
 
 class TestTemplateRegistry:
@@ -106,7 +85,7 @@ class TestTemplateRegistry:
         assert "multi_agent" in templates
 
         # Each entry should have a description
-        for name, desc in templates.items():
+        for _name, desc in templates.items():
             assert isinstance(desc, str)
             assert len(desc) > 0
 
@@ -116,13 +95,21 @@ class TestTemplateRegistry:
         Note: The @do decorator wraps functions in DoYieldFunction which
         cannot be inspected with getsource(). This is an existing limitation.
         """
+        source: str | None = None
+        source_error: TypeError | None = None
         try:
             source = get_template_source("basic_pr")
-            assert "@do" in source
-            assert "def basic_pr" in source
-            assert "CreateWorktree" in source
-        except TypeError as e:
-            assert "module, class, method, function" in str(e)
+        except TypeError as exc:
+            source_error = exc
+
+        if source_error is not None:
+            assert "module, class, method, function" in str(source_error)
+            return
+
+        assert source is not None
+        assert "@do" in source
+        assert "def basic_pr" in source
+        assert "CreateWorktree" in source
 
     def test_get_template_source_invalid(self):
         """Test get_template_source raises KeyError for invalid templates."""
@@ -132,7 +119,7 @@ class TestTemplateRegistry:
     def test_templates_registry_structure(self):
         """Test TEMPLATES registry has correct structure."""
         assert isinstance(TEMPLATES, dict)
-        for name, (func, desc) in TEMPLATES.items():
+        for _name, (func, desc) in TEMPLATES.items():
             assert callable(func)
             assert isinstance(desc, str)
 
@@ -202,7 +189,7 @@ class MockHandlerFixtures:
             return "abc123def456789012345678901234567890"
 
         def handle_push(effect: Push) -> None:
-            return None
+            pass
 
         def handle_create_pr(effect: CreatePR) -> PRHandle:
             return mock_pr
@@ -282,7 +269,6 @@ class TestBasicPRTemplate(MockHandlerFixtures):
 
         def handle_push(effect: Push) -> None:
             calls.append("push")
-            return None
 
         def handle_create_pr(effect: CreatePR) -> PRHandle:
             calls.append("create_pr")
@@ -374,7 +360,7 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
             return "abc123"
 
         def handle_push(e):
-            return None
+            pass
 
         def handle_create_pr(e):
             return mock_pr
@@ -467,7 +453,7 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
             return "abc123"
 
         def handle_push(e):
-            return None
+            pass
 
         def handle_create_pr(e):
             return mock_pr
@@ -516,7 +502,7 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
             return "abc123"
 
         def handle_push(e):
-            return None
+            pass
 
         def handle_create_pr(e):
             return mock_pr
@@ -595,7 +581,6 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
 
         def handle_push(effect: Push) -> None:
             calls.append("push")
-            return None
 
         def handle_create_pr(effect: CreatePR) -> PRHandle:
             calls.append("create_pr")
@@ -661,7 +646,7 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
             return "abc123"
 
         def handle_push(e):
-            return None
+            pass
 
         def handle_create_pr(e):
             return mock_pr
@@ -775,7 +760,7 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
             return "abc123"
 
         def handle_push(e):
-            return None
+            pass
 
         def handle_create_pr(e):
             raise PRError(operation="create", message="PR creation failed")
