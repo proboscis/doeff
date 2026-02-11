@@ -7,13 +7,15 @@ effects system into pinjected's Injected[T] and IProxy[T] types.
 
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff import Effect, KleisliProgramCall, Program, RunResult, async_run, default_handlers
-from doeff.effects import AskEffect, Await, GraphAnnotateEffect, GraphStepEffect, Intercept, Pure
+from doeff import Effect, KleisliProgramCall, Program, RunResult, async_run_with_handler_map
+from doeff.effects import AskEffect, GraphAnnotateEffect, GraphStepEffect, Intercept, Pure
+from doeff_pinjected.effects import PinjectedResolve
+from doeff_pinjected.handlers import production_handlers
 
 T = TypeVar("T")
 _EFFECT_FAILURE_TYPE_NAMES = {"EffectFailure", "EffectFailureError"}
@@ -44,9 +46,10 @@ def _program_with_dependency_interception(
 
     def _transform(effect: Effect) -> Effect | Program:
         if isinstance(effect, AskEffect):
-            key = effect.key
+            ask_effect = cast(AskEffect, effect)
+            key = ask_effect.key
             logger.debug(f"Resolving dependency for key: {key}")
-            return Await(resolver.provide(key))
+            return PinjectedResolve(key=key)
         return effect
 
     if _supports_program_intercept(prog):
@@ -56,9 +59,10 @@ def _program_with_dependency_interception(
     # Intercept(...) expects None for the "delegate unchanged" case.
     def _compat_transform(effect: Effect) -> Effect | Program | None:
         if isinstance(effect, AskEffect):
-            key = effect.key
+            ask_effect = cast(AskEffect, effect)
+            key = ask_effect.key
             logger.debug(f"Resolving dependency for key: {key}")
-            return Await(resolver.provide(key))
+            return PinjectedResolve(key=key)
         if isinstance(effect, (GraphStepEffect, GraphAnnotateEffect)):
             return Pure(None)
         return None
@@ -104,9 +108,9 @@ def program_to_injected(prog: Program[T]) -> Injected[T]:
 
         try:
             # Run with env containing the resolver for use by ask effects
-            result = await async_run(
+            result = await async_run_with_handler_map(
                 wrapped_program,
-                handlers=default_handlers(),
+                production_handlers(resolver=__resolver__),
                 env={"__resolver__": __resolver__},
             )
         finally:
@@ -179,9 +183,9 @@ def program_to_injected_result(prog: Program[T]) -> Injected[RunResult[T]]:
 
         try:
             # Run with env containing the resolver for use by ask effects
-            result = await async_run(
+            result = await async_run_with_handler_map(
                 wrapped_program,
-                handlers=default_handlers(),
+                production_handlers(resolver=__resolver__),
                 env={"__resolver__": __resolver__},
             )
         finally:
