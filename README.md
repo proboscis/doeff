@@ -1,6 +1,6 @@
-# doeff - Do-notation and Effects for Python
+# doeff - Algebraic Effects for Python
 
-A pragmatic free monad implementation that prioritizes usability and Python idioms over theoretical purity. Uses generators for do-notation and supports comprehensive effects including Reader, State, Writer, Future, Result, and IO.
+An algebraic effects system with one-shot continuations, backed by a Rust VM. Uses generators for do-notation and ships with batteries-included effect handlers: Reader, State, Writer, Future, Result, IO, Cache, and more.
 
 ## Documentation
 
@@ -14,8 +14,10 @@ A pragmatic free monad implementation that prioritizes usability and Python idio
 
 ## Features
 
-- **Generator-based do-notation**: Write monadic code that looks like regular Python
-- **Comprehensive effects system**: Reader, State, Writer, Future, Result, IO, and more
+- **Algebraic effects with one-shot continuations**: Effects are first-class operations handled by composable handlers
+- **Rust VM runtime**: High-performance interpreter for effect handling and continuation management
+- **Generator-based do-notation**: Write effectful code that looks like regular Python
+- **Batteries-included handlers**: Reader, State, Writer, Future, Result, IO, Cache, and more — ready to use
 - **Stack-safe execution**: Trampolining prevents stack overflow in deeply nested computations
 - **Pinjected integration**: Optional bridge to pinjected dependency injection framework
 - **Type hints**: Full type annotation support with `.pyi` files

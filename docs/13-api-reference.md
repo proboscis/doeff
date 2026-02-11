@@ -36,7 +36,7 @@ def pure(value: T) -> Program[T]
 
 ### Effect
 
-Protocol for effect requests.
+Protocol for algebraic effect operations.
 
 ```python
 class Effect(Protocol):
@@ -130,7 +130,7 @@ graph = result.raw_store.get("__graph__")
 
 **Stack traces (for debugging errors):**
 
-- **`k_stack`** - CESK continuation stack snapshot
+- **`k_stack`** - Continuation stack snapshot
 - **`effect_stack`** - Effect call tree
 - **`python_stack`** - Python source locations
 

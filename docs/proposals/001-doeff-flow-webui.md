@@ -690,9 +690,9 @@ Future: Projectional editing
 
 **References**: [JetBrains MPS](https://www.jetbrains.com/mps/), [Hazel](https://hazel.org/), [Dark](https://darklang.com/)
 
-### 4. Algebraic Effects
+### 4. Multi-Shot Continuations
 
-doeff uses free monad-style effects. Algebraic effects offer more composable handling:
+doeff uses algebraic effects with one-shot continuations. Multi-shot continuations would enable even more composable handling:
 
 ```hy
 ;; Current: Global handler for effect type
@@ -705,10 +705,10 @@ doeff uses free monad-style effects. Algebraic effects offer more composable han
   (run outer-workflow))  ; different handler
 ```
 
-Algebraic effects enable:
-- **Resumable handlers** — handler can continue the computation
-- **Multi-shot continuations** — run continuation multiple times
-- **Scoped handling** — different handlers in different parts
+Multi-shot continuations would enable:
+- **Multi-shot handlers** — run continuation multiple times (doeff currently supports one-shot only)
+- **Backtracking** — explore multiple branches from a single effect point
+- **Non-determinism** — natively model choice
 
 **References**: [Eff](https://www.eff-lang.org/), [Koka](https://koka-lang.github.io/), [OCaml 5 effects](https://v2.ocaml.org/manual/effects.html)
 
@@ -753,7 +753,7 @@ result.provenance(output_image.pixel[100, 100])
 | **Phase 2** | Content-addressed cache layer | Medium | ★★★★☆ |
 | **Phase 3** | Incremental computation for preview | High | ★★★★☆ |
 | **Phase 4** | Typed holes for partial workflows | Medium | ★★★☆☆ |
-| **Research** | Algebraic effects | Very High | ★★★☆☆ |
+| **Research** | Multi-shot continuations | Very High | ★★★☆☆ |
 | **Research** | Projectional editing | Very High | ★★★☆☆ |
 
 ### Design Principle
