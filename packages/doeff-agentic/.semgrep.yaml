@@ -21,8 +21,8 @@ rules:
     pattern-regex: 'async\s+def\s+handle_\w+\s*\(self'
     paths:
       include:
-        - "**/opencode_handler.py"
-        - "**/handler.py"
+        - "**/handlers/opencode.py"
+        - "**/handlers/production.py"
     message: |
       Handler methods must be sync (def), not async (async def).
       The handler does blocking I/O internally. AsyncRuntime handles concurrency
@@ -51,8 +51,8 @@ rules:
           $EFFECT_TYPE: lambda $E: $HANDLER.$METHOD($E)
     paths:
       include:
-        - "**/opencode_handler.py"
-        - "**/handler.py"
+        - "**/handlers/opencode.py"
+        - "**/handlers/production.py"
     message: |
       Do not wrap handlers in lambdas. Register handler methods directly.
       
@@ -154,8 +154,8 @@ rules:
           - pattern: aiohttp.ClientSession(...)
     paths:
       include:
-        - "**/opencode_handler.py"
-        - "**/handler.py"
+        - "**/handlers/opencode.py"
+        - "**/handlers/production.py"
     message: |
       Do not use async HTTP clients (httpx.AsyncClient, aiohttp) in handlers.
       Handlers are sync and should use sync HTTP clients.
