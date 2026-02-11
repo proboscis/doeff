@@ -25,7 +25,7 @@ from .types import APICallMetadata, CostInfo, TokenUsage
 
 
 def _prepare_prompt_details(
-    request_payload: dict[str, Any]
+    request_payload: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None, list[dict[str, Any]], list[dict[str, Any]] | None]:
     """Return sanitized payload plus extracted text/images/messages."""
 
@@ -76,6 +76,7 @@ def _prepare_prompt_details(
     prompt_text = "\n\n".join(filter(None, prompt_text_parts)).strip() or None
 
     return sanitized_payload, prompt_text, prompt_images, prompt_messages
+
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -147,9 +148,7 @@ def extract_token_usage(response_data: dict[str, Any]) -> TokenUsage | None:
     usage = response_data.get("usage")
     if not isinstance(usage, Mapping):
         return None
-    prompt = _coerce_int(usage.get("prompt_tokens")) or _coerce_int(
-        usage.get("input_tokens")
-    )
+    prompt = _coerce_int(usage.get("prompt_tokens")) or _coerce_int(usage.get("input_tokens"))
     completion = _coerce_int(usage.get("completion_tokens")) or _coerce_int(
         usage.get("output_tokens")
     )
@@ -243,16 +242,10 @@ def track_api_call(
     sanitized_payload, prompt_text, prompt_images, prompt_messages = _prepare_prompt_details(
         request_payload
     )
-    token_usage = (
-        extract_token_usage(response_data) if response_data and not error else None
-    )
-    cost_info = (
-        extract_cost_info(response_data) if response_data and not error else None
-    )
+    token_usage = extract_token_usage(response_data) if response_data and not error else None
+    cost_info = extract_cost_info(response_data) if response_data and not error else None
     request_id = extract_request_id(response_data, response_headers)
-    provider = (
-        extract_provider_name(response_data) if response_data and not error else None
-    )
+    provider = extract_provider_name(response_data) if response_data and not error else None
 
     metadata = APICallMetadata(
         operation=operation,

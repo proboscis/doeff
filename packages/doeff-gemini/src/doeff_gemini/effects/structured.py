@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
-from typing import Any
 
-from doeff import EffectBase
+from doeff_llm.effects import LLMStructuredOutput
 
 
 @dataclass(frozen=True, kw_only=True)
-class GeminiStructuredOutput(EffectBase):
-    """Request structured output from Gemini."""
+class GeminiStructuredOutput(LLMStructuredOutput):
+    """Deprecated alias of :class:`doeff_llm.effects.LLMStructuredOutput`."""
 
-    messages: list[dict[str, Any]]
-    response_format: type[Any]
-    model: str
+    def __post_init__(self) -> None:
+        warnings.warn(
+            "GeminiStructuredOutput is deprecated; use doeff_llm.effects.LLMStructuredOutput instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
 
 __all__ = ["GeminiStructuredOutput"]

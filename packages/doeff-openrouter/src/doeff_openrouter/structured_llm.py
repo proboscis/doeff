@@ -262,7 +262,9 @@ def process_structured_response(
         candidate_payload = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         yield Tell(f"JSON decoding failed: {exc}. Payload preview: {preview_source}")
-        raise StructuredOutputParsingError("OpenRouter response did not contain valid JSON content") from exc
+        raise StructuredOutputParsingError(
+            "OpenRouter response did not contain valid JSON content"
+        ) from exc
 
     try:
         result = _validate_with_model(response_format, candidate_payload)
@@ -302,7 +304,9 @@ def structured_llm(
 
     response_format_payload = None
     expects_structure = (
-        response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel)
+        response_format is not None
+        and isinstance(response_format, type)
+        and issubclass(response_format, BaseModel)
     )
     if expects_structure:
         response_format_payload = build_response_format_payload(response_format)
@@ -334,5 +338,7 @@ __all__ = [
     "process_unstructured_response",
     "structured_llm",
 ]
+
+
 class StructuredOutputParsingError(RuntimeError):
     """Raised when the provider returns content that cannot be parsed as JSON."""

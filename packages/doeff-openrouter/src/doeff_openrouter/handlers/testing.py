@@ -7,7 +7,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import Resume
+from doeff_llm.effects import (
+    LLMChat,
+    LLMEmbedding,
+    LLMStreamingChat,
+    LLMStructuredOutput,
+)
+
+from doeff import Delegate, Resume
 from doeff_openrouter.effects import (
     RouterChat,
     RouterStreamingChat,
@@ -57,13 +64,11 @@ class MockOpenRouterRuntime:
 
     chat_response: dict[str, Any] = field(default_factory=_default_chat_response)
     streaming_response: dict[str, Any] = field(default_factory=_default_streaming_response)
-    structured_response: Any = field(
-        default_factory=lambda: {"keyword": "mocked", "number": 17}
-    )
+    structured_response: Any = field(default_factory=lambda: {"keyword": "mocked", "number": 17})
     calls: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _coerce_structured_payload(effect: RouterStructuredOutput, payload: Any) -> Any:
+def _coerce_structured_payload(effect: LLMStructuredOutput, payload: Any) -> Any:
     if isinstance(payload, effect.response_format):
         return payload
     if isinstance(payload, dict):
@@ -79,47 +84,103 @@ def mock_handlers(
 
     active_runtime = runtime or MockOpenRouterRuntime()
 
-    def handle_chat(effect: RouterChat, k):
+    def handle_chat(effect: LLMChat | RouterChat, k):
         active_runtime.calls.append(
             {
-                "effect": "RouterChat",
+                "effect": effect.__class__.__name__,
                 "model": effect.model,
                 "messages": copy.deepcopy(effect.messages),
             }
         )
+        if effect.stream:
+            return (yield Resume(k, copy.deepcopy(active_runtime.streaming_response)))
         return (yield Resume(k, copy.deepcopy(active_runtime.chat_response)))
 
-    def handle_streaming_chat(effect: RouterStreamingChat, k):
+    def handle_streaming_chat(effect: LLMStreamingChat | RouterStreamingChat, k):
         active_runtime.calls.append(
             {
-                "effect": "RouterStreamingChat",
+                "effect": effect.__class__.__name__,
                 "model": effect.model,
                 "messages": copy.deepcopy(effect.messages),
             }
         )
         return (yield Resume(k, copy.deepcopy(active_runtime.streaming_response)))
 
-    def handle_structured_output(effect: RouterStructuredOutput, k):
+    def handle_structured_output(effect: LLMStructuredOutput | RouterStructuredOutput, k):
         active_runtime.calls.append(
             {
-                "effect": "RouterStructuredOutput",
+                "effect": effect.__class__.__name__,
                 "model": effect.model,
                 "messages": copy.deepcopy(effect.messages),
                 "response_format": effect.response_format.__name__,
             }
         )
-        payload = _coerce_structured_payload(effect, copy.deepcopy(active_runtime.structured_response))
+        payload = _coerce_structured_payload(
+            effect, copy.deepcopy(active_runtime.structured_response)
+        )
         return (yield Resume(k, payload))
 
     return {
         RouterChat: handle_chat,
         RouterStreamingChat: handle_streaming_chat,
         RouterStructuredOutput: handle_structured_output,
+        LLMChat: handle_chat,
+        LLMStreamingChat: handle_streaming_chat,
+        LLMStructuredOutput: handle_structured_output,
     }
+
+
+def openrouter_mock_handler(
+    effect: Any,
+    k: Any,
+    *,
+    runtime: MockOpenRouterRuntime | None = None,
+):
+    """Single protocol handler suitable for ``WithHandler`` usage."""
+    active_runtime = runtime or MockOpenRouterRuntime()
+
+    if isinstance(effect, LLMStreamingChat | RouterStreamingChat):
+        active_runtime.calls.append(
+            {
+                "effect": effect.__class__.__name__,
+                "model": effect.model,
+                "messages": copy.deepcopy(effect.messages),
+            }
+        )
+        return (yield Resume(k, copy.deepcopy(active_runtime.streaming_response)))
+    if isinstance(effect, LLMChat | RouterChat):
+        active_runtime.calls.append(
+            {
+                "effect": effect.__class__.__name__,
+                "model": effect.model,
+                "messages": copy.deepcopy(effect.messages),
+            }
+        )
+        if effect.stream:
+            return (yield Resume(k, copy.deepcopy(active_runtime.streaming_response)))
+        return (yield Resume(k, copy.deepcopy(active_runtime.chat_response)))
+    if isinstance(effect, LLMStructuredOutput | RouterStructuredOutput):
+        active_runtime.calls.append(
+            {
+                "effect": effect.__class__.__name__,
+                "model": effect.model,
+                "messages": copy.deepcopy(effect.messages),
+                "response_format": effect.response_format.__name__,
+            }
+        )
+        payload = _coerce_structured_payload(
+            effect, copy.deepcopy(active_runtime.structured_response)
+        )
+        return (yield Resume(k, payload))
+    if isinstance(effect, LLMEmbedding):
+        yield Delegate()
+        return
+    yield Delegate()
 
 
 __all__ = [
     "MockOpenRouterRuntime",
     "ProtocolHandler",
     "mock_handlers",
+    "openrouter_mock_handler",
 ]
