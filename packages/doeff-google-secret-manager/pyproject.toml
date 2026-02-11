@@ -26,6 +26,7 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
+    "doeff-secret>=0.1.0",
     "google-cloud-secret-manager>=2.20.0",
     "google-auth>=2.0.0",
 ]
@@ -47,4 +48,4 @@ packages = ["src/doeff_google_secret_manager"]
 
 [tool.uv.sources]
 doeff = {workspace = true}
-
+doeff-secret = {workspace = true}
