@@ -1,6 +1,5 @@
 """Tests for doeff-conductor effects."""
 
-
 from doeff_conductor.effects import (
     CaptureOutput,
     Commit,
@@ -392,3 +391,69 @@ class TestGitEffects:
         effect = MergePR(pr=pr, strategy=MergeStrategy.SQUASH, delete_branch=True)
         assert effect.strategy == MergeStrategy.SQUASH
         assert effect.delete_branch is True
+
+
+class TestModuleExports:
+    """Tests for package-level exports."""
+
+    def test_effects_init_exports_all_effects(self):
+        import doeff_conductor.effects as effects_module
+
+        expected_names = {
+            "ConductorEffectBase",
+            "CreateWorktree",
+            "MergeBranches",
+            "DeleteWorktree",
+            "CreateIssue",
+            "ListIssues",
+            "GetIssue",
+            "ResolveIssue",
+            "RunAgent",
+            "SpawnAgent",
+            "SendMessage",
+            "WaitForStatus",
+            "CaptureOutput",
+            "Commit",
+            "Push",
+            "CreatePR",
+            "MergePR",
+        }
+
+        assert expected_names.issubset(set(effects_module.__all__))
+        for name in expected_names:
+            assert hasattr(effects_module, name)
+
+    def test_handlers_exports_include_production_and_mock_handlers(self, tmp_path):
+        from doeff_conductor.handlers import mock_handlers, production_handlers
+        from doeff_conductor.handlers.testing import MockConductorRuntime
+
+        runtime = MockConductorRuntime(tmp_path)
+        expected_effects = {
+            CreateWorktree,
+            MergeBranches,
+            DeleteWorktree,
+            CreateIssue,
+            ListIssues,
+            GetIssue,
+            ResolveIssue,
+            RunAgent,
+            SpawnAgent,
+            SendMessage,
+            WaitForStatus,
+            CaptureOutput,
+            Commit,
+            Push,
+            CreatePR,
+            MergePR,
+        }
+
+        production = production_handlers(
+            worktree_handler=runtime,
+            issue_handler=runtime,
+            agent_handler=runtime,
+            git_handler=runtime,
+        )
+        mocked = mock_handlers(runtime=runtime)
+
+        assert expected_effects.issubset(set(production))
+        assert expected_effects.issubset(set(mocked))
