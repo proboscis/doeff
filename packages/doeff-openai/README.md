@@ -12,6 +12,19 @@ OpenAI integration for [doeff](https://github.com/CyberAgentAILab/doeff) with co
 - 🔄 **Parallel Operations**: Use Gather effect for parallel API calls
 - 🎯 **Type-Safe**: Fully typed with dataclasses and type hints
 
+## Unified Effects Routing
+
+`doeff-openai` now handles provider-agnostic effects from `doeff-llm`:
+
+- `LLMChat`
+- `LLMStreamingChat`
+- `LLMStructuredOutput`
+- `LLMEmbedding`
+
+The handler checks `effect.model`. Supported OpenAI model prefixes are
+`gpt-`, `o1-`, `o3-`, `o4-`, and `text-embedding-`. Unsupported models are
+delegated with `Delegate()` so outer handlers can process them.
+
 ## Installation
 
 ```bash

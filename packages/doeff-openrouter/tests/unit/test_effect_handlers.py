@@ -6,6 +6,13 @@ import importlib
 import json
 from typing import Any
 
+import pytest
+from doeff_llm.effects import (
+    LLMChat,
+    LLMEmbedding,
+    LLMStreamingChat,
+    LLMStructuredOutput,
+)
 from doeff_openrouter.effects import (
     RouterChat,
     RouterStreamingChat,
@@ -14,11 +21,13 @@ from doeff_openrouter.effects import (
 from doeff_openrouter.handlers import (
     MockOpenRouterRuntime,
     mock_handlers,
+    openrouter_mock_handler,
+    openrouter_production_handler,
     production_handlers,
 )
 from pydantic import BaseModel
 
-from doeff import do, run_with_handler_map
+from doeff import Delegate, Resume, WithHandler, default_handlers, do, run, run_with_handler_map
 
 
 class StructuredPayload(BaseModel):
@@ -34,6 +43,28 @@ def test_effect_exports():
     assert ImportedRouterChat is RouterChat
     assert ImportedRouterStreamingChat is RouterStreamingChat
     assert ImportedRouterStructuredOutput is RouterStructuredOutput
+    assert issubclass(RouterChat, LLMChat)
+    assert issubclass(RouterStreamingChat, LLMStreamingChat)
+    assert issubclass(RouterStructuredOutput, LLMStructuredOutput)
+
+
+def test_deprecated_effect_aliases_emit_warnings() -> None:
+    with pytest.deprecated_call(match="RouterChat is deprecated"):
+        RouterChat(
+            messages=[{"role": "user", "content": "hi"}],
+            model="openai/gpt-4o-mini",
+        )
+    with pytest.deprecated_call(match="RouterStreamingChat is deprecated"):
+        RouterStreamingChat(
+            messages=[{"role": "user", "content": "stream"}],
+            model="openai/gpt-4o-mini",
+        )
+    with pytest.deprecated_call(match="RouterStructuredOutput is deprecated"):
+        RouterStructuredOutput(
+            messages=[{"role": "user", "content": "json"}],
+            response_format=StructuredPayload,
+            model="openai/gpt-4o-mini",
+        )
 
 
 def test_handler_exports():
@@ -42,6 +73,8 @@ def test_handler_exports():
 
     assert imported_production_handlers is production_handlers
     assert imported_mock_handlers is mock_handlers
+    assert callable(openrouter_production_handler)
+    assert callable(openrouter_mock_handler)
 
 
 def test_mock_handlers_return_configured_deterministic_payloads() -> None:
@@ -59,16 +92,16 @@ def test_mock_handlers_return_configured_deterministic_payloads() -> None:
 
     @do
     def workflow():
-        chat = yield RouterChat(
+        chat = yield LLMChat(
             messages=[{"role": "user", "content": "hello"}],
             model="openai/gpt-4o-mini",
             temperature=0.0,
         )
-        stream = yield RouterStreamingChat(
+        stream = yield LLMStreamingChat(
             messages=[{"role": "user", "content": "stream"}],
             model="openai/gpt-4o-mini",
         )
-        structured = yield RouterStructuredOutput(
+        structured = yield LLMStructuredOutput(
             messages=[{"role": "user", "content": "return JSON"}],
             response_format=StructuredPayload,
             model="openai/gpt-4o-mini",
@@ -85,9 +118,9 @@ def test_mock_handlers_return_configured_deterministic_payloads() -> None:
     assert structured_payload.keyword == "mocked"
     assert structured_payload.number == 99
     assert [call["effect"] for call in runtime.calls] == [
-        "RouterChat",
-        "RouterStreamingChat",
-        "RouterStructuredOutput",
+        "LLMChat",
+        "LLMStreamingChat",
+        "LLMStructuredOutput",
     ]
 
 
@@ -127,12 +160,12 @@ def test_handler_swapping_between_mock_and_production(monkeypatch) -> None:
 
     @do
     def workflow():
-        chat = yield RouterChat(
+        chat = yield LLMChat(
             messages=[{"role": "user", "content": "hello prod"}],
             model="openai/gpt-4o-mini",
             temperature=0.3,
         )
-        structured = yield RouterStructuredOutput(
+        structured = yield LLMStructuredOutput(
             messages=[{"role": "user", "content": "return JSON"}],
             response_format=StructuredPayload,
             model="openai/gpt-4o-mini",
@@ -159,3 +192,22 @@ def test_handler_swapping_between_mock_and_production(monkeypatch) -> None:
     assert len(observed_calls) == 2
     assert observed_calls[0]["kwargs"]["temperature"] == 0.3
     assert observed_calls[1]["kwargs"]["response_format"]["type"] == "json_schema"
+
+
+def test_openrouter_handler_delegates_embedding_effects() -> None:
+    def fallback(effect: Any, k: Any):
+        if isinstance(effect, LLMEmbedding):
+            return (yield Resume(k, "embedding-fallback"))
+        yield Delegate()
+
+    @do
+    def workflow():
+        return (yield LLMEmbedding(input="hello", model="text-embedding-3-small"))
+
+    result = run(
+        WithHandler(fallback, WithHandler(openrouter_mock_handler, workflow())),
+        handlers=default_handlers(),
+    )
+
+    assert result.is_ok()
+    assert result.value == "embedding-fallback"

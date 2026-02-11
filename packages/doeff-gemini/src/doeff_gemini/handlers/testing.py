@@ -8,13 +8,21 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, get_args, get_origin
 
-from doeff import Resume
+from doeff_llm.effects import (
+    LLMChat,
+    LLMEmbedding,
+    LLMStreamingChat,
+    LLMStructuredOutput,
+)
+
+from doeff import Delegate, Resume
 from doeff_gemini.effects import (
     GeminiChat,
     GeminiEmbedding,
     GeminiStreamingChat,
     GeminiStructuredOutput,
 )
+from doeff_gemini.handlers.production import _is_gemini_model
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
@@ -63,20 +71,20 @@ class MockGeminiHandler:
     embedding_dimensions: int = 8
     embedding_seed: int = 0
 
-    def handle_chat(self, effect: GeminiChat | GeminiStreamingChat) -> str:
+    def handle_chat(self, effect: LLMChat | LLMStreamingChat) -> str:
         configured = self.chat_responses.get(effect.model)
         if configured is not None:
             return configured
         signature = _message_signature(effect.messages)
         return f"{self.default_chat_response}:{signature}"
 
-    def handle_structured(self, effect: GeminiStructuredOutput) -> Any:
+    def handle_structured(self, effect: LLMStructuredOutput) -> Any:
         configured = self.structured_responses.get(effect.response_format)
         if configured is None:
             configured = self._build_default_structured_payload(effect.response_format)
         return self._coerce_structured_response(effect.response_format, configured)
 
-    def handle_embedding(self, effect: GeminiEmbedding) -> list[float] | list[list[float]]:
+    def handle_embedding(self, effect: LLMEmbedding) -> list[float] | list[list[float]]:
         configured = self.embedding_responses.get(effect.model)
         if configured is not None:
             return configured
@@ -114,7 +122,7 @@ class MockGeminiHandler:
 
         for index in range(self.embedding_dimensions):
             offset = (index * 4) % len(digest)
-            chunk = digest[offset:offset + 4]
+            chunk = digest[offset : offset + 4]
             if len(chunk) < 4:
                 chunk += digest[: 4 - len(chunk)]
             value = int.from_bytes(chunk, "big") / 0xFFFFFFFF
@@ -144,16 +152,28 @@ def mock_handlers(
         embedding_seed=embedding_seed,
     )
 
-    def handle_chat(effect: GeminiChat, k):
+    def handle_chat(effect: LLMChat | GeminiChat, k):
+        if not _is_gemini_model(effect.model):
+            yield Delegate()
+            return
         return (yield Resume(k, active_handler.handle_chat(effect)))
 
-    def handle_streaming_chat(effect: GeminiStreamingChat, k):
+    def handle_streaming_chat(effect: LLMStreamingChat | GeminiStreamingChat, k):
+        if not _is_gemini_model(effect.model):
+            yield Delegate()
+            return
         return (yield Resume(k, active_handler.handle_chat(effect)))
 
-    def handle_structured(effect: GeminiStructuredOutput, k):
+    def handle_structured(effect: LLMStructuredOutput | GeminiStructuredOutput, k):
+        if not _is_gemini_model(effect.model):
+            yield Delegate()
+            return
         return (yield Resume(k, active_handler.handle_structured(effect)))
 
-    def handle_embedding(effect: GeminiEmbedding, k):
+    def handle_embedding(effect: LLMEmbedding | GeminiEmbedding, k):
+        if not _is_gemini_model(effect.model):
+            yield Delegate()
+            return
         return (yield Resume(k, active_handler.handle_embedding(effect)))
 
     return {
@@ -161,11 +181,51 @@ def mock_handlers(
         GeminiStreamingChat: handle_streaming_chat,
         GeminiStructuredOutput: handle_structured,
         GeminiEmbedding: handle_embedding,
+        LLMChat: handle_chat,
+        LLMStreamingChat: handle_streaming_chat,
+        LLMStructuredOutput: handle_structured,
+        LLMEmbedding: handle_embedding,
     }
+
+
+def gemini_mock_handler(
+    effect: Any,
+    k: Any,
+    *,
+    handler: MockGeminiHandler | None = None,
+    default_chat_response: str = "mock-gemini-chat-response",
+    chat_responses: Mapping[str, str] | None = None,
+    structured_responses: Mapping[type[Any], Any] | None = None,
+    embedding_responses: Mapping[str, list[float] | list[list[float]]] | None = None,
+    embedding_dimensions: int = 8,
+    embedding_seed: int = 0,
+):
+    """Single protocol handler suitable for ``WithHandler`` usage."""
+    active_handler = handler or MockGeminiHandler(
+        default_chat_response=default_chat_response,
+        chat_responses=chat_responses or {},
+        structured_responses=structured_responses or {},
+        embedding_responses=embedding_responses or {},
+        embedding_dimensions=embedding_dimensions,
+        embedding_seed=embedding_seed,
+    )
+
+    if isinstance(effect, LLMStreamingChat | GeminiStreamingChat | LLMChat | GeminiChat) and (
+        _is_gemini_model(effect.model)
+    ):
+        return (yield Resume(k, active_handler.handle_chat(effect)))
+    if isinstance(effect, LLMStructuredOutput | GeminiStructuredOutput) and _is_gemini_model(
+        effect.model
+    ):
+        return (yield Resume(k, active_handler.handle_structured(effect)))
+    if isinstance(effect, LLMEmbedding | GeminiEmbedding) and _is_gemini_model(effect.model):
+        return (yield Resume(k, active_handler.handle_embedding(effect)))
+    yield Delegate()
 
 
 __all__ = [
     "MockGeminiHandler",
     "ProtocolHandler",
+    "gemini_mock_handler",
     "mock_handlers",
 ]

@@ -7,6 +7,18 @@ Google Gemini integration for the `doeff` effect system. The package mirrors the
 - Structured responses backed by Pydantic models via Gemini `response_schema`
 - Full observability with `Log`, `Step`, and retry tracking just like the OpenAI integration
 
+## Unified Effects Routing
+
+`doeff-gemini` now handles provider-agnostic effects from `doeff-llm`:
+
+- `LLMChat`
+- `LLMStreamingChat`
+- `LLMStructuredOutput`
+- `LLMEmbedding`
+
+The Gemini handler routes by model name (for example `gemini-*`) and delegates
+unsupported models via `Delegate()` so stacked handlers can continue routing.
+
 ## Quick start
 
 ```bash

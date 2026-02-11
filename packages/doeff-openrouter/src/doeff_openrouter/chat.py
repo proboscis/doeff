@@ -83,7 +83,9 @@ def chat_completion(
         request_data["reasoning"] = reasoning
 
     if max_tokens is not None:
-        token_key = "max_completion_tokens" if _requires_max_completion_tokens(model) else "max_tokens"
+        token_key = (
+            "max_completion_tokens" if _requires_max_completion_tokens(model) else "max_tokens"
+        )
         request_data[token_key] = max_tokens
 
     request_data.update(kwargs)
