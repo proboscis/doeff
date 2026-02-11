@@ -440,7 +440,7 @@ def mock_handlers(
     workflow_name: str | None = "mock-workflow",
     working_dir: str | None = None,
 ) -> dict[type, Any]:
-    """Create typed CESK handler map for tests using in-memory state."""
+    """Create typed VM handler map for tests using in-memory state."""
     impl = handler or MockAgenticHandler(
         workflow_id=workflow_id,
         workflow_name=workflow_name,

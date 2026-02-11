@@ -243,7 +243,7 @@ Key differences from SyncRuntime:
 
 ### Sync/Simulation Runtime Tests
 
-Tests in `tests/cesk/test_new_runtime.py`:
+Tests in `tests/core/test_runtime_regressions_manual.py`:
 
 ```python
 class TestWaitUntilHandler:
@@ -255,7 +255,7 @@ class TestWaitUntilHandler:
 
 ### AsyncRuntime Tests
 
-Tests in `tests/cesk/test_async_runtime.py`:
+Tests in `tests/effects/test_effect_combinations.py`:
 
 ```python
 class TestAsyncRuntimeTimeEffects:
@@ -274,8 +274,8 @@ These tests verify:
 ## References
 
 - `doeff/effects/time.py` - Effect definitions
-- `doeff/cesk/handlers/time.py` - Handler implementations (Sync)
-- `doeff/cesk/runtime/async_.py` - AsyncRuntime with async time handling
-- `doeff/cesk/runtime/simulation.py` - SimulationRuntime with time control
-- `tests/cesk/test_new_runtime.py` - Sync/Simulation test suite
-- `tests/cesk/test_async_runtime.py` - AsyncRuntime test suite
+- `doeff/rust_vm.py` - Runtime entrypoints (`run`, `async_run`)
+- `packages/doeff-vm/src/handler.rs` - Built-in handler implementations
+- `packages/doeff-vm/src/scheduler.rs` - Scheduler/time integration
+- `tests/core/test_runtime_regressions_manual.py` - Runtime regression suite
+- `tests/effects/test_effect_combinations.py` - Effect interaction suite

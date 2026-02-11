@@ -36,7 +36,7 @@ from doeff_preset import preset_handlers
 from doeff_agents import (
     AgentType,
     Capture,
-    CeskMockSessionScript,
+    MockSessionScript,
     Launch,
     LaunchConfig,
     Monitor,
@@ -75,7 +75,7 @@ async def main():
     configure_mock_session(
         initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.RUNNING, "Working..."),
             (SessionStatus.DONE, "Complete!"),
         ]),
@@ -122,7 +122,7 @@ All examples can run without real tmux using `mock_agent_handlers()`:
 
 ```python
 from doeff_agents import (
-    CeskMockSessionScript,
+    MockSessionScript,
     SessionStatus,
     configure_mock_session,
     mock_agent_handlers,
@@ -133,7 +133,7 @@ initial_store = {}
 configure_mock_session(
     initial_store,
     "test-session",
-    CeskMockSessionScript([
+    MockSessionScript([
         (SessionStatus.RUNNING, "Working..."),
         (SessionStatus.BLOCKED, "Need input..."),
         (SessionStatus.DONE, "Complete!"),
