@@ -1,137 +1,143 @@
-"""
-Git handler for doeff-conductor.
+"""Git handler for doeff-conductor.
+
+This handler delegates git operations to doeff-git handlers while keeping
+conductor effect APIs stable.
 """
 
 from __future__ import annotations
 
-import subprocess
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from ..exceptions import GitCommandError
+from doeff_git.effects import (
+    CreatePR as GitCreatePR,
+)
+from doeff_git.effects import (
+    GitCommit,
+    GitPush,
+)
+from doeff_git.effects import (
+    MergePR as GitMergePR,
+)
+from doeff_git.exceptions import GitCommandError as DomainGitCommandError
+from doeff_git.handlers import GitHubHandler, GitLocalHandler
+from doeff_git.types import PRHandle as GitPRHandle
+
+from doeff_conductor.exceptions import GitCommandError
 
 if TYPE_CHECKING:
-    from ..effects.git import Commit, CreatePR, MergePR, Push
-    from ..types import PRHandle
+    from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
+    from doeff_conductor.types import PRHandle
 
 
-def _run_git(
-    args: list[str],
-    cwd: str | None = None,
-) -> subprocess.CompletedProcess[str]:
-    """Run a git/gh command. Raises GitCommandError on failure."""
-    try:
-        return subprocess.run(
-            args,
-            cwd=cwd,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        raise GitCommandError.from_subprocess_error(e, cwd=str(cwd) if cwd else None) from e
+def _labels_to_list(labels: tuple[str, ...] | list[str] | None) -> list[str] | None:
+    if labels is None:
+        return None
+    return list(labels)
+
+
+def _strategy_to_value(strategy: object) -> str | None:
+    if strategy is None:
+        return None
+    raw_value = getattr(strategy, "value", strategy)
+    return str(raw_value)
 
 
 class GitHandler:
-    """Handler for git effects using git and gh CLI."""
+    """Handler for conductor git effects via doeff-git delegates."""
 
-    def __init__(self):
-        pass
+    def __init__(
+        self,
+        *,
+        local_handler: GitLocalHandler | None = None,
+        github_handler: GitHubHandler | None = None,
+    ) -> None:
+        self._local_handler = local_handler or GitLocalHandler()
+        self._github_handler = github_handler or GitHubHandler()
+
+    @staticmethod
+    def _translate_error(error: DomainGitCommandError) -> GitCommandError:
+        return GitCommandError(
+            command=error.command,
+            returncode=error.returncode,
+            stdout=error.stdout,
+            stderr=error.stderr,
+            cwd=error.cwd,
+        )
 
     def handle_commit(self, effect: Commit) -> str:
         """Stage changes and create a commit. Returns commit SHA."""
-        worktree_path = effect.env.path
-
-        if effect.all:
-            _run_git(["git", "add", "-A"], cwd=str(worktree_path))
-
-        _run_git(
-            ["git", "commit", "-m", effect.message],
-            cwd=str(worktree_path),
+        git_effect = GitCommit(
+            work_dir=effect.env.path,
+            message=effect.message,
+            all=effect.all,
         )
-
-        sha_result = _run_git(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(worktree_path),
-        )
-
-        return sha_result.stdout.strip()
+        try:
+            return self._local_handler.handle_commit(git_effect)
+        except DomainGitCommandError as error:
+            raise self._translate_error(error) from error
 
     def handle_push(self, effect: Push) -> None:
         """Push branch to remote. Raises GitCommandError on failure."""
-        worktree_path = effect.env.path
-
-        args = ["git", "push"]
-
-        if effect.set_upstream:
-            args.extend(["-u", effect.remote, effect.env.branch])
-        else:
-            args.extend([effect.remote, effect.env.branch])
-
-        if effect.force:
-            args.insert(2, "--force")
-
-        _run_git(args, cwd=str(worktree_path))
+        git_effect = GitPush(
+            work_dir=effect.env.path,
+            remote=effect.remote,
+            force=effect.force,
+            set_upstream=effect.set_upstream,
+            branch=effect.env.branch,
+        )
+        try:
+            self._local_handler.handle_push(git_effect)
+        except DomainGitCommandError as error:
+            raise self._translate_error(error) from error
 
     def handle_create_pr(self, effect: CreatePR) -> PRHandle:
         """Create a pull request using gh CLI."""
-        from ..types import PRHandle
+        from doeff_conductor.types import PRHandle
 
-        worktree_path = effect.env.path
-
-        args = [
-            "gh",
-            "pr",
-            "create",
-            "--title",
-            effect.title,
-            "--base",
-            effect.target,
-            "--head",
-            effect.env.branch,
-        ]
-
-        if effect.body:
-            args.extend(["--body", effect.body])
-        else:
-            args.extend(["--body", ""])
-
-        if effect.draft:
-            args.append("--draft")
-
-        result = _run_git(args, cwd=str(worktree_path))
-
-        pr_url = result.stdout.strip()
-        pr_number = int(pr_url.split("/")[-1])
+        git_effect = GitCreatePR(
+            work_dir=effect.env.path,
+            title=effect.title,
+            body=effect.body,
+            target=effect.target,
+            draft=effect.draft,
+            labels=_labels_to_list(effect.labels),
+            head=effect.env.branch,
+        )
+        try:
+            pr = self._github_handler.handle_create_pr(git_effect)
+        except DomainGitCommandError as error:
+            raise self._translate_error(error) from error
 
         return PRHandle(
-            url=pr_url,
-            number=pr_number,
-            title=effect.title,
-            branch=effect.env.branch,
-            target=effect.target,
-            status="open",
-            created_at=datetime.now(timezone.utc),
+            url=pr.url,
+            number=pr.number,
+            title=pr.title,
+            branch=pr.branch,
+            target=pr.target,
+            status=pr.status,
+            created_at=pr.created_at,
         )
 
     def handle_merge_pr(self, effect: MergePR) -> None:
         """Merge a pull request using gh CLI. Raises GitCommandError on failure."""
-        from ..types import MergeStrategy
-
-        args = ["gh", "pr", "merge", str(effect.pr.number)]
-
-        strategy = effect.strategy or MergeStrategy.MERGE
-        if strategy == MergeStrategy.MERGE:
-            args.append("--merge")
-        elif strategy == MergeStrategy.REBASE:
-            args.append("--rebase")
-        elif strategy == MergeStrategy.SQUASH:
-            args.append("--squash")
-
-        if effect.delete_branch:
-            args.append("--delete-branch")
-
-        _run_git(args)
+        git_effect = GitMergePR(
+            pr=GitPRHandle(
+                url=effect.pr.url,
+                number=effect.pr.number,
+                title=effect.pr.title,
+                branch=effect.pr.branch,
+                target=effect.pr.target,
+                status=effect.pr.status,
+                created_at=effect.pr.created_at,
+                work_dir=getattr(effect.pr, "work_dir", None),
+            ),
+            strategy=_strategy_to_value(effect.strategy),
+            delete_branch=effect.delete_branch,
+        )
+        try:
+            self._github_handler.handle_merge_pr(git_effect)
+        except DomainGitCommandError as error:
+            raise self._translate_error(error) from error
 
 
 __all__ = ["GitHandler"]

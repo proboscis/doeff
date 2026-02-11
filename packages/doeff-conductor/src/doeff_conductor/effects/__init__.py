@@ -19,6 +19,12 @@ from .base import ConductorEffectBase
 from .git import (
     Commit,
     CreatePR,
+    GitCommitEffect,
+    GitCreatePREffect,
+    GitDiffEffect,
+    GitMergePREffect,
+    GitPullEffect,
+    GitPushEffect,
     MergePR,
     Push,
 )
@@ -43,6 +49,12 @@ __all__ = [
     # Issue
     "CreateIssue",
     "CreatePR",
+    "GitCommitEffect",
+    "GitCreatePREffect",
+    "GitDiffEffect",
+    "GitMergePREffect",
+    "GitPullEffect",
+    "GitPushEffect",
     # Worktree
     "CreateWorktree",
     "DeleteWorktree",
