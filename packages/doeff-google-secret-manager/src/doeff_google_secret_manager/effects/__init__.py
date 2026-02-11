@@ -1,8 +1,20 @@
-"""Secret Manager domain effects."""
+"""Backward-compatible re-export for secret effects.
+
+This module is deprecated. Import effects from `doeff_secret.effects` instead.
+"""
 
 from __future__ import annotations
 
-from .secrets import DeleteSecret, GetSecret, ListSecrets, SecretEffectBase, SetSecret
+import warnings
+
+from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SecretEffectBase, SetSecret
+
+warnings.warn(
+    "Importing from doeff_google_secret_manager.effects is deprecated; "
+    "use doeff_secret.effects instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 __all__ = [
     "DeleteSecret",

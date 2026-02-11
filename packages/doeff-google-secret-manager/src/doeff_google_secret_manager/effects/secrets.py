@@ -1,46 +1,20 @@
-"""Effect definitions for Google Secret Manager operations."""
+"""Backward-compatible re-export for secret effects.
+
+This module is deprecated. Import effects from `doeff_secret.effects` instead.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import warnings
 
-from doeff import EffectBase
+from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SecretEffectBase, SetSecret
 
-
-@dataclass(frozen=True, kw_only=True)
-class SecretEffectBase(EffectBase):
-    """Base class for Secret Manager domain effects."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class GetSecret(SecretEffectBase):
-    """Retrieve a secret value."""
-
-    secret_id: str
-    version: str = "latest"
-
-
-@dataclass(frozen=True, kw_only=True)
-class SetSecret(SecretEffectBase):
-    """Create or update a secret."""
-
-    secret_id: str
-    value: str | bytes
-
-
-@dataclass(frozen=True, kw_only=True)
-class ListSecrets(SecretEffectBase):
-    """List available secrets."""
-
-    filter: str | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class DeleteSecret(SecretEffectBase):
-    """Delete a secret."""
-
-    secret_id: str
-
+warnings.warn(
+    "Importing from doeff_google_secret_manager.effects.secrets is deprecated; "
+    "use doeff_secret.effects instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 __all__ = [
     "DeleteSecret",
