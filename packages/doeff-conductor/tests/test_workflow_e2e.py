@@ -1,12 +1,7 @@
-"""Workflow tests for doeff-conductor using WithHandler-based mocks."""
+"""Workflow tests for doeff-conductor using shared mock handlers."""
 
 from __future__ import annotations
 
-import hashlib
-import shutil
-from collections.abc import Callable
-from dataclasses import replace
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,160 +16,18 @@ from doeff_conductor import (
     Push,
     ResolveIssue,
 )
-from doeff_conductor.types import Issue, WorktreeEnv
+from doeff_conductor.handlers import mock_handlers, run_sync
+from doeff_conductor.handlers.testing import MockConductorRuntime
 
-from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
-
-
-def _wrap_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]) -> Any:
-    wrapped = program
-    for effect_type, effect_handler in reversed(list(handlers.items())):
-
-        def typed_handler(effect, k, _effect_type=effect_type, _handler=effect_handler):
-            if isinstance(effect, _effect_type):
-                return (yield Resume(k, _handler(effect)))
-            yield Delegate()
-
-        wrapped = WithHandler(handler=typed_handler, expr=wrapped)
-    return wrapped
+from doeff import do
 
 
-def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
-    wrapped = _wrap_with_effect_handlers(program, handlers)
-    return run(wrapped, handlers=default_handlers())
-
-
-class MockConductorRuntime:
-    """In-memory + tempdir-backed conductor mock runtime for workflow tests."""
-
-    def __init__(self, root: Path):
-        self.worktree_base = root / "worktrees"
-        self.worktree_base.mkdir()
-        self.issues_dir = root / "issues"
-        self.issues_dir.mkdir()
-
-        self._issues: dict[str, Issue] = {}
-        self._worktrees: dict[str, WorktreeEnv] = {}
-        self._issue_counter = 0
-        self._worktree_counter = 0
-        self._merge_counter = 0
-        self.pushed_branches: list[str] = []
-
-    def _write_issue_file(self, issue: Issue) -> None:
-        issue_path = self.issues_dir / f"{issue.id}.md"
-        issue_path.write_text(
-            "\n".join(
-                [
-                    f"# {issue.title}",
-                    "",
-                    "## Status",
-                    issue.status.value,
-                    "",
-                    "## Labels",
-                    ", ".join(issue.labels),
-                    "",
-                    "## Body",
-                    issue.body,
-                ]
-            )
-        )
-
-    def _new_worktree(self, branch: str, issue_id: str | None = None) -> WorktreeEnv:
-        self._worktree_counter += 1
-        env_id = f"env-{self._worktree_counter:03d}"
-        worktree_path = self.worktree_base / f"{env_id}-{branch}"
-        worktree_path.mkdir(parents=True)
-        (worktree_path / ".git").mkdir()
-
-        env = WorktreeEnv(
-            id=env_id,
-            path=worktree_path,
-            branch=branch,
-            base_commit="a" * 40,
-            issue_id=issue_id,
-            created_at=datetime.now(timezone.utc),
-        )
-        self._worktrees[env_id] = env
-        return env
-
-    def handle_create_issue(self, effect: CreateIssue) -> Issue:
-        self._issue_counter += 1
-        issue_id = f"ISSUE-{self._issue_counter:03d}"
-        issue = Issue(
-            id=issue_id,
-            title=effect.title,
-            body=effect.body,
-            status=IssueStatus.OPEN,
-            labels=effect.labels,
-            metadata=effect.metadata or {},
-            created_at=datetime.now(timezone.utc),
-        )
-        self._issues[issue_id] = issue
-        self._write_issue_file(issue)
-        return issue
-
-    def handle_get_issue(self, effect: GetIssue) -> Issue:
-        return self._issues[effect.id]
-
-    def handle_resolve_issue(self, effect: ResolveIssue) -> Issue:
-        now = datetime.now(timezone.utc)
-        source = self._issues.get(effect.issue.id, effect.issue)
-        metadata = dict(source.metadata)
-        if effect.result is not None:
-            metadata["result"] = effect.result
-
-        resolved = replace(
-            source,
-            status=IssueStatus.RESOLVED,
-            pr_url=effect.pr_url,
-            resolved_at=now,
-            updated_at=now,
-            metadata=metadata,
-        )
-        self._issues[resolved.id] = resolved
-        self._write_issue_file(resolved)
-        return resolved
-
-    def handle_create_worktree(self, effect: CreateWorktree) -> WorktreeEnv:
-        suffix = effect.name or effect.suffix or f"wt-{self._worktree_counter + 1}"
-        branch = effect.name or f"conductor-{suffix}"
-        issue_id = effect.issue.id if effect.issue else None
-        return self._new_worktree(branch=branch, issue_id=issue_id)
-
-    def handle_delete_worktree(self, effect: DeleteWorktree) -> bool:
-        shutil.rmtree(effect.env.path, ignore_errors=True)
-        self._worktrees.pop(effect.env.id, None)
-        return True
-
-    def handle_commit(self, effect: Commit) -> str:
-        payload = f"{effect.env.id}:{effect.env.branch}:{effect.message}"
-        return hashlib.sha1(payload.encode("utf-8")).hexdigest()
-
-    def handle_push(self, effect: Push) -> bool:
-        self.pushed_branches.append(effect.env.branch)
-        return True
-
-    def handle_merge_branches(self, effect: MergeBranches) -> WorktreeEnv:
-        self._merge_counter += 1
-        merged_branch = effect.name or f"conductor-merged-{self._merge_counter}"
-        merged_env = self._new_worktree(branch=merged_branch)
-
-        for env in effect.envs:
-            for source in env.path.iterdir():
-                if source.name == ".git":
-                    continue
-
-                target = merged_env.path / source.name
-                if source.is_dir():
-                    shutil.copytree(source, target, dirs_exist_ok=True)
-                else:
-                    target.write_bytes(source.read_bytes())
-
-        return merged_env
+def _run_with_mock_handlers(program: Any, runtime: MockConductorRuntime):
+    return run_sync(program, scheduled_handlers=mock_handlers(runtime=runtime))
 
 
 class TestWorkflowE2E:
-    """Workflow tests that previously required git/OpenCode now use WithHandler mocks."""
+    """Workflow tests that previously required git/OpenCode now use shared mock handlers."""
 
     def test_issue_lifecycle_workflow(self, tmp_path: Path):
         runtime = MockConductorRuntime(tmp_path)
@@ -199,14 +52,7 @@ class TestWorkflowE2E:
 
             return resolved
 
-        result = _run_with_effect_handlers(
-            issue_lifecycle(),
-            {
-                CreateIssue: runtime.handle_create_issue,
-                GetIssue: runtime.handle_get_issue,
-                ResolveIssue: runtime.handle_resolve_issue,
-            },
-        )
+        result = _run_with_mock_handlers(issue_lifecycle(), runtime)
 
         assert result.is_ok
         resolved_issue = result.value
@@ -228,13 +74,7 @@ class TestWorkflowE2E:
 
             return env.id
 
-        result = _run_with_effect_handlers(
-            worktree_workflow(),
-            {
-                CreateWorktree: runtime.handle_create_worktree,
-                DeleteWorktree: runtime.handle_delete_worktree,
-            },
-        )
+        result = _run_with_mock_handlers(worktree_workflow(), runtime)
 
         assert result.is_ok
         assert result.value.startswith("env-")
@@ -253,14 +93,7 @@ class TestWorkflowE2E:
             yield DeleteWorktree(env=env, force=True)
             return sha
 
-        result = _run_with_effect_handlers(
-            commit_workflow(),
-            {
-                CreateWorktree: runtime.handle_create_worktree,
-                DeleteWorktree: runtime.handle_delete_worktree,
-                Commit: runtime.handle_commit,
-            },
-        )
+        result = _run_with_mock_handlers(commit_workflow(), runtime)
 
         assert result.is_ok
         assert len(result.value) == 40
@@ -295,17 +128,7 @@ class TestWorkflowE2E:
                 "resolved": resolved.status == IssueStatus.RESOLVED,
             }
 
-        result = _run_with_effect_handlers(
-            full_workflow(),
-            {
-                CreateIssue: runtime.handle_create_issue,
-                GetIssue: runtime.handle_get_issue,
-                ResolveIssue: runtime.handle_resolve_issue,
-                CreateWorktree: runtime.handle_create_worktree,
-                DeleteWorktree: runtime.handle_delete_worktree,
-                Commit: runtime.handle_commit,
-            },
-        )
+        result = _run_with_mock_handlers(full_workflow(), runtime)
 
         assert result.is_ok
         workflow_result = result.value
@@ -337,15 +160,7 @@ class TestWorkflowE2E:
 
             return merged.branch
 
-        result = _run_with_effect_handlers(
-            merge_workflow(),
-            {
-                CreateWorktree: runtime.handle_create_worktree,
-                MergeBranches: runtime.handle_merge_branches,
-                DeleteWorktree: runtime.handle_delete_worktree,
-                Commit: runtime.handle_commit,
-            },
-        )
+        result = _run_with_mock_handlers(merge_workflow(), runtime)
 
         assert result.is_ok
         assert result.value.startswith("conductor-merged-")
@@ -362,15 +177,7 @@ class TestWorkflowE2E:
             yield DeleteWorktree(env=env, force=True)
             return env.branch
 
-        result = _run_with_effect_handlers(
-            push_workflow(),
-            {
-                CreateWorktree: runtime.handle_create_worktree,
-                DeleteWorktree: runtime.handle_delete_worktree,
-                Commit: runtime.handle_commit,
-                Push: runtime.handle_push,
-            },
-        )
+        result = _run_with_mock_handlers(push_workflow(), runtime)
 
         assert result.is_ok
         assert result.value in runtime.pushed_branches
