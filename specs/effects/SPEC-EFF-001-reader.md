@@ -53,5 +53,5 @@ val2 = yield Ask("service")  # Returns cached 42 (no re-evaluation)
 
 ## References
 
-- Handlers: `doeff/cesk/handlers/core.py`
-- Frames: `doeff/cesk/frames.py`
+- Handlers: `doeff/handlers.py`
+- Frames: `packages/doeff-vm/src/frame.rs`

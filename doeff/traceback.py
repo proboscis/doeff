@@ -1,7 +1,7 @@
 """
 Abstract traceback protocol for interpreter-agnostic error handling.
 
-This module defines the EffectTraceback protocol that both CESK and ProgramInterpreter
+This module defines the EffectTraceback protocol that both the Rust VM and ProgramInterpreter
 implementations use to provide rich error context. Users can work with tracebacks
 without knowing which interpreter executed their program.
 
@@ -43,7 +43,7 @@ class EffectTraceback(Protocol):
 
     This protocol provides a consistent interface for traceback information
     regardless of which interpreter executed the program:
-    - CESK: CapturedTraceback (rich - effect chain + Python chain)
+    - Rust VM interpreter: CapturedTraceback (rich - effect chain + Python chain)
     - ProgramInterpreter: PythonTraceback (basic - wraps exception.__traceback__)
     """
 

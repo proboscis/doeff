@@ -468,14 +468,14 @@ This allows implementing custom control flow (transactions, timeouts, retries, r
 | `doeff/effects/pure.py` | PureEffect definition |
 | `doeff/effects/result.py` | ResultSafeEffect definition |
 | `doeff/effects/intercept.py` | InterceptEffect definition |
-| `doeff/cesk/frames.py` | SafeFrame, InterceptFrame, LocalFrame |
-| `doeff/cesk/handlers/control.py` | handle_safe, handle_intercept, handle_local |
-| `doeff/cesk/helpers.py` | apply_intercept_chain |
-| `doeff/cesk/step.py` | Effect processing and frame handling |
+| `packages/doeff-vm/src/frame.rs` | Safe/Intercept/Local frame semantics |
+| `packages/doeff-vm/src/handler.rs` | Built-in control handler dispatch |
+| `packages/doeff-vm/src/dispatch.rs` | Dispatch chaining and delegation |
+| `packages/doeff-vm/src/step.rs` | Effect processing and frame handling |
 
 ### Handler Registration
 
-All control handlers are registered in `doeff/cesk/handlers/__init__.py`:
+Control handlers are surfaced via `doeff/handlers.py` and implemented in the Rust VM:
 
 ```python
 return {

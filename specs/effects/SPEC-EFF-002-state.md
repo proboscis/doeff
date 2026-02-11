@@ -227,6 +227,6 @@ All composition rules are verified by tests in `tests/effects/test_state_semanti
 ## References
 
 - Implementation: `doeff/effects/state.py`
-- Handlers: `doeff/cesk/handlers/core.py`
+- Handlers: `doeff/handlers.py`
 - Related issue: gh#157 (async store snapshot)
 - Related issue: gh#175 (this spec)

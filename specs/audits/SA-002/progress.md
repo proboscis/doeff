@@ -80,7 +80,7 @@ Phase 4 completion gate status:
 - SA-001 regression: `uv run pytest tests/core/test_sa001_spec_gaps.py`
   - Result: `30 passed`
 - Full repository pytest: `uv run pytest`
-  - Result: interrupted at collection with `13` pre-existing legacy CESK import errors (removed runtime import path)
+  - Result: interrupted at collection with `13` pre-existing legacy runtime import errors (removed runtime import path; note: legacy interpreter has since been removed)
 - Repository semgrep: `semgrep --config .semgrep.yaml doeff/ packages/ --error`
   - Result: `61` findings, pre-existing and outside SA-002 scope
 
