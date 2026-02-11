@@ -1,5 +1,6 @@
 """Tests for doeff-conductor effects."""
 
+import pytest
 from doeff_conductor.effects import (
     CaptureOutput,
     Commit,
@@ -391,6 +392,41 @@ class TestGitEffects:
         effect = MergePR(pr=pr, strategy=MergeStrategy.SQUASH, delete_branch=True)
         assert effect.strategy == MergeStrategy.SQUASH
         assert effect.delete_branch is True
+
+    def test_legacy_git_effects_are_deprecated(self):
+        from pathlib import Path
+
+        from doeff_conductor.types import WorktreeEnv
+
+        env = WorktreeEnv(
+            id="test",
+            path=Path("/tmp"),
+            branch="test",
+            base_commit="abc",
+        )
+
+        with pytest.warns(
+            DeprecationWarning,
+            match="doeff_conductor\\.effects\\.git\\.Commit",
+        ):
+            _ = Commit(env=env, message="feat: deprecated")
+
+    def test_generic_git_aliases_are_exported(self):
+        from doeff_conductor.effects.git import (
+            GitCommitEffect,
+            GitCreatePREffect,
+            GitDiffEffect,
+            GitMergePREffect,
+            GitPullEffect,
+            GitPushEffect,
+        )
+
+        assert GitCommitEffect.__name__ == "GitCommit"
+        assert GitPushEffect.__name__ == "GitPush"
+        assert GitPullEffect.__name__ == "GitPull"
+        assert GitDiffEffect.__name__ == "GitDiff"
+        assert GitCreatePREffect.__name__ == "CreatePR"
+        assert GitMergePREffect.__name__ == "MergePR"
 
 
 class TestModuleExports:
