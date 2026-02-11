@@ -515,6 +515,26 @@ class _CompatDataclassField:
         self.name = name
 
 
+def _format_kpc_args_repr(kleisli: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
+    target = getattr(kleisli, "original_func", None) or getattr(kleisli, "func", None) or kleisli
+    try:
+        signature = inspect.signature(target)
+    except (TypeError, ValueError):
+        signature = None
+
+    if signature is not None:
+        try:
+            bound = signature.bind_partial(*args, **kwargs)
+            parts = [f"{name}={value!r}" for name, value in bound.arguments.items()]
+            return ", ".join(parts) if parts else None
+        except TypeError:
+            pass
+
+    parts: list[str] = [repr(value) for value in args]
+    parts.extend(f"{key}={value!r}" for key, value in kwargs.items())
+    return ", ".join(parts) if parts else None
+
+
 def _kpc_create_from_kleisli(
     cls: type[Any],
     kleisli: Any,
@@ -530,6 +550,7 @@ def _kpc_create_from_kleisli(
         function_name=function_name,
         execution_kernel=getattr(kleisli, "func", None),
         created_at=created_at,
+        args_repr=_format_kpc_args_repr(kleisli, args, kwargs),
     )
 
 
@@ -552,6 +573,7 @@ if not hasattr(KleisliProgramCall, "__dataclass_fields__"):
             "args": _CompatDataclassField("args"),
             "kwargs": _CompatDataclassField("kwargs"),
             "function_name": _CompatDataclassField("function_name"),
+            "args_repr": _CompatDataclassField("args_repr"),
             "execution_kernel": _CompatDataclassField("execution_kernel"),
             "created_at": _CompatDataclassField("created_at"),
         },

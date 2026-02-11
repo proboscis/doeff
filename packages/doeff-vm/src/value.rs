@@ -5,6 +5,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString};
 
+use crate::capture::{DispatchAction, HandlerKind, TraceEntry};
 use crate::frame::CallMetadata;
 use crate::handler::Handler;
 use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
@@ -27,10 +28,162 @@ pub enum Value {
     Promise(PromiseHandle),
     ExternalPromise(ExternalPromise),
     CallStack(Vec<CallMetadata>),
+    Trace(Vec<TraceEntry>),
     List(Vec<Value>),
 }
 
 impl Value {
+    fn handler_kind_to_str(kind: &HandlerKind) -> &'static str {
+        match kind {
+            HandlerKind::Python => "python",
+            HandlerKind::RustBuiltin => "rust_builtin",
+        }
+    }
+
+    fn dispatch_action_to_str(action: &DispatchAction) -> &'static str {
+        match action {
+            DispatchAction::Active => "active",
+            DispatchAction::Resumed => "resumed",
+            DispatchAction::Transferred => "transferred",
+            DispatchAction::Returned => "returned",
+            DispatchAction::Threw => "threw",
+        }
+    }
+
+    fn trace_entry_to_pyobject<'py>(
+        py: Python<'py>,
+        entry: &TraceEntry,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let trace_mod = py.import("doeff.trace").ok();
+        match entry {
+            TraceEntry::Frame {
+                frame_id,
+                function_name,
+                source_file,
+                source_line,
+                args_repr,
+            } => {
+                if let Some(mod_) = &trace_mod {
+                    let cls = mod_.getattr("TraceFrame")?;
+                    let obj = cls.call1((
+                        *frame_id,
+                        function_name.as_str(),
+                        source_file.as_str(),
+                        *source_line,
+                        args_repr.clone(),
+                    ))?;
+                    Ok(obj.into_any())
+                } else {
+                    let dict = PyDict::new(py);
+                    dict.set_item("kind", "frame")?;
+                    dict.set_item("frame_id", *frame_id)?;
+                    dict.set_item("function_name", function_name)?;
+                    dict.set_item("source_file", source_file)?;
+                    dict.set_item("source_line", *source_line)?;
+                    dict.set_item("args_repr", args_repr.clone())?;
+                    Ok(dict.into_any())
+                }
+            }
+            TraceEntry::Dispatch {
+                dispatch_id,
+                effect_repr,
+                handler_name,
+                handler_kind,
+                handler_source_file,
+                handler_source_line,
+                delegation_chain,
+                action,
+                value_repr,
+                exception_repr,
+            } => {
+                if let Some(mod_) = &trace_mod {
+                    let delegation_cls = mod_.getattr("TraceDelegationEntry")?;
+                    let chain_items = PyList::empty(py);
+                    for item in delegation_chain {
+                        let obj = delegation_cls.call1((
+                            item.handler_name.as_str(),
+                            Self::handler_kind_to_str(&item.handler_kind),
+                            item.handler_source_file.clone(),
+                            item.handler_source_line,
+                        ))?;
+                        chain_items.append(obj)?;
+                    }
+                    let cls = mod_.getattr("TraceDispatch")?;
+                    let obj = cls.call1((
+                        dispatch_id.raw(),
+                        effect_repr.as_str(),
+                        handler_name.as_str(),
+                        Self::handler_kind_to_str(handler_kind),
+                        handler_source_file.clone(),
+                        *handler_source_line,
+                        chain_items.to_tuple(),
+                        Self::dispatch_action_to_str(action),
+                        value_repr.clone(),
+                        exception_repr.clone(),
+                    ))?;
+                    Ok(obj.into_any())
+                } else {
+                    let dict = PyDict::new(py);
+                    dict.set_item("kind", "dispatch")?;
+                    dict.set_item("dispatch_id", dispatch_id.raw())?;
+                    dict.set_item("effect_repr", effect_repr)?;
+                    dict.set_item("handler_name", handler_name)?;
+                    dict.set_item("handler_kind", Self::handler_kind_to_str(handler_kind))?;
+                    dict.set_item("handler_source_file", handler_source_file.clone())?;
+                    dict.set_item("handler_source_line", *handler_source_line)?;
+                    let chain = PyList::empty(py);
+                    for item in delegation_chain {
+                        let row = PyDict::new(py);
+                        row.set_item("handler_name", item.handler_name.as_str())?;
+                        row.set_item(
+                            "handler_kind",
+                            Self::handler_kind_to_str(&item.handler_kind),
+                        )?;
+                        row.set_item("source_file", item.handler_source_file.clone())?;
+                        row.set_item("source_line", item.handler_source_line)?;
+                        chain.append(row)?;
+                    }
+                    dict.set_item("delegation_chain", chain)?;
+                    dict.set_item("action", Self::dispatch_action_to_str(action))?;
+                    dict.set_item("value_repr", value_repr.clone())?;
+                    dict.set_item("exception_repr", exception_repr.clone())?;
+                    Ok(dict.into_any())
+                }
+            }
+            TraceEntry::ResumePoint {
+                dispatch_id,
+                handler_name,
+                resumed_function_name,
+                source_file,
+                source_line,
+                value_repr,
+            } => {
+                if let Some(mod_) = &trace_mod {
+                    let cls = mod_.getattr("TraceResumePoint")?;
+                    let obj = cls.call1((
+                        dispatch_id.raw(),
+                        handler_name.as_str(),
+                        resumed_function_name.as_str(),
+                        source_file.as_str(),
+                        *source_line,
+                        value_repr.clone(),
+                    ))?;
+                    Ok(obj.into_any())
+                } else {
+                    let dict = PyDict::new(py);
+                    dict.set_item("kind", "resume_point")?;
+                    dict.set_item("dispatch_id", dispatch_id.raw())?;
+                    dict.set_item("handler_name", handler_name)?;
+                    dict.set_item("resumed_function_name", resumed_function_name)?;
+                    dict.set_item("source_file", source_file)?;
+                    dict.set_item("source_line", *source_line)?;
+                    dict.set_item("value_repr", value_repr.clone())?;
+                    Ok(dict.into_any())
+                }
+            }
+        }
+    }
+
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         match self {
             Value::Python(obj) => Ok(obj.bind(py).clone()),
@@ -86,15 +239,24 @@ impl Value {
                 let list = PyList::empty(py);
                 for m in stack {
                     let dict = PyDict::new(py);
+                    dict.set_item("frame_id", m.frame_id)?;
                     dict.set_item("function_name", &m.function_name)?;
                     dict.set_item("source_file", &m.source_file)?;
                     dict.set_item("source_line", m.source_line)?;
+                    dict.set_item("args_repr", m.args_repr.clone())?;
                     if let Some(ref pc) = m.program_call {
                         dict.set_item("program_call", pc.bind(py))?;
                     } else {
                         dict.set_item("program_call", py.None())?;
                     }
                     list.append(dict)?;
+                }
+                Ok(list.into_any())
+            }
+            Value::Trace(trace_entries) => {
+                let list = PyList::empty(py);
+                for entry in trace_entries {
+                    list.append(Self::trace_entry_to_pyobject(py, entry)?)?;
                 }
                 Ok(list.into_any())
             }
@@ -186,6 +348,7 @@ impl Value {
             Value::Promise(h) => Value::Promise(*h),
             Value::ExternalPromise(h) => Value::ExternalPromise(h.clone()),
             Value::CallStack(stack) => Value::CallStack(stack.clone()),
+            Value::Trace(entries) => Value::Trace(entries.clone()),
             Value::List(items) => Value::List(items.iter().map(|v| v.clone_ref(py)).collect()),
         }
     }
@@ -275,6 +438,7 @@ mod tests {
         });
         let ext = Value::ExternalPromise(ExternalPromise {
             id: PromiseId::from_raw(3),
+            completion_queue: None,
         });
 
         // Verify they are distinct Value variants

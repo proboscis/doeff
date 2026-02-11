@@ -5,6 +5,7 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
+use crate::frame::CallMetadata;
 use crate::frame::Frame;
 use crate::handler::Handler;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
@@ -46,6 +47,9 @@ pub struct Continuation {
     /// Optional Python identities corresponding to handlers by index.
     /// Used to preserve Rust sentinel identity across continuation round-trips.
     pub handler_identities: Vec<Option<PyShared>>,
+
+    /// Optional call metadata to attach when starting unstarted continuations.
+    pub metadata: Option<CallMetadata>,
 }
 
 impl Continuation {
@@ -65,6 +69,7 @@ impl Continuation {
             program: None,
             handlers: Vec::new(),
             handler_identities: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -85,10 +90,19 @@ impl Continuation {
             program: None,
             handlers: Vec::new(),
             handler_identities: Vec::new(),
+            metadata: None,
         }
     }
 
     pub fn create_unstarted(expr: PyShared, handlers: Vec<Handler>) -> Self {
+        Self::create_unstarted_with_metadata(expr, handlers, None)
+    }
+
+    pub fn create_unstarted_with_metadata(
+        expr: PyShared,
+        handlers: Vec<Handler>,
+        metadata: Option<CallMetadata>,
+    ) -> Self {
         let handler_identities = vec![None; handlers.len()];
         Continuation {
             cont_id: ContId::fresh(),
@@ -101,6 +115,7 @@ impl Continuation {
             program: Some(expr),
             handlers,
             handler_identities,
+            metadata,
         }
     }
 
@@ -108,6 +123,15 @@ impl Continuation {
         expr: PyShared,
         handlers: Vec<Handler>,
         handler_identities: Vec<Option<PyShared>>,
+    ) -> Self {
+        Self::create_unstarted_with_identities_and_metadata(expr, handlers, handler_identities, None)
+    }
+
+    pub fn create_unstarted_with_identities_and_metadata(
+        expr: PyShared,
+        handlers: Vec<Handler>,
+        handler_identities: Vec<Option<PyShared>>,
+        metadata: Option<CallMetadata>,
     ) -> Self {
         Continuation {
             cont_id: ContId::fresh(),
@@ -120,6 +144,7 @@ impl Continuation {
             program: Some(expr),
             handlers,
             handler_identities,
+            metadata,
         }
     }
 

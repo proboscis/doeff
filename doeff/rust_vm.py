@@ -28,7 +28,9 @@ def _coerce_program(program: Any) -> Any:
     raise TypeError(f"run() requires DoExpr[T] or EffectValue[T], got {type(program).__name__}")
 
 
-def _raise_unhandled_effect_if_present(run_result: Any) -> Any:
+def _raise_unhandled_effect_if_present(run_result: Any, *, raise_unhandled: bool) -> Any:
+    if not raise_unhandled:
+        return run_result
     is_err = getattr(run_result, "is_err", None)
     if callable(is_err) and is_err():
         error = getattr(run_result, "error", None)
@@ -37,6 +39,22 @@ def _raise_unhandled_effect_if_present(run_result: Any) -> Any:
             if "unhandledeffect" in text or "unhandled effect" in text:
                 raise error
     return run_result
+
+
+def _attach_doeff_traceback_if_present(run_result: Any) -> None:
+    is_err = getattr(run_result, "is_err", None)
+    if not callable(is_err) or not is_err():
+        return
+    error = getattr(run_result, "error", None)
+    if not isinstance(error, BaseException):
+        return
+    try:
+        from doeff.traceback import attach_doeff_traceback
+
+        attach_doeff_traceback(error)
+    except Exception:
+        # Best-effort: traceback projection should not block normal execution paths.
+        return
 
 
 def _run_call_kwargs(
@@ -184,6 +202,7 @@ def run(
     run_fn = getattr(vm, "run", None)
     if run_fn is None:
         raise RuntimeError("Installed doeff_vm module does not expose run()")
+    raise_unhandled = isinstance(program, vm.EffectBase)
     program = _coerce_program(program)
     kwargs = _run_call_kwargs(
         run_fn,
@@ -193,7 +212,8 @@ def run(
         trace=trace,
     )
     result = _call_run_fn(run_fn, program, kwargs)
-    return _raise_unhandled_effect_if_present(result)
+    _attach_doeff_traceback_if_present(result)
+    return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
 async def async_run(
@@ -207,6 +227,7 @@ async def async_run(
     run_fn = getattr(vm, "async_run", None)
     if run_fn is None:
         raise RuntimeError("Installed doeff_vm module does not expose async_run()")
+    raise_unhandled = isinstance(program, vm.EffectBase)
     program = _coerce_program(program)
     kwargs = _run_call_kwargs(
         run_fn,
@@ -216,7 +237,8 @@ async def async_run(
         trace=trace,
     )
     result = await _call_async_run_fn(run_fn, program, kwargs)
-    return _raise_unhandled_effect_if_present(result)
+    _attach_doeff_traceback_if_present(result)
+    return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
 def __getattr__(name: str) -> Any:
@@ -231,6 +253,7 @@ def __getattr__(name: str) -> Any:
         "Delegate",
         "Transfer",
         "ResumeContinuation",
+        "GetTrace",
         "PythonAsyncSyntaxEscape",
         "K",
         "state",
@@ -263,6 +286,7 @@ __all__ = [
     "Delegate",
     "Transfer",
     "ResumeContinuation",
+    "GetTrace",
     "PythonAsyncSyntaxEscape",
     "K",
     "state",

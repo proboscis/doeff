@@ -10,6 +10,7 @@
 //! - **All effects dispatch**: No bypass for stdlib effects
 
 pub mod arena;
+pub mod capture;
 pub mod continuation;
 mod effect;
 pub mod dispatch;
@@ -32,6 +33,10 @@ pub mod yielded;
 
 // Re-exports for convenience
 pub use arena::SegmentArena;
+pub use capture::{
+    CaptureEvent, DelegationEntry, DispatchAction, FrameId, HandlerAction, HandlerKind,
+    TraceEntry,
+};
 pub use continuation::Continuation;
 pub use dispatch::DispatchContext;
 pub use do_ctrl::DoCtrl;
