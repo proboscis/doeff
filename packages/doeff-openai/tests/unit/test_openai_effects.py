@@ -22,19 +22,19 @@ from doeff_openai import (
 
 from doeff import (
     Ask,
-    AskEffect,
-    Delegate,
     EffectGenerator,
-    Gather,
     Get,
     Put,
-    Resume,
     Tell,
-    WithHandler,
     async_run,
     default_handlers,
     do,
 )
+
+
+async def run_program(program: Any, env: dict[str, Any] | None = None) -> Any:
+    """Execute a test program with standard handlers."""
+    return await async_run(program, handlers=default_handlers(), env=env)
 
 
 @pytest.fixture
@@ -87,15 +87,6 @@ def mock_embedding_response():
     )
 
 
-def _ask_override_handler(overrides: dict[str, Any]):
-    def handler(effect, k):
-        if isinstance(effect, AskEffect) and effect.key in overrides:
-            return (yield Resume(k, overrides[effect.key]))
-        yield Delegate()
-
-    return handler
-
-
 @pytest.mark.asyncio
 async def test_chat_completion_with_tracking(mock_openai_client, mock_chat_response):
     """Test chat completion with full Graph and Log tracking."""
@@ -128,11 +119,8 @@ async def test_chat_completion_with_tracking(mock_openai_client, mock_chat_respo
     # Set up mock to return our response
     mock_openai_client.async_client.chat.completions.create.return_value = mock_chat_response
 
-    handler = _ask_override_handler({"openai_client": mock_openai_client})
-    result = await async_run(
-        WithHandler(handler, test_workflow()),
-        handlers=default_handlers(),
-    )
+    # Run with mock client in environment
+    result = await run_program(test_workflow(), env={"openai_client": mock_openai_client})
 
     # Verify success
     assert result.is_ok()
@@ -184,11 +172,8 @@ async def test_embedding_with_tracking(mock_openai_client, mock_embedding_respon
     # Set up mock
     mock_openai_client.async_client.embeddings.create.return_value = mock_embedding_response
 
-    handler = _ask_override_handler({"openai_client": mock_openai_client})
-    result = await async_run(
-        WithHandler(handler, test_workflow()),
-        handlers=default_handlers(),
-    )
+    # Run
+    result = await run_program(test_workflow(), env={"openai_client": mock_openai_client})
 
     # Verify
     assert result.is_ok()
@@ -255,7 +240,8 @@ async def test_cost_tracking():
             "expected_total": cost1.total_cost + cost2.total_cost,
         }
 
-    result = await async_run(test_workflow(), handlers=default_handlers())
+    # Run
+    result = await run_program(test_workflow())
 
     # Verify
     assert result.is_ok()
@@ -271,9 +257,6 @@ async def test_parallel_operations_with_gather():
 
     @do
     def test_workflow() -> EffectGenerator[Any]:
-        # Mock client setup
-        client = Mock(spec=OpenAIClient)
-
         # Create mock responses
         responses = []
         for i in range(3):
@@ -294,7 +277,8 @@ async def test_parallel_operations_with_gather():
 
         return results
 
-    result = await async_run(test_workflow(), handlers=default_handlers())
+    # Run
+    result = await run_program(test_workflow())
 
     # Verify
     assert result.is_ok()
@@ -408,7 +392,8 @@ async def test_semantic_search_workflow():
 
         return top_results
 
-    result = await async_run(test_workflow(), handlers=default_handlers())
+    # Run
+    result = await run_program(test_workflow())
 
     # Verify
     assert result.is_ok()
@@ -474,7 +459,7 @@ async def test_track_api_call_accumulates_under_gather():
             "model_cost": model_cost,
         }
 
-    result = await async_run(run_parallel(), handlers=default_handlers())
+    result = await run_program(run_parallel())
 
     assert result.is_ok()
     api_calls = result.value["api_calls"]
