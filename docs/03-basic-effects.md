@@ -1,6 +1,6 @@
 # Basic Effects
 
-This chapter covers the fundamental effects that form the building blocks of most programs: Reader, State, and Writer.
+This chapter covers the fundamental **batteries-included algebraic effects** that form the building blocks of most programs: Reader, State, and Writer. Each effect type has a corresponding built-in handler that interprets the effect operations.
 
 ## Table of Contents
 

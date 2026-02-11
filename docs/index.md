@@ -1,6 +1,6 @@
 # doeff Documentation
 
-Welcome to the comprehensive documentation for doeff - a pragmatic free monad implementation for Python.
+Welcome to the comprehensive documentation for doeff - an algebraic effects system with one-shot continuations for Python, backed by a Rust VM.
 
 ## Quick Links
 
@@ -60,10 +60,15 @@ Welcome to the comprehensive documentation for doeff - a pragmatic free monad im
 
 ## What is doeff?
 
-doeff is a pragmatic effects system for Python that provides:
+doeff is an **algebraic effects** system for Python. Effects are first-class operations that can be intercepted and handled by composable handlers. The runtime uses **one-shot continuations** — each effect invocation suspends, gets handled, and resumes exactly once — backed by a high-performance **Rust VM**.
 
-- **Generator-based do-notation**: Write monadic code that looks like regular Python
-- **Comprehensive effects**: Reader, State, Writer, Future, Result, IO, Cache, Graph tracking
+Key characteristics:
+
+- **Algebraic effects with handlers**: Define effects as data, handle them with composable, swappable handlers
+- **One-shot continuations**: Each continuation resumes exactly once (unlike multi-shot systems like Koka or Eff)
+- **Rust VM runtime**: High-performance effect handling and continuation management
+- **Batteries-included handlers**: Reader, State, Writer, Future, Result, IO, Cache, Graph tracking — ready to use
+- **Generator-based do-notation**: Write effectful code that looks like regular Python
 - **Stack-safe execution**: Trampolining prevents stack overflow
 - **Type safety**: Full type annotations with `.pyi` files
 - **Pinjected integration**: Bridge to dependency injection framework
@@ -99,7 +104,7 @@ main()
 ### For Beginners
 
 1. Start with **[Getting Started](01-getting-started.md)** for installation and basics
-2. Read **[Core Concepts](02-core-concepts.md)** to understand Program and Effect
+2. Read **[Core Concepts](02-core-concepts.md)** to understand algebraic effects, handlers, and the execution model
 3. Learn **[Basic Effects](03-basic-effects.md)** for Reader, State, Writer
 4. Explore **[Error Handling](05-error-handling.md)** for robust programs
 

@@ -1,9 +1,9 @@
 """
-doeff - Do-notation and Effects system for Python.
+doeff - Algebraic Effects for Python.
 
-A practical free monad implementation that prioritizes usability and Python idioms
-over theoretical purity. Uses generators for do-notation and supports comprehensive
-effects including Reader, State, Writer, Future, Result, and IO.
+An algebraic effects system with one-shot continuations, backed by a Rust VM.
+Uses generators for do-notation and ships with batteries-included effect handlers:
+Reader, State, Writer, Future, Result, IO, Cache, and more.
 
 Example:
     >>> from doeff import do, Program, Put, Get, Tell

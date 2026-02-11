@@ -1,6 +1,6 @@
 # Error Handling
 
-This chapter covers doeff's error handling approach using the Result monad, the Safe effect, RuntimeResult protocol, and native Python patterns.
+This chapter covers doeff's error handling approach using the Result type, the Safe effect (an algebraic effect handled by the Result handler), RuntimeResult protocol, and native Python patterns.
 
 ## Table of Contents
 
