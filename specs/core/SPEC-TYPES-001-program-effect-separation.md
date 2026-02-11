@@ -731,12 +731,12 @@ When `Yielded::Program` is processed, the program object is consumed by
 metadata (function_name, source_file, source_line, kleisli_source, created_at)
 is discarded — making call stack reconstruction impossible.
 
-### 5.2 Current mechanism (Python CESK — what we must preserve)
+### 5.2 [Historical][Deprecated] Legacy Python interpreter mechanism
 
-The Python CESK stores rich metadata on `ReturnFrame.program_call`:
+The legacy Python interpreter stored rich metadata on `ReturnFrame.program_call`:
 
 ```python
-# cesk/frames.py
+# legacy_runtime/frames.py (historical reference)
 @dataclass
 class ReturnFrame:
     generator: Generator
@@ -1085,7 +1085,7 @@ CODE-ATTENTION:
 8. Verify all tests pass
 
 ### Phase D: Cleanup — all items MUST be removed, no "after migration" hedge
-1. ~~Remove Python CESK v1 and v3~~ **DONE** — `doeff/cesk/` directory deleted.
+1. ~~Remove legacy Python interpreter v1 and v3~~ **DONE** — legacy interpreter directory deleted.
 2. **REMOVE `Effect` enum and string-based `classify_yielded`** [Rev 8]:
    - `effect.rs`: Delete `Effect` enum. Replace with `#[pyclass(frozen)]` structs
      for all Rust-handled effects (Get, Put, Ask, Tell, Modify, Spawn, Gather, Race,

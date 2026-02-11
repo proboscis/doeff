@@ -3,6 +3,8 @@
 This module serves two roles:
 - Imported as ``doeff.traceback``: expose doeff traceback projection/rendering APIs.
 - Imported accidentally as top-level ``traceback`` (module shadowing): proxy stdlib traceback.
+
+The module also defines the ``EffectTraceback`` protocol used by different interpreter backends.
 """
 
 from __future__ import annotations

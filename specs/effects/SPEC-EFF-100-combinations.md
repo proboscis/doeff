@@ -321,8 +321,8 @@ handle the error case explicitly.
 
 - gh#174-178: Individual effect RFCs
 - gh#157: Gather store sharing discussion
-- `doeff/cesk/frames.py`: Frame implementations
-- `doeff/cesk/handlers/control.py`: Control flow handlers
-- `doeff/cesk/handlers/task.py`: Gather handler
-- `doeff/cesk/runtime/async_.py`: AsyncRuntime implementation
-- `doeff/cesk/runtime/sync.py`: SyncRuntime implementation
+- `packages/doeff-vm/src/frame.rs`: Frame implementations
+- `packages/doeff-vm/src/handler.rs`: Control flow handlers
+- `packages/doeff-vm/src/scheduler.rs`: Gather/scheduler handling
+- `doeff/rust_vm.py`: `async_run` entrypoint
+- `doeff/rust_vm.py`: `run` entrypoint

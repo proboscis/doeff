@@ -3046,7 +3046,7 @@ impl PyVM {
 
 ## Asyncio Integration (Reference)
 
-This section mirrors SPEC-CESK-006's asyncio bridge, adapted to the Rust VM.
+This section mirrors legacy SPEC-006's asyncio bridge [Deprecated], adapted to the Rust VM.
 The VM core remains synchronous; async integration is implemented by a driver
 wrapper and a handler that yields `PythonAsyncSyntaxEscape`.
 
@@ -4699,7 +4699,7 @@ Rust program handlers mirror this protocol in Rust:
 
 ## Legacy Specs (Deprecated) — Differences
 
-SPEC-CESK-006 and SPEC-CESK-007 are deprecated. This spec (008) is authoritative.
+Legacy specs SPEC-006 and SPEC-007 are deprecated. This spec (008) is authoritative.
 Key differences and decisions in 008:
 
 - Busy boundary is **top-only**: only the topmost non-completed dispatch excludes
