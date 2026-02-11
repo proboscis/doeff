@@ -335,6 +335,46 @@ def test_doeff_run_with_empty_script_string() -> None:
     assert payload["result"] == 5
 
 
+def test_doeff_run_with_script_run_and_default_handlers() -> None:
+    """Test that 'run' and 'default_handlers' are available in script namespace."""
+    script = """
+from doeff import Program
+result = run(Program.pure(42), handlers=default_handlers())
+print(f"run result: {result.value}")
+"""
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.sample_program",
+        "--interpreter",
+        "tests.cli_assets.sync_interpreter",
+        "-",
+        input_text=script,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "run result: 42" in result.stdout
+
+
+def test_doeff_run_with_script_no_legacy_sync_run() -> None:
+    """Test that deprecated 'sync_run' and 'sync_handlers_preset' are NOT in script namespace."""
+    script = """
+has_sync_run = 'sync_run' in dir() or 'sync_run' in globals()
+has_preset = 'sync_handlers_preset' in dir() or 'sync_handlers_preset' in globals()
+print(f"sync_run present: {has_sync_run}")
+print(f"sync_handlers_preset present: {has_preset}")
+"""
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.sample_program",
+        "--interpreter",
+        "tests.cli_assets.sync_interpreter",
+        "-",
+        input_text=script,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "sync_run present: False" in result.stdout
+    assert "sync_handlers_preset present: False" in result.stdout
+
+
 @pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_doeff_run_with_script_auto_discovery() -> None:
     """Test that auto-discovered interpreter and environments are loaded in script execution."""

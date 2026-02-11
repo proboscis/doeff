@@ -558,8 +558,8 @@ def handle_run_with_script(context: RunContext, script: str | None) -> int:
         "interpreter": interpreter_obj,
         "RunResult": RunResult,
         "Program": Program,
-        "sync_run": sync_run,
-        "sync_handlers_preset": sync_handlers_preset,
+        "run": vm_run,
+        "default_handlers": default_handlers,
     }
 
     # Add any additional useful imports
@@ -783,12 +783,12 @@ def build_parser() -> argparse.ArgumentParser:
             "  - value: The final execution result\n"
             "  - interpreter: The interpreter function\n"
             "  - Program, RunResult: Type classes\n"
-            "  - sync_run, sync_handlers_preset: Run functions\n"
+            "  - run, default_handlers: Execution functions\n"
             "  - sys, json: Standard library modules\n\n"
             "Example:\n"
             "  doeff run --program myapp.program - <<'PY'\n"
             "  print(f'Result: {value}')\n"
-            "  result = sync_run(program, sync_handlers_preset)\n"
+            "  result = run(program, handlers=default_handlers())\n"
             "  print(f'Re-run: {result.value}')\n"
             "  PY"
         ),
