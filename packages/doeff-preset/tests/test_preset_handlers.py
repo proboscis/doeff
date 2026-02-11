@@ -13,7 +13,21 @@ from doeff_preset import (
     DEFAULT_CONFIG,
     config_handlers,
     log_display_handlers,
+    mock_handlers,
     preset_handlers,
+    production_handlers,
+)
+from doeff_preset.effects import (
+    PRESET_CONFIG_EFFECT,
+    PRESET_CONFIG_KEY_PREFIX,
+    PRESET_LOG_EFFECT,
+    is_preset_config_key,
+)
+from doeff_preset.handlers import (
+    mock_handlers as exported_mock_handlers,
+)
+from doeff_preset.handlers import (
+    production_handlers as exported_production_handlers,
 )
 
 from doeff import (
@@ -24,6 +38,7 @@ from doeff import (
     MissingEnvKeyError,
     Resume,
     WithHandler,
+    WriterTellEffect,
     async_run_with_handler_map,
     do,
     run_with_handler_map,
@@ -42,6 +57,23 @@ async def _async_run_with_handler_map(
     program, handler_map: dict[type, HandlerFn], *, env=None, store=None
 ):
     return await async_run_with_handler_map(program, handler_map, env=env, store=store)
+
+
+class TestCanonicalPackageLayout:
+    """Tests for canonical effects/ + handlers/ package layout."""
+
+    def test_effects_exports_core_effect_metadata(self):
+        """effects package should expose metadata even without custom effect classes."""
+        assert PRESET_CONFIG_EFFECT is AskEffect
+        assert PRESET_LOG_EFFECT is WriterTellEffect
+        assert PRESET_CONFIG_KEY_PREFIX == "preset."
+        assert is_preset_config_key("preset.log_level")
+        assert not is_preset_config_key("other.key")
+
+    def test_handlers_exports_required_entrypoints(self):
+        """handlers package should export production_handlers and mock_handlers."""
+        assert callable(exported_production_handlers)
+        assert callable(exported_mock_handlers)
 
 
 class TestLogDisplayHandlers:
@@ -240,6 +272,53 @@ class TestPresetHandlers:
         assert result.value == "handled: test"
         captured = capsys.readouterr()
         assert "using preset" in captured.err
+
+
+class TestProductionAndMockHandlers:
+    """Tests for explicit production and testing handler entrypoints."""
+
+    def test_production_handlers_include_display_and_config(self, capsys):
+        """production_handlers should display slog and resolve preset config."""
+
+        @do
+        def workflow():
+            yield slog(msg="from production")
+            level = yield Ask("preset.log_level")
+            return level
+
+        result = _run_with_handler_map(workflow(), production_handlers())
+
+        assert result.value == "info"
+        captured = capsys.readouterr()
+        assert "from production" in captured.err
+
+    def test_mock_handlers_disable_display(self, capsys):
+        """mock_handlers should not print structured logs to stderr."""
+
+        @do
+        def workflow():
+            yield slog(msg="from mock")
+            return "done"
+
+        result = _run_with_handler_map(workflow(), mock_handlers())
+
+        assert result.value == "done"
+        captured = capsys.readouterr()
+        assert "from mock" not in captured.err
+
+    def test_mock_handlers_support_custom_config_defaults(self):
+        """mock_handlers should still provide deterministic config values."""
+
+        @do
+        def workflow():
+            return (yield Ask("preset.show_logs"))
+
+        result = _run_with_handler_map(
+            workflow(),
+            mock_handlers(config_defaults={"preset.show_logs": False}),
+        )
+
+        assert result.value is False
 
 
 class TestDefaultConfig:
