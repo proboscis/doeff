@@ -11,10 +11,13 @@ import pytest
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
+SECRET_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-secret" / "src"
+if str(SECRET_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SECRET_PACKAGE_ROOT))
 
-from doeff_google_secret_manager import access_secret
+from doeff_google_secret_manager import access_secret  # noqa: E402
 
-from doeff import default_handlers, do, run
+from doeff import default_handlers, do, run  # noqa: E402
 
 ENV_ENABLE = "SECRET_MANAGER_RUN_E2E"
 ENV_PROJECT = "SECRET_MANAGER_TEST_PROJECT"

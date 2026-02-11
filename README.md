@@ -34,6 +34,11 @@ For pinjected integration:
 pip install doeff-pinjected
 ```
 
+For unified secret effects and Google Secret Manager handlers:
+```bash
+pip install doeff-secret doeff-google-secret-manager
+```
+
 ## Quick Start
 
 ```python

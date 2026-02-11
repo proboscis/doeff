@@ -11,6 +11,15 @@ from typing import Any
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
+SECRET_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-secret" / "src"
+if str(SECRET_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SECRET_PACKAGE_ROOT))
+
+from doeff_google_secret_manager import (  # noqa: E402
+    SecretManagerClient,
+    access_secret,
+    get_secret_manager_client,
+)
 
 from doeff import (  # noqa: E402
     AskEffect,
@@ -21,11 +30,6 @@ from doeff import (  # noqa: E402
     run,
 )
 from doeff.effects import StateGetEffect, StatePutEffect  # noqa: E402
-from doeff_google_secret_manager import (  # noqa: E402
-    SecretManagerClient,
-    access_secret,
-    get_secret_manager_client,
-)
 
 
 @dataclass
@@ -92,9 +96,7 @@ def _build_handler(
 def test_access_secret_returns_decoded_secret_with_mock_handler() -> None:
     mock_async_api = MockSecretManagerAsyncAPI(payload=b"top-secret")
     mock_client = MockSecretManagerClient(project="my-project", async_client=mock_async_api)
-    mock_handler, _, _ = _build_handler(
-        ask_values={"secret_manager_client": mock_client}
-    )
+    mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
     result = run(
         WithHandler(mock_handler, access_secret("db-password")),
@@ -111,9 +113,7 @@ def test_access_secret_returns_decoded_secret_with_mock_handler() -> None:
 def test_access_secret_can_return_bytes_with_decode_false() -> None:
     mock_async_api = MockSecretManagerAsyncAPI(payload=b"\x00\x01\x02")
     mock_client = MockSecretManagerClient(project="my-project", async_client=mock_async_api)
-    mock_handler, _, _ = _build_handler(
-        ask_values={"secret_manager_client": mock_client}
-    )
+    mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
     result = run(
         WithHandler(
@@ -134,9 +134,7 @@ def test_access_secret_can_return_bytes_with_decode_false() -> None:
 def test_access_secret_uses_explicit_version_in_request_path() -> None:
     mock_async_api = MockSecretManagerAsyncAPI(payload=b"versioned-secret")
     mock_client = MockSecretManagerClient(project="my-project", async_client=mock_async_api)
-    mock_handler, _, _ = _build_handler(
-        ask_values={"secret_manager_client": mock_client}
-    )
+    mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
     result = run(
         WithHandler(mock_handler, access_secret("api-key", version="42")),
@@ -145,18 +143,14 @@ def test_access_secret_uses_explicit_version_in_request_path() -> None:
 
     assert _is_ok(result)
     assert result.value == "versioned-secret"
-    assert mock_async_api.requests == [
-        {"name": "projects/my-project/secrets/api-key/versions/42"}
-    ]
+    assert mock_async_api.requests == [{"name": "projects/my-project/secrets/api-key/versions/42"}]
 
 
 def test_access_secret_propagates_not_found_error() -> None:
     not_found = FakeNotFound("secret version does not exist")
     mock_async_api = MockSecretManagerAsyncAPI(error=not_found)
     mock_client = MockSecretManagerClient(project="my-project", async_client=mock_async_api)
-    mock_handler, _, _ = _build_handler(
-        ask_values={"secret_manager_client": mock_client}
-    )
+    mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
     result = run(
         WithHandler(mock_handler, access_secret("missing-secret")),
