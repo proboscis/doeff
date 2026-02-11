@@ -75,11 +75,31 @@ result = run_with_handler_map(configurable_workflow(), custom)
 
 ### `preset_handlers(config_defaults=None)`
 
-Returns all preset handlers combined.
+Backward-compatible alias for `production_handlers(config_defaults=...)`.
 
 ```python
 handlers = preset_handlers()
 # Contains handlers for WriterTellEffect (slog) and AskEffect (preset.* config)
+```
+
+### `production_handlers(config_defaults=None)`
+
+Returns the canonical production handler map for this package.
+
+```python
+from doeff_preset import production_handlers
+
+handlers = production_handlers()
+```
+
+### `mock_handlers(config_defaults=None)`
+
+Returns the canonical test handler map. Structured slog display is disabled.
+
+```python
+from doeff_preset import mock_handlers
+
+handlers = mock_handlers(config_defaults={"preset.show_logs": False})
 ```
 
 ### `log_display_handlers()`
@@ -177,6 +197,12 @@ result = run_with_handler_map(my_workflow(), handlers)
 # Asynchronous
 result = await async_run_with_handler_map(my_workflow(), handlers)
 ```
+
+## Package Layout
+
+`doeff_preset` maintains canonical `effects/` + `handlers/` submodules.
+This package intentionally does not define new domain-specific effect classes;
+it composes core doeff effects into preset handler bundles.
 
 ## License
 
