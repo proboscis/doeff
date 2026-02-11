@@ -23,8 +23,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff_preset.handlers.config import DEFAULT_CONFIG, config_handlers
-from doeff_preset.handlers.log_display import log_display_handlers
+from doeff_preset.handlers import (
+    DEFAULT_CONFIG,
+    config_handlers,
+    log_display_handlers,
+    mock_handlers,
+    production_handlers,
+)
 
 
 def preset_handlers(
@@ -60,15 +65,14 @@ def preset_handlers(
         >>> # Preset handlers win on conflict
         >>> handlers = {**domain_handlers(), **preset_handlers()}
     """
-    return {
-        **log_display_handlers(),
-        **config_handlers(config_defaults),
-    }
+    return production_handlers(config_defaults=config_defaults)
 
 
 __all__ = [
     "DEFAULT_CONFIG",
     "config_handlers",
     "log_display_handlers",
+    "mock_handlers",
     "preset_handlers",
+    "production_handlers",
 ]
