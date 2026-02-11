@@ -17,10 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from doeff import EffectBase
-
-from .adapters.base import AgentType, LaunchConfig
-from .monitor import SessionStatus
-
+from doeff_agents.adapters.base import AgentType, LaunchConfig
+from doeff_agents.monitor import SessionStatus
 
 # =============================================================================
 # SessionHandle - Immutable session identifier
@@ -85,7 +83,6 @@ class AgentEffectBase(EffectBase):
     Inherits from doeff's public EffectBase type.
     """
 
-    pass
 
 
 # =============================================================================
