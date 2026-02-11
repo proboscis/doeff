@@ -26,6 +26,7 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
+    "doeff-image>=0.1.0",
     "httpx>=0.27",
     "pillow>=11.0.0",
 ]
@@ -47,6 +48,7 @@ packages = ["src/doeff_seedream"]
 
 [tool.uv.sources]
 doeff = {workspace = true}
+doeff-image = {workspace = true}
 
 [dependency-groups]
 dev = []

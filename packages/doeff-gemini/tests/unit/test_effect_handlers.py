@@ -8,6 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
+import pytest
+
+IMAGE_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-image" / "src"
+if str(IMAGE_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(IMAGE_PACKAGE_ROOT))
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
@@ -62,8 +68,17 @@ from doeff import (
     run,
     run_with_handler_map,
 )
+from doeff_image.effects import ImageEdit
+from doeff_image.effects import ImageEdit as UnifiedImageEdit
+from doeff_image.effects import ImageGenerate as UnifiedImageGenerate
+from doeff_image.types import ImageResult
 from doeff_llm.effects import LLMChat, LLMEmbedding, LLMStructuredOutput
-from doeff_gemini.effects import GeminiChat, GeminiEmbedding, GeminiStructuredOutput
+from doeff_gemini.effects import (
+    GeminiChat,
+    GeminiEmbedding,
+    GeminiImageEdit,
+    GeminiStructuredOutput,
+)
 from doeff_gemini.handlers import (
     gemini_mock_handler,
     gemini_production_handler,
@@ -102,9 +117,11 @@ def _domain_program() -> EffectGenerator[dict[str, Any]]:
 
 def test_effect_exports() -> None:
     from doeff_gemini.effects import GeminiChat as ImportedChat
+    from doeff_gemini.effects import GeminiImageEdit as ImportedImageEdit
     from doeff_gemini.effects import GeminiStructuredOutput as ImportedStructured
 
     assert ImportedChat is GeminiChat
+    assert ImportedImageEdit is GeminiImageEdit
     assert ImportedStructured is GeminiStructuredOutput
     assert issubclass(GeminiChat, LLMChat)
     assert issubclass(GeminiStructuredOutput, LLMStructuredOutput)
@@ -130,6 +147,12 @@ def test_deprecated_effect_aliases_emit_warnings() -> None:
             input="embed",
             model="text-embedding-004",
         )
+
+
+def test_gemini_image_edit_is_deprecated_alias() -> None:
+    with pytest.deprecated_call(match="GeminiImageEdit is deprecated"):
+        effect = GeminiImageEdit(prompt="deprecated", model="gemini-3-pro-image")
+    assert isinstance(effect, ImageEdit)
 
 
 def test_handler_exports() -> None:
@@ -224,3 +247,23 @@ def test_gemini_handler_delegates_unsupported_models() -> None:
 
     assert result.is_ok()
     assert result.value == "fallback-chat"
+
+
+@do
+def _unified_image_program() -> EffectGenerator[ImageResult]:
+    generated = yield UnifiedImageGenerate(
+        prompt="A bright kite",
+        model="gemini-3-pro-image",
+    )
+    edited = yield UnifiedImageEdit(
+        prompt="Add clouds",
+        model="gemini-3-pro-image",
+        images=[generated.images[0]],
+    )
+    return edited
+
+
+def test_mock_handlers_support_unified_image_effects() -> None:
+    result = run_with_handler_map(_unified_image_program(), mock_handlers())
+    assert result.is_ok()
+    assert isinstance(result.value, ImageResult)

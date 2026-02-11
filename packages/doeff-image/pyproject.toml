@@ -3,16 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "doeff-gemini"
+name = "doeff-image"
 version = "0.1.0"
-description = "Google Gemini integration for doeff with structured output and observability"
+description = "Provider-agnostic image generation effects for doeff"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Proboscis"},
+    {name = "CyberAgent AI Lab"},
 ]
-keywords = ["gemini", "google", "effects", "structured-output", "observability"]
+keywords = ["image", "effects", "generation", "editing", "doeff"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -26,11 +26,7 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
-    "doeff-llm>=0.1.0",
-    "doeff-image>=0.1.0",
-    "google-genai>=0.3.0",
-    "google-auth>=2.0.0",
-    "pydantic>=2.0",
+    "pillow>=11.0.0",
 ]
 
 [project.optional-dependencies]
@@ -46,14 +42,10 @@ Repository = "https://github.com/CyberAgentAILab/doeff"
 Issues = "https://github.com/CyberAgentAILab/doeff/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/doeff_gemini"]
+packages = ["src/doeff_image"]
 
 [tool.uv.sources]
 doeff = {workspace = true}
-doeff-llm = {workspace = true}
-doeff-image = {workspace = true}
 
 [dependency-groups]
-dev = [
-    "pillow>=11.0.0",
-]
+dev = []

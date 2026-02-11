@@ -3,26 +3,32 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import Callable
+from io import BytesIO
 from typing import Any
 
+from doeff_image.effects import ImageEdit, ImageGenerate
+from doeff_image.types import ImageResult
 from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
     LLMStreamingChat,
     LLMStructuredOutput,
 )
+from PIL import Image
 
 from doeff import Await, Delegate, EffectGenerator, Resume, Safe, do
 from doeff_gemini.client import get_gemini_client, track_api_call
 from doeff_gemini.effects import (
     GeminiChat,
     GeminiEmbedding,
+    GeminiImageEdit,
     GeminiStreamingChat,
     GeminiStructuredOutput,
 )
-from doeff_gemini.structured_llm import structured_llm__gemini
+from doeff_gemini.structured_llm import edit_image__gemini, structured_llm__gemini
 
 ProtocolHandler = Callable[[Any, Any], Any]
 GEMINI_MODEL_PREFIXES = ("gemini-",)
@@ -33,6 +39,54 @@ def _is_gemini_model(model: str) -> bool:
     return model in GEMINI_MODEL_EXACT or any(
         model.startswith(prefix) for prefix in GEMINI_MODEL_PREFIXES
     )
+
+
+GEMINI_IMAGE_MODEL_PREFIXES = (
+    "gemini-3-pro-image",
+    "gemini-3-pro-image-preview",
+    "gemini-2.5-flash-image-preview",
+    "gemini-2.0-flash-preview-image",
+)
+_ALLOWED_ASPECT_RATIOS = {
+    "1:1",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:3",
+    "4:5",
+    "5:4",
+    "9:16",
+    "16:9",
+    "21:9",
+}
+
+
+def _is_gemini_image_model(model: str) -> bool:
+    if any(model.startswith(prefix) for prefix in GEMINI_IMAGE_MODEL_PREFIXES):
+        return True
+    return model.startswith("gemini-") and "image" in model
+
+
+def _aspect_ratio_from_size(size: tuple[int, int] | None) -> str | None:
+    if size is None:
+        return None
+    width, height = size
+    if width <= 0 or height <= 0:
+        return None
+    factor = math.gcd(width, height)
+    ratio = f"{width // factor}:{height // factor}"
+    return ratio if ratio in _ALLOWED_ASPECT_RATIOS else None
+
+
+def _image_size_from_size(size: tuple[int, int] | None) -> str | None:
+    if size is None:
+        return None
+    largest = max(size)
+    if largest <= 1024:
+        return "1K"
+    if largest <= 2048:
+        return "2K"
+    return "4K"
 
 
 def _content_to_text(content: Any) -> str:  # noqa: PLR0911
@@ -107,6 +161,58 @@ def _structured_impl(effect: LLMStructuredOutput) -> EffectGenerator[Any]:
             response_format=effect.response_format,
         )
     )
+
+
+def _decode_image_bytes(payload: bytes) -> Image.Image:
+    with BytesIO(payload) as buffer:
+        image = Image.open(buffer)
+        return image.copy()
+
+
+def _prompt_for_generate(effect: ImageGenerate) -> str:
+    prompt = effect.prompt
+    if effect.style:
+        prompt = f"{prompt}\nStyle: {effect.style}"
+    if effect.negative_prompt:
+        prompt = f"{prompt}\nNegative prompt: {effect.negative_prompt}"
+    return prompt
+
+
+def _gemini_to_unified(result: Any, *, model: str, prompt: str) -> ImageResult:
+    return ImageResult(
+        images=[_decode_image_bytes(result.image_bytes)],
+        model=model,
+        prompt=prompt,
+        raw_response=result,
+    )
+
+
+@do
+def _image_generate_impl(effect: ImageGenerate) -> EffectGenerator[ImageResult]:
+    result = yield edit_image__gemini(
+        prompt=_prompt_for_generate(effect),
+        model=effect.model,
+        images=None,
+        candidate_count=max(1, effect.num_images),
+        generation_config_overrides=effect.generation_config,
+        aspect_ratio=_aspect_ratio_from_size(effect.size),
+        image_size=_image_size_from_size(effect.size),
+    )
+    return _gemini_to_unified(result, model=effect.model, prompt=effect.prompt)
+
+
+@do
+def _image_edit_impl(effect: ImageEdit) -> EffectGenerator[ImageResult]:
+    overrides = dict(effect.generation_config or {})
+    if effect.strength != 0.8:
+        overrides.setdefault("image_strength", effect.strength)
+    result = yield edit_image__gemini(
+        prompt=effect.prompt,
+        model=effect.model,
+        images=effect.images or None,
+        generation_config_overrides=overrides or None,
+    )
+    return _gemini_to_unified(result, model=effect.model, prompt=effect.prompt)
 
 
 def _extract_embedding_vectors(response: Any) -> list[list[float]]:  # noqa: PLR0912
@@ -214,6 +320,32 @@ def _embedding_impl(effect: LLMEmbedding) -> EffectGenerator[list[float] | list[
     return vectors
 
 
+def gemini_image_handler(effect: Any, k: Any):
+    """Protocol handler with model routing for unified image effects."""
+    if isinstance(effect, GeminiImageEdit):
+        if not _is_gemini_image_model(effect.model):
+            yield Delegate()
+            return
+        value = yield _image_edit_impl(effect)
+        return (yield Resume(k, value))
+
+    if isinstance(effect, ImageGenerate):
+        if not _is_gemini_image_model(effect.model):
+            yield Delegate()
+            return
+        value = yield _image_generate_impl(effect)
+        return (yield Resume(k, value))
+
+    if isinstance(effect, ImageEdit):
+        if not _is_gemini_image_model(effect.model):
+            yield Delegate()
+            return
+        value = yield _image_edit_impl(effect)
+        return (yield Resume(k, value))
+
+    yield Delegate()
+
+
 def production_handlers(
     *,
     chat_impl: Callable[[LLMChat], EffectGenerator[str]] | None = None,
@@ -224,6 +356,8 @@ def production_handlers(
         EffectGenerator[list[float] | list[list[float]]],
     ]
     | None = None,
+    image_generate_impl: Callable[[ImageGenerate], EffectGenerator[ImageResult]] | None = None,
+    image_edit_impl: Callable[[ImageEdit], EffectGenerator[ImageResult]] | None = None,
 ) -> dict[type[Any], ProtocolHandler]:
     """Build effect handlers backed by real Gemini API integrations."""
 
@@ -231,6 +365,8 @@ def production_handlers(
     active_streaming_chat_impl = streaming_chat_impl or _streaming_chat_impl
     active_structured_impl = structured_impl or _structured_impl
     active_embedding_impl = embedding_impl or _embedding_impl
+    active_image_generate_impl = image_generate_impl or _image_generate_impl
+    active_image_edit_impl = image_edit_impl or _image_edit_impl
 
     def handle_chat(effect: LLMChat | GeminiChat, k):
         if not _is_gemini_model(effect.model):
@@ -263,6 +399,14 @@ def production_handlers(
         value = yield active_embedding_impl(effect)
         return (yield Resume(k, value))
 
+    def handle_image_generate(effect: ImageGenerate, k):
+        value = yield active_image_generate_impl(effect)
+        return (yield Resume(k, value))
+
+    def handle_image_edit(effect: ImageEdit, k):
+        value = yield active_image_edit_impl(effect)
+        return (yield Resume(k, value))
+
     return {
         GeminiChat: handle_chat,
         GeminiStreamingChat: handle_streaming_chat,
@@ -272,6 +416,9 @@ def production_handlers(
         LLMStreamingChat: handle_streaming_chat,
         LLMStructuredOutput: handle_structured,
         LLMEmbedding: handle_embedding,
+        ImageGenerate: handle_image_generate,
+        ImageEdit: handle_image_edit,
+        GeminiImageEdit: handle_image_edit,
     }
 
 
@@ -300,10 +447,12 @@ def gemini_production_handler(effect: Any, k: Any):
 
 
 __all__ = [
+    "GEMINI_IMAGE_MODEL_PREFIXES",
     "GEMINI_MODEL_EXACT",
     "GEMINI_MODEL_PREFIXES",
     "ProtocolHandler",
     "_is_gemini_model",
+    "gemini_image_handler",
     "gemini_production_handler",
     "production_handlers",
 ]
