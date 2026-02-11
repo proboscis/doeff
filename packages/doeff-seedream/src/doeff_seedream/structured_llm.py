@@ -140,7 +140,7 @@ def _decode_images(
 
 
 @do
-def edit_image__seedream4(
+def _edit_image__seedream4_impl(
     prompt: str,
     model: str = DEFAULT_MODEL,
     images: list[Image.Image] | None = None,
@@ -398,6 +398,47 @@ def edit_image__seedream4(
         )
 
     return result
+
+
+@do
+def edit_image__seedream4(
+    prompt: str,
+    model: str = DEFAULT_MODEL,
+    images: list[Image.Image] | None = None,
+    max_output_tokens: int = 8192,
+    temperature: float = 0.9,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    candidate_count: int = 1,
+    system_instruction: str | None = None,
+    safety_settings: list[dict[str, Any]] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_config: dict[str, Any] | None = None,
+    response_modalities: list[str] | None = None,
+    generation_config_overrides: dict[str, Any] | None = None,
+    max_retries: int = 3,
+) -> EffectGenerator[SeedreamImageEditResult]:
+    """Public Seedream helper that preserves the established request flow."""
+
+    return (
+        yield _edit_image__seedream4_impl(
+            prompt=prompt,
+            model=model,
+            images=images,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            candidate_count=candidate_count,
+            system_instruction=system_instruction,
+            safety_settings=safety_settings,
+            tools=tools,
+            tool_config=tool_config,
+            response_modalities=response_modalities,
+            generation_config_overrides=generation_config_overrides,
+            max_retries=max_retries,
+        )
+    )
 
 
 __all__ = ["DEFAULT_MODEL", "DEFAULT_RESPONSE_FORMAT", "edit_image__seedream4"]
