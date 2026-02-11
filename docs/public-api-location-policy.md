@@ -37,7 +37,7 @@ In scope now:
 - `examples/**/*.py`
 - consumer-facing docs
 
-CESK user-facing surfaces have been removed under ISSUE-CORE-492.
+Legacy interpreter user-facing surfaces have been removed under ISSUE-CORE-492.
 
 ## Enforcement
 

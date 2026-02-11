@@ -93,5 +93,5 @@ Specs:
 - Additional regression check:
   - `uv run pytest -q tests/core/test_sa007_spec_gaps.py` -> pass
 - Repository-wide checks (informational):
-  - `uv run pytest -q` -> fails during collection due pre-existing removed CESK module imports and one public-api DoThunk import expectation not aligned with SA-008 policy decision.
+  - `uv run pytest -q` -> fails during collection due pre-existing removed legacy runtime module imports and one public-api DoThunk import expectation not aligned with SA-008 policy decision (note: legacy interpreter has since been removed).
   - `uv run semgrep --config .semgrep.yaml /Users/s22625/repos/doeff` -> existing unrelated policy findings in docs/examples/other packages.

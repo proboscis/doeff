@@ -923,7 +923,7 @@ def _as_protocol_handler(
 
 
 def tmux_handler(working_dir: str | None = None) -> dict[type, Any]:
-    """Create CESK-compatible handlers for agentic effects using tmux.
+    """Create VM-compatible handlers for agentic effects using tmux.
 
     Args:
         working_dir: Default working directory

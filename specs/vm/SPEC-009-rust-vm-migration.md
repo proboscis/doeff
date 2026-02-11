@@ -27,7 +27,7 @@
 
 | Tag | Section | Change |
 |-----|---------|--------|
-| **R6-A** | §1 Entrypoints, §9 Migration | Clarified rust-vm-only public path: `doeff.run` / `doeff.async_run` are the supported entrypoints; legacy CESK `sync_run` presets are retired from top-level exports. |
+| **R6-A** | §1 Entrypoints, §9 Migration | Clarified rust-vm-only public path: `doeff.run` / `doeff.async_run` are the supported entrypoints; legacy Python `sync_run` presets are retired from top-level exports. |
 | **R6-B** | §7 Scheduler | Removed compatibility coercion note for `WaitEffect`; typed scheduler classification is strict (malformed/unsupported scheduler forms are errors). |
 | **R6-C** | §3 Program, §5 Handlers | Clarified KPC dispatch expectation: KleisliProgramCall must route through effect-handler pipeline, not direct call rewrite bypass. |
 | **R6-D** | §3, §4 | `KleisliProgramCall` is a `#[pyclass(frozen, extends=PyEffectBase)]` struct in Rust (`PyKPC`). Auto-unwrap strategy NOT stored on KPC — handler computes from `kleisli_source` annotations at dispatch time. See SPEC-008 R11-A and SPEC-TYPES-001 Rev 9. |
@@ -63,7 +63,7 @@
 ## Summary
 
 Define the public API that the Rust VM (SPEC-008) must expose so that
-doeff subpackages can migrate from the Python CESK v3 interpreter.
+doeff subpackages can migrate from the legacy Python v3 interpreter [Deprecated].
 
 This spec defines **what users import and call** — not VM internals.
 
@@ -948,7 +948,7 @@ framework-internal.
 
 ### What Changes for Subpackages
 
-| Before (Python CESK) | After (Rust VM) |
+| Before (Legacy Python interpreter [Deprecated]) | After (Rust VM) |
 |---|---|
 | `from legacy runtime import sync_run` | `from doeff import run` |
 | `sync_run(prog, sync_handlers_preset)` | `run(prog, handlers=sync_preset)` |
@@ -960,16 +960,16 @@ framework-internal.
 The handler protocol changes:
 
 ```python
-# BEFORE (Python CESK):
-# Handler = Callable[[EffectBase, HandlerContext], Program[CESKState | ResumeK]]
+# BEFORE (Legacy Python interpreter [Deprecated]):
+# Handler = Callable[[EffectBase, HandlerContext], Program[LegacyState | ResumeK]]
 
 @do
 def my_handler(effect, ctx):
     if isinstance(effect, MyEffect):
-        return CESKState.resume_value(effect.value, ctx)
+        return LegacyState.resume_value(effect.value, ctx)
     else:
         result = yield effect  # re-raise
-        return CESKState.resume_value(result, ctx)
+        return LegacyState.resume_value(result, ctx)
 
 # AFTER (Rust VM):
 # Handler = Callable[[Effect, K], Program[T]]
@@ -985,10 +985,10 @@ def my_handler(effect, k):
 
 Key differences:
 - `ctx: HandlerContext` → `k: K` (opaque continuation handle)
-- `CESKState.resume_value(v, ctx)` → `yield Resume(k, v)`
+- `LegacyState.resume_value(v, ctx)` → `yield Resume(k, v)`
 - re-yielding the effect → `yield Delegate()`
 - `ResumeK(k=..., value=...)` → `yield Transfer(k, value)`
-- No `CESKState`, no `HandlerContext`, no `Store` / `Environment` access
+- No `LegacyState`, no `HandlerContext`, no `Store` / `Environment` access
 
 ### What Does NOT Change
 

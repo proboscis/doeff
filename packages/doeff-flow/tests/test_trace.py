@@ -189,7 +189,7 @@ class TestRunWorkflow:
 
 
 class TestWithHandlerObservability:
-    """Tests that replace removed CESK hook tracing with WithHandler."""
+    """Tests that replace removed legacy hook tracing with WithHandler."""
 
     def test_can_capture_effects_with_delegate(self):
         captured_effects: list[object] = []
