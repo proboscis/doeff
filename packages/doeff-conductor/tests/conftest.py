@@ -280,7 +280,7 @@ __all__ = [
     "is_git_available",
     # Detection functions
     "is_opencode_available",
-    # CESK API compatibility
+    # Handler API compatibility
     "run_sync",
     # Skip decorators
     "skip_without_e2e",
