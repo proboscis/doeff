@@ -1,7 +1,7 @@
 """Simple test to debug retry tracking."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from doeff_openai import get_api_calls, structured_llm__openai
@@ -9,25 +9,17 @@ from doeff_openai.client import OpenAIClient
 
 from doeff import (
     Ask,
-    AskEffect,
-    Delegate,
     EffectGenerator,
-    Resume,
     Tell,
-    WithHandler,
     async_run,
     default_handlers,
     do,
 )
 
 
-def _ask_override_handler(overrides: dict[str, object]):
-    def handler(effect, k):
-        if isinstance(effect, AskEffect) and effect.key in overrides:
-            return (yield Resume(k, overrides[effect.key]))
-        yield Delegate()
-
-    return handler
+async def run_program(program, env=None):
+    """Execute a test program with standard handlers."""
+    return await async_run(program, handlers=default_handlers(), env=env)
 
 
 @pytest.mark.asyncio
@@ -71,12 +63,7 @@ async def test_simple_success():
         api_calls = yield get_api_calls()
         return {"text": text_result, "api_calls": api_calls}
 
-    # Run the test
-    handler = _ask_override_handler({"openai_client": mock_client})
-    result = await async_run(
-        WithHandler(handler, test_flow()),
-        handlers=default_handlers(),
-    )
+    result = await run_program(test_flow(), env={"openai_client": mock_client})
 
     # Print all logs to debug
     print("\n=== LOGS ===")
