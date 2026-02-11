@@ -213,17 +213,17 @@ def slog(**entries: object) -> WriterTellEffect:
 
 | Composition | Tested | File |
 |-------------|--------|------|
-| Listen + Tell | Yes | `tests/cesk/test_writer_semantics.py` |
-| Listen + Local | Yes | `tests/cesk/test_writer_semantics.py` |
-| Listen + Safe (success) | Yes | `tests/cesk/test_writer_semantics.py` |
-| Listen + Safe (error) | Yes | `tests/cesk/test_writer_semantics.py` |
-| Listen + Gather (sync) | Yes | `tests/cesk/test_writer_semantics.py` |
-| Listen + Gather (async) | Yes | `tests/cesk/test_writer_semantics.py` |
-| Listen + Listen (nested) | Yes | `tests/cesk/test_writer_semantics.py` |
+| Listen + Tell | Yes | `tests/effects/test_effect_combinations.py` |
+| Listen + Local | Yes | `tests/effects/test_effect_combinations.py` |
+| Listen + Safe (success) | Yes | `tests/effects/test_effect_combinations.py` |
+| Listen + Safe (error) | Yes | `tests/effects/test_effect_combinations.py` |
+| Listen + Gather (sync) | Yes | `tests/effects/test_effect_combinations.py` |
+| Listen + Gather (async) | Yes | `tests/effects/test_effect_combinations.py` |
+| Listen + Listen (nested) | Yes | `tests/effects/test_effect_combinations.py` |
 
 ## References
 
 - Effect definitions: `doeff/effects/writer.py`
-- Handlers: `doeff/cesk/handlers/control.py`
-- ListenFrame: `doeff/cesk/frames.py`
+- Handlers: `doeff/handlers.py`
+- ListenFrame: `packages/doeff-vm/src/frame.rs`
 - Related issue: [#176](https://github.com/CyberAgentAILab/doeff/issues/176)
