@@ -44,6 +44,7 @@ CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
 GetHandlers = _ext.GetHandlers
 GetCallStack = _ext.GetCallStack
+GetTrace = _ext.GetTrace
 PythonAsyncSyntaxEscape = _ext.AsyncEscape
 PyGet = _ext.PyGet
 PyPut = _ext.PyPut
@@ -73,6 +74,7 @@ TAG_DELEGATE = _ext.TAG_DELEGATE
 TAG_GET_CONTINUATION = _ext.TAG_GET_CONTINUATION
 TAG_GET_HANDLERS = _ext.TAG_GET_HANDLERS
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
+TAG_GET_TRACE = _ext.TAG_GET_TRACE
 TAG_EVAL = _ext.TAG_EVAL
 TAG_CREATE_CONTINUATION = _ext.TAG_CREATE_CONTINUATION
 TAG_RESUME_CONTINUATION = _ext.TAG_RESUME_CONTINUATION
@@ -138,6 +140,7 @@ __all__ = [
     "PythonAsyncSyntaxEscape",
     "CreateContinuation",
     "GetCallStack",
+    "GetTrace",
     "GetContinuation",
     "GetHandlers",
     "async_run",
@@ -162,6 +165,7 @@ __all__ = [
     "TAG_GET_CONTINUATION",
     "TAG_GET_HANDLERS",
     "TAG_GET_CALL_STACK",
+    "TAG_GET_TRACE",
     "TAG_EVAL",
     "TAG_CREATE_CONTINUATION",
     "TAG_RESUME_CONTINUATION",

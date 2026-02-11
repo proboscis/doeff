@@ -58,6 +58,8 @@ pub struct PyKPC {
     #[pyo3(get)]
     pub function_name: String,
     #[pyo3(get)]
+    pub args_repr: Option<String>,
+    #[pyo3(get)]
     pub execution_kernel: Py<PyAny>,
     #[pyo3(get)]
     pub created_at: Py<PyAny>,
@@ -183,7 +185,7 @@ impl PyTell {
 #[pymethods]
 impl PyKPC {
     #[new]
-    #[pyo3(signature = (kleisli_source, args, kwargs, function_name, execution_kernel, created_at=None))]
+    #[pyo3(signature = (kleisli_source, args, kwargs, function_name, execution_kernel, created_at=None, args_repr=None))]
     fn new(
         kleisli_source: Py<PyAny>,
         args: Py<PyAny>,
@@ -191,6 +193,7 @@ impl PyKPC {
         function_name: String,
         execution_kernel: Py<PyAny>,
         created_at: Option<Py<PyAny>>,
+        args_repr: Option<String>,
         py: Python<'_>,
     ) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -201,6 +204,7 @@ impl PyKPC {
             args,
             kwargs,
             function_name,
+            args_repr,
             execution_kernel,
             created_at: created_at.unwrap_or_else(|| py.None()),
         })

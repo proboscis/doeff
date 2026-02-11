@@ -37,6 +37,7 @@ from .debug import (
 from .future import Await, PythonAsyncioAwaitEffect, await_
 from .gather import Gather, GatherEffect, gather
 from .race import Race, RaceEffect, RaceResult, race
+from .trace import ProgramTrace, ProgramTraceEffect
 from .wait import Wait, WaitEffect, wait
 from .graph import (
     Annotate,
@@ -160,6 +161,8 @@ __all__ = [
     "ProgramCallFrameEffect",
     "ProgramCallStack",
     "ProgramCallStackEffect",
+    "ProgramTrace",
+    "ProgramTraceEffect",
     "Pure",
     "PureEffect",
     "Put",

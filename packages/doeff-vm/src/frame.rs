@@ -1,8 +1,16 @@
 //! Frame types for the continuation stack.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::handler::RustProgramRef;
 use crate::ids::CallbackId;
 use crate::py_shared::PyShared;
+
+static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
+
+pub fn fresh_frame_id() -> u64 {
+    NEXT_FRAME_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Metadata about a program call for call stack reconstruction. [SPEC-008 R9-D]
 ///
@@ -10,20 +18,40 @@ use crate::py_shared::PyShared;
 /// RustHandlerPrograms that emit Call primitives. Stored on PythonGenerator frames.
 #[derive(Debug, Clone)]
 pub struct CallMetadata {
+    pub frame_id: u64,
     pub function_name: String,
     pub source_file: String,
     pub source_line: u32,
+    pub args_repr: Option<String>,
     pub program_call: Option<PyShared>,
 }
 
 impl CallMetadata {
-    pub fn anonymous() -> Self {
+    pub fn new(
+        function_name: String,
+        source_file: String,
+        source_line: u32,
+        args_repr: Option<String>,
+        program_call: Option<PyShared>,
+    ) -> Self {
         CallMetadata {
-            function_name: "<anonymous>".to_string(),
-            source_file: "<unknown>".to_string(),
-            source_line: 0,
-            program_call: None,
+            frame_id: fresh_frame_id(),
+            function_name,
+            source_file,
+            source_line,
+            args_repr,
+            program_call,
         }
+    }
+
+    pub fn anonymous() -> Self {
+        Self::new(
+            "<anonymous>".to_string(),
+            "<unknown>".to_string(),
+            0,
+            None,
+            None,
+        )
     }
 }
 
