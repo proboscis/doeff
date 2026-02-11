@@ -2,11 +2,11 @@ rules:
   # =============================================================================
   # DOEFF-AGENTIC ARCHITECTURAL ENFORCEMENT RULES
   # =============================================================================
-  # These rules enforce the CESK handler architecture for doeff-agentic.
+  # These rules enforce the handler architecture for doeff-agentic.
   # 
   # Architecture:
   #   - Programs yield domain effects (AgenticCreateSession, etc.)
-  #   - Handlers implement CESK contract: (effect, task_state, store) -> FrameResult
+  #   - Handlers implement the handler contract: (effect, task_state, store) -> FrameResult
   #   - AsyncRuntime dispatches effects to handlers
   #   - Handlers are SYNC (not async) - they do blocking I/O
   #
@@ -38,7 +38,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      category: cesk-architecture
+      category: handler-architecture
       rationale: "Handlers are sync; AsyncRuntime provides concurrency via effects"
 
   # ---------------------------------------------------------------------------
@@ -62,13 +62,13 @@ rules:
       CORRECT:
         AgenticCreateSession: handler.handle_create_session
       
-      Lambdas break the CESK handler contract which requires:
+      Lambdas break the handler contract which requires:
         handler(effect, task_state, store) -> FrameResult
     languages: [python]
     severity: ERROR
     metadata:
-      category: cesk-architecture
-      rationale: "Lambda wrappers break CESK handler signature contract"
+      category: handler-architecture
+      rationale: "Lambda wrappers break handler signature contract"
 
   # ---------------------------------------------------------------------------
   # RUNTIME USAGE
@@ -168,7 +168,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      category: cesk-architecture
+      category: handler-architecture
       rationale: "Handlers are sync; use sync HTTP clients"
 
   # ---------------------------------------------------------------------------

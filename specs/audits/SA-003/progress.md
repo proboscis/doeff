@@ -71,7 +71,7 @@ Spec-only items to apply in Phase 5 docs/spec updates: `SA-003-C01`, `SA-003-G05
   - `uv run pytest tests/core/test_sa001_spec_gaps.py` -> `30 passed`
   - `uv run pytest tests/core/test_spec_gaps.py` -> `22 passed`
 - Full repository checks:
-  - `uv run pytest` -> interrupted at collection with `13` pre-existing CESK import errors
+  - `uv run pytest` -> interrupted at collection with `13` pre-existing legacy runtime import errors (note: legacy interpreter has since been removed)
   - `semgrep --config .semgrep.yaml doeff/ packages/ --error` -> `61` pre-existing findings outside SA-003 scope
 
 ## Q Resolution Conformance Evidence (strict mode)
