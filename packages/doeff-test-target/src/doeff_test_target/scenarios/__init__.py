@@ -8,6 +8,7 @@ from .intercepting import intercepted_alpha
 from .lifting import dict_builder, lifted_alpha
 from .methods import MethodPrograms, run_class_method, run_instance_method
 from .pattern import pattern_matcher
+from .target_effects import fixture_effect_roundtrip
 from .traverse import traverse_items
 from .try_except import try_except_yield
 
@@ -20,6 +21,7 @@ __all__ = [
     "dataclass_program",
     "decorated_alpha",
     "dict_builder",
+    "fixture_effect_roundtrip",
     "intercepted_alpha",
     "lifted_alpha",
     "pattern_matcher",
