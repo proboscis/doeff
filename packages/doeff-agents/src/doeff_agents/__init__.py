@@ -2,7 +2,7 @@
 
 This package provides both:
 1. Imperative API (session.py) - direct function calls with context managers
-2. Effects API (effects.py, programs.py) - composable effects for doeff integration
+2. Effects API (effects/, programs.py) - composable effects for doeff integration
 
 Imperative API Example:
     from doeff_agents import session_scope, monitor_session, LaunchConfig, AgentType
@@ -29,18 +29,6 @@ Effects API Example:
 
 from .adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchConfig
 
-# Effect handler imports (for doeff_vm integration)
-from .handlers import (
-    AGENT_SESSIONS_KEY,
-    MOCK_AGENT_STATE_KEY,
-    MockAgentState,
-    agent_effectful_handler,
-    agent_effectful_handlers,
-    configure_mock_session,
-    mock_agent_handler,
-    mock_agent_handlers,
-)
-
 # Effects API imports
 from .effects import (
     # Errors (re-export effect-specific errors)
@@ -66,15 +54,26 @@ from .effects import (
     WithSessionEffect,
 )
 
+# Effect handler imports (for doeff_vm integration)
 # Handler imports
 from .handlers import (
+    AGENT_SESSIONS_KEY,
+    MOCK_AGENT_STATE_KEY,
     AgentHandler,
     MockAgentHandler,
+    MockAgentState,
     MockSessionScript,
     TmuxAgentHandler,
+    agent_effectful_handler,
+    agent_effectful_handlers,
+    configure_mock_session,
     dispatch_effect,
     make_scheduled_handler,
     make_typed_handler,
+    mock_agent_handler,
+    mock_agent_handlers,
+    mock_handlers,
+    production_handlers,
 )
 from .monitor import MonitorState, OnStatusChange, SessionStatus
 
@@ -182,9 +181,11 @@ __all__ = [
     "make_typed_handler",
     "mock_agent_handler",
     "mock_agent_handlers",
+    "mock_handlers",
     "monitor_once",
     "monitor_session",
     "monitor_until_terminal",
+    "production_handlers",
     "quick_agent",
     "register_adapter",
     "run_agent_to_completion",
