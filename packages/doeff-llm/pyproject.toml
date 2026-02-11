@@ -3,23 +3,21 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "doeff-openai"
+name = "doeff-llm"
 version = "0.1.0"
-description = "OpenAI integration for doeff with comprehensive observability via Graph and Log effects"
+description = "Provider-agnostic LLM effects for doeff"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Proboscis"},
 ]
-keywords = ["openai", "effects", "monads", "functional", "observability", "cost-tracking"]
+keywords = ["llm", "effects", "doeff", "providers", "structured-output"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -28,19 +26,12 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
-    "doeff-llm>=0.1.0",
-    "openai>=1.0.0",
-    "tiktoken>=0.5.0",
-    "python-dateutil>=2.8.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-    "pyright>=1.1.0",
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
 ]
 
 [project.urls]
@@ -49,13 +40,10 @@ Repository = "https://github.com/CyberAgentAILab/doeff"
 Issues = "https://github.com/CyberAgentAILab/doeff/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/doeff_openai"]
+packages = ["src/doeff_llm"]
 
 [tool.uv.sources]
 doeff = {workspace = true}
-doeff-llm = {workspace = true}
 
 [dependency-groups]
-dev = [
-    "pillow>=11.3.0",
-]
+dev = []

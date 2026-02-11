@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
-from typing import Any
 
-from doeff import EffectBase
+from doeff_llm.effects import LLMStructuredOutput
 
 
 @dataclass(frozen=True, kw_only=True)
-class StructuredOutput(EffectBase):
-    """Request structured output from OpenAI."""
+class StructuredOutput(LLMStructuredOutput):
+    """Deprecated alias of :class:`doeff_llm.effects.LLMStructuredOutput`."""
 
-    messages: list[dict[str, Any]]
-    response_format: type[Any]
-    model: str
+    def __post_init__(self) -> None:
+        warnings.warn(
+            "StructuredOutput is deprecated; use doeff_llm.effects.LLMStructuredOutput instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
 
 __all__ = [
