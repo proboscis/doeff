@@ -1,6 +1,6 @@
 """ExternalPromise for external world integration.
 
-ExternalPromise allows code outside the CESK machine (asyncio, threads, processes,
+ExternalPromise allows code outside the Rust VM runtime (asyncio, threads, processes,
 network) to complete a promise and wake up waiting doeff tasks.
 
 IMPURE: ExternalPromise is explicitly impure. Do NOT use inside pure doeff programs.
@@ -26,7 +26,7 @@ T = TypeVar("T")
 
 @dataclass
 class ExternalPromise(Generic[T]):
-    """Promise that can be completed from outside the CESK machine.
+    """Promise that can be completed from outside the Rust VM runtime.
 
     IMPURE: This type is for bridging external world to doeff.
     Do NOT use inside pure doeff programs - use regular Promise instead.

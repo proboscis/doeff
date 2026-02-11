@@ -258,9 +258,9 @@ if result.is_err():
 
 ## 12.7 スケジューラの仕組み
 
-doeff のランタイムは CESK マシンに基づいている。
+doeff のランタイムは Rust VM に基づいている。
 
-### CESK マシン
+### Rust VM 実行モデル
 
 | 要素 | 説明 |
 |------|------|
@@ -397,7 +397,7 @@ result = await runtime.run(program(), env=env, store=store)
 | `SimulationRuntime` | テスト | No |
 
 - ランタイムがエフェクトを解釈・実行する
-- CESK マシンモデルに基づいている
+- Rust VM モデルに基づいている
 - `RuntimeResult` で結果とデバッグ情報を取得
 
 次の章では、Pure Core パターンを見ていく。

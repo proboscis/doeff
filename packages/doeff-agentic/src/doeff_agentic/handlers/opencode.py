@@ -1045,7 +1045,7 @@ def opencode_handler(
     startup_timeout: float = 30.0,
     working_dir: str | None = None,
 ) -> dict[type, Any]:
-    """Create CESK-compatible handlers for agentic effects using OpenCode.
+    """Create VM-compatible handlers for agentic effects using OpenCode.
 
     Args:
         server_url: URL of existing OpenCode server (skip auto-start if provided)
