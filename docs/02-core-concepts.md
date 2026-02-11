@@ -1,16 +1,29 @@
 # Core Concepts
 
-This chapter explores the fundamental architecture of doeff: how Programs work, what Effects are, and how the execution model operates.
+This chapter explores the fundamental architecture of doeff: **algebraic effects**, **handlers**, **one-shot continuations**, and the **Rust VM** that powers it all.
 
 ## Table of Contents
 
+- [Algebraic Effects — The Mental Model](#algebraic-effects--the-mental-model)
 - [Program[T] - The Core Abstraction](#programt---the-core-abstraction)
 - [Effect Protocol](#effect-protocol)
+- [Handlers — Interpreting Effects](#handlers--interpreting-effects)
 - [The @do Decorator](#the-do-decorator)
 - [Generator-Based Do-Notation](#generator-based-do-notation)
-- [Execution Model](#execution-model)
-- [Monadic Operations](#monadic-operations)
+- [Execution Model — One-Shot Continuations and the Rust VM](#execution-model--one-shot-continuations-and-the-rust-vm)
+- [Composition Operations](#composition-operations)
 - [Type System](#type-system)
+
+## Algebraic Effects — The Mental Model
+
+doeff is built on the concept of **algebraic effects with one-shot continuations**. Here is the core idea:
+
+1. **Effects are data** — when your program needs something (read config, update state, log a message), it yields an *effect value* that describes the operation, without performing it.
+2. **Handlers interpret effects** — a handler receives the effect value, decides what to do, and sends the result back. Handlers are composable and swappable.
+3. **One-shot continuations** — when an effect is yielded, the program suspends. The handler processes it and resumes the program exactly once with the result. This is a *one-shot continuation* (unlike multi-shot systems like Koka or Eff where a continuation can be invoked multiple times).
+4. **Rust VM** — the effect handler runtime is backed by a Rust virtual machine for performance, managing the continuation stack, effect dispatch, and handler resolution.
+
+This **effect-handler duality** is the central design: programs *perform* effects, handlers *interpret* them. The same program can be run with different handlers — production handlers for real I/O, mock handlers for testing, logging handlers for debugging.
 
 ## Program[T] - The Core Abstraction
 
@@ -91,7 +104,7 @@ program = Program(generator_func)
 
 ## Effect Protocol
 
-Effects are the vocabulary of doeff programs. An effect represents a request for an operation.
+Effects are the vocabulary of doeff programs. Each effect is a **first-class algebraic effect operation** — a data value that describes an operation to be performed by a handler.
 
 ### Effect Base Class
 
@@ -121,13 +134,13 @@ doeff provides effects for:
 | **Graph** | `Step`, `Annotate`, `Snapshot` | Execution tracking |
 | **Atomic** | `AtomicGet`, `AtomicUpdate` | Thread-safe state |
 
-### Effect Lifecycle
+### Effect Lifecycle (Perform → Handle → Resume)
 
 1. **Creation**: Effect is instantiated with parameters
-2. **Yielding**: Effect is yielded in a `@do` function
-3. **Interpretation**: Handler processes the effect
-4. **Resolution**: Effect produces a value
-5. **Continuation**: Value is sent back to the generator
+2. **Perform**: Effect is yielded in a `@do` function — the program suspends
+3. **Handle**: The effect handler runtime dispatches to the appropriate handler
+4. **Resolve**: The handler produces a result value
+5. **Resume**: The one-shot continuation resumes the program with the result
 
 ### Custom Effects
 
@@ -145,9 +158,47 @@ class CustomEffect(EffectBase):
 
 Then add a handler to the handlers list.
 
+## Handlers — Interpreting Effects
+
+Handlers are the other half of the algebraic effects duality. A handler receives an effect value and decides how to interpret it — this is what makes effects composable and testable.
+
+### Built-in (Batteries-Included) Handlers
+
+doeff ships with handlers for all built-in effects:
+
+| Effect | Handler | What It Does |
+|--------|---------|-------------|
+| `Ask`, `Local` | Reader handler | Reads from / scopes the environment |
+| `Get`, `Put`, `Modify` | State handler | Manages mutable store |
+| `Log`, `Tell`, `Listen` | Writer handler | Accumulates log entries |
+| `Await`, `Gather` | Async handler | Bridges to async I/O |
+| `Safe` | Result handler | Captures errors as `Result` values |
+| `IO` | IO handler | Executes side-effecting thunks |
+| `CacheGet`, `CachePut` | Cache handler | Persistent key-value cache |
+| `Step`, `Annotate`, `Snapshot` | Graph handler | Tracks execution graph |
+| `AtomicGet`, `AtomicUpdate` | Atomic handler | Thread-safe state |
+
+Use `default_handlers()` to get the standard set:
+
+```python
+from doeff import run, default_handlers
+
+result = run(my_program(), default_handlers())
+```
+
+### Swappable Handlers
+
+Because effects are data and handlers are separate, you can swap handlers for different contexts:
+
+- **Production**: Real I/O, real database, real network
+- **Testing**: Mock handlers that return canned values — no GPU, no network, milliseconds
+- **Debugging**: Logging handlers that trace every effect
+
+This is a fundamental architectural advantage of algebraic effects over direct side effects.
+
 ## The @do Decorator
 
-The `@do` decorator is the bridge between Python generators and monadic do-notation.
+The `@do` decorator is the bridge between Python generators and effect-handling do-notation.
 
 ### What It Does
 
@@ -235,11 +286,11 @@ def my_program():
 
 ### How It Works
 
-1. **Generator Protocol**: `yield` suspends execution and produces a value
-2. **Effect Yielding**: The yielded value is an Effect instance
-3. **Interpreter Loop**: CESK machine processes each effect
-4. **Value Sending**: Result is sent back via `.send(value)`
-5. **Continuation**: Generator resumes with the value
+1. **Generator Protocol**: `yield` suspends execution (captures the continuation)
+2. **Effect Performing**: The yielded value is an Effect instance — the program is *performing* an effect
+3. **Handler Dispatch**: The Rust VM dispatches to the appropriate handler
+4. **Result Sending**: Handler result is sent back via `.send(value)`
+5. **Continuation Resume**: The one-shot continuation resumes with the value
 
 ```python
 def generator_func():
@@ -267,7 +318,9 @@ except StopIteration as e:
     final_value = e.value  # The return value
 ```
 
-## Execution Model
+## Execution Model — One-Shot Continuations and the Rust VM
+
+doeff's execution model is based on **one-shot continuations**: when a program performs an effect (via `yield`), the current continuation is captured, the handler processes the effect, and the continuation is resumed exactly once with the result. This suspend-handle-resume cycle is managed by the **Rust VM** for performance.
 
 ### Running Programs
 
@@ -295,13 +348,15 @@ result = await arun(
 
 ### Execution Steps
 
-1. **Initialize State**: Create CESK machine state from program, environment, and store
+The Rust VM drives effect handling through the following steps:
+
+1. **Initialize**: Create runtime state from program, environment, and store
 2. **Create Generator**: Call `program.generator_func()`
-3. **Process Loop**:
-   - Get next yielded value
-   - If `Program`: recursively run it
-   - If `Effect`: handle via appropriate handler
-   - Send result back to generator
+3. **Effect Loop** (the core of the algebraic effects runtime):
+   - Get next yielded value (the performed effect)
+   - If `Program`: push continuation frame, enter nested program
+   - If `Effect`: dispatch to the appropriate handler, get result
+   - Resume the one-shot continuation with the result (via `.send(value)`)
 4. **Handle Completion**: Catch `StopIteration` and extract return value
 5. **Return Result**: `RuntimeResult` with value
 
@@ -344,7 +399,7 @@ class RuntimeResult(Protocol[T]):
         """Check if failed"""
 
     # Stack traces for debugging (available on error)
-    k_stack: KStackTrace           # CESK continuation stack
+    k_stack: KStackTrace           # Continuation stack
     effect_stack: EffectStackTrace # Effect call tree
     python_stack: PythonStackTrace # Python source locations
 
@@ -364,7 +419,7 @@ doeff uses trampolining to prevent stack overflow:
 
 ```python
 def force_eval(prog: Program[T]) -> Program[T]:
-    """Trampoline for stack safety with deep monadic chains"""
+    """Trampoline for stack safety with deep effect chains"""
     def forced_generator():
         gen = prog.generator_func()
         try:
@@ -379,11 +434,11 @@ def force_eval(prog: Program[T]) -> Program[T]:
     return Program(forced_generator)
 ```
 
-## Monadic Operations
+## Composition Operations
 
-`Program[T]` is a monad, providing standard monadic operations.
+`Program[T]` provides composition operations for combining effectful computations. These correspond to standard algebraic operations (map, bind/flat_map, pure) that enable programs to be composed. While these have monadic structure under the hood, the mental model should be **effect composition**: combining smaller effectful programs into larger ones.
 
-### Functor: map
+### map — Transform Results
 
 Transform the result value:
 
@@ -402,9 +457,9 @@ def example():
     return doubled2
 ```
 
-### Monad: flat_map
+### flat_map — Chain Effectful Computations
 
-Chain computations (monadic bind):
+Chain effectful computations (the result of one feeds into the next):
 
 ```python
 def double_program(x: int) -> Program[int]:
@@ -423,7 +478,7 @@ def result():
     return final
 ```
 
-### Sequencing: then
+### then — Sequence Effects
 
 Run programs in sequence, discarding first result:
 
@@ -567,17 +622,21 @@ result = identity("hello")  # Program[str]
 
 ## Summary
 
-- **Program[T]**: Lazy, reusable computation producing `T`
-- **Effect**: Request for an operation (Reader, State, Writer, etc.)
-- **@do**: Converts generator functions to Programs with monadic operations
-- **Generator**: Python's coroutine mechanism enables do-notation syntax
+- **Algebraic effects**: Effects are first-class data values; handlers interpret them. This is the core mental model.
+- **One-shot continuations**: Each effect suspends the program, the handler resolves it, and the continuation resumes exactly once.
+- **Rust VM**: The runtime manages continuations and handler dispatch for performance.
+- **Program[T]**: Lazy, reusable effectful computation producing `T`
+- **Effect**: An algebraic effect operation — a data value describing a request (Reader, State, Writer, etc.)
+- **Handlers**: Composable, swappable interpreters for effects (`default_handlers()` for the built-in set)
+- **@do**: Converts generator functions to Programs using do-notation
+- **Generator**: Python's coroutine mechanism implements the suspend/resume of one-shot continuations
 - **run/async_run**: Execute programs with provided handlers
 - **Environment/Store**: Tracks environment and mutable state during execution
 - **RuntimeResult[T]**: Contains final value and raw_store
-- **Monadic Ops**: map, flat_map, sequence, pure enable composition
+- **Composition Ops**: map, flat_map, sequence, pure enable combining effectful computations
 
 ## Next Steps
 
 - **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer in detail
 - **[Async Effects](04-async-effects.md)** - Future, Await, Gather
-- **[Error Handling](05-error-handling.md)** - Result monad and error effects
+- **[Error Handling](05-error-handling.md)** - Result type and error handling effects

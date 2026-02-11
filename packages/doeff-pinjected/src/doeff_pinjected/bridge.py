@@ -1,8 +1,8 @@
 """
-Pinjected bridge for the pragmatic comprehensive free monad implementation.
+Pinjected bridge for doeff's algebraic effects system.
 
-This module provides functions to convert Program[T] from the pragmatic
-implementation into pinjected's Injected[T] and IProxy[T] types.
+This module provides functions to convert Program[T] from the doeff
+effects system into pinjected's Injected[T] and IProxy[T] types.
 """
 
 from __future__ import annotations

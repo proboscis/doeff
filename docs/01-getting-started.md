@@ -1,5 +1,7 @@
 # Getting Started with doeff
 
+doeff is an **algebraic effects** system for Python. You write programs that *perform* effects (read config, update state, log messages), and **handlers** interpret those effects. The runtime uses **one-shot continuations** backed by a **Rust VM** for performance.
+
 ## Installation
 
 Install doeff using pip:
@@ -72,12 +74,12 @@ Result: 1
 Let's break down what's happening:
 
 1. **`@do` decorator**: Converts a generator function into a reusable `KleisliProgram`
-2. **`yield` effects**: Each `yield` suspends execution and requests an effect
-3. **Effects**:
-   - `Put("counter", value)` - Sets state
-   - `Get("counter")` - Retrieves state
-   - `Log(message)` - Writes to log
-4. **`run`**: Executes programs with the provided handlers
+2. **`yield` effects**: Each `yield` *performs* an algebraic effect — the program suspends and the handler processes it
+3. **Effects** (algebraic effect operations):
+   - `Put("counter", value)` - State effect: sets state (handled by the State handler)
+   - `Get("counter")` - State effect: retrieves state
+   - `Log(message)` - Writer effect: writes to log (handled by the Writer handler)
+4. **`run`**: Executes programs with the provided effect handlers
 5. **Result**: Returns a `RuntimeResult` with `.value` for success or `.error` for failure
 
 ## Key Concepts
@@ -121,7 +123,7 @@ result2 = run(prog2, default_handlers())
 
 ### Effects are Composable
 
-You can compose programs together:
+You can compose effectful programs together — a key advantage of algebraic effects:
 
 ```python
 @do
@@ -275,7 +277,7 @@ result2 = run(prog2, default_handlers())
 
 Now that you understand the basics, explore:
 
-- **[Core Concepts](02-core-concepts.md)** - Deep dive into Program, Effect, and execution model
+- **[Core Concepts](02-core-concepts.md)** - Algebraic effects, handlers, one-shot continuations, and the Rust VM
 - **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
 - **[Async Effects](04-async-effects.md)** - Parallel execution and futures
 - **[Error Handling](05-error-handling.md)** - Result, Safe for error handling

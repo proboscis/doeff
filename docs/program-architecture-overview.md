@@ -1,13 +1,17 @@
 # Program Architecture Overview
 
-This document summarises the refactored runtime architecture that powers `doeff`. It complements the more detailed notes in `specs/program-architecture/` and focuses on the concrete code that now ships in the repository.
+This document summarises the runtime architecture that powers doeff's **algebraic effects system**. The design implements algebraic effects with **one-shot continuations**, managed by a **Rust VM** runtime.
+
+It complements the more detailed notes in `specs/program-architecture/` and focuses on the concrete code that now ships in the repository.
 
 ## High-Level Summary
 
-- **Program = Effect | KleisliProgramCall** – every executable computation is either an `EffectBase` instance or a `KleisliProgramCall` (bound generator call).
-- **ProgramBase** – the single runtime base class (`doeff/program.py`) that exposes helper combinators such as `pure`, `sequence`, `first_success`, etc.
-- **Interpreter** – `_execute_program_loop` handles effects directly, runs nested Kleisli calls by pushing/popping `CallFrame` entries, and records call-stack snapshots on every observation.
-- **Interception** – `_InterceptedProgram` subclasses `KleisliProgramCall`, preserving original metadata while layering transforms.
+- **Algebraic effects model** – programs *perform* effects (yield data values); handlers *interpret* them and resume the continuation. This effect-handler duality is the core abstraction.
+- **Program = Effect | KleisliProgramCall** – every executable computation is either an `EffectBase` instance (an algebraic effect operation) or a `KleisliProgramCall` (a bound generator call that may perform effects).
+- **ProgramBase** – the single runtime base class (`doeff/program.py`) that exposes composition combinators such as `pure`, `sequence`, `first_success`, etc.
+- **Effect handler runtime** – `_execute_program_loop` dispatches effects to handlers, manages the continuation stack via `CallFrame` push/pop, and records observations.
+- **One-shot continuations** – each effect yield captures the current continuation; the handler resumes it exactly once with the result. This is implemented via Python's generator `.send()` protocol.
+- **Interception** – `_InterceptedProgram` subclasses `KleisliProgramCall`, preserving original metadata while layering effect transforms (middleware).
 - **Effect Observation & Reporting** – each `EffectObservation` carries a `call_stack_snapshot`. These snapshots feed `EffectCallTree`, RunResult reports, and the CLI `--report` flag.
 
 ## Core Types
@@ -53,11 +57,11 @@ classDiagram
 
 Key points:
 
-- `Program` is just an alias for `ProgramBase`. All helper combinators now live here and always return either an `EffectBase` or `KleisliProgramCall`.
-- Effects are first-class `Program` values because `EffectBase` (`doeff/types.py`) inherits from `ProgramBase` and implements `map/flat_map/intercept`.
-- `_InterceptedProgram` is a frozen dataclass that extends `KleisliProgramCall`. It copies the underlying call metadata and delegates execution through `_intercept_generator`.
+- `Program` is just an alias for `ProgramBase`. All composition combinators now live here and always return either an `EffectBase` or `KleisliProgramCall`.
+- Effects are first-class `Program` values because `EffectBase` (`doeff/types.py`) inherits from `ProgramBase` and implements `map/flat_map/intercept`. This is the algebraic effects design: effects *are* programs that can be composed.
+- `_InterceptedProgram` is a frozen dataclass that extends `KleisliProgramCall`. It copies the underlying call metadata and delegates execution through `_intercept_generator` — this implements effect interception (middleware over algebraic effects).
 
-## Interpreter Loop
+## Effect Handler Runtime (Interpreter Loop)
 
 ```mermaid
 flowchart TD
@@ -76,11 +80,11 @@ flowchart TD
     J --> D
 ```
 
-Implementation details:
+Implementation details (algebraic effects perspective):
 
-- `CallFrame` objects (in `doeff/types.py`) are appended before entering a `KleisliProgramCall` with metadata. They are always popped in a `finally` block.
-- `_handle_effect` records `EffectObservation` entries, including the call-stack snapshot, via `_record_effect_usage`.
-- The interpreter never wraps or unwraps legacy `Program` objects; the helper `Program.from_program_like` has been removed.
+- `CallFrame` objects (in `doeff/types.py`) represent the **continuation stack** — they track which effectful computation is active. Appended before entering a `KleisliProgramCall`, always popped in a `finally` block.
+- `_handle_effect` is the **handler dispatch** — it finds the appropriate handler for the effect type, invokes it, and returns the result to be sent back to the continuation. It also records `EffectObservation` entries via `_record_effect_usage`.
+- The one-shot continuation is implemented by the generator protocol: `yield` suspends (captures continuation), `.send(value)` resumes it exactly once.
 
 ## Effect Call Tree
 

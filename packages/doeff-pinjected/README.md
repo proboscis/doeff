@@ -2,7 +2,7 @@
 
 Pinjected integration for doeff effects system.
 
-This package provides a bridge between doeff's free monad implementation
+This package provides a bridge between doeff's algebraic effects system
 and the pinjected dependency injection framework.
 
 ## Features
