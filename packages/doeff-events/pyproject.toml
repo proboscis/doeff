@@ -1,0 +1,23 @@
+[project]
+name = "doeff-events"
+version = "0.1.0"
+description = "Generic publish/subscribe effects for doeff"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Kento Masui", email = "nameissoap@gmail.com"}
+]
+dependencies = [
+    "doeff>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doeff_events"]
+
+[tool.uv.sources]
+doeff = { workspace = true }
