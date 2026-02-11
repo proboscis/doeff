@@ -1,7 +1,7 @@
 """Tests to verify that retry attempts are properly tracked."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from doeff_openai import get_api_calls, structured_llm__openai
@@ -9,24 +9,16 @@ from doeff_openai.client import OpenAIClient
 
 from doeff import (
     Ask,
-    AskEffect,
-    Delegate,
     EffectGenerator,
-    Resume,
-    WithHandler,
     async_run,
     default_handlers,
     do,
 )
 
 
-def _ask_override_handler(overrides: dict[str, object]):
-    def handler(effect, k):
-        if isinstance(effect, AskEffect) and effect.key in overrides:
-            return (yield Resume(k, overrides[effect.key]))
-        yield Delegate()
-
-    return handler
+async def run_program(program, env=None):
+    """Execute a test program with standard handlers."""
+    return await async_run(program, handlers=default_handlers(), env=env)
 
 
 @pytest.mark.asyncio
@@ -87,11 +79,7 @@ async def test_retry_tracking_on_failure_then_success():
             api_calls = yield get_api_calls()
             return {"text": text_result, "api_calls": api_calls}
 
-        handler = _ask_override_handler({"openai_client": mock_client})
-        result = await async_run(
-            WithHandler(handler, test_flow()),
-            handlers=default_handlers(),
-        )
+        result = await run_program(test_flow(), env={"openai_client": mock_client})
 
         # Should eventually succeed on third attempt
         assert result.is_ok()
@@ -159,11 +147,7 @@ async def test_retry_exhaustion_tracking():
             )
             return result
 
-        handler = _ask_override_handler({"openai_client": mock_client})
-        result = await async_run(
-            WithHandler(handler, test_flow()),
-            handlers=default_handlers(),
-        )
+        result = await run_program(test_flow(), env={"openai_client": mock_client})
 
         # Should fail after all retries
         assert result.is_err()
@@ -227,11 +211,7 @@ async def test_no_retry_on_immediate_success():
             api_calls = yield get_api_calls()
             return {"text": text_result, "api_calls": api_calls}
 
-        handler = _ask_override_handler({"openai_client": mock_client})
-        result = await async_run(
-            WithHandler(handler, test_flow()),
-            handlers=default_handlers(),
-        )
+        result = await run_program(test_flow(), env={"openai_client": mock_client})
 
         # Should succeed immediately
         assert result.is_ok()
