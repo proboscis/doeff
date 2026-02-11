@@ -4,6 +4,8 @@ __version__ = "0.1.0"
 
 from .client import GeminiClient, get_gemini_client, track_api_call
 from .costs import calculate_cost, gemini_cost_calculator__default
+from .effects import GeminiChat, GeminiEmbedding, GeminiStreamingChat, GeminiStructuredOutput
+from .handlers import mock_handlers, production_handlers
 from .structured_llm import (
     build_contents,
     build_generation_config,
@@ -27,9 +29,13 @@ __all__ = [
     "APICallMetadata",
     "CostInfo",
     "GeminiCallResult",
+    "GeminiChat",
     "GeminiClient",
     "GeminiCostEstimate",
+    "GeminiEmbedding",
     "GeminiImageEditResult",
+    "GeminiStreamingChat",
+    "GeminiStructuredOutput",
     "TokenUsage",
     "__version__",
     "build_contents",
@@ -39,9 +45,11 @@ __all__ = [
     "gemini_cost_calculator__default",
     "get_gemini_client",
     "image_edit__gemini",
+    "mock_handlers",
     "process_image_edit_response",
     "process_structured_response",
     "process_unstructured_response",
+    "production_handlers",
     "structured_llm__gemini",
     "track_api_call",
 ]
