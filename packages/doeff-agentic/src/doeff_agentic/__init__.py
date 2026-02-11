@@ -133,6 +133,10 @@ from .opencode_handler import (
     OpenCodeHandler,
     opencode_handler,
 )
+from .handlers import (
+    mock_handlers,
+    production_handlers,
+)
 
 # State management
 from .state import (
@@ -275,6 +279,8 @@ __all__ = [
     "generate_workflow_id",
     "get_default_state_dir",
     "opencode_handler",
+    "production_handlers",
+    "mock_handlers",
     "tmux_handler",
     "VisualInterceptorConfig",
     "with_visual_logging",
