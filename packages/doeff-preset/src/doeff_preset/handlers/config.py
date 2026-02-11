@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from doeff import AskEffect, Delegate, MissingEnvKeyError, Resume
+from doeff_preset.effects.config import is_preset_config_key
 
 # Default preset configuration
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -52,7 +53,7 @@ def make_config_handler(
 
         key = effect.key
 
-        if isinstance(key, str) and key.startswith("preset."):
+        if is_preset_config_key(key):
             if key not in config:
                 raise MissingEnvKeyError(key)
             return (yield Resume(k, config[key]))
