@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import base64
@@ -8,13 +9,27 @@ from typing import Any
 import pytest
 from PIL import Image
 
+IMAGE_PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "doeff-image" / "src"
+if str(IMAGE_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(IMAGE_PACKAGE_ROOT))
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from doeff_seedream import SeedreamClient, edit_image__seedream4, get_seedream_client
 
-from doeff import AskEffect, Delegate, Get, Resume, Safe, WithHandler, async_run, default_handlers, do
+from doeff import (
+    AskEffect,
+    Delegate,
+    Get,
+    Resume,
+    Safe,
+    WithHandler,
+    async_run,
+    default_handlers,
+    do,
+)
 
 
 class RecordingSeedreamClient(SeedreamClient):
@@ -101,8 +116,10 @@ async def test_edit_image_seedream4_decodes_payload_and_tracks_cost_with_handler
     assert run_result.value["seedream_total_cost_usd"] == pytest.approx(0.05)
     assert run_result.value["seedream_cost_dummy_model"] == pytest.approx(0.05)
     calls = run_result.value["seedream_api_calls"]
-    assert calls and calls[-1]["total_cost"] == pytest.approx(0.05)
-    assert client.calls and client.calls[0]["payload"]["prompt"] == "A test prompt"
+    assert calls
+    assert calls[-1]["total_cost"] == pytest.approx(0.05)
+    assert client.calls
+    assert client.calls[0]["payload"]["prompt"] == "A test prompt"
     assert any("estimated cost" in str(entry) for entry in run_result.log)
 
 

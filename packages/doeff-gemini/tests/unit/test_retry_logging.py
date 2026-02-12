@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Retry logging tests that avoid the google.genai dependency."""
 
 from __future__ import annotations
@@ -12,6 +13,10 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+
+IMAGE_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-image" / "src"
+if str(IMAGE_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(IMAGE_PACKAGE_ROOT))
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
@@ -68,7 +73,7 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(
         structured_llm_module,
         "_gemini_random_backoff",
-        lambda attempt, error: 0.0,
+        lambda _attempt, _error: 0.0,
     )
 
     assert hasattr(structured_llm_module, "slog")
@@ -103,7 +108,10 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
                 max_retries=2,
             )
         )
-    result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": mock_client})
+
+    result = await async_run(
+        flow(), handlers=default_handlers(), env={"gemini_client": mock_client}
+    )
 
     assert result.is_err()
     error = result.error
@@ -137,7 +145,7 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(
         structured_llm_module,
         "_gemini_random_backoff",
-        lambda attempt, error: 0.0,
+        lambda _attempt, _error: 0.0,
     )
 
     assert hasattr(structured_llm_module, "slog")
@@ -168,7 +176,10 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
                 max_retries=2,
             )
         )
-    result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": mock_client})
+
+    result = await async_run(
+        flow(), handlers=default_handlers(), env={"gemini_client": mock_client}
+    )
 
     assert result.is_err()
     error = result.error
