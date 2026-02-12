@@ -3,16 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "doeff-google-secret-manager"
+name = "doeff-secret"
 version = "0.1.0"
-description = "Google Secret Manager integration for doeff using Application Default Credentials"
+description = "Provider-agnostic secret management effects for doeff"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Kento Masui"},
 ]
-keywords = ["doeff", "secret-manager", "google", "effects", "adc"]
+keywords = ["doeff", "secrets", "effects", "secret-manager"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -26,15 +26,11 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
-    "doeff-secret>=0.1.0",
-    "google-cloud-secret-manager>=2.20.0",
-    "google-auth>=2.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
-    "pytest-asyncio>=0.24.0",
     "ruff>=0.6.0",
 ]
 
@@ -44,8 +40,7 @@ Repository = "https://github.com/CyberAgentAILab/doeff"
 Issues = "https://github.com/CyberAgentAILab/doeff/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/doeff_google_secret_manager"]
+packages = ["src/doeff_secret"]
 
 [tool.uv.sources]
-doeff = {workspace = true}
-doeff-secret = {workspace = true}
+doeff = { workspace = true }
