@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,15 +12,13 @@ from typing import Any
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
+SECRET_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-secret" / "src"
+if str(SECRET_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SECRET_PACKAGE_ROOT))
 
 from doeff_google_secret_manager.client import SecretManagerClient  # noqa: E402
-from doeff_google_secret_manager.effects import (  # noqa: E402
-    DeleteSecret,
-    GetSecret,
-    ListSecrets,
-    SetSecret,
-)
 from doeff_google_secret_manager.handlers import mock_handlers, production_handlers  # noqa: E402
+from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret  # noqa: E402
 
 from doeff import do, run_with_handler_map  # noqa: E402
 
@@ -90,9 +89,16 @@ def _is_err(run_result: Any) -> bool:
 
 
 def test_effect_exports() -> None:
-    exported_effects = importlib.import_module("doeff_google_secret_manager.effects")
+    sys.modules.pop("doeff_google_secret_manager.effects", None)
+    sys.modules.pop("doeff_google_secret_manager.effects.secrets", None)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        exported_effects = importlib.import_module("doeff_google_secret_manager.effects")
     assert exported_effects.GetSecret is GetSecret
     assert exported_effects.SetSecret is SetSecret
+    assert any(
+        "doeff_google_secret_manager.effects is deprecated" in str(item.message) for item in caught
+    )
 
 
 def test_handler_exports() -> None:
@@ -113,16 +119,22 @@ def _mock_program():
 
 
 def test_mock_handlers_use_in_memory_store() -> None:
-    result = run_with_handler_map(
-        _mock_program(),
-        mock_handlers(seed_data={"seed-secret": "seed-value"}),
-    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        result = run_with_handler_map(
+            _mock_program(),
+            mock_handlers(seed_data={"seed-secret": "seed-value"}),
+        )
 
     assert _is_ok(result)
     latest, all_secrets, remaining = result.value
     assert latest == b"v1"
     assert all_secrets == ["api-key", "db-password", "seed-secret"]
     assert remaining == ["db-password", "seed-secret"]
+    assert any(
+        "doeff_google_secret_manager.handlers.mock_handlers is deprecated" in str(item.message)
+        for item in caught
+    )
 
 
 @do
@@ -171,12 +183,18 @@ def test_handler_swapping_changes_behavior() -> None:
     )
     injected_client._client = fake_api
 
-    mock_result = run_with_handler_map(
-        _read_swap_target(),
-        mock_handlers(seed_data={"swap-target": "from-mock"}),
-    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        mock_result = run_with_handler_map(
+            _read_swap_target(),
+            mock_handlers(seed_data={"swap-target": "from-mock"}),
+        )
     assert _is_ok(mock_result)
     assert mock_result.value == b"from-mock"
+    assert any(
+        "doeff_google_secret_manager.handlers.mock_handlers is deprecated" in str(item.message)
+        for item in caught
+    )
 
     production_result = run_with_handler_map(
         _read_swap_target(),
