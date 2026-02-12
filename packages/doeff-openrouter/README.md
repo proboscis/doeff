@@ -9,6 +9,17 @@ OpenRouter integration for [doeff](https://github.com/CyberAgentAILab/doeff) pro
 - 📦 Built-in helpers for structured outputs backed by Pydantic models
 - 🧪 Works with the same execution/test utilities as other doeff packages
 
+## Unified Effects Routing
+
+`doeff-openrouter` now handles provider-agnostic effects from `doeff-llm`:
+
+- `LLMChat`
+- `LLMStreamingChat`
+- `LLMStructuredOutput`
+
+In multi-provider stacks, OpenRouter is typically used as the outer fallback
+handler because it can proxy many model families.
+
 ## Installation
 
 ```bash

@@ -5,7 +5,12 @@ __version__ = "0.1.0"
 from .client import GeminiClient, get_gemini_client, track_api_call
 from .costs import calculate_cost, gemini_cost_calculator__default
 from .effects import GeminiChat, GeminiEmbedding, GeminiStreamingChat, GeminiStructuredOutput
-from .handlers import mock_handlers, production_handlers
+from .handlers import (
+    gemini_mock_handler,
+    gemini_production_handler,
+    mock_handlers,
+    production_handlers,
+)
 from .structured_llm import (
     build_contents,
     build_generation_config,
@@ -42,6 +47,8 @@ __all__ = [
     "build_generation_config",
     "calculate_cost",
     "edit_image__gemini",
+    "gemini_mock_handler",
+    "gemini_production_handler",
     "gemini_cost_calculator__default",
     "get_gemini_client",
     "image_edit__gemini",
