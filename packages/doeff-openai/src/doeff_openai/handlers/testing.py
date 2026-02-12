@@ -7,6 +7,13 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, TypeVar, get_args, get_origin
 
+from doeff_llm.effects import (
+    LLMChat,
+    LLMEmbedding,
+    LLMStreamingChat,
+    LLMStructuredOutput,
+)
+
 from doeff import Delegate, Resume
 from doeff_openai.effects import (
     ChatCompletion,
@@ -14,6 +21,7 @@ from doeff_openai.effects import (
     StreamingChatCompletion,
     StructuredOutput,
 )
+from doeff_openai.handlers.production import _is_openai_model
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
@@ -219,8 +227,7 @@ def _default_structured_payload(response_format: type[Any]) -> dict[str, Any]:
     if not annotations:
         return {}
     return {
-        key: _default_value_for_annotation(annotation)
-        for key, annotation in annotations.items()
+        key: _default_value_for_annotation(annotation) for key, annotation in annotations.items()
     }
 
 
@@ -241,7 +248,7 @@ def _coerce_structured_value(payload: Any, response_format: type[Any]) -> Any:
 
 
 def _handle_chat_completion(
-    effect: ChatCompletion,
+    effect: LLMChat,
     k: Any,
     *,
     config: MockOpenAIConfig,
@@ -266,7 +273,7 @@ def _handle_chat_completion(
 
 
 def _handle_streaming_chat_completion(
-    effect: StreamingChatCompletion,
+    effect: LLMStreamingChat | LLMChat,
     k: Any,
     *,
     config: MockOpenAIConfig,
@@ -290,7 +297,7 @@ def _handle_streaming_chat_completion(
 
 
 def _handle_embedding(
-    effect: Embedding,
+    effect: LLMEmbedding,
     k: Any,
     *,
     config: MockOpenAIConfig,
@@ -322,7 +329,7 @@ def _handle_embedding(
 
 
 def _handle_structured_output(
-    effect: StructuredOutput,
+    effect: LLMStructuredOutput,
     k: Any,
     *,
     config: MockOpenAIConfig,
@@ -361,21 +368,33 @@ def openai_mock_handler(
     resolved_config = config or MockOpenAIConfig()
     resolved_state = state or MockOpenAIState()
 
-    if isinstance(effect, ChatCompletion):
-        return (
-            yield from _handle_chat_completion(
-                effect, k, config=resolved_config, state=resolved_state
+    if isinstance(effect, LLMStreamingChat | StreamingChatCompletion):
+        if _is_openai_model(effect.model):
+            return (
+                yield from _handle_streaming_chat_completion(
+                    effect, k, config=resolved_config, state=resolved_state
+                )
             )
-        )
-    if isinstance(effect, StreamingChatCompletion):
-        return (
-            yield from _handle_streaming_chat_completion(
-                effect, k, config=resolved_config, state=resolved_state
+    elif isinstance(effect, LLMChat | ChatCompletion):
+        if _is_openai_model(effect.model):
+            if effect.stream:
+                return (
+                    yield from _handle_streaming_chat_completion(
+                        effect, k, config=resolved_config, state=resolved_state
+                    )
+                )
+            return (
+                yield from _handle_chat_completion(
+                    effect, k, config=resolved_config, state=resolved_state
+                )
             )
+    elif isinstance(effect, LLMEmbedding | Embedding) and _is_openai_model(effect.model):
+        return (
+            yield from _handle_embedding(effect, k, config=resolved_config, state=resolved_state)
         )
-    if isinstance(effect, Embedding):
-        return (yield from _handle_embedding(effect, k, config=resolved_config, state=resolved_state))
-    if isinstance(effect, StructuredOutput):
+    elif isinstance(effect, LLMStructuredOutput | StructuredOutput) and _is_openai_model(
+        effect.model
+    ):
         return (
             yield from _handle_structured_output(
                 effect, k, config=resolved_config, state=resolved_state
@@ -394,23 +413,43 @@ def mock_handlers(
     resolved_state = state or MockOpenAIState()
 
     def handle_chat(effect: ChatCompletion, k: Any):
+        if not _is_openai_model(effect.model):
+            yield Delegate()
+            return
+        if effect.stream:
+            return (
+                yield from _handle_streaming_chat_completion(
+                    effect, k, config=resolved_config, state=resolved_state
+                )
+            )
         return (
             yield from _handle_chat_completion(
                 effect, k, config=resolved_config, state=resolved_state
             )
         )
 
-    def handle_stream(effect: StreamingChatCompletion, k: Any):
+    def handle_stream(effect: LLMStreamingChat | StreamingChatCompletion, k: Any):
+        if not _is_openai_model(effect.model):
+            yield Delegate()
+            return
         return (
             yield from _handle_streaming_chat_completion(
                 effect, k, config=resolved_config, state=resolved_state
             )
         )
 
-    def handle_embedding(effect: Embedding, k: Any):
-        return (yield from _handle_embedding(effect, k, config=resolved_config, state=resolved_state))
+    def handle_embedding(effect: LLMEmbedding | Embedding, k: Any):
+        if not _is_openai_model(effect.model):
+            yield Delegate()
+            return
+        return (
+            yield from _handle_embedding(effect, k, config=resolved_config, state=resolved_state)
+        )
 
-    def handle_structured(effect: StructuredOutput, k: Any):
+    def handle_structured(effect: LLMStructuredOutput | StructuredOutput, k: Any):
+        if not _is_openai_model(effect.model):
+            yield Delegate()
+            return
         return (
             yield from _handle_structured_output(
                 effect, k, config=resolved_config, state=resolved_state
@@ -422,6 +461,10 @@ def mock_handlers(
         StreamingChatCompletion: handle_stream,
         Embedding: handle_embedding,
         StructuredOutput: handle_structured,
+        LLMChat: handle_chat,
+        LLMStreamingChat: handle_stream,
+        LLMEmbedding: handle_embedding,
+        LLMStructuredOutput: handle_structured,
     }
 
 

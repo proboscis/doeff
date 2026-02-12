@@ -5,6 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from doeff_llm.effects import (
+    LLMChat,
+    LLMEmbedding,
+    LLMStreamingChat,
+    LLMStructuredOutput,
+)
 from doeff_openai.effects import (
     ChatCompletion as ChatCompletionEffect,
 )
@@ -19,11 +25,22 @@ from doeff_openai.handlers import (
     MockOpenAIConfig,
     MockOpenAIState,
     mock_handlers,
+    openai_mock_handler,
     production_handlers,
 )
 from pydantic import BaseModel
 
-from doeff import Await, EffectGenerator, async_run_with_handler_map, do
+from doeff import (
+    Await,
+    Delegate,
+    EffectGenerator,
+    Resume,
+    WithHandler,
+    async_run,
+    async_run_with_handler_map,
+    default_handlers,
+    do,
+)
 
 
 class StructuredAnswer(BaseModel):
@@ -47,6 +64,34 @@ def test_effect_exports() -> None:
     assert StreamingChatCompletion.__name__ == "StreamingChatCompletion"
     assert EmbeddingEffect.__name__ == "Embedding"
     assert StructuredOutput.__name__ == "StructuredOutput"
+    assert issubclass(ChatCompletionEffect, LLMChat)
+    assert issubclass(StreamingChatCompletion, LLMStreamingChat)
+    assert issubclass(EmbeddingEffect, LLMEmbedding)
+    assert issubclass(StructuredOutput, LLMStructuredOutput)
+
+
+def test_deprecated_effect_aliases_emit_warnings() -> None:
+    with pytest.deprecated_call(match="ChatCompletion is deprecated"):
+        ChatCompletionEffect(
+            messages=[{"role": "user", "content": "hello"}],
+            model="gpt-4o-mini",
+        )
+    with pytest.deprecated_call(match="StreamingChatCompletion is deprecated"):
+        StreamingChatCompletion(
+            messages=[{"role": "user", "content": "stream"}],
+            model="gpt-4o-mini",
+        )
+    with pytest.deprecated_call(match="Embedding is deprecated"):
+        EmbeddingEffect(
+            input="hello",
+            model="text-embedding-3-small",
+        )
+    with pytest.deprecated_call(match="StructuredOutput is deprecated"):
+        StructuredOutput(
+            messages=[{"role": "user", "content": "json"}],
+            response_format=StructuredAnswer,
+            model="gpt-4o-mini",
+        )
 
 
 def test_handler_exports() -> None:
@@ -56,6 +101,10 @@ def test_handler_exports() -> None:
     assert StreamingChatCompletion in handler_map
     assert EmbeddingEffect in handler_map
     assert StructuredOutput in handler_map
+    assert LLMChat in handler_map
+    assert LLMStreamingChat in handler_map
+    assert LLMEmbedding in handler_map
+    assert LLMStructuredOutput in handler_map
 
     assert callable(mock_handlers)
 
@@ -77,24 +126,24 @@ async def test_mock_handlers_support_handler_swapping_for_all_effects() -> None:
 
     @do
     def flow() -> EffectGenerator[dict[str, Any]]:
-        first_chat = yield ChatCompletionEffect(
+        first_chat = yield LLMChat(
             messages=[{"role": "user", "content": "hello"}],
             model="gpt-4o-mini",
         )
-        second_chat = yield ChatCompletionEffect(
+        second_chat = yield LLMChat(
             messages=[{"role": "user", "content": "hello again"}],
             model="gpt-4o-mini",
         )
-        stream = yield StreamingChatCompletion(
+        stream = yield LLMStreamingChat(
             messages=[{"role": "user", "content": "stream"}],
             model="gpt-4o-mini",
         )
         stream_text = yield Await(_collect_stream_text(stream))
-        embedding = yield EmbeddingEffect(
+        embedding = yield LLMEmbedding(
             input=["alpha", "beta"],
             model="text-embedding-3-small",
         )
-        structured = yield StructuredOutput(
+        structured = yield LLMStructuredOutput(
             messages=[{"role": "user", "content": "Return structured output"}],
             response_format=StructuredAnswer,
             model="gpt-4o-mini",
@@ -133,3 +182,42 @@ async def test_mock_handlers_support_handler_swapping_for_all_effects() -> None:
     assert state.embedding_calls == 1
     assert state.structured_calls == 1
     assert len(state.calls) == 5
+
+
+@pytest.mark.asyncio
+async def test_openai_handler_delegates_unsupported_models() -> None:
+    config = MockOpenAIConfig(chat_responses=["openai-response"])
+    state = MockOpenAIState()
+
+    def wrapped_openai_handler(effect: Any, k: Any):
+        return (
+            yield from openai_mock_handler(
+                effect,
+                k,
+                config=config,
+                state=state,
+            )
+        )
+
+    def fallback_handler(effect: Any, k: Any):
+        if isinstance(effect, LLMChat):
+            return (yield Resume(k, "fallback-response"))
+        yield Delegate()
+
+    @do
+    def flow() -> EffectGenerator[str]:
+        return (
+            yield LLMChat(
+                messages=[{"role": "user", "content": "delegate to fallback"}],
+                model="gemini-1.5-pro",
+            )
+        )
+
+    result = await async_run(
+        WithHandler(fallback_handler, WithHandler(wrapped_openai_handler, flow())),
+        handlers=default_handlers(),
+    )
+
+    assert result.is_ok()
+    assert result.value == "fallback-response"
+    assert state.chat_calls == 0

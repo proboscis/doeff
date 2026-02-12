@@ -3,16 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "doeff-openrouter"
+name = "doeff-llm"
 version = "0.1.0"
-description = "OpenRouter integration for doeff with effect-based observability"
+description = "Provider-agnostic LLM effects for doeff"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Kento Masui"},
 ]
-keywords = ["openrouter", "effects", "functional", "observability"]
+keywords = ["llm", "effects", "doeff", "providers", "structured-output"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -26,17 +26,12 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
-    "doeff-llm>=0.1.0",
-    "httpx>=0.27.0",
-    "pydantic>=2.6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
 ]
 
 [project.urls]
@@ -45,13 +40,10 @@ Repository = "https://github.com/CyberAgentAILab/doeff"
 Issues = "https://github.com/CyberAgentAILab/doeff/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/doeff_openrouter"]
+packages = ["src/doeff_llm"]
 
 [tool.uv.sources]
 doeff = {workspace = true}
-doeff-llm = {workspace = true}
 
 [dependency-groups]
-dev = [
-    "pillow>=11.3.0",
-]
+dev = []

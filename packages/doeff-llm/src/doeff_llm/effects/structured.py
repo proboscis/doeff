@@ -1,0 +1,24 @@
+"""Provider-agnostic structured-output effects."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from doeff import EffectBase
+
+
+@dataclass(frozen=True, kw_only=True)
+class LLMStructuredOutput(EffectBase):
+    """Request provider-agnostic structured output."""
+
+    messages: list[dict[str, Any]]
+    response_format: type[Any]
+    model: str
+    temperature: float = 0.7
+    max_tokens: int | None = None
+
+
+__all__ = [
+    "LLMStructuredOutput",
+]
