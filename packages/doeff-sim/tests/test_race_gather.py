@@ -27,7 +27,7 @@ def _gather_program():
 def _race_program():
     t1 = yield Spawn(_worker("r1", 2.0))
     t2 = yield Spawn(_worker("r2", 1.0))
-    winner = yield race(t1, t2)
+    winner = yield race(t2, t1)
     now = yield GetTime()
     return winner, now
 
