@@ -7,10 +7,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+IMAGE_PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "doeff-image" / "src"
+if str(IMAGE_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(IMAGE_PACKAGE_ROOT))
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+from doeff_image.effects import ImageGenerate as UnifiedImageGenerate
+from doeff_image.types import ImageResult
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.handlers import mock_handlers, production_handlers
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
@@ -77,6 +85,12 @@ def test_effect_exports() -> None:
 
     assert ImportedGenerate is SeedreamGenerate
     assert ImportedStructured is SeedreamStructuredOutput
+
+
+def test_seedream_generate_is_deprecated_alias() -> None:
+    with pytest.deprecated_call(match="SeedreamGenerate is deprecated"):
+        effect = SeedreamGenerate(prompt="deprecated", model="seedream-4")
+    assert effect.model == "seedream-4"
 
 
 def test_handler_exports() -> None:
@@ -147,3 +161,19 @@ def test_handler_swapping_changes_behavior() -> None:
     assert production_result.is_ok()
     assert mock_result.value != production_result.value
     assert production_result.value == b"production-bytes"
+
+
+@do
+def _unified_program() -> EffectGenerator[ImageResult]:
+    return (
+        yield UnifiedImageGenerate(
+            prompt="Unified generation",
+            model="seedream-test-model",
+        )
+    )
+
+
+def test_mock_handlers_support_unified_effects() -> None:
+    result = run_with_handler_map(_unified_program(), mock_handlers())
+    assert result.is_ok()
+    assert isinstance(result.value, ImageResult)

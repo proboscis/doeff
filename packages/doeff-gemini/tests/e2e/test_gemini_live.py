@@ -14,6 +14,10 @@ import pytest
 from PIL import Image
 from pydantic import BaseModel
 
+IMAGE_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-image" / "src"
+if str(IMAGE_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(IMAGE_PACKAGE_ROOT))
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
@@ -192,7 +196,9 @@ async def test_edit_image__gemini() -> None:
     assert payload.mime_type.startswith("image/")
     assert "gemini_client" in asked_keys
     async_models.generate_content.assert_called_once()
-    assert async_models.generate_content.call_args.kwargs["model"] == "gemini-2.5-flash-image-preview"
+    assert (
+        async_models.generate_content.call_args.kwargs["model"] == "gemini-2.5-flash-image-preview"
+    )
 
 
 @pytest.mark.asyncio
@@ -210,8 +216,7 @@ async def test_structured_llm__gemini_with_pydantic() -> None:
         return (
             yield structured_llm__gemini(
                 text=(
-                    "Return JSON describing a fun fact about hummingbirds with keys "
-                    "topic and fact"
+                    "Return JSON describing a fun fact about hummingbirds with keys topic and fact"
                 ),
                 model="gemini-2.5-pro",
                 response_format=FunFact,
@@ -250,8 +255,7 @@ async def test_structured_llm__gemini_live_with_pydantic() -> None:
         return (
             yield structured_llm__gemini(
                 text=(
-                    "Return JSON describing a fun fact about hummingbirds with keys "
-                    "topic and fact"
+                    "Return JSON describing a fun fact about hummingbirds with keys topic and fact"
                 ),
                 model="gemini-2.5-pro",
                 response_format=FunFact,

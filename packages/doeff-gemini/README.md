@@ -95,3 +95,14 @@ signature and how to override pricing.
 
 See `docs/gemini_client_setup.md` for details on how the Gemini client is
 constructed (API key vs ADC) and which environment keys are read.
+
+## Unified image effects (`doeff-image`)
+
+`doeff-gemini` now supports provider-agnostic image effects:
+
+- `doeff_image.effects.ImageGenerate`
+- `doeff_image.effects.ImageEdit`
+
+Use `gemini_image_handler` for model-routed protocol handling. It handles
+Gemini image models and delegates unsupported models with `Delegate()`, so it
+can be stacked with other provider handlers.

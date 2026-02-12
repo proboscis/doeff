@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Tests for the Gemini structured LLM implementation."""
 
 import importlib
@@ -12,6 +13,10 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+
+IMAGE_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-image" / "src"
+if str(IMAGE_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(IMAGE_PACKAGE_ROOT))
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
@@ -101,6 +106,7 @@ def test_image_edit_entrypoint_alias() -> None:
 
     assert image_edit__gemini is edit_image__gemini
 
+
 @pytest.mark.asyncio
 async def test_build_contents_text_only() -> None:
     """Ensure text-only prompts become a single user content block."""
@@ -109,6 +115,7 @@ async def test_build_contents_text_only() -> None:
     def flow() -> EffectGenerator[Any]:
         contents = yield build_contents("Hello Gemini")
         return contents
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -135,13 +142,16 @@ async def test_build_generation_config_basic() -> None:
             top_k=32,
             candidate_count=2,
             system_instruction="Be concise",
-            safety_settings=[{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_LOW_AND_ABOVE"}],
+            safety_settings=[
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_LOW_AND_ABOVE"}
+            ],
             tools=None,
             tool_config=None,
             response_format=None,
             generation_config_overrides={"stop_sequences": ["END"], "logprobs": 2},
         )
         return config
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -179,6 +189,7 @@ async def test_build_generation_config_with_modalities() -> None:
                 image_config=None,
             )
         )
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -200,6 +211,7 @@ async def test_process_structured_response_from_text() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -220,6 +232,7 @@ async def test_process_structured_response_from_parsed() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -242,6 +255,7 @@ async def test_process_structured_response_nested_model_from_parsed() -> None:
     def flow() -> EffectGenerator[SymbolAssessmentsV2]:
         result = yield process_structured_response(response, SymbolAssessmentsV2)
         return result
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -269,6 +283,7 @@ async def test_process_structured_response_from_json_part() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -298,6 +313,7 @@ async def test_process_structured_response_from_json_part_string_payload() -> No
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -326,6 +342,7 @@ async def test_process_structured_response_from_json_part_with_model() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -348,9 +365,7 @@ async def test_process_structured_response_nested_model_from_json_part() -> None
     )
     response = SimpleNamespace(
         parsed=None,
-        candidates=[
-            SimpleNamespace(content=SimpleNamespace(parts=[json_part]), contents=None)
-        ],
+        candidates=[SimpleNamespace(content=SimpleNamespace(parts=[json_part]), contents=None)],
         text="",
     )
 
@@ -358,6 +373,7 @@ async def test_process_structured_response_nested_model_from_json_part() -> None
     def flow() -> EffectGenerator[SymbolAssessmentsV2]:
         result = yield process_structured_response(response, SymbolAssessmentsV2)
         return result
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -390,6 +406,7 @@ async def test_process_structured_response_from_outputs_structure() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -408,6 +425,7 @@ async def test_process_structured_response_without_json_payload() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_err()
@@ -426,6 +444,7 @@ async def test_process_unstructured_response() -> None:
     def flow() -> EffectGenerator[str]:
         result = yield process_unstructured_response(response)
         return result
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -484,11 +503,13 @@ async def test_repair_structured_response_uses_default_when_missing(monkeypatch)
                 default_sllm=default_sllm,
             )
         )
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value.answer == "fixed"
-    assert calls and calls[0]["model"] == "gemini-default"
+    assert calls
+    assert calls[0]["model"] == "gemini-default"
 
 
 @pytest.mark.asyncio
@@ -526,7 +547,10 @@ async def test_repair_structured_response_uses_injected_sllm() -> None:
                 default_sllm=default_sllm,
             )
         )
-    result = await async_run(flow(), handlers=default_handlers(), env={"sllm_for_json_fix": custom_fix})
+
+    result = await async_run(
+        flow(), handlers=default_handlers(), env={"sllm_for_json_fix": custom_fix}
+    )
 
     assert result.is_ok()
     payload = result.value
@@ -561,7 +585,10 @@ async def test_structured_llm_text_only() -> None:
             temperature=0.2,
         )
         return result
-    result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": mock_client})
+
+    result = await async_run(
+        flow(), handlers=default_handlers(), env={"gemini_client": mock_client}
+    )
 
     assert result.is_ok()
     assert result.value == "Test response"
@@ -602,7 +629,10 @@ async def test_structured_llm_with_pydantic() -> None:
             response_format=SimpleResponse,
         )
         return result
-    result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": mock_client})
+
+    result = await async_run(
+        flow(), handlers=default_handlers(), env={"gemini_client": mock_client}
+    )
 
     assert result.is_ok()
     value = result.value
@@ -647,7 +677,9 @@ async def test_process_image_edit_response_success(tmp_path: Path) -> None:
                 content=_CandidateContent(
                     parts=[
                         _ContentPart(text="Edit applied"),
-                        _ContentPart(inline_data=_InlineData(data=image_bytes, mime_type="image/png")),
+                        _ContentPart(
+                            inline_data=_InlineData(data=image_bytes, mime_type="image/png")
+                        ),
                     ]
                 )
             )
@@ -657,6 +689,7 @@ async def test_process_image_edit_response_success(tmp_path: Path) -> None:
     @do
     def flow() -> EffectGenerator[GeminiImageEditResult]:
         return (yield process_image_edit_response(response))
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -690,7 +723,9 @@ async def test_edit_image__gemini_success() -> None:
                 content=_CandidateContent(
                     parts=[
                         _ContentPart(text="Success"),
-                        _ContentPart(inline_data=_InlineData(data=edited_bytes, mime_type="image/png")),
+                        _ContentPart(
+                            inline_data=_InlineData(data=edited_bytes, mime_type="image/png")
+                        ),
                     ]
                 )
             )
@@ -721,6 +756,7 @@ async def test_edit_image__gemini_success() -> None:
                 image_size="2K",
             )
         )
+
     result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": client})
 
     assert result.is_ok()
@@ -779,6 +815,7 @@ async def test_track_api_call_accumulates_under_gather() -> None:
         first = yield invoke(call_defs[0])
         second = yield invoke(call_defs[1])
         return [first, second]
+
     result = await async_run(run_calls(), handlers=default_handlers())
 
     assert result.is_ok()
