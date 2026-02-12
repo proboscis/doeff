@@ -1,10 +1,65 @@
+# ruff: noqa: E402
 """Tests for Gemini cost calculation hook and fallback behavior."""
 
+import sys
 import time
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
+
+IMAGE_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-image" / "src"
+if str(IMAGE_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(IMAGE_PACKAGE_ROOT))
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+if "pydantic" not in sys.modules:
+    import types
+
+    pydantic_stub = types.ModuleType("pydantic")
+
+    class BaseModel:  # type: ignore[no-redef]
+        """Minimal pydantic-like stub supporting model_validate."""
+
+        model_fields: ClassVar[dict[str, Any]] = {}
+
+        def __init_subclass__(cls, **kwargs: Any) -> None:
+            super().__init_subclass__(**kwargs)
+            annotations = getattr(cls, "__annotations__", {})
+            cls.model_fields = {
+                name: types.SimpleNamespace(annotation=annotation)
+                for name, annotation in annotations.items()
+            }
+
+        def __init__(self, **data: Any) -> None:
+            for field_name in self.model_fields:
+                setattr(self, field_name, data[field_name])
+
+        def model_dump(self) -> dict[str, Any]:
+            return {
+                field_name: getattr(self, field_name)
+                for field_name in self.model_fields
+            }
+
+        @classmethod
+        def model_validate(cls, value: Any) -> Any:
+            if isinstance(value, cls):
+                return value
+            if not isinstance(value, dict):
+                raise ValidationError("Expected mapping payload")
+            return cls(**value)
+
+    class ValidationError(Exception):  # type: ignore[no-redef]
+        """Stub ValidationError."""
+
+    pydantic_stub.BaseModel = BaseModel  # type: ignore[attr-defined]
+    pydantic_stub.ValidationError = ValidationError  # type: ignore[attr-defined]
+    sys.modules["pydantic"] = pydantic_stub
+
 from doeff_gemini import (
     CostInfo,
     GeminiCallResult,
@@ -52,11 +107,13 @@ async def test_default_cost_calculator_runs_when_no_custom() -> None:
                 api_payload=None,
             )
         )
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     total_cost = result.raw_store.get("gemini_total_cost")
-    assert total_cost is not None and total_cost > 0
+    assert total_cost is not None
+    assert total_cost > 0
 
 
 @pytest.mark.asyncio
@@ -80,6 +137,7 @@ async def test_default_cost_calculator_supports_gemini3_image() -> None:
                 api_payload=None,
             )
         )
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -114,6 +172,7 @@ async def test_cost_fallback_to_image_tokens_from_total() -> None:
                 api_payload=None,
             )
         )
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -160,6 +219,7 @@ async def test_custom_cost_calculator_overrides_default() -> None:
                 ),
             )
         )
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
@@ -196,6 +256,7 @@ async def test_cost_calculation_failure_raises() -> None:
                 ),
             )
         )
+
     result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_err()

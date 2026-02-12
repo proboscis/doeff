@@ -2,10 +2,20 @@
 
 __version__ = "0.1.0"
 
+from doeff_image.effects import ImageEdit, ImageGenerate
+from doeff_image.types import ImageResult
+
 from .client import GeminiClient, get_gemini_client, track_api_call
 from .costs import calculate_cost, gemini_cost_calculator__default
-from .effects import GeminiChat, GeminiEmbedding, GeminiStreamingChat, GeminiStructuredOutput
+from .effects import (
+    GeminiChat,
+    GeminiEmbedding,
+    GeminiImageEdit,
+    GeminiStreamingChat,
+    GeminiStructuredOutput,
+)
 from .handlers import (
+    gemini_image_handler,
     gemini_mock_handler,
     gemini_production_handler,
     mock_handlers,
@@ -38,9 +48,13 @@ __all__ = [
     "GeminiClient",
     "GeminiCostEstimate",
     "GeminiEmbedding",
+    "GeminiImageEdit",
     "GeminiImageEditResult",
     "GeminiStreamingChat",
     "GeminiStructuredOutput",
+    "ImageEdit",
+    "ImageGenerate",
+    "ImageResult",
     "TokenUsage",
     "__version__",
     "build_contents",
@@ -50,6 +64,7 @@ __all__ = [
     "gemini_mock_handler",
     "gemini_production_handler",
     "gemini_cost_calculator__default",
+    "gemini_image_handler",
     "get_gemini_client",
     "image_edit__gemini",
     "mock_handlers",

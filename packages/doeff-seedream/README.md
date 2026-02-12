@@ -38,3 +38,14 @@ asyncio.run(run())
 Set `seedream_api_key` in the Reader environment (or provide a pre-configured `SeedreamClient` via `seedream_client`).
 
 Consult [the official API docs](https://www.volcengine.com/docs/82379/1541523) for the full parameter surface. Most advanced options can be passed through `generation_config_overrides`.
+
+## Unified image effects (`doeff-image`)
+
+`doeff-seedream` now supports provider-agnostic effects from `doeff-image`:
+
+- `doeff_image.effects.ImageGenerate`
+- `doeff_image.effects.ImageEdit`
+
+Use `seedream_image_handler` for model-routed protocol handling. It handles
+Seedream models and delegates unsupported models via `Delegate()`, so it can be
+stacked with other providers.

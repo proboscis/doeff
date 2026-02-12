@@ -2,6 +2,9 @@
 
 __version__ = "0.1.0"
 
+from doeff_image.effects import ImageEdit, ImageGenerate
+from doeff_image.types import ImageResult
+
 from .client import (
     DEFAULT_BASE_URL,
     DEFAULT_TIMEOUT,
@@ -11,7 +14,7 @@ from .client import (
 )
 from .costs import DEFAULT_COST_PER_IMAGE, DEFAULT_SIZE_PRICING, CostEstimate, calculate_cost
 from .effects import SeedreamGenerate, SeedreamStructuredOutput
-from .handlers import mock_handlers, production_handlers
+from .handlers import mock_handlers, production_handlers, seedream_image_handler
 from .structured_llm import DEFAULT_MODEL, DEFAULT_RESPONSE_FORMAT, edit_image__seedream4
 from .types import SeedreamImage, SeedreamImageEditResult
 
@@ -23,8 +26,11 @@ __all__ = [
     "DEFAULT_SIZE_PRICING",
     "DEFAULT_TIMEOUT",
     "CostEstimate",
-    "SeedreamGenerate",
+    "ImageEdit",
+    "ImageGenerate",
+    "ImageResult",
     "SeedreamClient",
+    "SeedreamGenerate",
     "SeedreamImage",
     "SeedreamImageEditResult",
     "SeedreamStructuredOutput",
@@ -34,5 +40,6 @@ __all__ = [
     "get_seedream_client",
     "mock_handlers",
     "production_handlers",
+    "seedream_image_handler",
     "track_api_call",
 ]
