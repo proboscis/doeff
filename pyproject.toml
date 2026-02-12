@@ -62,6 +62,7 @@ doeff-flow = { workspace = true }
 doeff-agents = { workspace = true }
 doeff-agentic = { workspace = true }
 doeff-conductor = { workspace = true }
+doeff-git = { workspace = true }
 doeff-preset = { workspace = true }
 doeff-vm = { workspace = true }
 doeff-llm = { workspace = true }
