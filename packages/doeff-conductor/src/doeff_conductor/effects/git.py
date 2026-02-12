@@ -1,22 +1,48 @@
-"""
-Git effects for doeff-conductor.
+"""Git effects for doeff-conductor.
 
-Effects for git operations:
-- Commit: Create a commit
-- Push: Push branch to remote
-- CreatePR: Create a pull request
-- MergePR: Merge a pull request
+This module keeps conductor-specific git effects for backward compatibility.
+New workflows should prefer direct use of ``doeff_git.effects``.
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .base import ConductorEffectBase
+from doeff_git.effects import (
+    CreatePR as GitCreatePR,
+)
+from doeff_git.effects import (
+    GitCommit,
+    GitDiff,
+    GitPull,
+    GitPush,
+)
+from doeff_git.effects import (
+    MergePR as GitMergePR,
+)
+
+from doeff_conductor.effects.base import ConductorEffectBase
 
 if TYPE_CHECKING:
-    from ..types import MergeStrategy, PRHandle, WorktreeEnv
+    from doeff_conductor.types import MergeStrategy, PRHandle, WorktreeEnv
+
+
+def _warn_deprecated(effect_name: str) -> None:
+    replacement_map = {
+        "Commit": "GitCommit",
+        "Push": "GitPush",
+        "CreatePR": "CreatePR",
+        "MergePR": "MergePR",
+    }
+    replacement = replacement_map.get(effect_name, effect_name)
+    warnings.warn(
+        f"doeff_conductor.effects.git.{effect_name} is deprecated. "
+        f"Use doeff_git.effects.{replacement} instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -38,6 +64,9 @@ class Commit(ConductorEffectBase):
     message: str  # Commit message
     all: bool = True  # Stage all changes (git add -A)
 
+    def __post_init__(self) -> None:
+        _warn_deprecated("Commit")
+
 
 @dataclass(frozen=True, kw_only=True)
 class Push(ConductorEffectBase):
@@ -58,6 +87,9 @@ class Push(ConductorEffectBase):
     remote: str = "origin"  # Remote name
     force: bool = False  # Force push
     set_upstream: bool = True  # Set upstream tracking
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("Push")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -86,6 +118,10 @@ class CreatePR(ConductorEffectBase):
     body: str | None = None  # PR body
     target: str = "main"  # Target branch
     draft: bool = False  # Create as draft PR
+    labels: tuple[str, ...] | list[str] | None = None  # Labels to apply on create
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("CreatePR")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -101,10 +137,28 @@ class MergePR(ConductorEffectBase):
     strategy: MergeStrategy | None = None  # Merge strategy (default: merge)
     delete_branch: bool = True  # Delete source branch after merge
 
+    def __post_init__(self) -> None:
+        _warn_deprecated("MergePR")
+
+
+# Generic aliases exposed for migration convenience.
+GitCommitEffect = GitCommit
+GitPushEffect = GitPush
+GitPullEffect = GitPull
+GitDiffEffect = GitDiff
+GitCreatePREffect = GitCreatePR
+GitMergePREffect = GitMergePR
+
 
 __all__ = [
     "Commit",
     "CreatePR",
+    "GitCommitEffect",
+    "GitCreatePREffect",
+    "GitDiffEffect",
+    "GitMergePREffect",
+    "GitPullEffect",
+    "GitPushEffect",
     "MergePR",
     "Push",
 ]
