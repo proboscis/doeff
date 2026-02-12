@@ -31,8 +31,6 @@ dependencies = [
     "doeff-vm>=0.1.0",
     "cloudpickle>=3.0.0",
     "phart>=1.1.4",
-    "numpy>=1.26.0",
-    "pillow>=11.0.0",
 ]
 
 [project.optional-dependencies]
