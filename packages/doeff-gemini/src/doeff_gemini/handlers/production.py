@@ -7,7 +7,14 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from doeff import Await, EffectGenerator, Resume, Safe, do
+from doeff_llm.effects import (
+    LLMChat,
+    LLMEmbedding,
+    LLMStreamingChat,
+    LLMStructuredOutput,
+)
+
+from doeff import Await, Delegate, EffectGenerator, Resume, Safe, do
 from doeff_gemini.client import get_gemini_client, track_api_call
 from doeff_gemini.effects import (
     GeminiChat,
@@ -18,6 +25,14 @@ from doeff_gemini.effects import (
 from doeff_gemini.structured_llm import structured_llm__gemini
 
 ProtocolHandler = Callable[[Any, Any], Any]
+GEMINI_MODEL_PREFIXES = ("gemini-",)
+GEMINI_MODEL_EXACT = ("text-embedding-004", "embedding-001")
+
+
+def _is_gemini_model(model: str) -> bool:
+    return model in GEMINI_MODEL_EXACT or any(
+        model.startswith(prefix) for prefix in GEMINI_MODEL_PREFIXES
+    )
 
 
 def _content_to_text(content: Any) -> str:  # noqa: PLR0911
@@ -50,38 +65,45 @@ def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
 
 
 @do
-def _chat_impl(effect: GeminiChat) -> EffectGenerator[str]:
+def _chat_impl(effect: LLMChat) -> EffectGenerator[str]:
     prompt = _messages_to_prompt(effect.messages)
+    max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
     return (
         yield structured_llm__gemini(
             text=prompt,
             model=effect.model,
             temperature=effect.temperature,
+            max_output_tokens=max_output_tokens,
             response_format=None,
         )
     )
 
 
 @do
-def _streaming_chat_impl(effect: GeminiStreamingChat) -> EffectGenerator[str]:
+def _streaming_chat_impl(effect: LLMStreamingChat | LLMChat) -> EffectGenerator[str]:
     prompt = _messages_to_prompt(effect.messages)
+    max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
     return (
         yield structured_llm__gemini(
             text=prompt,
             model=effect.model,
             temperature=effect.temperature,
+            max_output_tokens=max_output_tokens,
             response_format=None,
         )
     )
 
 
 @do
-def _structured_impl(effect: GeminiStructuredOutput) -> EffectGenerator[Any]:
+def _structured_impl(effect: LLMStructuredOutput) -> EffectGenerator[Any]:
     prompt = _messages_to_prompt(effect.messages)
+    max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
     return (
         yield structured_llm__gemini(
             text=prompt,
             model=effect.model,
+            temperature=effect.temperature,
+            max_output_tokens=max_output_tokens,
             response_format=effect.response_format,
         )
     )
@@ -132,7 +154,7 @@ def _extract_embedding_vectors(response: Any) -> list[list[float]]:  # noqa: PLR
 
 
 @do
-def _embedding_impl(effect: GeminiEmbedding) -> EffectGenerator[list[float] | list[list[float]]]:
+def _embedding_impl(effect: LLMEmbedding) -> EffectGenerator[list[float] | list[list[float]]]:
     client = yield get_gemini_client()
     async_client = client.async_client
     start_time = time.time()
@@ -194,11 +216,11 @@ def _embedding_impl(effect: GeminiEmbedding) -> EffectGenerator[list[float] | li
 
 def production_handlers(
     *,
-    chat_impl: Callable[[GeminiChat], EffectGenerator[str]] | None = None,
-    streaming_chat_impl: Callable[[GeminiStreamingChat], EffectGenerator[str]] | None = None,
-    structured_impl: Callable[[GeminiStructuredOutput], EffectGenerator[Any]] | None = None,
+    chat_impl: Callable[[LLMChat], EffectGenerator[str]] | None = None,
+    streaming_chat_impl: Callable[[LLMStreamingChat | LLMChat], EffectGenerator[str]] | None = None,
+    structured_impl: Callable[[LLMStructuredOutput], EffectGenerator[Any]] | None = None,
     embedding_impl: Callable[
-        [GeminiEmbedding],
+        [LLMEmbedding],
         EffectGenerator[list[float] | list[list[float]]],
     ]
     | None = None,
@@ -210,19 +232,34 @@ def production_handlers(
     active_structured_impl = structured_impl or _structured_impl
     active_embedding_impl = embedding_impl or _embedding_impl
 
-    def handle_chat(effect: GeminiChat, k):
+    def handle_chat(effect: LLMChat | GeminiChat, k):
+        if not _is_gemini_model(effect.model):
+            yield Delegate()
+            return
+        if effect.stream:
+            value = yield active_streaming_chat_impl(effect)
+            return (yield Resume(k, value))
         value = yield active_chat_impl(effect)
         return (yield Resume(k, value))
 
-    def handle_streaming_chat(effect: GeminiStreamingChat, k):
+    def handle_streaming_chat(effect: LLMStreamingChat | GeminiStreamingChat, k):
+        if not _is_gemini_model(effect.model):
+            yield Delegate()
+            return
         value = yield active_streaming_chat_impl(effect)
         return (yield Resume(k, value))
 
-    def handle_structured(effect: GeminiStructuredOutput, k):
+    def handle_structured(effect: LLMStructuredOutput | GeminiStructuredOutput, k):
+        if not _is_gemini_model(effect.model):
+            yield Delegate()
+            return
         value = yield active_structured_impl(effect)
         return (yield Resume(k, value))
 
-    def handle_embedding(effect: GeminiEmbedding, k):
+    def handle_embedding(effect: LLMEmbedding | GeminiEmbedding, k):
+        if not _is_gemini_model(effect.model):
+            yield Delegate()
+            return
         value = yield active_embedding_impl(effect)
         return (yield Resume(k, value))
 
@@ -231,10 +268,42 @@ def production_handlers(
         GeminiStreamingChat: handle_streaming_chat,
         GeminiStructuredOutput: handle_structured,
         GeminiEmbedding: handle_embedding,
+        LLMChat: handle_chat,
+        LLMStreamingChat: handle_streaming_chat,
+        LLMStructuredOutput: handle_structured,
+        LLMEmbedding: handle_embedding,
     }
 
 
+def gemini_production_handler(effect: Any, k: Any):
+    """Single protocol handler suitable for ``WithHandler`` usage."""
+    if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
+        if _is_gemini_model(effect.model):
+            value = yield _streaming_chat_impl(effect)
+            return (yield Resume(k, value))
+    elif isinstance(effect, LLMChat | GeminiChat):
+        if _is_gemini_model(effect.model):
+            if effect.stream:
+                value = yield _streaming_chat_impl(effect)
+                return (yield Resume(k, value))
+            value = yield _chat_impl(effect)
+            return (yield Resume(k, value))
+    elif isinstance(effect, LLMStructuredOutput | GeminiStructuredOutput) and _is_gemini_model(
+        effect.model
+    ):
+        value = yield _structured_impl(effect)
+        return (yield Resume(k, value))
+    elif isinstance(effect, LLMEmbedding | GeminiEmbedding) and _is_gemini_model(effect.model):
+        value = yield _embedding_impl(effect)
+        return (yield Resume(k, value))
+    yield Delegate()
+
+
 __all__ = [
+    "GEMINI_MODEL_EXACT",
+    "GEMINI_MODEL_PREFIXES",
     "ProtocolHandler",
+    "_is_gemini_model",
+    "gemini_production_handler",
     "production_handlers",
 ]

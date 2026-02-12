@@ -51,6 +51,7 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 
 - **[Gemini Setup](gemini_client_setup.md)** - API key and ADC configuration
 - **[Gemini Cost Hook](gemini_cost_hook.md)** - Custom cost calculation
+- **[Unified LLM Effects](llm_unified_effects.md)** - Provider-agnostic LLM effects and handler stacking
 
 ### Design Notes
 

@@ -26,6 +26,7 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
+    "doeff-llm>=0.1.0",
     "google-genai>=0.3.0",
     "google-auth>=2.0.0",
     "pydantic>=2.0",
@@ -48,6 +49,7 @@ packages = ["src/doeff_gemini"]
 
 [tool.uv.sources]
 doeff = {workspace = true}
+doeff-llm = {workspace = true}
 
 [dependency-groups]
 dev = [

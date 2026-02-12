@@ -50,11 +50,26 @@ except ModuleNotFoundError:
     pydantic_stub.BaseModel = BaseModel  # type: ignore[attr-defined]
     pydantic_stub.ValidationError = ValidationError  # type: ignore[attr-defined]
     sys.modules["pydantic"] = pydantic_stub
-    from pydantic import BaseModel
+from pydantic import BaseModel
 
-from doeff import EffectGenerator, do, run_with_handler_map
+from doeff import (
+    Delegate,
+    EffectGenerator,
+    Resume,
+    WithHandler,
+    default_handlers,
+    do,
+    run,
+    run_with_handler_map,
+)
+from doeff_llm.effects import LLMChat, LLMEmbedding, LLMStructuredOutput
 from doeff_gemini.effects import GeminiChat, GeminiEmbedding, GeminiStructuredOutput
-from doeff_gemini.handlers import mock_handlers, production_handlers
+from doeff_gemini.handlers import (
+    gemini_mock_handler,
+    gemini_production_handler,
+    mock_handlers,
+    production_handlers,
+)
 
 
 class FunFact(BaseModel):
@@ -64,17 +79,17 @@ class FunFact(BaseModel):
 
 @do
 def _domain_program() -> EffectGenerator[dict[str, Any]]:
-    chat = yield GeminiChat(
+    chat = yield LLMChat(
         messages=[{"role": "user", "content": "Say hello"}],
         model="gemini-test-model",
         temperature=0.1,
     )
-    structured = yield GeminiStructuredOutput(
+    structured = yield LLMStructuredOutput(
         messages=[{"role": "user", "content": "Return a hummingbird fact"}],
         response_format=FunFact,
         model="gemini-test-model",
     )
-    embedding = yield GeminiEmbedding(
+    embedding = yield LLMEmbedding(
         input=["alpha", "beta"],
         model="text-embedding-004",
     )
@@ -91,6 +106,30 @@ def test_effect_exports() -> None:
 
     assert ImportedChat is GeminiChat
     assert ImportedStructured is GeminiStructuredOutput
+    assert issubclass(GeminiChat, LLMChat)
+    assert issubclass(GeminiStructuredOutput, LLMStructuredOutput)
+    assert issubclass(GeminiEmbedding, LLMEmbedding)
+
+
+def test_deprecated_effect_aliases_emit_warnings() -> None:
+    import pytest
+
+    with pytest.deprecated_call(match="GeminiChat is deprecated"):
+        GeminiChat(
+            messages=[{"role": "user", "content": "hi"}],
+            model="gemini-1.5-pro",
+        )
+    with pytest.deprecated_call(match="GeminiStructuredOutput is deprecated"):
+        GeminiStructuredOutput(
+            messages=[{"role": "user", "content": "json"}],
+            response_format=FunFact,
+            model="gemini-1.5-pro",
+        )
+    with pytest.deprecated_call(match="GeminiEmbedding is deprecated"):
+        GeminiEmbedding(
+            input="embed",
+            model="text-embedding-004",
+        )
 
 
 def test_handler_exports() -> None:
@@ -99,6 +138,8 @@ def test_handler_exports() -> None:
 
     assert imported_production_handlers is production_handlers
     assert imported_mock_handlers is mock_handlers
+    assert callable(gemini_production_handler)
+    assert callable(gemini_mock_handler)
 
 
 def test_mock_handlers_are_configurable_and_deterministic() -> None:
@@ -135,7 +176,7 @@ def test_handler_swapping_changes_behavior() -> None:
     @do
     def chat_program() -> EffectGenerator[str]:
         return (
-            yield GeminiChat(
+            yield LLMChat(
                 messages=[{"role": "user", "content": "hello"}],
                 model="gemini-swap-model",
             )
@@ -147,7 +188,7 @@ def test_handler_swapping_changes_behavior() -> None:
     )
 
     @do
-    def production_chat(effect: GeminiChat) -> EffectGenerator[str]:
+    def production_chat(effect: LLMChat) -> EffectGenerator[str]:
         return f"production:{effect.model}:{len(effect.messages)}"
 
     production_result = run_with_handler_map(
@@ -159,3 +200,27 @@ def test_handler_swapping_changes_behavior() -> None:
     assert production_result.is_ok()
     assert mock_result.value == "mock-result"
     assert production_result.value == "production:gemini-swap-model:1"
+
+
+def test_gemini_handler_delegates_unsupported_models() -> None:
+    def fallback_handler(effect: Any, k: Any):
+        if isinstance(effect, LLMChat):
+            return (yield Resume(k, "fallback-chat"))
+        yield Delegate()
+
+    @do
+    def program() -> EffectGenerator[str]:
+        return (
+            yield LLMChat(
+                messages=[{"role": "user", "content": "route elsewhere"}],
+                model="gpt-4o",
+            )
+        )
+
+    result = run(
+        WithHandler(fallback_handler, WithHandler(gemini_mock_handler, program())),
+        handlers=default_handlers(),
+    )
+
+    assert result.is_ok()
+    assert result.value == "fallback-chat"
