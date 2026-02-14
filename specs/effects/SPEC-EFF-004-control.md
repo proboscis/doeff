@@ -525,5 +525,5 @@ return {
 
 ## References
 
-- Issue: [gh#177](https://github.com/CyberAgentAILab/doeff/issues/177)
+- Issue: [gh#177](https://github.com/proboscis/doeff/issues/177)
 - Program Architecture: `specs/program-architecture/architecture.md`

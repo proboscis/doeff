@@ -1,6 +1,6 @@
 # doeff-seedream
 
-Helpers for invoking ByteDance's Seedream 4.0 image generation API from the [doeff](https://github.com/CyberAgentAILab/doeff) effect system. The package mirrors the ergonomics of the Gemini integration so you can swap providers without changing call sites.
+Helpers for invoking ByteDance's Seedream 4.0 image generation API from the [doeff](https://github.com/proboscis/doeff) effect system. The package mirrors the ergonomics of the Gemini integration so you can swap providers without changing call sites.
 
 ## Features
 

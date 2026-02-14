@@ -21,21 +21,17 @@ classifiers = [
 ]
 
 dependencies = [
-    "returns>=0.22.0",
-    "cytoolz>=1.0.0",
     "frozendict>=2.4.0",
-    "beartype>=0.19.0",
     "loguru>=0.7.0",
     "exceptiongroup>=1.2.0; python_version < '3.11'",
     "doeff-indexer>=0.1.2",
     "doeff-vm>=0.1.0",
     "cloudpickle>=3.0.0",
-    "phart>=1.1.4",
 ]
 
 [project.optional-dependencies]
 pinjected = ["doeff-pinjected; python_version < '3.14'"]
-ray = ["ray>=2.0.0; python_version < '3.14'"]
+viz = ["phart>=1.1.4"]
 
 [project.scripts]
 doeff = "doeff.__main__:main"
@@ -64,6 +60,9 @@ doeff-git = { workspace = true }
 doeff-preset = { workspace = true }
 doeff-vm = { workspace = true }
 doeff-llm = { workspace = true }
+doeff-gemini = { workspace = true }
+doeff-openai = { workspace = true }
+doeff-openrouter = { workspace = true }
 doeff-time = { workspace = true }
 doeff-events = { workspace = true }
 doeff-sim = { workspace = true }
@@ -105,7 +104,6 @@ disable = ["DOEFF013"]  # Prefer Maybe Monad - intentionally using Optional/None
 dev = [
     "pytest>=8.1.1",
     "pytest-asyncio>=0.24.0",
-    "ray>=2.0.0; python_version < '3.14'",
     "ruff>=0.8.0",
     "pyright>=1.1.0",
     "pillow>=11.3.0",
@@ -113,5 +111,8 @@ dev = [
     "httpx>=0.25.0",
     "doeff-conductor",
     "doeff-llm",
+    "doeff-gemini",
+    "doeff-openai",
+    "doeff-openrouter",
     "doeff-vm",
 ]

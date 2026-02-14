@@ -4,7 +4,7 @@ Games are the purest demonstration of handler switching. The game logic is a Pro
 
 ## Real-World Evidence: card_game_2026
 
-This isn't hypothetical. **[card_game_2026](https://github.com/...)** is a working Slay the Spire-style card game built on a CESK machine with algebraic effects. Written in Hy (Lisp on Python), it demonstrates every pattern described here — with real code running real games.
+This isn't hypothetical. **[card_game_2026](https://github.com/...)** is a working Slay the Spire-style card game built on an effect runtime with algebraic effects. Written in Hy (Lisp on Python), it demonstrates every pattern described here — with real code running real games.
 
 The architecture:
 - **Game logic** (`combat.hy`) — pure effects. Knows nothing about CLI, TUI, or Pygame.
@@ -132,7 +132,7 @@ The CLI runtime uses default IO handlers — `print()` for Print, `input()` for 
     (.run runtime game-main :store initial-state)))
 ```
 
-The CLI UI task spawns two concurrent CESK tasks:
+The CLI UI task spawns two concurrent runtime tasks:
 
 ```hy
 ;; game/ui_task.hy — cli-ui-task spawns an animation player
@@ -237,18 +237,18 @@ The test runtime replaces IO handlers with scripted responses and captures outpu
 (defn make-test-io-handlers [state]
   "Create IO handlers that use the given TestIOState."
 
-  (defn handle-print [effect cesk-state]
+  (defn handle-print [effect runtime-state]
     "Capture print output to state.output"
     (.append (. state output) #((. effect text) (. effect category)))
-    #(None cesk-state))
+    #(None runtime-state))
 
-  (defn handle-readchoice [effect cesk-state]
+  (defn handle-readchoice [effect runtime-state]
     "Return next scripted response"
     (when (>= (. state script-idx) (len (. state script)))
       (raise (RuntimeError f"Test script exhausted at index {(. state script-idx)}")))
     (let [response (get (. state script) (. state script-idx))]
       (+= (. state script-idx) 1)
-      #(response cesk-state)))
+      #(response runtime-state)))
 
   {Print handle-print
    ReadLine handle-readline
@@ -290,7 +290,7 @@ And the scripted UI task — same event handling as `cli-ui-task`, but with scri
 The Runtime has a `time_scale` parameter that controls how `Delay` effects are handled:
 
 ```hy
-;; cesk/runtime.hy — Runtime constructor
+;; runtime/runtime.hy — Runtime constructor
 (defclass Runtime []
   (defn __init__ [self * [time-scale 1.0] ...]
     "Args:
