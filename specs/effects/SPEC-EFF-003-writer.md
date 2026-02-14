@@ -226,4 +226,4 @@ def slog(**entries: object) -> WriterTellEffect:
 - Effect definitions: `doeff/effects/writer.py`
 - Handlers: `doeff/handlers.py`
 - ListenFrame: `packages/doeff-vm/src/frame.rs`
-- Related issue: [#176](https://github.com/CyberAgentAILab/doeff/issues/176)
+- Related issue: [#176](https://github.com/proboscis/doeff/issues/176)

@@ -4,9 +4,9 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 
 ## Quick Links
 
-- **[GitHub Repository](https://github.com/CyberAgentAILab/doeff)**
+- **[GitHub Repository](https://github.com/proboscis/doeff)**
 - **[PyPI Package](https://pypi.org/project/doeff/)**
-- **[Issue Tracker](https://github.com/CyberAgentAILab/doeff/issues)**
+- **[Issue Tracker](https://github.com/proboscis/doeff/issues)**
 
 ## Table of Contents
 
@@ -205,17 +205,17 @@ def process_batch(items):
 
 ## Contributing
 
-See the [GitHub repository](https://github.com/CyberAgentAILab/doeff) for:
+See the [GitHub repository](https://github.com/proboscis/doeff) for:
 - Filing issues
 - Submitting pull requests
 - Development guidelines
 
 ## License
 
-MIT License - see [LICENSE](https://github.com/CyberAgentAILab/doeff/blob/main/LICENSE) for details.
+MIT License - see [LICENSE](https://github.com/proboscis/doeff/blob/main/LICENSE) for details.
 
 ## Author
 
 Kento Masui (nameissoap@gmail.com)
 
-Originally extracted from the `sge-hub` project's `pragmo` module.
+This project evolved from earlier internal prototypes.
