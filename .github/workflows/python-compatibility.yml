@@ -31,10 +31,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --dev --python ${{ matrix.python-version }}
 
       - name: Run test suite
-        run: uv run pytest -q --ignore-glob='tests/core/test_*spec_gaps.py'
+        run: uv run --python ${{ matrix.python-version }} pytest -q --ignore-glob='tests/core/test_*spec_gaps.py'
 
   version-probe:
     runs-on: ubuntu-latest
