@@ -11,6 +11,7 @@ An algebraic effects system with one-shot continuations, backed by a Rust VM. Us
 - [Effect Guides](docs/index.md#effect-types) - Detailed guides for all effect types
 - [API Reference](docs/13-api-reference.md) - Complete API documentation
 - [Program Architecture Overview](docs/program-architecture-overview.md) - Runtime design and interpreter internals
+- [Publication Milestones](docs/MILESTONES.md) - Roadmap to PyPI release and PyCon JP 2026
 
 ## Features
 
@@ -337,4 +338,4 @@ MIT License - see LICENSE file for details.
 
 ## Credits
 
-Originally extracted from the `sge-hub` project's `pragmo` module.
+This project evolved from earlier internal prototypes.

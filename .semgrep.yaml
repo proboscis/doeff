@@ -370,7 +370,7 @@ rules:
       category: docs-deprecation
 
   - id: docs-no-runtime-import
-    pattern-regex: 'from doeff\.(cesk\.runtime|cesk\.runner|runtimes) import'
+    pattern-regex: 'from doeff\.(runtime|runner|runtimes) import'
     paths:
       include:
         - "/docs/**/*.md"

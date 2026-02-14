@@ -1,6 +1,6 @@
 # doeff-openrouter
 
-OpenRouter integration for [doeff](https://github.com/CyberAgentAILab/doeff) providing effect-aware logging, graph tracking, and structured output helpers for the OpenRouter API.
+OpenRouter integration for [doeff](https://github.com/proboscis/doeff) providing effect-aware logging, graph tracking, and structured output helpers for the OpenRouter API.
 
 ## Features
 
