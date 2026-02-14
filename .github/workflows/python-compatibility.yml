@@ -31,7 +31,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --dev
 
       - name: Run test suite
         run: uv run pytest -q --ignore-glob='tests/core/test_*spec_gaps.py'
@@ -41,6 +41,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
 
       - name: Verify supported Python versions
         run: python tools/test_python_versions.py --versions 3.10,3.11,3.12
