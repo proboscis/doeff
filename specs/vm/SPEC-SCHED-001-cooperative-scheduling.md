@@ -1546,4 +1546,4 @@ fn save_current_task_store(store: &RustStore) -> TaskStore {
 7. `test_interleaving_with_scheduler_yield` — Two tasks interleave
 8. `test_store_isolation` — Child and parent stores independent
 9. `test_promise_wait` — CreatePromise + CompletePromise + Wait
-10. `test_concurrent_kpc_with_scheduler` — ConcurrentKpcHandler via Spawn/Gather
+10. `[SUPERSEDED BY SPEC-KPC-001 — KPC is now a call-time macro, not a runtime effect]` `test_concurrent_kpc_with_scheduler` — ~~ConcurrentKpcHandler via Spawn/Gather~~
