@@ -16,7 +16,7 @@ In doeff, **Effect is data (EffectValue), not Program control**. Runtime dispatc
 @do
 def example():
     x = yield Ask("key")      # lowered to Perform(Ask("key"))
-    y = yield some_kleisli()   # lowered to Perform(KPC(...))
+    y = yield some_kleisli()   # macro-expanded to Call DoCtrl [Rev 12, SPEC-KPC-001]
     return x + y
 ```
 

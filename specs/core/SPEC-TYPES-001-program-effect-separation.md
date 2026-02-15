@@ -1,6 +1,40 @@
 # SPEC-TYPES-001: DoExpr Type Hierarchy — Draft Spec
 
-## Status: WIP Discussion Draft (Rev 11)
+## Status: WIP Discussion Draft (Rev 12)
+
+### Rev 12 changes — KPC is a call-time macro, not an effect (doeff-13)
+
+- **`KleisliProgramCall` is NO LONGER an effect.** KPC does not extend `PyEffectBase`.
+  It is not dispatched through the handler stack. The KPC handler (`KpcHandlerProgram`, `KpcHandlerFactory`, `ConcurrentKpcHandlerProgram`) is **removed**.
+- **KPC resolution is macro expansion.** `KleisliProgram.__call__()` is a macro: it
+  computes the auto-unwrap strategy from annotations and emits a `Call` DoCtrl directly.
+  No handler dispatch. No KPC perform-lowering path. The VM evaluates the `Call` like any other DoCtrl.
+- **Why this change:** KPC-as-effect causes unavoidable infinite recursion when `@do`
+  functions are used as handlers. The cycle: handler(eff, k) → KPC → KPC handler →
+  auto-unwrap → Eval(eff) → dispatch eff → same handler → KPC → ∞. This is inherent
+  in the combination of KPC-as-effect + auto-unwrap + @do-on-handlers + handler protocol.
+  No fix exists without special-casing KPC or restricting `@do` usage. See doeff-13.
+- **Macro = object → DoExpr conversion in user space.** A macro is a pure transformation
+  from a user-space object to a DoExpr tree. No side effects, no handler stack, no dispatch.
+  KPC is the first (and currently only) macro. The concept may be generalized later
+  (`DefMacro` pyclass) but is not needed now.
+- **Auto-unwrap strategy computation unchanged.** Still built from `kleisli_source`
+  annotations. But it runs at `KleisliProgram.__call__()` time (call-time), not at
+  handler dispatch time. The strategy determines which args become `Perform(arg)` vs
+  `Pure(arg)` in the emitted `Call` DoCtrl.
+- **`classify_yielded` unchanged.** KPC no longer appears in the classifier. Users
+  yield the `Call` DoCtrl that `__call__()` produced, which is caught by the existing
+  `DoCtrlBase` isinstance check.
+- **`default_handlers()` no longer includes `kpc`.** The KPC handler sentinel is removed.
+  `run()` does not need the removed KPC handler because KPC is never dispatched.
+- **OPEN QUESTION: auto-unwrap at call time for unannotated EffectBase args.**
+  When `fetch_user(Ask("key"))` is called and `id` is unannotated, should `Ask("key")`
+  become `Perform(Ask("key"))` (auto-resolved by VM) or `Pure(Ask("key"))` (passed as-is)?
+  The former preserves current behavior but risks the same cycle if the Call arg evaluation
+  dispatches to an @do handler. The latter is safe but changes existing @do semantics.
+  See doeff-13 for full discussion.
+- **Supersedes:** Rev 9 [Historical] (KPC as `#[pyclass(frozen, extends=PyEffectBase)]`), §3 (KPC Handler),
+  §9 Q2 (KPC is an Effect), §9 Q11 (run() requires KPC handler).
 
 ### Rev 11 changes — Explicit `Perform` boundary (DoExpr control, EffectValue data)
 
@@ -48,7 +82,7 @@
   processes directly. EffectBase → dispatched to handler stack. No third category.
 
 ### Rev 9 changes — KPC is a Rust `#[pyclass]`, auto-unwrap strategy moves to handler
-- **`KleisliProgramCall` is a `#[pyclass(frozen, extends=PyEffectBase)]` struct** defined
+- **[Historical]** `KleisliProgramCall` was a `#[pyclass(frozen, extends=PyEffectBase)]` struct
   in Rust. Fields: `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`,
   `created_at`. KPC is a proper EffectBase subclass — `classify_yielded` catches it via
   the EffectBase isinstance check with zero special-casing. The KPC handler downcasts
@@ -247,45 +281,62 @@ optimization — avoids `Pure` wrapping in the common `.map()` case.
 through the active handler stack. Effect values are data; only `Perform` causes
 dispatch.
 
-### 1.3 Call is syntax, KleisliProgramCall is effect data
+### 1.3 KPC is a call-time macro that emits Call [Rev 12]
 
-These are at different levels:
+`KleisliProgramCall` is **not** an effect. It is a call-time macro that lowers
+to a `Call` DoCtrl at `KleisliProgram.__call__()` time.
 
-| Concept | Type | Who handles | Example |
-|---------|------|-------------|---------|
-| Evaluate args + invoke | `Call(f, args, kwargs, meta)` (DoCtrl) | VM directly | Sequential arg eval, push frame |
-| Resolve @do func args | `Perform(KleisliProgramCall(...))` | KPC handler | `my_do_func(x, y)` |
+| Concept | Type | Who handles | When |
+|---------|------|-------------|------|
+| Evaluate args + invoke | `Call(f, args, kwargs, meta)` (DoCtrl) | VM directly | VM eval loop |
+| `@do` function call | `KleisliProgram.__call__()` | Macro expansion | Python call time |
 
-The VM provides `Call` with sequential arg evaluation as the **correct default**.
-The KPC handler exists to override this default — it can pre-resolve args in
-parallel (via `Gather` + `Eval`) and emit a `Call` where all args are `Pure`
-(already resolved), making the VM's sequential eval a no-op. This is what
-"KPC is user-space" means: the evaluation strategy for args is not baked into
-the VM.
+```python
+@do
+def fetch_user(id: int):
+    url = yield Ask("db")
+    return db.get(url, id)
 
+fetch_user(Ask("key"))
+# Macro expansion at call time:
+#   1. Inspect annotations: id is int → should_unwrap=True
+#   2. Ask("key") is EffectBase + should_unwrap → Perform(Ask("key"))
+#   3. Emit: Call(Pure(kernel), [Perform(Ask("key"))], metadata)
+#
+# VM evaluation at runtime:
+#   1. Eval arg[0]: dispatch Ask → get "db_url"
+#   2. Call kernel("db_url") → generator
+#   3. Push generator as frame, step it
 ```
-// KPC handler pre-resolves in parallel:
-1. GetHandlers → capture callsite handler chain
-2. Eval(arg1, handlers), Eval(arg2, handlers) ... in parallel via Gather
-3. Call(Pure(kernel), [Pure(resolved1), Pure(resolved2), ...], meta)
-//                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-//                     args are Pure — VM evals trivially
-```
 
-### 1.4 Why KPC is effect data, not syntax
+### 1.4 Why KPC is a macro, not an effect [Rev 12]
 
-Arg resolution scheduling is a **handler concern**:
+KPC resolution is **compilation** (object → DoExpr tree), not **runtime dispatch**
+(effect → handler). These are different phases that must not share the same
+dispatch mechanism.
 
-| Strategy | How |
-|----------|-----|
-| Sequential (default) | Let `Call`'s built-in sequential eval do it |
-| Parallel | `Gather` + `Eval`, then emit `Call` with `Pure` args |
-| Cached | Memoize resolved args, emit `Call` with `Pure` args |
-| Selective | Annotation-based: only resolve some args |
-| Mocked | Test handler that substitutes fake resolutions |
+**The fatal flaw of KPC-as-effect:** When a `@do` function is used as a handler,
+the handler call produces a KPC. The KPC handler's auto-unwrap evaluates the
+effect arg, which re-dispatches to the same handler, creating infinite recursion.
+This is inherent — no fix exists without special-casing KPC or restricting `@do`.
+See doeff-13.
 
-The handler decides. Different strategies for different contexts.
-Users who want custom resolution install a different KPC handler.
+**Macro = pure transformation, no dispatch:**
+
+| Phase | Mechanism | Side effects | Handler stack |
+|-------|-----------|-------------|---------------|
+| Compilation (macro) | object → DoExpr | None | Not involved |
+| Runtime (dispatch) | effect → handler | Handler-defined | Walked |
+
+The auto-unwrap strategy (which args to resolve vs pass-through) is computed
+at call time from annotations. The result is a `Call` DoCtrl with DoExpr args.
+The VM evaluates the args at runtime using whatever handlers are in scope.
+
+**~~Pluggable resolution strategies~~ [REMOVED Rev 12]:** The previous design
+allowed swapping KPC handlers for different resolution strategies (parallel,
+cached, mocked). This extensibility point is removed. If needed in the future,
+it can be provided via a VM-level `Call` arg evaluation strategy, not via
+handler dispatch.
 
 ### 1.5 DoExpr, Program, EffectValue, and composability
 
@@ -333,7 +384,7 @@ yield Perform(Ask("key"))
 | Call(f, args, ...) | **yes** | no |
 | WithHandler(h, expr) | **yes** | no |
 | Perform(effect) | **yes** | no |
-| KleisliProgramCall | no | **yes** |
+| KleisliProgramCall | no | ~~yes~~ **no** [Rev 12: KPC is no longer EffectValue — see SPEC-KPC-001] |
 | Ask, Get, Put, ... | no | **yes** |
 
 ---
@@ -371,7 +422,7 @@ DoExpr[T] (= Program[T])       ← control expressions evaluated by VM
 EffectValue[T]                 ← user-space operation data (open world)
   ├── Ask/Get/Put/Tell/Modify/...
   ├── Spawn/Gather/Race/...
-  ├── KleisliProgramCall[T]
+  ├── ~~KleisliProgramCall[T]~~ [Rev 12: removed — KPC is no longer EffectValue, see SPEC-KPC-001]
   └── user-defined effects
 ```
 
@@ -389,181 +440,17 @@ Effect values become composable once lifted by `Perform`.
 
 ## 3. The KPC Handler
 
-### 3.1 Architecture
+[SUPERSEDED BY SPEC-KPC-001 — KPC is now a call-time macro, not a runtime effect]
 
-```
-User code yields KleisliProgramCall(f, [Ask("key"), fetch_user(42)], {})
-         │
-         ▼ dispatched as effect
-   ┌──────────────────────────────────────────────────────┐
-   │  KPC Handler (RustHandlerProgram)                    │
-   │                                                       │
-   │  1. Compute auto_unwrap_strategy from annotations    │
-   │  2. Classify args: unwrap vs pass-as-is              │
-   │  3. Resolve unwrap-marked args:                      │
-   │     - DoExpr arg → yield Eval(arg, handlers)         │
-   │       (parallel via Gather, or sequential per-arg)   │
-   │     - Plain value → wrap as Pure(value)              │
-   │  4. yield Call(Pure(kernel), [Pure(v1), ...], meta)  │
-   │     (all args are Pure — VM eval is trivial)         │
-   │  5. Resume(k, result)                                │
-   └──────────────────────────────────────────────────────┘
-```
+This section previously described the KPC handler (`KpcHandlerFactory`, `KpcHandlerProgram`, `ConcurrentKpcHandlerProgram`) [SUPERSEDED BY SPEC-KPC-001] which dispatched KPC effects
+through the handler stack. Under the macro model (Rev 12, doeff-13), KPC resolution
+happens at `KleisliProgram.__call__()` time via macro expansion to a `Call` DoCtrl.
+The KPC handler is removed. `default_handlers()` no longer includes `kpc`.
 
-### 3.2 Annotation-aware auto-unwrap
-
-The KPC handler MUST respect type annotations to decide which args to unwrap.
-This is critical for enabling `@do` functions that transform programs:
-
-```python
-@do
-def run_both(a: int, b: int) -> Program[tuple]:
-    return (a, b)
-# a and b are auto-unwrapped — plain type annotations
-
-@do
-def transform_program(p: Program[int]) -> Program[int]:
-    val = yield p  # user manually yields the program
-    return val * 2
-# p is NOT unwrapped — annotated as Program[T]
-
-@do
-def inspect_effect(e: Effect) -> Program[str]:
-    return type(e).__name__
-# e is NOT unwrapped — annotated as Effect
-```
-
-### 3.3 Classification rules
-
-The auto-unwrap strategy is computed by the **KPC handler** from `kleisli_source`
-annotations at dispatch time [Rev 9]. The strategy is NOT stored on the KPC effect —
-it is internal to the handler. This means different KPC handlers can implement
-different classification policies without changing the KPC type.
-
-**DO unwrap** (`should_unwrap = True`) when annotation is:
-- Plain types: `int`, `str`, `dict`, `User`, etc.
-- No annotation (default: unwrap)
-- Any type that is NOT a Program/Effect family type
-
-**DO NOT unwrap** (`should_unwrap = False`) when annotation is:
-- `Program`, `Program[T]`
-- `DoCtrl`, `DoCtrl[T]`
-- `Effect`, `Effect[T]`
-- `DoExpr`, `DoExpr[T]`
-- Any subclass of `Effect` (e.g., custom effect types)
-- Any subclass of `DoCtrl`
-- `Optional[Program[T]]`, `Program[T] | None`, `Annotated[Program[T], ...]`
-
-**String annotation handling** (for `from __future__ import annotations`):
-- Supports quoted strings, `Optional[...]`, `Annotated[...]`, union `|`
-- Matches normalized strings: `"Program"`, `"Program[...]"`, `"DoCtrl"`,
-  `"DoCtrl[...]"`, `"Effect"`, `"Effect[...]"`, `"DoExpr"`, etc.
-
-**Parameter kinds**:
-- `POSITIONAL_ONLY`: indexed in `strategy.positional`
-- `POSITIONAL_OR_KEYWORD`: indexed in both `strategy.positional` and `strategy.keyword`
-- `KEYWORD_ONLY`: in `strategy.keyword`
-- `VAR_POSITIONAL` (`*args`): single `strategy.var_positional` bool for all
-- `VAR_KEYWORD` (`**kwargs`): single `strategy.var_keyword` bool for all
-
-### 3.4 Arg resolution behavior
-
-| Arg value | `should_unwrap` | Handler action |
-|-----------|----------------|----------------|
-| `DoExpr` instance (Effect or DoCtrl) | `True` | `yield Eval(arg, handlers)` → wrap result as `Pure(resolved)` |
-| `DoExpr` instance (Effect or DoCtrl) | `False` | Pass the DoExpr object as-is (wrap in `Pure` for Call arg position) |
-| Plain value (`int`, `str`, etc.) | either | Wrap as `Pure(value)` |
-
-All args in the final `Call` are DoExpr nodes (typically `Pure` for resolved values).
-The VM evaluates each `Pure` trivially — zero overhead.
-
-### 3.5 Resolution strategies
-
-The default KPC handler is a `RustHandlerProgram` that resolves args using
-`Eval(expr, handlers)` — a control primitive that evaluates any DoExpr
-in a fresh scope with the given handler chain. The handler first captures
-the callsite handlers via `GetHandlers`, then uses `Eval` for each arg.
-
-```
-// Default KPC handler (sequential resolution):
-fn start(effect: PyKPC, k_user: Continuation) -> RustProgramStep:
-    handlers = yield GetHandlers()
-    // Handler computes strategy from kleisli_source annotations [Rev 9]
-    strategy = build_auto_unwrap_strategy(effect.kleisli_source)
-
-    resolved_args = []
-    for (idx, arg) in effect.args:
-        if strategy.should_unwrap(idx) and is_do_expr(arg):
-            value = yield Eval(arg, handlers)
-            resolved_args.push(Pure(value))
-        else:
-            resolved_args.push(Pure(arg))
-
-    metadata = extract_call_metadata(effect)
-    result = yield Call(Pure(effect.kernel), resolved_args, resolved_kwargs, metadata)
-    yield Resume(k_user, result)
-```
-
-**`Eval` semantics**: `Eval(expr, handlers)` is a `DoCtrl` that
-atomically creates an unstarted continuation with the given handler chain
-and evaluates the DoExpr within it. The caller (KPC handler) is suspended;
-when the evaluation completes, the VM resumes the caller with the result.
-Internally equivalent to `CreateContinuation` + `ResumeContinuation` but
-as a single step.
-
-The DoExpr can be any yieldable value:
-- **DoCtrl** (Pure, Map, Call, ...): VM evaluates directly within the
-  continuation's scope
-- **Effect** (Get, Put, Ask, KPC, ...): VM dispatches through the
-  continuation's handler stack via `start_dispatch`
-
-`Eval` uses the explicit `handlers` to build the continuation's scope chain.
-This preserves the full handler chain (including the KPC handler itself) for
-nested `@do` calls within resolved args — avoiding busy boundary issues.
-
-**Sequential vs concurrent**: The default handler resolves args one at a time
-with `Eval` per arg. For **concurrent resolution**, a different KPC handler
-wraps args in `Gather`:
-
-```
-// Concurrent KPC handler variant:
-fn start(effect: PyKPC, k_user: Continuation) -> RustProgramStep:
-    handlers = yield GetHandlers()
-    strategy = build_auto_unwrap_strategy(effect.kleisli_source)
-    exprs_to_resolve = [arg for (idx, arg) if strategy.should_unwrap(idx)]
-    results = yield Eval(Gather(*exprs_to_resolve), handlers)
-    // merge resolved values back with non-unwrapped args
-    metadata = extract_call_metadata(effect)
-    result = yield Call(Pure(effect.kernel), merged_pure_args, merged_kwargs, metadata)
-    yield Resume(k_user, result)
-```
-
-The handler decides the strategy. Users swap KPC handlers for different
-resolution policies (sequential, concurrent, cached, retried, etc.).
-
-### 3.6 Eval and the busy boundary
-
-`Eval(expr, handlers)` sidesteps the busy boundary entirely. The
-continuation created by `Eval` uses the explicit `handlers` parameter to
-build its scope chain — NOT the current `visible_handlers`. Since
-`GetHandlers` captures the full callsite chain (before the KPC dispatch
-made anything busy), `Eval` preserves the complete handler stack for all
-nested operations.
-
-This means:
-- Nested `@do` calls within resolved args find the KPC handler (it's in
-  the explicit handlers list)
-- State/reader/writer handlers are all visible
-- No ordering or installation tricks needed
-
-Both sequential (`Eval` per-arg) and concurrent (`Eval` with `Gather`)
-resolution benefit from this — the handler chain is always explicit, never
-affected by busy boundary computation.
-
-Under the hood, `Eval` is equivalent to the 3-primitive sequence
-`GetHandlers` + `CreateContinuation` + `ResumeContinuation`, collapsed
-into a single atomic step. The VM creates an unstarted continuation with
-the given handlers, starts it, and resumes the caller with the result.
+- For auto-unwrap classification rules (formerly §3.2/§3.3), see **SPEC-KPC-001 section 3**.
+- For metadata population (formerly §5.6), see **SPEC-KPC-001 section 4**.
+- For macro expansion semantics, see **SPEC-KPC-001 section 2**.
+- For the `Eval` DoCtrl and busy boundary discussion, see **§1.2** (unchanged — `Eval` remains a valid DoCtrl).
 
 ---
 
@@ -583,11 +470,11 @@ def my_func(a: int, b: str) -> Program[Result]:
 
 The `@do` decorator:
 1. Returns a `KleisliProgram[P, T]` (via `DoYieldFunction` subclass)
-2. Calling it creates a `KleisliProgramCall` — does NOT execute the body
-3. `KleisliProgramCall` is an `Effect` — dispatched to the KPC handler
-4. `KleisliProgramCall` is also a `Program` — users can compose it
+2. Calling it returns a `Call` DoCtrl via macro expansion — does NOT execute the body [Rev 12: replaces "creates a KleisliProgramCall"]
+3. The `Call` DoCtrl is a `DoExpr` — the VM evaluates it directly, no handler dispatch [Rev 12: replaces the old KPC effect-dispatch wording]
+4. The `Call` DoCtrl is composable — users can compose it
    with `.map()`, `.flat_map()`, `+`, etc. before yielding
-5. The KPC handler resolves args, calls the kernel, returns result via `Resume`
+5. The VM evaluates `Call` args (via macro-emitted `Perform`/`Pure` nodes), calls the kernel, delivers the result [Rev 12: replaces "KPC handler resolves args"]
 6. Native `try/except` blocks work inside `@do` functions for effect errors
 
 ### 4.2 Non-generator early return
@@ -641,21 +528,14 @@ fetch_by_id = fetch_item.partial(category="books")
 
 ### 4.6 KleisliProgramCall metadata
 
-`KleisliProgramCall` (`PyKPC`) is a `#[pyclass(frozen, extends=PyEffectBase)]` struct
-defined in Rust [Rev 9]. It carries:
+[SUPERSEDED BY SPEC-KPC-001 — KPC is now a call-time macro, not a runtime effect]
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `kleisli_source` | `Py<PyAny>` | Reference to originating `KleisliProgram` (has `original_func`, signature) |
-| `args` | `Py<PyTuple>` | Positional arguments |
-| `kwargs` | `Py<PyDict>` | Keyword arguments |
-| `function_name` | `String` | Human-readable name for tracing |
-| `execution_kernel` | `Py<PyAny>` | The actual generator function to call |
-| `created_at` | `Py<PyAny>` | `EffectCreationContext` for call tree reconstruction |
+Under the macro model (Rev 12), `KleisliProgram.__call__()` returns a `Call` DoCtrl
+directly. Metadata (function_name, source_file, source_line) is populated at call
+time and attached to the `Call` as `CallMetadata`. The `KleisliProgramCall` type as a
+`#[pyclass(frozen, extends=PyEffectBase)]` struct is eliminated.
 
-**Note [Rev 9]**: `auto_unwrap_strategy` is NOT a field on KPC. The KPC handler
-computes it from `kleisli_source` annotations at dispatch time. This decouples
-the effect from the resolution policy.
+See **SPEC-KPC-001 section 5** for the return type and metadata description.
 
 ### 4.7 Composition on DoExpr control nodes returns DoCtrl [R11]
 
@@ -809,7 +689,7 @@ User code yields DoExpr (KPC, Effect, or DoCtrl)
     │   source_file   = kpc.kleisli_source.original_func.__code__.co_filename
     │   source_line   = kpc.kleisli_source.original_func.__code__.co_firstlineno
     │   program_call  = Some(kpc_ref)
-    │   → emit Yielded::Effect(kpc)  (dispatched to KPC handler)
+    │   → emit Yielded::Effect(kpc)  (dispatched to KPC handler) [SUPERSEDED BY SPEC-KPC-001]
     │   → KPC handler will emit Call with this metadata attached
     │
     ├─ Other Effect detected → emit Yielded::Effect(obj)
@@ -862,35 +742,14 @@ via a Python-side effect that reads the `Py<PyAny>` reference with GIL.
 
 ### 5.6 How the KPC handler populates metadata
 
-When the KPC handler yields `Call(kernel, args, kwargs, metadata)`, the
-metadata comes from the `KleisliProgramCall` effect it received. The handler
-extracts it once at `start()` time and attaches it to the final `Call`:
+[SUPERSEDED BY SPEC-KPC-001 — KPC is now a call-time macro, not a runtime effect]
 
-```rust
-// KPC handler (RustHandlerProgram) pseudo-code [Rev 9]:
-fn start(py: Python<'_>, effect: &Bound<'_, PyAny>, k_user: Continuation) -> RustProgramStep {
-    let kpc: PyRef<PyKPC> = effect.downcast()?;  // downcast to Rust-native PyKPC
-    let metadata = CallMetadata {
-        function_name: kpc.function_name.clone(),
-        source_file: extract_source_file(py, &kpc.kleisli_source),
-        source_line: extract_source_line(py, &kpc.kleisli_source),
-        program_call: Some(effect.into_py(py)),
-    };
+Under the macro model (Rev 12), metadata is populated by `KleisliProgram.__call__()`
+at call time, not by the KPC handler at dispatch time. The KPC handler is removed.
+`CallMetadata` fields (function_name, source_file, source_line, program_call) are
+attached directly to the `Call` DoCtrl emitted by the macro expansion.
 
-    // Handler computes auto-unwrap strategy from kleisli_source annotations
-    let strategy = build_auto_unwrap_strategy(py, &kpc.kleisli_source);
-
-    // ... resolve args via Eval using strategy ...
-
-    // Call kernel with resolved args and metadata
-    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Call {
-        f: kpc.execution_kernel.clone(),
-        args: resolved_args,
-        kwargs: resolved_kwargs,
-        metadata,
-    }))
-}
-```
+See **SPEC-KPC-001 section 4** for the updated metadata population flow.
 
 ---
 
@@ -917,7 +776,7 @@ DoCtrl               Pure(value),                    VM directly
                      PythonAsyncSyntaxEscape
 
 Effect               Get, Put, Modify, Ask, Tell     state/reader/writer handler
-                     KleisliProgramCall               KPC handler
+                     ~~KleisliProgramCall~~           ~~KPC handler~~ [SUPERSEDED BY SPEC-KPC-001 — KPC is now a call-time macro]
                      Spawn, Gather, Race              scheduler handler
                      user-defined effects             user handler
 ```
@@ -926,9 +785,10 @@ Both subtypes are `DoExpr[T]`, therefore both are composable with `map`,
 `flat_map`, etc. `Transfer` is `DoCtrl[Never]` — composable vacuously
 (`.map(f)` type-checks but `f` never runs since Transfer aborts).
 
-`KleisliProgramCall` is a regular Effect — it goes through the handler stack
+~~`KleisliProgramCall` is a regular Effect — it goes through the handler stack
 like any other effect. The KPC handler is a user-space handler (default
-provided as `RustHandlerProgram`), not a VM-internal component.
+provided as `RustHandlerProgram`), not a VM-internal component.~~
+[SUPERSEDED BY SPEC-KPC-001 — Rev 12: KPC is a call-time macro. `__call__()` returns a `Call` DoCtrl directly. No handler dispatch.]
 
 **DoThunk is eliminated [R10].** There is no third category. What was formerly
 DoThunk is now DoCtrl:
@@ -1008,22 +868,25 @@ CODE-ATTENTION:
   eliminated [R10]. Add `PyPure`, `PyMap`, `PyFlatMap` as
   `#[pyclass(frozen, extends=PyDoCtrlBase)]`.
 - `effect.rs`: Delete `Effect` enum. Replace with `#[pyclass(extends=PyEffectBase)]` structs.
-  Add `PyKPC` as `#[pyclass(frozen, extends=PyEffectBase)]` with fields:
-  `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at`. [Rev 9]
+  [SUPERSEDED BY Rev 12 — see SPEC-KPC-001] ~~Add `PyKPC` as `#[pyclass(frozen, extends=PyEffectBase)]` with fields:
+  `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at`. [Rev 9]~~
+  [SUPERSEDED BY Rev 12 — KPC no longer extends PyEffectBase. See SPEC-KPC-001]
 - `pyvm.rs`: Update DoCtrl pyclasses to use `extends=PyDoCtrlBase`.
 - `vm.rs`: `Yielded::Effect(Py<PyAny>)` not `Yielded::Effect(Effect)`.
   Add `DoCtrl::Pure`, `DoCtrl::Map`, `DoCtrl::FlatMap` variants. Update
   `DoCtrl::Call` to take `Vec<DoExprArg>` (each arg is a DoExpr, not a Value). [R10]
 - `handler.rs`: `can_handle` and `start` receive `&Bound<'_, PyAny>`.
 - All handler impls: downcast in `start()`, not pre-parsed by classifier.
-- KPC handler impl: downcast to `PyRef<PyKPC>`, compute auto-unwrap strategy
+- ~~KPC handler impl: downcast to `PyRef<PyKPC>`, compute auto-unwrap strategy
   from `kleisli_source` annotations at dispatch time. Strategy is handler-internal,
-  NOT stored on KPC. Emit `Call` with `Pure`-wrapped resolved args. [Rev 9, R10]
+  NOT stored on KPC. Emit `Call` with `Pure`-wrapped resolved args. [Rev 9, R10]~~
+  [SUPERSEDED BY Rev 12 — KPC handler removed. See SPEC-KPC-001]
 - Python side: Delete Python-defined `EffectBase` and import the Rust base
   classes from `doeff_vm`. No transitional compatibility layer is allowed.
-  Delete Python `KleisliProgramCall` dataclass — replace with `PyKPC` imported
+  Delete Python `KleisliProgramCall` dataclass — ~~replace with `PyKPC` imported
   from `doeff_vm`. Delete `_AutoUnwrapStrategy` from KPC — it moves into the
-  KPC handler implementation. [Rev 9]
+  KPC handler implementation. [Rev 9]~~
+  [SUPERSEDED BY Rev 12 — `__call__()` returns `Call` DoCtrl directly. KPC handler removed. See SPEC-KPC-001]
   Delete `PureProgram`, `DerivedProgram`, `GeneratorProgram` as DoThunk subtypes —
   replace with `Pure`, `Map`, `FlatMap`, `Call` DoCtrl nodes. [R10]
 
@@ -1038,8 +901,9 @@ CODE-ATTENTION:
 4. Add `Call { f, args, kwargs, metadata }` as a `DoCtrl` variant
 5. Add `Eval { expr, handlers }` as a `DoCtrl` variant
 6. Add `GetCallStack` as a `DoCtrl` variant
-7. Implement metadata extraction in driver's `classify_yielded` with **mandatory KPC dispatch**:
-   KPC must normalize to `Yielded::DoCtrl(Perform(kpc))` and be handled by the KPC handler.
+7. ~~Implement metadata extraction in driver's `classify_yielded` with **mandatory KPC dispatch**:
+   KPC must normalize to `Yielded::DoCtrl(Perform(kpc))` and be handled by the KPC handler.~~
+   [SUPERSEDED BY Rev 12 — KPC is a call-time macro; no KPC dispatch. See SPEC-KPC-001]
    Legacy GeneratorProgram objects classify as `DoCtrl::Call(Pure(gen_fn), ...)`.
 8. **REMOVE `Yielded::Program`** — delete the variant from the Rust enum.
    `classify_yielded` returns DoCtrl; effect values are wrapped as `Perform`.
@@ -1057,22 +921,25 @@ CODE-ATTENTION:
 7. Add `Map(source, f)` and `FlatMap(source, binder)` as DoCtrl variants
 8. Update `Call` to take `DoExpr` args: `Call(f: DoExpr, args: [DoExpr], kwargs, meta)`
    VM evaluates args sequentially left-to-right by default
-9. Make `KleisliProgramCall` a `#[pyclass(frozen, extends=PyEffectBase)]` struct in Rust (`PyKPC`)
-   with fields: `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at` [Rev 9]
+9. [SUPERSEDED BY Rev 12 — see SPEC-KPC-001] ~~Make `KleisliProgramCall` a `#[pyclass(frozen, extends=PyEffectBase)]` struct in Rust (`PyKPC`)
+    with fields: `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at` [Rev 9]~~
+    [SUPERSEDED BY Rev 12 — KPC no longer extends PyEffectBase. See SPEC-KPC-001]
 10. Make all standard effects (Get, Put, Ask, ...) implement `EffectValue`
 11. Add `Perform(effect)` DoCtrl node; source-level `yield effect` lowers to `Perform(effect)`
 12. `.map()` / `.flat_map()` are defined on DoExpr control, not raw EffectValue
 13. `DoExpr.pure(value)` returns `Pure(value)` (DoCtrl)
-14. Implement default KPC handler as `RustHandlerProgram` — handler computes auto-unwrap
-    strategy from `kleisli_source` annotations at dispatch time. Handler emits `Call` with
-    `Pure`-wrapped resolved args [Rev 9, R10]
+14. ~~Implement default KPC handler as `RustHandlerProgram` — handler computes auto-unwrap
+     strategy from `kleisli_source` annotations at dispatch time. Handler emits `Call` with
+     `Pure`-wrapped resolved args [Rev 9, R10]~~
+     [SUPERSEDED BY Rev 12 — KPC handler removed. Auto-unwrap runs at `__call__()` time. See SPEC-KPC-001]
 15. Update `classify_yielded` to normalize effect values as `DoCtrl::Perform(effect)`.
     VM evaluation path remains DoCtrl-only.
-16. Update presets to include KPC handler
-17. Update `@do` decorator — `KleisliProgram.__call__` constructs `PyKPC` (imported from `doeff_vm`)
-18. Delete Python-side `_AutoUnwrapStrategy` from KPC — it moves into the KPC handler [Rev 9]
+16. ~~Update presets to include KPC handler~~ [SUPERSEDED BY Rev 12 — KPC handler removed from presets. See SPEC-KPC-001]
+17. Update `@do` decorator — `KleisliProgram.__call__` returns `Call` DoCtrl directly via macro expansion [Rev 12: replaces "constructs `PyKPC`"]
+18. ~~Delete Python-side `_AutoUnwrapStrategy` from KPC — it moves into the KPC handler [Rev 9]~~
+     [SUPERSEDED BY Rev 12 — auto-unwrap strategy runs at `__call__()` time, not in handler. See SPEC-KPC-001]
 19. Remove transitional compatibility state: no Python dataclass KPC, no runtime base rebasing,
-    no mixed old/new dispatch paths. Rust-side `PyKPC` + handler path is the single source of truth.
+     no mixed old/new dispatch paths. `__call__()` macro expansion is the single source of truth. [Rev 12 update]
 
 ### Phase C: Complete separation (binary DoExpr replaces old ProgramBase/EffectBase) [R10]
 1. Remove `EffectBase(ProgramBase)` inheritance
@@ -1090,7 +957,7 @@ CODE-ATTENTION:
    - `effect.rs`: Delete `Effect` enum. Replace with `#[pyclass(frozen)]` structs
      for all Rust-handled effects (Get, Put, Ask, Tell, Modify, Spawn, Gather, Race,
      CreatePromise, CompletePromise, FailPromise, CreateExternalPromise, TaskCompleted).
-     Add `PyKPC` as `#[pyclass(frozen, extends=PyEffectBase)]` [Rev 9].
+     ~~Add `PyKPC` as `#[pyclass(frozen, extends=PyEffectBase)]` [Rev 9].~~ [SUPERSEDED BY Rev 12 — KPC no longer extends PyEffectBase]
    - `pyvm.rs`: Delete ~300 lines of `match type_str { ... }`. Replace with
      single isinstance check: `is_effect_base(obj)` → `Yielded::Effect(obj)`.
    - `handler.rs`: `can_handle` and `start` receive `&Bound<'_, PyAny>` (not `Effect`).
@@ -1127,29 +994,29 @@ CODE-ATTENTION:
     metadata carries function_name, source_file, source_line — extracted by
     the driver with GIL.
 
-2. **KPC is an Effect, not a DoCtrl.** Arg resolution scheduling is a
+2. [REVERSED BY Rev 12 — see SPEC-KPC-001] **KPC is an Effect, not a DoCtrl.** Arg resolution scheduling is a
    handler concern. Sequential, concurrent, cached, retried — the handler decides.
 
-3. **Auto-unwrap strategy is the handler's responsibility [Rev 9].** The KPC
+3. [REVERSED BY Rev 12 — see SPEC-KPC-001] **Auto-unwrap strategy is the handler's responsibility [Rev 9].** The KPC
    handler computes the strategy from `kleisli_source` annotations at dispatch
    time. It is NOT stored on the KPC effect. This decouples the effect from the
    resolution policy — different KPC handlers can implement different strategies
    (sequential, concurrent, cached, etc.) without changing the KPC type.
 
-4. **Default KPC handler resolves sequentially** using `Eval(expr, handlers)`
+4. [REVERSED BY Rev 12 — see SPEC-KPC-001] **Default KPC handler resolves sequentially** using `Eval(expr, handlers)`
    per arg. `Eval` is a DoCtrl that creates an unstarted continuation
    with the given handler chain and evaluates the DoExpr within it. The caller
    is suspended and resumed with the result. No busy boundary issues because
    `Eval` uses explicit handlers, not `visible_handlers`.
 
-5. **Arg resolution uses `Eval`, NOT direct effect yield or `Delegate`.**
+5. [REVERSED BY Rev 12 — see SPEC-KPC-001] **Arg resolution uses `Eval`, NOT direct effect yield or `Delegate`.**
    Direct effect yield would hit the busy boundary (KPC handler excluded from
    `visible_handlers`), breaking nested `@do` calls in args. `Delegate`
    advances within the same dispatch context — incompatible with multi-arg
    resolution. `Eval` creates a fresh scope with the full handler chain
    (captured via `GetHandlers` before the dispatch made anything busy).
 
-6. **Sequential vs concurrent resolution is the handler's choice.** The default
+6. [REVERSED BY Rev 12 — see SPEC-KPC-001] **Sequential vs concurrent resolution is the handler's choice.** The default
    KPC handler uses `Eval` per-arg (sequential). A concurrent variant wraps
    args in `Gather` and uses a single `Eval`. Users swap handlers for
    different policies.
@@ -1187,7 +1054,7 @@ CODE-ATTENTION:
     unprefixed (user-facing). `Program = DoExpr` is a type alias. `DoThunk`
     is eliminated — there is no `Do-` prefixed thunk concept.
 
-11. **run() requires explicit KPC handler (Rev 5).** The KPC handler is not
+11. [REVERSED BY Rev 12 — see SPEC-KPC-001] **run() requires explicit KPC handler (Rev 5).** The KPC handler is not
     auto-installed. If a KPC is dispatched with no handler, the VM errors.
     Users provide it via presets or explicit handler list.
 
@@ -1203,10 +1070,11 @@ CODE-ATTENTION:
     inspect effect fields. `classify_yielded` does ONE isinstance check for
     EffectBase — no per-type arms, no string matching, no field extraction.
     Handlers downcast to concrete `#[pyclass]` types themselves. All Rust-handled
-    effects (`Get`, `Put`, `Ask`, `Tell`, `Modify`, `KleisliProgramCall`, scheduler
+    effects (`Get`, `Put`, `Ask`, `Tell`, `Modify`, ~~`KleisliProgramCall`~~, scheduler
     effects) are `#[pyclass(frozen)]` structs defined in Rust and exposed to Python.
-    `KleisliProgramCall` (`PyKPC`) extends `PyEffectBase` — it is caught by the
-    single EffectBase isinstance check like any other effect. [Rev 9]
+    ~~`KleisliProgramCall` (`PyKPC`) extends `PyEffectBase` — it is caught by the
+    single EffectBase isinstance check like any other effect. [Rev 9]~~
+    [Rev 12: KPC is no longer an effect — `__call__()` returns `Call` DoCtrl directly. See SPEC-KPC-001]
     This is separation of concerns: classification is the classifier's job,
     effect handling is the handler's job.
 
@@ -1230,12 +1098,13 @@ CODE-ATTENTION:
     a generator just to return it. `Pure` evaluates to the value immediately:
     `VM sees Pure(42) → deliver 42`. Zero generator allocation.
 
-17. **`Call` takes DoExpr args with sequential evaluation (R10).** `Call(f, args,
+17. [REVERSED BY Rev 12 — see SPEC-KPC-001] **`Call` takes DoExpr args with sequential evaluation (R10).** `Call(f, args,
     kwargs, meta)` — `f` and each arg/kwarg are DoExpr nodes. The VM evaluates
-    them sequentially left-to-right. This is the correct default. The KPC handler
+    them sequentially left-to-right. This is the correct default. ~~The KPC handler
     can pre-resolve args in parallel and emit `Call` with `Pure` args — the VM's
     sequential eval becomes a no-op. This is the precise meaning of "KPC is
-    user-space": the arg evaluation strategy is not baked into the VM.
+    user-space": the arg evaluation strategy is not baked into the VM.~~
+    [Rev 12: KPC macro emits `Call` with `Perform`/`Pure` arg nodes directly. No KPC handler.]
 
 18. **`Map` and `FlatMap` as DoCtrl nodes replace DerivedProgram (R10).**
     `expr.map(f)` → `Map(source=expr, f)`. The VM evaluates: eval source, apply
@@ -1256,25 +1125,31 @@ CODE-ATTENTION:
 2. ~~**run() entry point**~~
 
    **RESOLVED (Rev 5)**: `run()` does NOT auto-include the KPC handler.
-   The handler stack must be provided explicitly. If a KPC is yielded and
+   [Rev 12 UPDATE: moot — KPC handler removed. `run()` does not need a KPC handler
+   because KPC is no longer dispatched as an effect. `__call__()` returns a `Call` DoCtrl
+   directly. See SPEC-KPC-001.]
+
+   ~~The handler stack must be provided explicitly. If a KPC is yielded and
    no KPC handler is installed, the VM raises an error. This is intentional:
    the KPC handler is a user-space handler, not a VM builtin. Users must
-   configure it via presets or explicit handler installation.
+   configure it via presets or explicit handler installation.~~
 
    ```python
-   # Correct — KPC handler provided:
-   run(fetch_user(42), handlers=[kpc_handler(), state_handler()])
+   # Rev 12: KPC handler no longer needed — macro expansion handles it
+   run(fetch_user(42), handlers=[state_handler()])
    # or via preset:
    run(fetch_user(42), preset=default_preset)
 
-   # Error — no KPC handler:
-   run(fetch_user(42))  # → raises: no handler for KleisliProgramCall
+   # This now works — no KPC handler required:
+   run(fetch_user(42))  # → succeeds (macro expansion, not handler dispatch)
    ```
 
-3. **Performance**: Every `@do` function call becomes an effect dispatch.
+3. **Performance**: ~~Every `@do` function call becomes an effect dispatch.
    For hot paths, this adds overhead vs current inline `to_generator()`.
    Should there be a fast-path in the VM for KPC (recognize + handle
-   inline, bypassing full dispatch)?
+   inline, bypassing full dispatch)?~~
+   [Rev 12 UPDATE: macro expansion, not effect dispatch. `__call__()` returns `Call` DoCtrl
+   directly — no handler dispatch overhead. The VM evaluates `Call` like any other DoCtrl.]
 
 4. ~~**Effect.map() return type**~~
 
@@ -1319,7 +1194,7 @@ Tests MUST verify:
 | TH-01 | `DoExpr` and `DoCtrl` are distinct classes; `DoCtrl` is a subclass of `DoExpr` | §1.1 |
 | TH-02 | `EffectBase` is **not** a subclass of `DoExpr` (effects are data values) | §1.1 |
 | TH-03 | `Perform(effect)` is `DoExpr` and is the required lift from EffectValue to control IR | §1.1, §1.2 |
-| TH-04 | `KleisliProgramCall` is an instance of `EffectBase` (EffectValue), not `DoCtrl` | §1.1, §2 |
+| TH-04 | ~~`KleisliProgramCall` is an instance of `EffectBase` (EffectValue), not `DoCtrl`~~ [REVERSED BY Rev 12 — KPC is no longer EffectBase. See SPEC-KPC-001] | §1.1, §2 |
 | TH-05 | `Pure`, `Map`, `FlatMap`, `Call` are instances of `DoCtrl` | §1.2, §2 |
 | TH-06 | `Pure(value)` is a `DoCtrl` and a `DoExpr` | §1.2 |
 | TH-07 | Effects created via `Ask()`, `Get()`, `Tell()`, `Put()` are `EffectBase` EffectValue instances | §1.1 |
@@ -1352,10 +1227,10 @@ Tests MUST verify through `run()`:
 
 | ID | Requirement | Spec Section |
 |----|-------------|-------------|
-| KD-01 | `@do` function call creates a `KleisliProgramCall` (not executed immediately) | §4.1 |
-| KD-02 | KPC is dispatched via `Perform(KPC(...))` through the handler stack (requires KPC handler) | §1.2, §1.3 |
-| KD-03 | `run(kpc, handlers=[])` fails (no KPC handler) | §9 Q11 |
-| KD-04 | `run(kpc, handlers=default_handlers())` succeeds (default handlers include KPC) | §4.1 |
+| KD-01 | `@do` function call invokes `KleisliProgram.__call__()` which returns a `Call` DoCtrl via macro expansion (not executed immediately) [Rev 12] | §4.1, §1.3 |
+| KD-02 | ~~KPC is dispatched via `Perform(KPC(...))` through the handler stack (requires KPC handler)~~ [REVERSED BY Rev 12 — `__call__()` returns `Call` DoCtrl directly, no handler dispatch. See SPEC-KPC-001] | §1.2, §1.3 |
+| KD-03 | ~~`run(kpc, handlers=[])` fails (no KPC handler)~~ [REVERSED BY Rev 12 — `run()` succeeds without KPC handler; macro expansion, not dispatch. See SPEC-KPC-001] | §9 Q11 |
+| KD-04 | `run(kpc, handlers=default_handlers())` succeeds [Rev 12: default_handlers no longer includes kpc — not needed] | §4.1 |
 | KD-05 | Plain-typed args (`int`, `str`) auto-unwrap: DoExpr args are resolved before body | §3.3, §3.4 |
 | KD-06 | `Program[T]`-annotated args are NOT unwrapped: DoExpr passed as-is | §3.3 |
 | KD-07 | `Effect`-annotated args are NOT unwrapped: Effect passed as-is | §3.3 |
@@ -1390,7 +1265,7 @@ Tests MUST verify:
 | ID | Requirement | Spec Section |
 |----|-------------|-------------|
 | RC-01 | `run(prog)` with no handlers → effects raise unhandled error | SPEC-009 §1 |
-| RC-02 | `run(prog, handlers=default_handlers())` installs state+reader+writer+kpc | SPEC-009 §1 |
+| RC-02 | `run(prog, handlers=default_handlers())` installs state+reader+writer [Rev 12: kpc removed] | SPEC-009 §1 |
 | RC-03 | `RunResult.result` returns `Ok` or `Err` | SPEC-009 §2 |
 | RC-04 | `isinstance(result.result, Ok)` works for successful runs | SPEC-009 §2 |
 | RC-05 | `isinstance(result.result, Err)` works for failed runs | SPEC-009 §2 |
