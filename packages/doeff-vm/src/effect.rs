@@ -4,9 +4,9 @@
 
 use pyo3::prelude::*;
 
-use crate::frame::CallMetadata;
 use crate::py_shared::PyShared;
 use crate::pyvm::{DoExprTag, PyEffectBase};
+#[cfg(test)]
 use crate::value::Value;
 
 // ---------------------------------------------------------------------------
@@ -45,24 +45,6 @@ pub struct PyAsk {
 pub struct PyTell {
     #[pyo3(get)]
     pub message: Py<PyAny>,
-}
-
-#[pyclass(frozen, name = "PyKPC", extends=PyEffectBase)]
-pub struct PyKPC {
-    #[pyo3(get)]
-    pub kleisli_source: Py<PyAny>,
-    #[pyo3(get)]
-    pub args: Py<PyAny>,
-    #[pyo3(get)]
-    pub kwargs: Py<PyAny>,
-    #[pyo3(get)]
-    pub function_name: String,
-    #[pyo3(get)]
-    pub args_repr: Option<String>,
-    #[pyo3(get)]
-    pub execution_kernel: Py<PyAny>,
-    #[pyo3(get)]
-    pub created_at: Py<PyAny>,
 }
 
 #[pyclass(frozen, name = "SpawnEffect", extends=PyEffectBase)]
@@ -179,35 +161,6 @@ impl PyTell {
             tag: DoExprTag::Effect as u8,
         })
         .add_subclass(PyTell { message })
-    }
-}
-
-#[pymethods]
-impl PyKPC {
-    #[new]
-    #[pyo3(signature = (kleisli_source, args, kwargs, function_name, execution_kernel, created_at=None, args_repr=None))]
-    fn new(
-        kleisli_source: Py<PyAny>,
-        args: Py<PyAny>,
-        kwargs: Py<PyAny>,
-        function_name: String,
-        execution_kernel: Py<PyAny>,
-        created_at: Option<Py<PyAny>>,
-        args_repr: Option<String>,
-        py: Python<'_>,
-    ) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase {
-            tag: DoExprTag::Effect as u8,
-        })
-        .add_subclass(PyKPC {
-            kleisli_source,
-            args,
-            kwargs,
-            function_name,
-            args_repr,
-            execution_kernel,
-            created_at: created_at.unwrap_or_else(|| py.None()),
-        })
     }
 }
 
@@ -386,21 +339,6 @@ impl PyTaskCompleted {
             result: result.unwrap_or_else(|| py.None()),
         })
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum KpcArg {
-    Value(Value),
-    Expr(PyShared),
-}
-
-#[derive(Debug, Clone)]
-pub struct KpcCallEffect {
-    pub call: PyShared,
-    pub kernel: PyShared,
-    pub args: Vec<KpcArg>,
-    pub kwargs: Vec<(String, KpcArg)>,
-    pub metadata: CallMetadata,
 }
 
 #[cfg(not(test))]

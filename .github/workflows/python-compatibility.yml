@@ -52,6 +52,9 @@ jobs:
       - name: Verify supported Python versions
         run: python tools/test_python_versions.py --versions 3.10,3.11,3.12
 
-      - name: Verify free-threaded Python (experimental)
-        continue-on-error: true
-        run: python tools/test_python_versions.py --versions 3.13t
+      - name: Verify free-threaded Python (experimental, non-blocking)
+        run: |
+          python tools/test_python_versions.py --versions 3.13t || {
+            echo "::warning::Free-threaded 3.13 probe failed (known cffi/cryptography ecosystem gap)."
+            echo "::warning::Keeping this check non-blocking until dependency support lands."
+          }

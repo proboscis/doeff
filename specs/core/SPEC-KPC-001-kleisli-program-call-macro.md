@@ -157,6 +157,24 @@ def inspect_effect(e: Effect) -> Program[str]:
 All args in the resulting `Call` are DoExpr nodes. The VM evaluates each arg
 sequentially left-to-right before invoking the kernel.
 
+### 3.5 `@do` handler authoring rule (mandatory)
+
+When a `@do`-decorated callable is installed as a handler (for example via
+`WithHandler(handler=..., expr=...)` or equivalent Python API handler-install
+entry points), the first handler parameter (the effect argument) MUST be
+explicitly annotated as an Effect-family type:
+
+- `Effect` / `EffectBase`
+- `Effect[T]`
+- a subclass of `EffectBase`
+
+If the first parameter is unannotated or annotated with a non-Effect type,
+construction MUST fail immediately with `TypeError` at the Python API boundary.
+
+This is a hard contract. The VM/runtime MUST NOT apply fallback behavior,
+special-casing, or silent auto-unwrap overrides to compensate for an invalid
+`@do` handler signature.
+
 ---
 
 ## 4. Metadata Population

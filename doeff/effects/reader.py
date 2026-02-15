@@ -90,7 +90,7 @@ def _build_local_handler(overlay: dict[Any, object]):
 
             return (yield doeff_vm.Resume(k, value))
 
-        yield doeff_vm.Delegate()
+        return (yield doeff_vm.Delegate())
 
     return handle_local_ask
 

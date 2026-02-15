@@ -267,7 +267,7 @@ def _is_rust_program_subclass(subclass: type[Any]) -> bool:
         return False
 
     try:
-        return issubclass(subclass, (doeff_vm.DoExpr, doeff_vm.KleisliProgramCall))
+        return issubclass(subclass, doeff_vm.DoExpr)
     except TypeError:
         return False
 
@@ -290,7 +290,7 @@ def _make_generator_program(
 
 
 class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
-    """Runtime base class for all doeff programs (effects and Kleisli calls)."""
+    """Runtime base class for doeff programs."""
 
     def __class_getitem__(cls, item):
         """Allow ``Program[T]`` generic-style annotations."""
@@ -492,8 +492,7 @@ class ProgramProtocol(Protocol[T]):
     """
     Protocol for all executable computations in doeff.
 
-    This protocol defines the core interface that both Effects and KleisliProgramCalls
-    implement, allowing them to be composed uniformly.
+    This protocol defines the core interface for effectful computations.
     """
 
     def map(self, f: Callable[[T], U]) -> ProgramProtocol[U]:
@@ -505,80 +504,6 @@ class ProgramProtocol(Protocol[T]):
         ...
 
 
-from doeff_vm import KleisliProgramCall as KleisliProgramCall
-
-
-class _CompatDataclassField:
-    __slots__ = ("name",)
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-
-def _format_kpc_args_repr(kleisli: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
-    target = getattr(kleisli, "original_func", None) or getattr(kleisli, "func", None) or kleisli
-    try:
-        signature = inspect.signature(target)
-    except (TypeError, ValueError):
-        signature = None
-
-    if signature is not None:
-        try:
-            bound = signature.bind_partial(*args, **kwargs)
-            parts = [f"{name}={value!r}" for name, value in bound.arguments.items()]
-            return ", ".join(parts) if parts else None
-        except TypeError:
-            pass
-
-    parts: list[str] = [repr(value) for value in args]
-    parts.extend(f"{key}={value!r}" for key, value in kwargs.items())
-    return ", ".join(parts) if parts else None
-
-
-def _kpc_create_from_kleisli(
-    cls: type[Any],
-    kleisli: Any,
-    args: tuple,
-    kwargs: dict[str, Any],
-    function_name: str,
-    created_at: Any = None,
-) -> Any:
-    return cls(
-        kleisli_source=kleisli,
-        args=tuple(args),
-        kwargs=dict(kwargs),
-        function_name=function_name,
-        execution_kernel=getattr(kleisli, "func", None),
-        created_at=created_at,
-        args_repr=_format_kpc_args_repr(kleisli, args, kwargs),
-    )
-
-
-def _kpc_and_then_k(self: Any, f: Callable[[T], ProgramProtocol[U]]) -> Program[U]:
-    if not callable(f):
-        raise TypeError("binder must be callable returning Program/Effect")
-    from doeff_vm import FlatMap
-
-    return FlatMap(self, f)
-
-
-setattr(KleisliProgramCall, "create_from_kleisli", classmethod(_kpc_create_from_kleisli))
-setattr(KleisliProgramCall, "and_then_k", _kpc_and_then_k)
-if not hasattr(KleisliProgramCall, "__dataclass_fields__"):
-    setattr(
-        KleisliProgramCall,
-        "__dataclass_fields__",
-        {
-            "kleisli_source": _CompatDataclassField("kleisli_source"),
-            "args": _CompatDataclassField("args"),
-            "kwargs": _CompatDataclassField("kwargs"),
-            "function_name": _CompatDataclassField("function_name"),
-            "args_repr": _CompatDataclassField("args_repr"),
-            "execution_kernel": _CompatDataclassField("execution_kernel"),
-            "created_at": _CompatDataclassField("created_at"),
-        },
-    )
-
 Program = ProgramBase
 GeneratorProgram = _GenProgramThunk
 
@@ -586,7 +511,6 @@ __all__ = [
     "DoCtrl",
     "DoExpr",
     "GeneratorProgram",
-    "KleisliProgramCall",
     "Program",
     "ProgramProtocol",
 ]

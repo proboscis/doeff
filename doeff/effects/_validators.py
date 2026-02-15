@@ -17,12 +17,13 @@ def _type_name(value: object) -> str:
 
 
 def _is_program_like(value: object) -> bool:
-    """Check if value is Program, KleisliProgramCall, or Effect."""
+    """Check if value is Program or Effect."""
     if isinstance(value, EffectBase):
         return True
     # Import here to avoid circular imports
-    from doeff.program import KleisliProgramCall, Program
-    return isinstance(value, (Program, KleisliProgramCall))
+    from doeff.program import Program
+
+    return isinstance(value, Program)
 
 
 def ensure_str(value: object, *, name: str) -> None:
@@ -61,9 +62,7 @@ def ensure_program_like_or_thunk(value: object, *, name: str) -> None:
         try:
             inspect.signature(value).bind()
         except TypeError as exc:
-            raise TypeError(
-                f"{name} callable must accept no required arguments"
-            ) from exc
+            raise TypeError(f"{name} callable must accept no required arguments") from exc
         except ValueError:
             # Unable to introspect (e.g., builtins); assume callable accepts zero args.
             pass

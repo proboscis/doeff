@@ -12,7 +12,7 @@ from typing import TypeVar, cast
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff import Effect, KleisliProgramCall, Program, RunResult, async_run_with_handler_map
+from doeff import Effect, Program, RunResult, async_run_with_handler_map
 from doeff.effects import AskEffect, GraphAnnotateEffect, GraphStepEffect, Intercept, Pure
 from doeff_pinjected.effects import PinjectedResolve
 from doeff_pinjected.handlers import production_handlers
@@ -39,9 +39,7 @@ def _program_with_dependency_interception(
 ) -> Program[T] | Effect:
     """Attach dependency-resolution interception using ``Program.intercept``."""
 
-    if not isinstance(
-        prog, (Program, KleisliProgramCall)
-    ):  # Defensive: keep API expectations clear
+    if not isinstance(prog, Program):  # Defensive: keep API expectations clear
         raise TypeError(f"Pinjected bridge expects a Program instance, got {type(prog)!r}")
 
     def _transform(effect: Effect) -> Effect | Program:
@@ -55,7 +53,7 @@ def _program_with_dependency_interception(
     if _supports_program_intercept(prog):
         return prog.intercept(_transform)
 
-    # Compatibility fallback for runtimes where KleisliProgramCall lacks `.intercept()`.
+    # Compatibility fallback for runtimes where Program lacks `.intercept()`.
     # Intercept(...) expects None for the "delegate unchanged" case.
     def _compat_transform(effect: Effect) -> Effect | Program | None:
         if isinstance(effect, AskEffect):

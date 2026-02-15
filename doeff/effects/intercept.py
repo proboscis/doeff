@@ -33,8 +33,7 @@ def Intercept(
                 break
 
         if replacement is None:
-            yield doeff_vm.Delegate()
-            return
+            return (yield doeff_vm.Delegate())
 
         if isinstance(replacement, (ProgramBase, EffectBase)):
             value = yield replacement
