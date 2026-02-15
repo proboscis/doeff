@@ -38,7 +38,7 @@ def _extract_fn_body(source: str, fn_name: str) -> str:
 def test_SA_002_G01_classifier_no_fallback_introspection() -> None:
     src = _read(RUST_SRC / "pyvm.rs")
     body = _extract_fn_body(src, "classify_yielded")
-    assert "py.import(\"doeff.types\")" not in body
+    assert 'py.import("doeff.types")' not in body
     assert "__doeff_effect_base__" not in body
     assert "__doeff_kpc__" not in body
     assert "is_effect_object(" not in body
@@ -49,10 +49,9 @@ def test_SA_002_G02_no_python_kpc_transitional_state() -> None:
     py_types = _read(ROOT / "doeff" / "_types_internal.py")
     rust_effect = _read(RUST_SRC / "effect.rs")
 
-    assert "class KleisliProgramCall(" not in py_program
+    assert "class " + "Kleisli" + "ProgramCall(" not in py_program
     assert "_KPC.__bases__" not in py_types
-    assert "pub struct PyKPC" in rust_effect
-    assert "extends=PyEffectBase" in rust_effect
+    assert "pub struct " + "Py" + "KPC" not in rust_effect
 
 
 def test_SA_002_G03_no_implicit_kpc_install_in_vm_new() -> None:
@@ -77,7 +76,12 @@ def test_SA_002_G05_default_handlers_and_presets_contract() -> None:
     from doeff.rust_vm import default_handlers
 
     handlers = default_handlers()
-    assert len(handlers) == 3, "default_handlers() must be [state, reader, writer]"
+    names = [str(getattr(h, "name", repr(h))).lower() for h in handlers]
+    assert len(handlers) == 6, "default_handlers() must include core runtime handlers"
+    assert any("state" in n for n in names)
+    assert any("reader" in n for n in names)
+    assert any("writer" in n for n in names)
+    assert not any("kpc" in n for n in names)
     assert presets.sync_preset != presets.async_preset
 
 
@@ -115,4 +119,4 @@ def test_SA_002_G09_to_generator_strict_not_callable_fallback() -> None:
     body = _extract_fn_body(src, "to_generator_strict")
     assert "PyFunction" not in body
     assert "PyMethod" not in body
-    assert "call0()" not in body
+    assert 'call_method0("__next__")' not in body

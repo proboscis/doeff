@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 import doeff_vm
-from doeff import do, Program
+from doeff import Effect, Program, do
 from doeff.effects import Get, Put, Modify, Ask, Tell, Pure
 
 
@@ -1280,7 +1280,7 @@ class TestR9HandlerNesting:
         from doeff_vm import run, state, Resume
 
         @do
-        def my_handler(effect, k):
+        def my_handler(effect: Effect, k):
             if hasattr(effect, "message"):
                 # Custom Tell handler that does nothing
                 result = yield Resume(k, None)
@@ -1767,128 +1767,80 @@ def test_flatmap_rejects_non_doexpr_binder_return():
         )
 
 
-def test_kpc_resolves_doexpr_args():
-    """ISSUE-VM-004: KPC handler resolves DoExpr args via Eval.
-
-    Verifies the KPC handler correctly resolves DoExpr positional args
-    before calling the kernel function.
-
-    SPEC-TYPES-001 §3.5 also specifies a concurrent variant (Gather-based
-    parallel resolution) — NOT yet implemented.
-    """
-    from doeff_vm import PyKPC, Pure, kpc
+def test_call_resolves_doexpr_args():
+    """Call DoCtrl resolves DoExpr positional args before invoking the callable."""
     from doeff_vm import run as vm_run
 
+    @do
     def adder(a, b):
         return a + b
-        yield  # make generator
 
-    # Wrap args as DoExpr objects (Pure) so KPC recognizes them as Expr
-    kpc_effect = PyKPC(
-        kleisli_source=adder,
-        args=(Pure(10), Pure(20)),
-        kwargs={},
-        function_name="adder",
-        execution_kernel=adder,
-    )
-
+    @do
     def body():
-        result = yield kpc_effect
+        result = yield adder(Pure(10), Pure(20))
         return result
 
-    result = vm_run(body(), handlers=[kpc])
-    assert result.is_ok(), f"KPC resolution failed: {result.result}"
-    assert result.value == 30, f"KPC should resolve DoExpr args and call kernel, got {result.value}"
+    result = vm_run(body(), handlers=[])
+    assert result.is_ok(), f"Call arg resolution failed: {result.result}"
+    assert result.value == 30
 
 
-## -- ISSUE-VM-004: Concurrent KPC (Spawn+Gather) -----------------------------
-
-
-def test_concurrent_kpc_resolves_doexpr_args_in_parallel():
-    """ISSUE-VM-004: Concurrent KPC handler evaluates Expr args via
-    DoCtrl::Eval before calling the kernel.
-
-    No scheduler needed — Eval runs programs inline.
-    """
-    from doeff_vm import PyKPC, Pure, concurrent_kpc
+def test_call_with_mixed_value_and_expr_args():
+    """Call DoCtrl handles mixed literal and DoExpr arguments."""
     from doeff_vm import run as vm_run
 
-    def adder(a, b):
-        return a + b
-        yield  # make generator
-
-    kpc_effect = PyKPC(
-        kleisli_source=adder,
-        args=(Pure(10), Pure(20)),
-        kwargs={},
-        function_name="adder",
-        execution_kernel=adder,
-    )
-
-    def body():
-        result = yield kpc_effect
-        return result
-
-    result = vm_run(body(), handlers=[concurrent_kpc])
-    assert result.is_ok(), f"Concurrent KPC failed: {result.result}"
-    assert result.value == 30, (
-        f"Concurrent KPC should resolve DoExpr args via Eval, got {result.value}"
-    )
-
-
-def test_concurrent_kpc_with_mixed_value_and_expr_args():
-    """ISSUE-VM-004: Concurrent KPC handles mix of Value and Expr args.
-
-    Value args are passed through directly; only Expr args are Eval'd.
-    """
-    from doeff_vm import PyKPC, Pure, concurrent_kpc
-    from doeff_vm import run as vm_run
-
+    @do
     def mixer(a, b, c):
         return a + b + c
-        yield
 
-    kpc_effect = PyKPC(
-        kleisli_source=mixer,
-        args=(42, Pure(10), Pure(20)),  # 42 is Value, Pure(10/20) are Expr
-        kwargs={},
-        function_name="mixer",
-        execution_kernel=mixer,
-    )
-
+    @do
     def body():
-        result = yield kpc_effect
+        result = yield mixer(42, Pure(10), Pure(20))
         return result
 
-    result = vm_run(body(), handlers=[concurrent_kpc])
-    assert result.is_ok(), f"Mixed concurrent KPC failed: {result.result}"
-    assert result.value == 72, f"Expected 42+10+20=72, got {result.value}"
+    result = vm_run(body(), handlers=[])
+    assert result.is_ok(), f"Mixed Call argument resolution failed: {result.result}"
+    assert result.value == 72
 
 
-def test_concurrent_kpc_with_all_value_args():
-    """ISSUE-VM-004: Concurrent KPC with no Expr args skips eval phase."""
-    from doeff_vm import PyKPC, concurrent_kpc
+def test_call_with_all_value_args():
+    """Call DoCtrl still works when all args are already plain values."""
     from doeff_vm import run as vm_run
 
+    @do
     def adder(a, b):
         return a + b
-        yield
 
-    kpc_effect = PyKPC(
-        kleisli_source=adder,
-        args=(10, 20),  # both are plain values
-        kwargs={},
-        function_name="adder",
-        execution_kernel=adder,
-    )
-
+    @do
     def body():
-        result = yield kpc_effect
+        result = yield adder(10, 20)
         return result
 
-    result = vm_run(body(), handlers=[concurrent_kpc])
-    assert result.is_ok(), f"All-value concurrent KPC failed: {result.result}"
+    result = vm_run(body(), handlers=[])
+    assert result.is_ok(), f"All-value Call invocation failed: {result.result}"
     assert result.value == 30
+
+
+def test_call_resolves_nested_effectful_args_left_to_right():
+    """Nested Call DoCtrl args resolve effectful expressions in deterministic order."""
+    from doeff_vm import run as vm_run
+
+    @do
+    def inner(v):
+        return v + 1
+
+    @do
+    def outer(v):
+        return v * 3
+
+    @do
+    def body():
+        value = yield outer(inner(Ask("key")))
+        return value
+
+    result = vm_run(body(), handlers=[doeff_vm.reader], env={"key": 4})
+    assert result.is_ok(), f"Nested Call DoCtrl resolution failed: {result.result}"
+    assert result.value == 15
 
 
 if __name__ == "__main__":

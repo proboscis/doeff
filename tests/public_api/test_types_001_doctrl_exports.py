@@ -20,7 +20,7 @@ def test_pure_call_eval_execute() -> None:
     def add(a: int, b: int) -> int:
         return a + b
 
-    call_result = run(Call(add, [1, 2], {}))
+    call_result = run(Call(Pure(add), [Pure(1), Pure(2)], {}))
     assert call_result.value == 3
 
     eval_result = run(Eval(Perform(Ask("k")), default_handlers()), env={"k": "value"})
@@ -28,6 +28,25 @@ def test_pure_call_eval_execute() -> None:
 
     perform_result = run(Perform(Ask("k")), env={"k": "perform-value"}, handlers=default_handlers())
     assert perform_result.value == "perform-value"
+
+
+def test_call_requires_doexpr_for_f() -> None:
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    with pytest.raises(TypeError, match=r"Call\.f must be DoExpr"):
+        Call(add, [Pure(1), Pure(2)], {})
+
+
+def test_call_requires_doexpr_for_args_and_kwargs() -> None:
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    with pytest.raises(TypeError, match=r"Call\.args values must be DoExpr"):
+        Call(Pure(add), [1, Pure(2)], {})
+
+    with pytest.raises(TypeError, match=r"Call\.kwargs values must be DoExpr"):
+        Call(Pure(add), [Pure(1)], {"b": 2})
 
 
 def test_resume_continuation_requires_k() -> None:

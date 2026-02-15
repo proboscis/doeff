@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from doeff.program import ProgramBase
     from doeff.types import Effect
 
-    # Use ProgramBase[Any] to accept any Program/KleisliProgramCall regardless of
+    # Use ProgramBase[Any] to accept any Program regardless of
     # result type. ProgramBase is invariant in T, so ProgramBase[object] would
     # reject ProgramBase[str] etc. Using Any avoids this variance issue.
     #

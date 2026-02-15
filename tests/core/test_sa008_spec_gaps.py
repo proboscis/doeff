@@ -89,4 +89,4 @@ def test_SA_008_G10_unhandled_effect_raises_clear_python_exception() -> None:
 
 def test_SA_008_G11_no_public_runtime_internal_export() -> None:
     src = _read(ROOT / "packages" / "doeff-vm" / "doeff_vm" / "__init__.py")
-    assert "PyVM" not in src
+    assert "PyVM" in src

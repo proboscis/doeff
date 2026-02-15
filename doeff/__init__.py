@@ -113,7 +113,7 @@ from doeff.graph_snapshot import (
     write_graph_html_async,
 )
 from doeff.kleisli import KleisliProgram
-from doeff.program import DoCtrl, DoExpr, GeneratorProgram, KleisliProgramCall, Program, ProgramBase
+from doeff.program import DoCtrl, DoExpr, GeneratorProgram, Program, ProgramBase
 from doeff.run import ProgramRunResult, run_program
 from doeff.rust_vm import (
     async_run,
@@ -266,7 +266,6 @@ __all__ = [
     "GeneratorProgram",
     "Intercept",
     "KleisliProgram",
-    "KleisliProgramCall",
     "Listen",
     "ListenResult",
     "Local",

@@ -13,7 +13,7 @@ from functools import wraps
 from typing import Any, ParamSpec, TypeVar, cast
 
 from doeff.kleisli import KleisliProgram
-from doeff.program import Program
+from doeff.program import Program, _build_auto_unwrap_strategy
 from doeff.types import Effect, EffectGenerator
 
 P = ParamSpec("P")
@@ -21,8 +21,7 @@ T = TypeVar("T")
 
 # Type alias for the internal generator wrapper signature.
 # This is what generator_wrapper actually produces - a generator that yields
-# effects/programs and returns T. KleisliProgramCall is dispatched as an effect
-# and resolved by the default KPC handler pipeline.
+# effects/programs and returns T.
 _GeneratorFunc = Callable[..., Generator[Effect | Program, Any, T]]
 
 
@@ -66,7 +65,7 @@ class DoYieldFunction(KleisliProgram[P, T]):
                     return stop_exc.value
 
         # KleisliProgram.func expects Callable[P, Program[T]], but we pass a
-        # generator function. Runtime KPC dispatch handles both Program and
+        # generator function. Runtime call dispatch handles both Program and
         # generator returns from the execution kernel. Cast to satisfy pyright.
         super().__init__(cast(Callable[P, Program[T]], generator_wrapper))
         self.original_func = func
@@ -82,6 +81,11 @@ class DoYieldFunction(KleisliProgram[P, T]):
             signature = None
         if signature is not None:
             self.__signature__ = signature
+
+        self.__doeff_do_decorated__ = True
+
+        strategy = _build_auto_unwrap_strategy(self)
+        object.__setattr__(self, "_auto_unwrap_strategy", strategy)
 
     @property
     def original_generator(self) -> Callable[P, EffectGenerator[T]]:

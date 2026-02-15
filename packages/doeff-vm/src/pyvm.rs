@@ -4,9 +4,10 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
+use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::effect::{
     dispatch_from_shared, dispatch_to_pyobject, PyAsk, PyCompletePromise, PyCreateExternalPromise,
-    PyCreatePromise, PyFailPromise, PyGather, PyGet, PyKPC, PyModify, PyPut, PyRace, PySpawn,
+    PyCreatePromise, PyFailPromise, PyGather, PyGet, PyModify, PyPut, PyRace, PySpawn,
     PyTaskCompleted, PyTell,
 };
 
@@ -73,16 +74,15 @@ impl TryFrom<u8> for DoExprTag {
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    AwaitHandlerFactory, ConcurrentKpcHandlerFactory, Handler, HandlerEntry, KpcHandlerFactory,
-    ReaderHandlerFactory, ResultSafeHandlerFactory, RustProgramHandlerRef, StateHandlerFactory,
-    WriterHandlerFactory,
+    AwaitHandlerFactory, Handler, HandlerEntry, ReaderHandlerFactory, ResultSafeHandlerFactory,
+    RustProgramHandlerRef, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerHandler;
 use crate::segment::Segment;
 use crate::step::{
-    DoCtrl, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
+    Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
 };
 use crate::value::Value;
 use crate::vm::VM;
@@ -126,6 +126,14 @@ fn attach_doeff_traceback_best_effort(py: Python<'_>, exc_obj: &Bound<'_, PyAny>
 
 fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     Ok(obj.is_instance_of::<PyEffectBase>())
+}
+
+fn classify_call_arg(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<CallArg> {
+    if obj.is_instance_of::<PyDoExprBase>() || is_effect_base_like(py, obj)? {
+        Ok(CallArg::Expr(PyShared::new(obj.clone().unbind())))
+    } else {
+        Ok(CallArg::Value(Value::from_pyobject(obj)))
+    }
 }
 
 fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
@@ -176,6 +184,15 @@ impl PyDoExprBase {
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         PyDoExprBase::new_base()
+    }
+
+    fn to_generator(slf: Py<Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        use pyo3::types::PyModule;
+        let code = c"def _wrap(e):\n    v = yield e\n    return v\n";
+        let module = PyModule::from_code(py, code, c"_effect_wrap", c"_effect_wrap")?;
+        let wrap_fn = module.getattr("_wrap")?;
+        let gen = wrap_fn.call1((slf.bind(py),))?;
+        Ok(gen.unbind())
     }
 }
 
@@ -703,9 +720,8 @@ impl PyVM {
                                 return Ok(PyCallOutcome::Value(Value::Python(gen)));
                             }
 
-                            let is_doexpr_like = result.is_instance_of::<PyKPC>()
-                                || result.is_instance_of::<PyDoCtrlBase>()
-                                || result.is_callable();
+                            let is_doexpr_like =
+                                result.is_instance_of::<PyDoCtrlBase>() || result.is_callable();
 
                             if !is_doexpr_like {
                                 let gen =
@@ -902,18 +918,20 @@ impl PyVM {
                 }
                 DoExprTag::Call => {
                     let c: PyRef<'_, PyCall> = obj.extract()?;
+                    let f = classify_call_arg(py, c.f.bind(py).as_any())?;
                     let mut args = Vec::new();
                     for item in c.args.bind(py).try_iter()? {
-                        args.push(Value::from_pyobject(item?.as_any()));
+                        let item = item?;
+                        args.push(classify_call_arg(py, item.as_any())?);
                     }
                     let kwargs_dict = c.kwargs.bind(py).cast::<PyDict>()?;
                     let mut kwargs = Vec::new();
                     for (k, v) in kwargs_dict.iter() {
                         let key = k.str()?.to_str()?.to_string();
-                        kwargs.push((key, Value::from_pyobject(v.as_any())));
+                        kwargs.push((key, classify_call_arg(py, v.as_any())?));
                     }
                     Ok(Yielded::DoCtrl(DoCtrl::Call {
-                        f: PyShared::new(c.f.clone_ref(py)),
+                        f,
                         args,
                         kwargs,
                         metadata: call_metadata_from_pycall(py, &c),
@@ -1621,14 +1639,26 @@ impl PyCall {
         kwargs: Py<PyAny>,
         meta: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        if !f.bind(py).is_callable() {
-            return Err(PyTypeError::new_err("Call.f must be callable"));
+        if !f.bind(py).is_instance_of::<PyDoExprBase>() {
+            return Err(PyTypeError::new_err("Call.f must be DoExpr"));
         }
         if args.bind(py).try_iter().is_err() {
             return Err(PyTypeError::new_err("Call.args must be iterable"));
         }
+        for item in args.bind(py).try_iter()? {
+            let item = item?;
+            if !item.is_instance_of::<PyDoExprBase>() {
+                return Err(PyTypeError::new_err("Call.args values must be DoExpr"));
+            }
+        }
         if !kwargs.bind(py).is_instance_of::<PyDict>() {
             return Err(PyTypeError::new_err("Call.kwargs must be dict"));
+        }
+        let kwargs_dict = kwargs.bind(py).cast::<PyDict>()?;
+        for (_, value) in kwargs_dict.iter() {
+            if !value.is_instance_of::<PyDoExprBase>() {
+                return Err(PyTypeError::new_err("Call.kwargs values must be DoExpr"));
+            }
         }
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
@@ -2260,28 +2290,6 @@ mod tests {
     }
 
     #[test]
-    fn test_g5_kpc_classifies_as_effect_not_direct_call() {
-        Python::attach(|py| {
-            let pyvm = PyVM { vm: VM::new() };
-            let locals = pyo3::types::PyDict::new(py);
-            locals.set_item("PyKPC", py.get_type::<PyKPC>()).unwrap();
-            py.run(
-                c"obj = PyKPC(None, (1,), {}, 'f', (lambda x: x))\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap();
-            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
-            assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
-                "G5 FAIL: KleisliProgramCall should classify as Effect (handler-dispatched), got {:?}",
-                yielded
-            );
-        });
-    }
-
-    #[test]
     fn test_g6_malformed_gather_effect_classifies_as_opaque_effect() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
@@ -2482,28 +2490,6 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_kpc_classifies_as_opaque_python_effect() {
-        Python::attach(|py| {
-            let pyvm = PyVM { vm: VM::new() };
-            let locals = pyo3::types::PyDict::new(py);
-            locals.set_item("PyKPC", py.get_type::<PyKPC>()).unwrap();
-            py.run(
-                c"obj = PyKPC(None, (1,), {}, 'f', (lambda x: x))\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap();
-            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
-            assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
-                "SPEC GAP: KPC should classify as opaque Python effect, got {:?}",
-                yielded
-            );
-        });
-    }
-
-    #[test]
     fn test_spec_scheduler_spawn_classifies_as_opaque_python_effect() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
@@ -2542,7 +2528,11 @@ mod tests {
             assert_eq!(base.tag, DoExprTag::Pure as u8);
 
             // Call
-            let f = py.eval(c"lambda: None", None, None).unwrap().unbind();
+            let kernel = py.eval(c"lambda: None", None, None).unwrap().unbind();
+            let f = Bound::new(py, PyPure::new(kernel))
+                .unwrap()
+                .into_any()
+                .unbind();
             let args = pyo3::types::PyTuple::empty(py).into_any().unbind();
             let kwargs = PyDict::new(py).into_any().unbind();
             let obj = Bound::new(py, PyCall::new(py, f, args, kwargs, None).unwrap())
@@ -2650,7 +2640,7 @@ mod tests {
 /// equivalent to `WithHandler(h0, WithHandler(h1, WithHandler(h2, prog)))`.
 ///
 /// `handlers` accepts a list of:
-///   - `RustHandler` sentinels: `state`, `reader`, `writer`, `result_safe`, `scheduler`, `kpc`
+///   - `RustHandler` sentinels: `state`, `reader`, `writer`, `result_safe`, `scheduler`
 ///   - Python handler callables
 #[pyfunction]
 #[pyo3(signature = (program, handlers=None, env=None, store=None, trace=false))]
@@ -2872,7 +2862,6 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyModify>()?;
     m.add_class::<PyAsk>()?;
     m.add_class::<PyTell>()?;
-    m.add_class::<PyKPC>()?;
     m.add_class::<PySpawn>()?;
     m.add_class::<PyGather>()?;
     m.add_class::<PyRace>()?;
@@ -2881,22 +2870,6 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFailPromise>()?;
     m.add_class::<PyCreateExternalPromise>()?;
     m.add_class::<PyTaskCompleted>()?;
-    // G09: KleisliProgramCall alias for PyKPC
-    m.add("KleisliProgramCall", m.getattr("PyKPC")?)?;
-    // KPC handler sentinel — explicit, not auto-installed
-    m.add(
-        "kpc",
-        PyRustHandlerSentinel {
-            factory: Arc::new(KpcHandlerFactory),
-        },
-    )?;
-    // Concurrent KPC handler sentinel — uses Spawn+Gather via scheduler
-    m.add(
-        "concurrent_kpc",
-        PyRustHandlerSentinel {
-            factory: Arc::new(ConcurrentKpcHandlerFactory),
-        },
-    )?;
     // G14: scheduler sentinel
     m.add(
         "scheduler",

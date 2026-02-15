@@ -21,11 +21,8 @@ def test_p0_pyvm_to_generator_strict_has_no_duck_paths() -> None:
 
 def test_p0_handler_candidate_has_no_shape_heuristics() -> None:
     src = _read("packages/doeff-vm/src/handler.rs")
-    start = src.index("fn is_do_expr_candidate")
-    end = src.index(
-        "// ---------------------------------------------------------------------------", start
-    )
-    block = src[start:end]
+    assert "fn is_do_expr_candidate" not in src
+    block = src
     assert 'hasattr("to_generator")' not in block
     assert 'getattr ("handler")' not in block
     assert 'getattr ("program")' not in block

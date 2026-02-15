@@ -42,7 +42,9 @@ pub enum PendingPython {
     StartProgramFrame {
         metadata: Option<CallMetadata>,
     },
-    CallFuncReturn,
+    CallFuncReturn {
+        metadata: Option<CallMetadata>,
+    },
     StepUserGenerator {
         generator: PyShared,
         metadata: Option<CallMetadata>,

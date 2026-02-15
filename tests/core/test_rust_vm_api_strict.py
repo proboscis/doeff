@@ -24,7 +24,6 @@ def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPa
         "writer": object(),
         "result_safe": object(),
         "scheduler": object(),
-        "kpc": object(),
         "await_handler": object(),
     }
     fake_vm = SimpleNamespace(**sentinels)
@@ -38,7 +37,6 @@ def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPa
         sentinels["writer"],
         sentinels["result_safe"],
         sentinels["scheduler"],
-        sentinels["kpc"],
         sentinels["await_handler"],
     ]
 
