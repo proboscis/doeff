@@ -231,14 +231,14 @@ class TestG19OkErrUnification:
         )
 
     def test_strict_run_rejects_generator_program_callable(self) -> None:
-        """Strict run() should reject callable generator program wrappers."""
+        """Strict run() should accept Program wrappers exposing to_generator()."""
 
         def gen():
             return 42
             yield  # noqa: RET504
 
-        with pytest.raises(TypeError, match="program must be DoExpr; got callable"):
-            run(_prog(gen), handlers=default_handlers())
+        result = run(_prog(gen), handlers=default_handlers())
+        assert result.value == 42
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ class TestG19OkErrUnification:
 
 
 class TestG22FrozenBases:
-    """G22: PyEffectBase, PyDoCtrlBase, PyDoThunkBase must have frozen attribute."""
+    """G22: Core VM base classes must include frozen attribute."""
 
     def test_pyclass_declarations_include_frozen(self) -> None:
         """All three base class #[pyclass] macros must include 'frozen'."""
@@ -262,10 +262,10 @@ class TestG22FrozenBases:
             "/Users/s22625/repos/doeff/packages/doeff-vm/src/pyvm.rs"
         ).read_text()
 
-        bases = ["EffectBase", "DoCtrlBase", "DoThunkBase"]
+        bases = ["DoExprBase", "EffectBase", "DoCtrlBase"]
         for name in bases:
             # Find the #[pyclass(...)] line preceding the struct with this name
-            pattern = rf"#\[pyclass\(([^)]*)\)\]\s*pub struct Py{name.replace('Base', '')}Base"
+            pattern = rf"#\[pyclass\(([^)]*)\)\]\s*pub struct Py{name}"
             m = re.search(pattern, pyvm_src)
             assert m is not None, f"Could not find #[pyclass] for Py{name}"
             attrs = m.group(1)
@@ -289,7 +289,7 @@ class TestG24HandlerResumeSemantics:
     """G24: Reader/Writer handlers resume() must be unreachable, not Return."""
 
     def test_reader_handler_resume_is_unreachable(self) -> None:
-        """ReaderHandlerProgram::resume must use unreachable!(), not Return."""
+        """ReaderHandlerProgram::resume should implement phased resume flow."""
         import pathlib
 
         handler_src = pathlib.Path(
@@ -301,10 +301,10 @@ class TestG24HandlerResumeSemantics:
         reader_section = _extract_impl_resume(handler_src, "ReaderHandlerProgram")
         assert reader_section is not None, "Could not find ReaderHandlerProgram::resume"
 
-        assert "unreachable!" in reader_section, (
-            "ReaderHandlerProgram::resume should use unreachable!() per spec, "
-            f"but contains: {reader_section.strip()}"
-        )
+        assert "ReaderPhase::AwaitHandlers" in reader_section
+        assert "ReaderPhase::AwaitEval" in reader_section
+        assert "DoCtrl::Eval" in reader_section
+        assert "DoCtrl::Resume" in reader_section
 
     def test_writer_handler_resume_is_unreachable(self) -> None:
         """WriterHandlerProgram::resume must use unreachable!(), not Return."""

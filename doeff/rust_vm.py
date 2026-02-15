@@ -90,6 +90,8 @@ def _run_call_kwargs(
 def _normalize_env(env: dict[Any, Any] | None) -> dict[str, Any] | None:
     if env is None:
         return None
+    if not isinstance(env, dict):
+        raise TypeError(f"env must be a dict, got {type(env).__name__}")
     normalized: dict[str, Any] = {}
     for key, value in env.items():
         if isinstance(key, str):
@@ -128,7 +130,7 @@ async def _call_async_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) 
 
 def default_handlers() -> list[Any]:
     vm = _vm()
-    required = ("state", "reader", "writer", "result_safe", "scheduler", "kpc", "await_handler")
+    required = ("state", "reader", "writer", "result_safe", "scheduler", "await_handler")
     if all(hasattr(vm, name) for name in required):
         return [getattr(vm, name) for name in required]
     missing = [name for name in required if not hasattr(vm, name)]
@@ -138,7 +140,9 @@ def default_handlers() -> list[Any]:
     )
 
 
-def wrap_with_handler_map(program: Any, handler_map: Mapping[type, Callable[[Any, Any], Any]]) -> Any:
+def wrap_with_handler_map(
+    program: Any, handler_map: Mapping[type, Callable[[Any, Any], Any]]
+) -> Any:
     """Wrap a program with typed WithHandler layers from an effect->handler mapping."""
     vm = _vm()
     with_handler = getattr(vm, "WithHandler")

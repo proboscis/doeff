@@ -4,6 +4,52 @@ from importlib import import_module
 
 _ext = import_module("doeff_vm.doeff_vm")
 
+
+def _validate_do_handler_annotations(handlers) -> None:
+    kleisli_mod = import_module("doeff.kleisli")
+    validate_do_handler_effect_annotation = getattr(
+        kleisli_mod, "validate_do_handler_effect_annotation"
+    )
+    for handler in handlers:
+        if callable(handler):
+            validate_do_handler_effect_annotation(handler)
+
+
+def _install_validated_runtime_api() -> None:
+    if bool(getattr(_ext, "__doeff_handler_validation_patched__", False)):
+        return
+
+    raw_with_handler = _ext.WithHandler
+    raw_run = _ext.run
+    raw_async_run = _ext.async_run
+
+    def validated_with_handler(handler, expr):
+        _validate_do_handler_annotations((handler,))
+        return raw_with_handler(handler, expr)
+
+    def validated_run(program, handlers=(), env=None, store=None, trace=False):
+        _validate_do_handler_annotations(handlers)
+        return raw_run(program, handlers=handlers, env=env, store=store, trace=trace)
+
+    async def validated_async_run(program, handlers=(), env=None, store=None, trace=False):
+        _validate_do_handler_annotations(handlers)
+        return await raw_async_run(
+            program,
+            handlers=handlers,
+            env=env,
+            store=store,
+            trace=trace,
+        )
+
+    setattr(_ext, "WithHandler", validated_with_handler)
+    setattr(_ext, "run", validated_run)
+    setattr(_ext, "async_run", validated_async_run)
+    setattr(_ext, "__doeff_handler_validation_patched__", True)
+
+
+_install_validated_runtime_api()
+
+
 DoExpr = _ext.DoExpr
 EffectBase = _ext.EffectBase
 DoCtrlBase = _ext.DoCtrlBase
@@ -17,7 +63,11 @@ Err = getattr(_ext, "Err", None)
 ResultOk = Ok
 ResultErr = Err
 K = _ext.K
+
+
 WithHandler = _ext.WithHandler
+
+
 Pure = _ext.Pure
 Call = _ext.Call
 Map = _ext.Map
@@ -29,17 +79,20 @@ Delegate = _ext.Delegate
 Transfer = _ext.Transfer
 ResumeContinuation = _ext.ResumeContinuation
 RustHandler = _ext.RustHandler
+
+
 run = _ext.run
+
+
 async_run = _ext.async_run
+
+
 state = _ext.state
 reader = _ext.reader
 writer = _ext.writer
 result_safe = _ext.result_safe
 scheduler = _ext.scheduler
 await_handler = _ext.await_handler
-kpc = _ext.kpc
-concurrent_kpc = _ext.concurrent_kpc
-KleisliProgramCall = _ext.KleisliProgramCall
 CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
 GetHandlers = _ext.GetHandlers
@@ -51,7 +104,6 @@ PyPut = _ext.PyPut
 PyModify = _ext.PyModify
 PyAsk = _ext.PyAsk
 PyTell = _ext.PyTell
-PyKPC = _ext.PyKPC
 SpawnEffect = _ext.SpawnEffect
 GatherEffect = _ext.GatherEffect
 RaceEffect = _ext.RaceEffect
@@ -94,7 +146,6 @@ PyTaskCompleted = _SchedulerTaskCompleted
 
 __all__ = [
     "K",
-    "KleisliProgramCall",
     "Delegate",
     "Call",
     "Eval",
@@ -107,7 +158,6 @@ __all__ = [
     "EffectBase",
     "PyAsk",
     "PyGet",
-    "PyKPC",
     "PySpawn",
     "PyGather",
     "PyRace",
@@ -144,8 +194,6 @@ __all__ = [
     "GetContinuation",
     "GetHandlers",
     "async_run",
-    "concurrent_kpc",
-    "kpc",
     "reader",
     "run",
     "scheduler",

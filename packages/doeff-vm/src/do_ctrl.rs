@@ -11,6 +11,12 @@ use crate::py_shared::PyShared;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
+pub enum CallArg {
+    Value(Value),
+    Expr(PyShared),
+}
+
+#[derive(Debug, Clone)]
 pub enum DoCtrl {
     Pure {
         value: Value,
@@ -61,9 +67,9 @@ pub enum DoCtrl {
         action: Py<PyAny>,
     },
     Call {
-        f: PyShared,
-        args: Vec<Value>,
-        kwargs: Vec<(String, Value)>,
+        f: CallArg,
+        args: Vec<CallArg>,
+        kwargs: Vec<(String, CallArg)>,
         metadata: CallMetadata,
     },
     Eval {
