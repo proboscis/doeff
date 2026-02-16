@@ -1,0 +1,28 @@
+KPC Change Scope Verification (2026-02-15)
+
+Command: git status --short
+Observed tracked changes (in-scope runtime/tests + existing repo-local edits):
+- doeff/handlers.py
+- doeff/program.py
+- doeff/rust_vm.py
+- packages/doeff-vm/src/pyvm.rs
+- tests/public_api/test_types_001_kpc.py
+- tests/public_api/test_types_001_hierarchy.py
+- tests/public_api/test_types_001_handler_protocol.py
+- tests/public_api/test_kpc_macro_runtime_contract.py
+- tests/public_api/test_doeff13_hang_regression.py
+- tests/core/test_sa001_spec_gaps.py
+- tests/core/test_rust_vm_api_strict.py
+- tests/core/test_sa002_spec_gaps.py
+- tests/core/test_sa007_spec_gaps.py
+- tests/core/test_sa008_spec_gaps.py
+- tests/core/test_spec_gaps.py
+
+Additional unrelated pre-existing workspace changes observed and preserved:
+- .github/workflows/python-compatibility.yml
+- .sisyphus/boulder.json
+- .claude/worktrees/ (untracked)
+
+Conclusion:
+- KPC migration + hang remediation edits are isolated to planned runtime/test surfaces.
+- Unrelated existing changes were not reverted.

@@ -1,6 +1,13 @@
 name: Build doeff-indexer
 
 on:
+  workflow_call:
+    inputs:
+      publish:
+        description: "Publish to PyPI"
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - 'doeff-indexer-v*'
@@ -145,8 +152,7 @@ jobs:
     name: Publish to PyPI
     needs: [build-linux, build-macos, build-windows, sdist]
     runs-on: ubuntu-latest
-    # Only publish on tag push or manual trigger with publish=true
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    if: startsWith(github.ref, 'refs/tags/doeff-indexer-v') || (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'workflow_call' && inputs.publish)
     environment: pypi
     permissions:
       id-token: write  # Required for trusted publishing
@@ -165,3 +171,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          skip-existing: true

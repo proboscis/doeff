@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use doeff_effect_anlyzer::analyze_with_root;
+use doeff_effect_analyzer::analyze_with_root;
 use tempfile::tempdir;
 
 fn write_module(root: &Path, name: &str, contents: &str) {
@@ -10,7 +10,7 @@ fn write_module(root: &Path, name: &str, contents: &str) {
     fs::write(&module_path, contents).expect("failed to write test module");
 }
 
-fn effect_keys(report: &doeff_effect_anlyzer::Report) -> Vec<String> {
+fn effect_keys(report: &doeff_effect_analyzer::Report) -> Vec<String> {
     report
         .summary
         .effects
