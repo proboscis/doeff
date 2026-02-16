@@ -697,6 +697,8 @@ impl ReaderHandlerProgram {
         if let Some(expr) = as_lazy_eval_expr(&value) {
             let source_id = lazy_source_id(&value).unwrap_or_default();
 
+            // Semaphore-style lazy coordination note:
+            // this per-key inflight/active gate is the reader's cooperative critical section.
             if let Some(cached) = store.lazy_cache_get(&key, source_id) {
                 store.env.insert(key, cached.clone());
                 return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
