@@ -51,6 +51,15 @@ pub enum SchedulerEffect {
         error: PyException,
     },
     CreateExternalPromise,
+    CreateSemaphore {
+        permits: u64,
+    },
+    AcquireSemaphore {
+        semaphore_id: u64,
+    },
+    ReleaseSemaphore {
+        semaphore_id: u64,
+    },
     TaskCompleted {
         task: TaskId,
         result: Result<Value, PyException>,
@@ -130,6 +139,19 @@ pub struct ExternalPromise {
     pub completion_queue: Option<PyShared>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SemaphoreWaiter {
+    promise: PromiseId,
+    waiting_task: Option<TaskId>,
+}
+
+#[derive(Clone, Debug)]
+struct SemaphoreRuntimeState {
+    max_permits: u64,
+    available_permits: u64,
+    waiters: VecDeque<SemaphoreWaiter>,
+}
+
 #[derive(Clone, Debug)]
 enum WaitMode {
     All,
@@ -193,10 +215,12 @@ pub struct SchedulerState {
     ready_waiters: VecDeque<WaitRequest>,
     pub tasks: HashMap<TaskId, TaskState>,
     pub promises: HashMap<PromiseId, PromiseState>,
+    semaphores: HashMap<u64, SemaphoreRuntimeState>,
     waiters: HashMap<Waitable, Vec<WaitRequest>>,
     external_completion_queue: Option<PyShared>,
     pub next_task: u64,
     pub next_promise: u64,
+    pub next_semaphore: u64,
     pub current_task: Option<TaskId>,
 }
 
@@ -232,6 +256,10 @@ fn parse_task_completed_result(
     }
 
     Err("TaskCompleted.result must be Ok(...) or Err(...)".to_string())
+}
+
+fn extract_semaphore_id(obj: &Bound<'_, PyAny>) -> Option<u64> {
+    obj.getattr("id").ok()?.extract::<u64>().ok()
 }
 
 fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEffect>, String> {
@@ -395,6 +423,30 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
             "CreateExternalPromiseEffect",
         ) {
             Ok(Some(SchedulerEffect::CreateExternalPromise))
+        } else if is_instance_from(obj, "doeff.effects.semaphore", "CreateSemaphoreEffect") {
+            let permits = obj
+                .getattr("permits")
+                .map_err(|e| e.to_string())?
+                .extract::<i64>()
+                .map_err(|e| e.to_string())?;
+            if permits < 1 {
+                return Err("CreateSemaphoreEffect.permits must be >= 1".to_string());
+            }
+            Ok(Some(SchedulerEffect::CreateSemaphore {
+                permits: permits as u64,
+            }))
+        } else if is_instance_from(obj, "doeff.effects.semaphore", "AcquireSemaphoreEffect") {
+            let semaphore_obj = obj.getattr("semaphore").map_err(|e| e.to_string())?;
+            let Some(semaphore_id) = extract_semaphore_id(&semaphore_obj) else {
+                return Err("AcquireSemaphoreEffect.semaphore must carry a numeric id".to_string());
+            };
+            Ok(Some(SchedulerEffect::AcquireSemaphore { semaphore_id }))
+        } else if is_instance_from(obj, "doeff.effects.semaphore", "ReleaseSemaphoreEffect") {
+            let semaphore_obj = obj.getattr("semaphore").map_err(|e| e.to_string())?;
+            let Some(semaphore_id) = extract_semaphore_id(&semaphore_obj) else {
+                return Err("ReleaseSemaphoreEffect.semaphore must carry a numeric id".to_string());
+            };
+            Ok(Some(SchedulerEffect::ReleaseSemaphore { semaphore_id }))
         } else if is_instance_from(obj, "doeff.effects.promise", "CompletePromiseEffect") {
             let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
             let Some(promise) = extract_promise_id(&promise_obj) else {
@@ -533,6 +585,62 @@ fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyExce
     PyException::new(exc_type, exc_value, Some(exc_tb))
 }
 
+fn is_task_cancel_requested(task_id: TaskId) -> bool {
+    Python::attach(|py| {
+        let Ok(spawn_mod) = py.import("doeff.effects.spawn") else {
+            return false;
+        };
+        let Ok(cancelled_ids) = spawn_mod.getattr("_cancelled_task_ids") else {
+            return false;
+        };
+        cancelled_ids
+            .call_method1("__contains__", (task_id.raw(),))
+            .and_then(|v| v.extract::<bool>())
+            .unwrap_or(false)
+    })
+}
+
+fn task_cancelled_error() -> PyException {
+    Python::attach(|py| {
+        let message = "Task was cancelled";
+        let cancelled = (|| -> PyResult<Bound<'_, PyAny>> {
+            let spawn_mod = py.import("doeff.effects.spawn")?;
+            let cls = spawn_mod.getattr("TaskCancelledError")?;
+            cls.call1((message,))
+        })();
+
+        match cancelled {
+            Ok(exc_obj) => pyobject_to_exception(py, &exc_obj),
+            Err(_) => PyException::runtime_error(message.to_string()),
+        }
+    })
+}
+
+fn make_python_semaphore_value(semaphore_id: u64) -> Result<Value, PyException> {
+    Python::attach(|py| {
+        let semaphore_mod = py.import("doeff.effects.semaphore").map_err(|e| {
+            PyException::runtime_error(format!(
+                "failed to import semaphore module while creating Semaphore handle: {e}"
+            ))
+        })?;
+        let semaphore_cls = semaphore_mod.getattr("Semaphore").map_err(|e| {
+            PyException::runtime_error(format!(
+                "failed to resolve Semaphore class while creating Semaphore handle: {e}"
+            ))
+        })?;
+        let semaphore = semaphore_cls.call1((semaphore_id,)).map_err(|e| {
+            PyException::runtime_error(format!(
+                "failed to instantiate Semaphore({semaphore_id}): {e}"
+            ))
+        })?;
+        Ok(Value::Python(semaphore.unbind()))
+    })
+}
+
+fn unknown_semaphore_error(semaphore_id: u64) -> PyException {
+    PyException::runtime_error(format!("unknown semaphore id {semaphore_id}"))
+}
+
 // ---------------------------------------------------------------------------
 // SchedulerState implementation
 // ---------------------------------------------------------------------------
@@ -544,10 +652,12 @@ impl SchedulerState {
             ready_waiters: VecDeque::new(),
             tasks: HashMap::new(),
             promises: HashMap::new(),
+            semaphores: HashMap::new(),
             waiters: HashMap::new(),
             external_completion_queue: None,
             next_task: 0,
             next_promise: 0,
+            next_semaphore: 1,
             current_task: None,
         }
     }
@@ -729,6 +839,140 @@ impl SchedulerState {
         let id = PromiseId::from_raw(self.next_promise);
         self.next_promise += 1;
         id
+    }
+
+    pub fn alloc_semaphore_id(&mut self) -> u64 {
+        let id = self.next_semaphore;
+        self.next_semaphore += 1;
+        id
+    }
+
+    pub fn create_semaphore(&mut self, permits: u64) -> u64 {
+        let semaphore_id = self.alloc_semaphore_id();
+        self.semaphores.insert(
+            semaphore_id,
+            SemaphoreRuntimeState {
+                max_permits: permits,
+                available_permits: permits,
+                waiters: VecDeque::new(),
+            },
+        );
+        semaphore_id
+    }
+
+    fn is_waiter_cancelled(&self, waiter: SemaphoreWaiter) -> bool {
+        let Some(task_id) = waiter.waiting_task else {
+            return false;
+        };
+        if matches!(self.tasks.get(&task_id), Some(TaskState::Done { .. })) {
+            return true;
+        }
+        is_task_cancel_requested(task_id)
+    }
+
+    fn drain_cancelled_head_waiters(&mut self, semaphore_id: u64) -> Result<(), PyException> {
+        loop {
+            let head_waiter = self
+                .semaphores
+                .get(&semaphore_id)
+                .ok_or_else(|| unknown_semaphore_error(semaphore_id))?
+                .waiters
+                .front()
+                .copied();
+
+            let Some(waiter) = head_waiter else {
+                return Ok(());
+            };
+
+            if !self.is_waiter_cancelled(waiter) {
+                return Ok(());
+            }
+
+            if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
+                semaphore.waiters.pop_front();
+            } else {
+                return Err(unknown_semaphore_error(semaphore_id));
+            }
+            self.mark_promise_done(waiter.promise, Err(task_cancelled_error()));
+        }
+    }
+
+    pub fn acquire_semaphore(
+        &mut self,
+        semaphore_id: u64,
+    ) -> Result<Option<PromiseId>, PyException> {
+        if let Some(task_id) = self.current_task {
+            if is_task_cancel_requested(task_id) {
+                return Err(task_cancelled_error());
+            }
+        }
+
+        self.drain_cancelled_head_waiters(semaphore_id)?;
+
+        let can_acquire = {
+            let semaphore = self
+                .semaphores
+                .get(&semaphore_id)
+                .ok_or_else(|| unknown_semaphore_error(semaphore_id))?;
+            semaphore.available_permits > 0 && semaphore.waiters.is_empty()
+        };
+
+        if can_acquire {
+            if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
+                semaphore.available_permits -= 1;
+                return Ok(None);
+            }
+            return Err(unknown_semaphore_error(semaphore_id));
+        }
+
+        let waiter_promise = self.alloc_promise_id();
+        self.promises.insert(waiter_promise, PromiseState::Pending);
+        let waiting_task = self.current_task;
+        if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
+            semaphore.waiters.push_back(SemaphoreWaiter {
+                promise: waiter_promise,
+                waiting_task,
+            });
+            Ok(Some(waiter_promise))
+        } else {
+            Err(unknown_semaphore_error(semaphore_id))
+        }
+    }
+
+    pub fn release_semaphore(&mut self, semaphore_id: u64) -> Result<(), PyException> {
+        loop {
+            self.drain_cancelled_head_waiters(semaphore_id)?;
+
+            let next_waiter = if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
+                semaphore.waiters.pop_front()
+            } else {
+                return Err(unknown_semaphore_error(semaphore_id));
+            };
+
+            if let Some(waiter) = next_waiter {
+                self.mark_promise_done(waiter.promise, Ok(Value::Unit));
+                return Ok(());
+            }
+
+            let over_release = {
+                let semaphore = self
+                    .semaphores
+                    .get(&semaphore_id)
+                    .ok_or_else(|| unknown_semaphore_error(semaphore_id))?;
+                semaphore.available_permits >= semaphore.max_permits
+            };
+            if over_release {
+                return Err(PyException::runtime_error(
+                    "semaphore released too many times".to_string(),
+                ));
+            }
+
+            if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
+                semaphore.available_permits += 1;
+                return Ok(());
+            }
+            return Err(unknown_semaphore_error(semaphore_id));
+        }
     }
 
     pub fn save_task_store(&mut self, task_id: TaskId, store: &RustStore) {
@@ -1466,6 +1710,45 @@ impl RustHandlerProgram for SchedulerProgram {
                         completion_queue: Some(completion_queue),
                     }),
                 )
+            }
+
+            SchedulerEffect::CreateSemaphore { permits } => {
+                let semaphore_id = {
+                    let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                    state.create_semaphore(permits)
+                };
+                let semaphore_value = match make_python_semaphore_value(semaphore_id) {
+                    Ok(value) => value,
+                    Err(error) => return RustProgramStep::Throw(error),
+                };
+                jump_to_continuation(k_user, semaphore_value)
+            }
+
+            SchedulerEffect::AcquireSemaphore { semaphore_id } => {
+                let waiter_promise = {
+                    let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                    match state.acquire_semaphore(semaphore_id) {
+                        Ok(result) => result,
+                        Err(error) => return RustProgramStep::Throw(error),
+                    }
+                };
+                match waiter_promise {
+                    Some(promise_id) => {
+                        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                        let items = [Waitable::Promise(promise_id)];
+                        state.wait_on_any(&items, k_user.clone(), store);
+                        state.transfer_next_or(k_user, store)
+                    }
+                    None => jump_to_continuation(k_user, Value::Unit),
+                }
+            }
+
+            SchedulerEffect::ReleaseSemaphore { semaphore_id } => {
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                if let Err(error) = state.release_semaphore(semaphore_id) {
+                    return RustProgramStep::Throw(error);
+                }
+                jump_to_continuation(k_user, Value::Unit)
             }
         }
     }
