@@ -10,6 +10,7 @@ The underscore prefix (_Scheduler*) signals internal/private use.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
@@ -177,6 +178,32 @@ class WaitForExternalCompletion(EffectBase):
     queue: Any  # queue.Queue - can't import due to circular deps
 
 
+def sync_external_wait_handler(effect: Any, k: Any):
+    """Handle WaitForExternalCompletion with blocking queue.get()."""
+    if isinstance(effect, WaitForExternalCompletion):
+        effect.queue.get(block=True)
+        return (yield doeff_vm.Resume(k, None))
+
+    yield doeff_vm.Delegate()
+
+
+def async_external_wait_handler(effect: Any, k: Any):
+    """Handle WaitForExternalCompletion with PythonAsyncSyntaxEscape.
+
+    Uses run_in_executor so queue waiting does not block the active event loop.
+    """
+    if isinstance(effect, WaitForExternalCompletion):
+
+        async def _wait_one() -> None:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, effect.queue.get, True)
+
+        _ = yield doeff_vm.PythonAsyncSyntaxEscape(action=_wait_one)
+        return (yield doeff_vm.Resume(k, None))
+
+    yield doeff_vm.Delegate()
+
+
 __all__ = [
     "_SchedulerCancelTask",
     "_SchedulerCreatePromise",
@@ -188,5 +215,7 @@ __all__ = [
     "_SchedulerRegisterWaiter",
     "_SchedulerTaskComplete",
     "_SchedulerTaskCompleted",
+    "async_external_wait_handler",
+    "sync_external_wait_handler",
     "WaitForExternalCompletion",
 ]

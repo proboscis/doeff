@@ -105,6 +105,10 @@ from doeff.effects import (
     tell,
     wait,
 )
+from doeff.nonblocking_await import (
+    nonblocking_await_handler,
+    with_nonblocking_await,
+)
 from doeff.graph_snapshot import (
     build_graph_snapshot,
     graph_to_html,
@@ -274,6 +278,7 @@ __all__ = [
     "MissingEnvKeyError",
     "Modify",
     "Nothing",
+    "nonblocking_await_handler",
     "Ok",
     "Program",
     "ProgramBase",
@@ -352,6 +357,7 @@ __all__ = [
     "async_run_with_handler_map",
     "wrap_with_handler_map",
     "wait",
+    "with_nonblocking_await",
     "write_graph_html",
     "write_graph_html_async",
 ]
