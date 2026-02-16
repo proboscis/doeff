@@ -1,31 +1,18 @@
 # doeff Release Publish Runbook
 
-This runbook covers the release flow for milestone M1 (release infrastructure).
+## One-time Setup
 
-## One-time Setup (Manual)
-
-Complete these steps in PyPI before first publish:
-
-1. Create projects on PyPI:
-   - `doeff-vm`
-   - `doeff-indexer`
-   - `doeff`
-2. Configure Trusted Publishing (OIDC) for this repository and workflows:
-   - `.github/workflows/build-vm.yml`
-   - `.github/workflows/build-indexer.yml`
-   - `.github/workflows/publish.yml`
-3. Ensure each package has the correct project maintainers/owners.
+1. Get an account-scoped PyPI API token from https://pypi.org/manage/account/token/
+2. For CI: add it as `PYPI_API_TOKEN` in GitHub repo settings → Secrets and variables → Actions
+3. For local: set `UV_PUBLISH_TOKEN` in your shell environment
 
 ## Release Order
 
-Publish in this strict order:
+Publish in this strict order (root `doeff` depends on the others):
 
 1. `doeff-vm`
 2. `doeff-indexer`
 3. `doeff`
-
-The root publish workflow (`publish.yml`) now orchestrates this order by calling the package workflows
-first, then publishing `doeff`.
 
 ## Preflight Checklist
 
@@ -35,23 +22,42 @@ first, then publishing `doeff`.
 uv run pytest
 ```
 
-2. Verify version consistency:
-   - `pyproject.toml` project version is updated.
-   - `doeff.__version__` resolves via package metadata.
+2. Bump versions in `pyproject.toml` and `doeff/__init__.py` if needed.
 
-3. Verify URLs point to canonical repository:
-   - `https://github.com/proboscis/doeff`
-
-4. Build and verify distribution metadata (no local workspace-path leaks):
+3. Build and verify distribution metadata (no local workspace-path leaks):
 
 ```bash
 uv build --wheel --sdist
 uv run python tools/verify_dist_metadata.py dist/*.whl dist/*.tar.gz
 ```
 
-## Publish Commands
+## Publishing
 
-### Option A: Tag-driven (recommended)
+### Option A: Local publish (recommended for now)
+
+```bash
+# 1. Build and publish doeff-vm
+cd packages/doeff-vm
+rm -rf dist/
+uv build --wheel --sdist
+uv publish dist/*
+
+# 2. Build and publish doeff-indexer
+cd ../doeff-indexer
+rm -rf dist/
+uv build --wheel --sdist
+uv publish dist/*
+
+# 3. Build and publish doeff (from repo root)
+cd ../..
+rm -f dist/doeff-*
+uv build --wheel --sdist
+uv publish dist/doeff-*
+```
+
+Note: `uv publish` uses the `UV_PUBLISH_TOKEN` env var automatically.
+
+### Option B: CI tag-driven publish
 
 ```bash
 git tag vX.Y.Z
@@ -59,38 +65,43 @@ git push origin vX.Y.Z
 ```
 
 This triggers `.github/workflows/publish.yml`, which will:
-- publish `doeff-vm` (skip-existing enabled)
-- publish `doeff-indexer` (skip-existing enabled)
+- publish `doeff-vm` via `build-vm.yml` (all platforms)
+- publish `doeff-indexer` via `build-indexer.yml` (all platforms)
 - build + publish `doeff`
 
-### Option B: Manual workflow dispatch
+Requires `PYPI_API_TOKEN` secret in GitHub repo settings.
+
+### Option C: Manual workflow dispatch
 
 From GitHub Actions UI, run `Publish doeff` with `publish=true`.
 
 ## Post-publish Verification
 
-1. Create a clean virtual environment.
-2. Install from PyPI:
-
 ```bash
-python -m venv .venv-release-check
-source .venv-release-check/bin/activate
-python -m pip install --upgrade pip
-python -m pip install doeff
-python -c "import doeff; print(doeff.__version__)"
-```
-
-3. Smoke test runtime:
-
-```bash
-python - <<'PY'
+python -m venv /tmp/doeff-release-check
+/tmp/doeff-release-check/bin/pip install --upgrade pip
+/tmp/doeff-release-check/bin/pip install doeff
+/tmp/doeff-release-check/bin/python -c "
 from doeff import Program, run
-print(run(Program.pure("ok")).value)
-PY
+print(run(Program.pure('ok')).value)
+"
 ```
+
+## Publishing Other Subpackages
+
+Each package in `packages/` can be published independently:
+
+```bash
+cd packages/doeff-openai
+uv build --wheel --sdist
+uv publish dist/*
+```
+
+No per-project PyPI config needed if using an account-scoped API token.
 
 ## Notes
 
-- All publish jobs use Trusted Publishing (`id-token: write`).
-- Package publish steps use `skip-existing: true` so reruns are idempotent.
-- If dependency packages are already published for the target version, root publish can proceed safely.
+- CI publish uses `skip-existing: true` so reruns are idempotent.
+- Local builds only produce wheels for your current platform/Python version.
+- CI builds produce wheels for linux/macos/windows × x86_64/aarch64.
+- The sdist always works as a fallback (pip builds from source).

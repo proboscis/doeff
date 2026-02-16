@@ -14,7 +14,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   publish-doeff-vm:
@@ -62,10 +61,6 @@ jobs:
     needs: [build-dist, publish-doeff-vm, publish-doeff-indexer]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    environment: pypi
-    permissions:
-      id-token: write
-
     steps:
       - name: Download dist artifacts
         uses: actions/download-artifact@v4
@@ -81,3 +76,4 @@ jobs:
         with:
           packages-dir: dist/
           skip-existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
