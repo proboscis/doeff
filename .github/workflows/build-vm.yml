@@ -40,7 +40,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist
+          args: --release --out dist -i 3.10 3.11 3.12
           working-directory: packages/doeff-vm
           manylinux: auto
 
