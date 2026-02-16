@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping, Sequence
 import importlib
 import inspect
@@ -128,6 +129,46 @@ async def _call_async_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) 
         raise
 
 
+def _normalize_async_handlers(handlers: Sequence[Any]) -> list[Any]:
+    """Replace sync await sentinel with async-capable Python handler."""
+    vm = _vm()
+    await_sentinel = getattr(vm, "await_handler", None)
+    if await_sentinel is None:
+        return list(handlers)
+
+    try:
+        from doeff.effects.future import python_async_syntax_escape_handler
+    except Exception:
+        return list(handlers)
+
+    normalized: list[Any] = []
+    for handler in handlers:
+        if handler is await_sentinel:
+            normalized.append(python_async_syntax_escape_handler)
+        else:
+            normalized.append(handler)
+    return normalized
+
+
+def _needs_threaded_async_driver(handlers: Sequence[Any]) -> bool:
+    """Return True when async_run should execute VM stepping off-loop."""
+    try:
+        from doeff.effects.future import python_async_syntax_escape_handler
+    except Exception:
+        return False
+
+    return any(handler is python_async_syntax_escape_handler for handler in handlers)
+
+
+def _run_async_call_in_thread(run_fn: Any, program: Any, kwargs: dict[str, Any]) -> Any:
+    """Execute module-level async_run coroutine in a dedicated thread loop."""
+
+    async def _runner() -> Any:
+        return await _call_async_run_fn(run_fn, program, kwargs)
+
+    return asyncio.run(_runner())
+
+
 def default_handlers() -> list[Any]:
     vm = _vm()
     required = ("state", "reader", "writer", "result_safe", "scheduler", "await_handler")
@@ -233,14 +274,18 @@ async def async_run(
         raise RuntimeError("Installed doeff_vm module does not expose async_run()")
     raise_unhandled = isinstance(program, vm.EffectBase)
     program = _coerce_program(program)
+    normalized_handlers = _normalize_async_handlers(handlers)
     kwargs = _run_call_kwargs(
         run_fn,
-        handlers=handlers,
+        handlers=normalized_handlers,
         env=_normalize_env(env),
         store=store,
         trace=trace,
     )
-    result = await _call_async_run_fn(run_fn, program, kwargs)
+    if _needs_threaded_async_driver(normalized_handlers):
+        result = await asyncio.to_thread(_run_async_call_in_thread, run_fn, program, kwargs)
+    else:
+        result = await _call_async_run_fn(run_fn, program, kwargs)
     _attach_doeff_traceback_if_present(result)
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 

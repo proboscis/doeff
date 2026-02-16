@@ -1,7 +1,7 @@
 """Python-facing helpers for the Static Effect Dependency Analyzer (SEDA).
 
 This module provides lightweight dataclasses that mirror the structures returned by the
-`doeff-effect-anlyzer` PyO3 extension. It keeps all heavyweight parsing and symbol resolution in
+`doeff-effect-analyzer` PyO3 extension. It keeps all heavyweight parsing and symbol resolution in
 Rust; the Python side is intentionally thin and only normalises analyzer output into Python-native
 objects.
 
@@ -13,12 +13,16 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from importlib import import_module
 from typing import Any
 
 try:  # pragma: no cover - optional dependency during bootstrap
-    from doeff_effect_anlyzer import analyze as _rust_analyze
+    _rust_analyze = import_module("doeff_effect_analyzer").analyze
 except ImportError:  # pragma: no cover
-    _rust_analyze = None
+    try:
+        _rust_analyze = import_module("doeff_effect_anlyzer").analyze
+    except ImportError:
+        _rust_analyze = None
 
 
 @dataclass(slots=True)
@@ -120,8 +124,8 @@ def analyze(dotted_path: str) -> EffectReport:
 
     if _rust_analyze is None:  # pragma: no cover - defensive
         raise RuntimeError(
-            "doeff_effect_anlyzer extension module is not installed. "
-            "Run `uv run maturin develop --manifest-path packages/doeff-effect-anlyzer/Cargo.toml`."
+            "doeff_effect_analyzer extension module is not installed. "
+            "Run `uv run maturin develop --manifest-path packages/doeff-effect-analyzer/Cargo.toml`."
         )
 
     py_report = _rust_analyze(dotted_path)
