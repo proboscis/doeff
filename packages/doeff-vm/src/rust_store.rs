@@ -1,9 +1,9 @@
 //! Store model shared by handlers and VM.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::cell::UnsafeCell;
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::ids::PromiseId;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
@@ -12,20 +12,69 @@ struct LazyCacheEntry {
     value: Value,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct LazyInflightEntry {
+#[derive(Debug, Clone)]
+struct LazySemaphoreEntry {
     source_id: usize,
-    promise_id: PromiseId,
+    semaphore: Value,
 }
+
+struct SharedLazyMap<T> {
+    inner: Arc<UnsafeCell<HashMap<String, T>>>,
+}
+
+impl<T> SharedLazyMap<T> {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(UnsafeCell::new(HashMap::new())),
+        }
+    }
+
+    fn get_cloned(&self, key: &str) -> Option<T>
+    where
+        T: Clone,
+    {
+        // SAFETY: VM execution is single-threaded and cooperative. Only one task mutates
+        // RustStore at a time, so shared lazy maps can be read without OS locks.
+        let map = unsafe { &*self.inner.get() };
+        map.get(key).cloned()
+    }
+
+    fn insert(&self, key: String, value: T) {
+        // SAFETY: VM execution is single-threaded and cooperative. Only one task mutates
+        // RustStore at a time, so shared lazy maps can be updated without OS locks.
+        let map = unsafe { &mut *self.inner.get() };
+        map.insert(key, value);
+    }
+}
+
+impl<T> Clone for SharedLazyMap<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for SharedLazyMap<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedLazyMap").finish_non_exhaustive()
+    }
+}
+
+// SAFETY: VM + scheduler execution is cooperative and single-threaded in-process.
+// SharedLazyMap intentionally uses interior mutability to share lazy coordination
+// state across isolated task store snapshots without OS-level mutexes.
+unsafe impl<T: Send> Send for SharedLazyMap<T> {}
+// SAFETY: See rationale above for `Send`.
+unsafe impl<T: Send> Sync for SharedLazyMap<T> {}
 
 #[derive(Debug, Clone)]
 pub struct RustStore {
     pub state: HashMap<String, Value>,
     pub env: HashMap<String, Value>,
     pub log: Vec<Value>,
-    lazy_cache: Arc<Mutex<HashMap<String, LazyCacheEntry>>>,
-    lazy_inflight: Arc<Mutex<HashMap<String, LazyInflightEntry>>>,
-    lazy_active: Arc<Mutex<HashSet<(String, usize)>>>,
+    lazy_cache: SharedLazyMap<LazyCacheEntry>,
+    lazy_semaphores: SharedLazyMap<LazySemaphoreEntry>,
 }
 
 impl RustStore {
@@ -34,9 +83,8 @@ impl RustStore {
             state: HashMap::new(),
             env: HashMap::new(),
             log: Vec::new(),
-            lazy_cache: Arc::new(Mutex::new(HashMap::new())),
-            lazy_inflight: Arc::new(Mutex::new(HashMap::new())),
-            lazy_active: Arc::new(Mutex::new(HashSet::new())),
+            lazy_cache: SharedLazyMap::new(),
+            lazy_semaphores: SharedLazyMap::new(),
         }
     }
 
@@ -103,71 +151,34 @@ impl RustStore {
     }
 
     pub fn lazy_cache_get(&self, key: &str, source_id: usize) -> Option<Value> {
-        let cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
-        let entry = cache.get(key)?;
+        let entry = self.lazy_cache.get_cloned(key)?;
         if entry.source_id == source_id {
-            return Some(entry.value.clone());
+            return Some(entry.value);
         }
         None
     }
 
     pub fn lazy_cache_put(&self, key: String, source_id: usize, value: Value) {
-        let mut cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
-        cache.insert(key, LazyCacheEntry { source_id, value });
+        self.lazy_cache
+            .insert(key, LazyCacheEntry { source_id, value });
     }
 
-    pub fn lazy_inflight_get(&self, key: &str, source_id: usize) -> Option<PromiseId> {
-        let inflight = self
-            .lazy_inflight
-            .lock()
-            .expect("lazy_inflight lock poisoned");
-        let entry = inflight.get(key)?;
+    pub fn lazy_semaphore_get(&self, key: &str, source_id: usize) -> Option<Value> {
+        let entry = self.lazy_semaphores.get_cloned(key)?;
         if entry.source_id == source_id {
-            return Some(entry.promise_id);
+            return Some(entry.semaphore);
         }
         None
     }
 
-    pub fn lazy_inflight_put(&self, key: String, source_id: usize, promise_id: PromiseId) {
-        let mut inflight = self
-            .lazy_inflight
-            .lock()
-            .expect("lazy_inflight lock poisoned");
-        inflight.insert(
+    pub fn lazy_semaphore_put(&self, key: String, source_id: usize, semaphore: Value) {
+        self.lazy_semaphores.insert(
             key,
-            LazyInflightEntry {
+            LazySemaphoreEntry {
                 source_id,
-                promise_id,
+                semaphore,
             },
         );
-    }
-
-    pub fn lazy_inflight_remove(&self, key: &str, source_id: usize, promise_id: PromiseId) {
-        let mut inflight = self
-            .lazy_inflight
-            .lock()
-            .expect("lazy_inflight lock poisoned");
-        let should_remove = inflight
-            .get(key)
-            .is_some_and(|entry| entry.source_id == source_id && entry.promise_id == promise_id);
-        if should_remove {
-            inflight.remove(key);
-        }
-    }
-
-    pub fn lazy_active_contains(&self, key: &str, source_id: usize) -> bool {
-        let active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.contains(&(key.to_string(), source_id))
-    }
-
-    pub fn lazy_active_insert(&self, key: String, source_id: usize) {
-        let mut active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.insert((key, source_id));
-    }
-
-    pub fn lazy_active_remove(&self, key: &str, source_id: usize) {
-        let mut active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.remove(&(key.to_string(), source_id));
     }
 }
 
