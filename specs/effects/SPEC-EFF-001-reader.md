@@ -2,6 +2,11 @@
 
 **Status:** Confirmed | **Ref:** gh#174 | **Tests:** `tests/effects/test_reader_effects.py`
 
+## Related Specs
+
+- [SPEC-EFF-014: Cooperative Semaphore](SPEC-EFF-014-semaphore.md)
+- [SPEC-SCHED-001: Cooperative Scheduling for the Rust VM](../vm/SPEC-SCHED-001-cooperative-scheduling.md)
+
 ## Effects
 
 | Effect | Signature | Description |
@@ -36,8 +41,21 @@ val2 = yield Ask("service")  # Returns cached 42 (no re-evaluation)
 | Scope | Per `runtime.run()` invocation |
 | Key | Same as Ask key (any hashable) |
 | Invalidation | Local override with different Program object |
-| Concurrency | Protected - simultaneous Ask waits, doesn't re-execute |
+| Concurrency | Protected by per-key semaphore (`Semaphore(1)`); simultaneous Ask waits, doesn't re-execute |
 | Errors | Program failure = entire `run()` fails |
+
+### Concurrency Contract (Semaphore-based)
+
+For lazy env values, concurrent `Ask(key)` calls across spawned tasks MUST be
+coordinated by a per-key semaphore (`Semaphore(1)`) as defined in
+[SPEC-EFF-014](SPEC-EFF-014-semaphore.md).
+
+Required behavior:
+
+1. At most one task evaluates a lazy env program for a given key at a time.
+2. Other tasks asking the same key wait cooperatively and receive the cached result.
+3. Waiting tasks MUST NOT be treated as circular dependencies.
+4. Lazy program evaluation remains one-shot per key per run unless invalidated by `Local`.
 
 **Implementation:** #190 (AsyncRuntime), #191 (SyncRuntime), #192 (SimulationRuntime)
 
