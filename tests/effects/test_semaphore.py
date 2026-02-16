@@ -5,11 +5,14 @@ from doeff import (
     CreateSemaphore,
     Gather,
     ReleaseSemaphore,
+    Safe,
     Spawn,
+    Wait,
     default_handlers,
     do,
     run,
 )
+from doeff.effects import TaskCancelledError
 
 
 class TestSemaphoreEffectContract:
@@ -108,8 +111,7 @@ class TestSemaphoreRuntimeBehavior:
         def worker(sem):
             yield AcquireSemaphore(sem)
             current["value"] += 1
-            if current["value"] > max_concurrent["value"]:
-                max_concurrent["value"] = current["value"]
+            max_concurrent["value"] = max(max_concurrent["value"], current["value"])
             current["value"] -= 1
             yield ReleaseSemaphore(sem)
 
@@ -184,3 +186,36 @@ class TestSemaphoreRuntimeBehavior:
         result = run(program(), handlers=default_handlers())
         assert result.is_ok()
         assert result.value == ["first-waiter", "late-acquirer"]
+
+    def test_cancelled_waiter_is_removed_and_order_is_preserved(self) -> None:
+        """Cancelled waiters are skipped and remaining waiters wake FIFO."""
+        wake_order: list[str] = []
+
+        @do
+        def waiter(sem, name: str):
+            yield AcquireSemaphore(sem)
+            wake_order.append(name)
+            yield ReleaseSemaphore(sem)
+
+        @do
+        def program():
+            sem = yield CreateSemaphore(1)
+            yield AcquireSemaphore(sem)
+
+            cancelled = yield Spawn(waiter(sem, "cancelled"))
+            second = yield Spawn(waiter(sem, "second"))
+            third = yield Spawn(waiter(sem, "third"))
+
+            _ = yield cancelled.cancel()
+            yield ReleaseSemaphore(sem)
+            yield Gather(second, third)
+
+            cancelled_result = yield Safe(Wait(cancelled))
+            return wake_order, cancelled_result
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok()
+        wake_order, cancelled_result = result.value
+        assert wake_order == ["second", "third"]
+        assert cancelled_result.is_err()
+        assert isinstance(cancelled_result.error, TaskCancelledError)
