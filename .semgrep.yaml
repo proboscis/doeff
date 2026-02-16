@@ -106,6 +106,39 @@ rules:
     metadata:
       category: architecture
 
+  - id: doeff-no-handler-modification-in-run
+    patterns:
+      - pattern-either:
+          - pattern: _normalize_async_handlers(...)
+          - pattern: _needs_threaded_async_driver(...)
+    paths:
+      include:
+        - "**/doeff/"
+    message: |
+      Handler lists must never be modified by run() or async_run().
+      Handler selection is the user's responsibility. Remove handler
+      normalization/detection functions.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Handler immutability invariant — SPEC-EFF-011, ISSUE-CORE-495"
+
+  - id: doeff-no-thread-offload-in-async-run
+    patterns:
+      - pattern: asyncio.to_thread(...)
+    paths:
+      include:
+        - "**/doeff/rust_vm.py"
+    message: |
+      async_run must not offload VM stepping to a background thread.
+      The VM step loop should run on the caller's event loop.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "VM boundary invariant — SPEC-EFF-011, ISSUE-CORE-495"
+
   # ---------------------------------------------------------------------------
   # PURITY PATTERNS
   # ---------------------------------------------------------------------------

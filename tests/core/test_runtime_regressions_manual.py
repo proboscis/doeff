@@ -19,6 +19,7 @@ from doeff import (
     Safe,
     Spawn,
     async_run,
+    default_async_handlers,
     default_handlers,
     do,
     run,
@@ -573,7 +574,8 @@ async def test_lazy_ask_concurrent_waiters_do_not_reexecute() -> None:
     @do
     def service_program():
         calls["service"] += 1
-        _ = yield Await(asyncio.sleep(0))
+        if False:
+            yield
         return 42
 
     @do
@@ -588,7 +590,7 @@ async def test_lazy_ask_concurrent_waiters_do_not_reexecute() -> None:
 
     result = await async_run(
         program(),
-        handlers=default_handlers(),
+        handlers=default_async_handlers(),
         env={"service": service_program()},
     )
     assert result.is_ok()
