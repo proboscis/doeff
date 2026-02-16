@@ -132,6 +132,7 @@ from doeff.run import ProgramRunResult, run_program
 from doeff.rust_vm import (
     async_run,
     async_run_with_handler_map,
+    default_async_handlers,
     default_handlers,
     run,
     run_with_handler_map,
@@ -352,6 +353,7 @@ __all__ = [
     "capture_graph",
     "clear_persistent_cache",
     "do",
+    "default_async_handlers",
     "default_handlers",
     "get",
     "gather",
