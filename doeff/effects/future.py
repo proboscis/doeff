@@ -1,4 +1,8 @@
-"""Future/async effects."""
+"""Future/async effects.
+
+Handlers in this module are user-space entities. They are dispatched by the VM
+like any other handler and are not VM internals.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +16,7 @@ from typing import Any
 import doeff_vm
 
 from .external_promise import CreateExternalPromise
-from .gather import gather
+from .wait import Wait
 
 from ._validators import ensure_awaitable
 from .base import Effect, EffectBase, create_effect_with_trace
@@ -26,8 +30,8 @@ class PythonAsyncioAwaitEffect(EffectBase):
     Tasks, Futures). It is NOT a generic "future" abstraction.
 
     Handled by:
-    - python_async_syntax_escape_handler (async_run): produces PythonAsyncSyntaxEscape
-    - sync_await_handler (sync_run): runs in background thread
+    - sync_await_handler (run): bridges via background loop thread
+    - async_await_handler (async_run): uses PythonAsyncSyntaxEscape + create_task
 
     Usage:
         result = yield Await(some_coroutine())
@@ -122,21 +126,22 @@ def _submit_awaitable(awaitable: Awaitable[Any], promise: Any) -> None:
 
 
 def sync_await_handler(effect: Any, k: Any):
-    """Handle Await effects via background-loop bridge (sync-compatible)."""
+    """Handle Await effects via background-loop bridge for sync execution."""
     if isinstance(effect, PythonAsyncioAwaitEffect):
         promise = yield CreateExternalPromise()
         _submit_awaitable(effect.awaitable, promise)
-        values = yield gather(promise.future)
-        return (yield doeff_vm.Resume(k, values[0]))
+        value = yield Wait(promise.future)
+        return (yield doeff_vm.Resume(k, value))
 
     yield doeff_vm.Delegate()
 
 
-def python_async_syntax_escape_handler(effect: Any, k: Any):
-    """Handle Await effects in async mode using PythonAsyncSyntaxEscape kickoff.
+def async_await_handler(effect: Any, k: Any):
+    """Handle Await effects in async execution via non-blocking kickoff.
 
-    The actual awaitable is executed on a background loop thread so scheduler
-    waits can be satisfied without depending on the host event loop.
+    Uses PythonAsyncSyntaxEscape to kick off awaitable submission without
+    blocking the async VM driver, then bridges completion through
+    ExternalPromise + Wait.
     """
     if isinstance(effect, PythonAsyncioAwaitEffect):
         promise = yield CreateExternalPromise()
@@ -145,10 +150,14 @@ def python_async_syntax_escape_handler(effect: Any, k: Any):
             _submit_awaitable(effect.awaitable, promise)
 
         _ = yield doeff_vm.PythonAsyncSyntaxEscape(action=_kickoff)
-        values = yield gather(promise.future)
-        return (yield doeff_vm.Resume(k, values[0]))
+        value = yield Wait(promise.future)
+        return (yield doeff_vm.Resume(k, value))
 
     yield doeff_vm.Delegate()
+
+
+# Backward-compat alias. New code should use async_await_handler.
+python_async_syntax_escape_handler = async_await_handler
 
 
 def await_(awaitable: Awaitable[Any]) -> PythonAsyncioAwaitEffect:
@@ -163,6 +172,7 @@ __all__ = [
     "AllTasksSuspendedEffect",
     "Await",
     "PythonAsyncioAwaitEffect",
+    "async_await_handler",
     "await_",
     "python_async_syntax_escape_handler",
     "sync_await_handler",

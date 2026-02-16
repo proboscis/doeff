@@ -1,20 +1,28 @@
-"""TDD red tests for async handler spec gaps.
-
-These tests intentionally codify strict spec/document contracts that are
-currently missing or violated. They should fail until the gaps are fixed.
-"""
+"""SA009 contract tests: async handler architecture and concurrency guarantees."""
 
 from __future__ import annotations
 
 import asyncio
-import importlib
+from dataclasses import dataclass
 from pathlib import Path
-import re
+import threading
 import time
+from typing import Any
 
 import pytest
+import doeff_vm
 
-from doeff import Await, Gather, Spawn, async_run, default_handlers, do
+from doeff import (
+    Await,
+    EffectBase,
+    Gather,
+    Spawn,
+    async_run,
+    default_async_handlers,
+    default_handlers,
+    do,
+    run,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,112 +46,127 @@ def _result_value(run_result: object) -> object:
     raise AssertionError("RunResult does not expose value")
 
 
-class TestSA009AwaitHandlerExistenceContract:
-    """Spec/document contract: await handlers must exist and be importable."""
+def _assert_vm_handler_stack_matches_passed_handlers(
+    *,
+    passed_handlers: list[Any],
+    vm_handler_stack: list[Any],
+) -> None:
+    """Assert VM handler stack preserves passed handlers.
 
-    def test_future_module_exposes_sync_and_async_await_handlers(self) -> None:
-        future_mod = importlib.import_module("doeff.effects.future")
-        sync_name = "_".join(("sync", "await", "handler"))
-        async_name = "_".join(("python", "async", "syntax", "escape", "handler"))
-
-        assert hasattr(
-            future_mod,
-            sync_name,
-        ), "missing doeff.effects.future.sync_await_handler"
-        assert hasattr(
-            future_mod,
-            async_name,
-        ), "missing doeff.effects.future.python_async_syntax_escape_handler"
-
-        assert callable(getattr(future_mod, sync_name))
-        assert callable(getattr(future_mod, async_name))
-
-    def test_future_module_all_exports_include_required_handlers(self) -> None:
-        import doeff.effects.future as future_mod
-
-        exports = set(getattr(future_mod, "__all__", []))
-        assert "sync_await_handler" in exports
-        assert "python_async_syntax_escape_handler" in exports
-
-    def test_future_module_contains_handler_definitions_in_source(self) -> None:
-        source = (ROOT / "doeff" / "effects" / "future.py").read_text(encoding="utf-8")
-
-        assert re.search(r"def\s+sync_await_handler\s*\(", source)
-        assert re.search(r"def\s+python_async_syntax_escape_handler\s*\(", source)
-        assert "PythonAsyncSyntaxEscape" in source
+    GetHandlers() returns handlers in stack order (top-most first), while
+    handlers are passed in source order (left-to-right). Rust sentinels are
+    represented as None identities in GetHandlers.
+    """
+    expected_stack = [handler if callable(handler) else None for handler in reversed(passed_handlers)]
+    assert len(vm_handler_stack) == len(expected_stack)
+    for expected, seen in zip(expected_stack, vm_handler_stack):
+        if expected is None:
+            assert seen is None, f"Expected Rust sentinel identity placeholder None, got {seen!r}"
+        else:
+            assert expected is seen, (
+                f"Handler mismatch: expected {expected!r} but VM saw {seen!r}. "
+                "Handlers were modified between entrypoint and VM dispatch."
+            )
 
 
-class TestSA009ExternalWaitHandlerExistenceContract:
-    """Spec/document contract: scheduler external wait handlers must exist."""
+class TestHandlerImmutabilityContract:
+    @dataclass(frozen=True)
+    class ProbeEffect(EffectBase):
+        pass
 
-    def test_scheduler_internal_module_exposes_external_wait_handlers(self) -> None:
-        scheduler_internal = importlib.import_module("doeff.effects.scheduler_internal")
-        sync_name = "_".join(("sync", "external", "wait", "handler"))
-        async_name = "_".join(("async", "external", "wait", "handler"))
+    @staticmethod
+    def _passthrough_handler(effect, k):
+        yield doeff_vm.Delegate()
 
-        assert hasattr(
-            scheduler_internal,
-            sync_name,
-        ), "missing doeff.effects.scheduler_internal.sync_external_wait_handler"
-        assert hasattr(
-            scheduler_internal,
-            async_name,
-        ), "missing doeff.effects.scheduler_internal.async_external_wait_handler"
+    @classmethod
+    def _probe_handler(cls, effect, k):
+        if isinstance(effect, cls.ProbeEffect):
+            handler_stack = yield doeff_vm.GetHandlers()
+            return (yield doeff_vm.Resume(k, handler_stack))
+        yield doeff_vm.Delegate()
 
-        assert callable(getattr(scheduler_internal, sync_name))
-        assert callable(getattr(scheduler_internal, async_name))
+    @classmethod
+    def _program(cls):
+        @do
+        def program():
+            return (yield doeff_vm.Perform(cls.ProbeEffect()))
 
-    def test_scheduler_internal_all_exports_include_external_wait_handlers(self) -> None:
-        import doeff.effects.scheduler_internal as scheduler_internal
+        return program()
 
-        exports = set(getattr(scheduler_internal, "__all__", []))
-        assert "sync_external_wait_handler" in exports
-        assert "async_external_wait_handler" in exports
-        assert "WaitForExternalCompletion" in exports
+    def test_run_handler_stack_matches_passed_handlers(self) -> None:
+        handlers = [doeff_vm.await_handler, self._passthrough_handler, self._probe_handler]
+        result = run(self._program(), handlers=handlers)
+        assert _result_is_ok(result)
+        _assert_vm_handler_stack_matches_passed_handlers(
+            passed_handlers=handlers,
+            vm_handler_stack=_result_value(result),
+        )
 
-    def test_scheduler_internal_contains_external_wait_handler_definitions(self) -> None:
-        source = (ROOT / "doeff" / "effects" / "scheduler_internal.py").read_text(encoding="utf-8")
+    @pytest.mark.asyncio
+    async def test_async_run_handler_stack_matches_passed_handlers(self) -> None:
+        handlers = [doeff_vm.await_handler, self._passthrough_handler, self._probe_handler]
+        result = await async_run(self._program(), handlers=handlers)
+        assert _result_is_ok(result)
+        _assert_vm_handler_stack_matches_passed_handlers(
+            passed_handlers=handlers,
+            vm_handler_stack=_result_value(result),
+        )
 
-        assert re.search(r"def\s+sync_external_wait_handler\s*\(", source)
-        assert re.search(r"def\s+async_external_wait_handler\s*\(", source)
-        assert "WaitForExternalCompletion" in source
-        assert "run_in_executor" in source
-        assert "PythonAsyncSyntaxEscape" in source
+
+class TestNoHandlerSwapContract:
+    def test_no_normalize_async_handlers_function(self) -> None:
+        import doeff.rust_vm as rust_vm
+
+        assert not hasattr(rust_vm, "_normalize_async_handlers"), (
+            "_normalize_async_handlers still exists in rust_vm.py. "
+            "Handler swapping violates handler immutability invariant."
+        )
+
+    def test_no_needs_threaded_async_driver_function(self) -> None:
+        import doeff.rust_vm as rust_vm
+
+        assert not hasattr(rust_vm, "_needs_threaded_async_driver"), (
+            "_needs_threaded_async_driver still exists in rust_vm.py. "
+            "VM execution model must not depend on handler identity."
+        )
+
+    def test_no_run_async_call_in_thread_function(self) -> None:
+        import doeff.rust_vm as rust_vm
+
+        assert not hasattr(rust_vm, "_run_async_call_in_thread"), (
+            "_run_async_call_in_thread still exists in rust_vm.py. "
+            "async_run must not offload VM to background thread."
+        )
+
+    def test_rust_vm_source_has_no_handler_swap_patterns(self) -> None:
+        source = (ROOT / "doeff" / "rust_vm.py").read_text(encoding="utf-8")
+
+        assert "_normalize_async_handlers" not in source
+        assert "_needs_threaded_async_driver" not in source
+        assert "_run_async_call_in_thread" not in source
+        assert "python_async_syntax_escape_handler" not in source, (
+            "rust_vm.py must not reference python_async_syntax_escape_handler. "
+            "Handler selection is the user's responsibility."
+        )
+
+
+class TestDefaultHandlerPresetsContract:
+    def test_default_async_handlers_exists(self) -> None:
+        from doeff import default_async_handlers as imported_default_async_handlers
+
+        handlers = imported_default_async_handlers()
+        assert isinstance(handlers, list)
+        assert len(handlers) >= 5
+
+    def test_default_handlers_differ_from_default_async_handlers(self) -> None:
+        sync_handlers = default_handlers()
+        async_handlers = default_async_handlers()
+        assert sync_handlers != async_handlers, (
+            "default_handlers() and default_async_handlers() must be different presets."
+        )
 
 
 class TestSA009AsyncConcurrencyContract:
-    """Behavior contract: async path must be event-loop friendly and concurrent."""
-
-    @pytest.mark.asyncio
-    async def test_async_run_await_does_not_block_event_loop(self) -> None:
-        tick_count = 0
-        stop = asyncio.Event()
-
-        async def ticker() -> None:
-            nonlocal tick_count
-            while not stop.is_set():
-                tick_count += 1
-                await asyncio.sleep(0.005)
-
-        @do
-        def program():
-            value = yield Await(asyncio.sleep(0.12, result="ok"))
-            return value
-
-        ticker_task = asyncio.create_task(ticker())
-        try:
-            result = await async_run(program(), handlers=default_handlers())
-        finally:
-            stop.set()
-            await ticker_task
-
-        assert _result_is_ok(result)
-        assert _result_value(result) == "ok"
-        assert tick_count >= 8, (
-            "Event loop made too little progress while Await was in-flight; "
-            "async path appears blocking"
-        )
-
     @pytest.mark.asyncio
     async def test_spawned_await_tasks_overlap_under_async_run(self) -> None:
         @do
@@ -159,7 +182,7 @@ class TestSA009AsyncConcurrencyContract:
             return tuple(values)
 
         start = time.monotonic()
-        result = await async_run(parent(), handlers=default_handlers())
+        result = await async_run(parent(), handlers=default_async_handlers())
         elapsed = time.monotonic() - start
 
         assert _result_is_ok(result)
@@ -167,4 +190,53 @@ class TestSA009AsyncConcurrencyContract:
         assert elapsed < 0.18, (
             f"Spawned Await tasks did not overlap (elapsed={elapsed:.3f}s). "
             "Expected async handler path to allow concurrent progress."
+        )
+
+
+class TestAwaitHandlerEffectSystemContract:
+    def test_rust_handler_source_has_no_blocking_await_runner(self) -> None:
+        handler_rs = (ROOT / "packages" / "doeff-vm" / "src" / "handler.rs").read_text(
+            encoding="utf-8"
+        )
+        assert "get_blocking_await_runner" not in handler_rs, (
+            "handler.rs still contains get_blocking_await_runner. "
+            "Await handlers must use the effect system (ExternalPromise + Wait), "
+            "not bypass it with blocking executor calls."
+        )
+
+    def test_rust_handler_source_has_no_threadpoolexecutor(self) -> None:
+        handler_rs = (ROOT / "packages" / "doeff-vm" / "src" / "handler.rs").read_text(
+            encoding="utf-8"
+        )
+        assert "ThreadPoolExecutor" not in handler_rs, (
+            "handler.rs still contains ThreadPoolExecutor. "
+            "Await effect handling must go through the effect system."
+        )
+
+
+class TestAsyncRunThreadingContract:
+    @pytest.mark.asyncio
+    async def test_async_run_executes_on_caller_event_loop(self) -> None:
+        caller_thread = threading.current_thread().ident
+        observed_thread: int | None = None
+
+        @do
+        def program():
+            nonlocal observed_thread
+            observed_thread = threading.current_thread().ident
+
+            async def _noop():
+                return None
+
+            _ = yield Await(_noop())
+            return "done"
+
+        result = await async_run(program(), handlers=default_async_handlers())
+
+        assert _result_is_ok(result)
+        assert _result_value(result) == "done"
+        assert observed_thread is not None
+        assert observed_thread == caller_thread, (
+            "async_run stepped the program on a non-caller thread. "
+            "VM stepping must remain on the caller event loop thread."
         )

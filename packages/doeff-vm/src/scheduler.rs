@@ -683,9 +683,9 @@ impl SchedulerState {
             return Ok(());
         };
 
-        // Use a 5-second timeout to allow periodic re-checking and avoid indefinite
-        // blocking if external code never completes. The caller loops and retries.
-        const TIMEOUT_SECONDS: f64 = 5.0;
+        // Keep timeout short so async_run can yield back to the caller event loop
+        // while waiting on external completions.
+        const TIMEOUT_SECONDS: f64 = 0.001;
 
         Python::attach(|py| {
             let queue_obj = queue.bind(py);
