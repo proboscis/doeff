@@ -1,7 +1,7 @@
 //! Store model shared by handlers and VM.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::ids::PromiseId;
 use crate::value::Value;
@@ -23,7 +23,7 @@ pub struct RustStore {
     pub state: HashMap<String, Value>,
     pub env: HashMap<String, Value>,
     pub log: Vec<Value>,
-    lazy_cache: Arc<Mutex<HashMap<String, LazyCacheEntry>>>,
+    lazy_cache: Arc<RwLock<HashMap<String, LazyCacheEntry>>>,
     lazy_inflight: Arc<Mutex<HashMap<String, LazyInflightEntry>>>,
     lazy_active: Arc<Mutex<HashSet<(String, usize)>>>,
 }
@@ -34,7 +34,7 @@ impl RustStore {
             state: HashMap::new(),
             env: HashMap::new(),
             log: Vec::new(),
-            lazy_cache: Arc::new(Mutex::new(HashMap::new())),
+            lazy_cache: Arc::new(RwLock::new(HashMap::new())),
             lazy_inflight: Arc::new(Mutex::new(HashMap::new())),
             lazy_active: Arc::new(Mutex::new(HashSet::new())),
         }
@@ -103,7 +103,7 @@ impl RustStore {
     }
 
     pub fn lazy_cache_get(&self, key: &str, source_id: usize) -> Option<Value> {
-        let cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
+        let cache = self.lazy_cache.read().expect("lazy_cache lock poisoned");
         let entry = cache.get(key)?;
         if entry.source_id == source_id {
             return Some(entry.value.clone());
@@ -112,7 +112,7 @@ impl RustStore {
     }
 
     pub fn lazy_cache_put(&self, key: String, source_id: usize, value: Value) {
-        let mut cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
+        let mut cache = self.lazy_cache.write().expect("lazy_cache lock poisoned");
         cache.insert(key, LazyCacheEntry { source_id, value });
     }
 
