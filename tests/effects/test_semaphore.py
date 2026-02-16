@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import gc
+
 from doeff import (
     AcquireSemaphore,
     CreateSemaphore,
     Gather,
+    Pure,
     ReleaseSemaphore,
     Safe,
+    Semaphore,
     Spawn,
     Wait,
     default_handlers,
@@ -13,6 +17,7 @@ from doeff import (
     run,
 )
 from doeff.effects import TaskCancelledError
+from doeff.effects.spawn import task_id_of
 
 
 class TestSemaphoreEffectContract:
@@ -219,3 +224,63 @@ class TestSemaphoreRuntimeBehavior:
         assert wake_order == ["second", "third"]
         assert cancelled_result.is_err()
         assert isinstance(cancelled_result.error, TaskCancelledError)
+
+    def test_semaphore_state_cleaned_after_handle_dropped(self) -> None:
+        """Dropping semaphore handles should clean scheduler semaphore state."""
+
+        @do
+        def program():
+            semaphores = []
+            for _ in range(5):
+                sem = yield CreateSemaphore(1)
+                semaphores.append(sem)
+            return semaphores
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok()
+
+        handles = result.value
+        cleanup = handles[0]._cleanup
+        assert cleanup is not None
+        assert cleanup.semaphore_count() == 5
+
+        result = None
+        handles = None
+        gc.collect()
+
+        assert cleanup.semaphore_count() == 0
+
+    def test_semaphore_cleanup_with_pending_waiters(self) -> None:
+        """Dropping a semaphore with pending waiters cancels waiters with TaskCancelledError."""
+
+        @do
+        def waiter(sem_id: int):
+            yield AcquireSemaphore(Semaphore(sem_id))
+            return "unexpected"
+
+        @do
+        def program():
+            sem = yield CreateSemaphore(1)
+            yield AcquireSemaphore(sem)
+
+            pending = yield Spawn(waiter(sem.id))
+            tick = yield Spawn(Pure("tick"))
+            yield Gather(tick)
+            cleanup = sem._cleanup
+
+            pending_task_id = task_id_of(pending)
+            sem = None
+            gc.collect()
+            return cleanup, pending_task_id
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok()
+
+        cleanup, pending_task_id = result.value
+        assert cleanup is not None
+        assert pending_task_id is not None
+
+        semaphore_count_after_cleanup = cleanup.semaphore_count()
+        pending_cancelled = cleanup.task_error_is_cancelled(pending_task_id)
+        assert pending_cancelled is True
+        assert semaphore_count_after_cleanup == 0
