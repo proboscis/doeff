@@ -1,4 +1,8 @@
 //! Handler types for effect handling.
+//!
+//! Important: even Rust-implemented handlers in this module are user-space
+//! handler implementations. They are dispatched by the VM, not part of VM core
+//! stepping semantics.
 
 use std::sync::{Arc, Mutex};
 
@@ -351,17 +355,17 @@ fn parse_result_safe_python_effect(effect: &PyShared) -> Result<Option<PyShared>
     })
 }
 
-fn get_blocking_await_runner() -> Result<PyShared, String> {
+fn get_sync_await_runner() -> Result<PyShared, String> {
     Python::attach(|py| {
         let module = PyModule::from_code(
             py,
-            c"import asyncio\nimport concurrent.futures\n\ndef _run_awaitable_blocking(awaitable):\n    def _runner():\n        return asyncio.run(awaitable)\n\n    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:\n        return executor.submit(_runner).result()\n",
+            c"import asyncio\n\ndef _run_awaitable_sync(awaitable):\n    return asyncio.run(awaitable)\n",
             c"_doeff_await_bridge",
             c"_doeff_await_bridge",
         )
         .map_err(|e| e.to_string())?;
         let runner = module
-            .getattr("_run_awaitable_blocking")
+            .getattr("_run_awaitable_sync")
             .map_err(|e| e.to_string())?;
         Ok(PyShared::new(runner.unbind()))
     })
@@ -411,7 +415,7 @@ impl RustHandlerProgram for AwaitHandlerProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_await_python_effect(&obj) {
                 Ok(Some(awaitable)) => {
-                    let runner = match get_blocking_await_runner() {
+                    let runner = match get_sync_await_runner() {
                         Ok(func) => func,
                         Err(msg) => {
                             return RustProgramStep::Throw(PyException::type_error(format!(

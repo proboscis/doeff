@@ -3103,7 +3103,7 @@ treats it as `Effect::Python` and dispatches to user handlers.
 Two reference handlers are provided:
 - `sync_await_handler`: runs the awaitable in a background thread/executor and
   resumes the continuation with the result.
-- `python_async_syntax_escape_handler`: yields `PythonAsyncSyntaxEscape` so
+- `async_await_handler`: yields `PythonAsyncSyntaxEscape` so
   `async_run` can await in the event loop.
 
 ```python
@@ -3118,7 +3118,7 @@ def sync_await_handler(effect, k):
 
 ```python
 @do
-def python_async_syntax_escape_handler(effect, k):
+def async_await_handler(effect, k):
     if isinstance(effect, Await):
         promise = yield CreateExternalPromise()
         async def fire_task():
@@ -3134,12 +3134,16 @@ def python_async_syntax_escape_handler(effect, k):
     return (yield Delegate(effect))
 ```
 
-`python_async_syntax_escape_handler` must only be used with `async_run`;
+`async_await_handler` must only be used with `async_run`;
 the sync driver raises `TypeError` if it sees `CallAsync`.
+
+`run()` and `async_run()` must pass handler lists through unchanged. Handler
+selection is user responsibility; no handler swapping or thread-offload
+detection is allowed in VM wrappers.
 
 **Usage**:
 - Sync: `vm.run(with_handler(sync_await_handler, program))`
-- Async: `await vm.run_async(with_handler(python_async_syntax_escape_handler, program))`
+- Async: `await vm.run_async(with_handler(async_await_handler, program))`
 
 ---
 
