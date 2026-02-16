@@ -37,6 +37,18 @@ from .debug import (
 from .future import Await, PythonAsyncioAwaitEffect, await_
 from .gather import Gather, GatherEffect, gather
 from .race import Race, RaceEffect, RaceResult, race
+from .semaphore import (
+    AcquireSemaphore,
+    AcquireSemaphoreEffect,
+    CreateSemaphore,
+    CreateSemaphoreEffect,
+    ReleaseSemaphore,
+    ReleaseSemaphoreEffect,
+    Semaphore,
+    acquire_semaphore,
+    create_semaphore,
+    release_semaphore,
+)
 from .trace import ProgramTrace, ProgramTraceEffect
 from .wait import Wait, WaitEffect, wait
 from .graph import (
@@ -122,6 +134,8 @@ __all__ = [
     "AtomicGetEffect",
     "AtomicUpdate",
     "AtomicUpdateEffect",
+    "AcquireSemaphore",
+    "AcquireSemaphoreEffect",
     "Await",
     "CacheDelete",
     "CacheDeleteEffect",
@@ -138,6 +152,8 @@ __all__ = [
     "CreatePromiseEffect",
     "CreateExternalPromise",
     "CreateExternalPromiseEffect",
+    "CreateSemaphore",
+    "CreateSemaphoreEffect",
     "ExternalPromise",
     "FailPromise",
     "FailPromiseEffect",
@@ -170,7 +186,10 @@ __all__ = [
     "Race",
     "RaceEffect",
     "RaceResult",
+    "ReleaseSemaphore",
+    "ReleaseSemaphoreEffect",
     "Safe",
+    "Semaphore",
     "Snapshot",
     "Spawn",
     "SpawnBackend",
@@ -190,6 +209,7 @@ __all__ = [
     "WaitEffect",
     "WriterListenEffect",
     "WriterTellEffect",
+    "acquire_semaphore",
     "annotate",
     "ask",
     "atomic_get",
@@ -201,6 +221,7 @@ __all__ = [
     "cache_put",
     "capture",
     "capture_graph",
+    "create_semaphore",
     "gather",
     "get",
     "graph",
@@ -208,6 +229,7 @@ __all__ = [
     "local",
     "put",
     "race",
+    "release_semaphore",
     "safe",
     "slog",
     "snapshot",
