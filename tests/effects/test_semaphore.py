@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import importlib
+from collections.abc import Iterator
+
+import pytest
+
 from doeff import (
     AcquireSemaphore,
     CreateSemaphore,
@@ -13,6 +18,15 @@ from doeff import (
     run,
 )
 from doeff.effects import TaskCancelledError
+
+spawn_effects = importlib.import_module("doeff.effects.spawn")
+
+
+@pytest.fixture(autouse=True)
+def _clear_cancelled_tasks() -> Iterator[None]:
+    spawn_effects._cancelled_task_ids.clear()
+    yield
+    spawn_effects._cancelled_task_ids.clear()
 
 
 class TestSemaphoreEffectContract:
@@ -217,5 +231,97 @@ class TestSemaphoreRuntimeBehavior:
         assert result.is_ok()
         wake_order, cancelled_result = result.value
         assert wake_order == ["second", "third"]
+        assert cancelled_result.is_err()
+        assert isinstance(cancelled_result.error, TaskCancelledError)
+
+    def test_cancelled_nonhead_waiter_removed_from_queue(self) -> None:
+        """Cancelled waiter in middle should not disrupt remaining FIFO wake order."""
+        wake_order: list[str] = []
+
+        @do
+        def waiter(sem, name: str):
+            yield AcquireSemaphore(sem)
+            wake_order.append(name)
+            yield ReleaseSemaphore(sem)
+
+        @do
+        def program():
+            sem = yield CreateSemaphore(1)
+            yield AcquireSemaphore(sem)
+
+            first = yield Spawn(waiter(sem, "first"))
+            cancelled = yield Spawn(waiter(sem, "cancelled"))
+            third = yield Spawn(waiter(sem, "third"))
+
+            _ = yield cancelled.cancel()
+            yield ReleaseSemaphore(sem)
+            yield Gather(first, third)
+
+            cancelled_result = yield Safe(Wait(cancelled))
+            return wake_order, cancelled_result
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok()
+        wake_order, cancelled_result = result.value
+        assert wake_order == ["first", "third"]
+        assert cancelled_result.is_err()
+        assert isinstance(cancelled_result.error, TaskCancelledError)
+
+    def test_cancelled_waiter_promise_resolved_with_error(self) -> None:
+        """Cancelled blocked waiter should surface TaskCancelledError."""
+
+        @do
+        def waiter(sem):
+            yield AcquireSemaphore(sem)
+            yield ReleaseSemaphore(sem)
+
+        @do
+        def program():
+            sem = yield CreateSemaphore(1)
+            yield AcquireSemaphore(sem)
+
+            cancelled = yield Spawn(waiter(sem))
+            _ = yield cancelled.cancel()
+            cancelled_result = yield Safe(Wait(cancelled))
+
+            yield ReleaseSemaphore(sem)
+            return cancelled_result
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok()
+        cancelled_result = result.value
+        assert cancelled_result.is_err()
+        assert isinstance(cancelled_result.error, TaskCancelledError)
+
+    def test_cancel_does_not_consume_permit(self) -> None:
+        """
+        Cancelling a blocked waiter must not consume a permit.
+
+        After cancel + release, a subsequent acquire should succeed immediately.
+        """
+
+        @do
+        def waiter(sem):
+            yield AcquireSemaphore(sem)
+            yield ReleaseSemaphore(sem)
+
+        @do
+        def program():
+            sem = yield CreateSemaphore(1)
+            yield AcquireSemaphore(sem)
+
+            cancelled = yield Spawn(waiter(sem))
+            _ = yield cancelled.cancel()
+
+            yield ReleaseSemaphore(sem)
+            yield AcquireSemaphore(sem)
+            yield ReleaseSemaphore(sem)
+
+            cancelled_result = yield Safe(Wait(cancelled))
+            return cancelled_result
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok()
+        cancelled_result = result.value
         assert cancelled_result.is_err()
         assert isinstance(cancelled_result.error, TaskCancelledError)

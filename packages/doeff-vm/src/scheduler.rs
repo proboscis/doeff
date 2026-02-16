@@ -3,7 +3,7 @@
 //! The scheduler is a RustProgramHandler that manages tasks, promises,
 //! and cooperative scheduling via Transfer-only semantics.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
@@ -600,6 +600,31 @@ fn is_task_cancel_requested(task_id: TaskId) -> bool {
     })
 }
 
+fn cancelled_task_ids_snapshot() -> HashSet<TaskId> {
+    Python::attach(|py| {
+        let Ok(spawn_mod) = py.import("doeff.effects.spawn") else {
+            return HashSet::new();
+        };
+        let Ok(cancelled_ids) = spawn_mod.getattr("_cancelled_task_ids") else {
+            return HashSet::new();
+        };
+        let Ok(iter) = cancelled_ids.try_iter() else {
+            return HashSet::new();
+        };
+
+        let mut ids = HashSet::new();
+        for item in iter {
+            let Ok(item) = item else {
+                continue;
+            };
+            if let Ok(raw) = item.extract::<u64>() {
+                ids.insert(TaskId::from_raw(raw));
+            }
+        }
+        ids
+    })
+}
+
 fn task_cancelled_error() -> PyException {
     Python::attach(|py| {
         let message = "Task was cancelled";
@@ -870,6 +895,38 @@ impl SchedulerState {
         is_task_cancel_requested(task_id)
     }
 
+    fn remove_cancelled_waiters_from_all_semaphores(&mut self) {
+        if self.semaphores.is_empty() {
+            return;
+        }
+
+        let cancelled_task_ids = cancelled_task_ids_snapshot();
+        if cancelled_task_ids.is_empty() {
+            return;
+        }
+
+        let mut cancelled_promises = Vec::new();
+
+        for semaphore in self.semaphores.values_mut() {
+            let mut retained_waiters = VecDeque::with_capacity(semaphore.waiters.len());
+            while let Some(waiter) = semaphore.waiters.pop_front() {
+                let is_cancelled = waiter
+                    .waiting_task
+                    .is_some_and(|task_id| cancelled_task_ids.contains(&task_id));
+                if is_cancelled {
+                    cancelled_promises.push(waiter.promise);
+                } else {
+                    retained_waiters.push_back(waiter);
+                }
+            }
+            semaphore.waiters = retained_waiters;
+        }
+
+        for promise in cancelled_promises {
+            self.mark_promise_done(promise, Err(task_cancelled_error()));
+        }
+    }
+
     fn drain_cancelled_head_waiters(&mut self, semaphore_id: u64) -> Result<(), PyException> {
         loop {
             let head_waiter = self
@@ -901,6 +958,8 @@ impl SchedulerState {
         &mut self,
         semaphore_id: u64,
     ) -> Result<Option<PromiseId>, PyException> {
+        self.remove_cancelled_waiters_from_all_semaphores();
+
         if let Some(task_id) = self.current_task {
             if is_task_cancel_requested(task_id) {
                 return Err(task_cancelled_error());
@@ -940,6 +999,8 @@ impl SchedulerState {
     }
 
     pub fn release_semaphore(&mut self, semaphore_id: u64) -> Result<(), PyException> {
+        self.remove_cancelled_waiters_from_all_semaphores();
+
         loop {
             self.drain_cancelled_head_waiters(semaphore_id)?;
 
@@ -1225,6 +1286,8 @@ impl SchedulerState {
     /// switching and loads the new task's store after switching.
     pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> RustProgramStep {
         loop {
+            self.remove_cancelled_waiters_from_all_semaphores();
+
             if let Err(error) = self.drain_external_completions_nonblocking() {
                 return RustProgramStep::Throw(error);
             }
