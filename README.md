@@ -179,13 +179,14 @@ The CLI supports automatic interpreter/environment discovery for `doeff run`.
 Keep README usage minimal and refer to the full guide for markers, hierarchy rules, and troubleshooting:
 `docs/14-cli-auto-discovery.md`.
 For RunResult report output (`--report` / `--report-verbose`), see `docs/program-architecture-overview.md`.
-
 ## Pinjected Integration
 
 `doeff-pinjected` is an optional bridge package for pinjected integration.
 For setup and examples, see `packages/doeff-pinjected/README.md` and `docs/10-pinjected-integration.md`.
 
 ## Development
+
+`make lint` runs Ruff, Pyright, Semgrep, and doeff-linter.
 
 ```bash
 uv sync --group dev
@@ -194,7 +195,6 @@ uv run pyright
 make lint
 make format
 ```
-
 ## License
 
 MIT License. See `LICENSE`.
