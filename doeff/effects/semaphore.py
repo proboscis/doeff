@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from .base import Effect, EffectBase, create_effect_with_trace
 
@@ -8,10 +9,20 @@ from .base import Effect, EffectBase, create_effect_with_trace
 @dataclass(frozen=True, slots=True)
 class Semaphore:
     id: int
+    _cleanup: Callable[[int], None] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.id, int):
             raise TypeError(f"id must be int, got {type(self.id).__name__}")
+
+    def __del__(self) -> None:
+        if self._cleanup is None:
+            return
+        try:
+            self._cleanup(self.id)
+        except Exception:
+            # Best-effort: finalizers must not raise.
+            return
 
 
 @dataclass(frozen=True)

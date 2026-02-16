@@ -216,6 +216,7 @@ pub struct SchedulerState {
     pub tasks: HashMap<TaskId, TaskState>,
     pub promises: HashMap<PromiseId, PromiseState>,
     semaphores: HashMap<u64, SemaphoreRuntimeState>,
+    pending_semaphore_cleanup: Vec<u64>,
     waiters: HashMap<Waitable, Vec<WaitRequest>>,
     external_completion_queue: Option<PyShared>,
     pub next_task: u64,
@@ -616,7 +617,85 @@ fn task_cancelled_error() -> PyException {
     })
 }
 
-fn make_python_semaphore_value(semaphore_id: u64) -> Result<Value, PyException> {
+fn warn_semaphore_cleanup_with_waiters(semaphore_id: u64, waiter_count: usize) {
+    if waiter_count == 0 {
+        return;
+    }
+
+    Python::attach(|py| {
+        let _ = (|| -> PyResult<()> {
+            let warnings_mod = py.import("warnings")?;
+            let message = format!(
+                "Semaphore({semaphore_id}) was dropped with {waiter_count} pending waiter(s); \
+cancelling pending acquires"
+            );
+            warnings_mod.call_method1("warn", (message,))?;
+            Ok(())
+        })();
+    });
+}
+
+#[pyclass(module = "doeff_vm", frozen)]
+struct PySemaphoreCleanupCallback {
+    state: Arc<Mutex<SchedulerState>>,
+}
+
+#[pymethods]
+impl PySemaphoreCleanupCallback {
+    fn __call__(&self, semaphore_id: u64) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.semaphore_has_waiters(semaphore_id) {
+                state.enqueue_semaphore_cleanup(semaphore_id);
+            } else {
+                state.remove_semaphore(semaphore_id);
+            }
+        }
+    }
+
+    fn semaphore_count(&self) -> usize {
+        self.state
+            .lock()
+            .map(|mut state| {
+                state.process_pending_semaphore_cleanup();
+                state.semaphore_count()
+            })
+            .unwrap_or(0)
+    }
+
+    fn task_error_is_cancelled(&self, task_id_raw: u64) -> bool {
+        let task_error = self.state.lock().ok().and_then(|state| {
+            match state.tasks.get(&TaskId::from_raw(task_id_raw)) {
+                Some(TaskState::Done {
+                    result: Err(error), ..
+                }) => Some(error.clone()),
+                _ => None,
+            }
+        });
+
+        let Some(error) = task_error else {
+            return false;
+        };
+
+        Python::attach(|py| {
+            let Ok(spawn_mod) = py.import("doeff.effects.spawn") else {
+                return false;
+            };
+            let Ok(task_cancelled_cls) = spawn_mod.getattr("TaskCancelledError") else {
+                return false;
+            };
+            let error_obj = error.value_clone_ref(py);
+            error_obj
+                .bind(py)
+                .is_instance(&task_cancelled_cls)
+                .unwrap_or(false)
+        })
+    }
+}
+
+fn make_python_semaphore_value(
+    state: Arc<Mutex<SchedulerState>>,
+    semaphore_id: u64,
+) -> Result<Value, PyException> {
     Python::attach(|py| {
         let semaphore_mod = py.import("doeff.effects.semaphore").map_err(|e| {
             PyException::runtime_error(format!(
@@ -628,11 +707,19 @@ fn make_python_semaphore_value(semaphore_id: u64) -> Result<Value, PyException> 
                 "failed to resolve Semaphore class while creating Semaphore handle: {e}"
             ))
         })?;
-        let semaphore = semaphore_cls.call1((semaphore_id,)).map_err(|e| {
-            PyException::runtime_error(format!(
-                "failed to instantiate Semaphore({semaphore_id}): {e}"
-            ))
-        })?;
+        let cleanup_callback =
+            Bound::new(py, PySemaphoreCleanupCallback { state }).map_err(|e| {
+                PyException::runtime_error(format!(
+                    "failed to create semaphore cleanup callback for Semaphore({semaphore_id}): {e}"
+                ))
+            })?;
+        let semaphore = semaphore_cls
+            .call1((semaphore_id, cleanup_callback))
+            .map_err(|e| {
+                PyException::runtime_error(format!(
+                    "failed to instantiate Semaphore({semaphore_id}): {e}"
+                ))
+            })?;
         Ok(Value::Python(semaphore.unbind()))
     })
 }
@@ -653,6 +740,7 @@ impl SchedulerState {
             tasks: HashMap::new(),
             promises: HashMap::new(),
             semaphores: HashMap::new(),
+            pending_semaphore_cleanup: Vec::new(),
             waiters: HashMap::new(),
             external_completion_queue: None,
             next_task: 0,
@@ -858,6 +946,59 @@ impl SchedulerState {
             },
         );
         semaphore_id
+    }
+
+    pub fn remove_semaphore(&mut self, semaphore_id: u64) {
+        let Some(semaphore) = self.semaphores.remove(&semaphore_id) else {
+            return;
+        };
+
+        if semaphore.waiters.is_empty() {
+            return;
+        }
+
+        warn_semaphore_cleanup_with_waiters(semaphore_id, semaphore.waiters.len());
+        for waiter in semaphore.waiters {
+            self.promises.insert(
+                waiter.promise,
+                PromiseState::Done(Err(task_cancelled_error())),
+            );
+
+            if let Some(task_id) = waiter.waiting_task {
+                if let Some(cont) = self.task_cont(task_id) {
+                    self.clear_waiters_for_continuation(cont.cont_id);
+                }
+                self.mark_task_done(task_id, Err(task_cancelled_error()));
+                self.wake_waiters(Waitable::Task(task_id));
+            } else {
+                self.wake_waiters(Waitable::Promise(waiter.promise));
+            }
+        }
+    }
+
+    pub fn enqueue_semaphore_cleanup(&mut self, semaphore_id: u64) {
+        self.pending_semaphore_cleanup.push(semaphore_id);
+    }
+
+    pub fn semaphore_has_waiters(&self, semaphore_id: u64) -> bool {
+        self.semaphores
+            .get(&semaphore_id)
+            .is_some_and(|semaphore| !semaphore.waiters.is_empty())
+    }
+
+    pub fn process_pending_semaphore_cleanup(&mut self) {
+        if self.pending_semaphore_cleanup.is_empty() {
+            return;
+        }
+
+        let pending = std::mem::take(&mut self.pending_semaphore_cleanup);
+        for semaphore_id in pending {
+            self.remove_semaphore(semaphore_id);
+        }
+    }
+
+    pub fn semaphore_count(&self) -> usize {
+        self.semaphores.len()
     }
 
     fn is_waiter_cancelled(&self, waiter: SemaphoreWaiter) -> bool {
@@ -1717,10 +1858,11 @@ impl RustHandlerProgram for SchedulerProgram {
                     let mut state = self.state.lock().expect("Scheduler lock poisoned");
                     state.create_semaphore(permits)
                 };
-                let semaphore_value = match make_python_semaphore_value(semaphore_id) {
-                    Ok(value) => value,
-                    Err(error) => return RustProgramStep::Throw(error),
-                };
+                let semaphore_value =
+                    match make_python_semaphore_value(self.state.clone(), semaphore_id) {
+                        Ok(value) => value,
+                        Err(error) => return RustProgramStep::Throw(error),
+                    };
                 jump_to_continuation(k_user, semaphore_value)
             }
 
@@ -1942,7 +2084,11 @@ impl RustProgramHandler for SchedulerHandler {
 
     fn on_run_end(&self, run_token: u64) {
         let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
-        states.remove(&run_token);
+        if let Some(state) = states.remove(&run_token) {
+            if let Ok(mut state) = state.lock() {
+                state.process_pending_semaphore_cleanup();
+            }
+        }
     }
 }
 
@@ -2044,6 +2190,41 @@ mod tests {
         assert!(matches!(
             state.promises.get(&pid),
             Some(PromiseState::Done(Ok(Value::Int(42))))
+        ));
+    }
+
+    #[test]
+    fn test_remove_semaphore_removes_state() {
+        let mut state = SchedulerState::new();
+        let semaphore_id = state.create_semaphore(1);
+        assert_eq!(state.semaphore_count(), 1);
+
+        state.remove_semaphore(semaphore_id);
+        assert_eq!(state.semaphore_count(), 0);
+    }
+
+    #[test]
+    fn test_remove_semaphore_cancels_pending_waiters() {
+        let mut state = SchedulerState::new();
+        let semaphore_id = state.create_semaphore(1);
+
+        let immediate = state.acquire_semaphore(semaphore_id).unwrap();
+        assert!(immediate.is_none());
+
+        let waiter_promise = state
+            .acquire_semaphore(semaphore_id)
+            .unwrap()
+            .expect("second acquire should enqueue waiter");
+        assert!(matches!(
+            state.promises.get(&waiter_promise),
+            Some(PromiseState::Pending)
+        ));
+
+        state.remove_semaphore(semaphore_id);
+        assert_eq!(state.semaphore_count(), 0);
+        assert!(matches!(
+            state.promises.get(&waiter_promise),
+            Some(PromiseState::Done(Err(_)))
         ));
     }
 
