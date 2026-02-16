@@ -149,7 +149,7 @@ from doeff.types import (
     trace_err,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 capture = capture_graph
 
