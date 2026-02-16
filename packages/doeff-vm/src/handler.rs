@@ -12,7 +12,9 @@ use pyo3::types::PyModule;
 use crate::continuation::Continuation;
 #[cfg(test)]
 use crate::effect::Effect;
-use crate::effect::{dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect};
+use crate::effect::{
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
+};
 use crate::ids::SegmentId;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
@@ -308,6 +310,65 @@ fn lazy_source_id(value: &Value) -> Option<usize> {
         return None;
     };
     Python::attach(|py| Some(obj.bind(py).as_ptr() as usize))
+}
+
+fn reader_lazy_create_semaphore_effect() -> Result<DispatchEffect, PyException> {
+    Python::attach(|py| {
+        let semaphore_module = py
+            .import("doeff.effects.semaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let create = semaphore_module
+            .getattr("CreateSemaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let effect = create
+            .call1((1_i64,))
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
+    })
+}
+
+fn reader_lazy_acquire_semaphore_effect(semaphore: &Value) -> Result<DispatchEffect, PyException> {
+    let Value::Python(semaphore_obj) = semaphore else {
+        return Err(PyException::type_error(format!(
+            "CreateSemaphore returned non-semaphore value: {:?}",
+            semaphore
+        )));
+    };
+
+    Python::attach(|py| {
+        let semaphore_module = py
+            .import("doeff.effects.semaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let acquire = semaphore_module
+            .getattr("AcquireSemaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let effect = acquire
+            .call1((semaphore_obj.bind(py),))
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
+    })
+}
+
+fn reader_lazy_release_semaphore_effect(semaphore: &Value) -> Result<DispatchEffect, PyException> {
+    let Value::Python(semaphore_obj) = semaphore else {
+        return Err(PyException::type_error(format!(
+            "CreateSemaphore returned non-semaphore value: {:?}",
+            semaphore
+        )));
+    };
+
+    Python::attach(|py| {
+        let semaphore_module = py
+            .import("doeff.effects.semaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let release = semaphore_module
+            .getattr("ReleaseSemaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let effect = release
+            .call1((semaphore_obj.bind(py),))
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
+    })
 }
 
 fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String> {
@@ -663,16 +724,39 @@ impl RustProgramHandler for ReaderHandlerFactory {
 #[derive(Debug)]
 enum ReaderPhase {
     Idle,
-    AwaitHandlers {
+    AwaitCreateSemaphore {
         key: String,
         continuation: Continuation,
         expr: PyShared,
         source_id: usize,
     },
+    AwaitAcquireSemaphore {
+        key: String,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Value,
+    },
+    AwaitHandlers {
+        key: String,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Value,
+    },
     AwaitEval {
         key: String,
         continuation: Continuation,
         source_id: usize,
+        semaphore: Value,
+    },
+    AwaitReleaseSuccess {
+        continuation: Continuation,
+        value: Value,
+    },
+    AwaitReleaseError {
+        continuation: Continuation,
+        exception: PyException,
     },
 }
 
@@ -686,6 +770,67 @@ impl ReaderHandlerProgram {
         ReaderHandlerProgram {
             phase: ReaderPhase::Idle,
         }
+    }
+
+    fn yield_perform(effect: Result<DispatchEffect, PyException>) -> RustProgramStep {
+        match effect {
+            Ok(effect) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Perform { effect })),
+            Err(exc) => RustProgramStep::Throw(exc),
+        }
+    }
+
+    fn transfer_throw(continuation: Continuation, exception: PyException) -> RustProgramStep {
+        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+            continuation,
+            exception,
+        }))
+    }
+
+    fn begin_acquire_phase(
+        &mut self,
+        key: String,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Value,
+    ) -> RustProgramStep {
+        let effect = reader_lazy_acquire_semaphore_effect(&semaphore);
+        self.phase = ReaderPhase::AwaitAcquireSemaphore {
+            key,
+            continuation,
+            expr,
+            source_id,
+            semaphore,
+        };
+        Self::yield_perform(effect)
+    }
+
+    fn begin_release_success_phase(
+        &mut self,
+        continuation: Continuation,
+        value: Value,
+        semaphore: Value,
+    ) -> RustProgramStep {
+        let effect = reader_lazy_release_semaphore_effect(&semaphore);
+        self.phase = ReaderPhase::AwaitReleaseSuccess {
+            continuation,
+            value,
+        };
+        Self::yield_perform(effect)
+    }
+
+    fn begin_release_error_phase(
+        &mut self,
+        continuation: Continuation,
+        exception: PyException,
+        semaphore: Value,
+    ) -> RustProgramStep {
+        let effect = reader_lazy_release_semaphore_effect(&semaphore);
+        self.phase = ReaderPhase::AwaitReleaseError {
+            continuation,
+            exception,
+        };
+        Self::yield_perform(effect)
     }
 
     fn handle_ask(
@@ -709,22 +854,17 @@ impl ReaderHandlerProgram {
                 }));
             }
 
-            if store.lazy_active_contains(&key, source_id) {
-                return RustProgramStep::Throw(PyException::runtime_error(format!(
-                    "circular lazy Ask dependency detected for key '{}'",
-                    key
-                )));
+            if let Some(semaphore) = store.lazy_semaphore_get(&key, source_id) {
+                return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
             }
 
-            store.lazy_active_insert(key.clone(), source_id);
-
-            self.phase = ReaderPhase::AwaitHandlers {
+            self.phase = ReaderPhase::AwaitCreateSemaphore {
                 key,
                 continuation,
                 expr,
                 source_id,
             };
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers));
+            return Self::yield_perform(reader_lazy_create_semaphore_effect());
         }
 
         RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
@@ -770,11 +910,50 @@ impl RustHandlerProgram for ReaderHandlerProgram {
 
     fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
         match std::mem::replace(&mut self.phase, ReaderPhase::Idle) {
+            ReaderPhase::AwaitCreateSemaphore {
+                key,
+                continuation,
+                expr,
+                source_id,
+            } => {
+                let semaphore = match value {
+                    Value::Python(_) => value,
+                    _ => {
+                        return RustProgramStep::Throw(PyException::type_error(
+                            "CreateSemaphore must return a semaphore handle".to_string(),
+                        ));
+                    }
+                };
+                store.lazy_semaphore_put(key.clone(), source_id, semaphore.clone());
+                self.begin_acquire_phase(key, continuation, expr, source_id, semaphore)
+            }
+            ReaderPhase::AwaitAcquireSemaphore {
+                key,
+                continuation,
+                expr,
+                source_id,
+                semaphore,
+            } => {
+                if let Some(cached) = store.lazy_cache_get(&key, source_id) {
+                    store.env.insert(key, cached.clone());
+                    return self.begin_release_success_phase(continuation, cached, semaphore);
+                }
+
+                self.phase = ReaderPhase::AwaitHandlers {
+                    key,
+                    continuation,
+                    expr,
+                    source_id,
+                    semaphore,
+                };
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+            }
             ReaderPhase::AwaitHandlers {
                 key,
                 continuation,
                 expr,
                 source_id,
+                semaphore,
             } => {
                 let handlers = match value {
                     Value::Handlers(handlers) => handlers,
@@ -789,6 +968,7 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                     key,
                     continuation,
                     source_id,
+                    semaphore,
                 };
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
                     expr,
@@ -800,43 +980,50 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                 key,
                 continuation,
                 source_id,
+                semaphore,
             } => {
-                store.lazy_active_remove(&key, source_id);
                 store.env.insert(key.clone(), value.clone());
                 store.lazy_cache_put(key.clone(), source_id, value.clone());
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                    continuation,
-                    value,
-                }))
+                self.begin_release_success_phase(continuation, value, semaphore)
             }
+            ReaderPhase::AwaitReleaseSuccess {
+                continuation,
+                value,
+            } => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation,
+                value,
+            })),
+            ReaderPhase::AwaitReleaseError {
+                continuation,
+                exception,
+            } => Self::transfer_throw(continuation, exception),
             ReaderPhase::Idle => RustProgramStep::Return(value),
         }
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep {
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
         match std::mem::replace(&mut self.phase, ReaderPhase::Idle) {
-            ReaderPhase::AwaitHandlers {
-                key,
-                continuation,
-                source_id,
-                ..
-            } => {
-                store.lazy_active_remove(&key, source_id);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
-                    continuation,
-                    exception: exc,
-                }))
+            ReaderPhase::AwaitCreateSemaphore { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
             }
-            ReaderPhase::AwaitEval {
-                key,
+            ReaderPhase::AwaitAcquireSemaphore { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
+            }
+            ReaderPhase::AwaitHandlers {
                 continuation,
-                source_id,
-            } => {
-                store.lazy_active_remove(&key, source_id);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
-                    continuation,
-                    exception: exc,
-                }))
+                semaphore,
+                ..
+            } => self.begin_release_error_phase(continuation, exc, semaphore),
+            ReaderPhase::AwaitEval {
+                continuation,
+                semaphore,
+                ..
+            } => self.begin_release_error_phase(continuation, exc, semaphore),
+            ReaderPhase::AwaitReleaseSuccess { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
+            }
+            ReaderPhase::AwaitReleaseError { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
             }
             ReaderPhase::Idle => RustProgramStep::Throw(exc),
         }

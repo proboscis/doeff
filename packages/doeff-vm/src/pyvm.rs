@@ -109,10 +109,7 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
 }
 
 fn attach_doeff_traceback_best_effort(py: Python<'_>, exc_obj: &Bound<'_, PyAny>) {
-    if !exc_obj
-        .hasattr("__doeff_traceback_data__")
-        .unwrap_or(false)
-    {
+    if !exc_obj.hasattr("__doeff_traceback_data__").unwrap_or(false) {
         return;
     }
     let Ok(module) = py.import("doeff.traceback") else {
@@ -429,22 +426,9 @@ impl PyVM {
     }
 
     fn build_trace_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let trace_list = pyo3::types::PyList::empty(py);
-        for event in self.vm.trace_events() {
-            let row = pyo3::types::PyDict::new(py);
-            row.set_item("step", event.step)?;
-            row.set_item("event", event.event.as_str())?;
-            row.set_item("mode", event.mode.as_str())?;
-            row.set_item("pending", event.pending.as_str())?;
-            row.set_item("dispatch_depth", event.dispatch_depth)?;
-            if let Some(result) = &event.result {
-                row.set_item("result", result.as_str())?;
-            } else {
-                row.set_item("result", py.None())?;
-            }
-            trace_list.append(row)?;
-        }
-        Ok(trace_list.into_any().unbind())
+        Value::Trace(self.vm.assemble_trace())
+            .to_pyobject(py)
+            .map(|obj| obj.unbind())
     }
 
     pub fn build_run_result(
@@ -1243,7 +1227,9 @@ fn metadata_attr_as_string(meta: &Bound<'_, PyAny>, key: &str) -> Option<String>
             .flatten()
             .and_then(|v| v.extract::<String>().ok());
     }
-    meta.getattr(key).ok().and_then(|v| v.extract::<String>().ok())
+    meta.getattr(key)
+        .ok()
+        .and_then(|v| v.extract::<String>().ok())
 }
 
 fn metadata_attr_as_u32(meta: &Bound<'_, PyAny>, key: &str) -> Option<u32> {
@@ -1259,15 +1245,21 @@ fn metadata_attr_as_u32(meta: &Bound<'_, PyAny>, key: &str) -> Option<u32> {
 
 fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<PyShared> {
     if let Ok(dict) = meta.cast::<PyDict>() {
-        return dict
-            .get_item(key)
-            .ok()
-            .flatten()
-            .and_then(|v| if v.is_none() { None } else { Some(PyShared::new(v.unbind())) });
+        return dict.get_item(key).ok().flatten().and_then(|v| {
+            if v.is_none() {
+                None
+            } else {
+                Some(PyShared::new(v.unbind()))
+            }
+        });
     }
-    meta.getattr(key)
-        .ok()
-        .and_then(|v| if v.is_none() { None } else { Some(PyShared::new(v.unbind())) })
+    meta.getattr(key).ok().and_then(|v| {
+        if v.is_none() {
+            None
+        } else {
+            Some(PyShared::new(v.unbind()))
+        }
+    })
 }
 
 fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> CallMetadata {
