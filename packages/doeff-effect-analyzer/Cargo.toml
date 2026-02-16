@@ -1,5 +1,5 @@
 [package]
-name = "doeff-effect-anlyzer"
+name = "doeff-effect-analyzer"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,7 +8,7 @@ description = "Static effect dependency analyzer for doeff programs"
 license = "MIT"
 
 [lib]
-name = "doeff_effect_anlyzer"
+name = "doeff_effect_analyzer"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 

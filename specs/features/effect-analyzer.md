@@ -3,7 +3,7 @@
 > **Status**: 🚧 PLANNING — implementation tracked in `specs/effect-analyzer/todo.md`.
 
 ## Summary
-- Build a Rust-based static analyzer (`doeff-effect-anlyzer`) with PyO3 bindings that reports all
+- Build a Rust-based static analyzer (`doeff-effect-analyzer`) with PyO3 bindings that reports all
   effects reachable from a module-qualified doeff program or Kleisli entrypoint.
 - Deliver instantaneous developer feedback (<= 200 ms per incremental update) by reusing a
   persistent incremental parsing and fixed-point propagation engine.
@@ -45,7 +45,7 @@
 - Provide warnings for ambiguous constructs (dynamic keys, getattr, unknown combinators).
 
 ## Architecture Overview
-### Rust Crate: `doeff-effect-anlyzer`
+### Rust Crate: `doeff-effect-analyzer`
 - **Parser Layer**: Tree-sitter Python with incremental parsing, rope-backed source storage, and
   file fingerprinting (content hash + mtime).
 - **Summarizer**: Walks AST to build `FunctionSummary` structs containing local effects, call edges,
@@ -112,7 +112,7 @@ Report
 - Python wrapper exposes `.to_dict()` and `.pretty()` helpers for CLI usage.
 
 ## Configuration
-- Default config shipped at `packages/doeff-effect-anlyzer/default_effects.toml`.
+- Default config shipped at `packages/doeff-effect-analyzer/default_effects.toml`.
 - User overrides searched in project root: `seda.toml` or `seda.json`.
 - Config sections:
   - `[effects.<name>]` with pattern descriptors (call name, arg positions, literal keys).

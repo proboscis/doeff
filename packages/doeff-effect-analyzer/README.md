@@ -1,4 +1,4 @@
-# doeff-effect-anlyzer
+# doeff-effect-analyzer
 
 Static effect dependency analyzer for the doeff ecosystem.
 
@@ -9,7 +9,7 @@ foundation for the `seda` command-line interface.
 
 ## Building
 ```
-uv run maturin develop --manifest-path packages/doeff-effect-anlyzer/Cargo.toml
+uv run maturin develop --manifest-path packages/doeff-effect-analyzer/Cargo.toml
 ```
 
 ## Status

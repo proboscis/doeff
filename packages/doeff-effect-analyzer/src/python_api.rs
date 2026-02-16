@@ -6,7 +6,7 @@ use crate::{
     EffectTreeNode, EffectUsage, NodeKind, Report, SourceSpan,
 };
 
-#[pyclass(module = "doeff_effect_anlyzer")]
+#[pyclass(module = "doeff_effect_analyzer")]
 pub struct PyReport {
     inner: Report,
 }
@@ -35,7 +35,7 @@ impl PyReport {
     }
 }
 
-#[pyclass(module = "doeff_effect_anlyzer")]
+#[pyclass(module = "doeff_effect_analyzer")]
 #[derive(Clone)]
 pub struct PyEffectSummary {
     inner: EffectSummary,
@@ -112,7 +112,7 @@ impl PyEffectSummary {
     }
 }
 
-#[pyclass(module = "doeff_effect_anlyzer")]
+#[pyclass(module = "doeff_effect_analyzer")]
 #[derive(Clone)]
 pub struct PyEffectUsage {
     inner: EffectUsage,
@@ -156,7 +156,7 @@ impl PyEffectUsage {
     }
 }
 
-#[pyclass(module = "doeff_effect_anlyzer")]
+#[pyclass(module = "doeff_effect_analyzer")]
 #[derive(Clone)]
 pub struct PySourceSpan {
     inner: SourceSpan,
@@ -188,7 +188,7 @@ impl PySourceSpan {
     }
 }
 
-#[pyclass(module = "doeff_effect_anlyzer")]
+#[pyclass(module = "doeff_effect_analyzer")]
 #[derive(Clone)]
 pub struct PyEffectTree {
     inner: EffectTree,
@@ -211,7 +211,7 @@ impl PyEffectTree {
     }
 }
 
-#[pyclass(module = "doeff_effect_anlyzer")]
+#[pyclass(module = "doeff_effect_analyzer")]
 #[derive(Clone)]
 pub struct PyEffectTreeNode {
     inner: EffectTreeNode,
@@ -299,7 +299,7 @@ pub fn analyze_symbol(module: &str, symbol: &str) -> PyResult<PyReport> {
 }
 
 #[pymodule]
-pub fn doeff_effect_anlyzer(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+pub fn doeff_effect_analyzer(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(analyze, m)?)?;
     m.add_function(wrap_pyfunction!(analyze_symbol, m)?)?;
     m.add_class::<PyReport>()?;

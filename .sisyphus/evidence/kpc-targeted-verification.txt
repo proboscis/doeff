@@ -1,0 +1,22 @@
+KPC Targeted Verification (2026-02-15)
+
+Command: uv run pytest tests/public_api/test_types_001_kpc.py -q
+Result: 25 passed in 0.06s
+
+Command: uv run pytest tests/public_api/test_types_001_hierarchy.py -q
+Result: 15 passed in 0.03s
+
+Command: uv run pytest tests/public_api/test_types_001_handler_protocol.py -q
+Result: 13 passed in 0.05s
+
+Command: uv run pytest tests/public_api/test_kpc_macro_runtime_contract.py -q
+Result: 4 passed in 0.01s
+
+Command: uv run pytest tests/public_api/test_doeff13_hang_regression.py -q
+Result: 4 passed in 0.02s
+
+Command: uv run pytest tests/core/test_sa001_spec_gaps.py tests/core/test_do_methods.py tests/core/test_doexpr_hierarchy.py -q
+Result: 37 passed in 0.06s
+
+Command: uv run python -c "import doeff; hs=doeff.default_handlers(); names=[getattr(h,'name',repr(h)) for h in hs]; import sys; sys.exit(1 if any('kpc' in str(n).lower() for n in names) else 0)"
+Result: exit 0 (default_handlers excludes public kpc)
