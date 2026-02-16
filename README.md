@@ -1,28 +1,15 @@
 # doeff - Algebraic Effects for Python
 
-An algebraic effects system with one-shot continuations, backed by a Rust VM. Uses generators for do-notation and ships with batteries-included effect handlers: Reader, State, Writer, Future, Result, IO, Cache, and more.
+doeff is an algebraic effects system for Python with one-shot continuations.
+Programs are written with generator-based do-notation (`@do`), and executed by a Rust VM stepping engine that handles effect dispatch, continuation resumption, and trace collection.
 
 ## Documentation
 
-**[📚 Full Documentation](docs/index.md)** - Comprehensive guides, tutorials, and API reference
-
-- [Getting Started](docs/01-getting-started.md) - Installation and first program
-- [Core Concepts](docs/02-core-concepts.md) - Understanding Program and Effect
-- [Effect Guides](docs/index.md#effect-types) - Detailed guides for all effect types
-- [API Reference](docs/13-api-reference.md) - Complete API documentation
-- [Program Architecture Overview](docs/program-architecture-overview.md) - Runtime design and interpreter internals
-- [Publication Milestones](docs/MILESTONES.md) - Roadmap to PyPI release and PyCon JP 2026
-
-## Features
-
-- **Algebraic effects with one-shot continuations**: Effects are first-class operations handled by composable handlers
-- **Rust VM runtime**: High-performance interpreter for effect handling and continuation management
-- **Generator-based do-notation**: Write effectful code that looks like regular Python
-- **Batteries-included handlers**: Reader, State, Writer, Future, Result, IO, Cache, and more — ready to use
-- **Stack-safe execution**: Trampolining prevents stack overflow in deeply nested computations
-- **Pinjected integration**: Optional bridge to pinjected dependency injection framework
-- **Type hints**: Full type annotation support with `.pyi` files
-- **Python 3.10+**: Modern Python with full async/await support
+- [Docs index](docs/index.md)
+- [Getting started](docs/01-getting-started.md)
+- [Core concepts](docs/02-core-concepts.md)
+- [API reference](docs/13-api-reference.md)
+- [Runtime architecture overview](docs/program-architecture-overview.md)
 
 ## Installation
 
@@ -30,20 +17,12 @@ An algebraic effects system with one-shot continuations, backed by a Rust VM. Us
 pip install doeff
 ```
 
-For pinjected integration:
-```bash
-pip install doeff-pinjected
-```
-
-For unified secret effects and Google Secret Manager handlers:
-```bash
-pip install doeff-secret doeff-google-secret-manager
-```
+Optional bridges and provider packages live under `packages/` (for example `doeff-pinjected`, `doeff-openai`, and `doeff-gemini`).
 
 ## Quick Start
 
 ```python
-from doeff import do, Program, Put, Get, Tell, run
+from doeff import Get, Program, Put, Tell, default_handlers, do, run
 
 @do
 def counter_program() -> Program[int]:
@@ -53,289 +32,168 @@ def counter_program() -> Program[int]:
     yield Put("counter", count + 1)
     return count + 1
 
-result = run(counter_program())
+result = run(counter_program(), handlers=default_handlers())
 print(result.value)  # 1
 ```
 
-## Runtimes
+`run()` returns a `RunResult`. Use `result.value` for success, or `result.is_err()` / `result.error` for failures.
 
-doeff now uses the Rust VM entrypoints:
+## Runtime Entrypoints
 
-| Entrypoint | Use Case |
-|------------|----------|
-| `run(program, handlers=None, env=None, store=None)` | Synchronous execution |
-| `arun(program, handlers=None, env=None, store=None)` | Async execution with event-loop yielding |
+| Entrypoint | Signature | Notes |
+|---|---|---|
+| `run` | `run(program, handlers=(), env=None, store=None, trace=False)` | Synchronous stepping |
+| `async_run` | `async_run(program, handlers=(), env=None, store=None, trace=False)` | Async stepping for `await`-heavy flows |
 
-Default handlers are installed automatically (`state`, `reader`, `writer`).
+Notes:
+- Handlers are not auto-installed. Pass `handlers=default_handlers()` for built-in Reader/State/Writer/Result/Scheduler/Await support.
+- `trace=True` enables VM trace capture in `RunResult.trace`.
 
-## Migration from ProgramInterpreter
+## Handler Presets
 
-`ProgramInterpreter` is deprecated in favor of the new runtime system. Here's how to migrate:
-
-| ProgramInterpreter (deprecated) | AsyncRuntime (new) |
-|--------------------------------|---------------------|
-| `engine = ProgramInterpreter()` | `runtime = AsyncRuntime()` |
-| `engine.run(program)` | `runtime.run(program)` (async) |
-| `await engine.run_async(program)` | `await runtime.run(program)` |
-| `result.context.state` | Direct value return |
-
-## Effects
-
-### State (Get, Put, Modify)
 ```python
-@do
-def stateful_computation():
-    value = yield Get("key")
-    yield Put("key", value + 10)
-    yield Modify("counter", lambda x: x + 1)
+from doeff import default_handlers
+
+handlers = default_handlers()
 ```
 
-### Reader (Ask, Local)
-```python
-@do
-def with_config():
-    config = yield Ask("database_url")
-    result = yield Local({"timeout": 30}, sub_program())
-    return result
-```
+`default_handlers()` is the public preset used for both `run()` and `async_run()`.
+There is no separate public `default_async_handlers()` in the current API.
 
-### Writer (Log, Tell, Listen)
-```python
-@do
-def with_logging():
-    yield Log("Starting operation")
-    result = yield computation()
-    yield Tell(["Additional", "messages"])
-    return result
-```
+## Handler Architecture (`WithHandler`)
 
-### Result (Safe)
-```python
-@do
-def with_error_handling():
-    safe_result = yield Safe(risky_operation())
-    if safe_result.is_ok():
-        return safe_result.value
-    else:
-        return f"Failed: {safe_result.error}"
-```
-
-### Future (Await, Parallel)
-```python
-@do
-def async_operations():
-    result1 = yield Await(async_function_1())
-    results = yield Parallel([
-        async_function_2(),
-        async_function_3()
-    ])
-    return (result1, results)
-```
-
-### Cache (CacheGet, CachePut)
-```python
-@do
-def cached_call():
-    try:
-        return (yield CacheGet("expensive"))
-    except KeyError:
-        value = yield do_expensive_work()
-        yield CachePut("expensive", value, ttl=60)
-        return value
-```
-
-See `docs/cache.md` for accepted policy fields (`ttl`, lifecycle/storage hints, metadata) and the
-behaviour of the bundled sqlite-backed handler.
-
-## Pinjected Integration
+`WithHandler` wraps a sub-program with a typed effect handler. Handlers can be stacked to compose behavior.
 
 ```python
-from doeff import do, Ask
-from doeff_pinjected import program_to_injected
+from doeff import Ask, AskEffect, Delegate, Resume, WithHandler, default_handlers, do, run
 
 @do
-def service_program():
-    db = yield Ask("database")
-    cache = yield Ask("cache")
-    result = yield process_data(db, cache)
-    return result
+def read_region():
+    return (yield Ask("region"))
 
-# Convert to pinjected Injected
-injected = program_to_injected(service_program())
+def override_region(effect, k):
+    if isinstance(effect, AskEffect) and effect.key == "region":
+        return (yield Resume(k, "us-west-2"))
+    return (yield Delegate())
 
-# Use with pinjected's dependency injection
-from pinjected import design
+def outer_passthrough(effect, k):
+    return (yield Delegate())
 
-bindings = design(
-    database=Database(),
-    cache=Cache()
+wrapped = WithHandler(
+    outer_passthrough,
+    WithHandler(override_region, read_region()),
 )
-result = await bindings.provide(injected)
+
+result = run(wrapped, handlers=default_handlers(), env={"region": "local"})
+print(result.value)  # us-west-2
 ```
+
+## Scheduler and Concurrency
+
+Use scheduler effects for cooperative concurrency:
+- `Spawn(program)` to start a background task
+- `Wait(task_or_future)` to await one task/future
+- `Gather(*tasks_or_programs)` to wait for all
+- `Race(*waitables)` to return the first completion
+
+```python
+from doeff import Gather, Race, Spawn, Wait, default_handlers, do, run
+
+@do
+def child(value: int):
+    return value * 10
+
+@do
+def scheduler_demo():
+    t1 = yield Spawn(child(1))
+    t2 = yield Spawn(child(2))
+
+    gathered = yield Gather(t1, t2)
+    first = yield Race(t1, t2)
+    waited = yield Wait(t1)
+    return tuple(gathered), first.value, waited
+
+result = run(scheduler_demo(), handlers=default_handlers())
+print(result.value)  # ((10, 20), 10, 10)
+```
+
+## Bridging External Async Code (`ExternalPromise`)
+
+Use `CreateExternalPromise()` when non-doeff code (threads, callbacks, external loops) needs to complete a value back into doeff.
+
+```python
+import threading
+import time
+
+from doeff import CreateExternalPromise, Wait, default_handlers, do, run
+
+@do
+def external_bridge_demo():
+    promise = yield CreateExternalPromise()
+
+    def worker() -> None:
+        time.sleep(0.01)
+        promise.complete("done-from-thread")
+
+    threading.Thread(target=worker, daemon=True).start()
+    return (yield Wait(promise.future))
+
+result = run(external_bridge_demo(), handlers=default_handlers())
+print(result.value)  # done-from-thread
+```
+
+If you already have Python coroutines, `Await` works with `async_run`:
+`yield Await(coro)` inside your `@do` program and execute with `await async_run(..., handlers=default_handlers())`.
+
+## Effect Surface (Public)
+
+| Family | Effects |
+|---|---|
+| Reader | `Ask`, `Local` |
+| State | `Get`, `Put`, `Modify`, `AtomicGet`, `AtomicUpdate` |
+| Writer | `Log`, `Tell`, `Listen`, `StructuredLog` |
+| Result | `Safe` |
+| Async and scheduling | `Await`, `Spawn`, `Wait`, `Gather`, `Race`, `Future`, `Promise`, `Task` |
+| External bridging | `CreateExternalPromise`, `ExternalPromise` |
+| Cache | `CacheGet`, `CachePut`, `CacheExists`, `CacheDelete` |
+| Graph and trace | `Step`, `Annotate`, `Snapshot`, `CaptureGraph`, `ProgramTrace` |
+
+See [API reference](docs/13-api-reference.md) for the complete list and signatures.
 
 ## CLI Auto-Discovery
 
-The `doeff` CLI can automatically discover default interpreters and environments based on markers in your code, eliminating the need to specify them manually.
+The `doeff run` CLI can auto-discover a default interpreter and environment values via markers.
+Use this when you want `--program`-only invocation in larger projects.
 
-**📖 [Full CLI Auto-Discovery Guide](docs/14-cli-auto-discovery.md)** - Comprehensive documentation with examples, troubleshooting, and best practices.
+- Full guide: [docs/14-cli-auto-discovery.md](docs/14-cli-auto-discovery.md)
 
-### Quick Example
+## Pinjected Integration
 
-```bash
-# Auto-discovers interpreter and environments
-doeff run --program myapp.features.auth.login_program
+Pinjected support is provided by `doeff-pinjected`.
+Use it when you want to adapt a doeff `Program` into pinjected's dependency-resolution flow.
 
-# Equivalent to:
-doeff run --program myapp.features.auth.login_program \
-  --interpreter myapp.features.auth.auth_interpreter \
-  --env myapp.base_env \
-  --env myapp.features.features_env \
-  --env myapp.features.auth.auth_env
-```
-
-### Marking Default Interpreters
-
-Add `# doeff: interpreter, default` marker to your interpreter function:
-
-```python
-def my_interpreter(prog: Program[Any]) -> Any:
-    """
-    Custom interpreter for myapp.
-    # doeff: interpreter, default
-    """
-    from doeff.runtimes import SyncRuntime
-    runtime = SyncRuntime()
-    return runtime.run(prog)
-```
-
-**Discovery Rules:**
-- CLI searches from program module up to root
-- Selects the **closest** interpreter in the module hierarchy
-- Explicit `--interpreter` overrides auto-discovery
-
-### Marking Default Environments
-
-Add `# doeff: default` marker above environment variables:
-
-```python
-# doeff: default
-base_env: Program[dict] = Program.pure({
-    'db_host': 'localhost',
-    'api_key': 'xxx',
-    'timeout': 10
-})
-```
-
-**Accumulation Rules:**
-- CLI discovers **all** environments in hierarchy (root → program)
-- Later values override earlier values
-- Environments are merged automatically
-
-### Example Structure
-
-```
-myapp/
-  __init__.py          # base_interpreter, base_env
-  features/
-    __init__.py        # features_env (overrides base)
-    auth/
-      __init__.py      # auth_interpreter (closer), auth_env
-      login.py         # login_program uses discovered resources
-```
-
-When running `doeff run --program myapp.features.auth.login.login_program`:
-1. Discovers `auth_interpreter` (closest match)
-2. Discovers and merges: `base_env` → `features_env` → `auth_env`
-3. Injects merged environment into program
-4. Executes with discovered interpreter
-
-### Debugging and Profiling
-
-Profiling and discovery logging is **enabled by default**. To disable it, use the `DOEFF_DISABLE_PROFILE` environment variable:
-
-```bash
-export DOEFF_DISABLE_PROFILE=1
-doeff run --program myapp.features.auth.login.login_program
-```
-
-When enabled, profiling shows:
-- **Performance metrics**: Time spent on indexing, discovery, symbol loading, and execution
-- **Discovery details**: Which interpreter and environments were discovered and selected
-- **Symbol loading**: Which symbols are being imported and when
-
-Example output:
-```
-[DOEFF][PROFILE] Profiling enabled. To disable, set: export DOEFF_DISABLE_PROFILE=1
-[DOEFF][PROFILE]   Import doeff_indexer: 3.45ms
-[DOEFF][PROFILE]   Initialize discovery services: 3.48ms
-[DOEFF][PROFILE]   Find default interpreter: 74.74ms
-[DOEFF][DISCOVERY] Interpreter: myapp.features.auth.auth_interpreter
-[DOEFF][PROFILE]   Find default environments: 57.51ms
-[DOEFF][DISCOVERY] Environments (3):
-[DOEFF][DISCOVERY]   - myapp.base_env
-[DOEFF][DISCOVERY]   - myapp.features.features_env
-[DOEFF][DISCOVERY]   - myapp.features.auth.auth_env
-[DOEFF][PROFILE]   Merge environments: 0.13ms
-[DOEFF][PROFILE]   Load and run interpreter: 0.83ms
-[DOEFF][PROFILE] CLI discovery and execution: 141.23ms
-```
-
-Profiling output goes to **stderr**, so it won't interfere with JSON output or stdout.
-
-### RunResult Reports & Effect Call Tree
-
-Use `--report` to print the annotated `RunResult.display()` output after command execution. The report includes:
-
-- final status (success/error)
-- captured logs, state, and environment
-- the **effect call tree** showing which `@do` functions produced each effect
-- (with `--report-verbose`) the full creation stack traces and verbose sections
-
-```bash
-doeff run --program myapp.features.auth.login.login_program --report
-```
-
-For JSON output the report and call tree appear as additional fields when `--report` is provided:
-
-```bash
-doeff run --program myapp.features.auth.login.login_program --format json --report
-```
-
-This returns:
-
-```json
-{
-  "status": "ok",
-  "result": "Login via oauth2 (timeout: 10s)",
-  "report": "... RunResult report ...",
-  "call_tree": "outer()\n└─ inner()\n   └─ Ask('value')"
-}
-```
+- Guide: [docs/10-pinjected-integration.md](docs/10-pinjected-integration.md)
 
 ## Development
 
+Install dev dependencies:
+
 ```bash
-# Clone the repository
-git clone https://github.com/proboscis/doeff.git
-cd doeff
-
-# Install with development dependencies
 uv sync --group dev
+```
 
-# Run tests
+Run lint suite (Ruff + Pyright + Semgrep + doeff-linter):
+
+```bash
+make lint
+```
+
+Run tests:
+
+```bash
 uv run pytest
-
-# Run type checking
-uv run pyright
-
-# Run linting
-uv run ruff check
 ```
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Credits
-
-This project evolved from earlier internal prototypes.
+MIT. See [LICENSE](LICENSE).
