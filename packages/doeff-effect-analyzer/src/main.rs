@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use doeff_effect_anlyzer::{analyze_dotted_path, Report};
+use doeff_effect_analyzer::{analyze_dotted_path, Report};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Static Effect Dependency Analyzer", long_about = None)]

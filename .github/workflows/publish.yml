@@ -14,8 +14,24 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
+  publish-doeff-vm:
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    uses: ./.github/workflows/build-vm.yml
+    with:
+      publish: true
+    secrets: inherit
+
+  publish-doeff-indexer:
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    needs: [publish-doeff-vm]
+    uses: ./.github/workflows/build-indexer.yml
+    with:
+      publish: true
+    secrets: inherit
+
   build-dist:
     runs-on: ubuntu-latest
     steps:
@@ -32,6 +48,9 @@ jobs:
       - name: Build wheel and sdist
         run: uv build --wheel --sdist
 
+      - name: Verify built metadata
+        run: uv run python tools/verify_dist_metadata.py dist/*.whl dist/*.tar.gz
+
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -40,7 +59,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: [build-dist]
+    needs: [build-dist, publish-doeff-vm, publish-doeff-indexer]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     environment: pypi
@@ -61,3 +80,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          skip-existing: true

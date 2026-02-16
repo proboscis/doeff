@@ -80,48 +80,49 @@ Blocked on M0. Goal: `pip install doeff` works.
 ### M1.1 — doeff-vm platform wheels
 The single biggest blocker. doeff-vm is a Rust/PyO3 extension — needs pre-built wheels on PyPI.
 
-- [ ] Create `.github/workflows/build-vm.yml` (mirror `build-indexer.yml` pattern)
-- [ ] Build wheels for: linux x86_64/aarch64, macos x86_64/aarch64, windows x86_64
+- [x] Create `.github/workflows/build-vm.yml` (mirror `build-indexer.yml` pattern)
+- [x] Build wheels for: linux x86_64/aarch64, macos x86_64/aarch64, windows x86_64
 - [ ] Configure PyPI OIDC trusted publishing for doeff-vm
 - [ ] Publish doeff-vm to PyPI
 - [ ] Verify: `pip install doeff-vm` works on all platforms
 
 ### M1.2 — Fix version mismatch (PUB-003)
-- [ ] `pyproject.toml` says `0.2.0`, `doeff/__init__.py` says `0.1.7`
-- [ ] Choose single source of truth (recommend `importlib.metadata` or hatch-vcs)
-- [ ] Align version everywhere
+- [x] `pyproject.toml` says `0.2.0`, `doeff/__init__.py` says `0.1.7`
+- [x] Choose single source of truth (recommend `importlib.metadata` or hatch-vcs)
+- [x] Align version everywhere
 
 ### M1.3 — CI: pytest on 3.10/3.11/3.12 (PUB-002)
 Current CI only runs Python version compatibility check — no actual pytest.
 
-- [ ] Extend `.github/workflows/python-compatibility.yml` or create new workflow
-- [ ] Run `uv run pytest` on Python 3.10, 3.11, 3.12
-- [ ] Include doeff-vm build in CI (Rust dependency)
+- [x] Extend `.github/workflows/python-compatibility.yml` or create new workflow
+- [x] Run `uv run pytest` on Python 3.10, 3.11, 3.12
+- [x] Include doeff-vm build in CI (Rust dependency)
 
 ### M1.4 — CI: tag-to-publish workflow (PUB-004)
-- [ ] Create `.github/workflows/publish.yml`
+- [x] Create `.github/workflows/publish.yml`
 - [ ] OIDC trusted publishing for doeff on PyPI
-- [ ] Publish workspace deps in order: doeff-vm → doeff-indexer → doeff
-- [ ] Trigger on tag push (e.g., `v0.2.0`)
+- [x] Publish workspace deps in order: doeff-vm → doeff-indexer → doeff
+- [x] Trigger on tag push (e.g., `v0.2.0`)
 
 ### M1.5 — Consolidate repo URLs (PUB-005)
 31+ files have split-brain: some point to legacy-org URLs, others to `proboscis/doeff`.
 
-- [ ] After M0.1 (repo transfer), update ALL URLs to canonical location
-- [ ] Root `pyproject.toml`
-- [ ] All `packages/*/pyproject.toml`
-- [ ] All `Cargo.toml` files
-- [ ] IDE plugin configs
-- [ ] Docs and specs
+- [x] After M0.1 (repo transfer), update ALL URLs to canonical location
+- [x] Root `pyproject.toml`
+- [x] All `packages/*/pyproject.toml`
+- [x] All `Cargo.toml` files
+- [x] IDE plugin configs
+- [x] Docs and specs
 
 ### M1.6 — Fix package name typo (PUB-007)
-- [ ] Rename `doeff-effect-anlyzer` → `doeff-effect-analyzer` (permanent once on PyPI)
+- [x] Rename `doeff-effect-anlyzer` → `doeff-effect-analyzer` (permanent once on PyPI)
 
 ### M1.7 — Verify workspace source overrides
-- [ ] Confirm `[tool.uv.sources]` workspace paths in pyproject.toml don't leak into built sdist/wheel
-- [ ] Test: build wheel, install in clean venv, verify `import doeff` works
+- [x] Confirm `[tool.uv.sources]` workspace paths in pyproject.toml don't leak into built sdist/wheel
+- [x] Test: build wheel, install in clean venv, verify `import doeff` works
 
 ### M1.8 — First publish
+- [x] Draft release runbook and manual blockers in `docs/release-publish-runbook.md`
 - [ ] Publish doeff to PyPI (PUB-001)
 - [ ] Verify: `pip install doeff` in clean venv → `import doeff` → `doeff.run(...)` works
 

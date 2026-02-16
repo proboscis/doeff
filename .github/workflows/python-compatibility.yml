@@ -35,8 +35,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev --python ${{ matrix.python-version }}
 
+      - name: Verify doeff-vm import
+        run: uv run --python ${{ matrix.python-version }} python -c "import doeff_vm; import doeff_vm.doeff_vm"
+
       - name: Run test suite
-        run: uv run --python ${{ matrix.python-version }} pytest -q --ignore-glob='tests/core/test_*spec_gaps.py'
+        run: uv run --python ${{ matrix.python-version }} pytest -q
 
   version-probe:
     runs-on: ubuntu-latest

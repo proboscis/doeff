@@ -1,0 +1,8 @@
+KPC Negative/Boundary Verification (2026-02-15)
+
+Command: uv run python -c "import subprocess,sys; r=subprocess.run(['pytest','tests/public_api/test_doeff13_hang_regression.py','-q'], timeout=3.0); sys.exit(r.returncode)"
+Result: 4 passed in 0.02s (bounded execution completed, no hang)
+
+Command: uv run pytest tests/public_api/test_kpc_macro_runtime_contract.py -q
+Result: 4 passed
+Notes: Confirms default handlers and presets exclude public kpc sentinel.
