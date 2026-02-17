@@ -5,7 +5,7 @@ from typing import Any, TypeVar
 
 from .base import Effect, EffectBase, create_effect_with_trace
 from .gather import gather
-from .spawn import TaskCancelledError, Waitable, is_task_cancelled, normalize_waitable
+from .spawn import Waitable, normalize_waitable
 
 T = TypeVar("T")
 
@@ -31,9 +31,6 @@ def Wait(future: Waitable[T]):
 
     @do
     def _program():
-        if is_task_cancelled(normalized):
-            raise TaskCancelledError("Task was cancelled")
-
         values = yield gather(normalized)
         return values[0]
 

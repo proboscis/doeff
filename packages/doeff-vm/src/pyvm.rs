@@ -6,9 +6,9 @@ use pyo3::types::{PyDict, PyTuple};
 
 use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::effect::{
-    dispatch_from_shared, dispatch_to_pyobject, PyAsk, PyCompletePromise, PyCreateExternalPromise,
-    PyCreatePromise, PyFailPromise, PyGather, PyGet, PyModify, PyPut, PyRace, PySpawn,
-    PyTaskCompleted, PyTell,
+    dispatch_from_shared, dispatch_to_pyobject, PyAsk, PyCancelEffect, PyCompletePromise,
+    PyCreateExternalPromise, PyCreatePromise, PyFailPromise, PyGather, PyGet, PyModify, PyPut,
+    PyRace, PySpawn, PyTaskCompleted, PyTell,
 };
 
 // ---------------------------------------------------------------------------
@@ -2874,6 +2874,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCompletePromise>()?;
     m.add_class::<PyFailPromise>()?;
     m.add_class::<PyCreateExternalPromise>()?;
+    m.add_class::<PyCancelEffect>()?;
     m.add_class::<PyTaskCompleted>()?;
     // G14: scheduler sentinel
     m.add(
