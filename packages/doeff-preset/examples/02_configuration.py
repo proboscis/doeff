@@ -12,7 +12,8 @@ Run:
 
 from doeff_preset import preset_handlers
 
-from doeff import Ask, do, run_with_handler_map, slog
+from doeff import Ask, do, slog
+from doeff.rust_vm import run_with_handler_map
 
 
 @do
@@ -51,11 +52,13 @@ def main():
 
     # Example 2: Custom configuration
     print("\n=== Custom Configuration ===\n")
-    custom_handlers = preset_handlers(config_defaults={
-        "preset.show_logs": False,
-        "preset.log_level": "debug",
-        "preset.log_format": "json",
-    })
+    custom_handlers = preset_handlers(
+        config_defaults={
+            "preset.show_logs": False,
+            "preset.log_level": "debug",
+            "preset.log_format": "json",
+        }
+    )
     result2 = run_with_handler_map(configurable_workflow(), custom_handlers)
     print(f"\nConfig: {result2.value}")
 

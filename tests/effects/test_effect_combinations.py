@@ -7,10 +7,10 @@ predictable behavior.
 Reference: gh#180, specs/effects/SPEC-EFF-100-combinations.md
 """
 
-import pytest
-
 import asyncio
 import time
+
+import pytest
 
 from doeff import Program, do
 from doeff.effects import (
@@ -22,11 +22,10 @@ from doeff.effects import (
     Local,
     Modify,
     Put,
-    Safe,
     Spawn,
     Tell,
+    Try,
 )
-from doeff.effects.reader import AskEffect
 
 # ============================================================================
 # Law 1: Local Restoration Law Tests
@@ -72,7 +71,7 @@ class TestLocalRestorationLaw:
         @do
         def program():
             outer_before = yield Ask("key")
-            result = yield Safe(Local({"key": "inner_value"}, failing_inner()))
+            result = yield Try(Local({"key": "inner_value"}, failing_inner()))
             outer_after = yield Ask("key")
             return (outer_before, result.is_err(), outer_after)
 
@@ -262,7 +261,7 @@ class TestListenCaptureLaw:
 
         @do
         def program():
-            result = yield Safe(Listen(failing_with_logs()))
+            result = yield Try(Listen(failing_with_logs()))
             return result
 
         result = await parameterized_interpreter.run_async(program())
@@ -274,16 +273,16 @@ class TestListenCaptureLaw:
 
 
 # ============================================================================
-# Law 4: Safe Non-Rollback Law Tests
+# Law 4: Try Non-Rollback Law Tests
 # ============================================================================
 
 
 class TestSafeNonRollbackLaw:
-    """Tests for Law 4: Safe does NOT rollback state on error."""
+    """Tests for Law 4: Try does NOT rollback state on error."""
 
     @pytest.mark.asyncio
     async def test_safe_does_not_rollback_state(self, parameterized_interpreter) -> None:
-        """Law 4: State changes persist despite Safe catching error."""
+        """Law 4: State changes persist despite Try catching error."""
 
         @do
         def modify_then_fail():
@@ -294,7 +293,7 @@ class TestSafeNonRollbackLaw:
         @do
         def program():
             yield Put("counter", 0)
-            result = yield Safe(modify_then_fail())
+            result = yield Try(modify_then_fail())
             counter = yield Get("counter")
             return (result.is_err(), counter)
 
@@ -307,7 +306,7 @@ class TestSafeNonRollbackLaw:
 
     @pytest.mark.asyncio
     async def test_nested_safe_innermost_catches(self, parameterized_interpreter) -> None:
-        """Law 4: Innermost Safe catches, outer Safe sees success."""
+        """Law 4: Innermost Try catches, outer Try sees success."""
 
         @do
         def failing_program():
@@ -315,12 +314,12 @@ class TestSafeNonRollbackLaw:
 
         @do
         def middle_program():
-            inner_result = yield Safe(failing_program())
+            inner_result = yield Try(failing_program())
             return ("middle_ok", inner_result.is_err())
 
         @do
         def program():
-            outer_result = yield Safe(middle_program())
+            outer_result = yield Try(middle_program())
             return outer_result
 
         result = await parameterized_interpreter.run_async(program())
@@ -334,16 +333,16 @@ class TestSafeNonRollbackLaw:
 
 
 # ============================================================================
-# Law 5: Safe Environment Restoration Law Tests
+# Law 5: Try Environment Restoration Law Tests
 # ============================================================================
 
 
 class TestSafeEnvironmentRestorationLaw:
-    """Tests for Law 5: Safe restores environment context."""
+    """Tests for Law 5: Try restores environment context."""
 
     @pytest.mark.asyncio
     async def test_safe_with_local_restores_env(self, parameterized_interpreter) -> None:
-        """Law 5: Environment restored even when Safe catches Local failure."""
+        """Law 5: Environment restored even when Try catches Local failure."""
 
         @do
         def failing_in_local():
@@ -353,7 +352,7 @@ class TestSafeEnvironmentRestorationLaw:
         @do
         def program():
             outer_before = yield Ask("key")
-            result = yield Safe(Local({"key": "inner"}, failing_in_local()))
+            result = yield Try(Local({"key": "inner"}, failing_in_local()))
             outer_after = yield Ask("key")
             return (outer_before, result.is_err(), outer_after)
 
@@ -486,7 +485,7 @@ class TestGatherErrorPropagationLaw:
 
         @do
         def program():
-            result = yield Safe(gather_children())
+            result = yield Try(gather_children())
             return result
 
         result = await parameterized_interpreter.run_async(program())
@@ -545,7 +544,7 @@ class TestEffectCombinationIntegration:
 
     @pytest.mark.asyncio
     async def test_complex_safe_local_listen_combination(self, parameterized_interpreter) -> None:
-        """Integration: Complex combination of Safe, Local, and Listen."""
+        """Integration: Complex combination of Try, Local, and Listen."""
 
         @do
         def inner_task():
@@ -560,7 +559,7 @@ class TestEffectCombinationIntegration:
         def program():
             yield Put("processed", False)
 
-            result = yield Safe(Local({"config": "success"}, Listen(inner_task())))
+            result = yield Try(Local({"config": "success"}, Listen(inner_task())))
 
             outer_config = yield Ask("config")
             processed = yield Get("processed")

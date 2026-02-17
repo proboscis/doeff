@@ -9,9 +9,7 @@ from __future__ import annotations
 
 from doeff import (
     Ask,
-    DoCtrl,
     EffectBase,
-    GeneratorProgram,
     Get,
     KleisliProgram,
     Program,
@@ -21,6 +19,7 @@ from doeff import (
     do,
     run,
 )
+from doeff.program import DoCtrl, GeneratorProgram
 
 
 def _prog(gen_factory):

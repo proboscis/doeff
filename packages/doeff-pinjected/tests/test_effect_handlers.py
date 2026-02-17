@@ -20,7 +20,8 @@ from doeff_pinjected.handlers import (  # noqa: E402
     production_handlers,
 )
 
-from doeff import async_run_with_handler_map, do, run_with_handler_map  # noqa: E402
+from doeff import do  # noqa: E402
+from doeff.rust_vm import async_run_with_handler_map, run_with_handler_map
 
 
 def _is_ok(run_result: Any) -> bool:
