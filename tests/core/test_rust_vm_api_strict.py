@@ -26,6 +26,7 @@ def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPa
         "writer": object(),
         "result_safe": object(),
         "scheduler": object(),
+        "lazy_ask": object(),
     }
     fake_vm = SimpleNamespace(**sentinels)
     monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
@@ -38,6 +39,7 @@ def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPa
         sentinels["writer"],
         sentinels["result_safe"],
         sentinels["scheduler"],
+        sentinels["lazy_ask"],
         sync_await_handler,
     ]
 
@@ -53,6 +55,7 @@ def test_default_async_handlers_use_async_await_handler(
         "writer": object(),
         "result_safe": object(),
         "scheduler": object(),
+        "lazy_ask": object(),
     }
     fake_vm = SimpleNamespace(**sentinels)
     monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
@@ -65,6 +68,7 @@ def test_default_async_handlers_use_async_await_handler(
         sentinels["writer"],
         sentinels["result_safe"],
         sentinels["scheduler"],
+        sentinels["lazy_ask"],
         async_await_handler,
     ]
 

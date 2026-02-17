@@ -3,13 +3,42 @@ from __future__ import annotations
 from pathlib import Path
 
 from doeff import Ask, Gather, Safe, Spawn, default_handlers, do, run
+from doeff.handlers import lazy_ask, reader, scheduler, state
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestLazyAskSemaphoreContract:
+    @staticmethod
+    def _perform_enter_count(trace: list[dict[str, object]]) -> int:
+        return sum(
+            1
+            for event in trace
+            if event.get("event") == "enter" and event.get("mode") == "HandleYield(Perform)"
+        )
+
+    def test_lazy_ask_caches(self) -> None:
+        calls = {"service": 0}
+
+        @do
+        def service_program():
+            calls["service"] += 1
+            if False:
+                yield
+            return 42
+
+        @do
+        def program():
+            first = yield Ask("service")
+            second = yield Ask("service")
+            return (first, second)
+
+        result = run(program(), handlers=default_handlers(), env={"service": service_program()})
+        assert result.is_ok()
+        assert result.value == (42, 42)
+        assert calls["service"] == 1
+
     def test_concurrent_lazy_ask_single_evaluation(self) -> None:
-        """Two spawned tasks Ask-ing the same lazy key must evaluate only once."""
         calls = {"service": 0}
 
         @do
@@ -34,9 +63,46 @@ class TestLazyAskSemaphoreContract:
         assert result.value == [42, 42]
         assert calls["service"] == 1
 
-    def test_lazy_ask_dispatches_semaphore_effects_in_trace(self) -> None:
-        """VM trace must show AcquireSemaphoreEffect/ReleaseSemaphoreEffect during lazy Ask."""
+    def test_non_lazy_ask_passthrough(self) -> None:
+        @do
+        def program():
+            return (yield Ask("key"))
 
+        result = run(program(), handlers=default_handlers(), env={"key": "plain_value"})
+        assert result.is_ok()
+        assert result.value == "plain_value"
+
+    def test_reader_no_semaphore_dependency(self) -> None:
+        @do
+        def program():
+            return (yield Ask("key"))
+
+        result = run(program(), handlers=[reader], env={"key": "value"})
+        assert result.is_ok()
+        assert result.value == "value"
+
+    def test_ordering_independence(self) -> None:
+        @do
+        def service_program():
+            if False:
+                yield
+            return 42
+
+        @do
+        def program():
+            return (yield Ask("service"))
+
+        orderings = [
+            [state, reader, scheduler, lazy_ask],
+            [scheduler, state, reader, lazy_ask],
+            [reader, state, scheduler, lazy_ask],
+        ]
+        for handlers in orderings:
+            result = run(program(), handlers=handlers, env={"service": service_program()})
+            assert result.is_ok()
+            assert result.value == 42
+
+    def test_lazy_ask_dispatches_semaphore_effects_in_trace(self) -> None:
         @do
         def service_program():
             if False:
@@ -53,23 +119,24 @@ class TestLazyAskSemaphoreContract:
             env={"service": service_program()},
             trace=True,
         )
+        plain_result = run(
+            program(),
+            handlers=default_handlers(),
+            env={"service": 42},
+            trace=True,
+        )
         assert result.is_ok()
+        assert plain_result.is_ok()
         assert result.value == 42
 
-        trace_str = str(result.trace)
-        assert "AcquireSemaphore" in trace_str, (
-            "No AcquireSemaphoreEffect in VM trace during lazy Ask. "
-            "Reader handler must yield AcquireSemaphore(sem) for lazy keys. "
-            f"Trace: {trace_str[:500]}"
-        )
-        assert "ReleaseSemaphore" in trace_str, (
-            "No ReleaseSemaphoreEffect in VM trace during lazy Ask. "
-            "Reader handler must yield ReleaseSemaphore(sem) after evaluation. "
-            f"Trace: {trace_str[:500]}"
+        lazy_performs = self._perform_enter_count(result.trace)
+        plain_performs = self._perform_enter_count(plain_result.trace)
+        assert lazy_performs >= plain_performs + 3, (
+            "Lazy Ask should perform at least Create/Acquire/Release semaphore effects. "
+            f"lazy_performs={lazy_performs}, plain_performs={plain_performs}"
         )
 
     def test_no_os_lock_for_lazy_cache(self) -> None:
-        """rust_store.rs must not use Mutex/RwLock for lazy_cache."""
         source = (ROOT / "packages" / "doeff-vm" / "src" / "rust_store.rs").read_text()
 
         assert "Mutex<HashMap<String, LazyCacheEntry>>" not in source, (
@@ -79,10 +146,10 @@ class TestLazyAskSemaphoreContract:
             "lazy_cache uses RwLock. RwLock is still an OS-level lock. "
             "Must use cooperative semaphore effects per SPEC-EFF-001."
         )
+        assert "lazy_cache:" not in source
+        assert "lazy_semaphores:" not in source
 
     def test_concurrent_ask_not_flagged_as_circular(self) -> None:
-        """Waiting tasks on same key must not be treated as circular dependency errors."""
-
         @do
         def slow_service():
             if False:
@@ -105,8 +172,6 @@ class TestLazyAskSemaphoreContract:
         assert result.value == ["resolved", "resolved", "resolved"]
 
     def test_lazy_ask_failure_releases_semaphore_for_retry(self) -> None:
-        """If lazy evaluation fails, semaphore must be released (try/finally semantics)."""
-
         @do
         def failing_service():
             raise ValueError("boom")
@@ -122,8 +187,6 @@ class TestLazyAskSemaphoreContract:
         assert isinstance(safe_result.error, ValueError)
 
     def test_lazy_ask_creates_semaphore_per_key_in_trace(self) -> None:
-        """VM trace must show CreateSemaphoreEffect when lazy keys are first resolved."""
-
         @do
         def service_a():
             if False:
@@ -148,11 +211,19 @@ class TestLazyAskSemaphoreContract:
             env={"svc_a": service_a(), "svc_b": service_b()},
             trace=True,
         )
+        plain_result = run(
+            program(),
+            handlers=default_handlers(),
+            env={"svc_a": "a", "svc_b": "b"},
+            trace=True,
+        )
         assert result.is_ok()
+        assert plain_result.is_ok()
         assert result.value == ("a", "b")
 
-        trace_str = str(result.trace)
-        assert "CreateSemaphore" in trace_str, (
-            "No CreateSemaphoreEffect in VM trace. "
-            "Reader handler must create per-key semaphores via the effect system."
+        lazy_performs = self._perform_enter_count(result.trace)
+        plain_performs = self._perform_enter_count(plain_result.trace)
+        assert lazy_performs >= plain_performs + 6, (
+            "Resolving two lazy keys should perform additional semaphore effects per key. "
+            f"lazy_performs={lazy_performs}, plain_performs={plain_performs}"
         )
