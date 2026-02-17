@@ -70,7 +70,7 @@ class ExecutionContext:
 
 - **`env`** - Environment variables (Ask/Local effects)
 - **`state`** - Mutable state (Get/Put/Modify effects)
-- **`log`** - Log entries (Log/Tell effects)
+- **`log`** - Writer entries (Tell/StructuredLog/slog effects)
 - **`graph`** - Execution graph (Step/Annotate effects)
 - **`memo`** - Within-execution cache (for internal use)
 - **`cache_handler`** - Persistent cache handler (CacheGet/CachePut)
@@ -304,32 +304,16 @@ yield Modify("counter", lambda x: x + 1)
 
 ## Writer Effects
 
-### Log(message)
-
-Add log entry.
-
-```python
-yield Log("Processing data")
-```
-
-**Parameters:** `message: str` - Log message
-
-**Returns:** None
-
-**See:** [Basic Effects](03-basic-effects.md#writer-effects)
-
----
-
 ### Tell(message)
 
-Add a log entry. Alias: `Log(message)`.
+Add a writer log entry.
 
 ```python
 yield Tell("Processing started")
-yield Log("Step 1 complete")  # Log is alias for Tell
+yield Tell({"step": 1, "status": "complete"})
 ```
 
-**Parameters:** `message: object` - Message to log (string or any object)
+**Parameters:** `message: object` - Message to append to the writer log
 
 **Returns:** None
 
@@ -915,7 +899,7 @@ await write_graph_html(result.graph, "output.html")
 |----------|---------|
 | **Reader** | Ask, Local |
 | **State** | Get, Put, Modify, AtomicGet, AtomicUpdate |
-| **Writer** | Log, Tell, Listen, StructuredLog |
+| **Writer** | Tell, Listen, StructuredLog, slog |
 | **Async** | Await, Gather, Spawn, Wait |
 | **Error** | Safe |
 | **IO** | IO |
@@ -934,7 +918,7 @@ from doeff import run, default_handlers
 from doeff import async_run, default_async_handlers
 
 # Basic Effects
-from doeff import Ask, Local, Get, Put, Modify, Log, Tell, Listen
+from doeff import Ask, Local, Get, Put, Modify, Tell, Listen, StructuredLog, slog
 
 # Async
 from doeff import Await, Gather, Spawn, Wait

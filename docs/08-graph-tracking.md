@@ -41,7 +41,7 @@ def with_snapshot():
 
     # Capture graph at this point
     graph = yield Snapshot()
-    yield Log(f"Graph has {len(graph.steps)} steps")
+    yield Tell(f"Graph has {len(graph.steps)} steps")
 
     yield Step("continue")
     return "done"

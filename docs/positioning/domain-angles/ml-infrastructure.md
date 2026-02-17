@@ -258,12 +258,12 @@ def retry_handler(max_retries=3, backoff=1.0, transient_errors=None):
             except Exception as e:
                 if any(err in str(e).lower() for err in transient_errors):
                     if attempt < max_retries - 1:
-                        yield Log(f"Retry {attempt + 1}/{max_retries} for {effect.cmd}: {e}")
+                        yield Tell(f"Retry {attempt + 1}/{max_retries} for {effect.cmd}: {e}")
                         yield Delay(current_backoff)
                         current_backoff *= 2
                         attempt += 1
                     else:
-                        yield Log(f"Failed after {max_retries} attempts: {effect.cmd}")
+                        yield Tell(f"Failed after {max_retries} attempts: {effect.cmd}")
                         raise
                 else:
                     raise  # non-transient error, fail immediately
@@ -338,9 +338,9 @@ def execute_ai_platform(cmd: str) -> Program[str]:
 def logging_handler():
     def handler(effect, k):
         if isinstance(effect, SystemCall):
-            yield Log(f"Executing: {effect.cmd}")
+            yield Tell(f"Executing: {effect.cmd}")
             result = yield Delegate()
-            yield Log(f"Result: {result}")
+            yield Tell(f"Result: {result}")
             return result
         yield Delegate()
     return handler
@@ -605,7 +605,7 @@ def run_ml_job(
     Handlers decide HOW each step happens.
     """
     # 1. Build
-    yield Log(f"Building image for {project.name}")
+    yield Tell(f"Building image for {project.name}")
     image = yield BuildImage(schematic.builder)
 
     # 2. Push

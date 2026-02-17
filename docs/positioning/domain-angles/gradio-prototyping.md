@@ -21,13 +21,13 @@ Every `yield` is a capturable event. A stacked handler can push each effect to t
 ```python
 @do
 def style_transfer(content_img, style_img):
-    yield Log("Encoding content image...")
+    yield Tell("Encoding content image...")
     content_features = yield ExtractFeatures(content_img, model="vgg19", layers=["conv4_2"])
 
-    yield Log("Encoding style image...")
+    yield Tell("Encoding style image...")
     style_features = yield ExtractFeatures(style_img, model="vgg19", layers=["conv1_1", "conv2_1", "conv3_1"])
 
-    yield Log("Optimizing...")
+    yield Tell("Optimizing...")
     for step in range(100):
         loss = yield OptimizationStep(content_features, style_features, step)
         yield Tell({"step": step, "loss": loss.value})
@@ -40,10 +40,11 @@ def style_transfer(content_img, style_img):
 ```python
 # Handler that streams effects to Gradio — orthogonal to the pipeline
 def gradio_streaming_handler(effect, k):
-    if isinstance(effect, Log):
-        gradio_log_queue.put(effect.message)        # -> live log panel
-    elif isinstance(effect, Tell):
-        gradio_metrics_queue.put(effect.value)       # -> live loss chart
+    if isinstance(effect, Tell):
+        if isinstance(effect.value, str):
+            gradio_log_queue.put(effect.value)        # -> live log panel
+        elif isinstance(effect.value, dict):
+            gradio_metrics_queue.put(effect.value)    # -> live loss chart
     elif isinstance(effect, Snapshot):
         gradio_image_queue.put(effect.image)         # -> live preview gallery
     yield Delegate()  # let the real handler execute the effect too
