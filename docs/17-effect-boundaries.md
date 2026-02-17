@@ -7,10 +7,12 @@ doeff for Python async integration.
 
 - [Boundary Model](#boundary-model)
 - [Effects That Stay Inside doeff](#effects-that-stay-inside-doeff)
+- [Effect Categorization](#effect-categorization)
 - [Escaped Effects](#escaped-effects)
 - [Why `PythonAsyncSyntaxEscape` Exists](#why-pythonasyncsyntaxescape-exists)
 - [Scheduler Suspension vs VM Escape](#scheduler-suspension-vs-vm-escape)
-- [Free-Monad View of `step`](#free-monad-view-of-step)
+- [Formal Model](#formal-model)
+- [VM Parameterization](#vm-parameterization)
 - [Runner Pairing (`run` vs `async_run`)](#runner-pairing-run-vs-async_run)
 - [Custom Handler Rules](#custom-handler-rules)
 
@@ -51,6 +53,17 @@ def pipeline():
 
 All of those effects are resolved by handlers inside doeff.
 
+## Effect Categorization
+
+| Category | Effects | Boundary |
+| --- | --- | --- |
+| Context | `Ask`, `Local` | Inside doeff |
+| State / Writer / Result | `Get`, `Put`, `Modify`, `Tell`, `Listen`, `Safe` | Inside doeff |
+| Scheduler | `Spawn`, `Wait`, `Gather`, `Race` | Inside doeff |
+| Cache | `CacheGet`, `CachePut`, `CacheDelete`, `CacheExists` | Inside doeff |
+| Promise | `CreatePromise`, `CompletePromise`, `FailPromise` | Inside doeff |
+| Async handoff | `Await` via `async_await_handler` | Escapes as `PythonAsyncSyntaxEscape` |
+
 ## Escaped Effects
 
 Escaped effects are represented by `PythonAsyncSyntaxEscape`, a VM step outcome consumed by the
@@ -87,23 +100,27 @@ These are different mechanisms:
   - The runner interprets the escaped action in async context.
   - Control returns to VM after the external async step finishes.
 
-## Free-Monad View of `step`
+## Formal Model
 
-Conceptually, stepping can be described as:
+`step` can be viewed as returning one Free-monad layer per transition:
 
 ```text
 step : state -> Free[ExternalOp, StepOutcome]
-
+StepFree = StepPure(StepOutcome) | StepBind(op, continuation)
 StepOutcome = Done | Failed | Continue
-Free[F, A] = Pure(A) | Bind(F, continuation)
 ```
 
-Interpretation:
+- `StepPure(...)` means the VM can keep stepping without external interpretation.
+- `StepBind(op, continuation)` means the runner must interpret `op` and resume the continuation.
+- In doeff, Python async handoff is the concrete `StepBind` case exposed as `PythonAsyncSyntaxEscape`.
 
-- `Pure(Done | Failed | Continue)` means no external interpretation is needed for that step.
-- `Bind(op, cont)` means the runner must interpret an external operation and then resume.
+## VM Parameterization
 
-In doeff, `PythonAsyncSyntaxEscape` is the concrete external-op handshake for Python async.
+The VM remains a pure step machine and does not require `VM[M]` parameterization.
+State, reader, writer, scheduler, cache, and promise operations are interpreted by handlers and
+return normal VM outcomes (`Continue`, `Done`, `Failed`) inside doeff.
+Only Python `await` syntax forces an external boundary, so doeff keeps one VM and exposes two
+interpreters: `run(...)` for sync execution and `async_run(...)` for event-loop integration.
 
 ## Runner Pairing (`run` vs `async_run`)
 
@@ -143,4 +160,3 @@ When adding handlers, keep the boundary strict:
 2. Use `PythonAsyncSyntaxEscape` only for operations that must execute in Python async context.
 3. Keep scheduler state transitions internal to scheduler handlers.
 4. Pair sync and async runners with their matching handler presets.
-
