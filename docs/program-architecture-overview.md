@@ -1,21 +1,47 @@
 # Program Architecture Overview
 
-This document describes the current doeff execution architecture, aligned to:
+This document describes the current execution model defined by:
 
-- `specs/core/SPEC-TYPES-001-program-effect-separation.md` (Rev 12)
-- `specs/vm/SPEC-008-rust-vm.md` (Rev 14)
-- `specs/core/SPEC-CORE-001-effect-boundaries.md`
+- `specs/core/SPEC-TYPES-001-program-effect-separation.md`
+- `specs/vm/SPEC-008-rust-vm.md`
 
-## Program Model
+## Core Model
 
-- `Program[T]` is the user-facing execution type.
-- Control is represented as `DoCtrl[T]` nodes (the VM instruction set).
-- Effect payloads are user-space values (`EffectValue[T]`) and are dispatched via `Perform(effect)`.
-- At API boundaries, `run` and `async_run` accept either:
-  - a control expression (`DoExpr[T]`)
-  - a raw effect payload (`EffectValue[T]`), normalized to `Perform(effect)`
+- `Program[T]` is `DoExpr[T]`.
+- `DoExpr` is control IR evaluated by the Rust VM.
+- `DoCtrl` is the concrete instruction set (`Pure`, `Call`, `Map`, `FlatMap`, `Perform`, ...).
+- `EffectValue` is user-space operation data.
+- `Perform(effect)` is the only effect-dispatch boundary.
 
-Source-level ergonomics stay simple:
+At API and lowering boundaries, execution accepts either control IR or effect payload:
+
+```text
+program input / yielded value = DoExpr | EffectValue
+EffectValue is normalized to Perform(effect) before dispatch
+```
+
+## Type Hierarchy and Perform Boundary
+
+```mermaid
+classDiagram
+direction TB
+
+class Program
+class DoExpr
+class DoCtrl
+class Perform
+class EffectValue
+
+Program : alias of DoExpr
+DoExpr <|-- DoCtrl
+DoCtrl <|-- Perform
+Perform --> EffectValue : dispatch payload
+```
+
+`EffectValue` is data. It does not dispatch by itself. Dispatch happens only when wrapped by
+`Perform(effect)`.
+
+Source ergonomics stay simple:
 
 ```python
 value = yield Ask("key")
@@ -27,111 +53,89 @@ Lowered control form:
 value = yield Perform(Ask("key"))
 ```
 
-## Generator as Lazy AST
+## Handler Stack Model
 
-`@do` generators are evaluated as a lazy AST stream:
-
-1. `next(gen)` yields a control expression.
-2. The VM evaluates that expression.
-3. The VM sends the result back with `gen.send(value)`.
-4. Repeat until completion.
-
-Free-monad interpretation:
+`run(..., handlers=[h0, h1, h2])` installs nested handler scopes:
 
 ```text
-yield expr  ==  Bind(expr, lambda result: rest_of_program)
+WithHandler(h0,
+  WithHandler(h1,
+    WithHandler(h2, program)))
 ```
 
-The generator holds continuation state; the VM is the evaluator.
+- `h2` is innermost and sees effects first.
+- `h0` is outermost and sees effects delegated outward.
+- Handler contract is `(effect, k) -> DoExpr`.
 
-## DoCtrl Instruction Set
+## Rust VM Stepping Engine
 
-Core control nodes include:
+The step engine is a mode/state machine that repeatedly executes one transition at a time.
+The same engine is used by both `run` and `async_run`.
 
-- `Pure(value)`
-- `Call(f, args, kwargs, metadata)`
-- `Eval(expr, handlers)`
-- `Map(source, f)`
-- `FlatMap(source, f)`
-- `Perform(effect)`
-- `WithHandler(handler, body)`
-- `Resume`, `Transfer`, `Delegate`, `ResumeContinuation`
-- `PythonAsyncSyntaxEscape` (async integration escape node)
+```mermaid
+flowchart TD
+    A[run / async_run] --> B{Input kind}
+    B -->|DoExpr| C[Use as root control node]
+    B -->|EffectValue| D[Normalize to Perform(effect)]
+    D --> C
+    C --> E[Install handler stack as nested WithHandler]
+    E --> F[VM step loop]
 
-`Pure`, `Map`, `FlatMap`, and `Call` are DoCtrl nodes evaluated by the VM, not wrapper types.
+    F --> G{Yield classification}
+    G -->|DoCtrl| H[Evaluate DoCtrl]
+    G -->|EffectValue| I[Normalize to Perform(effect)]
+    I --> J[Dispatch through handler stack]
 
-## KPC Is Call-Time Macro Expansion
+    H --> K{DoCtrl variant}
+    K -->|Perform(effect)| J
+    K -->|Other control node| L[Update VM mode/state]
 
-`@do` creates a `KleisliProgram`. Calling it performs call-time macro expansion into `Call(...)`:
+    J --> M{Handler action}
+    M -->|Resume / Return / Transfer / Throw| L
+    M -->|Delegate| N[Try next outer handler]
+    N --> L
 
-1. Compute argument unwrap strategy from function annotations.
-2. Wrap unwrapable effect arguments as `Perform(arg)`.
-3. Wrap plain values as `Pure(arg)`.
-4. Emit `Call(Pure(func), args, kwargs, metadata)`.
-
-KPC is not dispatched through handlers; there is no handler-phase KPC resolution path.
-
-## VM Step Semantics
-
-The step loop is modeled as:
-
-```text
-step : state -> Free[ExternalOp, step_outcome]
-
-step_outcome = Done(value) | Failed(error) | Continue(state) | Escape(payload, resume)
+    L --> O{StepEvent}
+    O -->|Continue| F
+    O -->|NeedsPython| P[Driver executes PythonCall and feeds result]
+    P --> F
+    O -->|Done / Failed| Q[Build RunResult]
 ```
 
-- `Done` and `Failed` terminate execution.
-- `Continue` advances the VM state.
-- `Escape` is the external bind case used for async syntax integration.
+## Effect Observation (`trace=True`)
 
-## Yield Classification and Dispatch
+`run(..., trace=True)` and `async_run(..., trace=True)` enable VM step tracing in `RunResult.trace`.
+Each entry records step-level execution state:
 
-Classification is binary:
+- `step`
+- `event`
+- `mode`
+- `pending`
+- `dispatch_depth`
+- `result`
 
-- `DoCtrlBase` -> evaluate as control IR
-- `EffectBase` -> dispatch through handlers (via `Perform` boundary)
+Example:
 
-Dispatch is tag-based in hot paths:
+```python
+result = run(program, handlers=default_handlers(), trace=True)
+first = result.trace[0]
+# {'step': 1, 'event': 'enter', 'mode': 'Deliver', ...}
+```
 
-- `DoCtrlBase`/`EffectBase` instances carry immutable discriminant tags.
-- The VM reads tags directly for GIL-free fast classification and DoCtrl dispatch.
+This trace shows when execution enters `Perform` dispatch and how handler-dispatch depth changes
+during stepping.
 
-Effect payloads are opaque VM objects (`Py<PyAny>` at the Rust boundary). The VM does not use an effect enum or inspect effect-specific fields during classification.
+## Async Boundary
 
-## Handler Protocol
+`PythonAsyncSyntaxEscape` is the VM escape for Python async integration.
 
-Handlers interpret effect payloads with this contract:
+- `run(...)`: synchronous stepping path.
+- `async_run(...)`: same step semantics plus async escape/await/resume handling.
 
-- input: `(effect, k)`
-- output: `DoExpr`
+## Summary
 
-The handler receives an opaque effect object and performs any needed downcast itself. If a host handler returns a raw effect value, runtime normalizes it to `Perform(effect)` before continuing.
-
-## Escape Boundary: Async Only
-
-`PythonAsyncSyntaxEscape` is the only VM-level escape for Python async syntax integration.
-
-- Handler-internal suspension:
-  - stays inside handler logic (for example, scheduler bookkeeping)
-  - VM continues with normal `Continue` transitions
-- VM-level escape:
-  - leaves doeff boundary for external async runtime integration
-  - resumed by async runner after awaiting payload
-
-## Runners
-
-There are two entrypoints:
-
-- `run(program, ...)` for synchronous execution
-- `async_run(program, ...)` for async-loop integration
-
-Both drive the same core step semantics. `async_run` handles `PythonAsyncSyntaxEscape`; `run` rejects async escape nodes.
-
-## End-to-End Flow
-
-1. Build a control expression (`DoExpr`) from `@do` code and macro-expanded calls.
-2. Step the VM over yielded nodes.
-3. Classify each yielded object (`DoCtrlBase` or `EffectBase`) using tag dispatch.
-4. Evaluate DoCtrl directly; dispatch effects to handlers.
-5. Continue until `Done`, `Failed`, or async escape/resume completion.
+- `Program[T] = DoExpr[T]`.
+- Control and effect payloads are separated.
+- `Perform(effect)` is the sole dispatch boundary.
+- Handlers are a nested stack (`WithHandler`) with deterministic inner-to-outer dispatch.
+- Rust VM stepping is the execution core for both sync and async runners.
