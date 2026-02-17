@@ -3,6 +3,22 @@
 Historical and migration notes are collected here so the main documentation chapters stay focused on
 the current architecture and APIs.
 
+## DA2-007 (2026-02-17)
+
+Updates for KPC/Intercept documentation gaps:
+
+- Added Intercept transform contract coverage (`None` pass-through, `Effect` replacement,
+  `Program` replacement, first non-`None` wins).
+- Added explicit KPC non-effect invariant callout in Kleisli docs.
+- Added `@do` handler authoring contract details for handler signatures.
+- Added varargs auto-unwrap boundary notes for `*args`/`**kwargs`.
+
+KPC migration reminder (historical context):
+
+- The KPC handler is removed. Current architecture uses call-time macro expansion:
+  `KleisliProgram.__call__()` returns `Call` DoCtrl directly, and the VM evaluates
+  that DoExpr without any KPC-specific handler.
+
 ## DA-001 (2026-02-17)
 
 `docs/02-core-concepts.md` was rewritten to present only current architecture.
