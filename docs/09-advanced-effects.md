@@ -309,6 +309,8 @@ def transform(effect: Effect) -> Effect | Program | None:
 - First non-`None` transform wins.
 - If a transform raises an exception, that transform exception propagates and
   Intercept evaluation fails for that step.
+- Raised exceptions from the intercepted program are not rewritten by `Intercept`; they bubble through
+  the `InterceptFrame` unchanged.
 
 ### Child Propagation
 
