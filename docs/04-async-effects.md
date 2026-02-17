@@ -28,8 +28,6 @@ sync_result = run(program(), handlers=default_handlers())
 async_result = await async_run(program(), handlers=default_async_handlers())
 ```
 
-`arun` is not part of the current public API. Use `async_run`.
-
 ## Await Effect
 
 `Await(awaitable)` is the bridge for Python asyncio awaitables inside a doeff program.
@@ -163,9 +161,6 @@ Use `default_async_handlers()` for the async entrypoint.
 
 2. Passing a coroutine to `Wait(...)`.
 `Wait` expects a doeff scheduler handle (`Task`/`Future`), not a Python coroutine.
-
-3. Using `arun` in examples.
-Use `async_run`.
 
 ## Quick Reference
 
