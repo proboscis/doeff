@@ -428,12 +428,14 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 
     @staticmethod
     def sequence(programs: list[Program[T]]) -> Program[list[T]]:
-        from doeff.effects import gather
+        from doeff.effects.gather import gather
+        from doeff.effects.spawn import spawn
 
         def sequence_generator():
-            effect = gather(*programs)
-            results = yield effect
-            return list(results)
+            tasks = []
+            for prog in programs:
+                tasks.append((yield spawn(prog)))
+            return list((yield gather(*tasks)))
 
         return _make_generator_program(sequence_generator)
 
@@ -447,33 +449,30 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 
     @staticmethod
     def list(*values: Program[U] | U) -> Program[list[U]]:
-        programs = [ProgramBase.lift(value) for value in values]
-        return ProgramBase.sequence(programs)
+        from doeff._collection_combinators import _list
+
+        return _list(*values)
 
     @staticmethod
     def tuple(*values: Program[U] | U) -> Program[tuple[U, ...]]:
-        return ProgramBase.list(*values).map(lambda items: tuple(items))
+        from doeff._collection_combinators import _tuple
+
+        return _tuple(*values)
 
     @staticmethod
     def set(*values: Program[U] | U) -> Program[set[U]]:
-        return ProgramBase.list(*values).map(lambda items: set(items))
+        from doeff._collection_combinators import _set
+
+        return _set(*values)
 
     @staticmethod
     def dict(
         *mapping: Mapping[Any, Program[V] | V] | Iterable[tuple[Any, Program[V] | V]],
         **kwargs: Program[V] | V,
     ) -> Program[dict[Any, V]]:
-        raw = dict(*mapping, **kwargs)
+        from doeff._collection_combinators import _dict
 
-        from doeff.effects import gather
-
-        def dict_generator():
-            program_map = {key: ProgramBase.lift(value) for key, value in raw.items()}
-            keys = list(program_map.keys())
-            values = yield gather(*program_map.values())
-            return dict(zip(keys, values, strict=False))
-
-        return _make_generator_program(dict_generator)
+        return _dict(*mapping, **kwargs)
 
 
 @dataclass
@@ -506,6 +505,7 @@ class ProgramProtocol(Protocol[T]):
 
 Program = ProgramBase
 GeneratorProgram = _GenProgramThunk
+
 
 __all__ = [
     "DoCtrl",
