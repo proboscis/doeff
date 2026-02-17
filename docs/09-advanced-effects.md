@@ -1,160 +1,67 @@
 # Advanced Effects
 
-Advanced effects for scheduler-level concurrency, promise-based coordination, shared-state safety, and runtime-aware time behavior.
+Advanced effects for parallel execution, shared-state coordination, and runtime-aware scheduling.
 
-## Scheduler Primitives (Advanced View)
+## Gather Effects
 
-These scheduler effects compose to model most concurrent workflows:
+Execute multiple Programs in parallel and collect results.
 
-| Effect | Output | Notes |
-| --- | --- | --- |
-| `Spawn(program)` | `Task[T]` | Starts child task and returns immediately |
-| `Wait(waitable)` | `T` | Waits for one `Task`/`Future` |
-| `Gather(*waitables)` | `list[T]` | Waits for all; fail-fast on first error/cancel |
-| `Race(*waitables)` | winner + value | Waits for first completion |
-| `CreatePromise()` | `Promise[T]` | Internal scheduler promise |
-| `CompletePromise(p, value)` | `None` | Resolves internal promise |
-| `FailPromise(p, error)` | `None` | Fails internal promise |
-| `CreateExternalPromise()` | `ExternalPromise[T]` | Promise completed by external code |
-
-## Task Lifecycle and Handler Boundaries
-
-Scheduler task lifecycle is internal to the scheduler handler:
-
-- `Pending` -> `Running` on first schedule
-- `Running` -> `Suspended` on cooperative preemption
-- `Running` -> `Blocked` on `Wait`/`Gather`/`Race` when inputs are pending
-- `Blocked` -> `Running` when callback wakeup fires
-- terminal states: `Completed`, `Failed`, `Cancelled`
-
-Boundary rules:
-
-- `Wait`, `Gather`, and `Race` suspension is handler-internal.
-- VM does not manage task queues or waiter sets.
-- VM continues by stepping `Continue`; scheduler chooses which task to run next.
-- Wakeups happen through scheduler callbacks when task/promise completion arrives.
-
-## Gather and Race Patterns
-
-### Gather over tasks
-
-```python
-from doeff import Gather, Spawn, do
-
-@do
-def gather_tasks():
-    t1 = yield Spawn(fetch_user(1))
-    t2 = yield Spawn(fetch_user(2))
-    return (yield Gather(t1, t2))
-```
-
-### Gather over dynamic dict inputs
+### Gather - Parallel Programs
 
 ```python
 from doeff import Gather, do
 
 @do
-def gather_dict(programs: dict[str, object]):
+def parallel_programs():
+    prog1 = fetch_user(1)
+    prog2 = fetch_user(2)
+    prog3 = fetch_user(3)
+
+    # Run all Programs in parallel
+    users = yield Gather(prog1, prog2, prog3)
+    # users = [user1, user2, user3]
+
+    return users
+```
+
+### User-Side Dict Pattern
+
+If you need to run a dict of Programs in parallel, use `Gather` with dict reconstruction:
+
+```python
+@do
+def parallel_dict():
+    programs = {
+        "user": fetch_user(123),
+        "posts": fetch_posts(123),
+        "comments": fetch_comments(123),
+    }
     keys = list(programs.keys())
     values = yield Gather(*programs.values())
-    return dict(zip(keys, values))
+    results = dict(zip(keys, values))
+
+    # results = {"user": ..., "posts": [...], "comments": [...]}
+    return results
 ```
 
-### Gather fail-fast with `Safe`
+### Using Gather with Async Operations
 
-`Gather` fails immediately on first error/cancellation. To collect partial outcomes:
-
-```python
-from doeff import Gather, Safe, Spawn, do
-
-@do
-def gather_partial():
-    t1 = yield Spawn(Safe(might_fail_a()))
-    t2 = yield Spawn(Safe(might_fail_b()))
-    t3 = yield Spawn(Safe(might_fail_c()))
-    return (yield Gather(t1, t2, t3))
-```
-
-### Race first-winner semantics
-
-`Race` resumes when the first waitable resolves.
-
-- first completion wins
-- first error/cancel propagates
-- losers keep running unless cancelled explicitly
-
-Conceptually this is `(winner_index, value)` in argument order.
+To run async operations in parallel, wrap them with `Await`:
 
 ```python
-from doeff import Race, Spawn, do
+from doeff import Await, Gather, do
 
 @do
-def race_tasks():
-    t1 = yield Spawn(work("slow", 0.4))
-    t2 = yield Spawn(work("fast", 0.1))
-    ordered = (t1, t2)
+def parallel_async():
+    @do
+    def fetch_data(url):
+        return (yield Await(http_get(url)))
 
-    result = yield Race(*ordered)
-    return ordered.index(result.first), result.value
-```
-
-## Promise-Based Synchronization
-
-### Internal Promise flow
-
-```python
-from doeff import CompletePromise, CreatePromise, Spawn, Wait, do
-
-@do
-def producer(promise):
-    yield CompletePromise(promise, {"status": "ready"})
-
-@do
-def consumer():
-    promise = yield CreatePromise()
-    _ = yield Spawn(producer(promise))
-    return (yield Wait(promise.future))
-```
-
-Use `FailPromise(promise, error)` for error paths.
-
-### External Promise bridge
-
-`CreateExternalPromise()` is the bridge when completion happens in external code (async library callback, thread, process, queue consumer).
-
-```python
-import threading
-from doeff import CreateExternalPromise, Wait, do
-
-@do
-def wait_external_event():
-    promise = yield CreateExternalPromise()
-
-    def on_external_event():
-        try:
-            data = read_external_source()
-            promise.complete(data)
-        except Exception as exc:
-            promise.fail(exc)
-
-    threading.Thread(target=on_external_event, daemon=True).start()
-    return (yield Wait(promise.future))
-```
-
-## Spawn + Wait Orchestration
-
-```python
-from doeff import Spawn, Tell, Wait, do
-
-@do
-def background_workflow():
-    task = yield Spawn(expensive_computation())
-
-    yield Tell("running independent work while child runs")
-    local = yield quick_operation()
-
-    remote = yield Wait(task)
-    return local, remote
+    results = yield Gather(
+        fetch_data("https://api1.example.com"),
+        fetch_data("https://api2.example.com"),
+    )
+    return results
 ```
 
 ## State Effects in Concurrent Programs
@@ -165,7 +72,9 @@ State semantics use `Get`, `Put`, and `Modify`.
 - `Put(key, value)`: write a value
 - `Modify(key, fn)`: atomic read-modify-write update
 
-### Atomic updates with `Modify`
+### Atomic Updates with Modify
+
+Use `Modify` when multiple tasks can update the same key.
 
 ```python
 from doeff import Modify, Tell, do
@@ -177,28 +86,42 @@ def increment_counter():
     return new_value
 ```
 
-### `Get`/`Put` vs `Modify`
+### Get/Put vs Modify
 
 ```python
 from doeff import Get, Modify, Put, do
 
 @do
 def unsafe_increment():
+    # Not atomic across tasks
     count = yield Get("counter")
     yield Put("counter", count + 1)
 
 @do
 def safe_increment():
+    # Atomic read-modify-write
     return (yield Modify("counter", lambda current: (current or 0) + 1))
+```
+
+### Common Modify Patterns
+
+```python
+from doeff import Modify, do
+
+@do
+def accumulate_result(value):
+    return (yield Modify("total", lambda current: (current or 0) + value))
 ```
 
 ## Semaphore Effects
 
-Semaphores provide cooperative concurrency limits.
+Semaphores provide cooperative concurrency control for limiting concurrent access.
 
 - `CreateSemaphore(permits)` creates a semaphore with `permits >= 1`
-- `AcquireSemaphore(sem)` acquires a permit (parks when none available)
-- `ReleaseSemaphore(sem)` releases a permit (wakes next waiter in FIFO order)
+- `AcquireSemaphore(sem)` acquires a permit (parks when none are available)
+- `ReleaseSemaphore(sem)` releases a permit (wakes the next waiter in FIFO order)
+
+### Basic Pattern (Always Release in finally)
 
 ```python
 from doeff import (
@@ -207,36 +130,190 @@ from doeff import (
     Gather,
     ReleaseSemaphore,
     Spawn,
+    Tell,
     Wait,
     do,
 )
 
 @do
-def worker(sem, idx):
+def worker(sem, worker_id):
     yield AcquireSemaphore(sem)
     try:
-        return yield process_item(idx)
+        yield Tell(f"Worker {worker_id} in critical section")
+        return worker_id
     finally:
         yield ReleaseSemaphore(sem)
 
 @do
-def run_bounded():
-    sem = yield CreateSemaphore(3)
+def run_workers():
+    sem = yield CreateSemaphore(3)  # at most 3 concurrent workers
     tasks = []
     for i in range(10):
         tasks.append((yield Spawn(worker(sem, i))))
-    return (yield Gather(*[Wait(t) for t in tasks]))
+    return (yield Gather(*[Wait(task) for task in tasks]))
 ```
+
+### Semaphore Use Cases
+
+- Rate limiting (`CreateSemaphore(N)`)
+- Connection pools (`N` concurrent DB/API clients)
+- Mutex-style critical sections (`CreateSemaphore(1)`)
+
+### Semaphore Runtime Semantics
+
+- Waiters are resumed in FIFO acquire order
+- Releasing above max permits raises `RuntimeError`
+- `CreateSemaphore(0)` raises `ValueError`
+- Cancelled waiters are removed from the wait queue
+- Permits can leak if you do not release on all code paths
+
+## Spawn Effect
+
+Execute Programs in the background and retrieve results later.
+
+### Basic Spawn
+
+```python
+from doeff import Spawn, Tell, Wait, do
+
+@do
+def background_work():
+    task = yield Spawn(expensive_computation())
+
+    yield Tell("Doing other work...")
+    other_result = yield quick_operation()
+
+    background_result = yield Wait(task)
+    return (other_result, background_result)
+```
+
+### Multiple Background Tasks
+
+```python
+from doeff import Spawn, Wait, do
+
+@do
+def parallel_background_work():
+    task1 = yield Spawn(computation_1())
+    task2 = yield Spawn(computation_2())
+    task3 = yield Spawn(computation_3())
+
+    result1 = yield Wait(task1)
+    result2 = yield Wait(task2)
+    result3 = yield Wait(task3)
+    return [result1, result2, result3]
+```
+
+### Spawn vs Gather
+
+| Effect | Execution | Use Case |
+|--------|-----------|----------|
+| `Gather(*progs)` | Parallel, blocking | Wait for all immediately |
+| `Spawn(prog)` | Background, non-blocking | Do other work while waiting |
+
+```python
+from doeff import Gather, Spawn, Wait, do
+
+@do
+def comparison():
+    results = yield Gather(prog1(), prog2(), prog3())
+
+    task = yield Spawn(slow_prog())
+    yield do_other_work()
+    result = yield Wait(task)
+    return results, result
+```
+
+## Intercept Effect
+
+`Intercept` transforms effects yielded by a program in a scoped way.
+
+```python
+program.intercept(transform)
+# same as:
+Intercept(program, transform)
+```
+
+### Transform Contract
+
+```python
+from doeff import Effect, Program
+
+def transform(effect: Effect) -> Effect | Program | None:
+    ...
+```
+
+- `None`: pass through to the next transform (or the original effect)
+- `Effect`: substitute with that effect (it is not re-transformed by this chain)
+- `Program`: replace the effect by running that program
+
+### Intercept Semantics
+
+1. Returned `Effect` values are not re-transformed by the same transform chain.
+2. Replacement `Program` values execute under intercept, so their yielded effects are intercepted.
+3. Interception propagates to children in `Gather`, `Spawn`, and `Safe` (including background tasks).
+4. In chained intercepts, first non-`None` wins.
+5. In parallel contexts, interception order is undefined.
+
+```python
+from doeff import Ask, AskEffect, Gather, Intercept, Program, Spawn, do
+
+@do
+def fallback_user():
+    value = yield Ask("fallback_user")
+    return f"user:{value}"
+
+def transform(effect):
+    if isinstance(effect, AskEffect) and effect.key == "user":
+        return fallback_user()  # Program replacement
+    return None
+
+@do
+def child():
+    return (yield Ask("user"))
+
+@do
+def run_with_intercept():
+    t1 = yield Spawn(child())
+    t2 = yield Spawn(child())
+    return (yield Intercept(Gather(t1, t2), transform))
+```
+
+### Chained Intercepts
+
+```python
+program.intercept(f).intercept(g)
+# per yielded effect:
+# 1) try f
+# 2) if f returns None, try g
+# 3) if both return None, run original effect
+```
+
+## Custom Control Effects with Frames
+
+Doeff supports custom control effects by adding handlers that push custom continuation frames.
+The frame contract is:
+
+```python
+from typing import Protocol
+
+class Frame(Protocol):
+    def on_value(self, value, env, store, k_rest) -> FrameResult: ...
+    def on_error(self, error, env, store, k_rest) -> FrameResult: ...
+```
+
+Use this pattern to implement domain-specific control flow such as transactions, timeouts, and
+retries without modifying the runtime internals.
 
 ## Time Effects Runtime Matrix
 
-`Delay`, `GetTime`, and `WaitUntil` depend on runtime.
+`Delay`, `GetTime`, and `WaitUntil` are runtime-dependent. Use this behavior matrix:
 
 | Effect | Sync Runtime | Simulation Runtime | Async Runtime |
-| --- | --- | --- | --- |
-| `Delay` | real blocking sleep | advances simulated clock instantly | real non-blocking async sleep |
-| `GetTime` | wall-clock time | simulated time | wall-clock time |
-| `WaitUntil` | sleeps until target | advances sim clock to target | awaits until target |
+|--------|--------------|--------------------|---------------|
+| `Delay` | Real blocking sleep | Advances simulated clock instantly | Real non-blocking async sleep |
+| `GetTime` | Current wall-clock time | Current simulated time | Current wall-clock time |
+| `WaitUntil` | Sleeps until target time | Advances sim clock to target time | Awaits until target time |
 
 If `WaitUntil` receives a time in the past, it returns immediately.
 
@@ -263,32 +340,85 @@ def parallel_counter():
         increment_task(100),
     )
 
-    return (yield Get("count"))
+    final = yield Get("count")
+    return final  # 300
 ```
 
 ## Best Practices
 
-- Use `Await` for Python awaitables; use `Wait` for scheduler waitables.
-- Keep `Gather` inputs independent and wrap risky children in `Safe` when partial results matter.
-- Cancel losing race tasks explicitly if they should not continue.
-- Prefer promise-based signaling when producer and consumer lifetimes are decoupled.
-- Always release semaphore permits in `finally` blocks.
+### Accessing the active interpreter
+
+If you need the active interpreter object (for example, to pass it into an external callback),
+ask for the special key `__interpreter__`:
+
+```python
+from doeff import Ask, do
+
+@do
+def read_interpreter():
+    interp = yield Ask("__interpreter__")
+    return interp
+```
+
+This does not require adding `__interpreter__` to your environment.
+
+### When to Use Gather
+
+**DO:**
+- Multiple independent Programs
+- Fan-out computation patterns
+- Parallel data fetching
+
+**DON'T:**
+- Dependent computations (use sequential yields)
+- Single Program (just yield it directly)
+
+### When to Use Modify
+
+**DO:**
+- Concurrent state updates
+- Counters and accumulators
+- Atomic read-modify-write flows
+
+**DON'T:**
+- Isolated single-step reads (`Get` is enough)
+- Multi-key transactional workflows
+
+### When to Use Semaphores
+
+**DO:**
+- Limit concurrent workers
+- Guard critical sections
+- Build bounded pools
+
+**DON'T:**
+- Skip `ReleaseSemaphore` on error paths
+- Use huge permit counts as a substitute for backpressure design
+
+### When to Use Intercept
+
+**DO:**
+- Rewrite or short-circuit selected effects in a scoped subtree
+- Inject fallback programs for missing data or policy checks
+- Layer transforms with clear first-match precedence
+
+**DON'T:**
+- Assume deterministic transform order across parallel child effects
+- Return replacement programs that recursively trigger the same transform without a stop condition
 
 ## Summary
 
-| Effect family | Core behavior |
-| --- | --- |
-| `Spawn` / `Wait` | start child work and join later |
-| `Gather` | wait for all with fail-fast semantics |
-| `Race` | first completion wins |
-| `CreatePromise` / `CompletePromise` / `FailPromise` | internal synchronization |
-| `CreateExternalPromise` | external world to scheduler bridge |
-| `Modify` | atomic shared-state updates |
-| Semaphores | bounded cooperative concurrency |
-| `Delay` / `GetTime` / `WaitUntil` | runtime-aware time control |
+| Effect | Purpose | Use Case |
+|--------|---------|----------|
+| `Gather(*progs)` | Parallel Programs | Fan-out computation |
+| `Spawn(prog)` | Background execution | Non-blocking tasks |
+| `Intercept(prog, *transforms)` | Scoped effect transformation | Policy injection, effect rewriting |
+| `Modify(key, fn)` | Atomic read-modify-write | Shared-state updates |
+| `CreateSemaphore / AcquireSemaphore / ReleaseSemaphore` | Cooperative concurrency limit | Rate limiting, mutex, pools |
+| `Delay / GetTime / WaitUntil` | Runtime-aware time control | Time-based workflows |
 
 ## Next Steps
 
-- **[Async Effects](04-async-effects.md)** - Await and scheduler primitives
-- **[Cache System](07-cache-system.md)** - persistent caching
-- **[Patterns](12-patterns.md)** - larger composition patterns
+- **[Async Effects](04-async-effects.md)** - Async operations with Await and Gather
+- **[Cache System](07-cache-system.md)** - Persistent caching
+- **[Patterns](12-patterns.md)** - Advanced patterns and best practices
