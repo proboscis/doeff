@@ -5,24 +5,10 @@ use std::collections::HashMap;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
-struct LazyCacheEntry {
-    source_id: usize,
-    value: Value,
-}
-
-#[derive(Debug, Clone)]
-struct LazySemaphoreEntry {
-    source_id: usize,
-    semaphore: Value,
-}
-
-#[derive(Debug, Clone)]
 pub struct RustStore {
     pub state: HashMap<String, Value>,
     pub env: HashMap<String, Value>,
     pub log: Vec<Value>,
-    lazy_cache: HashMap<String, LazyCacheEntry>,
-    lazy_semaphores: HashMap<String, LazySemaphoreEntry>,
 }
 
 impl RustStore {
@@ -31,8 +17,6 @@ impl RustStore {
             state: HashMap::new(),
             env: HashMap::new(),
             log: Vec::new(),
-            lazy_cache: HashMap::new(),
-            lazy_semaphores: HashMap::new(),
         }
     }
 
@@ -96,31 +80,6 @@ impl RustStore {
 
     pub fn clear_logs(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.log)
-    }
-
-    pub fn lazy_cache_get(&self, key: &str, source_id: usize) -> Option<Value> {
-        let entry = self.lazy_cache.get(key)?;
-        if entry.source_id == source_id {
-            return Some(entry.value.clone());
-        }
-        None
-    }
-
-    pub fn lazy_cache_put(&mut self, key: String, source_id: usize, value: Value) {
-        self.lazy_cache.insert(key, LazyCacheEntry { source_id, value });
-    }
-
-    pub fn lazy_semaphore_get(&self, key: &str, source_id: usize) -> Option<Value> {
-        let entry = self.lazy_semaphores.get(key)?;
-        if entry.source_id == source_id {
-            return Some(entry.semaphore.clone());
-        }
-        None
-    }
-
-    pub fn lazy_semaphore_put(&mut self, key: String, source_id: usize, semaphore: Value) {
-        self.lazy_semaphores
-            .insert(key, LazySemaphoreEntry { source_id, semaphore });
     }
 }
 
