@@ -13,16 +13,16 @@ use crate::capture::{
 use crate::continuation::Continuation;
 use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::driver::{Mode, PyException, StepEvent};
+use crate::effect::{dispatch_ref_as_python, DispatchEffect};
 #[cfg(test)]
 use crate::effect::Effect;
-use crate::effect::{dispatch_ref_as_python, DispatchEffect};
 use crate::error::VMError;
 use crate::frame::{CallMetadata, Frame};
 use crate::handler::{Handler, HandlerEntry};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
+use crate::pyvm::{PyDoExprBase, PyEffectBase};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::pyvm::{PyDoExprBase, PyEffectBase};
 use crate::segment::Segment;
 use crate::value::Value;
 use crate::yielded::Yielded;
@@ -315,37 +315,6 @@ impl VM {
         Self::truncate_repr(repr)
     }
 
-    fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
-        let py = obj.py();
-        let Ok(mod_) = py.import(module) else {
-            return false;
-        };
-        let Ok(cls) = mod_.getattr(class_name) else {
-            return false;
-        };
-        obj.is_instance(&cls).unwrap_or(false)
-    }
-
-    fn is_semaphore_effect(effect: &DispatchEffect) -> bool {
-        let Some(obj) = dispatch_ref_as_python(effect) else {
-            return false;
-        };
-        Python::attach(|py| {
-            let bound = obj.bind(py);
-            Self::is_instance_from(bound, "doeff.effects.semaphore", "CreateSemaphoreEffect")
-                || Self::is_instance_from(
-                    bound,
-                    "doeff.effects.semaphore",
-                    "AcquireSemaphoreEffect",
-                )
-                || Self::is_instance_from(
-                    bound,
-                    "doeff.effects.semaphore",
-                    "ReleaseSemaphoreEffect",
-                )
-        })
-    }
-
     fn python_handler_name(handler: &PyShared) -> String {
         Python::attach(|py| {
             let bound = handler.bind(py);
@@ -492,11 +461,7 @@ impl VM {
         });
     }
 
-    fn maybe_emit_handler_threw_for_dispatch(
-        &mut self,
-        dispatch_id: DispatchId,
-        exc: &PyException,
-    ) {
+    fn maybe_emit_handler_threw_for_dispatch(&mut self, dispatch_id: DispatchId, exc: &PyException) {
         let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
         self.capture_log.push(CaptureEvent::HandlerCompleted {
             dispatch_id,
@@ -912,8 +877,12 @@ impl VM {
                     DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
                     DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
                     DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
-                    DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
-                    DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
+                    DoCtrl::CreateContinuation { .. } => {
+                        "HandleYield(CreateContinuation)"
+                    }
+                    DoCtrl::ResumeContinuation { .. } => {
+                        "HandleYield(ResumeContinuation)"
+                    }
                     DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
                     DoCtrl::Call { .. } => "HandleYield(Call)",
                     DoCtrl::Eval { .. } => "HandleYield(Eval)",
@@ -1107,7 +1076,9 @@ impl VM {
                             StepEvent::NeedsPython(PythonCall::GenNext)
                         }
                     }
-                    Mode::Throw(exc) => StepEvent::NeedsPython(PythonCall::GenThrow { exc }),
+                    Mode::Throw(exc) => StepEvent::NeedsPython(PythonCall::GenThrow {
+                        exc,
+                    }),
                     _ => unreachable!(),
                 }
             }
@@ -1141,7 +1112,9 @@ impl VM {
                 self.mode = Mode::HandleYield(yielded);
                 StepEvent::Continue
             }
-            RustProgramStep::Return(value) => self.handle_handler_return(value),
+            RustProgramStep::Return(value) => {
+                self.handle_handler_return(value)
+            }
             RustProgramStep::Throw(exc) => {
                 if let Some(dispatch_id) = self
                     .dispatch_stack
@@ -1159,17 +1132,17 @@ impl VM {
                 if let Some(seg) = self.current_segment_mut() {
                     seg.push_frame(Frame::RustProgram { program });
                 }
-                let top = self
-                    .dispatch_stack
-                    .last()
-                    .expect("RustProgramContinuation: handler always runs inside dispatch");
+                let top = self.dispatch_stack.last().expect(
+                    "RustProgramContinuation: handler always runs inside dispatch",
+                );
                 let marker = top
                     .handler_chain
                     .get(top.handler_idx)
                     .copied()
                     .unwrap_or_else(Marker::fresh);
                 let k = top.k_user.clone();
-                self.pending_python = Some(PendingPython::RustProgramContinuation { marker, k });
+                self.pending_python =
+                    Some(PendingPython::RustProgramContinuation { marker, k });
                 StepEvent::NeedsPython(call)
             }
         }
@@ -1217,7 +1190,9 @@ impl VM {
                         handler,
                         expr,
                         py_identity,
-                    } => self.handle_with_handler(handler, expr, py_identity),
+                    } => {
+                        self.handle_with_handler(handler, expr, py_identity)
+                    }
                     DoCtrl::Delegate { effect } => self.handle_delegate(effect),
                     DoCtrl::GetContinuation => self.handle_get_continuation(),
                     DoCtrl::GetHandlers => self.handle_get_handlers(),
@@ -1225,7 +1200,9 @@ impl VM {
                         expr,
                         handlers,
                         handler_identities,
-                    } => self.handle_create_continuation(expr, handlers, handler_identities),
+                    } => {
+                        self.handle_create_continuation(expr, handlers, handler_identities)
+                    }
                     DoCtrl::ResumeContinuation {
                         continuation,
                         value,
@@ -1258,9 +1235,7 @@ impl VM {
                             );
                         }
 
-                        if let Some(arg_idx) =
-                            args.iter().position(|arg| matches!(arg, CallArg::Expr(_)))
-                        {
+                        if let Some(arg_idx) = args.iter().position(|arg| matches!(arg, CallArg::Expr(_))) {
                             let expr = match &args[arg_idx] {
                                 CallArg::Expr(expr) => expr.clone(),
                                 CallArg::Value(_) => unreachable!(),
@@ -1280,9 +1255,8 @@ impl VM {
                             );
                         }
 
-                        if let Some(kwargs_idx) = kwargs
-                            .iter()
-                            .position(|(_, value)| matches!(value, CallArg::Expr(_)))
+                        if let Some(kwargs_idx) =
+                            kwargs.iter().position(|(_, value)| matches!(value, CallArg::Expr(_)))
                         {
                             let expr = match &kwargs[kwargs_idx].1 {
                                 CallArg::Expr(expr) => expr.clone(),
@@ -1345,8 +1319,7 @@ impl VM {
                         handlers,
                         metadata,
                     } => {
-                        let cont =
-                            Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
+                        let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
                         self.handle_resume_continuation(cont, Value::None)
                     }
                     DoCtrl::GetCallStack => {
@@ -1488,7 +1461,10 @@ impl VM {
             }
 
             (
-                PendingPython::StepUserGenerator { metadata, .. },
+                PendingPython::StepUserGenerator {
+                    metadata,
+                    ..
+                },
                 PyCallOutcome::GenReturn(value),
             ) => {
                 if let Some(ref m) = metadata {
@@ -1655,11 +1631,7 @@ impl VM {
         self.lazy_pop_completed();
 
         let scope_chain = self.current_scope_chain();
-        let handler_chain = if Self::is_semaphore_effect(&effect) {
-            scope_chain.clone()
-        } else {
-            self.visible_handlers(&scope_chain)
-        };
+        let handler_chain = self.visible_handlers(&scope_chain);
 
         if handler_chain.is_empty() {
             return Err(VMError::unhandled_effect(effect));
@@ -1798,8 +1770,9 @@ impl VM {
 
     fn handle_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
         if !k.started {
-            return self
-                .throw_runtime_error("Resume on unstarted continuation; use ResumeContinuation");
+            return self.throw_runtime_error(
+                "Resume on unstarted continuation; use ResumeContinuation",
+            );
         }
         if self.is_one_shot_consumed(k.cont_id) {
             return self.throw_runtime_error(&format!(
@@ -1819,7 +1792,13 @@ impl VM {
                     value_repr: value_repr.clone(),
                 },
             });
-            self.maybe_emit_resume_event(dispatch_id, handler_name, value_repr, &k, false);
+            self.maybe_emit_resume_event(
+                dispatch_id,
+                handler_name,
+                value_repr,
+                &k,
+                false,
+            );
         }
         if let Some(dispatch_id) = k.dispatch_id {
             if !self.active_dispatch_handler_is_python(dispatch_id) {
@@ -1845,8 +1824,9 @@ impl VM {
 
     fn handle_transfer(&mut self, k: Continuation, value: Value) -> StepEvent {
         if !k.started {
-            return self
-                .throw_runtime_error("Transfer on unstarted continuation; use ResumeContinuation");
+            return self.throw_runtime_error(
+                "Transfer on unstarted continuation; use ResumeContinuation",
+            );
         }
         if self.is_one_shot_consumed(k.cont_id) {
             return self.throw_runtime_error(&format!(
@@ -1866,7 +1846,13 @@ impl VM {
                     value_repr: value_repr.clone(),
                 },
             });
-            self.maybe_emit_resume_event(dispatch_id, handler_name, value_repr, &k, true);
+            self.maybe_emit_resume_event(
+                dispatch_id,
+                handler_name,
+                value_repr,
+                &k,
+                true,
+            );
         }
         self.check_dispatch_completion(&k);
 
@@ -1983,19 +1969,20 @@ impl VM {
     }
 
     fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
-        let (handler_chain, start_idx, from_idx, dispatch_id) = match self.dispatch_stack.last() {
-            Some(t) => (
-                t.handler_chain.clone(),
-                t.handler_idx + 1,
-                t.handler_idx,
-                t.dispatch_id,
-            ),
-            None => {
-                return StepEvent::Error(VMError::internal(
-                    "Delegate called outside of dispatch context",
-                ))
-            }
-        };
+        let (handler_chain, start_idx, from_idx, dispatch_id) =
+            match self.dispatch_stack.last() {
+                Some(t) => (
+                    t.handler_chain.clone(),
+                    t.handler_idx + 1,
+                    t.handler_idx,
+                    t.dispatch_id,
+                ),
+                None => {
+                    return StepEvent::Error(VMError::internal(
+                        "Delegate called outside of dispatch context",
+                    ))
+                }
+            };
 
         // Capture inner handler segment so outer handler's return flows back here
         // (result of Delegate). Per spec: caller = Some(inner_seg_id).
@@ -2019,14 +2006,16 @@ impl VM {
                         .and_then(|m| self.marker_handler_trace_info(m))
                         .map(|(name, _, _, _)| name)
                         .unwrap_or_else(|| "<handler>".to_string());
-                    let to_info = self.marker_handler_trace_info(marker).unwrap_or_else(|| {
-                        (
-                            "<handler>".to_string(),
-                            HandlerKind::RustBuiltin,
-                            None,
-                            None,
-                        )
-                    });
+                    let to_info = self
+                        .marker_handler_trace_info(marker)
+                        .unwrap_or_else(|| {
+                            (
+                                "<handler>".to_string(),
+                                HandlerKind::RustBuiltin,
+                                None,
+                                None,
+                            )
+                        });
                     let (to_name, to_kind, to_source_file, to_source_line) = to_info;
                     self.capture_log.push(CaptureEvent::Delegated {
                         dispatch_id,
@@ -2054,9 +2043,7 @@ impl VM {
                                 rust_handler.create_program_for_run(self.current_run_token());
                             let step = {
                                 let mut guard = program.lock().expect("Rust program lock poisoned");
-                                Python::attach(|py| {
-                                    guard.start(py, effect, k_user, &mut self.rust_store)
-                                })
+                                Python::attach(|py| guard.start(py, effect, k_user, &mut self.rust_store))
                             };
                             return self.apply_rust_program_step(step, program);
                         }
@@ -2190,18 +2177,17 @@ impl VM {
         let handlers = self.current_visible_handlers();
         let handlers_after_bind = handlers.clone();
 
-        let bind_result_cb =
-            self.register_callback(Box::new(move |bound_value, _vm| match bound_value {
-                Value::Python(obj) => Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
-                    expr: PyShared::new(obj),
-                    handlers: handlers_after_bind,
-                    metadata: None,
-                })),
-                other => Mode::Throw(PyException::type_error(format!(
-                    "flat_map binder must return Program/Effect/DoCtrl; got {:?}",
-                    other
-                ))),
-            }));
+        let bind_result_cb = self.register_callback(Box::new(move |bound_value, _vm| match bound_value {
+            Value::Python(obj) => Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+                expr: PyShared::new(obj),
+                handlers: handlers_after_bind,
+                metadata: None,
+            })),
+            other => Mode::Throw(PyException::type_error(format!(
+                "flat_map binder must return Program/Effect/DoCtrl; got {:?}",
+                other
+            ))),
+        }));
 
         let bind_source_cb = self.register_callback(Box::new(move |value, vm| {
             let Some(seg) = vm.current_segment_mut() else {
@@ -2266,8 +2252,11 @@ impl VM {
         handlers: Vec<Handler>,
         handler_identities: Vec<Option<PyShared>>,
     ) -> StepEvent {
-        let k =
-            Continuation::create_unstarted_with_identities(program, handlers, handler_identities);
+        let k = Continuation::create_unstarted_with_identities(
+            program,
+            handlers,
+            handler_identities,
+        );
         self.register_continuation(k.clone());
         self.mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue
@@ -2310,9 +2299,7 @@ impl VM {
             );
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             let entry = match py_identity {
-                Some(identity) => {
-                    HandlerEntry::with_identity(handler.clone(), prompt_seg_id, identity)
-                }
+                Some(identity) => HandlerEntry::with_identity(handler.clone(), prompt_seg_id, identity),
                 None => HandlerEntry::new(handler.clone(), prompt_seg_id),
             };
             self.handlers.insert(handler_marker, entry);
@@ -2729,10 +2716,7 @@ mod tests {
             let event = vm.handle_resume(k, Value::Int(2));
 
             assert!(matches!(event, StepEvent::Continue));
-            assert!(
-                vm.mode.is_throw(),
-                "One-shot violation should set Mode::Throw"
-            );
+            assert!(vm.mode.is_throw(), "One-shot violation should set Mode::Throw");
         });
     }
 
@@ -2752,10 +2736,7 @@ mod tests {
             let event = vm.handle_transfer(k, Value::Int(2));
 
             assert!(matches!(event, StepEvent::Continue));
-            assert!(
-                vm.mode.is_throw(),
-                "One-shot violation should set Mode::Throw"
-            );
+            assert!(vm.mode.is_throw(), "One-shot violation should set Mode::Throw");
         });
     }
 
@@ -2849,9 +2830,7 @@ mod tests {
         let k_user = make_dummy_continuation();
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get {
-                key: "x".to_string(),
-            },
+            effect: Effect::Get { key: "x".to_string() },
             handler_chain: vec![marker],
             handler_idx: 0,
             k_user,
@@ -3300,14 +3279,8 @@ mod tests {
             let _ = vm.handle_resume(k.clone(), Value::Int(1));
             let event = vm.handle_resume(k, Value::Int(2));
 
-            assert!(
-                matches!(event, StepEvent::Continue),
-                "G4a: expected Continue, got Error"
-            );
-            assert!(
-                vm.mode.is_throw(),
-                "G4a: expected Mode::Throw after one-shot violation"
-            );
+            assert!(matches!(event, StepEvent::Continue), "G4a: expected Continue, got Error");
+            assert!(vm.mode.is_throw(), "G4a: expected Mode::Throw after one-shot violation");
         });
     }
 
@@ -3327,14 +3300,8 @@ mod tests {
 
             let event = vm.handle_resume(k, Value::Int(1));
 
-            assert!(
-                matches!(event, StepEvent::Continue),
-                "G4b: expected Continue, got Error"
-            );
-            assert!(
-                vm.mode.is_throw(),
-                "G4b: expected Mode::Throw for unstarted Resume"
-            );
+            assert!(matches!(event, StepEvent::Continue), "G4b: expected Continue, got Error");
+            assert!(vm.mode.is_throw(), "G4b: expected Mode::Throw for unstarted Resume");
         });
     }
 
@@ -3353,14 +3320,8 @@ mod tests {
             let _ = vm.handle_transfer(k.clone(), Value::Int(1));
             let event = vm.handle_transfer(k, Value::Int(2));
 
-            assert!(
-                matches!(event, StepEvent::Continue),
-                "G4c: expected Continue, got Error"
-            );
-            assert!(
-                vm.mode.is_throw(),
-                "G4c: expected Mode::Throw after transfer one-shot"
-            );
+            assert!(matches!(event, StepEvent::Continue), "G4c: expected Continue, got Error");
+            assert!(vm.mode.is_throw(), "G4c: expected Mode::Throw after transfer one-shot");
         });
     }
 
@@ -3384,8 +3345,7 @@ mod tests {
             vm.current_segment = Some(seg_id);
 
             let id_obj = pyo3::types::PyDict::new(py).into_any().unbind();
-            let handler =
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory));
+            let handler = Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory));
             let program = PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any());
 
             let k = Continuation::create_unstarted_with_identities(
@@ -3395,25 +3355,23 @@ mod tests {
             );
 
             let event = vm.handle_resume_continuation(k, Value::Unit);
-            assert!(matches!(
-                event,
-                StepEvent::NeedsPython(PythonCall::StartProgram { .. })
-            ));
+            assert!(matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })));
 
             let seg_id = vm.current_segment.expect("missing current segment");
             let seg = vm.segments.get(seg_id).expect("missing segment");
             let marker = *seg.scope_chain.first().expect("missing handler marker");
             let entry = vm.handlers.get(&marker).expect("missing handler entry");
-            let identity = entry
-                .py_identity
-                .as_ref()
-                .expect("G10 FAIL: continuation rehydration dropped handler identity");
+            let identity = entry.py_identity.as_ref().expect(
+                "G10 FAIL: continuation rehydration dropped handler identity",
+            );
             assert!(
                 identity.bind(py).is(&id_obj.bind(py)),
                 "G10 FAIL: preserved identity does not match original"
             );
         });
     }
+
+
 
     /// G5/G6 TDD: Tests the full VM dispatch cycle with a handler that returns
     /// NeedsPython from resume(). This exercises the critical path where the
@@ -3547,10 +3505,7 @@ mod tests {
             });
             assert!(result.is_ok());
             let event = result.unwrap();
-            assert!(matches!(
-                event,
-                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
-            ));
+            assert!(matches!(event, StepEvent::NeedsPython(PythonCall::CallFunc { .. })));
 
             // Feed modifier result: 5 * 10 = 50
             vm.receive_python_result(PyCallOutcome::Value(Value::Int(50)));
@@ -3871,10 +3826,7 @@ mod tests {
             let event = vm.step_handle_yield();
 
             assert!(
-                matches!(
-                    event,
-                    StepEvent::NeedsPython(PythonCall::StartProgram { .. })
-                ),
+                matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })),
                 "R9-H: Eval must create unstarted continuation and yield StartProgram, got {:?}",
                 std::mem::discriminant(&event)
             );
@@ -3914,10 +3866,7 @@ mod tests {
             let event = vm.step_handle_yield();
 
             assert!(
-                matches!(
-                    event,
-                    StepEvent::NeedsPython(PythonCall::StartProgram { .. })
-                ),
+                matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })),
                 "R9-H: Eval with handlers must still yield StartProgram"
             );
 
