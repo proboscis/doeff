@@ -73,7 +73,7 @@ def parallel_async():
 - Remaining branches continue unless you cancel them explicitly.
 - On success, results are returned in input order.
 
-Use `Safe(...)` around child programs when you need partial results instead of fail-fast behavior.
+Use `Try(...)` around child programs when you need partial results instead of fail-fast behavior.
 
 ## State Effects in Concurrent Programs
 
@@ -270,14 +270,14 @@ Cancellation is cooperative and non-blocking:
 - `Wait`, `Gather`, and `Race` raise `TaskCancelledError` when waiting on a cancelled task.
 
 ```python
-from doeff import Safe, Spawn, TaskCancelledError, Wait, do
+from doeff import Try, Spawn, TaskCancelledError, Wait, do
 
 @do
 def cancel_and_join():
     task = yield Spawn(long_running_job())
     _ = yield task.cancel()
 
-    joined = yield Safe(Wait(task))
+    joined = yield Try(Wait(task))
     if joined.is_err() and isinstance(joined.error, TaskCancelledError):
         return "cancelled"
     return joined.value
