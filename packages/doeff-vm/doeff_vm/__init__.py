@@ -115,6 +115,8 @@ FailPromiseEffect = _ext.FailPromiseEffect
 CreateExternalPromiseEffect = _ext.CreateExternalPromiseEffect
 PyCancelEffect = _ext.PyCancelEffect
 _SchedulerTaskCompleted = _ext._SchedulerTaskCompleted
+_notify_semaphore_handle_dropped = _ext._notify_semaphore_handle_dropped
+_debug_scheduler_semaphore_count = _ext._debug_scheduler_semaphore_count
 
 # R13-I: DoExprTag constants
 TAG_PURE = _ext.TAG_PURE

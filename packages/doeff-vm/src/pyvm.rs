@@ -2637,6 +2637,16 @@ mod tests {
 // Module-level functions [G11 / SPEC-008]
 // ---------------------------------------------------------------------------
 
+#[pyfunction]
+fn _notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
+    crate::scheduler::notify_semaphore_handle_dropped(state_id, semaphore_id);
+}
+
+#[pyfunction]
+fn _debug_scheduler_semaphore_count(state_id: u64) -> Option<usize> {
+    crate::scheduler::debug_semaphore_count_for_state(state_id)
+}
+
 /// Module-level `run()` — the public API entry point.
 ///
 /// Creates a fresh VM, seeds env/store, wraps the program in a WithHandler
@@ -2924,6 +2934,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_ASYNC_ESCAPE", DoExprTag::AsyncEscape as u8)?;
     m.add("TAG_EFFECT", DoExprTag::Effect as u8)?;
     m.add("TAG_UNKNOWN", DoExprTag::Unknown as u8)?;
+    m.add_function(wrap_pyfunction!(_notify_semaphore_handle_dropped, m)?)?;
+    m.add_function(wrap_pyfunction!(_debug_scheduler_semaphore_count, m)?)?;
     m.add_function(wrap_pyfunction!(run, m)?)?;
     m.add_function(wrap_pyfunction!(async_run, m)?)?;
     Ok(())
