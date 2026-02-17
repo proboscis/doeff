@@ -18,7 +18,7 @@ use crate::effect::{
 };
 use crate::ids::SegmentId;
 use crate::py_shared::PyShared;
-use crate::pyvm::{PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
+use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
 use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -295,10 +295,11 @@ fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
     Python::attach(|py| {
         let bound = obj.bind(py);
 
+        let is_doctrl = bound.is_instance_of::<PyDoCtrlBase>();
         let is_doexpr = bound.is_instance_of::<PyDoExprBase>();
         let is_effect = bound.is_instance_of::<PyEffectBase>();
 
-        if is_doexpr || is_effect {
+        if is_doctrl || is_doexpr || is_effect {
             Some(PyShared::new(obj.clone_ref(py)))
         } else {
             None
@@ -796,11 +797,6 @@ enum LazyAskPhase {
     AwaitDelegate {
         key: String,
         continuation: Continuation,
-        effect: DispatchEffect,
-    },
-    AwaitDelegateEval {
-        key: String,
-        continuation: Continuation,
     },
     AwaitAcquire {
         key: String,
@@ -896,12 +892,8 @@ impl LazyAskHandlerProgram {
         key: String,
         continuation: Continuation,
     ) -> RustProgramStep {
-        self.phase = LazyAskPhase::AwaitDelegate {
-            key,
-            continuation,
-            effect,
-        };
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+        self.phase = LazyAskPhase::AwaitDelegate { key, continuation };
+        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Perform { effect }))
     }
 
     fn begin_create_then_acquire_phase(
@@ -991,11 +983,11 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
-        store: &mut RustStore,
+        _store: &mut RustStore,
     ) -> RustProgramStep {
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
-            let Some(value) = store.ask(&key).cloned() else {
+            let Some(value) = _store.ask(&key).cloned() else {
                 return RustProgramStep::Throw(missing_env_key_error(&key));
             };
             return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
@@ -1027,40 +1019,7 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
 
     fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
-            LazyAskPhase::AwaitDelegate {
-                key,
-                continuation,
-                effect,
-            } => {
-                let mut handlers = match value {
-                    Value::Handlers(handlers) => handlers,
-                    _ => {
-                        return RustProgramStep::Throw(PyException::type_error(
-                            "lazy Ask expected handlers from GetHandlers".to_string(),
-                        ));
-                    }
-                };
-                if let Some(idx) = handlers.iter().position(|handler| {
-                    matches!(
-                        handler,
-                        Handler::RustProgram(factory) if factory.handler_name() == "LazyAskHandler"
-                    )
-                }) {
-                    handlers.drain(..=idx);
-                }
-                let Some(expr) = dispatch_ref_as_python(&effect).cloned() else {
-                    return RustProgramStep::Throw(PyException::type_error(
-                        "lazy Ask delegate effect must be a Python effect".to_string(),
-                    ));
-                };
-                self.phase = LazyAskPhase::AwaitDelegateEval { key, continuation };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
-                    expr,
-                    handlers,
-                    metadata: None,
-                }))
-            }
-            LazyAskPhase::AwaitDelegateEval { key, continuation } => {
+            LazyAskPhase::AwaitDelegate { key, continuation } => {
                 self.handle_delegated_ask_value(key, continuation, value, store)
             }
             LazyAskPhase::AwaitAcquire {
@@ -1152,9 +1111,6 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
     fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
             LazyAskPhase::AwaitDelegate { continuation, .. } => {
-                Self::transfer_throw(continuation, exc)
-            }
-            LazyAskPhase::AwaitDelegateEval { continuation, .. } => {
                 Self::transfer_throw(continuation, exc)
             }
             LazyAskPhase::AwaitAcquire { continuation, .. } => {

@@ -2,13 +2,45 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from doeff import Ask, Gather, Safe, Spawn, default_handlers, do, run
+import pytest
+
+from doeff import (
+    Ask,
+    Gather,
+    Safe,
+    Spawn,
+    async_run,
+    default_async_handlers,
+    default_handlers,
+    do,
+    run,
+)
 from doeff.handlers import lazy_ask, reader, scheduler, state
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestLazyAskSemaphoreContract:
+    @pytest.mark.asyncio
+    async def test_lazy_ask_delegates_to_reader(self) -> None:
+        """LazyAsk delegates Ask to Reader, then evaluates lazy values."""
+
+        @do
+        def service():
+            return 42
+
+        @do
+        def program():
+            return (yield Ask("svc"))
+
+        result = await async_run(
+            program(),
+            handlers=default_async_handlers(),
+            env={"svc": service()},
+        )
+        assert result.is_ok()
+        assert result.value == 42
+
     def test_lazy_ask_caches(self) -> None:
         calls = {"service": 0}
 
@@ -178,6 +210,17 @@ class TestLazyAskSemaphoreContract:
 
     def test_reader_no_semaphore_dependency(self) -> None:
         """Reader must remain pure lookup and work without scheduler."""
+
+        @do
+        def program():
+            return (yield Ask("key"))
+
+        result = run(program(), handlers=[reader], env={"key": "value"})
+        assert result.is_ok()
+        assert result.value == "value"
+
+    def test_reader_pure_no_semaphore(self) -> None:
+        """Reader alone handles Ask without scheduler."""
 
         @do
         def program():
