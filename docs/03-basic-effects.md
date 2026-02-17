@@ -177,13 +177,21 @@ def read_counter():
 
 **Returns:** The value if key exists.
 
-**Raises:** `KeyError` if key doesn't exist. Use `Safe` to handle missing keys:
+**Raises:** `KeyError` if key doesn't exist.
+
+This strict lookup behavior is intentional. `None` is valid state data, so
+returning `None` for missing keys would make "missing" and "stored None"
+indistinguishable.
+
+Use `Safe` when a key may be missing:
 
 ```python
 @do
-def safe_read():
-    result = yield Safe(Get("maybe_missing"))
-    return result.ok() if result.is_ok() else "default"
+def read_counter_or_default():
+    result = yield Safe(Get("counter"))
+    if result.is_ok():
+        return result.value
+    return 0
 ```
 
 ### Put - Write State
@@ -204,7 +212,25 @@ def initialize_state():
 - Overwrites existing value
 - Returns `None`
 
-### Modify - Transform State
+### Safe + Put - No Automatic Rollback
+
+`Safe` catches exceptions and returns them as `Err`, but it does **not** roll back state writes.
+
+```python
+@do
+def risky_update():
+    yield Put("status", "dirty")
+    raise ValueError("boom")
+
+@do
+def safe_wrapper():
+    yield Put("status", "clean")
+    result = yield Safe(risky_update())
+    final_status = yield Get("status")
+    return (result.is_err(), final_status)  # (True, "dirty")
+```
+
+### Modify - Transform State Atomically
 
 `Modify(key, func)` applies a function to current state and returns the new value:
 
@@ -219,16 +245,50 @@ def increment_counter():
 
 **Returns:** The new (transformed) value after applying the function.
 
-**Note:** If the key doesn't exist, `Modify` passes `None` to the function (unlike `Get` which raises `KeyError`).
+If the key doesn't exist, `Modify` passes `None` to `func` (unlike `Get`, which raises `KeyError`):
 
-**Equivalent to:**
 ```python
 @do
-def increment_counter_manual():
+def increment_with_init():
+    return (yield Modify("counter", lambda x: (x or 0) + 1))
+```
+
+If `func` raises, the store is unchanged (atomic update behavior):
+
+```python
+@do
+def atomic_modify_demo():
+    yield Put("value", 10)
+
+    def failing_transform(x):
+        raise ValueError("transform failed")
+
+    result = yield Safe(Modify("value", failing_transform))
+    current = yield Get("value")
+    return (result.is_err(), current)  # (True, 10)
+```
+
+### Gather + State - Shared Store Semantics
+
+`Gather` branches share the same store. State updates in one branch are visible
+to sibling branches and to the parent.
+
+- With `run(...)`, scheduling is deterministic.
+- With `async_run(...)`, branch interleaving is concurrent and race conditions are possible.
+
+```python
+@do
+def increment():
     current = yield Get("counter")
-    new_value = current + 1
-    yield Put("counter", new_value)
-    return new_value
+    yield Put("counter", current + 1)
+    return current
+
+@do
+def gather_with_state():
+    yield Put("counter", 0)
+    results = yield Gather(increment(), increment(), increment())
+    final = yield Get("counter")
+    return (results, final)  # sync run: ([0, 1, 2], 3)
 ```
 
 ### State Pattern Examples
@@ -290,7 +350,7 @@ def state_machine():
 
 Writer effects accumulate output (logs, messages, events) throughout program execution.
 
-### Tell - Append to the Writer Stream
+### Tell - Append Writer Output
 
 `Tell(message)` appends a message to the log:
 
@@ -315,11 +375,9 @@ def main():
 main()
 ```
 
-`Tell(message)` is the canonical writer append effect.
+### StructuredLog - Structured Logging
 
-### StructuredLog / slog - Structured Logging
-
-`StructuredLog(**kwargs)` logs structured data. `slog(**kwargs)` is the lowercase convenience alias.
+`StructuredLog(**kwargs)` logs structured data:
 
 ```python
 from doeff import run, default_handlers
@@ -333,8 +391,7 @@ def structured_logging():
         ip="192.168.1.1"
     )
 
-    # Equivalent shorthand:
-    yield slog(
+    yield StructuredLog(
         level="warn",
         message="High memory usage",
         memory_mb=512,
@@ -388,7 +445,7 @@ main()
 @dataclass
 class ListenResult(Generic[T]):
     value: T           # Return value of sub-program
-    log: list[Any]     # Captured entries from sub-program
+    log: list[Any]     # Entries captured from sub-program
 ```
 
 ### Writer Pattern Examples
@@ -493,27 +550,26 @@ def process_with_feature():
     return f"processed with {mode}"
 ```
 
-### Scoped State with Listen
+### Shared State with Listen
 
 ```python
 @do
-def isolated_operation():
+def shared_operation():
     # Main state
     yield Put("main_counter", 0)
 
-    # Run isolated sub-operation
-    listen_result = yield Listen(isolated_sub_operation())
+    # Run sub-operation and capture its writer output
+    listen_result = yield Listen(shared_sub_operation())
 
-    # Sub-operation's state changes don't affect main state
+    # State changes in the sub-program are visible here
     main_count = yield Get("main_counter")
-    yield Tell(f"Main counter unchanged: {main_count}")
+    yield Tell(f"Main counter after sub-operation: {main_count}")
 
     return listen_result.value
 
 @do
-def isolated_sub_operation():
-    # This operates on the same state
-    yield Modify("main_counter", lambda x: x + 10)
+def shared_sub_operation():
+    yield Modify("main_counter", lambda x: (x or 0) + 10)
     yield Tell("Modified counter in sub-operation")
     return "sub-done"
 ```
@@ -549,14 +605,7 @@ def get_database_config():
 ```python
 @do
 def safe_increment():
-    # Initialize if not exists
-    try:
-        count = yield Get("counter")
-    except KeyError:
-        yield Put("counter", 0)
-        count = 0
-
-    yield Put("counter", count + 1)
+    return (yield Modify("counter", lambda x: (x or 0) + 1))
 ```
 
 **DON'T:**
@@ -568,7 +617,7 @@ def safe_increment():
 **DO:**
 - Use consistent log formats
 - Record important state transitions
-- Use `StructuredLog`/`slog` for machine-readable logs
+- Use `StructuredLog` for machine-readable logs
 
 ```python
 @do
@@ -587,9 +636,9 @@ def well_logged_operation():
 ```
 
 **DON'T:**
-- Emit excessive writer entries in tight loops
-- Include sensitive information (passwords, tokens) in writer entries
-- Use Tell for control flow
+- Emit excessively in tight loops
+- Emit sensitive information (passwords, tokens)
+- Use `Tell` for control flow
 
 ### Combining Effects
 
@@ -613,7 +662,6 @@ def well_logged_operation():
 | `Modify(key, f)` | Transform state | Increment, append |
 | `Tell(msg)` | Append to log | Debugging, audit |
 | `StructuredLog(**kw)` | Structured logging | Machine-readable logs |
-| `slog(**kw)` | Structured logging shorthand | Concise structured logs |
 | `Listen(prog)` | Capture sub-logs | Nested operations |
 
 ## Next Steps
