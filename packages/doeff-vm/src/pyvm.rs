@@ -79,7 +79,9 @@ use crate::handler::{
 };
 use crate::ids::Marker;
 use crate::py_shared::PyShared;
-use crate::scheduler::SchedulerHandler;
+use crate::scheduler::{
+    scheduler_remove_semaphore_for_state, scheduler_semaphore_count_for_state, SchedulerHandler,
+};
 use crate::segment::Segment;
 use crate::step::{
     Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
@@ -2635,6 +2637,16 @@ mod tests {
 // Module-level functions [G11 / SPEC-008]
 // ---------------------------------------------------------------------------
 
+#[pyfunction]
+fn _scheduler_remove_semaphore(scheduler_state_id: u64, semaphore_id: u64) -> bool {
+    scheduler_remove_semaphore_for_state(scheduler_state_id, semaphore_id)
+}
+
+#[pyfunction]
+fn _scheduler_semaphore_count(scheduler_state_id: u64) -> usize {
+    scheduler_semaphore_count_for_state(scheduler_state_id).unwrap_or(0)
+}
+
 /// Module-level `run()` — the public API entry point.
 ///
 /// Creates a fresh VM, seeds env/store, wraps the program in a WithHandler
@@ -2920,6 +2932,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_ASYNC_ESCAPE", DoExprTag::AsyncEscape as u8)?;
     m.add("TAG_EFFECT", DoExprTag::Effect as u8)?;
     m.add("TAG_UNKNOWN", DoExprTag::Unknown as u8)?;
+    m.add_function(wrap_pyfunction!(_scheduler_remove_semaphore, m)?)?;
+    m.add_function(wrap_pyfunction!(_scheduler_semaphore_count, m)?)?;
     m.add_function(wrap_pyfunction!(run, m)?)?;
     m.add_function(wrap_pyfunction!(async_run, m)?)?;
     Ok(())
