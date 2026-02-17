@@ -3,7 +3,7 @@
 //! The scheduler is a RustProgramHandler that manages tasks, promises,
 //! and cooperative scheduling via Transfer-only semantics.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
@@ -14,8 +14,8 @@ use crate::continuation::Continuation;
 use crate::effect::Effect;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
-    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyFailPromise, PyGather, PyRace,
-    PySpawn, PyTaskCompleted,
+    PyCancelEffect, PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyFailPromise,
+    PyGather, PyRace, PySpawn, PyTaskCompleted,
 };
 use crate::handler::{
     Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
@@ -59,6 +59,9 @@ pub enum SchedulerEffect {
     },
     ReleaseSemaphore {
         semaphore_id: u64,
+    },
+    CancelTask {
+        task: TaskId,
     },
     TaskCompleted {
         task: TaskId,
@@ -219,6 +222,7 @@ pub struct SchedulerState {
     semaphores: HashMap<u64, SemaphoreRuntimeState>,
     waiters: HashMap<Waitable, Vec<WaitRequest>>,
     external_completion_queue: Option<PyShared>,
+    cancel_requested: HashSet<TaskId>,
     pub next_task: u64,
     pub next_promise: u64,
     pub next_semaphore: u64,
@@ -319,6 +323,14 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
 
         if obj.extract::<PyRef<'_, PyCreateExternalPromise>>().is_ok() {
             return Ok(Some(SchedulerEffect::CreateExternalPromise));
+        }
+
+        if let Ok(cancel) = obj.extract::<PyRef<'_, PyCancelEffect>>() {
+            let task_obj = cancel.task.bind(py);
+            let Some(task) = extract_task_id(task_obj) else {
+                return Err("PyCancelEffect.task must carry _handle.task_id".to_string());
+            };
+            return Ok(Some(SchedulerEffect::CancelTask { task }));
         }
 
         if let Ok(complete) = obj.extract::<PyRef<'_, PyCompletePromise>>() {
@@ -424,6 +436,12 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
             "CreateExternalPromiseEffect",
         ) {
             Ok(Some(SchedulerEffect::CreateExternalPromise))
+        } else if is_instance_from(obj, "doeff.effects.spawn", "TaskCancelEffect") {
+            let task_obj = obj.getattr("task").map_err(|e| e.to_string())?;
+            let Some(task) = extract_task_id(&task_obj) else {
+                return Err("TaskCancelEffect.task must carry _handle.task_id".to_string());
+            };
+            Ok(Some(SchedulerEffect::CancelTask { task }))
         } else if is_instance_from(obj, "doeff.effects.semaphore", "CreateSemaphoreEffect") {
             let permits = obj
                 .getattr("permits")
@@ -586,21 +604,6 @@ fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyExce
     PyException::new(exc_type, exc_value, Some(exc_tb))
 }
 
-fn is_task_cancel_requested(task_id: TaskId) -> bool {
-    Python::attach(|py| {
-        let Ok(spawn_mod) = py.import("doeff.effects.spawn") else {
-            return false;
-        };
-        let Ok(cancelled_ids) = spawn_mod.getattr("_cancelled_task_ids") else {
-            return false;
-        };
-        cancelled_ids
-            .call_method1("__contains__", (task_id.raw(),))
-            .and_then(|v| v.extract::<bool>())
-            .unwrap_or(false)
-    })
-}
-
 fn task_cancelled_error() -> PyException {
     Python::attach(|py| {
         let message = "Task was cancelled";
@@ -656,6 +659,7 @@ impl SchedulerState {
             semaphores: HashMap::new(),
             waiters: HashMap::new(),
             external_completion_queue: None,
+            cancel_requested: HashSet::new(),
             next_task: 0,
             next_promise: 0,
             next_semaphore: 1,
@@ -862,41 +866,72 @@ impl SchedulerState {
         semaphore_id
     }
 
-    fn is_waiter_cancelled(&self, waiter: SemaphoreWaiter) -> bool {
-        let Some(task_id) = waiter.waiting_task else {
-            return false;
-        };
-        if matches!(self.tasks.get(&task_id), Some(TaskState::Done { .. })) {
-            return true;
+    fn remove_semaphore_waiters_for_task(&mut self, task_id: TaskId) -> Vec<PromiseId> {
+        let mut removed = Vec::new();
+        for semaphore in self.semaphores.values_mut() {
+            let mut retained = VecDeque::new();
+            while let Some(waiter) = semaphore.waiters.pop_front() {
+                if waiter.waiting_task == Some(task_id) {
+                    removed.push(waiter.promise);
+                } else {
+                    retained.push_back(waiter);
+                }
+            }
+            semaphore.waiters = retained;
         }
-        is_task_cancel_requested(task_id)
+        removed
     }
 
-    fn drain_cancelled_head_waiters(&mut self, semaphore_id: u64) -> Result<(), PyException> {
-        loop {
-            let head_waiter = self
-                .semaphores
-                .get(&semaphore_id)
-                .ok_or_else(|| unknown_semaphore_error(semaphore_id))?
-                .waiters
-                .front()
-                .copied();
-
-            let Some(waiter) = head_waiter else {
-                return Ok(());
-            };
-
-            if !self.is_waiter_cancelled(waiter) {
-                return Ok(());
-            }
-
-            if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
-                semaphore.waiters.pop_front();
-            } else {
-                return Err(unknown_semaphore_error(semaphore_id));
-            }
-            self.mark_promise_done(waiter.promise, Err(task_cancelled_error()));
+    fn finalize_task_cancellation(&mut self, task_id: TaskId) {
+        let cont_id = match self.tasks.get(&task_id) {
+            Some(TaskState::Pending { cont, .. }) => Some(cont.cont_id),
+            _ => None,
+        };
+        if let Some(cont_id) = cont_id {
+            self.clear_waiters_for_continuation(cont_id);
         }
+
+        self.ready.retain(|queued| *queued != task_id);
+        self.current_task = self.current_task.filter(|running| *running != task_id);
+        self.cancel_requested.remove(&task_id);
+
+        let cancelled_waiters = self.remove_semaphore_waiters_for_task(task_id);
+        for promise_id in cancelled_waiters {
+            self.mark_promise_done(promise_id, Err(task_cancelled_error()));
+        }
+
+        self.mark_task_done(task_id, Err(task_cancelled_error()));
+        self.wake_waiters(Waitable::Task(task_id));
+    }
+
+    pub fn request_task_cancellation(&mut self, task_id: TaskId) {
+        let Some(task_state) = self.tasks.get(&task_id) else {
+            return;
+        };
+
+        if matches!(task_state, TaskState::Done { .. }) {
+            return;
+        }
+
+        if self.current_task == Some(task_id) {
+            self.cancel_requested.insert(task_id);
+            return;
+        }
+
+        self.finalize_task_cancellation(task_id);
+    }
+
+    pub fn cancel_requested_for_running_task(&self) -> Option<TaskId> {
+        let running = self.current_task?;
+        self.cancel_requested.contains(&running).then_some(running)
+    }
+
+    pub fn apply_running_task_cancellation_if_requested(&mut self) -> bool {
+        let Some(task_id) = self.cancel_requested_for_running_task() else {
+            return false;
+        };
+        self.finalize_task_cancellation(task_id);
+        true
     }
 
     pub fn acquire_semaphore(
@@ -904,14 +939,6 @@ impl SchedulerState {
         semaphore_id: u64,
     ) -> Result<Option<PromiseId>, PyException> {
         let owner = self.current_task;
-
-        if let Some(task_id) = self.current_task {
-            if is_task_cancel_requested(task_id) {
-                return Err(task_cancelled_error());
-            }
-        }
-
-        self.drain_cancelled_head_waiters(semaphore_id)?;
 
         let can_acquire = {
             let semaphore = self
@@ -982,8 +1009,6 @@ impl SchedulerState {
         }
 
         loop {
-            self.drain_cancelled_head_waiters(semaphore_id)?;
-
             let next_waiter = if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
                 semaphore.waiters.pop_front()
             } else {
@@ -1056,6 +1081,7 @@ impl SchedulerState {
     }
 
     pub fn mark_task_done(&mut self, task_id: TaskId, result: Result<Value, PyException>) {
+        self.cancel_requested.remove(&task_id);
         if let Some(state) = self.tasks.remove(&task_id) {
             let task_store = match state {
                 TaskState::Pending { store, .. } => store,
@@ -1277,6 +1303,10 @@ impl SchedulerState {
             }
 
             if let Some(task_id) = self.ready.pop_front() {
+                if self.cancel_requested.contains(&task_id) {
+                    self.finalize_task_cancellation(task_id);
+                    continue;
+                }
                 if let Some(task_k) = self.task_cont(task_id) {
                     // Save current task's store before switching away
                     if let Some(old_id) = self.current_task {
@@ -1654,6 +1684,13 @@ impl RustHandlerProgram for SchedulerProgram {
         k_user: Continuation,
         store: &mut RustStore,
     ) -> RustProgramStep {
+        {
+            let mut state = self.state.lock().expect("Scheduler lock poisoned");
+            if state.apply_running_task_cancellation_if_requested() {
+                return state.transfer_next_or(k_user, store);
+            }
+        }
+
         let sched_effect = if let Some(obj) = dispatch_into_python(effect.clone()) {
             match parse_scheduler_python_effect(&obj) {
                 Ok(Some(se)) => se,
@@ -1709,6 +1746,12 @@ impl RustHandlerProgram for SchedulerProgram {
                     handlers,
                     handler_identities: vec![],
                 }))
+            }
+
+            SchedulerEffect::CancelTask { task } => {
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                state.request_task_cancellation(task);
+                jump_to_continuation(k_user, Value::Unit)
             }
 
             SchedulerEffect::TaskCompleted { task, result } => {
