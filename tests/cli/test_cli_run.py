@@ -8,10 +8,6 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_LOCAL_EFFECT_PENDING = pytest.mark.xfail(
-    reason="LocalEffect is unhandled until ISSUE-CORE-505C",
-    strict=False,
-)
 
 
 def run_cli(*args: str, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -105,7 +101,6 @@ def test_doeff_run_apply_then_transform_mismatch_errors() -> None:
     assert "map" in str(payload["message"])
 
 
-@_LOCAL_EFFECT_PENDING
 def test_doeff_run_text_report() -> None:
     result = run_cli(
         "--program",
@@ -122,7 +117,6 @@ def test_doeff_run_text_report() -> None:
     assert "RunResult status: ok" in result.stdout
 
 
-@_LOCAL_EFFECT_PENDING
 def test_doeff_run_json_report_includes_call_tree() -> None:
     result = run_cli(
         "--program",

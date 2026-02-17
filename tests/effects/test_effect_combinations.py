@@ -28,24 +28,16 @@ from doeff.effects import (
 )
 from doeff.effects.reader import AskEffect
 
-_LOCAL_EFFECT_PENDING = pytest.mark.xfail(
-    reason="LocalEffect is unhandled until ISSUE-CORE-505C",
-    strict=False,
-)
-
 # ============================================================================
 # Law 1: Local Restoration Law Tests
 # ============================================================================
 
 
-@_LOCAL_EFFECT_PENDING
 class TestLocalRestorationLaw:
     """Tests for Law 1: Environment MUST restore after Local scope."""
 
     @pytest.mark.asyncio
-    async def test_local_restores_env_on_success(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_local_restores_env_on_success(self, parameterized_interpreter) -> None:
         """Law 1: Environment MUST restore after Local scope, regardless of success."""
 
         @do
@@ -60,9 +52,7 @@ class TestLocalRestorationLaw:
             outer_after = yield Ask("key")
             return (outer_before, inner_result, outer_after)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "outer_value"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "outer_value"})
         assert result.is_ok
         outer_before, inner_result, outer_after = result.value
 
@@ -71,9 +61,7 @@ class TestLocalRestorationLaw:
         assert outer_after == "outer_value"
 
     @pytest.mark.asyncio
-    async def test_local_restores_env_on_error(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_local_restores_env_on_error(self, parameterized_interpreter) -> None:
         """Law 1: Environment MUST restore after Local scope, regardless of error."""
 
         @do
@@ -88,9 +76,7 @@ class TestLocalRestorationLaw:
             outer_after = yield Ask("key")
             return (outer_before, result.is_err(), outer_after)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "outer_value"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "outer_value"})
         assert result.is_ok
         outer_before, had_error, outer_after = result.value
 
@@ -99,9 +85,7 @@ class TestLocalRestorationLaw:
         assert outer_after == "outer_value"
 
     @pytest.mark.asyncio
-    async def test_nested_local_override_and_restore(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_nested_local_override_and_restore(self, parameterized_interpreter) -> None:
         """Law 1: Each Local scope independently restores its environment."""
 
         @do
@@ -122,9 +106,7 @@ class TestLocalRestorationLaw:
             after = yield Ask("key")
             return (before, inner, after)
 
-        result = await parameterized_interpreter.run_async(
-            level1(), env={"key": "level1"}
-        )
+        result = await parameterized_interpreter.run_async(level1(), env={"key": "level1"})
         assert result.is_ok
 
         l1_before, l2_result, l1_after = result.value
@@ -142,14 +124,11 @@ class TestLocalRestorationLaw:
 # ============================================================================
 
 
-@_LOCAL_EFFECT_PENDING
 class TestLocalNonStateScopingLaw:
     """Tests for Law 2: Local does NOT scope state (Get/Put)."""
 
     @pytest.mark.asyncio
-    async def test_local_does_not_scope_state(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_local_does_not_scope_state(self, parameterized_interpreter) -> None:
         """Law 2: State changes propagate through Local scope."""
 
         @do
@@ -180,14 +159,11 @@ class TestLocalNonStateScopingLaw:
 # ============================================================================
 
 
-@_LOCAL_EFFECT_PENDING
 class TestListenCaptureLaw:
     """Tests for Law 3: Log/Tell operations captured on success only."""
 
     @pytest.mark.asyncio
-    async def test_listen_captures_logs_from_local(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_listen_captures_logs_from_local(self, parameterized_interpreter) -> None:
         """Law 3: Logs captured from nested Local scope on success."""
 
         @do
@@ -210,9 +186,7 @@ class TestListenCaptureLaw:
         assert "inner_log_2" in result.value.log
 
     @pytest.mark.asyncio
-    async def test_gather_isolated_state_logs_not_captured(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_gather_isolated_state_logs_not_captured(self, parameterized_interpreter) -> None:
         """Gather uses Futures with isolated state - logs are NOT captured by parent Listen."""
 
         @do
@@ -245,9 +219,7 @@ class TestListenCaptureLaw:
         assert len(result.value.log) == 0
 
     @pytest.mark.asyncio
-    async def test_nested_listen_separation(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_nested_listen_separation(self, parameterized_interpreter) -> None:
         """Law 3: Each Listen captures logs from its sub-tree."""
 
         @do
@@ -279,9 +251,7 @@ class TestListenCaptureLaw:
         assert len(outer_listen.log) == 0
 
     @pytest.mark.asyncio
-    async def test_listen_does_not_capture_on_error(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_listen_does_not_capture_on_error(self, parameterized_interpreter) -> None:
         """Law 3: On error, logs are NOT captured - error propagates directly."""
 
         @do
@@ -312,9 +282,7 @@ class TestSafeNonRollbackLaw:
     """Tests for Law 4: Safe does NOT rollback state on error."""
 
     @pytest.mark.asyncio
-    async def test_safe_does_not_rollback_state(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_safe_does_not_rollback_state(self, parameterized_interpreter) -> None:
         """Law 4: State changes persist despite Safe catching error."""
 
         @do
@@ -338,9 +306,7 @@ class TestSafeNonRollbackLaw:
         assert counter == 10
 
     @pytest.mark.asyncio
-    async def test_nested_safe_innermost_catches(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_nested_safe_innermost_catches(self, parameterized_interpreter) -> None:
         """Law 4: Innermost Safe catches, outer Safe sees success."""
 
         @do
@@ -372,14 +338,11 @@ class TestSafeNonRollbackLaw:
 # ============================================================================
 
 
-@_LOCAL_EFFECT_PENDING
 class TestSafeEnvironmentRestorationLaw:
     """Tests for Law 5: Safe restores environment context."""
 
     @pytest.mark.asyncio
-    async def test_safe_with_local_restores_env(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_safe_with_local_restores_env(self, parameterized_interpreter) -> None:
         """Law 5: Environment restored even when Safe catches Local failure."""
 
         @do
@@ -394,9 +357,7 @@ class TestSafeEnvironmentRestorationLaw:
             outer_after = yield Ask("key")
             return (outer_before, result.is_err(), outer_after)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "outer"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "outer"})
         assert result.is_ok
         outer_before, had_error, outer_after = result.value
 
@@ -410,14 +371,11 @@ class TestSafeEnvironmentRestorationLaw:
 # ============================================================================
 
 
-@_LOCAL_EFFECT_PENDING
 class TestGatherEnvironmentInheritanceLaw:
     """Tests for Law 7: Gather children inherit parent's environment."""
 
     @pytest.mark.asyncio
-    async def test_gather_children_inherit_local_env(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_gather_children_inherit_local_env(self, parameterized_interpreter) -> None:
         """Law 7: Children inherit parent's environment at Gather time."""
 
         @do
@@ -439,15 +397,10 @@ class TestGatherEnvironmentInheritanceLaw:
         @do
         def program():
             outer_result = yield Ask("key")
-            inner_results = yield Local(
-                {"key": "local_value"},
-                gather_children()
-            )
+            inner_results = yield Local({"key": "local_value"}, gather_children())
             return (outer_result, inner_results)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "outer_value"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "outer_value"})
         assert result.is_ok
         outer_result, inner_results = result.value
 
@@ -464,9 +417,7 @@ class TestGatherStoreSharingLaw:
     """Tests for Law 8: Gather store sharing (runtime-dependent)."""
 
     @pytest.mark.asyncio
-    async def test_async_gather_parallel_execution(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_async_gather_parallel_execution(self, parameterized_interpreter) -> None:
         """Law 8b: Gather executes spawned tasks in parallel."""
 
         @do
@@ -485,7 +436,7 @@ class TestGatherStoreSharingLaw:
         start = time.time()
         result = await parameterized_interpreter.run_async(program())
         elapsed = time.time() - start
-        
+
         assert result.is_ok
         results = result.value
 
@@ -503,9 +454,7 @@ class TestGatherErrorPropagationLaw:
     """Tests for Law 9: Gather error propagation behavior."""
 
     @pytest.mark.asyncio
-    async def test_gather_error_propagation(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_gather_error_propagation(self, parameterized_interpreter) -> None:
         """Law 9: Gather propagates first child error to parent."""
         side_effects = []
 
@@ -557,9 +506,7 @@ class TestEffectCombinationIntegration:
     """Integration tests for complex effect combinations."""
 
     @pytest.mark.asyncio
-    async def test_nested_gather_parallelism(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_nested_gather_parallelism(self, parameterized_interpreter) -> None:
         """Integration: Nested Gather operations work correctly."""
 
         @do
@@ -597,10 +544,7 @@ class TestEffectCombinationIntegration:
         assert branch_b_result == ("b", [3, 4])
 
     @pytest.mark.asyncio
-    @_LOCAL_EFFECT_PENDING
-    async def test_complex_safe_local_listen_combination(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_complex_safe_local_listen_combination(self, parameterized_interpreter) -> None:
         """Integration: Complex combination of Safe, Local, and Listen."""
 
         @do
@@ -616,21 +560,14 @@ class TestEffectCombinationIntegration:
         def program():
             yield Put("processed", False)
 
-            result = yield Safe(
-                Local(
-                    {"config": "success"},
-                    Listen(inner_task())
-                )
-            )
+            result = yield Safe(Local({"config": "success"}, Listen(inner_task())))
 
             outer_config = yield Ask("config")
             processed = yield Get("processed")
 
             return (result, outer_config, processed)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"config": "outer"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"config": "outer"})
         assert result.is_ok
         safe_result, outer_config, processed = result.value
 
