@@ -211,7 +211,7 @@ def auth_interpreter(prog: Program):
 # myapp/features/auth/login.py
 @do
 def login_program():
-    yield Log("Logging in...")
+    yield Tell("Logging in...")
     return "success"
 ```
 
@@ -296,7 +296,7 @@ auth_env: Program[dict] = Program.pure({
 @do
 def login_program():
     config = yield Ask('timeout')
-    yield Log(f"Timeout: {config}")  # Will be 30!
+    yield Tell(f"Timeout: {config}")  # Will be 30!
     return "success"
 ```
 
@@ -507,7 +507,7 @@ base_env = Program.pure({'debug': True})
 @do
 def my_program():
     debug = yield Ask('debug')
-    yield Log(f"Debug mode: {debug}")
+    yield Tell(f"Debug mode: {debug}")
     return "done"
 ```
 

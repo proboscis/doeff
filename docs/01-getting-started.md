@@ -40,21 +40,21 @@ uv add doeff
 Let's write a simple program that uses state management and logging:
 
 ```python
-from doeff import do, Program, Put, Get, Log
+from doeff import do, Program, Put, Get, Tell
 from doeff import run, default_handlers
 
 @do
 def counter_program():
     yield Put("counter", 0)
-    yield Log("Counter initialized")
+    yield Tell("Counter initialized")
 
     count = yield Get("counter")
-    yield Log(f"Current count: {count}")
+    yield Tell(f"Current count: {count}")
 
     yield Put("counter", count + 1)
     final_count = yield Get("counter")
 
-    yield Log(f"Final count: {final_count}")
+    yield Tell(f"Final count: {final_count}")
     return final_count
 
 def main():
@@ -78,7 +78,7 @@ Let's break down what's happening:
 3. **Effects** (algebraic effect operations):
    - `Put("counter", value)` - State effect: sets state (handled by the State handler)
    - `Get("counter")` - State effect: retrieves state
-   - `Log(message)` - Writer effect: writes to log (handled by the Writer handler)
+   - `Tell(message)` - Writer effect: appends to log (handled by the Writer handler)
 4. **`run`**: Executes programs with the provided effect handlers
 5. **Result**: Returns a `RuntimeResult` with `.value` for success or `.error` for failure
 
@@ -91,7 +91,7 @@ Programs don't execute until you call `run()` or `arun()`:
 ```python
 @do
 def my_program():
-    yield Log("This won't execute yet")
+    yield Tell("This won't execute yet")
     return 42
 
 # Just creates a Program, doesn't execute
@@ -109,7 +109,7 @@ Unlike Python generators, `@do` functions can be called multiple times:
 @do
 def get_timestamp():
     import time
-    yield Log("Getting timestamp")
+    yield Tell("Getting timestamp")
     return yield IO(lambda: time.time())
 
 # Each call creates a fresh Program
@@ -129,12 +129,12 @@ You can compose effectful programs together — a key advantage of algebraic eff
 @do
 def setup():
     yield Put("config", {"debug": True})
-    yield Log("Setup complete")
+    yield Tell("Setup complete")
 
 @do
 def work():
     config = yield Get("config")
-    yield Log(f"Working with config: {config}")
+    yield Tell(f"Working with config: {config}")
     return "done"
 
 @do
@@ -199,7 +199,7 @@ def complex_workflow():
     yield Put("connection", f"Connected to {db_url}")
 
     # Writer effect - log progress
-    yield Log("Processing data...")
+    yield Tell("Processing data...")
 
     # Async effect - await async operations
     data = yield Await(fetch_data_async())
@@ -216,10 +216,10 @@ def conditional_program():
     count = yield Get("count")
 
     if count > 10:
-        yield Log("Count is high")
+        yield Tell("Count is high")
         yield Put("status", "high")
     else:
-        yield Log("Count is low")
+        yield Tell("Count is low")
         yield Put("status", "low")
 
     return count
@@ -234,12 +234,12 @@ Make sure you're using `@do` decorator:
 ```python
 # Wrong - missing @do
 def my_program():
-    yield Log("test")
+    yield Tell("test")
 
 # Right - has @do
 @do
 def my_program():
-    yield Log("test")
+    yield Tell("test")
 ```
 
 ### "TypeError: Unknown yield type"
@@ -298,7 +298,7 @@ from doeff import (
     Ask, Local,
 
     # Writer effects
-    Log, Tell, Listen,
+    Tell, Listen,
 
     # Async effects
     Await, Gather,
@@ -321,12 +321,12 @@ from doeff import (
 ### Basic Program Template
 
 ```python
-from doeff import do, Log, run, default_handlers
+from doeff import do, Tell, run, default_handlers
 
 @do
 def my_program():
     # Your effects here
-    yield Log("Hello, doeff!")
+    yield Tell("Hello, doeff!")
     return "result"
 
 def main():
