@@ -75,7 +75,7 @@ Thread-safe state operations.
 def atomic_read():
     # Thread-safe state read
     count = yield AtomicGet("counter")
-    yield Log(f"Counter: {count}")
+    yield Tell(f"Counter: {count}")
     return count
 ```
 
@@ -86,7 +86,7 @@ def atomic_read():
 def atomic_increment():
     # Thread-safe atomic update
     new_value = yield AtomicUpdate("counter", lambda x: x + 1)
-    yield Log(f"Incremented to: {new_value}")
+    yield Tell(f"Incremented to: {new_value}")
     return new_value
 ```
 
@@ -114,7 +114,7 @@ def safe_increment():
 @do
 def increment_request_counter():
     count = yield AtomicUpdate("requests", lambda x: x + 1)
-    yield Log(f"Request #{count}")
+    yield Tell(f"Request #{count}")
 ```
 
 **Flags:**
@@ -126,10 +126,10 @@ def claim_resource():
         lambda x: True if not x else x
     )
     if not claimed:
-        yield Log("Successfully claimed resource")
+        yield Tell("Successfully claimed resource")
         return True
     else:
-        yield Log("Resource already claimed")
+        yield Tell("Resource already claimed")
         return False
 ```
 
@@ -159,7 +159,7 @@ def background_work():
     task = yield Spawn(expensive_computation())
     
     # Do other work while task runs
-    yield Log("Doing other work...")
+    yield Tell("Doing other work...")
     other_result = yield quick_operation()
     
     # Wait for background task to complete
