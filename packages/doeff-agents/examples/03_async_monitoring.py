@@ -259,11 +259,14 @@ async def run_truly_parallel() -> None:
             prompt=prompt,
         )
 
-        return await run_program(
+        run_result = await run_program(
             single_session_workflow(session_name, config),
             handler_maps=(preset_handlers(),),
             custom_handlers=mock_agent_handlers(),
         )
+        if hasattr(type(run_result), "value"):
+            return run_result.value
+        return run_result
     
     # Run all tasks truly in parallel
     start_time = time.time()
