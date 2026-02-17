@@ -1,151 +1,137 @@
 # Program Architecture Overview
 
-This document summarises the runtime architecture that powers doeff's **algebraic effects system**. The design implements algebraic effects with **one-shot continuations**, managed by a **Rust VM** runtime.
+This document describes the current doeff execution architecture, aligned to:
 
-It complements the more detailed notes in `specs/program-architecture/` and focuses on the concrete code that now ships in the repository.
+- `specs/core/SPEC-TYPES-001-program-effect-separation.md` (Rev 12)
+- `specs/vm/SPEC-008-rust-vm.md` (Rev 14)
+- `specs/core/SPEC-CORE-001-effect-boundaries.md`
 
-## High-Level Summary
+## Program Model
 
-- **Algebraic effects model** – programs *perform* effects (yield data values); handlers *interpret* them and resume the continuation. This effect-handler duality is the core abstraction.
-- **Program = Effect | KleisliProgramCall** – every executable computation is either an `EffectBase` instance (an algebraic effect operation) or a `KleisliProgramCall` (a bound generator call that may perform effects).
-- **ProgramBase** – the single runtime base class (`doeff/program.py`) that exposes composition combinators such as `pure`, `sequence`, `first_success`, etc.
-- **Effect handler runtime** – `_execute_program_loop` dispatches effects to handlers, manages the continuation stack via `CallFrame` push/pop, and records observations.
-- **One-shot continuations** – each effect yield captures the current continuation; the handler resumes it exactly once with the result. This is implemented via Python's generator `.send()` protocol.
-- **Interception** – `_InterceptedProgram` subclasses `KleisliProgramCall`, preserving original metadata while layering effect transforms (middleware).
-- **Effect Observation & Reporting** – each `EffectObservation` carries a `call_stack_snapshot`. These snapshots feed `EffectCallTree`, RunResult reports, and the CLI `--report` flag.
+- `Program[T]` is the user-facing execution type.
+- Control is represented as `DoCtrl[T]` nodes (the VM instruction set).
+- Effect payloads are user-space values (`EffectValue[T]`) and are dispatched via `Perform(effect)`.
+- At API boundaries, `run` and `async_run` accept either:
+  - a control expression (`DoExpr[T]`)
+  - a raw effect payload (`EffectValue[T]`), normalized to `Perform(effect)`
 
-## Core Types
+Source-level ergonomics stay simple:
 
-```mermaid
-classDiagram
-    class ProgramBase {
-        +pure(value)
-        +sequence(programs)
-        +first_success(...)
-        +first_some(...)
-        +dict(...)
-    }
-
-    ProgramBase <|-- EffectBase
-    ProgramBase <|-- KleisliProgramCall
-    ProgramBase <|-- _InterceptedProgram
-
-    class EffectBase {
-        +created_at
-        +map(f)
-        +flat_map(f)
-        +intercept(transform)
-    }
-
-    class KleisliProgramCall {
-        +generator_func
-        +args
-        +kwargs
-        +kleisli_source
-        +created_at
-        +map(f)
-        +flat_map(f)
-        +intercept(transform)
-        +to_generator()
-    }
-
-    class _InterceptedProgram {
-        +base_program
-        +transforms
-    }
+```python
+value = yield Ask("key")
 ```
 
-Key points:
+Lowered control form:
 
-- `Program` is just an alias for `ProgramBase`. All composition combinators now live here and always return either an `EffectBase` or `KleisliProgramCall`.
-- Effects are first-class `Program` values because `EffectBase` (`doeff/types.py`) inherits from `ProgramBase` and implements `map/flat_map/intercept`. This is the algebraic effects design: effects *are* programs that can be composed.
-- `_InterceptedProgram` is a frozen dataclass that extends `KleisliProgramCall`. It copies the underlying call metadata and delegates execution through `_intercept_generator` — this implements effect interception (middleware over algebraic effects).
-
-## Effect Handler Runtime (Interpreter Loop)
-
-```mermaid
-flowchart TD
-    A[ProgramInterpreter.run_async(program, ctx)] --> B{program instance}
-    B -->|EffectBase| C[_handle_effect]
-    C --> D[RunResult(ctx, Ok(value))]
-    B -->|KleisliProgramCall| E[push CallFrame]
-    E --> F[gen = program.to_generator()]
-    F --> G{next(gen)}
-    G -->|EffectBase| C
-    G -->|KleisliProgramCall| H[run_async(sub_program, ctx)]
-    H --> G
-    G -->|Other| I[TypeError]
-    H --> J[pop CallFrame]
-    G --> J
-    J --> D
+```python
+value = yield Perform(Ask("key"))
 ```
 
-Implementation details (algebraic effects perspective):
+## Generator as Lazy AST
 
-- `CallFrame` objects (in `doeff/types.py`) represent the **continuation stack** — they track which effectful computation is active. Appended before entering a `KleisliProgramCall`, always popped in a `finally` block.
-- `_handle_effect` is the **handler dispatch** — it finds the appropriate handler for the effect type, invokes it, and returns the result to be sent back to the continuation. It also records `EffectObservation` entries via `_record_effect_usage`.
-- The one-shot continuation is implemented by the generator protocol: `yield` suspends (captures continuation), `.send(value)` resumes it exactly once.
+`@do` generators are evaluated as a lazy AST stream:
 
-## Effect Call Tree
+1. `next(gen)` yields a control expression.
+2. The VM evaluates that expression.
+3. The VM sends the result back with `gen.send(value)`.
+4. Repeat until completion.
 
-`EffectCallTree` (`doeff/analysis/call_tree.py`) aggregates observations into a hierarchical tree. Each node is either a program call (`function_name(args...)`) or an effect label (`EffectType(key)`), and repeated effects are collapsed (`WriterTell x3`).
+Free-monad interpretation:
 
-RunResult includes a new section when observations exist:
-
-```
-🌳 Effect Call Tree:
-└─ outer()
-   └─ inner()
-      └─ Ask('value')
+```text
+yield expr  ==  Bind(expr, lambda result: rest_of_program)
 ```
 
-The CLI provides `--report`/`--report-verbose` flags to print the same information after executing a program, and JSON output includes `"report"` and `"call_tree"` fields when requested.
+The generator holds continuation state; the VM is the evaluator.
 
-## CLI Overview
+## DoCtrl Instruction Set
 
-```mermaid
-flowchart LR
-    A[doeff run] --> B[Load program symbol]
-    B --> C{Interpreter?}
-    C -->|ProgramInterpreter| D[run(program)]
-    C -->|callable| E[call(program)]
-    E --> F{Result}
-    D --> F
-    F -->|Program| G[run_async]
-    F -->|RunResult| H[unwrap]
-    F -->|Value| I[final-value]
-    G --> H
-    H --> J[report/call-tree]
-    I --> J
-    J -->|format=text| K[print text]
-    J -->|format=json| L[emit JSON]
+Core control nodes include:
+
+- `Pure(value)`
+- `Call(f, args, kwargs, metadata)`
+- `Eval(expr, handlers)`
+- `Map(source, f)`
+- `FlatMap(source, f)`
+- `Perform(effect)`
+- `WithHandler(handler, body)`
+- `Resume`, `Transfer`, `Delegate`, `ResumeContinuation`
+- `PythonAsyncSyntaxEscape` (async integration escape node)
+
+`Pure`, `Map`, `FlatMap`, and `Call` are DoCtrl nodes evaluated by the VM, not wrapper types.
+
+## KPC Is Call-Time Macro Expansion
+
+`@do` creates a `KleisliProgram`. Calling it performs call-time macro expansion into `Call(...)`:
+
+1. Compute argument unwrap strategy from function annotations.
+2. Wrap unwrapable effect arguments as `Perform(arg)`.
+3. Wrap plain values as `Pure(arg)`.
+4. Emit `Call(Pure(func), args, kwargs, metadata)`.
+
+KPC is not dispatched through handlers; there is no handler-phase KPC resolution path.
+
+## VM Step Semantics
+
+The step loop is modeled as:
+
+```text
+step : state -> Free[ExternalOp, step_outcome]
+
+step_outcome = Done(value) | Failed(error) | Continue(state) | Escape(payload, resume)
 ```
 
-Steps:
+- `Done` and `Failed` terminate execution.
+- `Continue` advances the VM state.
+- `Escape` is the external bind case used for async syntax integration.
 
-1. Auto-discovery services (interpreter/env) run before execution with profiling instrumentation.
-2. The program is optionally wrapped with local environments and user-supplied `--apply`/`--transform` functions.
-3. Interpreter callable executes, producing either a value, a `Program`, or a `RunResult`.
-4. The CLI finalises the value while preserving the `RunResult` (if produced), then prints text/JSON. When `--report` is active a full RunResult report and effect call tree are emitted.
+## Yield Classification and Dispatch
 
-## Call Stack & Observations
+Classification is binary:
 
-- Every effect observation stores `call_stack_snapshot=tuple(CallFrame, ...)`.
-- `CallFrame` captures `kleisli_source`, `function_name`, positional/keyword arguments, depth, and creation context if available.
-- Snapshots feed the call tree, RunResult display, and CLI reports, enabling post-run introspection without affecting the runtime execution flow.
+- `DoCtrlBase` -> evaluate as control IR
+- `EffectBase` -> dispatch through handlers (via `Perform` boundary)
 
-## Tests & Validation
+Dispatch is tag-based in hot paths:
 
-Key regression tests include:
+- `DoCtrlBase`/`EffectBase` instances carry immutable discriminant tags.
+- The VM reads tags directly for GIL-free fast classification and DoCtrl dispatch.
 
-- `tests/test_kleisli_program_call.py` – metadata preservation and generator invocation.
-- `tests/test_call_frame.py` – call stack snapshot correctness and cleanup.
-- `tests/test_intercept_recursion.py` – intercept transforms that return programs or effects without recursion.
-- `tests/test_runresult_display.py::test_display_includes_call_tree` – verifies the new display section.
-- `tests/test_cli_run.py::test_doeff_run_json_report_includes_call_tree` – ensures CLI reports capture the call tree and RunResult report.
+Effect payloads are opaque VM objects (`Py<PyAny>` at the Rust boundary). The VM does not use an effect enum or inspect effect-specific fields during classification.
 
-Full suite: `uv run pytest`
+## Handler Protocol
 
----
+Handlers interpret effect payloads with this contract:
 
-For deeper planning rationale refer to `specs/program-architecture/architecture.md` and `specs/program-architecture/todo.md`.
+- input: `(effect, k)`
+- output: `DoExpr`
+
+The handler receives an opaque effect object and performs any needed downcast itself. If a host handler returns a raw effect value, runtime normalizes it to `Perform(effect)` before continuing.
+
+## Escape Boundary: Async Only
+
+`PythonAsyncSyntaxEscape` is the only VM-level escape for Python async syntax integration.
+
+- Handler-internal suspension:
+  - stays inside handler logic (for example, scheduler bookkeeping)
+  - VM continues with normal `Continue` transitions
+- VM-level escape:
+  - leaves doeff boundary for external async runtime integration
+  - resumed by async runner after awaiting payload
+
+## Runners
+
+There are two entrypoints:
+
+- `run(program, ...)` for synchronous execution
+- `async_run(program, ...)` for async-loop integration
+
+Both drive the same core step semantics. `async_run` handles `PythonAsyncSyntaxEscape`; `run` rejects async escape nodes.
+
+## End-to-End Flow
+
+1. Build a control expression (`DoExpr`) from `@do` code and macro-expanded calls.
+2. Step the VM over yielded nodes.
+3. Classify each yielded object (`DoCtrlBase` or `EffectBase`) using tag dispatch.
+4. Evaluate DoCtrl directly; dispatch effects to handlers.
+5. Continue until `Done`, `Failed`, or async escape/resume completion.
