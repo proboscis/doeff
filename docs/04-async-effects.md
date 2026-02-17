@@ -178,15 +178,15 @@ why long-running concurrent workloads must keep yielding effects to remain fair.
 - if any gathered task is cancelled, `Gather` raises `TaskCancelledError`
 - remaining tasks are not auto-cancelled
 
-Use `Safe(...)` when you need partial results instead of fail-fast behavior.
+Use `Try(...)` when you need partial results instead of fail-fast behavior.
 
 ```python
-from doeff import Gather, Safe, Spawn, do
+from doeff import Gather, Try, Spawn, do
 
 @do
 def collect_all_even_on_errors():
-    t1 = yield Spawn(Safe(work_1()))
-    t2 = yield Spawn(Safe(work_2()))
+    t1 = yield Spawn(Try(work_1()))
+    t2 = yield Spawn(Try(work_2()))
     return (yield Gather(t1, t2))  # [Ok(...)/Err(...), Ok(...)/Err(...)]
 ```
 
@@ -232,13 +232,13 @@ Cancellation is explicit and cooperative:
 - cancellation request returns immediately; running tasks cancel at next `SchedulerYield`
 
 ```python
-from doeff import Safe, Spawn, Wait, do
+from doeff import Try, Spawn, Wait, do
 
 @do
 def cancel_child():
     task = yield Spawn(work())
     _ = yield task.cancel()
-    return (yield Safe(Wait(task)))  # Err(TaskCancelledError)
+    return (yield Try(Wait(task)))  # Err(TaskCancelledError)
 ```
 
 ## Promise vs ExternalPromise
@@ -280,7 +280,7 @@ Use `Await(coroutine)` for Python async work; use `Wait` for scheduler waitables
 Use `task = yield Spawn(program)` first, then pass the returned `Task` (or a `Future`) handle.
 
 5. Expecting `Gather` to keep going after first failure.
-Use `Safe(...)` around child programs if you need partial success collection.
+Use `Try(...)` around child programs if you need partial success collection.
 
 6. Assuming `Await` is concurrent under `run(...)`.
 It is sequential under `sync_await_handler`; use `async_run(...)` for overlap.
