@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 import doeff_vm
 
 from .base import Effect, create_effect_with_trace
-from .spawn import TaskCancelledError, Waitable, is_task_cancelled, normalize_waitable
+from .spawn import Waitable, normalize_waitable
 
 if TYPE_CHECKING:
     from doeff.program import ProgramBase
@@ -44,10 +44,6 @@ def Gather(*items: "Waitable[Any] | ProgramBase[Any]") -> Any:
 
     @do
     def _program():
-        for item in validated:
-            if is_task_cancelled(item):
-                raise TaskCancelledError("Task was cancelled")
-
         return (
             yield create_effect_with_trace(
                 GatherEffect(items=validated),

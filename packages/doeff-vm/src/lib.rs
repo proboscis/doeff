@@ -40,7 +40,7 @@ pub use continuation::Continuation;
 pub use dispatch::DispatchContext;
 pub use do_ctrl::DoCtrl;
 pub use driver::{Mode, StepEvent};
-pub use effect::{Effect, PyAsk, PyGet, PyModify, PyPut, PyTell};
+pub use effect::{Effect, PyAsk, PyCancelEffect, PyGet, PyModify, PyPut, PyTell};
 pub use error::VMError;
 pub use frame::Frame;
 pub use handler::{
