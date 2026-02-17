@@ -53,7 +53,6 @@ Notes:
 
 - `run()` and `async_run()` return a `RunResult` object (`.value`, `.error`, `.log`, `.raw_store`, `.trace`).
 - Default `handlers` is an empty tuple (`()`), so effectful programs should pass handler presets or custom handlers.
-- `arun` is not part of the current API.
 
 ## Default Handler Presets
 
