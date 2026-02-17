@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import gc
+
+import doeff_vm
+
 from doeff import (
     AcquireSemaphore,
     CreateSemaphore,
     Gather,
     ReleaseSemaphore,
+    Semaphore,
     Spawn,
     Try,
     Wait,
@@ -219,3 +224,84 @@ class TestSemaphoreRuntimeBehavior:
         assert wake_order == ["second", "third"]
         assert cancelled_result.is_err()
         assert isinstance(cancelled_result.error, TaskCancelledError)
+
+    def test_semaphore_state_cleaned_after_handle_dropped(self) -> None:
+        """GC of semaphore handles should clean up scheduler internal semaphore state."""
+
+        @do
+        def tick():
+            return None
+            yield
+
+        @do
+        def program():
+            semaphores = []
+            for _ in range(8):
+                sem = yield CreateSemaphore(1)
+                semaphores.append(sem)
+
+            state_id = semaphores[0]._scheduler_state_id
+            before = doeff_vm._debug_scheduler_semaphore_count(state_id)
+            semaphores.clear()
+            del sem
+            gc.collect()
+            # Force one scheduler cycle so VM-internal temporary references are released.
+            task = yield Spawn(tick())
+            _ = yield Wait(task)
+            after = doeff_vm._debug_scheduler_semaphore_count(state_id)
+            return before, after
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok()
+        before, after = result.value
+        assert before == 8
+        assert after == 0
+
+    def test_semaphore_cleanup_with_pending_waiters(self) -> None:
+        """Dropping the owner handle while waiters are pending yields waiter failure + cleanup."""
+
+        @do
+        def holder(semaphore_id: int):
+            yield AcquireSemaphore(Semaphore(semaphore_id))
+            return "held"
+
+        @do
+        def waiter(semaphore_id: int):
+            yield AcquireSemaphore(Semaphore(semaphore_id))
+            return "waiter-acquired"
+
+        @do
+        def tick():
+            return None
+            yield
+
+        @do
+        def program():
+            sem = yield CreateSemaphore(1)
+            state_id = sem._scheduler_state_id
+            holder_task = yield Spawn(holder(sem.id))
+            waiter_task = yield Spawn(waiter(sem.id))
+
+            _ = yield Try(Wait(holder_task))
+
+            # Let waiter attempt acquire and block while owner handle is still alive.
+            warmup = yield Spawn(tick())
+            _ = yield Try(Wait(warmup))
+
+            del sem
+            gc.collect()
+
+            # Trigger scheduler-side drop notification handling.
+            trigger = yield Spawn(tick())
+            _ = yield Try(Wait(trigger))
+
+            waiter_result = yield Try(Wait(waiter_task))
+            remaining = doeff_vm._debug_scheduler_semaphore_count(state_id)
+            return waiter_result, remaining
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok()
+        waiter_result, remaining = result.value
+        assert waiter_result.is_err()
+        assert isinstance(waiter_result.error, TaskCancelledError)
+        assert remaining == 0
