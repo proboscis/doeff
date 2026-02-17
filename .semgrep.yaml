@@ -9,6 +9,88 @@ rules:
   # Run: semgrep --config .semgrep.yaml doeff/ packages/
   # =============================================================================
 
+  - id: doeff-no-python-side-cancel-state
+    patterns:
+      - pattern-either:
+          - pattern: _cancelled_task_ids
+          - pattern: _cancelled_task_ids.add(...)
+          - pattern: _cancelled_task_ids.discard(...)
+          - pattern: $X in _cancelled_task_ids
+    paths:
+      include:
+        - "**/doeff/**"
+      exclude:
+        - "**/tests/**"
+    message: |
+      BANNED: Python-side cancel state management.
+      Cancellation state belongs in the Rust scheduler (`cancel_requested: HashSet<TaskId>`).
+      Task.cancel() must yield a PyCancelEffect, not mutate Python globals.
+      See SPEC-SCHED-001 §Cancel, ISSUE-CORE-502.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Cancel state ownership — SPEC-SCHED-001, ISSUE-CORE-502"
+
+  - id: doeff-no-python-task-id-extraction
+    patterns:
+      - pattern-inside: |
+          class Task:
+              ...
+      - pattern: task_id_of(...)
+    paths:
+      include:
+        - "**/doeff/effects/spawn.py"
+    message: |
+      BANNED: Python code must not extract task_id from Rust handles for scheduler operations.
+      Task operations (cancel, is_done) should yield effects handled by the Rust scheduler.
+      The Python layer should not inspect or decode Rust-internal handle structures.
+      See SPEC-SCHED-001 §PyTask, ISSUE-CORE-502.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Layer boundary — Python must not inspect Rust handle internals"
+
+  - id: doeff-no-rust-poll-python-cancel-state
+    pattern-regex: 'getattr\("_cancelled_task_ids"\)'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+    message: |
+      BANNED: Rust scheduler must not poll Python for cancellation state.
+      The scheduler owns cancel_requested via PyCancelEffect handler.
+      Remove GIL round-trip polling of _cancelled_task_ids.
+      See SPEC-SCHED-001, ISSUE-CORE-502.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Scheduler state ownership — cancel state lives in Rust"
+
+  - id: doeff-cancel-must-be-effectful
+    patterns:
+      - pattern-inside: |
+          class Task:
+              ...
+      - pattern: |
+          def cancel(self):
+              ...
+              return Program.pure(...)
+    paths:
+      include:
+        - "**/doeff/effects/spawn.py"
+    message: |
+      BANNED: Task.cancel() must yield an effect, not return Program.pure().
+      Cancel is a scheduler operation — it must go through effect dispatch.
+      Use: return create_effect_with_trace(TaskCancelEffect(task=self), ...)
+      See SPEC-SCHED-001 §PyTask, ISSUE-CORE-502.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Cancel must be effectful per SPEC-SCHED-001"
+
   # ---------------------------------------------------------------------------
   # EFFECT SYSTEM PATTERNS
   # ---------------------------------------------------------------------------
