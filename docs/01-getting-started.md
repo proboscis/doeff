@@ -86,7 +86,7 @@ Let's break down what's happening:
 
 ### Programs are Lazy
 
-Programs don't execute until you call `run()` or `arun()`:
+Programs don't execute until you call `run()` or `async_run()`:
 
 ```python
 @do
@@ -162,7 +162,7 @@ result = run(
 
 ## Error Handling
 
-`run()` and `arun()` always return a `RuntimeResult`:
+`run()` and `async_run()` always return a `RuntimeResult`:
 
 ```python
 from doeff import run, default_handlers
@@ -314,7 +314,7 @@ from doeff import (
 
     # Execution functions
     run, async_run,
-    default_handlers(), default_handlers(),
+    default_handlers, default_async_handlers,
 )
 ```
 

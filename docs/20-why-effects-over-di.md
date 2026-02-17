@@ -436,6 +436,7 @@ This program uses three independent effect domains:
 from doeff_sim.handlers import deterministic_sim_handler
 from doeff_events.handlers import event_handler
 from doeff_time.handlers import async_time_handler
+from doeff import async_run, default_async_handlers
 
 # Deterministic simulation (instant, reproducible)
 result = run(
@@ -451,7 +452,7 @@ result = run(
 )
 
 # Same program, real-time execution (wall-clock, asyncio)
-result = await arun(
+result = await async_run(
     WithHandler(
         WithHandler(
             trading_strategy(),
@@ -459,6 +460,7 @@ result = await arun(
         ),
         async_time_handler(),             # asyncio.sleep, time.time()
     ),
+    handlers=default_async_handlers(),
 )
 ```
 
