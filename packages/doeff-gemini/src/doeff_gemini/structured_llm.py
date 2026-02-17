@@ -18,8 +18,8 @@ from doeff import (
     Ask,
     Await,
     EffectGenerator,
-    Safe,
     Tell,
+    Try,
     do,
     slog,
 )
@@ -81,10 +81,10 @@ def _retry_with_backoff(
     max_attempts: int,
     delay_strategy: Callable[[int, Exception | None], float],
 ) -> EffectGenerator[Any]:
-    """Manual retry implementation using Safe effect."""
+    """Manual retry implementation using Try effect."""
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
-        safe_result = yield Safe(program_factory())
+        safe_result = yield Try(program_factory())
         if safe_result.is_ok():
             return safe_result.value
         last_error = safe_result.error
@@ -109,9 +109,7 @@ def _make_gemini_json_fix_sllm(
     """Create an ``sllm_for_json_fix`` implementation bound to specific config."""
 
     @do
-    def _impl(
-        json_text: str, response_format: type[BaseModel]
-    ) -> EffectGenerator[Any]:
+    def _impl(json_text: str, response_format: type[BaseModel]) -> EffectGenerator[Any]:
         return (
             yield _gemini_json_fix(
                 model=model,
@@ -310,7 +308,7 @@ def process_structured_response(
     payload: Any | None = None
     format_name = f"{response_format.__module__}.{response_format.__qualname__}"
 
-    if parsed_candidate: # why dont we just return the parsed???
+    if parsed_candidate:  # why dont we just return the parsed???
         if isinstance(parsed_candidate, (list, tuple)):
             non_null = [item for item in parsed_candidate if item is not None]
             candidate = non_null[0] if non_null else None
@@ -495,9 +493,7 @@ def _gemini_json_fix(
         "text": prompt,
         "images": [],
         "generation_config": {
-            key: value
-            for key, value in generation_config_payload.items()
-            if value is not None
+            key: value for key, value in generation_config_payload.items() if value is not None
         },
     }
 
@@ -528,7 +524,7 @@ def _gemini_json_fix(
         )
         return response
 
-    safe_result = yield Safe(api_call_with_tracking())
+    safe_result = yield Try(api_call_with_tracking())
     if safe_result.is_err():
         exc = safe_result.error
         yield track_api_call(
@@ -583,7 +579,7 @@ def repair_structured_response(
 
     fallback_sllm = default_sllm or gemini_sllm_for_json_fix
 
-    safe_sllm = yield Safe(Ask("sllm_for_json_fix"))
+    safe_sllm = yield Try(Ask("sllm_for_json_fix"))
     sllm_for_json_fix = safe_sllm.value if safe_sllm.is_ok() else fallback_sllm
 
     if sllm_for_json_fix is fallback_sllm:
@@ -659,7 +655,9 @@ def process_image_edit_response(response: Any) -> EffectGenerator[GeminiImageEdi
                 inline_data = part.get("inline_data") or part.get("inlineData")
             else:
                 part_text = getattr(part, "text", None)
-                inline_data = getattr(part, "inline_data", None) or getattr(part, "inlineData", None)
+                inline_data = getattr(part, "inline_data", None) or getattr(
+                    part, "inlineData", None
+                )
 
             if part_text:
                 text_fragments.append(str(part_text))
@@ -673,7 +671,9 @@ def process_image_edit_response(response: Any) -> EffectGenerator[GeminiImageEdi
                 mime = inline_data.get("mime_type") or inline_data.get("mimeType")
             else:
                 data = getattr(inline_data, "data", None)
-                mime = getattr(inline_data, "mime_type", None) or getattr(inline_data, "mimeType", None)
+                mime = getattr(inline_data, "mime_type", None) or getattr(
+                    inline_data, "mimeType", None
+                )
 
             if isinstance(data, str):
                 try:
@@ -767,9 +767,7 @@ def structured_llm__gemini(
         "text": text,
         "images": images or [],
         "generation_config": {
-            key: value
-            for key, value in generation_config_payload.items()
-            if value is not None
+            key: value for key, value in generation_config_payload.items() if value is not None
         },
     }
 
@@ -785,6 +783,7 @@ def structured_llm__gemini(
     @do
     def make_api_call() -> EffectGenerator[Any]:
         attempt_start_time = time.time()
+
         @do
         def api_call_with_tracking() -> EffectGenerator[Any]:
             response = yield Await(
@@ -806,7 +805,7 @@ def structured_llm__gemini(
             )
             return response
 
-        safe_result = yield Safe(api_call_with_tracking())
+        safe_result = yield Try(api_call_with_tracking())
         if safe_result.is_err():
             exc = safe_result.error
             yield track_api_call(
@@ -823,7 +822,7 @@ def structured_llm__gemini(
 
         return safe_result.value
 
-    safe_retry_result = yield Safe(
+    safe_retry_result = yield Try(
         _retry_with_backoff(
             make_api_call,
             max_attempts=max_retries,
@@ -845,7 +844,7 @@ def structured_llm__gemini(
     response = safe_retry_result.value
 
     if response_format is not None and issubclass(response_format, BaseModel):
-        safe_structured = yield Safe(process_structured_response(response, response_format))
+        safe_structured = yield Try(process_structured_response(response, response_format))
         if safe_structured.is_err():
             exc = safe_structured.error
             if isinstance(exc, GeminiStructuredOutputError):
@@ -900,8 +899,9 @@ def edit_image__gemini(
     response_modalities: list[str] | None = None,
     generation_config_overrides: dict[str, Any] | None = None,
     max_retries: int = 3,
-    aspect_ratio: Literal["1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"] | None = None,
-    image_size: Literal["1K","2K","4K"] | None = None,
+    aspect_ratio: Literal["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+    | None = None,
+    image_size: Literal["1K", "2K", "4K"] | None = None,
 ) -> EffectGenerator[GeminiImageEditResult]:
     """Generate or edit an image using Gemini multimodal models."""
 
@@ -920,6 +920,7 @@ def edit_image__gemini(
     image_config = None
     if aspect_ratio or image_size:
         from google.genai import types
+
         image_config = types.ImageConfig(
             aspect_ratio=aspect_ratio,
             image_size=image_size,
@@ -967,9 +968,7 @@ def edit_image__gemini(
         "text": prompt,
         "images": images or [],
         "generation_config": {
-            key: value
-            for key, value in generation_config_payload.items()
-            if value is not None
+            key: value for key, value in generation_config_payload.items() if value is not None
         },
     }
 
@@ -1007,7 +1006,7 @@ def edit_image__gemini(
             )
             return response
 
-        safe_result = yield Safe(api_call_with_tracking())
+        safe_result = yield Try(api_call_with_tracking())
         if safe_result.is_err():
             exc = safe_result.error
             yield track_api_call(
@@ -1024,7 +1023,7 @@ def edit_image__gemini(
 
         return safe_result.value
 
-    safe_retry_result = yield Safe(
+    safe_retry_result = yield Try(
         _retry_with_backoff(
             make_api_call,
             max_attempts=max_retries,

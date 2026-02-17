@@ -12,7 +12,8 @@ Run:
 
 from doeff_preset import preset_handlers
 
-from doeff import do, run_with_handler_map, slog
+from doeff import do, slog
+from doeff.rust_vm import run_with_handler_map
 
 
 @do

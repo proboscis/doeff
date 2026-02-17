@@ -10,7 +10,8 @@ from doeff_openai.effects import StructuredOutput
 from doeff_openai.handlers import production_handlers
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, async_run_with_handler_map, do
+from doeff import EffectGenerator, do
+from doeff.rust_vm import async_run_with_handler_map
 
 pytestmark = pytest.mark.e2e
 

@@ -12,8 +12,9 @@ from typing import TypeVar, cast
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff import Effect, Program, RunResult, async_run_with_handler_map
+from doeff import Effect, Program, RunResult
 from doeff.effects import AskEffect, GraphAnnotateEffect, GraphStepEffect, Intercept, Pure
+from doeff.rust_vm import async_run_with_handler_map
 from doeff_pinjected.effects import PinjectedResolve
 from doeff_pinjected.handlers import production_handlers
 
