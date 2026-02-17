@@ -1,4 +1,4 @@
-# 17. Semaphore Effects
+# 21. Semaphore Effects
 
 Semaphores provide cooperative concurrency control in doeff. They let you cap concurrent work,
 protect critical sections, and coordinate access to finite resources without blocking OS threads.
@@ -9,6 +9,9 @@ protect critical sections, and coordinate access to finite resources without blo
 - [Effect Definitions](#effect-definitions)
 - [Usage Patterns](#usage-patterns)
 - [FIFO Fairness](#fifo-fairness)
+- [Cancel Interaction](#cancel-interaction)
+- [Permit Leak Warning](#permit-leak-warning)
+- [Lifecycle (No Explicit Destroy)](#lifecycle-no-explicit-destroy)
 - [Scheduler Integration](#scheduler-integration)
 
 ## Overview / Motivation
@@ -127,6 +130,30 @@ Semaphore waiters are served in FIFO order.
 - A task that waits earlier is resumed earlier.
 - New acquirers do not bypass queued waiters.
 - This prevents starvation under sustained contention.
+
+## Cancel Interaction
+
+If a task is blocked in `AcquireSemaphore(sem)` and that task is cancelled:
+
+- The scheduler removes that task from the semaphore wait queue.
+- The task resumes with `TaskCancelledError`.
+- No permit is consumed by the cancelled task.
+
+This keeps permit accounting correct even when cancellation races with contention.
+
+## Permit Leak Warning
+
+Semaphores do not track permit ownership. If a task acquires a permit and then fails or is
+cancelled before `ReleaseSemaphore`, that permit is leaked.
+
+- Leaked permits reduce effective capacity and can stall future acquirers.
+- Always guard critical sections with `try/finally` so `ReleaseSemaphore` runs on both success
+  and failure/cancellation paths.
+
+## Lifecycle (No Explicit Destroy)
+
+There is no explicit semaphore destroy API. Semaphore state is dropped when the handle is no
+longer referenced and garbage collection reclaims it.
 
 ## Scheduler Integration
 
