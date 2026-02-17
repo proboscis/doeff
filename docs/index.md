@@ -24,7 +24,7 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 7. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
 8. **[Graph Tracking](08-graph-tracking.md)** - Execution tracking and visualization
 9. **[Advanced Effects](09-advanced-effects.md)** - Gather, Atomic operations
-10. **[Semaphore Effects](17-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
+10. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
 
 ### Integration & Advanced Topics
 
