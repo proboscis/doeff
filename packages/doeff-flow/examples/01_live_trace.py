@@ -93,6 +93,7 @@ def example_trace_observer():
     """Run workflow with trace_observer context manager."""
     from doeff_flow.trace import write_terminal_trace
 
+    from doeff import default_handlers
     from doeff import run as run_sync
 
     print("=== Example 2: Using trace_observer ===")
@@ -101,7 +102,7 @@ def example_trace_observer():
     # Uses XDG default trace directory
     with trace_observer("example-wf-002") as on_step:
         _ = on_step
-        result = run_sync(main_workflow())
+        result = run_sync(main_workflow(), handlers=default_handlers())
         write_terminal_trace("example-wf-002", None, result)
 
     print(f"\nResult: {result.value}")

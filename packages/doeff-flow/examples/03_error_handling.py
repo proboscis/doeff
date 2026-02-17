@@ -173,7 +173,7 @@ def main():
         workflow_id="error-demo",
     )
 
-    if result1.is_ok:
+    if result1.is_ok():
         print(f"\nResult: {result1.value['successful']} successful, "
               f"{result1.value['failed']} failed")
     else:
@@ -186,10 +186,12 @@ def main():
         workflow_id="failing-demo",
     )
 
-    if result2.is_ok:
+    if result2.is_ok():
         print(f"\nResult: {result2.value}")
     else:
-        print(f"\nWorkflow failed (expected): {type(result2.error).__name__}")
+        error = result2.error
+        print(f"\nWorkflow failed (expected): {type(error).__name__}: {error}")
+        print(f"Safe failure inspection via result.error: {error!r}")
 
     # Show how to inspect traces
     print("\n" + "=" * 60)
