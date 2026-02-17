@@ -159,7 +159,7 @@ main()
 |----------|---------|---------|
 | **Reader** | Ask, Local | [03](03-basic-effects.md#reader-effects) |
 | **State** | Get, Put, Modify, AtomicGet, AtomicUpdate | [03](03-basic-effects.md#state-effects), [09](09-advanced-effects.md#atomic-effects) |
-| **Writer** | Log, Tell, Listen, StructuredLog | [03](03-basic-effects.md#writer-effects) |
+| **Writer** | Tell, Listen, StructuredLog, slog | [03](03-basic-effects.md#writer-effects) |
 | **Future** | Await, Gather | [04](04-async-effects.md) |
 | **Result** | Safe | [05](05-error-handling.md) |
 | **IO** | IO | [06](06-io-effects.md) |
@@ -176,7 +176,7 @@ main()
 def application():
     config = yield Ask("config")
     yield Put("status", "running")
-    yield Log(f"Started with config: {config}")
+    yield Tell(f"Started with config: {config}")
     result = yield do_work()
     return result
 ```
@@ -190,7 +190,7 @@ def robust_fetch(url):
     if result.is_ok():
         return result.value
     else:
-        yield Log(f"Fetch failed: {result.error}")
+        yield Tell(f"Fetch failed: {result.error}")
         return None
 ```
 
