@@ -2768,34 +2768,39 @@ impl VM {
   `started=false`, installs handlers (outermost first) and starts the program, returning
   to the current handler when it finishes; `value` is ignored.
 - **Implicit Handler Return**: if a handler program (Python/Rust) returns, the VM
-  treats it as handler return. The returned value becomes the result of
-  `yield Delegate(effect)` for inner handlers; for the root handler it abandons the
-  callsite (marks dispatch completed) and returns to the prompt boundary.
+  treats it as handler return. For the root handler it abandons the callsite
+  (marks dispatch completed) and returns to the prompt boundary. For inner
+  handlers, return flows to the handler's caller segment; it does not flow back
+  to a handler that already executed terminal `Delegate(effect)`.
 - **Single Resume per Dispatch**: The callsite continuation (`k_user`) is one-shot.
-  Exactly one of Resume/Transfer/Return may consume it in a dispatch. After
-  `yield Delegate(effect)` returns, the handler must return (not Resume). Any
-  double-resume or resume-after-delegate is a runtime error.
+  Exactly one of Resume/Transfer/TransferThrow/Return may consume it in a
+  dispatch. `yield Delegate(effect)` does not return; Delegate is terminal and
+  transfers control to the outer handler. Any double-resume or
+  resume-after-delegate is a runtime error.
 - **No Multi-shot**: Multi-shot continuations are not supported. All continuations
   are one-shot and cannot be resumed more than once.
 
-**Delegate Data Flow (Koka/OCaml semantics)**:
+**Delegate Data Flow (Tail-Call Passthrough)**:
 
 ```
-User --perform E--> H1
-H1: z = yield Delegate(E)
+Delegate is tail-call. The delegating handler gives up control entirely.
+k_user passes to the outer handler. The delegating handler does NOT
+receive a value back and cannot Resume.
+
+User --perform E--> H1 (inner)
+H1: yield Delegate(E)           <- H1 is done, frames cleared
       |
       v
-     H2 handles E
-     H2: u = yield Resume(k_user, v)
-     User: r = ...; return r
-     H2: u == r; return h2
-H1: z == h2; return h1
+     H2 (outer) handles E
+     H2: yield Resume(k_user, v)  <- resumes original callsite
+     User: continues with v
+     H2: return h2                <- flows to H2 caller (not back to H1)
 ```
 
 Notes:
 - Only one handler in the chain resumes the callsite (`k_user`).
-- `yield Delegate(E)` returns the outer handler's return value (`h2`).
-- After Delegate returns, the handler must return (no Resume).
+- `yield Delegate(E)` is terminal and does not return to the delegating handler.
+- If no outer handler matches, dispatch fails with a runtime error.
 
 **Delegate/Resume Pseudocode**:
 
@@ -2810,19 +2815,50 @@ def outer_handler(effect, k_user):
     if isinstance(effect, SomeEffect):
         user_ret = yield Resume(k_user, 10)
         return user_ret + 5
-    return (yield Delegate(effect))
+    yield Delegate(effect)
 
 @do
 def inner_handler(effect, k_user):
-    outer_ret = yield Delegate(effect)
-    return outer_ret + 1
+    yield Delegate(effect)
+    # UNREACHABLE: Delegate is terminal.
 
-# INVALID: Resume after Delegate (double-resume)
+# Delegate is terminal — code after yield Delegate() never executes.
+# In Python handlers, yield Delegate() is always the last statement.
 @do
-def bad_handler(effect, k_user):
-    outer_ret = yield Delegate(effect)
-    return (yield Resume(k_user, outer_ret))  # runtime error
+def passthrough_handler(effect, k_user):
+    yield Delegate(effect)
+    # This line is UNREACHABLE — Delegate does not return.
 ```
+
+## Perform from Handler Programs
+
+When a Rust handler program yields `Perform(effect)`, the VM creates a new
+dispatch. The handler's continuation becomes `k_user` in the new dispatch.
+The handler retains the original callsite continuation and must eventually
+resume it (or transfer-throw).
+
+Flow:
+
+```
+User -> effect -> dispatch1 (k_user1 = user continuation)
+  -> HandlerA.start(effect, k_user1)
+    -> saves k_user1
+    -> Perform(effect) -> dispatch2 (k_user2 = HandlerA continuation)
+      -> HandlerB.start(effect, k_user2)
+        -> Resume(k_user2, value)        <- resumes back to HandlerA
+    -> HandlerA.resume(value)
+      -> Resume(k_user1, processed_value) <- resumes back to user
+```
+
+Key properties:
+- `Perform` is non-terminal: the handler frame is re-pushed and `resume()` is called.
+- The handler must eventually `Resume(k_user1, value)` or `TransferThrow(k_user1, exc)`.
+- If a handler performs but never resumes/transfers `k_user1`, the callsite is stuck.
+- This is the canonical mechanism for handler-to-handler consultation.
+
+Equivalent patterns:
+- Koka: `val x = outer/op(); resume(f(x))`
+- OCaml 5: `let x = perform Op in continue k (f x)`
 
 ---
 
@@ -3113,7 +3149,7 @@ def sync_await_handler(effect, k):
         promise = yield CreateExternalPromise()
         thread_pool.submit(run_and_complete, effect.awaitable, promise)
         return (yield Wait(promise.future))
-    return (yield Delegate(effect))
+    yield Delegate(effect)
 ```
 
 ```python
@@ -3131,7 +3167,7 @@ def async_await_handler(effect, k):
             action=lambda: asyncio.create_task(fire_task())
         )
         return (yield Wait(promise.future))
-    return (yield Delegate(effect))
+    yield Delegate(effect)
 ```
 
 `async_await_handler` must only be used with `async_run`;
@@ -3534,8 +3570,8 @@ pub enum DoCtrl {
         exception: PyException,
     },
     
-    /// Delegate(effect) - Delegate to outer handler.
-    /// Yield result is the outer handler's return value.
+    /// Delegate(effect) - Tail-call delegate to outer handler.
+    /// Terminal: current handler frames are cleared; no value returns here.
     Delegate {
         effect: Effect,
     },
@@ -4510,8 +4546,8 @@ ContId is checked in consumed_cont_ids before resume.
 Double-resume returns Error, not panic.
 
 Within a single dispatch, the callsite continuation (k_user) must be consumed
-exactly once (Resume/Transfer/Return). Any attempt to resume again (including
-after Delegate returns) is a runtime error.
+exactly once (Resume/Transfer/TransferThrow/Return). Any attempt to resume again (including
+after yielding terminal Delegate) is a runtime error.
 
 Multi-shot continuations are not supported. All continuations are one-shot only.
 ```
@@ -4721,8 +4757,8 @@ Key differences and decisions in 008:
   busy handlers; nested dispatch does not consider older frames.
 - `Delegate` is the only forwarding primitive; yielding a raw effect starts a new
   dispatch (does not forward).
-- `yield Delegate(effect)` returns the **outer handler's return value**; after
-  Delegate returns, the handler must return (no Resume).
+- `yield Delegate(effect)` is terminal tail-call forwarding; it does not return
+  to the delegating handler.
 - Handler return is implicit; there is no `Return` DoCtrl.
 - Program input is **ProgramBase only** (KleisliProgramCall or EffectBase); raw
   generators are rejected except via `start_with_generator()`.
