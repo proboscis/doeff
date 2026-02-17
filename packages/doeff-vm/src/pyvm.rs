@@ -78,6 +78,7 @@ use crate::handler::{
     RustProgramHandlerRef, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
+use crate::py_env_key::PyEnvKey;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerHandler;
 use crate::segment::Segment;
@@ -109,10 +110,7 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
 }
 
 fn attach_doeff_traceback_best_effort(py: Python<'_>, exc_obj: &Bound<'_, PyAny>) {
-    if !exc_obj
-        .hasattr("__doeff_traceback_data__")
-        .unwrap_or(false)
-    {
+    if !exc_obj.hasattr("__doeff_traceback_data__").unwrap_or(false) {
         return;
     }
     let Ok(module) = py.import("doeff.traceback") else {
@@ -368,18 +366,19 @@ impl PyVM {
         Ok(())
     }
 
-    pub fn put_env(&mut self, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    pub fn put_env(&mut self, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let env_key = PyEnvKey::from_bound(key)?;
         self.vm
             .rust_store
             .env
-            .insert(key, Value::from_pyobject(value));
+            .insert(env_key, Value::from_pyobject(value));
         Ok(())
     }
 
     pub fn env_items(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = pyo3::types::PyDict::new(py);
         for (k, v) in &self.vm.rust_store.env {
-            dict.set_item(k, v.to_pyobject(py)?)?;
+            dict.set_item(k.clone_object(py), v.to_pyobject(py)?)?;
         }
         Ok(dict.into())
     }
@@ -1243,7 +1242,9 @@ fn metadata_attr_as_string(meta: &Bound<'_, PyAny>, key: &str) -> Option<String>
             .flatten()
             .and_then(|v| v.extract::<String>().ok());
     }
-    meta.getattr(key).ok().and_then(|v| v.extract::<String>().ok())
+    meta.getattr(key)
+        .ok()
+        .and_then(|v| v.extract::<String>().ok())
 }
 
 fn metadata_attr_as_u32(meta: &Bound<'_, PyAny>, key: &str) -> Option<u32> {
@@ -1259,15 +1260,21 @@ fn metadata_attr_as_u32(meta: &Bound<'_, PyAny>, key: &str) -> Option<u32> {
 
 fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<PyShared> {
     if let Ok(dict) = meta.cast::<PyDict>() {
-        return dict
-            .get_item(key)
-            .ok()
-            .flatten()
-            .and_then(|v| if v.is_none() { None } else { Some(PyShared::new(v.unbind())) });
+        return dict.get_item(key).ok().flatten().and_then(|v| {
+            if v.is_none() {
+                None
+            } else {
+                Some(PyShared::new(v.unbind()))
+            }
+        });
     }
-    meta.getattr(key)
-        .ok()
-        .and_then(|v| if v.is_none() { None } else { Some(PyShared::new(v.unbind())) })
+    meta.getattr(key).ok().and_then(|v| {
+        if v.is_none() {
+            None
+        } else {
+            Some(PyShared::new(v.unbind()))
+        }
+    })
 }
 
 fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> CallMetadata {
@@ -2658,7 +2665,7 @@ fn run(
     // Seed env
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
-            let k: String = key.extract()?;
+            let k = PyEnvKey::from_bound(&key)?;
             vm.vm.rust_store.env.insert(k, Value::from_pyobject(&value));
         }
     }
@@ -2719,7 +2726,7 @@ fn async_run<'py>(
 
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
-            let k: String = key.extract()?;
+            let k = PyEnvKey::from_bound(&key)?;
             vm.vm.rust_store.env.insert(k, Value::from_pyobject(&value));
         }
     }
