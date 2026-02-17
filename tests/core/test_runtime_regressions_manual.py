@@ -182,7 +182,7 @@ def test_lazy_ask_local_override_is_enabled_and_cached() -> None:
     result = run(program(), handlers=default_handlers(), env={"service": outer_service()})
     assert result.is_ok()
     assert result.value == ("outer", ("inner", "inner"), "outer")
-    assert calls["outer"] == 2  # re-evaluated after Local exit (nuclear cache invalidation)
+    assert calls["outer"] == 1  # preserved global cache across Local exit (shadow cache)
     assert calls["inner"] == 1
 
 
