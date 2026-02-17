@@ -39,7 +39,7 @@ from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
 Creates and returns a `Semaphore` handle with `permits` available permits.
 
 - `permits` must be an integer `>= 1`.
-- `CreateSemaphore(0)` raises `ValueError`.
+- `CreateSemaphore(0)` raises `ValueError("permits must be >= 1")`.
 
 ```python
 from doeff import CreateSemaphore, do
@@ -69,8 +69,11 @@ def enter(sem):
 
 Releases one permit back to `sem`.
 
-- If waiters exist, the released permit is handed to the oldest waiter (FIFO).
-- Releasing more times than acquired raises `RuntimeError`.
+- If waiters exist, the permit transfers directly to the oldest blocked waiter (FIFO), so
+  `available_permits` remains `0`.
+- Direct transfer prevents permit stealing by third tasks between release and waiter wakeup.
+- Releasing more times than acquired raises
+  `RuntimeError("semaphore released too many times")`.
 
 ```python
 from doeff import ReleaseSemaphore, do
@@ -129,6 +132,8 @@ Semaphore waiters are served in FIFO order.
 
 - A task that waits earlier is resumed earlier.
 - New acquirers do not bypass queued waiters.
+- When waiters exist, releases use direct transfer instead of incrementing `available_permits`,
+  so third tasks cannot steal a permit.
 - This prevents starvation under sustained contention.
 
 ## Cancel Interaction
@@ -163,6 +168,7 @@ Semaphore effects are integrated with the scheduler's cooperative suspension mod
 2. If unavailable, the scheduler parks the task and records it in the semaphore wait queue.
 3. The parked task yields execution; other runnable tasks continue.
 4. `ReleaseSemaphore` resumes the next waiter in FIFO order (or returns a permit to the semaphore
-   if no waiter exists).
+   if no waiter exists). When a waiter exists, the permit is transferred directly to that waiter
+   and `available_permits` stays `0`.
 
 This design provides backpressure and fairness without thread blocking or busy waiting.
