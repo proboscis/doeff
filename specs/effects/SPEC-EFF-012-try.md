@@ -1,10 +1,10 @@
-# SPEC-EFF-012: Safe (Error-Tolerant Program Wrapper)
+# SPEC-EFF-012: Try (Error-Tolerant Program Wrapper)
 
 ## Status: Implemented
 
 ## Summary
 
-`Safe` is a program combinator that wraps a sub-program to catch exceptions
+`Try` is a program combinator that wraps a sub-program to catch exceptions
 and return `Result[T]` (`Ok(value)` or `Err(exception)`) instead of raising.
 It enables error-tolerant composition, particularly with `Gather` where
 fail-fast behavior would otherwise discard partial results.
@@ -12,10 +12,10 @@ fail-fast behavior would otherwise discard partial results.
 ## Definition
 
 ```python
-def Safe(sub_program: ProgramLike) -> Effect
+def Try(sub_program: ProgramLike) -> Effect
 ```
 
-`Safe` takes a `ProgramLike` (any `@do` generator, `KleisliProgramCall`, or
+`Try` takes a `ProgramLike` (any `@do` generator, `KleisliProgramCall`, or
 bare effect) and returns a new program that:
 - On success: returns `Ok(value)`
 - On exception: returns `Err(exception)`
@@ -39,7 +39,7 @@ Both are importable from `doeff.types`.
 
 ## Implementation
 
-`Safe` is a **Python-level program combinator**, not a VM-level effect.
+`Try` is a **Python-level program combinator**, not a VM-level effect.
 It wraps the sub-program's execution kernel to catch exceptions at the
 generator boundary:
 
@@ -59,14 +59,14 @@ def _wrap_kernel_as_result(execution_kernel):
     return wrapped_kernel
 ```
 
-No handler is needed — `Safe` operates purely at the program level by
+No handler is needed — `Try` operates purely at the program level by
 intercepting the generator protocol.
 
 ## Usage Patterns
 
 ### With Gather (partial results)
 
-Without `Safe`, `Gather` fails on the first error (fail-fast):
+Without `Try`, `Gather` fails on the first error (fail-fast):
 
 ```python
 @do
@@ -76,13 +76,13 @@ def fragile():
     results = yield Gather(t1, t2)  # raises on first failure
 ```
 
-With `Safe`, collect all results:
+With `Try`, collect all results:
 
 ```python
 @do
 def resilient():
-    t1 = yield Spawn(Safe(may_fail_1()))
-    t2 = yield Spawn(Safe(may_fail_2()))
+    t1 = yield Spawn(Try(may_fail_1()))
+    t2 = yield Spawn(Try(may_fail_2()))
     results = yield Gather(t1, t2)
     # results: [Ok(value1), Err(error2)]
     for r in results:
@@ -96,8 +96,8 @@ def resilient():
 ```python
 @do
 def race_safe():
-    t1 = yield Spawn(Safe(fast_but_flaky()))
-    t2 = yield Spawn(Safe(slow_but_reliable()))
+    t1 = yield Spawn(Try(fast_but_flaky()))
+    t2 = yield Spawn(Try(slow_but_reliable()))
     result = yield Race(t1, t2)
     # result.value is Ok(...) or Err(...)
 ```
@@ -107,15 +107,15 @@ def race_safe():
 ```python
 @do
 def try_something():
-    result = yield Safe(risky_operation())
+    result = yield Try(risky_operation())
     match result:
         case Ok(v): return v
         case Err(e): return default_value
 ```
 
-### Nested Safe
+### Nested Try
 
-`Safe(Safe(program))` is valid. The outer `Safe` catches any error from the
+`Try(Try(program))` is valid. The outer `Try` catches any error from the
 inner, which itself always returns `Ok` or `Err`. So the outer always
 returns `Ok(Ok(value))` or `Ok(Err(error))` — never `Err(...)`.
 
@@ -125,17 +125,17 @@ returns `Ok(Ok(value))` or `Ok(Err(error))` — never `Err(...)`.
   normally. Only the final return/raise is wrapped.
 - **No handler required**: Works with any handler stack.
 - **Composable**: Can be nested, combined with Spawn/Gather/Race.
-- **Idempotent on success**: `Safe(Safe(program))` on a successful program
+- **Idempotent on success**: `Try(Try(program))` on a successful program
   returns `Ok(Ok(value))`.
 
 ## Related Specs
 
 | Spec | Relationship |
 |------|-------------|
-| SPEC-SCHED-001 | Gather is fail-fast; `Safe` is the escape hatch for partial results |
-| SPEC-EFF-004 | Control effects (Local, Intercept) compose with Safe |
-| SPEC-EFF-013 | Ok/Err types returned by Safe. Same types used by TaskCompleted and RunResult. |
+| SPEC-SCHED-001 | Gather is fail-fast; `Try` is the escape hatch for partial results |
+| SPEC-EFF-004 | Control effects (Local, Intercept) compose with Try |
+| SPEC-EFF-013 | Ok/Err types returned by Try. Same types used by TaskCompleted and RunResult. |
 
 ## Location
 
-`doeff/effects/result.py` — exports `Safe`, `safe`, `ResultSafeEffect`
+`doeff/effects/result.py` — exports `Try`, `try_`, `ResultSafeEffect`
