@@ -28,7 +28,6 @@ T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
 
 _WAITABLE_TYPES: tuple[str, ...] = ("Task", "Promise", "ExternalPromise")
-_cancelled_task_ids: set[int] = set()
 
 
 @runtime_checkable
@@ -77,6 +76,7 @@ class TaskCancelledError(Exception):
 
 
 SpawnEffect = doeff_vm.SpawnEffect
+TaskCancelEffect = doeff_vm.PyCancelEffect
 
 
 @dataclass(frozen=True, eq=False)
@@ -93,17 +93,9 @@ class Task(Generic[T]):
     def cancel(self):
         """Request cancellation of the task.
 
-        Cancellation is modeled at the Python task-handle layer for scheduler
-        interop: subsequent Wait/Gather/Race calls on the cancelled task raise
-        TaskCancelledError.
+        Cancellation is a scheduler operation and must be dispatched as an effect.
         """
-        task_id = task_id_of(self)
-        if task_id is not None:
-            _cancelled_task_ids.add(task_id)
-
-        from doeff.program import Program
-
-        return Program.pure(task_id is not None)
+        return create_effect_with_trace(TaskCancelEffect(task=self), skip_frames=3)
 
     def is_done(self) -> Effect:
         """Check if the task has completed (success, error, or cancelled).
@@ -114,17 +106,6 @@ class Task(Generic[T]):
             Effect that yields True if the task is done, False otherwise.
         """
         return create_effect_with_trace(TaskIsDoneEffect(task=self), skip_frames=3)
-
-
-@dataclass(frozen=True)
-class TaskCancelEffect(EffectBase):
-    """Request cancellation of a spawned Task."""
-
-    task: Task[Any]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.task, Task):
-            raise TypeError(f"task must be Task, got {type(self.task).__name__}")
 
 
 @dataclass(frozen=True)
@@ -203,11 +184,6 @@ def coerce_promise_handle(value: Any) -> Promise[Any]:
     if _is_handle_dict(value) and value.get("type") in {"Promise", "ExternalPromise"}:
         return Promise(_promise_handle=value)
     raise TypeError(f"expected Promise handle, got {type(value).__name__}")
-
-
-def is_task_cancelled(value: Any) -> bool:
-    task_id = task_id_of(value)
-    return task_id is not None and task_id in _cancelled_task_ids
 
 
 def normalize_waitable(value: Any) -> Waitable[Any]:
@@ -324,7 +300,6 @@ __all__ = [
     "Waitable",
     "coerce_promise_handle",
     "coerce_task_handle",
-    "is_task_cancelled",
     "promise_id_of",
     "spawn",
     "task_id_of",
