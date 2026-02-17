@@ -1,11 +1,7 @@
 # Kleisli Arrows
 
-`@do` produces a `KleisliProgram[P, T]`. In the current model
-(`SPEC-KPC-001`, `SPEC-TYPES-001` Rev 12), calling that `KleisliProgram` is a
-pure call-time macro expansion that emits a `Call` DoCtrl directly.
-
-KPC is not an effect. There is no `Perform(KPC(...))`, no KPC handler dispatch,
-and `default_handlers()` does not include a `kpc` handler.
+`@do` produces a `KleisliProgram[P, T]`. Calling that `KleisliProgram` performs
+pure call-time macro expansion and emits a `Call` DoCtrl directly.
 
 ## Table of Contents
 
@@ -27,7 +23,7 @@ def add_one(x: int):
     return x + 1
 
 call_expr = add_one(41)
-# call_expr is a Call DoCtrl (Program-shaped DoExpr), not an Effect.
+# call_expr is a Call DoCtrl (Program-shaped DoExpr).
 ```
 
 Conceptually:
@@ -201,17 +197,18 @@ say_hello = greet.partial("Hello")
 - Prefer explicit annotations for parameters that should not auto-unwrap.
 - Use `Program[...]`/`Effect[...]` annotations when you need raw objects in the
   function body.
-- Treat `KleisliProgram.__call__` as macro expansion, not runtime dispatch.
-- Remember that no KPC handler exists in the macro model.
+- Treat `KleisliProgram.__call__` as macro expansion that constructs a DoExpr
+  tree for VM evaluation.
+- Keep reasoning at the DoExpr level: each call produces a `Call` node.
 
 ## Summary
 
 | Topic | Macro Model |
 | --- | --- |
-| KPC identity | Call-time macro, not Effect |
+| KPC identity | Call-time macro |
 | `__call__` result | `Call` DoCtrl |
 | Resolution path | Pure expansion + VM eval |
-| Handler dependency | No KPC handler |
+| Handler dependency | `Call` executes as regular DoExpr |
 | Argument policy | Annotation-aware `should_unwrap` |
 | Metadata | Populated at call time |
 
