@@ -2,13 +2,61 @@
 
 use std::collections::HashMap;
 
+#[cfg(not(test))]
+use pyo3::Python;
+#[cfg(not(test))]
+use pyo3::types::PyString;
+
+use crate::py_key::HashedPyKey;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub struct RustStore {
     pub state: HashMap<String, Value>,
-    pub env: HashMap<String, Value>,
+    pub env: HashMap<HashedPyKey, Value>,
     pub log: Vec<Value>,
+}
+
+impl From<&HashedPyKey> for HashedPyKey {
+    fn from(value: &HashedPyKey) -> Self {
+        value.clone()
+    }
+}
+
+#[cfg(test)]
+impl From<&str> for HashedPyKey {
+    fn from(value: &str) -> Self {
+        HashedPyKey::from_test_string(value)
+    }
+}
+
+#[cfg(test)]
+impl From<&String> for HashedPyKey {
+    fn from(value: &String) -> Self {
+        HashedPyKey::from_test_string(value)
+    }
+}
+
+#[cfg(test)]
+impl From<String> for HashedPyKey {
+    fn from(value: String) -> Self {
+        HashedPyKey::from_test_string(value)
+    }
+}
+
+fn string_key_to_hashed(key: &str) -> HashedPyKey {
+    #[cfg(test)]
+    {
+        return HashedPyKey::from_test_string(key);
+    }
+
+    #[cfg(not(test))]
+    {
+        Python::attach(|py| {
+            let py_key = PyString::new(py, key).into_any();
+            HashedPyKey::from_bound(&py_key).expect("Python string keys must be hashable")
+        })
+    }
 }
 
 impl RustStore {
@@ -28,8 +76,20 @@ impl RustStore {
         self.state.insert(key, value);
     }
 
-    pub fn ask(&self, key: &str) -> Option<&Value> {
-        self.env.get(key)
+    pub fn ask(&self, key: impl Into<HashedPyKey>) -> Option<&Value> {
+        let key = key.into();
+        self.env.get(&key)
+    }
+
+    #[cfg(test)]
+    pub fn ask_str(&self, key: &str) -> Option<&Value> {
+        self.env.get(&HashedPyKey::from_test_string(key))
+    }
+
+    #[cfg(test)]
+    pub fn set_env_str(&mut self, key: impl Into<String>, value: Value) {
+        self.env
+            .insert(HashedPyKey::from_test_string(key), value);
     }
 
     pub fn tell(&mut self, message: Value) {
@@ -52,17 +112,22 @@ impl RustStore {
     where
         F: FnOnce(&mut Self) -> R,
     {
-        let old: HashMap<String, Value> = bindings
+        let hashed_bindings: HashMap<HashedPyKey, Value> = bindings
+            .into_iter()
+            .map(|(k, v)| (string_key_to_hashed(&k), v))
+            .collect();
+
+        let old: HashMap<HashedPyKey, Value> = hashed_bindings
             .keys()
             .filter_map(|k| self.env.get(k).map(|v| (k.clone(), v.clone())))
             .collect();
-        let new_keys: Vec<String> = bindings
+        let new_keys: Vec<HashedPyKey> = hashed_bindings
             .keys()
             .filter(|k| !old.contains_key(*k))
             .cloned()
             .collect();
 
-        for (k, v) in bindings {
+        for (k, v) in hashed_bindings {
             self.env.insert(k, v);
         }
 
