@@ -6,6 +6,7 @@ This chapter covers error handling in doeff using `RunResult`, the `Safe` effect
 
 - [RunResult Overview](#runresult-overview)
 - [Ok/Err Result Values](#okerr-result-values)
+- [Result Methods](#result-methods)
 - [Pattern Matching](#pattern-matching)
 - [Safe Effect](#safe-effect)
 - [Captured Traceback on Err](#captured-traceback-on-err)
@@ -13,7 +14,7 @@ This chapter covers error handling in doeff using `RunResult`, the `Safe` effect
 
 ## RunResult Overview
 
-`run()` and `arun()` return a `RunResult[T]`.
+`run()` and `async_run()` return a `RunResult[T]`.
 
 ```python
 from doeff import Ask, Tell, default_handlers, do, run
@@ -48,7 +49,8 @@ Use the canonical import path:
 from doeff import Ok, Err
 ```
 
-`Ok` and `Err` values returned by doeff runtime surfaces (`RunResult.result`, `Safe(...)`, task completion payloads) are Rust-backed VM result objects.
+`Ok` and `Err` values returned by doeff runtime surfaces (`RunResult.result`, `Safe(...)`, task
+completion payloads) are a unified Rust-backed Result implementation.
 
 ### Fields
 
@@ -60,6 +62,14 @@ from doeff import Ok, Err
 
 - `bool(ok_value)` is `True`
 - `bool(err_value)` is `False`
+
+## Result Methods
+
+Use the Result API methods for transformations and fallbacks:
+
+- `value_or(default)`: get the success value or a fallback
+- `map(f)`: transform only the `Ok` value
+- `flat_map(f)`: chain functions that already return `Ok`/`Err`
 
 ## Pattern Matching
 
