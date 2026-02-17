@@ -10,8 +10,9 @@ This chapter covers async integration and scheduler primitives for cooperative c
 - [Waitables and Handles](#waitables-and-handles)
 - [Task Lifecycle and Scheduling Model](#task-lifecycle-and-scheduling-model)
 - [Gather Fail-Fast Semantics](#gather-fail-fast-semantics)
-- [Promise Synchronization Patterns](#promise-synchronization-patterns)
 - [Race Semantics](#race-semantics)
+- [Cancel and TaskCancelledError](#cancel-and-taskcancellederror)
+- [Promise vs ExternalPromise](#promise-vs-externalpromise)
 - [Common Mistakes](#common-mistakes)
 - [Quick Reference](#quick-reference)
 
@@ -52,9 +53,17 @@ Both Await handlers bridge completion through `CreateExternalPromise` plus `Wait
 - `sync_await_handler` (`run` preset):
   - submits the awaitable to a background asyncio loop thread
   - waits on `promise.future` via `Wait`
+  - spawned Await work is sequential (no overlap)
 - `async_await_handler` (`async_run` preset):
-  - kicks off awaitable submission through async runtime path
+  - schedules awaitable submission through the async runtime path
   - waits on `promise.future` via `Wait`
+  - spawned Await work can overlap
+
+### Await timing note
+
+`Await` on sync `run(...)` is not concurrent by itself. If you spawn two Await tasks, each
+`Await` resolves sequentially under `sync_await_handler`. Concurrency requires
+`async_await_handler` with `async_run(...)`.
 
 ## Scheduler Effect Catalog
 
@@ -65,7 +74,9 @@ The scheduler primitives are:
 | `Spawn(program)` | doeff program | `Task[T]` | Start child task and continue immediately |
 | `Wait(task_or_future)` | `Task` or `Future` | `T` | Suspend until one waitable resolves |
 | `Gather(*waitables)` | waitables/programs/effects | `list[T]` | Suspend until all complete (input order) |
-| `Race(*waitables)` | waitables | winner + value | Suspend until first completion |
+| `Race(*waitables)` | waitables | winner value | Suspend until first completion |
+| `Cancel(task)` | `Task[T]` | `None` | Request task cancellation (`yield task.cancel()`) |
+| `SchedulerYield` | internal | internal | Cooperative preemption point inserted per yield |
 | `CreatePromise()` | none | `Promise[T]` | Allocate doeff-internal promise |
 | `CompletePromise(p, value)` | `Promise[T]`, `T` | `None` | Resolve promise successfully |
 | `FailPromise(p, error)` | `Promise[Any]`, exception | `None` | Resolve promise with error |
@@ -91,13 +102,14 @@ def parent():
     promise = yield CreatePromise()
 
     task_value = yield Wait(task)
-    # promise_value = yield Wait(promise.future)
-    return task_value
+    promise_value = yield Wait(promise.future)
+    return task_value, promise_value
 ```
 
 ## Task Lifecycle and Scheduling Model
 
-Scheduler state transitions are internal to the scheduler handler (`Pending`, `Running`, `Suspended`, `Blocked`, `Completed`, `Failed`, `Cancelled`).
+Scheduler state transitions are internal to the scheduler handler
+(`Pending`, `Running`, `Suspended`, `Blocked`, `Completed`, `Failed`, `Cancelled`).
 
 At VM level, scheduling stays handler-internal:
 
@@ -106,7 +118,23 @@ At VM level, scheduling stays handler-internal:
 - VM keeps stepping `Continue` states; task switching is not exposed as a VM primitive.
 - When a waitable completes, scheduler callbacks wake blocked tasks and reschedule them.
 
-This separation keeps scheduling logic in the scheduler handler while preserving a simple VM step model.
+### store isolation
+
+Scheduler tasks run with store isolation:
+
+- `state` and `log` are isolated per task (snapshot at spawn, switched on task context switch)
+- `env` is shared across tasks and treated as read-only scheduler context
+
+This means parent and child tasks do not share mutable state/log writes, but they do share
+the same environment view.
+
+### Preemption (`SchedulerYield`)
+
+Preemption is cooperative. The scheduler inserts an internal `SchedulerYield` point after
+each task yield, so every effect dispatch is a potential context switch point.
+
+`SchedulerYield` is internal (not something user code should yield directly), but it explains
+why long-running concurrent workloads must keep yielding effects to remain fair.
 
 ## Gather Fail-Fast Semantics
 
@@ -128,59 +156,15 @@ def collect_all_even_on_errors():
     return (yield Gather(t1, t2))  # [Ok(...)/Err(...), Ok(...)/Err(...)]
 ```
 
-## Promise Synchronization Patterns
-
-### Internal promise (doeff-to-doeff)
-
-Use `CreatePromise`, `CompletePromise`, and `FailPromise` when completion happens inside doeff.
-
-```python
-from doeff import CompletePromise, CreatePromise, Spawn, Wait, do
-
-@do
-def producer(p):
-    yield CompletePromise(p, "ready")
-
-@do
-def consumer():
-    p = yield CreatePromise()
-    _ = yield Spawn(producer(p))
-    return (yield Wait(p.future))
-```
-
-### External promise bridge (asyncio/threads/processes)
-
-Use `CreateExternalPromise` when completion comes from outside the scheduler.
-
-```python
-import threading
-from doeff import CreateExternalPromise, Wait, do
-
-@do
-def wait_for_external():
-    promise = yield CreateExternalPromise()
-
-    def worker():
-        try:
-            promise.complete("ok")
-        except Exception as exc:
-            promise.fail(exc)
-
-    threading.Thread(target=worker, daemon=True).start()
-    return (yield Wait(promise.future))
-```
-
 ## Race Semantics
 
-`Race(*waitables)` resumes on the first completed input.
+`Race(*waitables)` resumes on first completion:
 
-- first completion wins
-- if the winner fails, `Race` raises that error
-- if the winner is cancelled, `Race` raises `TaskCancelledError`
-- non-winning waitables continue unless you cancel them
+- first completed waitable determines result
+- if that completion is an error, `Race` raises that error
+- if that completion is cancellation, `Race` raises `TaskCancelledError`
 
-Conceptually, race semantics are `(winner_index, value)` based on argument order.
-If you need index-style handling, derive it from your input tuple and the winner handle.
+For first-wins workflows, apply sibling cancellation immediately after `Race`.
 
 ```python
 from doeff import Race, Spawn, do
@@ -189,11 +173,54 @@ from doeff import Race, Spawn, do
 def first_result():
     t1 = yield Spawn(job("a", 0.3))
     t2 = yield Spawn(job("b", 0.1))
-    waitables = (t1, t2)
+    value = yield Race(t1, t2)
 
-    race_result = yield Race(*waitables)
-    winner_index = waitables.index(race_result.first)
-    return winner_index, race_result.value
+    # sibling cancellation for branch teardown
+    _ = yield t1.cancel()
+    _ = yield t2.cancel()
+    return value
+```
+
+## Cancel and TaskCancelledError
+
+Cancellation is explicit and cooperative:
+
+- request cancellation via `yield task.cancel()`
+- waiters (`Wait`, `Gather`, `Race`) observe cancelled tasks as `TaskCancelledError`
+- cancellation request returns immediately; error appears when the task is joined/observed
+
+```python
+from doeff import Safe, Spawn, Wait, do
+
+@do
+def cancel_child():
+    task = yield Spawn(work())
+    _ = yield task.cancel()
+    return (yield Safe(Wait(task)))  # Err(TaskCancelledError)
+```
+
+## Promise vs ExternalPromise
+
+Use `Promise` when producer and consumer are both inside doeff. Use `ExternalPromise` when
+external code (thread, callback, event-loop task, process) completes the value.
+
+| Type | Created by | Completed by | Completion path |
+| --- | --- | --- | --- |
+| `Promise` | `CreatePromise()` | `CompletePromise` / `FailPromise` | Scheduler effect dispatch |
+| `ExternalPromise` | `CreateExternalPromise()` | `promise.complete()` / `promise.fail()` | External queue drained by scheduler |
+
+```python
+from doeff import CompletePromise, CreatePromise, Spawn, Wait, do
+
+@do
+def internal_sync():
+    p = yield CreatePromise()
+    _ = yield Spawn(complete_later(p))
+    return (yield Wait(p.future))
+
+@do
+def complete_later(p):
+    yield CompletePromise(p, "ready")
 ```
 
 ## Common Mistakes
@@ -207,6 +234,9 @@ Use `Await(coroutine)` for Python async work; use `Wait` for scheduler waitables
 3. Expecting `Gather` to keep going after first failure.
 Use `Safe(...)` around child programs if you need partial success collection.
 
+4. Assuming `Await` is concurrent under `run(...)`.
+It is sequential under `sync_await_handler`; use `async_run(...)` for overlap.
+
 ## Quick Reference
 
 | Effect | Use when | Notes |
@@ -215,8 +245,10 @@ Use `Safe(...)` around child programs if you need partial success collection.
 | `Spawn(program)` | starting concurrent doeff task | Returns `Task[T]` |
 | `Wait(waitable)` | waiting for one task/promise | Returns resolved value or raises |
 | `Gather(*waitables)` | waiting for all children | Fail-fast on first error/cancellation |
-| `Race(*waitables)` | waiting for first child | Winner determines result/error |
-| `CreatePromise()` | internal producer/consumer sync | Complete via effects |
+| `Race(*waitables)` | waiting for first child | First completion determines result |
+| `Cancel(task)` | requesting task cancellation | User API is `yield task.cancel()` |
+| `SchedulerYield` | understanding scheduler fairness | Internal cooperative preemption point |
+| `CreatePromise()` | internal producer/consumer sync | Complete/fail via effects |
 | `CompletePromise(...)` | resolve internal promise | Wakes waiters |
 | `FailPromise(...)` | fail internal promise | Wakes waiters with error |
 | `CreateExternalPromise()` | external callback/thread/process completion | Complete via `promise.complete()`/`promise.fail()` |
