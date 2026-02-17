@@ -169,7 +169,7 @@ Use coordination primitives or isolated state partitioning instead.
 
 ```python
 @do
-async def test_law_8b_async():
+def test_law_8b_async():
     yield Put("counter", 0)
     results = yield Gather(increment(), increment(), increment())
     assert (yield Get("counter")) == 3
