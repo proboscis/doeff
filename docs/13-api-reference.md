@@ -292,7 +292,10 @@ value, logs = result
 
 **Signature:** `Listen(sub_program: ProgramLike)`
 
-**Returns:** `ListenResult(value, log)`
+**Returns:** `ListenResult(value: T, log: BoundedLog)`
+
+`ListenResult.log` uses bounded retention semantics: when capacity is exceeded, oldest
+entries are evicted.
 
 ---
 
@@ -321,6 +324,9 @@ value = yield Await(async_call())
 ```
 
 **Signature:** `Await(awaitable: Awaitable[Any])`
+
+`Await` bridges Python `asyncio` awaitables into doeff. For doeff-native `Task`/`Future`
+handles, use `Wait` instead.
 
 ---
 
