@@ -1,14 +1,17 @@
 # Async Effects
 
-This chapter explains async integration in doeff and the scheduler effects used for concurrency.
+This chapter covers async integration and scheduler primitives for cooperative concurrency.
 
 ## Table of Contents
 
 - [Runner and Handler Presets](#runner-and-handler-presets)
 - [Await Effect](#await-effect)
-- [Await vs Wait](#await-vs-wait)
-- [Spawn, Gather, and Wait](#spawn-gather-and-wait)
-- [Concurrency Under Spawn](#concurrency-under-spawn)
+- [Scheduler Effect Catalog](#scheduler-effect-catalog)
+- [Waitables and Handles](#waitables-and-handles)
+- [Task Lifecycle and Scheduling Model](#task-lifecycle-and-scheduling-model)
+- [Gather Fail-Fast Semantics](#gather-fail-fast-semantics)
+- [Promise Synchronization Patterns](#promise-synchronization-patterns)
+- [Race Semantics](#race-semantics)
 - [Common Mistakes](#common-mistakes)
 - [Quick Reference](#quick-reference)
 
@@ -30,7 +33,7 @@ async_result = await async_run(program(), handlers=default_async_handlers())
 
 ## Await Effect
 
-`Await(awaitable)` is the bridge for Python asyncio awaitables inside a doeff program.
+`Await(awaitable)` bridges Python awaitables (coroutines, tasks, futures) into a doeff program.
 
 ```python
 import asyncio
@@ -44,131 +47,176 @@ def fetch_value():
 
 ### Handler behavior
 
-Both Await handlers bridge completion through `CreateExternalPromise` + `Wait`.
+Both Await handlers bridge completion through `CreateExternalPromise` plus `Wait`:
 
 - `sync_await_handler` (`run` preset):
-  - Submits the awaitable to the sync bridge (background asyncio loop thread).
-  - Waits for the promise future, then resumes continuation.
+  - submits the awaitable to a background asyncio loop thread
+  - waits on `promise.future` via `Wait`
 - `async_await_handler` (`async_run` preset):
-  - Yields `PythonAsyncSyntaxEscape` so kickoff runs through the async driver path.
-  - Waits for the promise future, then resumes continuation.
+  - kicks off awaitable submission through async runtime path
+  - waits on `promise.future` via `Wait`
 
-### Wrong pairing behavior
+## Scheduler Effect Catalog
 
-- `run(..., handlers=default_async_handlers())` fails with a `TypeError` (`CallAsync requires async_run...`).
-- `async_run(..., handlers=default_handlers())` runs, but uses sync Await semantics rather than the async preset.
+The scheduler primitives are:
 
-## Await vs Wait
+| Effect | Input | Output | Purpose |
+| --- | --- | --- | --- |
+| `Spawn(program)` | doeff program | `Task[T]` | Start child task and continue immediately |
+| `Wait(task_or_future)` | `Task` or `Future` | `T` | Suspend until one waitable resolves |
+| `Gather(*waitables)` | waitables/programs/effects | `list[T]` | Suspend until all complete (input order) |
+| `Race(*waitables)` | waitables | winner + value | Suspend until first completion |
+| `CreatePromise()` | none | `Promise[T]` | Allocate doeff-internal promise |
+| `CompletePromise(p, value)` | `Promise[T]`, `T` | `None` | Resolve promise successfully |
+| `FailPromise(p, error)` | `Promise[Any]`, exception | `None` | Resolve promise with error |
+| `CreateExternalPromise()` | none | `ExternalPromise[T]` | Allocate externally-completable promise |
 
-Use `Await` for Python awaitables and `Wait` for doeff scheduler handles.
+## Waitables and Handles
 
-| Use `Await` | Use `Wait` |
-| --- | --- |
-| Python coroutines (`async def`) | doeff `Task` / `Future` handles |
-| `asyncio.sleep(...)` | values returned by `Spawn(...)` |
-| async libraries (`aiohttp`, `httpx`, etc.) | `ExternalPromise.future` |
-
-### Await example
-
-```python
-import asyncio
-from doeff import Await, do
-
-@do
-def get_payload():
-    return (yield Await(asyncio.sleep(0.01, result={"ok": True})))
-```
-
-### Wait example
+- `Spawn(...)` returns a `Task[T]` handle.
+- `Promise[T].future` is a `Future[T]` waitable.
+- `ExternalPromise[T].future` is also a `Future[T]` waitable.
+- `Wait`, `Gather`, and `Race` consume these waitable handles.
 
 ```python
-import asyncio
-from doeff import Await, Spawn, Wait, do
+from doeff import CreatePromise, Spawn, Wait, do
 
 @do
 def child():
-    return (yield Await(asyncio.sleep(0.01, result="done")))
+    return 7
 
 @do
 def parent():
     task = yield Spawn(child())
-    return (yield Wait(task))
+    promise = yield CreatePromise()
+
+    task_value = yield Wait(task)
+    # promise_value = yield Wait(promise.future)
+    return task_value
 ```
 
-## Spawn, Gather, and Wait
+## Task Lifecycle and Scheduling Model
 
-`Spawn`, `Gather`, and `Wait` are scheduler primitives for doeff tasks.
+Scheduler state transitions are internal to the scheduler handler (`Pending`, `Running`, `Suspended`, `Blocked`, `Completed`, `Failed`, `Cancelled`).
 
-- `Spawn(program)`: run a doeff program as a background task and return a `Task` handle.
-- `Gather(*items)`: wait for multiple waitables/programs and return values.
-- `Wait(task_or_future)`: wait for one spawned task/future.
+At VM level, scheduling stays handler-internal:
+
+- Wait/Race/Gather may park the current task if inputs are pending.
+- Scheduler selects another ready task and continues execution.
+- VM keeps stepping `Continue` states; task switching is not exposed as a VM primitive.
+- When a waitable completes, scheduler callbacks wake blocked tasks and reschedule them.
+
+This separation keeps scheduling logic in the scheduler handler while preserving a simple VM step model.
+
+## Gather Fail-Fast Semantics
+
+`Gather` is fail-fast:
+
+- if any gathered waitable fails, `Gather` raises immediately
+- if any gathered task is cancelled, `Gather` raises `TaskCancelledError`
+- remaining tasks are not auto-cancelled
+
+Use `Safe(...)` when you need partial results instead of fail-fast behavior.
 
 ```python
-import asyncio
-from doeff import Await, Gather, Spawn, Wait, do
+from doeff import Gather, Safe, Spawn, do
 
 @do
-def worker(name: str, delay: float):
-    return (yield Await(asyncio.sleep(delay, result=name)))
-
-@do
-def orchestrate():
-    t1 = yield Spawn(worker("a", 0.05))
-    t2 = yield Spawn(worker("b", 0.05))
-
-    both = yield Gather(t1, t2)
-    one = yield Wait(t1)
-    return both, one
+def collect_all_even_on_errors():
+    t1 = yield Spawn(Safe(work_1()))
+    t2 = yield Spawn(Safe(work_2()))
+    return (yield Gather(t1, t2))  # [Ok(...)/Err(...), Ok(...)/Err(...)]
 ```
 
-## Concurrency Under Spawn
+## Promise Synchronization Patterns
 
-The right way to reason about Spawn concurrency is to benchmark your selected runner+preset pair.
+### Internal promise (doeff-to-doeff)
+
+Use `CreatePromise`, `CompletePromise`, and `FailPromise` when completion happens inside doeff.
 
 ```python
-import asyncio
-import time
-from doeff import Await, Gather, Spawn, async_run, default_async_handlers, default_handlers, do, run
+from doeff import CompletePromise, CreatePromise, Spawn, Wait, do
 
 @do
-def child(label: str):
-    return (yield Await(asyncio.sleep(0.1, result=label)))
+def producer(p):
+    yield CompletePromise(p, "ready")
 
 @do
-def parent():
-    t1 = yield Spawn(child("left"))
-    t2 = yield Spawn(child("right"))
-    return tuple((yield Gather(t1, t2)))
-
-sync_start = time.monotonic()
-sync_result = run(parent(), handlers=default_handlers())
-print("sync", sync_result.value, time.monotonic() - sync_start)
-
-async def main():
-    async_start = time.monotonic()
-    async_result = await async_run(parent(), handlers=default_async_handlers())
-    print("async", async_result.value, time.monotonic() - async_start)
-
-asyncio.run(main())
+def consumer():
+    p = yield CreatePromise()
+    _ = yield Spawn(producer(p))
+    return (yield Wait(p.future))
 ```
 
-In current runtime behavior, both preset pairs should return the same values and typically complete near one sleep interval for this pattern.
+### External promise bridge (asyncio/threads/processes)
+
+Use `CreateExternalPromise` when completion comes from outside the scheduler.
+
+```python
+import threading
+from doeff import CreateExternalPromise, Wait, do
+
+@do
+def wait_for_external():
+    promise = yield CreateExternalPromise()
+
+    def worker():
+        try:
+            promise.complete("ok")
+        except Exception as exc:
+            promise.fail(exc)
+
+    threading.Thread(target=worker, daemon=True).start()
+    return (yield Wait(promise.future))
+```
+
+## Race Semantics
+
+`Race(*waitables)` resumes on the first completed input.
+
+- first completion wins
+- if the winner fails, `Race` raises that error
+- if the winner is cancelled, `Race` raises `TaskCancelledError`
+- non-winning waitables continue unless you cancel them
+
+Conceptually, race semantics are `(winner_index, value)` based on argument order.
+If you need index-style handling, derive it from your input tuple and the winner handle.
+
+```python
+from doeff import Race, Spawn, do
+
+@do
+def first_result():
+    t1 = yield Spawn(job("a", 0.3))
+    t2 = yield Spawn(job("b", 0.1))
+    waitables = (t1, t2)
+
+    race_result = yield Race(*waitables)
+    winner_index = waitables.index(race_result.first)
+    return winner_index, race_result.value
+```
 
 ## Common Mistakes
 
-1. Passing `default_handlers()` to `async_run` by habit.
-Use `default_async_handlers()` for the async entrypoint.
+1. Passing `default_handlers()` to `async_run`.
+Use `default_async_handlers()` for async entrypoints.
 
-2. Passing a coroutine to `Wait(...)`.
-`Wait` expects a doeff scheduler handle (`Task`/`Future`), not a Python coroutine.
+2. Passing a raw coroutine to `Wait(...)`.
+Use `Await(coroutine)` for Python async work; use `Wait` for scheduler waitables.
+
+3. Expecting `Gather` to keep going after first failure.
+Use `Safe(...)` around child programs if you need partial success collection.
 
 ## Quick Reference
 
-| Effect | Purpose | Input | Output |
-| --- | --- | --- | --- |
-| `Await(awaitable)` | Bridge Python async awaitable | Python awaitable/coroutine | Awaited value |
-| `Spawn(program)` | Start background doeff task | doeff program/effect | `Task` handle |
-| `Gather(*items)` | Wait for many items | Waitables/programs/effects | List of values |
-| `Wait(waitable)` | Wait for one item | `Task` or `Future` handle | Value |
-
-Use these with explicit handler presets so async behavior is intentional and predictable.
+| Effect | Use when | Notes |
+| --- | --- | --- |
+| `Await(awaitable)` | waiting on Python async objects | Bridge from Python async into doeff |
+| `Spawn(program)` | starting concurrent doeff task | Returns `Task[T]` |
+| `Wait(waitable)` | waiting for one task/promise | Returns resolved value or raises |
+| `Gather(*waitables)` | waiting for all children | Fail-fast on first error/cancellation |
+| `Race(*waitables)` | waiting for first child | Winner determines result/error |
+| `CreatePromise()` | internal producer/consumer sync | Complete via effects |
+| `CompletePromise(...)` | resolve internal promise | Wakes waiters |
+| `FailPromise(...)` | fail internal promise | Wakes waiters with error |
+| `CreateExternalPromise()` | external callback/thread/process completion | Complete via `promise.complete()`/`promise.fail()` |
