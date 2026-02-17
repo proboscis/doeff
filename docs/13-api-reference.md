@@ -86,6 +86,57 @@ Result[T] = Ok[T] | Err
 
 ---
 
+### Ok(value)
+
+Success constructor for `Result[T]`.
+
+```python
+ok = Ok({"user_id": 42})
+```
+
+**Signature:** `Ok(value: T)`
+
+**Fields:**
+
+- **`value`** - Success payload
+
+**Pattern matching:**
+
+```python
+match result:
+    case Ok(value=v):
+        print("success", v)
+```
+
+---
+
+### Err(error)
+
+Failure constructor for `Result[T]`.
+
+```python
+err = Err(ValueError("invalid input"))
+```
+
+**Signature:**
+`Err(error: Exception, captured_traceback: Maybe[EffectTraceback] = NOTHING)`
+
+**Fields:**
+
+- **`error`** - The captured exception
+- **`captured_traceback`** - Optional effect traceback metadata. Defaults to `NOTHING`,
+  and is populated when traceback capture is enabled for that error path.
+
+**Pattern matching:**
+
+```python
+match result:
+    case Err(error=e, captured_traceback=tb):
+        print("failed", e, tb)
+```
+
+---
+
 ## Decorators
 
 ### @do
@@ -274,7 +325,7 @@ result = yield Wait(task)
 
 ### Wait(future)
 
-Wait for a `Task`/`Future`/`Promise`-compatible value.
+Wait for a `Task`/`Future` waitable value.
 
 ```python
 result = yield Wait(task)
@@ -286,13 +337,16 @@ result = yield Wait(task)
 
 ### Gather(*items)
 
-Resolve multiple waitables/programs and return results in input order.
+Resolve multiple waitables and return results in input order.
 
 ```python
-results = yield Gather(fetch_user(1), fetch_user(2), fetch_user(3))
+task_1 = yield Spawn(fetch_user(1))
+task_2 = yield Spawn(fetch_user(2))
+task_3 = yield Spawn(fetch_user(3))
+results = yield Gather(task_1, task_2, task_3)
 ```
 
-**Signature:** `Gather(*items: Waitable[Any] | Program[Any])`
+**Signature:** `Gather(*items: Waitable[Any])`
 
 **See:** [Advanced Effects](09-advanced-effects.md#gather-effects)
 
@@ -316,9 +370,9 @@ value = winner.value
 
 ---
 
-### Cancel(task)
+### Task.cancel()
 
-Request cooperative cancellation for a running `Task`.
+Request cooperative cancellation for a target `Task`.
 
 ```python
 task = yield Spawn(worker())
@@ -326,6 +380,17 @@ _ = yield task.cancel()
 ```
 
 **Signature:** `Task.cancel()`
+
+`Task.cancel()` is effectful: it returns a cancellation effect that must be yielded.
+
+Cancellation behavior depends on the target task state:
+
+- **`Pending`** - Mark cancelled immediately and wake waiters with `TaskCancelledError`.
+- **`Running`** - Set cooperative cancel flag; task is cancelled at next scheduler yield point.
+- **`Suspended`** - Mark cancelled immediately and wake waiters with `TaskCancelledError`.
+- **`Blocked`** - Mark cancelled, remove target wait registration, wake waiters with
+  `TaskCancelledError`.
+- **`Completed` / `Failed` / `Cancelled`** - No-op.
 
 **See:** [Async Effects](04-async-effects.md#cancel-and-taskcancellederror)
 
@@ -406,6 +471,35 @@ value = yield Pure({"status": "ok"})
 ```
 
 **Signature:** `Pure(value: Any)`
+
+---
+
+### Intercept(program, transform)
+
+Run a program under effect interception. Each yielded effect is offered to `transform`.
+
+```python
+def transform(effect):
+    if isinstance(effect, AskEffect) and effect.key == "timeout":
+        return Pure(30)
+    return None
+
+result = yield Intercept(worker(), transform)
+```
+
+**Signature:**
+`Intercept(program: Program[T], transform: Callable[[Effect], Effect | Program | None])`
+
+**Transform contract:**
+
+- Return `None` to pass through unchanged.
+- Return an `Effect` to substitute that effect.
+- Return a `Program` to execute replacement logic.
+
+For multiple transforms, pass additional transform functions to `Intercept(...)`; first non-`None`
+result wins.
+
+Interception propagates to child execution contexts (for example `Gather`, `Safe`, and `Spawn`).
 
 ---
 
@@ -751,10 +845,10 @@ path = run(write_graph_html(graph, "output.html"), handlers=default_handlers()).
 | **Reader** | Ask, Local |
 | **State** | Get, Put, Modify |
 | **Writer** | Tell, Listen, StructuredLog, slog |
-| **Async/Concurrency** | Await, Spawn, Wait, Gather, Race, Cancel, TaskCancelledError |
+| **Async/Concurrency** | Await, Spawn, Wait, Gather, Race, Task.cancel, TaskCancelledError |
 | **Semaphore** | CreateSemaphore, AcquireSemaphore, ReleaseSemaphore |
-| **Control** | Pure |
-| **Error** | Safe |
+| **Control** | Pure, Intercept |
+| **Error** | Safe, Ok, Err |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
 | **Atomic** | AtomicGet, AtomicUpdate |
@@ -780,10 +874,10 @@ from doeff.effects import TaskCancelledError  # raised on Wait/Gather/Race for c
 from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
 
 # Control
-from doeff import Pure
+from doeff import Pure, Intercept
 
 # Error handling
-from doeff import Safe
+from doeff import Safe, Ok, Err
 
 # Cache
 from doeff import CacheGet, CachePut, cache
