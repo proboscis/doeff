@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import gc
+from importlib import import_module
+
 from doeff import (
     AcquireSemaphore,
     CreateSemaphore,
     Gather,
     ReleaseSemaphore,
     Safe,
+    Semaphore,
     Spawn,
     Wait,
     default_handlers,
@@ -13,6 +17,8 @@ from doeff import (
     run,
 )
 from doeff.effects import TaskCancelledError
+
+doeff_vm_ext = import_module("doeff_vm.doeff_vm")
 
 
 class TestSemaphoreEffectContract:
@@ -219,3 +225,76 @@ class TestSemaphoreRuntimeBehavior:
         assert wake_order == ["second", "third"]
         assert cancelled_result.is_err()
         assert isinstance(cancelled_result.error, TaskCancelledError)
+
+    def test_semaphore_state_cleaned_after_handle_dropped(self) -> None:
+        """Dropped semaphore handles are removed from scheduler state after GC."""
+
+        @do
+        def program():
+            scheduler_state_id: int | None = None
+            for _ in range(64):
+                sem = yield CreateSemaphore(1)
+                if scheduler_state_id is None:
+                    scheduler_state_id = sem._scheduler_state_id
+                sem = None
+            gc.collect()
+            # Flush the last yielded semaphore value from continuation state.
+            yield Gather()
+            gc.collect()
+            # Drain any cleanup that was queued by the previous flush.
+            yield Gather()
+            gc.collect()
+            if scheduler_state_id is None:
+                raise RuntimeError("expected scheduler state id from semaphore handle")
+            return doeff_vm_ext._scheduler_semaphore_count(scheduler_state_id)
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok()
+        assert result.value == 0
+
+    def test_semaphore_cleanup_with_pending_waiters(self) -> None:
+        """Destroying a semaphore with waiters cancels those waiters."""
+
+        @do
+        def waiter(sem_id: int):
+            yield AcquireSemaphore(Semaphore(sem_id))
+            return "acquired"
+
+        @do
+        def tick():
+            return "tick"
+
+        @do
+        def program():
+            sem = yield CreateSemaphore(1)
+            scheduler_state_id = sem._scheduler_state_id
+            sem_id = sem.id
+            yield AcquireSemaphore(sem)
+
+            first = yield Spawn(waiter(sem_id))
+            second = yield Spawn(waiter(sem_id))
+
+            # Run waiters until blocked on AcquireSemaphore while keeping parent alive.
+            ready_tick = yield Spawn(tick())
+            _ = yield Gather(ready_tick)
+
+            sem = None
+            gc.collect()
+            # Drain queued cleanup and mark waiter tasks as cancelled.
+            _ = yield Gather(ready_tick)
+
+            first_result = yield Safe(Wait(first))
+            second_result = yield Safe(Wait(second))
+            if scheduler_state_id is None:
+                raise RuntimeError("expected scheduler state id from semaphore handle")
+            semaphore_count = doeff_vm_ext._scheduler_semaphore_count(scheduler_state_id)
+            return first_result, second_result, semaphore_count
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok()
+        first_result, second_result, semaphore_count = result.value
+        assert first_result.is_err()
+        assert second_result.is_err()
+        assert isinstance(first_result.error, TaskCancelledError)
+        assert isinstance(second_result.error, TaskCancelledError)
+        assert semaphore_count == 0

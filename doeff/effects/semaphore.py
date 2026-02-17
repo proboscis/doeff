@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from importlib import import_module
 
 from .base import Effect, EffectBase, create_effect_with_trace
 
@@ -8,10 +9,29 @@ from .base import Effect, EffectBase, create_effect_with_trace
 @dataclass(frozen=True, slots=True)
 class Semaphore:
     id: int
+    _scheduler_state_id: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.id, int):
             raise TypeError(f"id must be int, got {type(self.id).__name__}")
+        if self._scheduler_state_id is not None and not isinstance(self._scheduler_state_id, int):
+            raise TypeError(
+                f"_scheduler_state_id must be int|None, got {type(self._scheduler_state_id).__name__}"
+            )
+
+    def __del__(self) -> None:
+        scheduler_state_id = self._scheduler_state_id
+        if scheduler_state_id is None:
+            return
+
+        try:
+            vm_ext = import_module("doeff_vm.doeff_vm")
+            cleanup = getattr(vm_ext, "_scheduler_remove_semaphore", None)
+            if callable(cleanup):
+                cleanup(scheduler_state_id, self.id)
+        except Exception:
+            # __del__ must never raise.
+            return
 
 
 @dataclass(frozen=True)

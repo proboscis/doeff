@@ -3,8 +3,9 @@
 //! The scheduler is a RustProgramHandler that manages tasks, promises,
 //! and cooperative scheduling via Transfer-only semantics.
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
@@ -153,6 +154,10 @@ struct SemaphoreRuntimeState {
     holders: HashMap<Option<TaskId>, u64>,
 }
 
+static NEXT_SCHEDULER_STATE_ID: AtomicU64 = AtomicU64::new(1);
+static SCHEDULER_STATE_REGISTRY: OnceLock<Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>>> =
+    OnceLock::new();
+
 #[derive(Clone, Debug)]
 enum WaitMode {
     All,
@@ -212,11 +217,13 @@ fn step_targets_continuation(step: &RustProgramStep, target: &Continuation) -> b
 
 /// The scheduler's internal state.
 pub struct SchedulerState {
+    pub state_id: u64,
     pub ready: VecDeque<TaskId>,
     ready_waiters: VecDeque<WaitRequest>,
     pub tasks: HashMap<TaskId, TaskState>,
     pub promises: HashMap<PromiseId, PromiseState>,
     semaphores: HashMap<u64, SemaphoreRuntimeState>,
+    pending_semaphore_cleanup: VecDeque<u64>,
     waiters: HashMap<Waitable, Vec<WaitRequest>>,
     external_completion_queue: Option<PyShared>,
     pub next_task: u64,
@@ -601,6 +608,18 @@ fn is_task_cancel_requested(task_id: TaskId) -> bool {
     })
 }
 
+fn mark_task_cancel_requested(task_id: TaskId) {
+    Python::attach(|py| {
+        let Ok(spawn_mod) = py.import("doeff.effects.spawn") else {
+            return;
+        };
+        let Ok(cancelled_ids) = spawn_mod.getattr("_cancelled_task_ids") else {
+            return;
+        };
+        let _ = cancelled_ids.call_method1("add", (task_id.raw(),));
+    });
+}
+
 fn task_cancelled_error() -> PyException {
     Python::attach(|py| {
         let message = "Task was cancelled";
@@ -617,7 +636,10 @@ fn task_cancelled_error() -> PyException {
     })
 }
 
-fn make_python_semaphore_value(semaphore_id: u64) -> Result<Value, PyException> {
+fn make_python_semaphore_value(
+    semaphore_id: u64,
+    scheduler_state_id: u64,
+) -> Result<Value, PyException> {
     Python::attach(|py| {
         let semaphore_mod = py.import("doeff.effects.semaphore").map_err(|e| {
             PyException::runtime_error(format!(
@@ -629,17 +651,72 @@ fn make_python_semaphore_value(semaphore_id: u64) -> Result<Value, PyException> 
                 "failed to resolve Semaphore class while creating Semaphore handle: {e}"
             ))
         })?;
-        let semaphore = semaphore_cls.call1((semaphore_id,)).map_err(|e| {
-            PyException::runtime_error(format!(
-                "failed to instantiate Semaphore({semaphore_id}): {e}"
-            ))
-        })?;
+        let semaphore = semaphore_cls
+            .call1((semaphore_id, scheduler_state_id))
+            .map_err(|e| {
+                PyException::runtime_error(format!(
+                    "failed to instantiate Semaphore({semaphore_id}): {e}"
+                ))
+            })?;
         Ok(Value::Python(semaphore.unbind()))
     })
 }
 
 fn unknown_semaphore_error(semaphore_id: u64) -> PyException {
     PyException::runtime_error(format!("unknown semaphore id {semaphore_id}"))
+}
+
+fn alloc_scheduler_state_id() -> u64 {
+    NEXT_SCHEDULER_STATE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn scheduler_state_registry() -> &'static Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>> {
+    SCHEDULER_STATE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_scheduler_state(state: &Arc<Mutex<SchedulerState>>) {
+    let state_id = state.lock().expect("Scheduler lock poisoned").state_id;
+    let mut registry = scheduler_state_registry()
+        .lock()
+        .expect("Scheduler lock poisoned");
+    registry.insert(state_id, Arc::downgrade(state));
+}
+
+fn unregister_scheduler_state(state_id: u64) {
+    let mut registry = scheduler_state_registry()
+        .lock()
+        .expect("Scheduler lock poisoned");
+    registry.remove(&state_id);
+}
+
+fn scheduler_state_by_id(state_id: u64) -> Option<Arc<Mutex<SchedulerState>>> {
+    let mut registry = scheduler_state_registry()
+        .lock()
+        .expect("Scheduler lock poisoned");
+    let upgraded = registry.get(&state_id).and_then(Weak::upgrade);
+    if upgraded.is_none() {
+        registry.remove(&state_id);
+    }
+    upgraded
+}
+
+pub fn scheduler_remove_semaphore_for_state(state_id: u64, semaphore_id: u64) -> bool {
+    let Some(state) = scheduler_state_by_id(state_id) else {
+        return false;
+    };
+    let mut guard = state.lock().expect("Scheduler lock poisoned");
+    guard.enqueue_semaphore_cleanup(semaphore_id);
+    true
+}
+
+pub fn scheduler_semaphore_count_for_state(state_id: u64) -> Option<usize> {
+    scheduler_state_by_id(state_id).map(|state| {
+        state
+            .lock()
+            .expect("Scheduler lock poisoned")
+            .semaphores
+            .len()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -649,11 +726,13 @@ fn unknown_semaphore_error(semaphore_id: u64) -> PyException {
 impl SchedulerState {
     pub fn new() -> Self {
         SchedulerState {
+            state_id: alloc_scheduler_state_id(),
             ready: VecDeque::new(),
             ready_waiters: VecDeque::new(),
             tasks: HashMap::new(),
             promises: HashMap::new(),
             semaphores: HashMap::new(),
+            pending_semaphore_cleanup: VecDeque::new(),
             waiters: HashMap::new(),
             external_completion_queue: None,
             next_task: 0,
@@ -862,6 +941,51 @@ impl SchedulerState {
         semaphore_id
     }
 
+    fn enqueue_semaphore_cleanup(&mut self, semaphore_id: u64) {
+        self.pending_semaphore_cleanup.push_back(semaphore_id);
+    }
+
+    fn drain_pending_semaphore_cleanup(&mut self) {
+        while let Some(semaphore_id) = self.pending_semaphore_cleanup.pop_front() {
+            self.remove_semaphore(semaphore_id);
+        }
+    }
+
+    pub fn remove_semaphore(&mut self, semaphore_id: u64) -> bool {
+        let Some(state) = self.semaphores.remove(&semaphore_id) else {
+            return false;
+        };
+
+        if !state.waiters.is_empty() {
+            eprintln!(
+                "warning: semaphore {semaphore_id} destroyed with {} pending waiter(s)",
+                state.waiters.len()
+            );
+        }
+
+        for waiter in state.waiters {
+            let mut waiter_tasks: HashSet<TaskId> = HashSet::new();
+            if let Some(task_id) = waiter.waiting_task {
+                waiter_tasks.insert(task_id);
+            }
+            if let Some(requests) = self.waiters.get(&Waitable::Promise(waiter.promise)) {
+                for request in requests {
+                    if let Some(task_id) = request.waiting_task.or_else(|| {
+                        self.pending_task_id_for_continuation(request.continuation.cont_id)
+                    }) {
+                        waiter_tasks.insert(task_id);
+                    }
+                }
+            }
+
+            for task_id in waiter_tasks {
+                mark_task_cancel_requested(task_id);
+            }
+            self.mark_promise_done(waiter.promise, Err(task_cancelled_error()));
+        }
+        true
+    }
+
     fn is_waiter_cancelled(&self, waiter: SemaphoreWaiter) -> bool {
         let Some(task_id) = waiter.waiting_task else {
             return false;
@@ -902,10 +1026,9 @@ impl SchedulerState {
     pub fn acquire_semaphore(
         &mut self,
         semaphore_id: u64,
+        owner: Option<TaskId>,
     ) -> Result<Option<PromiseId>, PyException> {
-        let owner = self.current_task;
-
-        if let Some(task_id) = self.current_task {
+        if let Some(task_id) = owner {
             if is_task_cancel_requested(task_id) {
                 return Err(task_cancelled_error());
             }
@@ -946,7 +1069,7 @@ impl SchedulerState {
 
         let waiter_promise = self.alloc_promise_id();
         self.promises.insert(waiter_promise, PromiseState::Pending);
-        let waiting_task = self.current_task;
+        let waiting_task = owner;
         if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
             semaphore.waiters.push_back(SemaphoreWaiter {
                 promise: waiter_promise,
@@ -958,8 +1081,11 @@ impl SchedulerState {
         }
     }
 
-    pub fn release_semaphore(&mut self, semaphore_id: u64) -> Result<(), PyException> {
-        let owner = self.current_task;
+    pub fn release_semaphore(
+        &mut self,
+        semaphore_id: u64,
+        owner: Option<TaskId>,
+    ) -> Result<(), PyException> {
         let released_one = {
             let semaphore = self
                 .semaphores
@@ -1113,6 +1239,13 @@ impl SchedulerState {
             Some(TaskState::Pending { cont, .. }) => Some(cont.clone()),
             _ => None,
         }
+    }
+
+    fn pending_task_id_for_continuation(&self, cont_id: ContId) -> Option<TaskId> {
+        self.tasks.iter().find_map(|(task_id, state)| match state {
+            TaskState::Pending { cont, .. } if cont.cont_id == cont_id => Some(*task_id),
+            _ => None,
+        })
     }
 
     pub fn try_collect(&self, items: &[Waitable]) -> Option<Value> {
@@ -1679,6 +1812,11 @@ impl RustHandlerProgram for SchedulerProgram {
             }
         };
 
+        {
+            let mut state = self.state.lock().expect("Scheduler lock poisoned");
+            state.drain_pending_semaphore_cleanup();
+        }
+
         match sched_effect {
             SchedulerEffect::Spawn {
                 program,
@@ -1760,21 +1898,25 @@ impl RustHandlerProgram for SchedulerProgram {
             }
 
             SchedulerEffect::CreateSemaphore { permits } => {
-                let semaphore_id = {
+                let (semaphore_id, scheduler_state_id) = {
                     let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                    state.create_semaphore(permits)
+                    (state.create_semaphore(permits), state.state_id)
                 };
-                let semaphore_value = match make_python_semaphore_value(semaphore_id) {
-                    Ok(value) => value,
-                    Err(error) => return RustProgramStep::Throw(error),
-                };
+                let semaphore_value =
+                    match make_python_semaphore_value(semaphore_id, scheduler_state_id) {
+                        Ok(value) => value,
+                        Err(error) => return RustProgramStep::Throw(error),
+                    };
                 jump_to_continuation(k_user, semaphore_value)
             }
 
             SchedulerEffect::AcquireSemaphore { semaphore_id } => {
                 let waiter_promise = {
                     let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                    match state.acquire_semaphore(semaphore_id) {
+                    let owner = state
+                        .current_task
+                        .or_else(|| state.pending_task_id_for_continuation(k_user.cont_id));
+                    match state.acquire_semaphore(semaphore_id, owner) {
                         Ok(result) => result,
                         Err(error) => return RustProgramStep::Throw(error),
                     }
@@ -1792,7 +1934,10 @@ impl RustHandlerProgram for SchedulerProgram {
 
             SchedulerEffect::ReleaseSemaphore { semaphore_id } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                if let Err(error) = state.release_semaphore(semaphore_id) {
+                let owner = state
+                    .current_task
+                    .or_else(|| state.pending_task_id_for_continuation(k_user.cont_id));
+                if let Err(error) = state.release_semaphore(semaphore_id, owner) {
                     return RustProgramStep::Throw(error);
                 }
                 jump_to_continuation(k_user, Value::Unit)
@@ -1945,8 +2090,10 @@ impl std::fmt::Debug for SchedulerHandler {
 
 impl SchedulerHandler {
     pub fn new() -> Self {
+        let default_state = Arc::new(Mutex::new(SchedulerState::new()));
+        register_scheduler_state(&default_state);
         SchedulerHandler {
-            default_state: Arc::new(Mutex::new(SchedulerState::new())),
+            default_state,
             run_states: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -1957,7 +2104,11 @@ impl SchedulerHandler {
                 let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
                 states
                     .entry(token)
-                    .or_insert_with(|| Arc::new(Mutex::new(SchedulerState::new())))
+                    .or_insert_with(|| {
+                        let state = Arc::new(Mutex::new(SchedulerState::new()));
+                        register_scheduler_state(&state);
+                        state
+                    })
                     .clone()
             }
             None => self.default_state.clone(),
@@ -1989,7 +2140,11 @@ impl RustProgramHandler for SchedulerHandler {
 
     fn on_run_end(&self, run_token: u64) {
         let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
-        states.remove(&run_token);
+        let Some(state) = states.remove(&run_token) else {
+            return;
+        };
+        let state_id = state.lock().expect("Scheduler lock poisoned").state_id;
+        unregister_scheduler_state(state_id);
     }
 }
 
