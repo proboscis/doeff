@@ -7,6 +7,7 @@ pure call-time macro expansion and emits a `Call` DoCtrl directly.
 
 - [What `@do` Returns](#what-do-returns)
 - [Call-Time Macro Expansion](#call-time-macro-expansion)
+- [Why Call Is a Macro](#why-call-is-a-macro)
 - [KPC Non-Effect Invariant](#kpc-non-effect-invariant)
 - [Annotation-Aware Argument Classification](#annotation-aware-argument-classification)
 - [`@do` Handler Authoring Contract](#do-handler-authoring-contract)
@@ -67,6 +68,17 @@ def __call__(self, *args, **kwargs):
     }
     return Call(Pure(self.execution_kernel), do_expr_args, do_expr_kwargs, metadata)
 ```
+
+## Why Call Is a Macro
+
+`KleisliProgram.__call__` is intentionally a macro step to preserve phase separation:
+Python call-time expansion builds `DoExpr`, and VM runtime evaluation executes `DoExpr`.
+Treating call-construction as an effect introduces a recursion flaw where call dispatch
+must invoke effect handling before the call tree is fully constructed.
+
+The macro model avoids that cycle by constructing `Call(...)` immediately, then letting
+standard DoExpr evaluation proceed. Historical removed component matrix details are kept
+in `docs/revision-log.md` so this chapter stays focused on the current model.
 
 ## KPC Non-Effect Invariant
 
