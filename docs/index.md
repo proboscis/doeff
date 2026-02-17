@@ -24,21 +24,22 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 7. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
 8. **[Graph Tracking](08-graph-tracking.md)** - Execution tracking and visualization
 9. **[Advanced Effects](09-advanced-effects.md)** - Gather, Atomic operations
+10. **[Semaphore Effects](17-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
 
 ### Integration & Advanced Topics
 
-10. **[Pinjected Integration](10-pinjected-integration.md)** - Dependency injection with pinjected
-11. **[Kleisli Arrows](11-kleisli-arrows.md)** - Composition and automatic unwrapping
-12. **[Patterns](12-patterns.md)** - Best practices and common patterns
-13. **[API Reference](13-api-reference.md)** - Complete API documentation
+11. **[Pinjected Integration](10-pinjected-integration.md)** - Dependency injection with pinjected
+12. **[Kleisli Arrows](11-kleisli-arrows.md)** - Composition and automatic unwrapping
+13. **[Patterns](12-patterns.md)** - Best practices and common patterns
+14. **[API Reference](13-api-reference.md)** - Complete API documentation
 
 ### CLI Tools
 
-14. **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery
-15. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
-16. **[Python run_program API](16-run-program-api.md)** - Use CLI-equivalent discovery from Python tests or scripts
-17. **[Effect Boundaries](17-effect-boundaries.md)** - Effect vs escape architecture and runner boundaries
-18. **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
+15. **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery
+16. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
+17. **[Python run_program API](16-run-program-api.md)** - Use CLI-equivalent discovery from Python tests or scripts
+18. **[Effect Boundaries](17-effect-boundaries.md)** - Effect vs escape architecture and runner boundaries
+19. **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
 
 ### Specialized Topics
 
