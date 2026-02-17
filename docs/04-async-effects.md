@@ -72,9 +72,9 @@ The scheduler primitives are:
 | Effect | Input | Output | Purpose |
 | --- | --- | --- | --- |
 | `Spawn(program)` | doeff program | `Task[T]` | Start child task and continue immediately |
-| `Wait(task_or_future)` | `Task` or `Future` | `T` | Suspend until one waitable resolves |
-| `Gather(*waitables)` | waitables/programs/effects | `list[T]` | Suspend until all complete (input order) |
-| `Race(*waitables)` | waitables | winner value | Suspend until first completion |
+| `Wait(task_or_future)` | `Task` or `Future` waitable handle | `T` | Suspend until one waitable resolves |
+| `Gather(*waitables)` | `Task`/`Future` waitable handles | `list[T]` | Suspend until all complete (input order) |
+| `Race(*waitables)` | `Task`/`Future` waitable handles | winner value | Suspend until first completion |
 | `Cancel(task)` | `Task[T]` | `None` | Request task cancellation (`yield task.cancel()`) |
 | `SchedulerYield` | internal | internal | Cooperative preemption point inserted per yield |
 | `CreatePromise()` | none | `Promise[T]` | Allocate doeff-internal promise |
@@ -88,6 +88,7 @@ The scheduler primitives are:
 - `Promise[T].future` is a `Future[T]` waitable.
 - `ExternalPromise[T].future` is also a `Future[T]` waitable.
 - `Wait`, `Gather`, and `Race` consume these waitable handles.
+- Raw programs are not waitables. Spawn programs first, then wait on the returned handles.
 
 ```python
 from doeff import CreatePromise, Spawn, Wait, do
@@ -104,6 +105,19 @@ def parent():
     task_value = yield Wait(task)
     promise_value = yield Wait(promise.future)
     return task_value, promise_value
+```
+
+```python
+from doeff import Gather, Race, Spawn, do
+
+@do
+def parallel():
+    task1 = yield Spawn(work_1())
+    task2 = yield Spawn(work_2())
+
+    winner = yield Race(task1, task2)
+    all_results = yield Gather(task1, task2)
+    return winner, all_results
 ```
 
 ## Task Lifecycle and Scheduling Model
@@ -138,7 +152,7 @@ why long-running concurrent workloads must keep yielding effects to remain fair.
 
 ## Gather Fail-Fast Semantics
 
-`Gather` is fail-fast:
+`Gather` is fail-fast for `Task`/`Future` waitable inputs:
 
 - if any gathered waitable fails, `Gather` raises immediately
 - if any gathered task is cancelled, `Gather` raises `TaskCancelledError`
@@ -158,7 +172,7 @@ def collect_all_even_on_errors():
 
 ## Race Semantics
 
-`Race(*waitables)` resumes on first completion:
+`Race(*waitables)` resumes on first completion of a `Task`/`Future` waitable:
 
 - first completed waitable determines result
 - if that completion is an error, `Race` raises that error
@@ -231,10 +245,13 @@ Use `default_async_handlers()` for async entrypoints.
 2. Passing a raw coroutine to `Wait(...)`.
 Use `Await(coroutine)` for Python async work; use `Wait` for scheduler waitables.
 
-3. Expecting `Gather` to keep going after first failure.
+3. Passing raw programs directly to `Wait`, `Gather`, or `Race`.
+Use `task = yield Spawn(program)` first, then pass the returned `Task` (or a `Future`) handle.
+
+4. Expecting `Gather` to keep going after first failure.
 Use `Safe(...)` around child programs if you need partial success collection.
 
-4. Assuming `Await` is concurrent under `run(...)`.
+5. Assuming `Await` is concurrent under `run(...)`.
 It is sequential under `sync_await_handler`; use `async_run(...)` for overlap.
 
 ## Quick Reference
@@ -243,9 +260,9 @@ It is sequential under `sync_await_handler`; use `async_run(...)` for overlap.
 | --- | --- | --- |
 | `Await(awaitable)` | waiting on Python async objects | Bridge from Python async into doeff |
 | `Spawn(program)` | starting concurrent doeff task | Returns `Task[T]` |
-| `Wait(waitable)` | waiting for one task/promise | Returns resolved value or raises |
-| `Gather(*waitables)` | waiting for all children | Fail-fast on first error/cancellation |
-| `Race(*waitables)` | waiting for first child | First completion determines result |
+| `Wait(waitable)` | waiting for one task/future handle | Accepts only `Task` or `Future` handles |
+| `Gather(*waitables)` | waiting for all spawned children | Pass `Task`/`Future` handles; fail-fast on first error/cancellation |
+| `Race(*waitables)` | waiting for first spawned child | Pass `Task`/`Future` handles; first completion determines result |
 | `Cancel(task)` | requesting task cancellation | User API is `yield task.cancel()` |
 | `SchedulerYield` | understanding scheduler fairness | Internal cooperative preemption point |
 | `CreatePromise()` | internal producer/consumer sync | Complete/fail via effects |
