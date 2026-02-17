@@ -8,8 +8,8 @@ from doeff import (
     Ask,
     Gather,
     Local,
-    Safe,
     Spawn,
+    Try,
     Wait,
     async_run,
     default_async_handlers,
@@ -274,7 +274,7 @@ class TestLazyAskSemaphoreContract:
 
         @do
         def program():
-            return (yield Safe(Ask("service")))
+            return (yield Try(Ask("service")))
 
         result = run(program(), handlers=default_handlers(), env={"service": failing_service()})
         assert result.is_ok()

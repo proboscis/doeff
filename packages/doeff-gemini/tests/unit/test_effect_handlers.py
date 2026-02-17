@@ -66,8 +66,8 @@ from doeff import (
     default_handlers,
     do,
     run,
-    run_with_handler_map,
 )
+from doeff.rust_vm import run_with_handler_map
 from doeff_image.effects import ImageEdit
 from doeff_image.effects import ImageEdit as UnifiedImageEdit
 from doeff_image.effects import ImageGenerate as UnifiedImageGenerate

@@ -23,7 +23,8 @@ from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.handlers import mock_handlers, production_handlers
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
 
-from doeff import EffectGenerator, do, run_with_handler_map
+from doeff import EffectGenerator, do
+from doeff.rust_vm import run_with_handler_map
 
 
 class SummarySchema:

@@ -11,8 +11,8 @@ from openai.types.chat.chat_completion_message_param import ChatCompletionMessag
 from doeff import (
     Await,
     EffectGenerator,
-    Safe,
     Tell,
+    Try,
     do,
 )
 from doeff_openai.client import get_openai_client, track_api_call
@@ -47,7 +47,7 @@ def chat_completion(
 ) -> EffectGenerator[ChatCompletion | AsyncIterator[ChatCompletionChunk]]:
     """
     Create a chat completion with full observability.
-    
+
     Tracks:
     - Request/response in Graph with metadata
     - Token usage and costs
@@ -111,7 +111,9 @@ def chat_completion(
                 # For streaming, we need to handle differently
                 # Create async generator wrapper
                 async def create_stream():
-                    stream_response = await client.async_client.chat.completions.create(**request_data)
+                    stream_response = await client.async_client.chat.completions.create(
+                        **request_data
+                    )
                     return stream_response
 
                 # Use Await effect for async operation
@@ -150,12 +152,14 @@ def chat_completion(
                 if response.choices:
                     finish_reason = response.choices[0].finish_reason
                     content = response.choices[0].message.content
-                    yield Tell(f"Chat completion finished: reason={finish_reason}, content_length={len(content) if content else 0}")
+                    yield Tell(
+                        f"Chat completion finished: reason={finish_reason}, content_length={len(content) if content else 0}"
+                    )
 
                 return response
 
-        # Use Safe to track both success and failure
-        safe_result = yield Safe(api_call_with_tracking())
+        # Use Try to track both success and failure
+        safe_result = yield Try(api_call_with_tracking())
         if safe_result.is_err():
             # Track failed API call attempt (tracking will log the error)
             e = safe_result.error
@@ -176,18 +180,20 @@ def chat_completion(
     if stream:
         result = yield make_api_call()  # No retry for streaming
     else:
-        # Implement retry logic using Safe
+        # Implement retry logic using Try
         max_attempts = 3
         delay_seconds = 1.0
         last_error = None
         for attempt in range(max_attempts):
-            safe_result = yield Safe(make_api_call())
+            safe_result = yield Try(make_api_call())
             if safe_result.is_ok():
                 result = safe_result.value
                 break
             last_error = safe_result.error
             if attempt < max_attempts - 1:
-                yield Tell(f"API call failed (attempt {attempt + 1}/{max_attempts}), retrying in {delay_seconds}s...")
+                yield Tell(
+                    f"API call failed (attempt {attempt + 1}/{max_attempts}), retrying in {delay_seconds}s..."
+                )
                 yield Await(asyncio.sleep(delay_seconds))
         else:
             assert last_error is not None, "Should have an error if all retries failed"
@@ -204,7 +210,7 @@ def chat_completion_async(
 ) -> EffectGenerator[ChatCompletion]:
     """
     Create an async chat completion with full observability.
-    
+
     This version uses the async client for better performance in async contexts.
     """
     # Log the request
@@ -244,8 +250,8 @@ def chat_completion_async(
 
         return response
 
-    # Execute with Safe to handle errors
-    safe_result = yield Safe(main_operation())
+    # Execute with Try to handle errors
+    safe_result = yield Try(main_operation())
     if safe_result.is_err():
         # Track error
         e = safe_result.error
@@ -268,7 +274,7 @@ def process_stream_chunks(
 ) -> EffectGenerator[list[StreamChunk]]:
     """
     Process streaming chunks with observability.
-    
+
     Accumulates chunks and tracks tokens/costs.
     """
     chunks = []
@@ -292,13 +298,15 @@ def process_stream_chunks(
                     content = choice.delta.content
                     full_content += content
 
-                    collected.append(StreamChunk(
-                        content=content,
-                        role=choice.delta.role,
-                        finish_reason=choice.finish_reason,
-                        index=choice.index,
-                        model=chunk.model,
-                    ))
+                    collected.append(
+                        StreamChunk(
+                            content=content,
+                            role=choice.delta.role,
+                            finish_reason=choice.finish_reason,
+                            index=choice.index,
+                            model=chunk.model,
+                        )
+                    )
 
         return collected
 
@@ -323,7 +331,9 @@ def process_stream_chunks(
             f"cost=${cost_info.total_cost:.6f}"
         )
 
-        yield Tell(f"Stream complete: chunks={total_chunks}, tokens={output_tokens}, cost=${cost_info.total_cost:.6f}")
+        yield Tell(
+            f"Stream complete: chunks={total_chunks}, tokens={output_tokens}, cost=${cost_info.total_cost:.6f}"
+        )
 
     return chunks
 
@@ -337,7 +347,7 @@ def simple_chat(
 ) -> EffectGenerator[str]:
     """
     Simple chat interface that returns just the response text.
-    
+
     Still tracks everything via Graph and Log effects.
     """
     messages = []

@@ -17,8 +17,8 @@ from pydantic import BaseModel
 from doeff import (
     Await,
     EffectGenerator,
-    Safe,
     Tell,
+    Try,
     do,
 )
 from doeff_openai.client import (
@@ -205,12 +205,12 @@ def build_messages(
 ) -> EffectGenerator[list[dict[str, Any]]]:
     """
     Build the messages array for OpenAI API call.
-    
+
     Args:
         text: The prompt text
         images: Optional list of PIL images to include
         detail: Image detail level ("auto", "low", "high")
-    
+
     Returns:
         List of message dictionaries for the API call
     """
@@ -224,7 +224,7 @@ def build_messages(
     # Add images if provided
     if images:
         for i, img in enumerate(images):
-            yield Tell(f"Converting image {i+1}/{len(images)} to base64")
+            yield Tell(f"Converting image {i + 1}/{len(images)} to base64")
             img_base64 = convert_pil_to_base64(img)
             content.append(
                 {
@@ -260,7 +260,7 @@ def build_api_parameters(
 ) -> EffectGenerator[dict[str, Any]]:
     """
     Build API parameters for OpenAI API call with model-specific handling.
-    
+
     Args:
         model: OpenAI model name
         messages: List of message dictionaries
@@ -271,7 +271,7 @@ def build_api_parameters(
         service_tier: Service tier for request prioritization
         response_format: Optional Pydantic BaseModel for structured output
         **kwargs: Additional API parameters
-    
+
     Returns:
         Dictionary of API parameters ready for OpenAI API call
     """
@@ -313,7 +313,9 @@ def build_api_parameters(
         if reasoning_effort:
             valid_efforts = ["minimal", "low", "medium", "high"]
             if reasoning_effort not in valid_efforts:
-                yield Tell(f"Invalid reasoning_effort '{reasoning_effort}'. Valid options: {valid_efforts}")
+                yield Tell(
+                    f"Invalid reasoning_effort '{reasoning_effort}'. Valid options: {valid_efforts}"
+                )
             else:
                 api_params["reasoning_effort"] = reasoning_effort
                 effort_descriptions = {
@@ -322,7 +324,9 @@ def build_api_parameters(
                     "medium": "Balanced reasoning for most cases.",
                     "high": "Deep reasoning for complex problems.",
                 }
-                yield Tell(f"Using reasoning_effort='{reasoning_effort}': {effort_descriptions[reasoning_effort]}")
+                yield Tell(
+                    f"Using reasoning_effort='{reasoning_effort}': {effort_descriptions[reasoning_effort]}"
+                )
 
         if verbosity:
             valid_verbosity = ["low", "medium", "high"]
@@ -338,15 +342,21 @@ def build_api_parameters(
 
         # Warn if GPT-5 specific parameters are used with non-GPT-5 models
         if reasoning_effort:
-            yield Tell(f"reasoning_effort parameter is only supported for GPT-5 models, ignoring for {model}")
+            yield Tell(
+                f"reasoning_effort parameter is only supported for GPT-5 models, ignoring for {model}"
+            )
         if verbosity:
-            yield Tell(f"verbosity parameter is only supported for GPT-5 models, ignoring for {model}")
+            yield Tell(
+                f"verbosity parameter is only supported for GPT-5 models, ignoring for {model}"
+            )
 
     # Add service_tier if provided
     if service_tier is not None:
         valid_service_tiers = ["auto", "default", "flex", "priority"]
         if service_tier not in valid_service_tiers:
-            yield Tell(f"Invalid service_tier '{service_tier}'. Valid options: {valid_service_tiers}")
+            yield Tell(
+                f"Invalid service_tier '{service_tier}'. Valid options: {valid_service_tiers}"
+            )
         else:
             api_params["service_tier"] = service_tier
             yield Tell(f"Using service_tier='{service_tier}' for request prioritization")
@@ -381,14 +391,14 @@ def process_structured_response(
 ) -> EffectGenerator[Any]:
     """
     Process structured response from OpenAI API.
-    
+
     Args:
         response: OpenAI API response object
         response_format: Pydantic BaseModel for structured output
-    
+
     Returns:
         Parsed response according to response_format
-    
+
     Raises:
         JSONDecodeError: If response content is not valid JSON
         ValidationError: If response doesn't match the expected format
@@ -427,8 +437,8 @@ def process_structured_response(
         yield Tell(f"Successfully parsed response as {response_format.__name__}")
         return result_model
 
-    # Execute with Safe to handle errors
-    safe_result = yield Safe(parse_json())
+    # Execute with Try to handle errors
+    safe_result = yield Try(parse_json())
     if safe_result.is_err():
         e = safe_result.error
         yield Tell(f"Failed to parse structured response: {e}")
@@ -441,10 +451,10 @@ def process_structured_response(
 def process_unstructured_response(response: Any) -> EffectGenerator[str]:
     """
     Process unstructured text response from OpenAI API.
-    
+
     Args:
         response: OpenAI API response object
-    
+
     Returns:
         Raw text content from the response
     """
@@ -477,11 +487,11 @@ def structured_llm__openai(
 ) -> EffectGenerator[Any]:
     """
     Structured LLM implementation using doeff effects for OpenAI API.
-    
+
     This function provides structured output capabilities with full observability
     through Effects, supporting Pydantic models, GPT-5 thinking modes, and
     comprehensive cost/token tracking.
-    
+
     Args:
         text: The prompt text
         model: OpenAI model name (e.g., "gpt-4o", "gpt-5-nano", "gpt-5")
@@ -507,30 +517,32 @@ def structured_llm__openai(
         detail: Image detail level for vision models ("auto", "low", "high")
         max_retries: Maximum number of retry attempts for API calls
         **kwargs: Additional OpenAI API parameters
-    
+
     GPT-5 Thinking Mode Usage:
         For simple tasks (extraction, formatting, classification):
             reasoning_effort="minimal"  # Fastest, lowest cost
-        
+
         For complex reasoning (math, analysis, planning):
             reasoning_effort="high"  # Best quality, shows thinking process
-        
+
         The model automatically uses "reasoning tokens" (invisible tokens that count
         toward billing) to think through problems before generating the response.
         You can see reasoning token usage in the response.usage.completion_tokens_details.
-    
+
     Returns:
         Parsed response according to response_format, or raw text if no format specified
-    
+
     Effects Used:
         - Log: Tracks all operations and decisions
         - Step: Creates graph nodes for observability
         - Get/Put: Manages state for cost tracking
         - Await: Makes async API calls with the async OpenAI client
         - Retry: Handles transient failures
-        - Safe: Handles parsing errors
+        - Try: Handles parsing errors
     """
-    yield Tell(f"structured_llm__openai called with model={model}, response_format={response_format}")
+    yield Tell(
+        f"structured_llm__openai called with model={model}, response_format={response_format}"
+    )
 
     yield Tell(
         f"Structured LLM tracking: operation=structured_llm, model={model}, "
@@ -563,7 +575,7 @@ def structured_llm__openai(
         attempt_start_time = time.time()
         yield Tell(f"Making OpenAI API call with model={model}")
 
-        # Use Safe to handle errors and track them
+        # Use Try to handle errors and track them
         @do
         def api_call_with_tracking():
             # Make the actual API call
@@ -580,8 +592,8 @@ def structured_llm__openai(
             )
             return response
 
-        # Use Safe to track both success and failure
-        safe_result = yield Safe(api_call_with_tracking())
+        # Use Try to track both success and failure
+        safe_result = yield Try(api_call_with_tracking())
         if safe_result.is_err():
             error = safe_result.error
             # Track failed API call attempt (tracking will log the error)
@@ -601,13 +613,15 @@ def structured_llm__openai(
     delay_seconds = 1.0
     last_error = None
     for attempt in range(max_retries):
-        safe_result = yield Safe(make_api_call())
+        safe_result = yield Try(make_api_call())
         if safe_result.is_ok():
             response = safe_result.value
             break
         last_error = safe_result.error
         if attempt < max_retries - 1:
-            yield Tell(f"OpenAI API call failed (attempt {attempt + 1}/{max_retries}), retrying in {delay_seconds}s...")
+            yield Tell(
+                f"OpenAI API call failed (attempt {attempt + 1}/{max_retries}), retrying in {delay_seconds}s..."
+            )
             yield Await(asyncio.sleep(delay_seconds))
     else:
         assert last_error is not None, "Should have an error if all retries failed"
@@ -618,7 +632,9 @@ def structured_llm__openai(
         details = response.usage.completion_tokens_details
         if hasattr(details, "reasoning_tokens"):
             yield Tell(f"GPT-5 reasoning tokens used: {details.reasoning_tokens}")
-            yield Tell(f"GPT-5 output tokens: {details.output_tokens if hasattr(details, 'output_tokens') else 'N/A'}")
+            yield Tell(
+                f"GPT-5 output tokens: {details.output_tokens if hasattr(details, 'output_tokens') else 'N/A'}"
+            )
 
     # Phase 6: Process response based on format
     if response_format is not None and issubclass(response_format, BaseModel):
@@ -643,13 +659,15 @@ def gpt4o_structured(
     **kwargs,
 ) -> EffectGenerator[Any]:
     """Convenience function for GPT-4o with structured output."""
-    return (yield structured_llm__openai(
-        text=text,
-        model="gpt-4o",
-        images=images,
-        response_format=response_format,
-        **kwargs,
-    ))
+    return (
+        yield structured_llm__openai(
+            text=text,
+            model="gpt-4o",
+            images=images,
+            response_format=response_format,
+            **kwargs,
+        )
+    )
 
 
 @do
@@ -662,17 +680,19 @@ def gpt5_nano_structured(
 ) -> EffectGenerator[Any]:
     """
     Convenience function for GPT-5-nano with structured output.
-    
+
     Defaults to minimal reasoning effort for fast responses.
     """
-    return (yield structured_llm__openai(
-        text=text,
-        model="gpt-5-nano",
-        images=images,
-        response_format=response_format,
-        reasoning_effort=reasoning_effort,
-        **kwargs,
-    ))
+    return (
+        yield structured_llm__openai(
+            text=text,
+            model="gpt-5-nano",
+            images=images,
+            response_format=response_format,
+            reasoning_effort=reasoning_effort,
+            **kwargs,
+        )
+    )
 
 
 @do
@@ -685,17 +705,19 @@ def gpt5_structured(
 ) -> EffectGenerator[Any]:
     """
     Convenience function for GPT-5 with structured output.
-    
+
     Defaults to medium reasoning effort for balanced performance.
     """
-    return (yield structured_llm__openai(
-        text=text,
-        model="gpt-5",
-        images=images,
-        response_format=response_format,
-        reasoning_effort=reasoning_effort,
-        **kwargs,
-    ))
+    return (
+        yield structured_llm__openai(
+            text=text,
+            model="gpt-5",
+            images=images,
+            response_format=response_format,
+            reasoning_effort=reasoning_effort,
+            **kwargs,
+        )
+    )
 
 
 __all__ = [
