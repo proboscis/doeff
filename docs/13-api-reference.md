@@ -212,17 +212,7 @@ yield Tell("Processing started")
 
 **Signature:** `Tell(message: object)`
 
----
-
-### Log(message)
-
-Alias of `Tell(message)`.
-
-```python
-yield Tell("Step complete")
-```
-
-**Signature:** `Tell(message: object)`
+`Log` is a deprecated alias for `Tell`. Use `Tell` instead.
 
 ---
 
@@ -305,6 +295,117 @@ results = yield Gather(fetch_user(1), fetch_user(2), fetch_user(3))
 **Signature:** `Gather(*items: Waitable[Any] | Program[Any])`
 
 **See:** [Advanced Effects](09-advanced-effects.md#gather-effects)
+
+---
+
+### Race(*waitables)
+
+Wait for the first waitable to complete.
+
+```python
+winner = yield Race(task_a, task_b)
+value = winner.value
+```
+
+**Signature:** `Race(*futures: Waitable[Any])`
+
+**Returns:** `RaceResult(first, value, rest)`
+
+**See:** [Async Effects](04-async-effects.md#race-semantics),
+[Advanced Effects](09-advanced-effects.md#race-effect)
+
+---
+
+### Cancel(task)
+
+Request cooperative cancellation for a running `Task`.
+
+```python
+task = yield Spawn(worker())
+_ = yield task.cancel()
+```
+
+**Signature:** `Task.cancel()`
+
+**See:** [Async Effects](04-async-effects.md#cancel-and-taskcancellederror)
+
+---
+
+### TaskCancelledError
+
+Raised by `Wait`, `Gather`, or `Race` when a waited task was cancelled.
+
+```python
+joined = yield Safe(Wait(task))
+if joined.is_err() and joined.error.__class__.__name__ == "TaskCancelledError":
+    ...
+```
+
+**Signature:** `class TaskCancelledError(Exception)`
+
+**Import:** `from doeff.effects import TaskCancelledError`
+
+---
+
+## Semaphore Effects
+
+### CreateSemaphore(permits)
+
+Create a semaphore handle with `permits` initial permits.
+
+```python
+sem = yield CreateSemaphore(3)
+```
+
+**Signature:** `CreateSemaphore(permits: int)`
+
+**Returns:** `Semaphore`
+
+---
+
+### AcquireSemaphore(sem)
+
+Acquire one permit from a semaphore; blocks cooperatively when no permits are available.
+
+```python
+yield AcquireSemaphore(sem)
+try:
+    ...
+finally:
+    yield ReleaseSemaphore(sem)
+```
+
+**Signature:** `AcquireSemaphore(semaphore: Semaphore)`
+
+**See:** [Semaphore Effects](17-semaphore-effects.md#acquiresemaphoresem)
+
+---
+
+### ReleaseSemaphore(sem)
+
+Release one permit back to a semaphore.
+
+```python
+yield ReleaseSemaphore(sem)
+```
+
+**Signature:** `ReleaseSemaphore(semaphore: Semaphore)`
+
+**See:** [Semaphore Effects](17-semaphore-effects.md#releasesemaphoresem)
+
+---
+
+## Control Effects
+
+### Pure(value)
+
+Return an immediate value without mutating state, environment, or writer log.
+
+```python
+value = yield Pure({"status": "ok"})
+```
+
+**Signature:** `Pure(value: Any)`
 
 ---
 
@@ -649,8 +750,10 @@ path = run(write_graph_html(graph, "output.html"), handlers=default_handlers()).
 |----------|---------|
 | **Reader** | Ask, Local |
 | **State** | Get, Put, Modify |
-| **Writer** | Tell, Log, Listen, StructuredLog |
-| **Async/Concurrency** | Await, Spawn, Wait, Gather |
+| **Writer** | Tell, Listen, StructuredLog, slog |
+| **Async/Concurrency** | Await, Spawn, Wait, Gather, Race, Cancel, TaskCancelledError |
+| **Semaphore** | CreateSemaphore, AcquireSemaphore, ReleaseSemaphore |
+| **Control** | Pure |
 | **Error** | Safe |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
@@ -667,10 +770,17 @@ from doeff import run, async_run
 from doeff import default_handlers, default_async_handlers
 
 # Reader / State / Writer
-from doeff import Ask, Local, Get, Put, Modify, Tell, Log, Listen, StructuredLog
+from doeff import Ask, Local, Get, Put, Modify, Tell, Listen, StructuredLog, slog
 
 # Async / Concurrency
-from doeff import Await, Spawn, Wait, Gather
+from doeff import Await, Spawn, Wait, Gather, Race, Task
+from doeff.effects import TaskCancelledError  # raised on Wait/Gather/Race for cancelled tasks
+
+# Semaphore
+from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
+
+# Control
+from doeff import Pure
 
 # Error handling
 from doeff import Safe
