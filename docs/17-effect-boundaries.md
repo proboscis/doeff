@@ -33,7 +33,7 @@ Most effects are fully handled by doeff handlers and never leave the VM stepping
 - `Ask`, `Local`
 - `Get`, `Put`, `Modify`
 - `Tell`, `Listen`
-- `Safe`
+- `Try`
 - scheduler effects such as `Spawn`, `Wait`, `Gather`, `Race`
 
 Example:
@@ -58,7 +58,7 @@ All of those effects are resolved by handlers inside doeff.
 | Category | Effects | Boundary |
 | --- | --- | --- |
 | Context | `Ask`, `Local` | Inside doeff |
-| State / Writer / Result | `Get`, `Put`, `Modify`, `Tell`, `Listen`, `Safe` | Inside doeff |
+| State / Writer / Result | `Get`, `Put`, `Modify`, `Tell`, `Listen`, `Try` | Inside doeff |
 | Scheduler | `Spawn`, `Wait`, `Gather`, `Race` | Inside doeff |
 | Cache | `CacheGet`, `CachePut`, `CacheDelete`, `CacheExists` | Inside doeff |
 | Promise | `CreatePromise`, `CompletePromise`, `FailPromise` | Inside doeff |
