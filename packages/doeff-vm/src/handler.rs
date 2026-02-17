@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use pyo3::types::{PyModule, PyTuple};
 
 use crate::continuation::Continuation;
 #[cfg(test)]
@@ -17,6 +17,7 @@ use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
 };
 use crate::ids::SegmentId;
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
 use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
@@ -191,38 +192,64 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffe
     })
 }
 
-fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, String> {
+#[derive(Debug, Clone)]
+enum ParsedReaderEffect {
+    Ask {
+        key: HashedPyKey,
+    },
+    Local {
+        env_update: HashMap<HashedPyKey, Value>,
+        sub_program: PyShared,
+    },
+}
+
+fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<ParsedReaderEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
         if is_instance_from(obj, "doeff.effects.reader", "AskEffect") {
-            let key: String = obj
-                .getattr("key")
-                .map_err(|e| e.to_string())?
-                .extract::<String>()
-                .map_err(|e| e.to_string())?;
-            return Ok(Some(key));
+            let key_obj = obj.getattr("key").map_err(|e| e.to_string())?;
+            let key = HashedPyKey::from_bound(&key_obj).map_err(|e| e.to_string())?;
+            return Ok(Some(ParsedReaderEffect::Ask { key }));
         }
 
-        if is_instance_from(obj, "doeff.effects.reader", "HashableAskEffect") {
-            let key_obj = obj.getattr("key").map_err(|e| e.to_string())?;
-            let key = key_obj
-                .str()
-                .map_err(|e| e.to_string())?
-                .to_str()
-                .map_err(|e| e.to_string())?
-                .to_string();
-            return Ok(Some(key));
+        if is_instance_from(obj, "doeff.effects.reader", "LocalEffect") {
+            let env_update = obj.getattr("env_update").map_err(|e| e.to_string())?;
+            let sub_program = obj.getattr("sub_program").map_err(|e| e.to_string())?;
+            let mut bindings: HashMap<HashedPyKey, Value> = HashMap::new();
+
+            let items = env_update
+                .call_method0("items")
+                .map_err(|e| e.to_string())?;
+            let iter = items.try_iter().map_err(|e| e.to_string())?;
+            for item in iter {
+                let pair = item.map_err(|e| e.to_string())?;
+                let tuple = pair.cast::<PyTuple>().map_err(|e| e.to_string())?;
+                if tuple.len() != 2 {
+                    return Err(
+                        "LocalEffect.env_update.items() must yield (key, value) pairs".to_string(),
+                    );
+                }
+                let key_obj = tuple.get_item(0).map_err(|e| e.to_string())?;
+                let value_obj = tuple.get_item(1).map_err(|e| e.to_string())?;
+                let key = HashedPyKey::from_bound(&key_obj).map_err(|e| e.to_string())?;
+                bindings.insert(key, Value::from_pyobject(&value_obj));
+            }
+
+            return Ok(Some(ParsedReaderEffect::Local {
+                env_update: bindings,
+                sub_program: PyShared::new(sub_program.unbind()),
+            }));
         }
 
         Ok(None)
     })
 }
 
-fn missing_env_key_error(key: &str) -> PyException {
+fn missing_env_key_error(key: &HashedPyKey) -> PyException {
     Python::attach(|py| {
         let maybe_exc = (|| -> PyResult<Py<PyAny>> {
             let cls = py.import("doeff.errors")?.getattr("MissingEnvKeyError")?;
-            let value = cls.call1((key,))?;
+            let value = cls.call1((key.to_pyobject(py),))?;
             Ok(value.unbind())
         })();
 
@@ -232,7 +259,7 @@ fn missing_env_key_error(key: &str) -> PyException {
                 PyException::new(exc_type, exc_value, None)
             }
             Err(_) => {
-                let err = pyo3::exceptions::PyKeyError::new_err(key.to_string());
+                let err = pyo3::exceptions::PyKeyError::new_err(key.display_for_error());
                 let exc_value = err.value(py).clone().into_any().unbind();
                 let exc_type = exc_value.bind(py).get_type().into_any().unbind();
                 PyException::new(exc_type, exc_value, None)
@@ -713,8 +740,8 @@ struct LazySemaphoreEntry {
 
 #[derive(Debug, Default)]
 struct LazyAskState {
-    cache: HashMap<String, LazyCacheEntry>,
-    semaphores: HashMap<String, LazySemaphoreEntry>,
+    cache: HashMap<HashedPyKey, LazyCacheEntry>,
+    semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
 }
 
 #[derive(Clone)]
@@ -764,8 +791,12 @@ impl RustProgramHandler for LazyAskHandlerFactory {
             return true;
         }
 
-        dispatch_ref_as_python(effect)
-            .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+        dispatch_ref_as_python(effect).is_some_and(|obj| {
+            matches!(
+                parse_reader_python_effect(obj).ok().flatten(),
+                Some(ParsedReaderEffect::Ask { .. })
+            )
+        })
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -794,30 +825,30 @@ impl RustProgramHandler for LazyAskHandlerFactory {
 enum LazyAskPhase {
     Idle,
     AwaitDelegate {
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         effect: DispatchEffect,
     },
     AwaitDelegateEval {
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
     },
     AwaitAcquire {
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         expr: PyShared,
         source_id: usize,
         semaphore: Option<Value>,
     },
     AwaitCache {
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         expr: PyShared,
         source_id: usize,
         semaphore: Value,
     },
     AwaitEval {
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         source_id: usize,
         semaphore: Value,
@@ -856,7 +887,7 @@ impl LazyAskHandlerProgram {
         }))
     }
 
-    fn lazy_cache_get(&self, key: &str, source_id: usize) -> Option<Value> {
+    fn lazy_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
         let state = self.state.lock().expect("LazyAsk lock poisoned");
         let entry = state.cache.get(key)?;
         if entry.source_id == source_id {
@@ -865,12 +896,12 @@ impl LazyAskHandlerProgram {
         None
     }
 
-    fn lazy_cache_put(&self, key: String, source_id: usize, value: Value) {
+    fn lazy_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
         state.cache.insert(key, LazyCacheEntry { source_id, value });
     }
 
-    fn lazy_semaphore_get(&self, key: &str, source_id: usize) -> Option<Value> {
+    fn lazy_semaphore_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
         let state = self.state.lock().expect("LazyAsk lock poisoned");
         let entry = state.semaphores.get(key)?;
         if entry.source_id == source_id {
@@ -879,7 +910,7 @@ impl LazyAskHandlerProgram {
         None
     }
 
-    fn lazy_semaphore_put(&self, key: String, source_id: usize, semaphore: Value) {
+    fn lazy_semaphore_put(&self, key: HashedPyKey, source_id: usize, semaphore: Value) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
         state.semaphores.insert(
             key,
@@ -893,7 +924,7 @@ impl LazyAskHandlerProgram {
     fn begin_delegate_phase(
         &mut self,
         effect: DispatchEffect,
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
     ) -> RustProgramStep {
         self.phase = LazyAskPhase::AwaitDelegate {
@@ -906,7 +937,7 @@ impl LazyAskHandlerProgram {
 
     fn begin_create_then_acquire_phase(
         &mut self,
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         expr: PyShared,
         source_id: usize,
@@ -923,7 +954,7 @@ impl LazyAskHandlerProgram {
 
     fn begin_acquire_phase(
         &mut self,
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         expr: PyShared,
         source_id: usize,
@@ -955,7 +986,7 @@ impl LazyAskHandlerProgram {
 
     fn handle_delegated_ask_value(
         &mut self,
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         value: Value,
         store: &mut RustStore,
@@ -991,12 +1022,14 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
-        store: &mut RustStore,
+        _store: &mut RustStore,
     ) -> RustProgramStep {
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
-            let Some(value) = store.ask(&key).cloned() else {
-                return RustProgramStep::Throw(missing_env_key_error(&key));
+            let Some(value) = _store.ask_str(&key).cloned() else {
+                return RustProgramStep::Throw(missing_env_key_error(
+                    &HashedPyKey::from_test_string(key),
+                ));
             };
             return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                 continuation: k,
@@ -1006,7 +1039,14 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
 
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
-                Ok(Some(key)) => self.begin_delegate_phase(dispatch_from_shared(obj), key, k),
+                Ok(Some(ParsedReaderEffect::Ask { key })) => {
+                    self.begin_delegate_phase(dispatch_from_shared(obj), key, k)
+                }
+                Ok(Some(ParsedReaderEffect::Local { .. })) => {
+                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                        effect: dispatch_from_shared(obj),
+                    }))
+                }
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
                 })),
@@ -1197,7 +1237,7 @@ impl RustProgramHandler for ReaderHandlerFactory {
     }
 
     fn create_program(&self) -> RustProgramRef {
-        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram)))
+        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram::new())))
     }
 
     fn handler_name(&self) -> &'static str {
@@ -1206,11 +1246,68 @@ impl RustProgramHandler for ReaderHandlerFactory {
 }
 
 #[derive(Debug)]
-struct ReaderHandlerProgram;
+enum ReaderPhase {
+    Idle,
+    AwaitLocalEval {
+        continuation: Continuation,
+        previous_bindings: Vec<(HashedPyKey, Value)>,
+        new_keys: Vec<HashedPyKey>,
+    },
+}
+
+#[derive(Debug)]
+struct ReaderHandlerProgram {
+    phase: ReaderPhase,
+}
 
 impl ReaderHandlerProgram {
+    fn new() -> Self {
+        Self {
+            phase: ReaderPhase::Idle,
+        }
+    }
+
+    fn transfer_throw(continuation: Continuation, exception: PyException) -> RustProgramStep {
+        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+            continuation,
+            exception,
+        }))
+    }
+
+    fn apply_local_bindings(
+        store: &mut RustStore,
+        bindings: &HashMap<HashedPyKey, Value>,
+    ) -> (Vec<(HashedPyKey, Value)>, Vec<HashedPyKey>) {
+        let mut previous_bindings = Vec::new();
+        let mut new_keys = Vec::new();
+
+        for (key, value) in bindings {
+            if let Some(previous) = store.env.get(key) {
+                previous_bindings.push((key.clone(), previous.clone()));
+            } else {
+                new_keys.push(key.clone());
+            }
+            store.env.insert(key.clone(), value.clone());
+        }
+
+        (previous_bindings, new_keys)
+    }
+
+    fn restore_local_bindings(
+        store: &mut RustStore,
+        previous_bindings: Vec<(HashedPyKey, Value)>,
+        new_keys: Vec<HashedPyKey>,
+    ) {
+        for (key, value) in previous_bindings {
+            store.env.insert(key, value);
+        }
+        for key in new_keys {
+            store.env.remove(&key);
+        }
+    }
+
     fn handle_ask(
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         store: &mut RustStore,
     ) -> RustProgramStep {
@@ -1221,6 +1318,27 @@ impl ReaderHandlerProgram {
         RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
             continuation,
             value,
+        }))
+    }
+
+    fn begin_local(
+        &mut self,
+        env_update: HashMap<HashedPyKey, Value>,
+        sub_program: PyShared,
+        continuation: Continuation,
+        store: &mut RustStore,
+    ) -> RustProgramStep {
+        let handlers = continuation.handlers.clone();
+        let (previous_bindings, new_keys) = Self::apply_local_bindings(store, &env_update);
+        self.phase = ReaderPhase::AwaitLocalEval {
+            continuation,
+            previous_bindings,
+            new_keys,
+        };
+        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+            expr: sub_program,
+            handlers,
+            metadata: None,
         }))
     }
 }
@@ -1235,12 +1353,19 @@ impl RustHandlerProgram for ReaderHandlerProgram {
     ) -> RustProgramStep {
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
+            let key = HashedPyKey::from_test_string(key);
             return ReaderHandlerProgram::handle_ask(key, k, store);
         }
 
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
-                Ok(Some(key)) => ReaderHandlerProgram::handle_ask(key, k, store),
+                Ok(Some(ParsedReaderEffect::Ask { key })) => {
+                    ReaderHandlerProgram::handle_ask(key, k, store)
+                }
+                Ok(Some(ParsedReaderEffect::Local {
+                    env_update,
+                    sub_program,
+                })) => self.begin_local(env_update, sub_program, k, store),
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
                 })),
@@ -1259,12 +1384,35 @@ impl RustHandlerProgram for ReaderHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, _value: Value, _store: &mut RustStore) -> RustProgramStep {
-        unreachable!("ReaderHandler never yields mid-handling")
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, ReaderPhase::Idle) {
+            ReaderPhase::AwaitLocalEval {
+                continuation,
+                previous_bindings,
+                new_keys,
+            } => {
+                Self::restore_local_bindings(store, previous_bindings, new_keys);
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    continuation,
+                    value,
+                }))
+            }
+            ReaderPhase::Idle => RustProgramStep::Return(value),
+        }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
-        RustProgramStep::Throw(exc)
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, ReaderPhase::Idle) {
+            ReaderPhase::AwaitLocalEval {
+                continuation,
+                previous_bindings,
+                new_keys,
+            } => {
+                Self::restore_local_bindings(store, previous_bindings, new_keys);
+                Self::transfer_throw(continuation, exc)
+            }
+            ReaderPhase::Idle => RustProgramStep::Throw(exc),
+        }
     }
 }
 
@@ -1805,9 +1953,7 @@ mod tests {
     fn test_reader_factory_ask() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-            store
-                .env
-                .insert("config".to_string(), Value::String("value".to_string()));
+            store.put_env_str("config", Value::String("value".to_string()));
             let k = make_test_continuation();
             let program_ref = ReaderHandlerFactory.create_program();
             let step = {

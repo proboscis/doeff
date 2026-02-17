@@ -1651,7 +1651,17 @@ impl VM {
             .segments
             .get(seg_id)
             .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
-        let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
+        let mut k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
+        let mut captured_handlers = Vec::new();
+        let mut captured_identities = Vec::new();
+        for marker in &handler_chain {
+            if let Some(entry) = self.handlers.get(marker) {
+                captured_handlers.push(entry.handler.clone());
+                captured_identities.push(entry.py_identity.clone());
+            }
+        }
+        k_user.handlers = captured_handlers;
+        k_user.handler_identities = captured_identities;
 
         let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id), scope_chain);
         let handler_seg_id = self.alloc_segment(handler_seg);
@@ -2794,12 +2804,12 @@ mod tests {
         let mut store = RustStore::new();
         store.put("key".to_string(), Value::Int(42));
         store.tell(Value::String("log".to_string()));
-        store.env.insert("env_key".to_string(), Value::Bool(true));
+        store.put_env_str("env_key", Value::Bool(true));
 
         let cloned = store.clone();
         assert_eq!(cloned.get("key").unwrap().as_int(), Some(42));
         assert_eq!(cloned.logs().len(), 1);
-        assert_eq!(cloned.ask("env_key").unwrap().as_bool(), Some(true));
+        assert_eq!(cloned.ask_str("env_key").unwrap().as_bool(), Some(true));
 
         // Verify independence
         store.put("key".to_string(), Value::Int(99));
@@ -3010,30 +3020,32 @@ mod tests {
     #[test]
     fn test_gap11_with_local_scoped_bindings() {
         let mut store = RustStore::new();
-        store
-            .env
-            .insert("db".to_string(), Value::String("prod".to_string()));
-        store
-            .env
-            .insert("host".to_string(), Value::String("localhost".to_string()));
+        store.put_env_str("db", Value::String("prod".to_string()));
+        store.put_env_str("host", Value::String("localhost".to_string()));
 
         let result = store.with_local(
             HashMap::from([
-                ("db".to_string(), Value::String("test".to_string())),
-                ("temp".to_string(), Value::Int(42)),
+                (
+                    crate::py_key::HashedPyKey::from_test_string("db"),
+                    Value::String("test".to_string()),
+                ),
+                (
+                    crate::py_key::HashedPyKey::from_test_string("temp"),
+                    Value::Int(42),
+                ),
             ]),
             |s| {
-                assert_eq!(s.ask("db").unwrap().as_str(), Some("test"));
-                assert_eq!(s.ask("temp").unwrap().as_int(), Some(42));
-                assert_eq!(s.ask("host").unwrap().as_str(), Some("localhost"));
+                assert_eq!(s.ask_str("db").unwrap().as_str(), Some("test"));
+                assert_eq!(s.ask_str("temp").unwrap().as_int(), Some(42));
+                assert_eq!(s.ask_str("host").unwrap().as_str(), Some("localhost"));
                 "done"
             },
         );
         assert_eq!(result, "done");
         // After with_local, old bindings restored, temp removed
-        assert_eq!(store.ask("db").unwrap().as_str(), Some("prod"));
-        assert!(store.ask("temp").is_none());
-        assert_eq!(store.ask("host").unwrap().as_str(), Some("localhost"));
+        assert_eq!(store.ask_str("db").unwrap().as_str(), Some("prod"));
+        assert!(store.ask_str("temp").is_none());
+        assert_eq!(store.ask_str("host").unwrap().as_str(), Some("localhost"));
     }
 
     /// G12: DispatchContext should not have callsite_cont_id field.

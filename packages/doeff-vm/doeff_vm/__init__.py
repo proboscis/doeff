@@ -104,6 +104,7 @@ PyGet = _ext.PyGet
 PyPut = _ext.PyPut
 PyModify = _ext.PyModify
 PyAsk = _ext.PyAsk
+PyLocal = _ext.PyLocal
 PyTell = _ext.PyTell
 SpawnEffect = _ext.SpawnEffect
 GatherEffect = _ext.GatherEffect
@@ -158,6 +159,7 @@ __all__ = [
     "DoThunkBase",
     "EffectBase",
     "PyAsk",
+    "PyLocal",
     "PyGet",
     "PySpawn",
     "PyGather",
