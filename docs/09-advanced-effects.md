@@ -64,6 +64,17 @@ def parallel_async():
     return results
 ```
 
+### Gather Fail-Fast Semantics
+
+`Gather` is fail-fast:
+
+- If any gathered branch fails, `Gather` raises that error immediately.
+- If any gathered branch is cancelled, `Gather` raises `TaskCancelledError`.
+- Remaining branches continue unless you cancel them explicitly.
+- On success, results are returned in input order.
+
+Use `Safe(...)` around child programs when you need partial results instead of fail-fast behavior.
+
 ## State Effects in Concurrent Programs
 
 State semantics use `Get`, `Put`, and `Modify`.
@@ -224,9 +235,58 @@ def comparison():
     return results, result
 ```
 
-## Intercept Effect
+## Race Effect
 
-`Intercept` transforms effects yielded by a program in a scoped way.
+`Race(*waitables)` resumes when the first waitable completes.
+
+- First completion wins.
+- If the winner fails, `Race` raises that error.
+- If the winner is cancelled, `Race` raises `TaskCancelledError`.
+- The returned `RaceResult` exposes `first`, `value`, and `rest`.
+
+By default, non-winning siblings keep running. Cancel them explicitly when you want winner-takes-all
+behavior:
+
+```python
+from doeff import Race, Spawn, do
+
+@do
+def first_wins():
+    fast = yield Spawn(fetch_fast())
+    slow = yield Spawn(fetch_slow())
+
+    result = yield Race(fast, slow)
+    for loser in result.rest:
+        _ = yield loser.cancel()
+
+    return result.value
+```
+
+## Cancel / TaskCancelledError
+
+Cancellation is cooperative and non-blocking:
+
+- `yield task.cancel()` requests cancellation and returns immediately.
+- `Wait`, `Gather`, and `Race` raise `TaskCancelledError` when waiting on a cancelled task.
+
+```python
+from doeff import Safe, Spawn, TaskCancelledError, Wait, do
+
+@do
+def cancel_and_join():
+    task = yield Spawn(long_running_job())
+    _ = yield task.cancel()
+
+    joined = yield Safe(Wait(task))
+    if joined.is_err() and isinstance(joined.error, TaskCancelledError):
+        return "cancelled"
+    return joined.value
+```
+
+## Intercept
+
+`Intercept` transforms effects yielded by a program in a scoped way. The runtime does this through an
+`InterceptFrame` pushed onto the continuation stack.
 
 ```python
 program.intercept(transform)
@@ -234,7 +294,7 @@ program.intercept(transform)
 Intercept(program, transform)
 ```
 
-### Transform Contract
+### InterceptFrame Transform Contract
 
 ```python
 from doeff import Effect, Program
@@ -243,17 +303,19 @@ def transform(effect: Effect) -> Effect | Program | None:
     ...
 ```
 
-- `None`: pass through to the next transform (or the original effect)
-- `Effect`: substitute with that effect (it is not re-transformed by this chain)
-- `Program`: replace the effect by running that program
+- `None`: pass through to the next transform (or the original effect).
+- `Effect`: substitute with that effect (it is not re-transformed by the same `InterceptFrame`).
+- `Program`: replace the effect by executing that program under the current intercept scope.
+- First non-`None` transform wins.
 
-### Intercept Semantics
+### Child Propagation
 
-1. Returned `Effect` values are not re-transformed by the same transform chain.
-2. Replacement `Program` values execute under intercept, so their yielded effects are intercepted.
-3. Interception propagates to children in `Gather`, `Spawn`, and `Safe` (including background tasks).
-4. In chained intercepts, first non-`None` wins.
-5. In parallel contexts, interception order is undefined.
+`InterceptFrame` is inherited by child execution contexts:
+
+- `Gather` branches run under the parent intercept scope.
+- `Spawn` tasks (including background tasks) run under the parent intercept scope.
+
+In parallel contexts, transform observation order is not guaranteed.
 
 ```python
 from doeff import Ask, AskEffect, Gather, Intercept, Program, Spawn, do
@@ -412,6 +474,8 @@ This does not require adding `__interpreter__` to your environment.
 |--------|---------|----------|
 | `Gather(*progs)` | Parallel Programs | Fan-out computation |
 | `Spawn(prog)` | Background execution | Non-blocking tasks |
+| `Race(*waitables)` | First-completion wait | Fastest-response selection |
+| `task.cancel()` | Cooperative task cancellation | Stop non-winning/background work |
 | `Intercept(prog, *transforms)` | Scoped effect transformation | Policy injection, effect rewriting |
 | `Modify(key, fn)` | Atomic read-modify-write | Shared-state updates |
 | `CreateSemaphore / AcquireSemaphore / ReleaseSemaphore` | Cooperative concurrency limit | Rate limiting, mutex, pools |
