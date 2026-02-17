@@ -107,8 +107,7 @@ impl RustStore {
     }
 
     pub fn lazy_cache_put(&mut self, key: String, source_id: usize, value: Value) {
-        self.lazy_cache
-            .insert(key, LazyCacheEntry { source_id, value });
+        self.lazy_cache.insert(key, LazyCacheEntry { source_id, value });
     }
 
     pub fn lazy_semaphore_get(&self, key: &str, source_id: usize) -> Option<Value> {
@@ -120,26 +119,8 @@ impl RustStore {
     }
 
     pub fn lazy_semaphore_put(&mut self, key: String, source_id: usize, semaphore: Value) {
-        self.lazy_semaphores.insert(
-            key,
-            LazySemaphoreEntry {
-                source_id,
-                semaphore,
-            },
-        );
-    }
-
-    /// Merge lazy Ask coordination state from another store snapshot.
-    ///
-    /// This intentionally syncs only lazy caches/semaphores; regular state/env/log
-    /// isolation semantics remain unchanged.
-    pub fn merge_lazy_from(&mut self, other: &RustStore) {
-        for (key, entry) in &other.lazy_cache {
-            self.lazy_cache.insert(key.clone(), entry.clone());
-        }
-        for (key, entry) in &other.lazy_semaphores {
-            self.lazy_semaphores.insert(key.clone(), entry.clone());
-        }
+        self.lazy_semaphores
+            .insert(key, LazySemaphoreEntry { source_id, semaphore });
     }
 }
 

@@ -120,6 +120,19 @@ class _SchedulerCreateTaskHandle(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
+class _SchedulerCancelTask(EffectBase):
+    """Request cancellation of a task.
+
+    Attributes:
+        handle_id: The task's handle ID
+
+    Returns True if task was cancelled, False if already complete or not found.
+    """
+
+    handle_id: Any
+
+
+@dataclass(frozen=True, kw_only=True)
 class _SchedulerCreatePromise(EffectBase):
     """Create a new promise handle.
 
@@ -192,6 +205,7 @@ def async_external_wait_handler(effect: Any, k: Any):
 
 
 __all__ = [
+    "_SchedulerCancelTask",
     "_SchedulerCreatePromise",
     "_SchedulerCreateTaskHandle",
     "_SchedulerDequeueTask",

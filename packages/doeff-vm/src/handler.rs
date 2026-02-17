@@ -63,15 +63,6 @@ pub trait RustProgramHandler: std::fmt::Debug + Send + Sync {
         std::any::type_name::<Self>()
     }
 
-    /// Keep this handler visible when another handler is actively dispatching.
-    ///
-    /// Default semantics hide handlers at indices `0..=current_handler_idx` for
-    /// nested `Perform` calls. Handlers can opt-in when they must remain
-    /// globally routable while other handlers are running.
-    fn stays_visible_during_dispatch(&self) -> bool {
-        false
-    }
-
     /// Create a handler program for a specific VM run token.
     ///
     /// Handlers that keep per-run state (for example, scheduler internals)
@@ -127,13 +118,6 @@ impl Handler {
         match self {
             Handler::RustProgram(h) => h.can_handle(effect),
             Handler::Python(_) => true,
-        }
-    }
-
-    pub fn stays_visible_during_dispatch(&self) -> bool {
-        match self {
-            Handler::RustProgram(h) => h.stays_visible_during_dispatch(),
-            Handler::Python(_) => false,
         }
     }
 }
@@ -312,11 +296,8 @@ fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
 
         let is_doexpr = bound.is_instance_of::<PyDoExprBase>();
         let is_effect = bound.is_instance_of::<PyEffectBase>();
-        let has_marker = has_true_attr(bound, "__doeff_do_expr_base__")
-            || has_true_attr(bound, "__doeff_effect_base__");
-        let has_to_generator = bound.getattr("to_generator").is_ok();
 
-        if is_doexpr || is_effect || has_marker || has_to_generator {
+        if is_doexpr || is_effect {
             Some(PyShared::new(obj.clone_ref(py)))
         } else {
             None

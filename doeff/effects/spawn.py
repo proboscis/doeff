@@ -28,6 +28,7 @@ T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
 
 _WAITABLE_TYPES: tuple[str, ...] = ("Task", "Promise", "ExternalPromise")
+_cancelled_task_ids: set[int] = set()
 
 
 @runtime_checkable
@@ -92,10 +93,17 @@ class Task(Generic[T]):
     def cancel(self):
         """Request cancellation of the task.
 
-        Cancellation is delegated to the Rust scheduler via an explicit
-        effect, per SPEC-SCHED-001.
+        Cancellation is modeled at the Python task-handle layer for scheduler
+        interop: subsequent Wait/Gather/Race calls on the cancelled task raise
+        TaskCancelledError.
         """
-        return create_effect_with_trace(doeff_vm.PyCancelEffect(task=self), skip_frames=3)
+        task_id = task_id_of(self)
+        if task_id is not None:
+            _cancelled_task_ids.add(task_id)
+
+        from doeff.program import Program
+
+        return Program.pure(task_id is not None)
 
     def is_done(self) -> Effect:
         """Check if the task has completed (success, error, or cancelled).
@@ -108,7 +116,15 @@ class Task(Generic[T]):
         return create_effect_with_trace(TaskIsDoneEffect(task=self), skip_frames=3)
 
 
-TaskCancelEffect = doeff_vm.PyCancelEffect
+@dataclass(frozen=True)
+class TaskCancelEffect(EffectBase):
+    """Request cancellation of a spawned Task."""
+
+    task: Task[Any]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.task, Task):
+            raise TypeError(f"task must be Task, got {type(self.task).__name__}")
 
 
 @dataclass(frozen=True)
@@ -187,6 +203,11 @@ def coerce_promise_handle(value: Any) -> Promise[Any]:
     if _is_handle_dict(value) and value.get("type") in {"Promise", "ExternalPromise"}:
         return Promise(_promise_handle=value)
     raise TypeError(f"expected Promise handle, got {type(value).__name__}")
+
+
+def is_task_cancelled(value: Any) -> bool:
+    task_id = task_id_of(value)
+    return task_id is not None and task_id in _cancelled_task_ids
 
 
 def normalize_waitable(value: Any) -> Waitable[Any]:
@@ -303,6 +324,7 @@ __all__ = [
     "Waitable",
     "coerce_promise_handle",
     "coerce_task_handle",
+    "is_task_cancelled",
     "promise_id_of",
     "spawn",
     "task_id_of",
