@@ -74,8 +74,8 @@ impl TryFrom<u8> for DoExprTag {
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    AwaitHandlerFactory, Handler, HandlerEntry, ReaderHandlerFactory, ResultSafeHandlerFactory,
-    RustProgramHandlerRef, StateHandlerFactory, WriterHandlerFactory,
+    AwaitHandlerFactory, Handler, HandlerEntry, LazyAskHandlerFactory, ReaderHandlerFactory,
+    ResultSafeHandlerFactory, RustProgramHandlerRef, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
 use crate::py_shared::PyShared;
@@ -109,10 +109,7 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
 }
 
 fn attach_doeff_traceback_best_effort(py: Python<'_>, exc_obj: &Bound<'_, PyAny>) {
-    if !exc_obj
-        .hasattr("__doeff_traceback_data__")
-        .unwrap_or(false)
-    {
+    if !exc_obj.hasattr("__doeff_traceback_data__").unwrap_or(false) {
         return;
     }
     let Ok(module) = py.import("doeff.traceback") else {
@@ -1243,7 +1240,9 @@ fn metadata_attr_as_string(meta: &Bound<'_, PyAny>, key: &str) -> Option<String>
             .flatten()
             .and_then(|v| v.extract::<String>().ok());
     }
-    meta.getattr(key).ok().and_then(|v| v.extract::<String>().ok())
+    meta.getattr(key)
+        .ok()
+        .and_then(|v| v.extract::<String>().ok())
 }
 
 fn metadata_attr_as_u32(meta: &Bound<'_, PyAny>, key: &str) -> Option<u32> {
@@ -1259,15 +1258,21 @@ fn metadata_attr_as_u32(meta: &Bound<'_, PyAny>, key: &str) -> Option<u32> {
 
 fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<PyShared> {
     if let Ok(dict) = meta.cast::<PyDict>() {
-        return dict
-            .get_item(key)
-            .ok()
-            .flatten()
-            .and_then(|v| if v.is_none() { None } else { Some(PyShared::new(v.unbind())) });
+        return dict.get_item(key).ok().flatten().and_then(|v| {
+            if v.is_none() {
+                None
+            } else {
+                Some(PyShared::new(v.unbind()))
+            }
+        });
     }
-    meta.getattr(key)
-        .ok()
-        .and_then(|v| if v.is_none() { None } else { Some(PyShared::new(v.unbind())) })
+    meta.getattr(key).ok().and_then(|v| {
+        if v.is_none() {
+            None
+        } else {
+            Some(PyShared::new(v.unbind()))
+        }
+    })
 }
 
 fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> CallMetadata {
@@ -2640,7 +2645,7 @@ mod tests {
 /// equivalent to `WithHandler(h0, WithHandler(h1, WithHandler(h2, prog)))`.
 ///
 /// `handlers` accepts a list of:
-///   - `RustHandler` sentinels: `state`, `reader`, `writer`, `result_safe`, `scheduler`
+///   - `RustHandler` sentinels: `state`, `reader`, `writer`, `result_safe`, `scheduler`, `lazy_ask`
 ///   - Python handler callables
 #[pyfunction]
 #[pyo3(signature = (program, handlers=None, env=None, store=None, trace=false))]
@@ -2875,6 +2880,12 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "scheduler",
         PyRustHandlerSentinel {
             factory: Arc::new(SchedulerHandler::new()),
+        },
+    )?;
+    m.add(
+        "lazy_ask",
+        PyRustHandlerSentinel {
+            factory: Arc::new(LazyAskHandlerFactory::new()),
         },
     )?;
     m.add(
