@@ -174,6 +174,31 @@ def app():
 print(run(app(), handlers=default_handlers(), env={"key": "outer"}).value)
 ```
 
+`Local(Safe(...))` is the inverse nesting order: `Safe` catches inside the `Local` scope first, then
+`Local` restores the outer env when the scope exits.
+
+```python
+from doeff import Ask, Local, Safe, default_handlers, do, run
+
+@do
+def local_safe_inner():
+    caught = yield Safe(failing_inner())
+    still_inner = yield Ask("key")
+    return (caught.is_err(), still_inner)  # (True, "inner")
+
+@do
+def app_local_safe():
+    before = yield Ask("key")
+    inside = yield Local({"key": "inner"}, local_safe_inner())
+    after = yield Ask("key")
+    return (before, inside, after)  # ("outer", (True, "inner"), "outer")
+
+print(run(app_local_safe(), handlers=default_handlers(), env={"key": "outer"}).value)
+```
+
+Contrast: `Safe(Local(...))` catches after `Local` unwinds; `Local(Safe(...))` catches before unwind
+while still inside the local env.
+
 ### 3. Nested `Safe` Result Shape
 
 A nested Safe does not collapse wrappers. `Safe(Safe(x))` returns nested results.
