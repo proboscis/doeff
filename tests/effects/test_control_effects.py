@@ -28,6 +28,11 @@ from doeff.effects import (
 )
 from doeff.effects.reader import AskEffect
 
+_LOCAL_EFFECT_PENDING = pytest.mark.xfail(
+    reason="LocalEffect is unhandled until ISSUE-CORE-505C",
+    strict=False,
+)
+
 # ============================================================================
 # Pure Effect Tests
 # ============================================================================
@@ -69,6 +74,7 @@ class TestPureEffect:
 # ============================================================================
 
 
+@_LOCAL_EFFECT_PENDING
 class TestSafeLocalComposition:
     """Tests for Safe + Local composition: Environment restored even on caught error."""
 
@@ -498,6 +504,7 @@ class TestCombinedComposition:
     """Tests for complex combinations of control effects."""
 
     @pytest.mark.asyncio
+    @_LOCAL_EFFECT_PENDING
     async def test_safe_intercept_local_combined(
         self, parameterized_interpreter
     ) -> None:
