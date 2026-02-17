@@ -5,178 +5,217 @@ contracts.
 
 ## Table of Contents
 
-- [Combination Matrix](#combination-matrix)
-- [Key Laws with Examples](#key-laws-with-examples)
-- [Sync vs Async Differences](#sync-vs-async-differences)
+- [Effect Combination Matrix](#effect-combination-matrix)
+- [Matrix Key](#matrix-key)
+- [Composition Laws](#composition-laws)
+- [Sync vs Async Runtime Differences](#sync-vs-async-runtime-differences)
+- [Design Decision Notes](#design-decision-notes)
 - [References](#references)
 
-## Combination Matrix
+## Effect Combination Matrix
 
-The table below lists documented effect pairs and their interaction behavior.
+The matrix below follows `SPEC-EFF-100` outer/inner structure.
 
-| Effect Pair | Interaction Behavior | Practical Guarantee |
-| --- | --- | --- |
-| `Local + Ask` | `Local` overrides reader values inside its scope only. | Reader env restores after scope exit. |
-| `Local + Local` | Nested locals compose by inner override, then unwind. | Each scope restores independently. |
-| `Local + Get/Put/Modify` | `Local` does not scope state operations. | State mutations propagate outside `Local`. |
-| `Local + Safe` | `Safe(Local(...))` catches errors without leaking env override. | Env is restored on both success and failure. |
-| `Listen + Tell` | `Listen` captures `Tell` entries from successful sub-programs. | `ListenResult.log` contains scope-local successful logs. |
-| `Listen + Local` | `Tell` inside `Local` is still visible to enclosing `Listen` on success. | Reader scoping does not block log capture. |
-| `Listen + Listen` | Inner and outer `Listen` scopes capture independently. | Inner captures its subtree; outer sees full outer subtree. |
-| `Listen + Safe` | If `Safe` wraps `Listen`, failures are returned as `Err`; no `ListenResult` on failing path. | Failed listens do not produce captured logs. |
-| `Listen + Gather` | With `Gather` over spawned tasks, child logs remain task-local snapshots. | Parent `Listen` does not capture spawned-child logs. |
-| `Safe + Get/Put/Modify` | `Safe` catches errors but does not roll back state mutations done before failure. | State changes persist after `Err`. |
-| `Safe + Local` | Error boundaries do not break env restoration semantics. | Post-`Safe` env equals pre-`Safe` env. |
-| `Safe + Gather` | `Safe(Gather(...))` returns `Err` on child failure. | Parent continues with explicit result handling. |
-| `State + Gather` | Gathered branches operate on isolated state snapshots and aggregate return values. | Child state writes do not merge into parent store automatically. |
-| `Spawn + Ask` | Child task inherits env snapshot at spawn time. | Children read parent env values unless locally overridden. |
-| `Spawn + Get/Put/Modify` | Child task runs on isolated state snapshot. | Branch state mutations are not shared with siblings/parent. |
-| `Spawn + Tell` | Child task uses isolated log snapshot. | Branch logs are not automatically merged into parent logs. |
-| `Gather + Spawn` | `Gather` joins spawned tasks and returns values in input order. | Aggregation is deterministic by input handle order. |
-| `Gather + Local` | Local env overrides apply to tasks spawned in that scope. | Gathered children see inherited local env snapshot. |
-| `Intercept + Gather/Local/Listen` | `Intercept` rewrites nested program payloads structurally. | Transforms apply through nested composition boundaries. |
+| Outer / Inner | Ask | Get | Put | Log | Safe | Local | Listen | Intercept | Gather |
+|---------------|-----|-----|-----|-----|------|-------|--------|-----------|--------|
+| **Local**     | Scoped | Propagates | Propagates | Propagates | Propagates | Scoped | Propagates | Propagates | Propagates |
+| **Listen**    | - | - | - | Captured* | - | - | Nested | - | All captured* |
+| **Safe**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
+| **Intercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
+| **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
 
-## Key Laws with Examples
+`*` Listen captures logs only on success paths. On error, the error propagates and logs are not
+wrapped in `ListenResult`.[^D5]
 
-### 1. Local Restoration
+`**` Gather store sharing differs by runtime (`Law 8a` and `Law 8b`).[^D4]
 
-Environment is restored after `Local` exits, even when the inner computation fails.
+## Matrix Key
+
+- `Scoped`: Effect operates within a bounded scope and restores after completion.
+- `Propagates`: Effect passes through unchanged.
+- `Captured`: Output is captured by the outer effect on success path.
+- `Persists`: Side effects persist even when errors are caught.
+- `Wrapped`: Result is wrapped in outer effect type.
+- `Restores`: Environment restores to pre-scope value.
+- `Transform`: Effect can be transformed by `Intercept` (including nested programs).[^D1]
+- `Isolated`: Error handling remains per-branch while parent receives failing outcome.
+- `Inherit`: Child inherits parent environment snapshot at invocation time.
+- `Shared`: All branches use the same underlying resource.
+- `Merged`: Outputs from branches are combined.
+- `Nested`: Inner effect nests within outer effect.
+
+## Composition Laws
+
+### Law 1: Local Restoration Law
+
+Environment MUST restore after `Local` scope, regardless of success or error.
 
 ```python
-from doeff import do
-from doeff.effects import Ask, Local, Safe
-
-
 @do
-def failing_inner():
-    _ = yield Ask("key")
-    raise ValueError("boom")
-
-
-@do
-def program():
-    before = yield Ask("key")
-    result = yield Safe(Local({"key": "inner"}, failing_inner()))
-    after = yield Ask("key")
-    return (before, result.is_err(), after)  # ("outer", True, "outer")
+def test_law_1():
+    outer_val = yield Ask("key")
+    try:
+        yield Local({"key": "inner"}, failing_program())
+    except Exception:
+        pass
+    restored_val = yield Ask("key")
+    assert outer_val == restored_val
 ```
 
-### 2. Listen Capture on Success Only
+### Law 2: Local Non-State-Scoping Law
 
-`Listen` captures logs only when the listened computation completes successfully.
+`Local` does NOT scope state (`Get`/`Put`). State changes propagate.
 
 ```python
-from doeff import do
-from doeff.effects import Listen, Safe, Tell
-
-
 @do
-def failing_with_logs():
-    yield Tell("before-fail")
-    raise RuntimeError("failed")
+def test_law_2():
+    yield Put("counter", 0)
+    yield Local({}, do_increment())
+    assert (yield Get("counter")) == 1
+```
 
+### Law 3: Listen Capture Law
 
+`Listen` captures logs only on successful completion. On error, the error propagates without
+`ListenResult` wrapping.[^D5]
+
+```python
 @do
-def program():
+def test_law_3_error():
     result = yield Safe(Listen(failing_with_logs()))
-    return result.is_err()  # True, no ListenResult produced on failure path
+    assert result.is_err()
 ```
 
-### 3. Safe State Persistence
+### Law 4: Safe Non-Rollback Law
 
-State mutations inside a `Safe` boundary persist, even if the computation fails.
+`Safe` does NOT rollback state on error. State changes persist.[^D3]
 
 ```python
-from doeff import do
-from doeff.effects import Get, Put, Safe
-
-
 @do
-def mutate_then_fail():
-    yield Put("counter", 10)
-    raise ValueError("fail after mutation")
-
-
-@do
-def program():
+def test_law_4():
     yield Put("counter", 0)
-    _ = yield Safe(mutate_then_fail())
-    return (yield Get("counter"))  # 10
+    _ = yield Safe(do_modify_then_fail())
+    assert (yield Get("counter")) > 0
 ```
 
-### 4. Gather Store Sharing (Isolation Semantics)
+### Law 5: Safe Environment Restoration Law
 
-`Gather` aggregates spawned children, but each child runs with isolated `state/log` snapshots while
-sharing inherited env context.
+`Safe` restores environment context to pre-`Safe` value.
 
 ```python
-from doeff import do
-from doeff.effects import Gather, Get, Put, Spawn
-
-
 @do
-def child_increment():
-    current = yield Get("counter")
-    yield Put("counter", current + 1)
-    return current
+def test_law_5():
+    _ = yield Safe(Local({"x": 1}, failing_program()))
+    # Environment is restored after Safe exits
+```
 
+### Law 6: Intercept Transformation Law
 
+`Intercept` transforms effects in the intercepted program, including nested program values in
+payloads (for example `Gather` children and `Local`/`Listen` sub-programs).[^D1]
+
+```python
 @do
-def program():
+def test_law_6():
+    seen = [0]
+
+    def transform(effect):
+        if isinstance(effect, AskEffect):
+            seen[0] += 1
+        return effect
+
+    @do
+    def child():
+        return (yield Ask("key"))
+
+    _ = yield Gather(child(), child()).intercept(transform)
+    assert seen[0] == 2
+```
+
+### Law 7: Gather Environment Inheritance Law
+
+`Gather` children inherit parent environment as a snapshot at gather invocation time.
+
+```python
+@do
+def test_law_7():
+    _ = yield Local({"env_key": "value"}, Gather(child_that_reads_env_key()))
+```
+
+### Law 8: Gather Store Sharing Law (Runtime-Dependent)
+
+Gather shares store across children in both runtimes, but execution model differs.[^D4]
+
+#### Law 8a: SyncRuntime (Sequential Gather)
+
+Children execute sequentially and share store deterministically.
+
+```python
+@do
+def test_law_8a_sync():
     yield Put("counter", 0)
-    t1 = yield Spawn(child_increment())
-    t2 = yield Spawn(child_increment())
-    t3 = yield Spawn(child_increment())
-    values = yield Gather(t1, t2, t3)
-    final = yield Get("counter")
-    return (values, final)  # ([0, 0, 0], 0)
+    results = yield Gather(increment(), increment(), increment())
+    assert results == [0, 1, 2]
+    assert (yield Get("counter")) == 3
 ```
 
-### 5. Env Inheritance for Child Tasks
+#### Law 8b: AsyncRuntime (Parallel Gather)
 
-Children spawned inside `Local` inherit the enclosing env snapshot.
+Children execute in parallel with shared store. Concurrent writes may race; ordering of
+intermediate observations is non-deterministic.
 
 ```python
-from doeff import do
-from doeff.effects import Ask, Gather, Local, Spawn
-
-
 @do
-def child():
-    return (yield Ask("tenant"))
-
-
-@do
-def program():
-    return (
-        yield Local(
-            {"tenant": "acme"},
-            _spawn_and_gather(),
-        )
-    )
-
-
-@do
-def _spawn_and_gather():
-    t1 = yield Spawn(child())
-    t2 = yield Spawn(child())
-    return (yield Gather(t1, t2))  # ["acme", "acme"]
+async def test_law_8b_async():
+    yield Put("counter", 0)
+    results = yield Gather(increment(), increment(), increment())
+    assert (yield Get("counter")) == 3
+    # `results` order is by input child position, but values may reflect interleaving.
 ```
 
-## Sync vs Async Differences
+### Law 9: Gather Error Propagation Law
 
-Core composition laws in this chapter are shared by `run(...)` and `async_run(...)`. Differences are
-in execution driver behavior:
+When any `Gather` child fails, error propagates to parent. Sibling behavior depends on runtime.
 
-| Concern | `run(...)` (sync) | `async_run(...)` (async) |
+- `SyncRuntime`: Sequential execution stops at first error.
+- `AsyncRuntime`: All children are already spawned; siblings may continue and side effects may still occur.
+
+```python
+@do
+def test_law_9():
+    result = yield Safe(Gather(
+        succeeds_with_side_effect(),
+        fails_immediately(),
+        succeeds_with_side_effect(),
+    ))
+    assert result.is_err()
+```
+
+## Sync vs Async Runtime Differences
+
+`SPEC-EFF-100` defines shared semantics plus explicit runtime-dependent behavior.
+
+| Concern | `run(...)` (`SyncRuntime`) | `async_run(...)` (`AsyncRuntime`) |
 | --- | --- | --- |
-| `Await` handling | Uses sync await bridge handler. | Uses async await handler with async runner path. |
-| Call site contract | Direct call returns `RunResult`. | `await` call returns `RunResult`. |
-| `Spawn` + `Gather` composition guarantees | Same guarantees: env snapshot inheritance, isolated state/log snapshots, result order follows input handles. | Same guarantees: env snapshot inheritance, isolated state/log snapshots, result order follows input handles. |
-| Side-effect timing | Cooperative scheduling; timing can vary with awaited operations. | Cooperative scheduling; timing can vary with awaited operations. |
+| Gather execution model | Sequential child execution. | Parallel child execution. |
+| Gather store semantics | Shared store, deterministic state observation by child order. | Shared store, race-prone interleavings for read/modify/write patterns. |
+| Gather error propagation | Stop at first failing child; later children are not executed. | First failure propagates; other children may continue running. |
+| Gather side effects on sibling failure | Effects only from children that already ran before failure. | Effects from siblings may still happen after failure is observed. |
 
-Guideline: rely on value-level guarantees (env inheritance, state/log isolation, explicit error
-handling), not on incidental interleaving timing.
+Guideline: treat `Gather` as shared-store in both runtimes; require explicit coordination for
+race-sensitive async state updates.
+
+## Design Decision Notes
+
+[^D1]: **D1 Intercept Scope**: Intercept applies structural rewriting to nested programs in effect payloads. It does not reach independently spawned tasks that do not share the parent continuation stack.
+
+[^D2]: **D2 Listen + Gather Ordering**: No ordering guarantees for logs from parallel gather branches.
+
+[^D3]: **D3 Safe Rollback**: `Safe` provides error capture and environment restoration, not transactional state rollback.
+
+[^D4]: **D4 Gather Store Semantics**: Gather store is shared in both runtimes: sequential and deterministic in sync, parallel and race-prone in async.
+
+[^D5]: **D5 Listen Error Behavior**: `Listen` does not capture logs on error paths; error propagates without `ListenResult` wrapping.
 
 ## References
 
