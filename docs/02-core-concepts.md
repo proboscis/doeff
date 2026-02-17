@@ -177,6 +177,19 @@ Handlers interpret effects with this shape:
 If a host handler returns an effect value, runtime normalizes it through `Perform(effect)`
 before continuing.
 
+## Intercept Transform Contract
+
+`Intercept(program, *transforms)` installs scoped transforms for yielded effects.
+Each transform is called with the current effect and may return:
+
+- `None`: pass through to the next transform (or to normal effect handling if none match)
+- `Effect`: replace the original effect with that effect
+- `Program`: replace the original effect by running that program
+
+Transforms are evaluated in declaration order, and the first non-`None` result wins.
+This contract defines interception as effect-to-effect/program rewriting at the
+`Perform(effect)` boundary, not as a separate control-node family.
+
 ## Composition
 
 IR-level composition primitives:
