@@ -25,6 +25,21 @@ Current docs should describe the active model directly:
 - Main docs now use the canonical writer API: `Tell`, `StructuredLog`, `slog`, and `Listen`.
 - Inline references to deprecated protocol names were removed from core chapters.
 
+## DA-011 (2026-02-17)
+
+`docs/program-architecture-overview.md` was fully rewritten to match:
+
+- SPEC-TYPES-001 Rev 12
+- SPEC-008 Rev 14
+- SPEC-CORE-001
+
+Archived historical content from the old chapter includes:
+
+- old runtime naming and execution flow references
+- old inheritance-centric type modeling notes
+- old KPC dispatch framing that predated call-time macro expansion
+- old interpreter-loop wording that predated `run` / `async_run` + explicit `Perform` boundary
+
 ## Error Handling Migration Notes (Archived)
 
 The following migration guide was moved from `docs/05-error-handling.md`.
