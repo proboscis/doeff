@@ -102,6 +102,17 @@ flowchart TD
     O -->|Done / Failed| Q[Build RunResult]
 ```
 
+## Call Stack Tracking
+
+Call-stack introspection is tracked at `Call` boundaries, not rebuilt from Python traceback state.
+During yielded-value classification, the driver extracts `CallMetadata` (function name, file, line)
+and attaches it to the `Call` node before handing control to the VM.
+When `Call` invokes a generator-producing callable, the VM pushes `Frame::PythonGenerator` with
+that metadata attached.
+`GetCallStack` then walks VM segments and frames, collecting `CallMetadata` from active
+`Frame::PythonGenerator` entries.
+This keeps stack reconstruction deterministic in VM state while Python object access remains in the driver.
+
 ## Effect Observation (`trace=True`)
 
 `run(..., trace=True)` and `async_run(..., trace=True)` enable VM step tracing in `RunResult.trace`.
