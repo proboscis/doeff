@@ -1,6 +1,6 @@
 # Advanced Effects
 
-Advanced effects for parallel Program execution, background tasks, and atomic operations.
+Advanced effects for parallel execution, shared-state coordination, and runtime-aware scheduling.
 
 ## Gather Effects
 
@@ -16,11 +16,11 @@ def parallel_programs():
     prog1 = fetch_user(1)
     prog2 = fetch_user(2)
     prog3 = fetch_user(3)
-    
+
     # Run all Programs in parallel
     users = yield Gather(prog1, prog2, prog3)
     # users = [user1, user2, user3]
-    
+
     return users
 ```
 
@@ -34,12 +34,12 @@ def parallel_dict():
     programs = {
         "user": fetch_user(123),
         "posts": fetch_posts(123),
-        "comments": fetch_comments(123)
+        "comments": fetch_comments(123),
     }
     keys = list(programs.keys())
     values = yield Gather(*programs.values())
     results = dict(zip(keys, values))
-    
+
     # results = {"user": ..., "posts": [...], "comments": [...]}
     return results
 ```
@@ -49,100 +49,123 @@ def parallel_dict():
 To run async operations in parallel, wrap them with `Await`:
 
 ```python
+from doeff import Await, Gather, do
+
 @do
 def parallel_async():
-    # Create Programs that wrap async functions
     @do
     def fetch_data(url):
         return (yield Await(http_get(url)))
 
-    # Run multiple Programs in parallel
     results = yield Gather(
         fetch_data("https://api1.example.com"),
-        fetch_data("https://api2.example.com")
+        fetch_data("https://api2.example.com"),
     )
     return results
 ```
 
-## Atomic Effects
+## State Effects in Concurrent Programs
 
-Thread-safe state operations.
+State semantics use `Get`, `Put`, and `Modify`.
 
-### AtomicGet
+- `Get(key)`: read a required value (raises `KeyError` if missing)
+- `Put(key, value)`: write a value
+- `Modify(key, fn)`: atomic read-modify-write update
 
-```python
-@do
-def atomic_read():
-    # Thread-safe state read
-    count = yield AtomicGet("counter")
-    yield Tell(f"Counter: {count}")
-    return count
-```
+### Atomic Updates with Modify
 
-### AtomicUpdate
+Use `Modify` when multiple tasks can update the same key.
 
 ```python
+from doeff import Modify, Tell, do
+
 @do
-def atomic_increment():
-    # Thread-safe atomic update
-    new_value = yield AtomicUpdate("counter", lambda x: x + 1)
-    yield Tell(f"Incremented to: {new_value}")
+def increment_counter():
+    new_value = yield Modify("counter", lambda current: (current or 0) + 1)
+    yield Tell(f"Counter: {new_value}")
     return new_value
 ```
 
-### Atomic vs Regular State
+### Get/Put vs Modify
 
 ```python
-# Race condition with regular state
+from doeff import Get, Modify, Put, do
+
 @do
 def unsafe_increment():
-    count = yield Get("counter")  # Read
-    # Another thread could modify here!
-    yield Put("counter", count + 1)  # Write
+    # Not atomic across tasks
+    count = yield Get("counter")
+    yield Put("counter", count + 1)
 
-# Safe with atomic update
 @do
 def safe_increment():
-    new_count = yield AtomicUpdate("counter", lambda x: x + 1)
-    return new_count
+    # Atomic read-modify-write
+    return (yield Modify("counter", lambda current: (current or 0) + 1))
 ```
 
-### Use Cases for Atomic Effects
+### Common Modify Patterns
 
-**Counters:**
 ```python
-@do
-def increment_request_counter():
-    count = yield AtomicUpdate("requests", lambda x: x + 1)
-    yield Tell(f"Request #{count}")
-```
+from doeff import Modify, do
 
-**Flags:**
-```python
-@do
-def claim_resource():
-    claimed = yield AtomicUpdate(
-        "resource_claimed",
-        lambda x: True if not x else x
-    )
-    if not claimed:
-        yield Tell("Successfully claimed resource")
-        return True
-    else:
-        yield Tell("Resource already claimed")
-        return False
-```
-
-**Accumulators:**
-```python
 @do
 def accumulate_result(value):
-    total = yield AtomicUpdate(
-        "total",
-        lambda current: current + value
-    )
-    return total
+    return (yield Modify("total", lambda current: (current or 0) + value))
 ```
+
+## Semaphore Effects
+
+Semaphores provide cooperative concurrency control for limiting concurrent access.
+
+- `CreateSemaphore(permits)` creates a semaphore with `permits >= 1`
+- `AcquireSemaphore(sem)` acquires a permit (parks when none are available)
+- `ReleaseSemaphore(sem)` releases a permit (wakes the next waiter in FIFO order)
+
+### Basic Pattern (Always Release in finally)
+
+```python
+from doeff import (
+    AcquireSemaphore,
+    CreateSemaphore,
+    Gather,
+    ReleaseSemaphore,
+    Spawn,
+    Tell,
+    Wait,
+    do,
+)
+
+@do
+def worker(sem, worker_id):
+    yield AcquireSemaphore(sem)
+    try:
+        yield Tell(f"Worker {worker_id} in critical section")
+        return worker_id
+    finally:
+        yield ReleaseSemaphore(sem)
+
+@do
+def run_workers():
+    sem = yield CreateSemaphore(3)  # at most 3 concurrent workers
+    tasks = []
+    for i in range(10):
+        tasks.append((yield Spawn(worker(sem, i))))
+    return (yield Gather(*[Wait(task) for task in tasks]))
+```
+
+### Semaphore Use Cases
+
+- Rate limiting (`CreateSemaphore(N)`)
+- Connection pools (`N` concurrent DB/API clients)
+- Mutex-style critical sections (`CreateSemaphore(1)`)
+
+### Semaphore Runtime Semantics
+
+- Waiters are resumed in FIFO acquire order
+- Releasing above max permits raises `RuntimeError`
+- `CreateSemaphore(0)` raises `ValueError`
+- Cancelled waiters are removed from the wait queue
+- Permits can leak if you do not release on all code paths
 
 ## Spawn Effect
 
@@ -151,38 +174,33 @@ Execute Programs in the background and retrieve results later.
 ### Basic Spawn
 
 ```python
-from doeff import Spawn, do
+from doeff import Spawn, Tell, Wait, do
 
 @do
 def background_work():
-    # Spawn a background task
     task = yield Spawn(expensive_computation())
-    
-    # Do other work while task runs
+
     yield Tell("Doing other work...")
     other_result = yield quick_operation()
-    
-    # Wait for background task to complete
+
     background_result = yield Wait(task)
-    
     return (other_result, background_result)
 ```
 
 ### Multiple Background Tasks
 
 ```python
+from doeff import Spawn, Wait, do
+
 @do
 def parallel_background_work():
-    # Spawn multiple tasks
     task1 = yield Spawn(computation_1())
     task2 = yield Spawn(computation_2())
     task3 = yield Spawn(computation_3())
-    
-    # Wait for all to complete
+
     result1 = yield Wait(task1)
     result2 = yield Wait(task2)
     result3 = yield Wait(task3)
-    
     return [result1, result2, result3]
 ```
 
@@ -194,59 +212,74 @@ def parallel_background_work():
 | `Spawn(prog)` | Background, non-blocking | Do other work while waiting |
 
 ```python
+from doeff import Gather, Spawn, Wait, do
+
 @do
 def comparison():
-    # Gather: blocks until all complete
     results = yield Gather(prog1(), prog2(), prog3())
-    
-    # Spawn: non-blocking, can do work in between
+
     task = yield Spawn(slow_prog())
-    yield do_other_work()  # Runs while task executes
-    result = yield Wait(task)  # Now wait for it
+    yield do_other_work()
+    result = yield Wait(task)
+    return results, result
 ```
+
+## Time Effects Runtime Matrix
+
+`Delay`, `GetTime`, and `WaitUntil` are runtime-dependent. Use this behavior matrix:
+
+| Effect | Sync Runtime | Simulation Runtime | Async Runtime |
+|--------|--------------|--------------------|---------------|
+| `Delay` | Real blocking sleep | Advances simulated clock instantly | Real non-blocking async sleep |
+| `GetTime` | Current wall-clock time | Current simulated time | Current wall-clock time |
+| `WaitUntil` | Sleeps until target time | Advances sim clock to target time | Awaits until target time |
+
+If `WaitUntil` receives a time in the past, it returns immediately.
 
 ## Combining Advanced Effects
 
-### Gather + Atomic
+### Gather + Modify
 
 ```python
+from doeff import Gather, Get, Modify, Put, do
+
 @do
 def parallel_counter():
-    # Multiple parallel operations updating a counter
     yield Put("count", 0)
-    
+
     @do
     def increment_task(n):
         for _ in range(n):
-            yield AtomicUpdate("count", lambda x: x + 1)
+            yield Modify("count", lambda current: (current or 0) + 1)
         return "done"
-    
-    # Run in parallel - atomic updates prevent race conditions
+
     yield Gather(
         increment_task(100),
         increment_task(100),
-        increment_task(100)
+        increment_task(100),
     )
-    
+
     final = yield Get("count")
-    # final = 300 (not less due to race conditions)
-    return final
+    return final  # 300
 ```
 
 ## Best Practices
 
-### Accessing the interpreter
+### Accessing the active interpreter
 
-If you need the active interpreter instance (for example, to pass it into an
-external framework callback), ask for the special key `__interpreter__`:
+If you need the active interpreter object (for example, to pass it into an external callback),
+ask for the special key `__interpreter__`:
 
 ```python
-interp = yield Ask("__interpreter__")
-# interp is the active runtime interpreter object for this execution.
+from doeff import Ask, do
+
+@do
+def read_interpreter():
+    interp = yield Ask("__interpreter__")
+    return interp
 ```
 
-This does not require adding `__interpreter__` to your environment; the
-interpreter responds to this key directly.
+This does not require adding `__interpreter__` to your environment.
 
 ### When to Use Gather
 
@@ -259,16 +292,27 @@ interpreter responds to this key directly.
 - Dependent computations (use sequential yields)
 - Single Program (just yield it directly)
 
-### When to Use Atomic
+### When to Use Modify
 
 **DO:**
 - Concurrent state updates
-- Counters and flags
-- Thread-safe operations
+- Counters and accumulators
+- Atomic read-modify-write flows
 
 **DON'T:**
-- Single-threaded programs (overhead unnecessary)
-- Complex transactions (use proper DB transactions)
+- Isolated single-step reads (`Get` is enough)
+- Multi-key transactional workflows
+
+### When to Use Semaphores
+
+**DO:**
+- Limit concurrent workers
+- Guard critical sections
+- Build bounded pools
+
+**DON'T:**
+- Skip `ReleaseSemaphore` on error paths
+- Use huge permit counts as a substitute for backpressure design
 
 ## Summary
 
@@ -276,8 +320,9 @@ interpreter responds to this key directly.
 |--------|---------|----------|
 | `Gather(*progs)` | Parallel Programs | Fan-out computation |
 | `Spawn(prog)` | Background execution | Non-blocking tasks |
-| `AtomicGet(key)` | Thread-safe read | Concurrent reads |
-| `AtomicUpdate(key, f)` | Thread-safe update | Concurrent modifications |
+| `Modify(key, fn)` | Atomic read-modify-write | Shared-state updates |
+| `CreateSemaphore / AcquireSemaphore / ReleaseSemaphore` | Cooperative concurrency limit | Rate limiting, mutex, pools |
+| `Delay / GetTime / WaitUntil` | Runtime-aware time control | Time-based workflows |
 
 ## Next Steps
 
