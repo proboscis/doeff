@@ -1,399 +1,219 @@
 # Kleisli Arrows
 
-KleisliProgram enables elegant composition and automatic Program unwrapping in doeff.
+`@do` produces a `KleisliProgram[P, T]`. Calling that `KleisliProgram` performs
+pure call-time macro expansion and emits a `Call` DoCtrl directly.
 
 ## Table of Contents
 
-- [What is KleisliProgram?](#what-is-kleisliprogram)
-- [Automatic Program Unwrapping](#automatic-program-unwrapping)
-- [Composition](#composition)
-- [Partial Application](#partial-application)
+- [What `@do` Returns](#what-do-returns)
+- [Call-Time Macro Expansion](#call-time-macro-expansion)
+- [Annotation-Aware Argument Classification](#annotation-aware-argument-classification)
+- [Call Metadata](#call-metadata)
+- [Composability of `Call` DoCtrl](#composability-of-call-doctrl)
+- [Kleisli-Level Composition and Partial Application](#kleisli-level-composition-and-partial-application)
+- [Best Practices](#best-practices)
 
-## What is KleisliProgram?
-
-`KleisliProgram[P, T]` is a callable that:
-1. Takes parameters `P`
-2. Returns `Program[T]`
-3. Automatically unwraps `Program` arguments
-
-The `@do` decorator converts functions to `KleisliProgram`.
-
-### Basic Structure
+## What `@do` Returns
 
 ```python
-@do
-def my_func(x: int, y: str) -> EffectGenerator[bool]:
-    yield Log(f"x={x}, y={y}")
-    return x > 0 and y != ""
+from doeff import Program, do
 
-# Type: KleisliProgram[(x: int, y: str), bool]
-# Which means: Callable[[int, str], Program[bool]]
+@do
+def add_one(x: int):
+    return x + 1
+
+call_expr = add_one(41)
+# call_expr is a Call DoCtrl (Program-shaped DoExpr).
 ```
 
-## Automatic Program Unwrapping
+Conceptually:
 
-KleisliProgram automatically unwraps `Program` arguments:
+- `@do` transforms a function into `KleisliProgram[P, T]`
+- `KleisliProgram.__call__` returns `Call[...]`
+- the VM evaluates that `Call` directly
 
-### Example: Composing Programs
+## Call-Time Macro Expansion
+
+When you call a `KleisliProgram`, expansion happens synchronously at Python call
+time:
+
+1. Load cached auto-unwrap strategy (computed once at decoration time).
+2. Classify each argument using annotation-aware `should_unwrap`.
+3. Convert each argument to a DoExpr node.
+4. Populate call metadata.
+5. Return `Call(Pure(kernel), args, kwargs, metadata)`.
+
+No handlers are consulted during this expansion. The transformation is pure.
+
+### Expansion Pseudocode
 
 ```python
-@do
-def add(x: int, y: int):
-    yield Log(f"Adding {x} + {y}")
-    return x + y
+def __call__(self, *args, **kwargs):
+    strategy = self._auto_unwrap_strategy
+    do_expr_args = [classify(arg, strategy.should_unwrap_positional(i)) for i, arg in enumerate(args)]
+    do_expr_kwargs = {
+        name: classify(value, strategy.should_unwrap_keyword(name))
+        for name, value in kwargs.items()
+    }
 
-@do
-def multiply(x: int, y: int):
-    return x * y
-
-@do
-def complex_calculation():
-    # These are Program[int]
-    a = add(5, 3)      # Program[int] with value 8
-    b = multiply(2, 4) # Program[int] with value 8
-
-    # Automatic unwrapping: add/multiply receive unwrapped values
-    result = yield add(a, b)  # add receives (8, 8)
-
-    return result  # 16
+    metadata = {
+        "function_name": self.__name__,
+        "source_file": self.original_func.__code__.co_filename,
+        "source_line": self.original_func.__code__.co_firstlineno,
+        "program_call": None,
+    }
+    return Call(Pure(self.execution_kernel), do_expr_args, do_expr_kwargs, metadata)
 ```
 
-### How It Works
+## Annotation-Aware Argument Classification
 
-When you call a KleisliProgram with `Program` arguments:
+`should_unwrap` is derived from parameter annotations.
+
+### `should_unwrap=True` (auto-resolve at runtime)
+
+- Plain annotations like `int`, `str`, `dict`, user classes
+- Unannotated parameters
+
+### `should_unwrap=False` (pass object through as data)
+
+- `Program`, `Program[T]`
+- `DoCtrl`, `DoCtrl[T]`
+- `Effect`, `Effect[T]`, `EffectBase` subclasses
+- `DoExpr`, `DoExpr[T]`
+- Wrapped forms like `Optional[Program[T]]`, `Program[T] | None`,
+  `Annotated[Program[T], ...]`
+
+### Value-Type to DoExpr Expansion
+
+| Argument value | `should_unwrap` | Expansion |
+| --- | --- | --- |
+| `EffectBase` instance | `True` | `Perform(arg)` |
+| `DoCtrlBase` instance | `True` | `arg` (already DoCtrl) |
+| Plain value | `True` | `Pure(arg)` |
+| `EffectBase` instance | `False` | `Pure(arg)` |
+| `DoCtrlBase` instance | `False` | `Pure(arg)` |
+| Plain value | `False` | `Pure(arg)` |
+
+### Example
+
+```python
+from doeff import Ask, Program, do
+
+@do
+def use_values(x: int, raw_program: Program[int]):
+    y = yield raw_program
+    return f"{x}:{y}"
+
+call_expr = use_values(Ask("x"), Program.pure(10))
+# x: int -> should_unwrap=True -> Ask("x") becomes Perform(Ask("x"))
+# raw_program: Program[int] -> should_unwrap=False -> Program.pure(10) becomes Pure(...)
+```
+
+## Call Metadata
+
+`KleisliProgram.__call__` attaches metadata at call time. The fields are used for
+tracing and stack introspection:
+
+- `function_name`
+- `source_file`
+- `source_line`
+- `program_call` (optional call context object)
+
+Example access:
 
 ```python
 @do
-def process(x: int, y: int):
-    return x + y
+def compute(x: int):
+    return x * 2
 
-# Create Program arguments
-prog_x = Program.pure(5)
-prog_y = Program.pure(10)
-
-# Call with Programs
-result = process(prog_x, prog_y)
-# Internally:
-# 1. Unwraps prog_x to get 5
-# 2. Unwraps prog_y to get 10
-# 3. Calls the original function with (5, 10)
-# 4. Returns Program[int]
+call_expr = compute(21)
+meta = call_expr.meta
+print(meta["function_name"])  # compute
 ```
 
-### Opt-Out of Unwrapping
+## Composability of `Call` DoCtrl
 
-Annotate parameters as `Program[T]` to prevent unwrapping:
+A `Call` is a DoExpr node, so it composes like any other DoExpr.
+
+Semantic shape (SPEC-KPC-001):
 
 ```python
-@do
-def manual_control(x: int, y: Program[int]):
-    # x is unwrapped automatically
-    # y is NOT unwrapped - you receive the Program
-
-    yield Log(f"x = {x}")
-    actual_y = yield y  # Manual unwrap
-    yield Log(f"y = {actual_y}")
-
-    return x + actual_y
-
-prog_y = Program.pure(10)
-result = manual_control(5, prog_y)  # x unwrapped, y passed as Program
+result = fetch_user(42)                          # Call DoCtrl
+mapped = fetch_user(42).map(lambda u: u.name)   # Map(Call(...), f)
+chained = fetch_user(42).flat_map(enrich)       # FlatMap(Call(...), f)
+value = yield fetch_user(42)                    # yield sends Call to VM
 ```
 
-## Composition
+The important invariant is the expression shape:
 
-KleisliProgram supports functional composition.
+- `fetch_user(42)` returns `Call(...)`
+- mapping/chaining over it yields `Map(Call(...), ...)` or
+  `FlatMap(Call(...), ...)`
+- `run()` evaluates the resulting DoExpr tree directly
 
-### and_then_k / >> operator
+## Kleisli-Level Composition and Partial Application
 
-Chain computations with `and_then_k` (or `>>`):
+Kleisli-level combinators still work and remain useful:
+
+### `and_then_k` / `>>`
 
 ```python
-from doeff import run, default_handlers
+from doeff import default_handlers, do, run
 
 @do
 def fetch_user(user_id: int):
-    yield Log(f"Fetching user {user_id}")
-    return {"id": user_id, "name": f"User{user_id}"}
+    return {"id": user_id, "name": f"user-{user_id}"}
 
 @do
 def fetch_posts(user: dict):
-    yield Log(f"Fetching posts for {user['name']}")
-    return [{"id": 1, "title": "Post 1"}, {"id": 2, "title": "Post 2"}]
+    return [f"post-for-{user['name']}"]
 
-# Compose using >>
-fetch_user_posts = fetch_user.and_then_k(lambda user: fetch_posts(user))
-# Or: fetch_user_posts = fetch_user >> fetch_posts
-
-result = run(fetch_user_posts(123), default_handlers())
-# Result: [{"id": 1, "title": "Post 1"}, {"id": 2, "title": "Post 2"}]
+fetch_user_posts = fetch_user >> fetch_posts
+result = run(fetch_user_posts(7), default_handlers())
 ```
 
-### Pipeline Pattern
-
-```python
-@do
-def load_data(filename: str):
-    yield Log(f"Loading {filename}")
-    return {"data": [1, 2, 3, 4, 5]}
-
-@do
-def validate_data(data: dict):
-    yield Log("Validating data")
-    if not data["data"]:
-        raise ValueError("Empty data")
-    return data
-
-@do
-def process_data(data: dict):
-    yield Log("Processing data")
-    return {"result": sum(data["data"])}
-
-# Build pipeline
-pipeline = (
-    load_data
-    >> (lambda d: validate_data(d))
-    >> (lambda d: process_data(d))
-)
-
-result = run(pipeline("data.json"), default_handlers())
-# Result: {"result": 15}
-```
-
-### fmap
-
-Map a pure function over the result:
+### `fmap`
 
 ```python
 @do
 def get_user():
-    return {"id": 1, "name": "Alice", "age": 30}
+    return {"id": 1, "name": "Alice"}
 
-# Extract just the name
 get_name = get_user.fmap(lambda user: user["name"])
-
-result = run(get_name(), default_handlers())
-# Result: "Alice"
 ```
 
-### Combining fmap and and_then_k
+### `partial`
 
 ```python
 @do
-def fetch_number():
-    return 42
+def greet(prefix: str, name: str):
+    return f"{prefix}, {name}"
 
-# Transform and chain
-pipeline = (
-    fetch_number
-    .fmap(lambda x: x * 2)  # 84
-    .and_then_k(lambda x: Program.pure(x + 10))  # 94
-)
-
-result = run(pipeline(), default_handlers())
-# Result: 94
-```
-
-## Partial Application
-
-Apply some arguments, creating a new KleisliProgram.
-
-### Basic Partial
-
-```python
-@do
-def greet(greeting: str, name: str):
-    yield Log(f"{greeting}, {name}!")
-    return f"{greeting}, {name}!"
-
-# Partially apply greeting
 say_hello = greet.partial("Hello")
-
-result = run(say_hello("Alice"), default_handlers())
-# Result: "Hello, Alice!"
-```
-
-### Partial with Programs
-
-```python
-@do
-def add_three(x: int, y: int, z: int):
-    return x + y + z
-
-# Partially apply first argument
-add_to_5 = add_three.partial(5)
-
-prog_y = Program.pure(3)
-result = add_to_5(prog_y, 2)  # add_three(5, 3, 2)
-# Result: Program[int] with value 10
-```
-
-### Currying Pattern
-
-```python
-@do
-def multiply(x: int, y: int):
-    return x * y
-
-# Create specialized multipliers
-double = multiply.partial(2)
-triple = multiply.partial(3)
-
-@do
-def use_multipliers():
-    a = yield double(5)  # 10
-    b = yield triple(5)  # 15
-    return a + b  # 25
-```
-
-## Advanced Patterns
-
-### Method Decoration
-
-KleisliProgram works as a method decorator:
-
-```python
-from doeff import run, default_handlers
-
-class UserService:
-    @do
-    def get_user(self, user_id: int):
-        yield Log(f"Fetching user {user_id}")
-        return {"id": user_id, "name": f"User{user_id}"}
-
-    @do
-    def update_user(self, user_id: int, data: dict):
-        user = yield self.get_user(user_id)
-        updated = {**user, **data}
-        yield Put(f"user_{user_id}", updated)
-        return updated
-
-service = UserService()
-result = run(service.get_user(123), default_handlers())
-```
-
-### Higher-Order Functions
-
-```python
-@do
-def apply_twice(f: KleisliProgram, x):
-    """Apply a KleisliProgram twice"""
-    result1 = yield f(x)
-    result2 = yield f(result1)
-    return result2
-
-@do
-def increment(x: int):
-    return x + 1
-
-@do
-def example():
-    result = yield apply_twice(increment, 5)
-    return result  # 7 (increment applied twice)
-```
-
-### Factory Pattern
-
-```python
-from doeff import run, default_handlers
-
-def create_processor(config: dict) -> KleisliProgram:
-    """Factory that creates a configured KleisliProgram"""
-
-    @do
-    def process(data: list):
-        yield Log(f"Processing with config: {config}")
-
-        if config.get("filter"):
-            data = [x for x in data if x > 0]
-
-        if config.get("double"):
-            data = [x * 2 for x in data]
-
-        return data
-
-    return process
-
-# Create specialized processors
-positive_doubler = create_processor({"filter": True, "double": True})
-simple_filter = create_processor({"filter": True})
-
-result = run(positive_doubler([1, -2, 3, -4, 5]), default_handlers())
-# Result: [2, 6, 10]
 ```
 
 ## Best Practices
 
-### Use Type Annotations
-
-```python
-# Good: clear types
-@do
-def process(x: int, y: str) -> EffectGenerator[bool]:
-    ...
-
-# Less clear: no types
-@do
-def process(x, y):
-    ...
-```
-
-### Opt-In to Manual Program Handling
-
-```python
-# When you need control over Program unwrapping
-@do
-def conditional_execute(condition: bool, action: Program[int]):
-    if condition:
-        result = yield action
-        return result
-    else:
-        return 0
-```
-
-### Compose Small Functions
-
-```python
-# Good: small, composable functions
-@do
-def validate(data):
-    ...
-
-@do
-def transform(data):
-    ...
-
-@do
-def save(data):
-    ...
-
-pipeline = validate >> transform >> save
-
-# Less good: one large function
-@do
-def validate_transform_and_save(data):
-    # Everything in one place...
-```
+- Prefer explicit annotations for parameters that should not auto-unwrap.
+- Use `Program[...]`/`Effect[...]` annotations when you need raw objects in the
+  function body.
+- Treat `KleisliProgram.__call__` as macro expansion that constructs a DoExpr
+  tree for VM evaluation.
+- Keep reasoning at the DoExpr level: each call produces a `Call` node.
 
 ## Summary
 
-| Feature | Usage |
-|---------|-------|
-| Auto-unwrap | Programs automatically unwrapped as arguments |
-| `and_then_k` / `>>` | Chain KleisliPrograms |
-| `fmap` | Map pure functions over results |
-| `partial` | Partial application |
-| Type annotation opt-out | `Program[T]` parameters not unwrapped |
-
-**Key Points:**
-- `@do` creates KleisliProgram
-- Automatic Program unwrapping enables natural composition
-- Use `>>` for pipelines
-- Use `partial` for currying
-- Annotate as `Program[T]` to prevent unwrapping
+| Topic | Macro Model |
+| --- | --- |
+| KPC identity | Call-time macro |
+| `__call__` result | `Call` DoCtrl |
+| Resolution path | Pure expansion + VM eval |
+| Handler dependency | `Call` executes as regular DoExpr |
+| Argument policy | Annotation-aware `should_unwrap` |
+| Metadata | Populated at call time |
 
 ## Next Steps
 
-- **[Patterns](12-patterns.md)** - Composition patterns and best practices
-- **[Core Concepts](02-core-concepts.md)** - Deep dive into Program and Effect
-- **[API Reference](13-api-reference.md)** - Complete API documentation
+- **[Patterns](12-patterns.md)** for larger composition patterns
+- **[Core Concepts](02-core-concepts.md)** for DoExpr/Effect architecture
+- **[API Reference](13-api-reference.md)** for complete runtime API details
