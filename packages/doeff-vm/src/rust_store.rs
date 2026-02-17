@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 #[cfg(not(test))]
-use pyo3::Python;
-#[cfg(not(test))]
 use pyo3::types::PyString;
+#[cfg(not(test))]
+use pyo3::Python;
 
 use crate::py_key::HashedPyKey;
 use crate::value::Value;
@@ -88,8 +88,7 @@ impl RustStore {
 
     #[cfg(test)]
     pub fn set_env_str(&mut self, key: impl Into<String>, value: Value) {
-        self.env
-            .insert(HashedPyKey::from_test_string(key), value);
+        self.env.insert(HashedPyKey::from_test_string(key), value);
     }
 
     pub fn tell(&mut self, message: Value) {
