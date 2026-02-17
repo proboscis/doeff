@@ -32,15 +32,16 @@ This **effect-handler duality** is the central design: programs *perform* effect
 ### Structure
 
 ```python
-@dataclass(frozen=True)
-class Program(Generic[T]):
-    generator_func: Callable[[], Generator[Effect | Program, Any, T]]
+Program[T]  # effectful computation value
 ```
 
-A Program wraps a **generator function** that:
+Programs are produced by `@do` functions and constructors like `Program.pure(...)` and
+`Program.lift(...)`.
+
+A generator-based `@do` program:
 1. Yields `Effect` or `Program` instances to request operations
 2. Eventually returns a value of type `T`
-3. Can be called multiple times to create fresh generators
+3. Is executed lazily when passed to `run(...)`/`async_run(...)`
 
 ### Key Properties
 
