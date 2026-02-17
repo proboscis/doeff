@@ -57,6 +57,25 @@ def _attach_doeff_traceback_if_present(run_result: Any) -> None:
         return
 
 
+def _print_doeff_trace_if_present(run_result: Any) -> None:
+    """Best-effort stderr printing for attached DoeffTraceback on error results."""
+    is_err = getattr(run_result, "is_err", None)
+    if not callable(is_err) or not is_err():
+        return
+    error = getattr(run_result, "error", None)
+    if not isinstance(error, BaseException):
+        return
+    doeff_tb = getattr(error, "__doeff_traceback__", None)
+    if doeff_tb is None:
+        return
+    try:
+        import sys
+
+        print(doeff_tb.format_chained(), file=sys.stderr)
+    except Exception:
+        return
+
+
 def _run_call_kwargs(
     run_fn: Any,
     *,
@@ -184,10 +203,18 @@ def run_with_handler_map(
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
     trace: bool = False,
+    print_doeff_trace: bool = True,
 ) -> Any:
     """Run with typed Python handlers plus the standard default handler sentinels."""
     wrapped = _wrap_with_handler_map(program, handler_map)
-    return run(wrapped, handlers=default_handlers(), env=env, store=store, trace=trace)
+    return run(
+        wrapped,
+        handlers=default_handlers(),
+        env=env,
+        store=store,
+        trace=trace,
+        print_doeff_trace=print_doeff_trace,
+    )
 
 
 async def async_run_with_handler_map(
@@ -197,6 +224,7 @@ async def async_run_with_handler_map(
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
     trace: bool = False,
+    print_doeff_trace: bool = True,
 ) -> Any:
     """Async counterpart to run_with_handler_map."""
     wrapped = _wrap_with_handler_map(program, handler_map)
@@ -206,6 +234,7 @@ async def async_run_with_handler_map(
         env=env,
         store=store,
         trace=trace,
+        print_doeff_trace=print_doeff_trace,
     )
 
 
@@ -215,6 +244,7 @@ def run(
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
     trace: bool = False,
+    print_doeff_trace: bool = True,
 ) -> Any:
     vm = _vm()
     run_fn = getattr(vm, "run", None)
@@ -231,6 +261,8 @@ def run(
     )
     result = _call_run_fn(run_fn, program, kwargs)
     _attach_doeff_traceback_if_present(result)
+    if print_doeff_trace:
+        _print_doeff_trace_if_present(result)
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
@@ -240,6 +272,7 @@ async def async_run(
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
     trace: bool = False,
+    print_doeff_trace: bool = True,
 ) -> Any:
     vm = _vm()
     run_fn = getattr(vm, "async_run", None)
@@ -256,6 +289,8 @@ async def async_run(
     )
     result = await _call_async_run_fn(run_fn, program, kwargs)
     _attach_doeff_traceback_if_present(result)
+    if print_doeff_trace:
+        _print_doeff_trace_if_present(result)
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
