@@ -143,6 +143,7 @@ def fetch_data():
 - `Local + Safe`: environment restoration still happens if the inner program raises and the error is caught by `Safe`.
 - `Local + Gather`: gathered child programs inherit the enclosing Local environment snapshot. A child's own `Local` stays isolated to that child scope.
 - `Local + Ask` (lazy `Program` values): overriding a key with a different `Program` object invalidates that key's lazy cache entry.
+- `Local + State`: State changes (`Get`/`Put`) persist outside the Local scope. Local only restores the environment, not state. This is intentional.
 
 ### Reader Pattern Example
 
@@ -250,6 +251,7 @@ For missing keys, `Modify` and `Get` + `Put` are not equivalent because `Get` ra
 
 ### State Composition Rules
 
+- `Put + Get` (immediate visibility): State changes are immediately visible within the same execution context - a `Put` followed by `Get` on the same key always returns the updated value.
 - `State + Safe`: state changes made before an error persist even when `Safe` catches that error. There is no automatic rollback.
 - `State + Gather` in `SyncRuntime`: gathered branches run sequentially in input order and share one store.
 - `State + Gather` in `AsyncRuntime`: branches share one store but execution can interleave, so read-modify-write patterns can race without explicit coordination.
