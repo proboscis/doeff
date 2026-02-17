@@ -7,8 +7,10 @@ import pytest
 from doeff import (
     Ask,
     Gather,
+    Local,
     Safe,
     Spawn,
+    Wait,
     async_run,
     default_async_handlers,
     default_handlers,
@@ -120,6 +122,112 @@ class TestLazyAskSemaphoreContract:
         result = run(program(), handlers=default_handlers(), env={"key": "plain_value"})
         assert result.is_ok()
         assert result.value == "plain_value"
+
+    @pytest.mark.asyncio
+    async def test_local_scoping(self) -> None:
+        @do
+        def program():
+            outer = yield Ask("key")
+            inner = yield Local({"key": "override"}, Ask("key"))
+            after = yield Ask("key")
+            return (outer, inner, after)
+
+        result = await async_run(
+            program(),
+            handlers=default_async_handlers(),
+            env={"key": "original"},
+        )
+        assert result.is_ok()
+        assert result.value == ("original", "override", "original")
+
+    def test_local_lazy_override_with_semaphore(self) -> None:
+        call_count = 0
+
+        @do
+        def expensive():
+            nonlocal call_count
+            call_count += 1
+            if False:
+                yield
+            return 42
+
+        @do
+        def worker():
+            return (yield Ask("svc"))
+
+        @do
+        def program():
+            t1 = yield Spawn(worker())
+            t2 = yield Spawn(worker())
+            r1 = yield Wait(t1)
+            r2 = yield Wait(t2)
+            return (r1, r2)
+
+        result = run(
+            Local({"svc": expensive()}, program()),
+            handlers=default_handlers(),
+            env={},
+        )
+        assert result.is_ok()
+        assert result.value == (42, 42)
+        assert call_count == 1
+
+    def test_local_visible_to_spawned_tasks(self) -> None:
+        @do
+        def worker():
+            return (yield Ask("key"))
+
+        @do
+        def program():
+            task = yield Spawn(worker())
+            return (yield Wait(task))
+
+        result = run(
+            Local({"key": "override"}, program()),
+            handlers=default_handlers(),
+            env={"key": "global"},
+        )
+        assert result.is_ok()
+        assert result.value == "override"
+
+    def test_cache_invalidation_on_local_exit(self) -> None:
+        call_count = 0
+
+        @do
+        def make_service():
+            nonlocal call_count
+            call_count += 1
+            db = yield Ask("db_url")
+            return f"Service({db})"
+
+        @do
+        def program():
+            inner = yield Local({"db_url": "test.db"}, Ask("service"))
+            outer = yield Ask("service")
+            return (inner, outer)
+
+        result = run(
+            program(),
+            handlers=default_handlers(),
+            env={"db_url": "prod.db", "service": make_service()},
+        )
+        assert result.is_ok()
+        assert result.value == ("Service(test.db)", "Service(prod.db)")
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_local_non_override_delegates(self) -> None:
+        @do
+        def program():
+            return (yield Local({"other": "x"}, Ask("key")))
+
+        result = await async_run(
+            program(),
+            handlers=default_async_handlers(),
+            env={"key": "global_value"},
+        )
+        assert result.is_ok()
+        assert result.value == "global_value"
 
     def test_no_os_lock_for_lazy_cache(self) -> None:
         """rust_store.rs must not use Mutex/RwLock for lazy_cache."""

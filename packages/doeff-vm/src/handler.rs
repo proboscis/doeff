@@ -8,13 +8,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use pyo3::types::{PyDict, PyModule};
 
 use crate::continuation::Continuation;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect, PyAsk,
+    PyLocal,
 };
 use crate::ids::SegmentId;
 use crate::py_key::HashedPyKey;
@@ -206,6 +207,50 @@ fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<HashedPyKey>, 
         }
 
         Ok(None)
+    })
+}
+
+#[derive(Debug)]
+struct ParsedLocalEffect {
+    overrides: HashMap<HashedPyKey, Value>,
+    sub_program: PyShared,
+}
+
+fn is_local_python_effect(effect: &PyShared) -> bool {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        obj.is_instance_of::<PyLocal>()
+            || is_instance_from(obj, "doeff.effects.reader", "LocalEffect")
+    })
+}
+
+fn parse_local_python_effect(effect: &PyShared) -> Result<Option<ParsedLocalEffect>, String> {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        if !(obj.is_instance_of::<PyLocal>()
+            || is_instance_from(obj, "doeff.effects.reader", "LocalEffect"))
+        {
+            return Ok(None);
+        }
+
+        let env_update = obj.getattr("env_update").map_err(|e| e.to_string())?;
+        let env_update = env_update
+            .cast::<PyDict>()
+            .map_err(|_| "Local env_update must be a dict".to_string())?;
+
+        let mut overrides = HashMap::new();
+        for (key, value) in env_update.iter() {
+            let key = HashedPyKey::from_bound(&key)
+                .map_err(|e| format!("Local env key is not hashable: {e}"))?;
+            overrides.insert(key, Value::from_pyobject(&value));
+        }
+
+        let sub_program = obj.getattr("sub_program").map_err(|e| e.to_string())?;
+
+        Ok(Some(ParsedLocalEffect {
+            overrides,
+            sub_program: PyShared::new(sub_program.unbind()),
+        }))
     })
 }
 
@@ -756,8 +801,9 @@ impl RustProgramHandler for LazyAskHandlerFactory {
             return true;
         }
 
-        dispatch_ref_as_python(effect)
-            .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+        dispatch_ref_as_python(effect).is_some_and(|obj| {
+            parse_reader_python_effect(obj).ok().flatten().is_some() || is_local_python_effect(obj)
+        })
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -782,9 +828,433 @@ impl RustProgramHandler for LazyAskHandlerFactory {
     }
 }
 
+#[derive(Debug, Default)]
+struct LazyLocalScopeState {
+    cache: HashMap<HashedPyKey, LazyCacheEntry>,
+    semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
+    tainted: bool,
+}
+
+#[derive(Debug, Clone)]
+struct LazyLocalScopeFactory {
+    overrides: Arc<HashMap<HashedPyKey, Value>>,
+    global_state: Arc<Mutex<LazyAskState>>,
+    scope_state: Arc<Mutex<LazyLocalScopeState>>,
+}
+
+impl LazyLocalScopeFactory {
+    fn new(overrides: HashMap<HashedPyKey, Value>, global_state: Arc<Mutex<LazyAskState>>) -> Self {
+        LazyLocalScopeFactory {
+            overrides: Arc::new(overrides),
+            global_state,
+            scope_state: Arc::new(Mutex::new(LazyLocalScopeState::default())),
+        }
+    }
+
+    fn mark_tainted(&self) {
+        let mut state = self.scope_state.lock().expect("LazyLocalScope lock poisoned");
+        state.tainted = true;
+    }
+
+    fn is_tainted(&self) -> bool {
+        let state = self.scope_state.lock().expect("LazyLocalScope lock poisoned");
+        state.tainted
+    }
+
+    fn invalidate_global_cache_if_tainted(&self) {
+        if !self.is_tainted() {
+            return;
+        }
+        let mut global = self.global_state.lock().expect("LazyAsk lock poisoned");
+        global.cache.clear();
+    }
+}
+
+impl RustProgramHandler for LazyLocalScopeFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        #[cfg(test)]
+        if matches!(effect, Effect::Ask { .. }) {
+            return true;
+        }
+
+        dispatch_ref_as_python(effect)
+            .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+    }
+
+    fn create_program(&self) -> RustProgramRef {
+        Arc::new(Mutex::new(Box::new(LazyLocalScopeProgram::new(
+            self.overrides.clone(),
+            self.scope_state.clone(),
+            self.clone(),
+        ))))
+    }
+
+    fn handler_name(&self) -> &'static str {
+        "LazyLocalScopeHandler"
+    }
+}
+
+#[derive(Debug)]
+enum LazyLocalScopePhase {
+    Idle,
+    AwaitAcquire {
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Option<Value>,
+    },
+    AwaitCache {
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Value,
+    },
+    AwaitEval {
+        key: HashedPyKey,
+        continuation: Continuation,
+        source_id: usize,
+        semaphore: Value,
+    },
+    AwaitRelease {
+        continuation: Continuation,
+        outcome: Result<Value, PyException>,
+    },
+}
+
+#[derive(Debug)]
+struct LazyLocalScopeProgram {
+    phase: LazyLocalScopePhase,
+    overrides: Arc<HashMap<HashedPyKey, Value>>,
+    scope_state: Arc<Mutex<LazyLocalScopeState>>,
+    scope_factory: LazyLocalScopeFactory,
+}
+
+impl LazyLocalScopeProgram {
+    fn new(
+        overrides: Arc<HashMap<HashedPyKey, Value>>,
+        scope_state: Arc<Mutex<LazyLocalScopeState>>,
+        scope_factory: LazyLocalScopeFactory,
+    ) -> Self {
+        LazyLocalScopeProgram {
+            phase: LazyLocalScopePhase::Idle,
+            overrides,
+            scope_state,
+            scope_factory,
+        }
+    }
+
+    fn yield_perform(effect: Result<DispatchEffect, PyException>) -> RustProgramStep {
+        match effect {
+            Ok(effect) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Perform { effect })),
+            Err(exc) => RustProgramStep::Throw(exc),
+        }
+    }
+
+    fn transfer_throw(continuation: Continuation, exception: PyException) -> RustProgramStep {
+        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+            continuation,
+            exception,
+        }))
+    }
+
+    fn local_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
+        let state = self
+            .scope_state
+            .lock()
+            .expect("LazyLocalScope lock poisoned");
+        let entry = state.cache.get(key)?;
+        if entry.source_id == source_id {
+            return Some(entry.value.clone());
+        }
+        None
+    }
+
+    fn local_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value) {
+        let mut state = self
+            .scope_state
+            .lock()
+            .expect("LazyLocalScope lock poisoned");
+        state.cache.insert(key, LazyCacheEntry { source_id, value });
+    }
+
+    fn local_semaphore_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
+        let state = self
+            .scope_state
+            .lock()
+            .expect("LazyLocalScope lock poisoned");
+        let entry = state.semaphores.get(key)?;
+        if entry.source_id == source_id {
+            return Some(entry.semaphore.clone());
+        }
+        None
+    }
+
+    fn local_semaphore_put(&self, key: HashedPyKey, source_id: usize, semaphore: Value) {
+        let mut state = self
+            .scope_state
+            .lock()
+            .expect("LazyLocalScope lock poisoned");
+        state.semaphores.insert(
+            key,
+            LazySemaphoreEntry {
+                source_id,
+                semaphore,
+            },
+        );
+    }
+
+    fn begin_create_then_acquire_phase(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+    ) -> RustProgramStep {
+        self.phase = LazyLocalScopePhase::AwaitAcquire {
+            key,
+            continuation,
+            expr,
+            source_id,
+            semaphore: None,
+        };
+        Self::yield_perform(lazy_ask_create_semaphore_effect())
+    }
+
+    fn begin_acquire_phase(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Value,
+    ) -> RustProgramStep {
+        let effect = lazy_ask_acquire_semaphore_effect(&semaphore);
+        self.phase = LazyLocalScopePhase::AwaitAcquire {
+            key,
+            continuation,
+            expr,
+            source_id,
+            semaphore: Some(semaphore),
+        };
+        Self::yield_perform(effect)
+    }
+
+    fn begin_release_phase(
+        &mut self,
+        continuation: Continuation,
+        outcome: Result<Value, PyException>,
+        semaphore: Value,
+    ) -> RustProgramStep {
+        self.phase = LazyLocalScopePhase::AwaitRelease {
+            continuation,
+            outcome,
+        };
+        Self::yield_perform(lazy_ask_release_semaphore_effect(&semaphore))
+    }
+
+    fn handle_override_ask(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        value: Value,
+    ) -> RustProgramStep {
+        self.scope_factory.mark_tainted();
+
+        let Some(expr) = as_lazy_eval_expr(&value) else {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation,
+                value,
+            }));
+        };
+
+        let source_id = lazy_source_id(&value).unwrap_or_default();
+
+        if let Some(cached) = self.local_cache_get(&key, source_id) {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation,
+                value: cached,
+            }));
+        }
+
+        if let Some(semaphore) = self.local_semaphore_get(&key, source_id) {
+            return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
+        }
+
+        self.begin_create_then_acquire_phase(key, continuation, expr, source_id)
+    }
+
+    fn handle_ask(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        effect: DispatchEffect,
+    ) -> RustProgramStep {
+        let Some(value) = self.overrides.get(&key).cloned() else {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        };
+
+        self.handle_override_ask(key, continuation, value)
+    }
+}
+
+impl RustHandlerProgram for LazyLocalScopeProgram {
+    fn start(
+        &mut self,
+        _py: Python<'_>,
+        effect: DispatchEffect,
+        k: Continuation,
+        _store: &mut RustStore,
+    ) -> RustProgramStep {
+        #[cfg(test)]
+        if let Effect::Ask { key } = effect.clone() {
+            let key = HashedPyKey::from_test_string(key);
+            return self.handle_ask(key, k, effect);
+        }
+
+        if let Some(obj) = dispatch_into_python(effect.clone()) {
+            return match parse_reader_python_effect(&obj) {
+                Ok(Some(key)) => self.handle_ask(key, k, dispatch_from_shared(obj)),
+                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                    effect: dispatch_from_shared(obj),
+                })),
+                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                    "failed to parse lazy local Ask effect: {msg}"
+                ))),
+            };
+        }
+
+        #[cfg(test)]
+        {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        }
+
+        #[cfg(not(test))]
+        unreachable!("runtime Effect is always Python")
+    }
+
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, LazyLocalScopePhase::Idle) {
+            LazyLocalScopePhase::AwaitAcquire {
+                key,
+                continuation,
+                expr,
+                source_id,
+                semaphore,
+            } => {
+                let Some(semaphore) = semaphore else {
+                    let semaphore = match value {
+                        Value::Python(_) => value,
+                        _ => {
+                            return RustProgramStep::Throw(PyException::type_error(
+                                "CreateSemaphore must return a semaphore handle".to_string(),
+                            ));
+                        }
+                    };
+                    self.local_semaphore_put(key.clone(), source_id, semaphore.clone());
+                    return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
+                };
+
+                if let Some(cached) = self.local_cache_get(&key, source_id) {
+                    return self.begin_release_phase(continuation, Ok(cached), semaphore);
+                }
+
+                self.phase = LazyLocalScopePhase::AwaitCache {
+                    key,
+                    continuation,
+                    expr,
+                    source_id,
+                    semaphore,
+                };
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+            }
+            LazyLocalScopePhase::AwaitCache {
+                key,
+                continuation,
+                expr,
+                source_id,
+                semaphore,
+            } => {
+                let handlers = match value {
+                    Value::Handlers(handlers) => handlers,
+                    _ => {
+                        return RustProgramStep::Throw(PyException::type_error(
+                            "lazy local scope expected handlers from GetHandlers".to_string(),
+                        ));
+                    }
+                };
+
+                self.phase = LazyLocalScopePhase::AwaitEval {
+                    key,
+                    continuation,
+                    source_id,
+                    semaphore,
+                };
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                    expr,
+                    handlers,
+                    metadata: None,
+                }))
+            }
+            LazyLocalScopePhase::AwaitEval {
+                key,
+                continuation,
+                source_id,
+                semaphore,
+            } => {
+                self.local_cache_put(key, source_id, value.clone());
+                self.begin_release_phase(continuation, Ok(value), semaphore)
+            }
+            LazyLocalScopePhase::AwaitRelease {
+                continuation,
+                outcome,
+            } => match outcome {
+                Ok(value) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    continuation,
+                    value,
+                })),
+                Err(exception) => Self::transfer_throw(continuation, exception),
+            },
+            LazyLocalScopePhase::Idle => RustProgramStep::Return(value),
+        }
+    }
+
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, LazyLocalScopePhase::Idle) {
+            LazyLocalScopePhase::AwaitAcquire { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
+            }
+            LazyLocalScopePhase::AwaitCache {
+                continuation,
+                semaphore,
+                ..
+            } => self.begin_release_phase(continuation, Err(exc), semaphore),
+            LazyLocalScopePhase::AwaitEval {
+                continuation,
+                semaphore,
+                ..
+            } => self.begin_release_phase(continuation, Err(exc), semaphore),
+            LazyLocalScopePhase::AwaitRelease { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
+            }
+            LazyLocalScopePhase::Idle => RustProgramStep::Throw(exc),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum LazyAskPhase {
     Idle,
+    AwaitLocalHandlers {
+        continuation: Continuation,
+        scope: LazyLocalScopeFactory,
+        sub_program: PyShared,
+    },
+    AwaitLocalEval {
+        continuation: Continuation,
+        scope: LazyLocalScopeFactory,
+    },
     AwaitDelegate {
         key: HashedPyKey,
         continuation: Continuation,
@@ -941,7 +1411,6 @@ impl LazyAskHandlerProgram {
         key: HashedPyKey,
         continuation: Continuation,
         value: Value,
-        store: &mut RustStore,
     ) -> RustProgramStep {
         let Some(expr) = as_lazy_eval_expr(&value) else {
             return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
@@ -953,7 +1422,6 @@ impl LazyAskHandlerProgram {
         let source_id = lazy_source_id(&value).unwrap_or_default();
 
         if let Some(cached) = self.lazy_cache_get(&key, source_id) {
-            store.env.insert(key.clone(), cached.clone());
             return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                 continuation,
                 value: cached,
@@ -989,6 +1457,24 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
         }
 
         if let Some(obj) = dispatch_into_python(effect.clone()) {
+            match parse_local_python_effect(&obj) {
+                Ok(Some(local_effect)) => {
+                    let scope = LazyLocalScopeFactory::new(local_effect.overrides, self.state.clone());
+                    self.phase = LazyAskPhase::AwaitLocalHandlers {
+                        continuation: k,
+                        scope,
+                        sub_program: local_effect.sub_program,
+                    };
+                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers));
+                }
+                Ok(None) => {}
+                Err(msg) => {
+                    return RustProgramStep::Throw(PyException::type_error(format!(
+                        "failed to parse Local effect: {msg}"
+                    )));
+                }
+            }
+
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => self.begin_delegate_phase(dispatch_from_shared(obj), key, k),
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
@@ -1009,10 +1495,44 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
+            LazyAskPhase::AwaitLocalHandlers {
+                continuation,
+                scope,
+                sub_program,
+            } => {
+                let mut handlers = match value {
+                    Value::Handlers(handlers) => handlers,
+                    _ => {
+                        return RustProgramStep::Throw(PyException::type_error(
+                            "lazy Ask Local expected handlers from GetHandlers".to_string(),
+                        ));
+                    }
+                };
+                handlers.insert(0, Handler::RustProgram(Arc::new(scope.clone())));
+                self.phase = LazyAskPhase::AwaitLocalEval {
+                    continuation,
+                    scope,
+                };
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                    expr: sub_program,
+                    handlers,
+                    metadata: None,
+                }))
+            }
+            LazyAskPhase::AwaitLocalEval {
+                continuation,
+                scope,
+            } => {
+                scope.invalidate_global_cache_if_tainted();
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    continuation,
+                    value,
+                }))
+            }
             LazyAskPhase::AwaitDelegate { key, continuation } => {
-                self.handle_delegated_ask_value(key, continuation, value, store)
+                self.handle_delegated_ask_value(key, continuation, value)
             }
             LazyAskPhase::AwaitAcquire {
                 key,
@@ -1035,7 +1555,6 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
                 };
 
                 if let Some(cached) = self.lazy_cache_get(&key, source_id) {
-                    store.env.insert(key.clone(), cached.clone());
                     return self.begin_release_phase(continuation, Ok(cached), semaphore);
                 }
 
@@ -1082,7 +1601,6 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
                 source_id,
                 semaphore,
             } => {
-                store.env.insert(key.clone(), value.clone());
                 self.lazy_cache_put(key, source_id, value.clone());
                 self.begin_release_phase(continuation, Ok(value), semaphore)
             }
@@ -1102,6 +1620,18 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
 
     fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
+            LazyAskPhase::AwaitLocalHandlers {
+                continuation,
+                scope,
+                ..
+            }
+            | LazyAskPhase::AwaitLocalEval {
+                continuation,
+                scope,
+            } => {
+                scope.invalidate_global_cache_if_tainted();
+                Self::transfer_throw(continuation, exc)
+            }
             LazyAskPhase::AwaitDelegate { continuation, .. } => {
                 Self::transfer_throw(continuation, exc)
             }
