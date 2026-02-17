@@ -227,6 +227,7 @@ pub struct SchedulerState {
     pub next_promise: u64,
     pub next_semaphore: u64,
     pub current_task: Option<TaskId>,
+    shared_lazy_store: RustStore,
 }
 
 fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
@@ -664,6 +665,7 @@ impl SchedulerState {
             next_promise: 0,
             next_semaphore: 1,
             current_task: None,
+            shared_lazy_store: RustStore::new(),
         }
     }
 
@@ -1043,6 +1045,10 @@ impl SchedulerState {
     }
 
     pub fn save_task_store(&mut self, task_id: TaskId, store: &RustStore) {
+        let mut snapshot = store.clone();
+        snapshot.merge_lazy_from(&self.shared_lazy_store);
+        self.shared_lazy_store.merge_lazy_from(&snapshot);
+
         if let Some(state) = self.tasks.get_mut(&task_id) {
             match state {
                 TaskState::Pending {
@@ -1053,7 +1059,7 @@ impl SchedulerState {
                         },
                     ..
                 } => {
-                    *task_store = store.clone();
+                    *task_store = snapshot;
                 }
                 _ => {}
             }
@@ -1071,6 +1077,7 @@ impl SchedulerState {
             } = task_store
             {
                 *store = task_store.clone();
+                store.merge_lazy_from(&self.shared_lazy_store);
             }
         }
     }
@@ -2005,6 +2012,10 @@ impl RustProgramHandler for SchedulerHandler {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
         dispatch_ref_as_python(effect)
             .is_some_and(|obj| matches!(parse_scheduler_python_effect(obj), Ok(Some(_)) | Err(_)))
+    }
+
+    fn stays_visible_during_dispatch(&self) -> bool {
+        true
     }
 
     fn create_program(&self) -> RustProgramRef {
