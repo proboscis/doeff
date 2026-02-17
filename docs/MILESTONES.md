@@ -212,8 +212,8 @@ No docs build system exists (no mkdocs.yml, no sphinx).
 - [ ] `14-cli-auto-discovery.md` → `specs/cli-auto-discovery/` (does not exist)
 - [ ] `19-agent-tutorial.md` → `18-agent-session-management.md` (does not exist)
 
-### M4.2 — Update deprecated ProgramInterpreter examples
-8 docs still use `ProgramInterpreter` / `ExecutionContext` in code examples:
+### M4.2 — Update legacy runtime API examples
+8 docs still use legacy runtime classes in code examples:
 
 | File | Severity | Occurrences |
 |------|----------|-------------|
@@ -224,7 +224,7 @@ No docs build system exists (no mkdocs.yml, no sphinx).
 | `gemini_client_setup.md` | MEDIUM | 2 |
 | `gemini_cost_hook.md` | MEDIUM | 2 |
 | `09-advanced-effects.md` | LOW | 1 |
-| `13-api-reference.md` | LOW | 1 (`ExecutionContext` section) |
+| `13-api-reference.md` | LOW | 1 (runtime kwargs section) |
 
 - [ ] Rewrite all examples to use `run()` / `async_run()` + `default_handlers()` / `default_async_handlers()`
 
@@ -244,7 +244,7 @@ Biggest structural gaps:
 ### M4.5 — Clean up stale artifacts
 - [ ] Delete empty legacy runtime examples directory
 - [ ] Delete or archive `tests/misc/test_segmentation_pragmo.py.skip`
-- [ ] Update `benchmarks/benchmark_runner.py` (uses deprecated `ProgramInterpreter`)
+- [ ] Update `benchmarks/benchmark_runner.py` (uses legacy runtime class API)
 - [ ] Fix duplicate `__all__` entries in `doeff/__init__.py` (`CacheLifecycle`, `CachePolicy`, `CacheStorage`)
 - [ ] Resolve `docs/filesystem-effect-architecture.md` TODO checklist (8 unchecked items)
 
