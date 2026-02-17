@@ -136,7 +136,7 @@ def cost_cap_handler(effect, k):
 # One retry handler works for everything
 def retry_handler(effect, k):
     for attempt in range(3):
-        safe = yield Safe(Resume(k, effect))
+        safe = yield Try(Resume(k, effect))
         if safe.is_ok():
             return safe.value
     raise safe.error

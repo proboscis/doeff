@@ -16,7 +16,7 @@ The key insight from [docs/20-why-effects-over-di.md](../20-why-effects-over-di.
 ## The Strategy: Pure Effects
 
 ```python
-from doeff import do, Program, Get, Put, Tell, Safe
+from doeff import do, Program, Get, Put, Tell, Try
 from doeff.effects import Await, Spawn, Gather
 
 @dataclass(frozen=True)
