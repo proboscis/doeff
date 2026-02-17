@@ -40,7 +40,7 @@ def order_service(order_id):
 def get_order_handler(order_id):
     yield Tell(f"Request: GET /orders/{order_id}")
     
-    result = yield Safe(order_service(order_id))
+    result = yield Try(order_service(order_id))
     order = result.value if result.is_ok() else {"error": str(result.error)}
     
     yield Tell(f"Response: {order}")
@@ -163,11 +163,11 @@ This section summarizes the composition guarantees from
 
 ### Effect Combination Matrix
 
-| Outer / Inner | Ask | Get | Put | Tell | Safe | Local | Listen | Intercept | Gather |
+| Outer / Inner | Ask | Get | Put | Tell | Try | Local | Listen | Intercept | Gather |
 |---------------|-----|-----|-----|------|------|-------|--------|-----------|--------|
 | **Local**     | Scoped | Propagates | Propagates | Propagates | Propagates | Scoped | Propagates | Propagates | Propagates |
 | **Listen**    | - | - | - | Captured* | - | - | Nested | - | All captured* |
-| **Safe**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
+| **Try**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
 | **Intercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
 | **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
 
@@ -195,8 +195,8 @@ The following laws from SPEC-EFF-100 apply to all compositions:
 1. **Local Restoration Law**: Environment MUST restore after `Local` scope, on both success and error.
 2. **Local Non-State-Scoping Law**: `Local` does NOT scope `Get`/`Put`; state changes propagate.
 3. **Listen Capture Law**: `Listen` captures `Tell` output ONLY on success; on error it propagates the error.
-4. **Safe Non-Rollback Law**: `Safe` does NOT roll back state on error.
-5. **Safe Environment Restoration Law**: `Safe` restores environment context, but not state.
+4. **Try Non-Rollback Law**: `Try` does NOT roll back state on error.
+5. **Try Environment Restoration Law**: `Try` restores environment context, but not state.
 6. **Intercept Transformation Law**: `Intercept` transforms effects in nested programs, including `Gather` children.
 7. **Gather Environment Inheritance Law**: `Gather` children inherit parent environment snapshot at invocation.
 8. **Gather Store Sharing Law**: Store sharing under `Gather` is runtime-dependent.
@@ -222,7 +222,7 @@ def with_error_handling(operation, operation_name):
     yield Tell(f"Starting: {operation_name}")
     yield Step(f"start_{operation_name}")
     
-    safe_result = yield Safe(operation())
+    safe_result = yield Try(operation())
     if safe_result.is_err():
         yield handle_error(operation_name, safe_result.error)
     result = safe_result.value if safe_result.is_ok() else None
@@ -254,7 +254,7 @@ Exponential backoff for retries:
 @do
 def retry_with_exponential_backoff(operation, max_attempts=5):
     for attempt in range(1, max_attempts + 1):
-        safe_result = yield Safe(operation())
+        safe_result = yield Try(operation())
         
         if safe_result.is_ok():
             return safe_result.value
@@ -333,7 +333,7 @@ def circuit_breaker(operation, threshold=5, timeout=60):
             yield Put("circuit_last_failure", None)
     
     # Try operation
-    safe_result = yield Safe(operation())
+    safe_result = yield Try(operation())
     
     if safe_result.is_ok():
         # Success - reset counter
@@ -414,7 +414,7 @@ def with_state_snapshot(operation):
     state = yield Get("_state")
     snapshot = state.copy() if state else {}
     
-    safe_result = yield Safe(operation())
+    safe_result = yield Try(operation())
     
     if safe_result.is_err():
         # Restore state and raise
@@ -645,7 +645,7 @@ def good_parameter_passing():
 ```python
 @do
 def bad_error_handling():
-    result = yield Safe(risky_operation())
+    result = yield Try(risky_operation())
     return result.value  # Might be None unexpectedly, error is silently ignored
 ```
 
@@ -653,7 +653,7 @@ def bad_error_handling():
 ```python
 @do
 def good_error_handling():
-    result = yield Safe(risky_operation())
+    result = yield Try(risky_operation())
     
     if result.is_err():
         yield Tell(f"Error occurred: {result.error}")
