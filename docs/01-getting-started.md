@@ -280,7 +280,7 @@ Now that you understand the basics, explore:
 - **[Core Concepts](02-core-concepts.md)** - Algebraic effects, handlers, one-shot continuations, and the Rust VM
 - **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
 - **[Async Effects](04-async-effects.md)** - Parallel execution and futures
-- **[Error Handling](05-error-handling.md)** - Result, Safe for error handling
+- **[Error Handling](05-error-handling.md)** - Result, Try for error handling
 
 ## Quick Reference
 
@@ -304,7 +304,7 @@ from doeff import (
     Await, Gather,
 
     # Error handling
-    Safe,
+    Try,
 
     # IO effects
     IO,

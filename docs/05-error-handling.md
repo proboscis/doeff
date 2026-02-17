@@ -1,6 +1,6 @@
 # Error Handling
 
-This chapter covers error handling in doeff using `RunResult`, the `Safe` effect, and canonical `Ok`/`Err` result values.
+This chapter covers error handling in doeff using `RunResult`, the `Try` effect, and canonical `Ok`/`Err` result values.
 
 ## Table of Contents
 
@@ -8,8 +8,8 @@ This chapter covers error handling in doeff using `RunResult`, the `Safe` effect
 - [Ok/Err Result Values](#okerr-result-values)
 - [Result Methods](#result-methods)
 - [Pattern Matching](#pattern-matching)
-- [Safe Effect](#safe-effect)
-- [Safe Composition Guarantees](#safe-composition-guarantees)
+- [Try Effect](#try-effect)
+- [Try Composition Guarantees](#try-composition-guarantees)
 - [Captured Traceback on Err](#captured-traceback-on-err)
 - [Practical Patterns](#practical-patterns)
 
@@ -50,7 +50,7 @@ Use the canonical import path:
 from doeff import Ok, Err
 ```
 
-`Ok` and `Err` values returned by doeff runtime surfaces (`RunResult.result`, `Safe(...)`, task
+`Ok` and `Err` values returned by doeff runtime surfaces (`RunResult.result`, `Try(...)`, task
 completion payloads) are a unified Rust-backed Result implementation.
 
 ### Fields
@@ -77,7 +77,7 @@ Use the Result API methods for transformations and fallbacks:
 `Ok` and `Err` support native Python pattern matching.
 
 ```python
-from doeff import Err, Ok, Safe, default_handlers, do, run
+from doeff import Err, Ok, Try, default_handlers, do, run
 
 @do
 def might_fail(x: int):
@@ -87,7 +87,7 @@ def might_fail(x: int):
 
 @do
 def workflow(x: int):
-    return (yield Safe(might_fail(x)))
+    return (yield Try(might_fail(x)))
 
 result = run(workflow(-1), handlers=default_handlers())
 
@@ -98,12 +98,12 @@ match result.value:
         print(f"failure: {e}")
 ```
 
-## Safe Effect
+## Try Effect
 
-`Safe(sub_program)` catches exceptions from `sub_program` and returns `Ok`/`Err` so you can keep control flow explicit.
+`Try(sub_program)` catches exceptions from `sub_program` and returns `Ok`/`Err` so you can keep control flow explicit.
 
 ```python
-from doeff import Err, Ok, Safe, Tell, default_handlers, do, run
+from doeff import Err, Ok, Try, Tell, default_handlers, do, run
 
 @do
 def parse_count(raw: str):
@@ -111,7 +111,7 @@ def parse_count(raw: str):
 
 @do
 def app(raw: str):
-    parsed = yield Safe(parse_count(raw))
+    parsed = yield Try(parse_count(raw))
 
     match parsed:
         case Ok(value=count):
@@ -125,15 +125,15 @@ result = run(app("not-a-number"), handlers=default_handlers())
 print(result.value)  # 0
 ```
 
-## Safe Composition Guarantees
+## Try Composition Guarantees
 
 ### 1. No-Rollback Rule
 
-`Safe(...)` catches exceptions as `Err(...)`, but it does not rollback effects that already happened.
+`Try(...)` catches exceptions as `Err(...)`, but it does not rollback effects that already happened.
 State updates and `Tell(...)` log entries persist.
 
 ```python
-from doeff import Get, Put, Safe, default_handlers, do, run
+from doeff import Get, Put, Try, default_handlers, do, run
 
 @do
 def mutate_then_fail():
@@ -143,7 +143,7 @@ def mutate_then_fail():
 @do
 def app():
     yield Put("counter", 0)
-    result = yield Safe(mutate_then_fail())
+    result = yield Try(mutate_then_fail())
     counter = yield Get("counter")
     return (result.is_err(), counter)  # (True, 1)
 
@@ -152,12 +152,12 @@ print(run(app(), handlers=default_handlers()).value)
 
 ### 2. Env Restoration with `Local`
 
-`Safe(Local(...))` still respects `Local` frame restoration: env overrides are scoped and restored on
+`Try(Local(...))` still respects `Local` frame restoration: env overrides are scoped and restored on
 both success and failure. This env restoration is independent from the no-rollback behavior for
 state/log.
 
 ```python
-from doeff import Ask, Local, Safe, default_handlers, do, run
+from doeff import Ask, Local, Try, default_handlers, do, run
 
 @do
 def failing_inner():
@@ -167,22 +167,22 @@ def failing_inner():
 @do
 def app():
     before = yield Ask("key")
-    _ = yield Safe(Local({"key": "inner"}, failing_inner()))
+    _ = yield Try(Local({"key": "inner"}, failing_inner()))
     after = yield Ask("key")
     return (before, after)  # ("outer", "outer")
 
 print(run(app(), handlers=default_handlers(), env={"key": "outer"}).value)
 ```
 
-`Local(Safe(...))` is the inverse nesting order: `Safe` catches inside the `Local` scope first, then
+`Local(Try(...))` is the inverse nesting order: `Try` catches inside the `Local` scope first, then
 `Local` restores the outer env when the scope exits.
 
 ```python
-from doeff import Ask, Local, Safe, default_handlers, do, run
+from doeff import Ask, Local, Try, default_handlers, do, run
 
 @do
 def local_safe_inner():
-    caught = yield Safe(failing_inner())
+    caught = yield Try(failing_inner())
     still_inner = yield Ask("key")
     return (caught.is_err(), still_inner)  # (True, "inner")
 
@@ -196,15 +196,15 @@ def app_local_safe():
 print(run(app_local_safe(), handlers=default_handlers(), env={"key": "outer"}).value)
 ```
 
-Contrast: `Safe(Local(...))` catches after `Local` unwinds; `Local(Safe(...))` catches before unwind
+Contrast: `Try(Local(...))` catches after `Local` unwinds; `Local(Try(...))` catches before unwind
 while still inside the local env.
 
-### 3. Nested `Safe` Result Shape
+### 3. Nested `Try` Result Shape
 
-A nested Safe does not collapse wrappers. `Safe(Safe(x))` returns nested results.
+A nested Try does not collapse wrappers. `Try(Try(x))` returns nested results.
 
 ```python
-from doeff import Safe, default_handlers, do, run
+from doeff import Try, default_handlers, do, run
 
 @do
 def succeeds():
@@ -216,8 +216,8 @@ def fails():
 
 @do
 def app():
-    a = yield Safe(Safe(succeeds()))
-    b = yield Safe(Safe(fails()))
+    a = yield Try(Try(succeeds()))
+    b = yield Try(Try(fails()))
     return (a, b)  # (Ok(Ok(5)), Ok(Err(ValueError(...))))
 
 print(run(app(), handlers=default_handlers()).value)
@@ -228,7 +228,7 @@ print(run(app(), handlers=default_handlers()).value)
 `Err` includes `captured_traceback` for debugging context.
 
 ```python
-from doeff import Safe, default_handlers, do, run
+from doeff import Try, default_handlers, do, run
 
 @do
 def boom():
@@ -236,7 +236,7 @@ def boom():
 
 @do
 def app():
-    return (yield Safe(boom()))
+    return (yield Try(boom()))
 
 safe_result = run(app(), handlers=default_handlers()).value
 
@@ -250,7 +250,7 @@ if safe_result.is_err():
 ### Explicit fallback
 
 ```python
-from doeff import Safe, default_handlers, do, run
+from doeff import Try, default_handlers, do, run
 
 @do
 def fetch_primary():
@@ -258,7 +258,7 @@ def fetch_primary():
 
 @do
 def fetch_with_fallback():
-    first = yield Safe(fetch_primary())
+    first = yield Try(fetch_primary())
     if first.is_ok():
         return first.value
     return "fallback"
@@ -269,7 +269,7 @@ print(run(fetch_with_fallback(), handlers=default_handlers()).value)
 ### Keep failures visible
 
 ```python
-from doeff import Safe, default_handlers, do, run
+from doeff import Try, default_handlers, do, run
 
 @do
 def validate(v: int):
@@ -279,7 +279,7 @@ def validate(v: int):
 
 @do
 def flow(v: int):
-    checked = yield Safe(validate(v))
+    checked = yield Try(validate(v))
     return checked  # caller receives Ok(...) or Err(...)
 
 out = run(flow(0), handlers=default_handlers()).value
