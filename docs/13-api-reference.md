@@ -186,6 +186,14 @@ def expensive_computation(x: int):
 
 Request an environment value.
 
+Raises `MissingEnvKeyError` (a `KeyError` subtype) when `key` is not present in the current
+environment.
+
+If the environment value is a `Program`, `Ask` evaluates it lazily once per `run()` invocation and
+caches the computed value per key. Concurrent `Ask` calls for the same lazy key are coordinated so
+only one task performs evaluation while others wait cooperatively. `Local(...)` overrides can
+invalidate that per-run cache for overridden keys.
+
 ```python
 config = yield Ask("database_url")
 ```
@@ -223,6 +231,8 @@ count = yield Get("counter")
 
 **Signature:** `Get(key: str)`
 
+Raises `KeyError` when `key` is missing.
+
 ---
 
 ### Put(key, value)
@@ -245,7 +255,11 @@ Update state value using a transformation function.
 yield Modify("counter", lambda x: x + 1)
 ```
 
-**Signature:** `Modify(key: str, f: Callable[[Any], Any])`
+**Signature:** `Modify(key: str, f: Callable[[Any | None], Any])`
+
+If `key` is missing, `Modify` calls `f(None)` (it does not raise `KeyError`).
+
+`Modify` is atomic: if `f` raises, the store is left unchanged.
 
 **See:** [Basic Effects](03-basic-effects.md#state-effects)
 
@@ -418,6 +432,9 @@ if joined.is_err() and joined.error.__class__.__name__ == "TaskCancelledError":
 
 Create a semaphore handle with `permits` initial permits.
 
+`permits` must be `>= 1`; `CreateSemaphore(0)` raises
+`ValueError("permits must be >= 1")`.
+
 ```python
 sem = yield CreateSemaphore(3)
 ```
@@ -442,7 +459,13 @@ finally:
 
 **Signature:** `AcquireSemaphore(semaphore: Semaphore)`
 
-**See:** [Semaphore Effects](17-semaphore-effects.md#acquiresemaphoresem)
+Blocked acquirers are resumed in FIFO order. When no permit is available, the task transitions to
+`BLOCKED` until a release occurs.
+
+If a blocked waiter is cancelled, it is removed from the semaphore queue, raises
+`TaskCancelledError`, and consumes no permit.
+
+**See:** [Semaphore Effects](21-semaphore-effects.md#acquiresemaphoresem)
 
 ---
 
@@ -456,7 +479,17 @@ yield ReleaseSemaphore(sem)
 
 **Signature:** `ReleaseSemaphore(semaphore: Semaphore)`
 
-**See:** [Semaphore Effects](17-semaphore-effects.md#releasesemaphoresem)
+When waiters exist, release uses direct handoff to the oldest waiter (FIFO): the permit transfers
+to that waiter and `available_permits` remains `0`.
+
+Permit leak warning: semaphores do not track ownership. If a task fails or is cancelled after
+acquire and before release, that permit is leaked. Always guard critical sections with
+`try/finally` so `ReleaseSemaphore` still runs.
+
+Lifecycle: there is no explicit destroy API; semaphore state is released when handles are garbage
+collected.
+
+**See:** [Semaphore Effects](21-semaphore-effects.md#releasesemaphoresem)
 
 ---
 
@@ -465,6 +498,8 @@ yield ReleaseSemaphore(sem)
 ### Pure(value)
 
 Return an immediate value without mutating state, environment, or writer log.
+
+On the control path, `yield Pure(x)` is equivalent to returning `x` directly.
 
 ```python
 value = yield Pure({"status": "ok"})
