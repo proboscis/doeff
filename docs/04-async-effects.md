@@ -1,667 +1,174 @@
 # Async Effects
 
-This chapter covers effects for asynchronous operations: awaiting coroutines, running tasks in parallel, spawning background tasks, and time-based effects.
+This chapter explains async integration in doeff and the scheduler effects used for concurrency.
 
 ## Table of Contents
 
+- [Runner and Handler Presets](#runner-and-handler-presets)
 - [Await Effect](#await-effect)
-- [Gather Effect](#gather-effect)
-- [Spawn and Task Effects](#spawn-and-task-effects)
-- [Time Effects](#time-effects)
-- [Async Integration Patterns](#async-integration-patterns)
-- [Best Practices](#best-practices)
+- [Await vs Wait](#await-vs-wait)
+- [Spawn, Gather, and Wait](#spawn-gather-and-wait)
+- [Concurrency Under Spawn](#concurrency-under-spawn)
+- [Common Mistakes](#common-mistakes)
+- [Quick Reference](#quick-reference)
+
+## Runner and Handler Presets
+
+Pair each runner with the matching handler preset.
+
+| Runner | Preset | Await Handler | Intended Context |
+| --- | --- | --- | --- |
+| `run(...)` | `default_handlers()` | `sync_await_handler` | Sync entrypoint |
+| `await async_run(...)` | `default_async_handlers()` | `async_await_handler` | Async entrypoint / caller event loop |
+
+```python
+from doeff import async_run, default_async_handlers, default_handlers, run
+
+sync_result = run(program(), handlers=default_handlers())
+async_result = await async_run(program(), handlers=default_async_handlers())
+```
 
 ## Await Effect
 
-`Await(awaitable)` integrates async/await with doeff programs.
-
-### Basic Usage
+`Await(awaitable)` is the bridge for Python asyncio awaitables inside a doeff program.
 
 ```python
 import asyncio
-from doeff import do, Await, Log, async_run, default_handlers
-
-async def fetch_data():
-    await asyncio.sleep(0.1)
-    return {"user_id": 123, "name": "Alice"}
+from doeff import Await, do
 
 @do
-def process_user():
-    yield Log("Fetching user data...")
-    data = yield Await(fetch_data())
-    yield Log(f"Received: {data}")
-    return data["name"]
+def fetch_value():
+    value = yield Await(asyncio.sleep(0.1, result=42))
+    return value
+```
+
+### Handler behavior
+
+Both Await handlers bridge completion through `CreateExternalPromise` + `Wait`.
+
+- `sync_await_handler` (`run` preset):
+  - Submits the awaitable to the sync bridge (background asyncio loop thread).
+  - Waits for the promise future, then resumes continuation.
+- `async_await_handler` (`async_run` preset):
+  - Yields `PythonAsyncSyntaxEscape` so kickoff runs through the async driver path.
+  - Waits for the promise future, then resumes continuation.
+
+### Wrong pairing behavior
+
+- `run(..., handlers=default_async_handlers())` fails with a `TypeError` (`CallAsync requires async_run...`).
+- `async_run(..., handlers=default_handlers())` runs, but uses sync Await semantics rather than the async preset.
+
+## Await vs Wait
+
+Use `Await` for Python awaitables and `Wait` for doeff scheduler handles.
+
+| Use `Await` | Use `Wait` |
+| --- | --- |
+| Python coroutines (`async def`) | doeff `Task` / `Future` handles |
+| `asyncio.sleep(...)` | values returned by `Spawn(...)` |
+| async libraries (`aiohttp`, `httpx`, etc.) | `ExternalPromise.future` |
+
+### Await example
+
+```python
+import asyncio
+from doeff import Await, do
+
+@do
+def get_payload():
+    return (yield Await(asyncio.sleep(0.01, result={"ok": True})))
+```
+
+### Wait example
+
+```python
+import asyncio
+from doeff import Await, Spawn, Wait, do
+
+@do
+def child():
+    return (yield Await(asyncio.sleep(0.01, result="done")))
+
+@do
+def parent():
+    task = yield Spawn(child())
+    return (yield Wait(task))
+```
+
+## Spawn, Gather, and Wait
+
+`Spawn`, `Gather`, and `Wait` are scheduler primitives for doeff tasks.
+
+- `Spawn(program)`: run a doeff program as a background task and return a `Task` handle.
+- `Gather(*items)`: wait for multiple waitables/programs and return values.
+- `Wait(task_or_future)`: wait for one spawned task/future.
+
+```python
+import asyncio
+from doeff import Await, Gather, Spawn, Wait, do
+
+@do
+def worker(name: str, delay: float):
+    return (yield Await(asyncio.sleep(delay, result=name)))
+
+@do
+def orchestrate():
+    t1 = yield Spawn(worker("a", 0.05))
+    t2 = yield Spawn(worker("b", 0.05))
+
+    both = yield Gather(t1, t2)
+    one = yield Wait(t1)
+    return both, one
+```
+
+## Concurrency Under Spawn
+
+The right way to reason about Spawn concurrency is to benchmark your selected runner+preset pair.
+
+```python
+import asyncio
+import time
+from doeff import Await, Gather, Spawn, async_run, default_async_handlers, default_handlers, do, run
+
+@do
+def child(label: str):
+    return (yield Await(asyncio.sleep(0.1, result=label)))
+
+@do
+def parent():
+    t1 = yield Spawn(child("left"))
+    t2 = yield Spawn(child("right"))
+    return tuple((yield Gather(t1, t2)))
+
+sync_start = time.monotonic()
+sync_result = run(parent(), handlers=default_handlers())
+print("sync", sync_result.value, time.monotonic() - sync_start)
 
 async def main():
-    result = await arun(process_user(), default_handlers())
-    print(result.value)  # "Alice"
+    async_start = time.monotonic()
+    async_result = await async_run(parent(), handlers=default_async_handlers())
+    print("async", async_result.value, time.monotonic() - async_start)
 
 asyncio.run(main())
 ```
 
-### Awaiting Multiple Operations Sequentially
+In current runtime behavior, both preset pairs should return the same values and typically complete near one sleep interval for this pattern.
 
-```python
-async def fetch_user(user_id):
-    await asyncio.sleep(0.1)
-    return {"id": user_id, "name": f"User{user_id}"}
+## Common Mistakes
 
-async def fetch_posts(user_id):
-    await asyncio.sleep(0.1)
-    return [{"id": 1, "title": "Post 1"}, {"id": 2, "title": "Post 2"}]
+1. Passing `default_handlers()` to `async_run` by habit.
+Use `default_async_handlers()` for the async entrypoint.
 
-@do
-def load_user_profile(user_id):
-    # Sequential async operations
-    user = yield Await(fetch_user(user_id))
-    yield Log(f"Loaded user: {user['name']}")
+2. Passing a coroutine to `Wait(...)`.
+`Wait` expects a doeff scheduler handle (`Task`/`Future`), not a Python coroutine.
 
-    posts = yield Await(fetch_posts(user_id))
-    yield Log(f"Loaded {len(posts)} posts")
+## Quick Reference
 
-    return {"user": user, "posts": posts}
-```
+| Effect | Purpose | Input | Output |
+| --- | --- | --- | --- |
+| `Await(awaitable)` | Bridge Python async awaitable | Python awaitable/coroutine | Awaited value |
+| `Spawn(program)` | Start background doeff task | doeff program/effect | `Task` handle |
+| `Gather(*items)` | Wait for many items | Waitables/programs/effects | List of values |
+| `Wait(waitable)` | Wait for one item | `Task` or `Future` handle | Value |
 
-### With HTTP Requests
-
-```python
-import httpx
-
-@do
-def fetch_api_data():
-    async with httpx.AsyncClient() as client:
-        # Await the request
-        response = yield Await(
-            client.get("https://api.example.com/data")
-        )
-
-        if response.status_code == 200:
-            yield Log("API request successful")
-            return response.json()
-        else:
-            raise Exception(f"HTTP {response.status_code}")
-```
-
-## Gather Effect
-
-`Gather(*programs)` runs multiple **Programs** in parallel and collects their results.
-
-**Important:** `Gather` takes `Program` objects, not awaitables. For raw awaitables, use `Await`.
-
-### Basic Parallel Execution
-
-```python
-from doeff import do, Gather, Log, Delay
-
-@do
-def task1():
-    yield Delay(0.1)
-    return "result1"
-
-@do
-def task2():
-    yield Delay(0.1)
-    return "result2"
-
-@do
-def task3():
-    yield Delay(0.1)
-    return "result3"
-
-@do
-def run_parallel_tasks():
-    yield Log("Starting parallel tasks...")
-
-    # All tasks run concurrently with async_run
-    results = yield Gather(task1(), task2(), task3())
-
-    yield Log(f"All tasks complete: {results}")
-    return results  # ["result1", "result2", "result3"]
-```
-
-**When to use Gather:**
-- Running multiple doeff Programs in parallel
-- When inner tasks need state, logging, or other effects
-- Primary parallel execution mechanism
-- For raw async coroutines, wrap them with `Await` effect
-
-### Parallel API Requests with Gather
-
-```python
-@do
-def fetch_from_api(endpoint):
-    yield Log(f"Fetching {endpoint}...")
-    response = yield Await(httpx_client.get(endpoint))
-    yield Log(f"Got response from {endpoint}")
-    return response.json()
-
-@do
-def fetch_multiple_apis():
-    # Run multiple Program-based fetchers in parallel
-    results = yield Gather(
-        fetch_from_api("https://api1.example.com/data"),
-        fetch_from_api("https://api2.example.com/data"),
-        fetch_from_api("https://api3.example.com/data")
-    )
-
-    yield Log(f"Fetched {len(results)} responses")
-    return results
-```
-
-### Fan-Out Pattern
-
-```python
-from doeff import async_run, default_handlers
-
-@do
-def process_item(item_id):
-    yield Log(f"Processing item {item_id}")
-    yield Delay(0.05)
-    return f"processed-{item_id}"
-
-@do
-def process_batch(item_ids):
-    yield Log(f"Processing {len(item_ids)} items in parallel")
-
-    # Create Program for each item
-    tasks = [process_item(item_id) for item_id in item_ids]
-
-    # Process all in parallel
-    results = yield Gather(*tasks)
-
-    yield Log("All items processed")
-    return results
-
-# Usage
-async def main():
-    result = await arun(process_batch([1, 2, 3, 4, 5]), default_handlers())
-    print(result.value)  # ["processed-1", ..., "processed-5"]
-```
-
-## Spawn and Task Effects
-
-`Spawn` creates background tasks with **snapshot semantics** for fire-and-forget or deferred execution patterns.
-
-See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for the full specification.
-
-### Basic Spawn Usage
-
-```python
-from doeff import do, Spawn, Wait, Log, Delay
-
-@do
-def background_work():
-    yield Log("Background work starting...")
-    yield Delay(1.0)
-    yield Log("Background work complete")
-    return "background_result"
-
-@do
-def main_program():
-    yield Log("Main: Starting")
-
-    # Spawn background task
-    task = yield Spawn(background_work())
-    yield Log("Main: Spawned background task")
-
-    # Do other work while background runs
-    yield Delay(0.5)
-    yield Log("Main: Did some work")
-
-    # Wait for background task result
-    result = yield Wait(task)
-    yield Log(f"Main: Background returned: {result}")
-
-    return result
-```
-
-### Snapshot Semantics
-
-Spawned tasks receive a **snapshot** of the environment and store at spawn time. Changes to state in the spawned task do not affect the parent:
-
-```python
-@do
-def spawned_task():
-    # This modifies the spawned task's isolated store
-    yield Put("counter", 999)
-    return yield Get("counter")  # Returns 999
-
-@do
-def parent_task():
-    yield Put("counter", 0)
-
-    task = yield Spawn(spawned_task())
-
-    # Parent's store is unchanged
-    parent_counter = yield Get("counter")  # Still 0
-
-    # Spawned task sees its own store
-    spawned_result = yield Wait(task)  # Returns 999
-
-    # Parent's store STILL unchanged
-    final_counter = yield Get("counter")  # Still 0
-
-    return {"parent": final_counter, "spawned": spawned_result}
-```
-
-### Task Operations
-
-```python
-@do
-def task_operations_example():
-    # Spawn a task
-    task = yield Spawn(long_running_work())
-
-    # Check if done (returns Effect, must yield)
-    is_done = yield task.is_done()
-    yield Log(f"Is done: {is_done}")  # False initially
-
-    # Cancel the task (returns Effect, must yield)
-    yield task.cancel()
-    yield Log("Requested cancellation")
-
-    # Wait raises TaskCancelledError after cancel
-    result = yield Safe(Wait(task))
-    if result.is_err():
-        yield Log("Task was cancelled")
-```
-
-### Spawn for Fire-and-Forget
-
-```python
-@do
-def send_notification():
-    yield Log("Sending notification...")
-    yield Await(email_service.send("Hello!"))
-    yield Log("Notification sent")
-    return "sent"
-
-@do
-def main_workflow():
-    # Fire and forget - we don't wait for the result
-    yield Spawn(send_notification())
-
-    # Continue immediately
-    yield Log("Workflow continues...")
-    return "done"
-```
-
-### Spawn with Error Handling
-
-```python
-@do
-def failing_task():
-    yield Delay(0.1)
-    raise ValueError("Task failed!")
-
-@do
-def handle_spawn_error():
-    task = yield Spawn(failing_task())
-
-    # Wrap Wait in Safe to handle errors
-    result = yield Safe(Wait(task))
-
-    if result.is_ok():
-        return result.value
-    else:
-        yield Log(f"Task failed: {result.error}")
-        return "fallback_value"
-```
-
-### When to Use Spawn vs Gather
-
-| Use Case | Use Spawn | Use Gather |
-|----------|-----------|------------|
-| Wait for all results | No | Yes |
-| Fire-and-forget | Yes | No |
-| Need cancellation | Yes | No |
-| Check completion | Yes | No |
-| State isolation needed | Yes | No |
-
-## Time Effects
-
-Time effects control timing in your programs.
-
-### Delay - Sleep for Duration
-
-```python
-from doeff import do, Delay, Log
-
-@do
-def with_delay():
-    yield Log("Starting...")
-    yield Delay(1.0)  # Sleep for 1 second
-    yield Log("After 1 second")
-    yield Delay(0.5)
-    yield Log("After another 0.5 seconds")
-    return "done"
-```
-
-**Execution behavior:**
-- `async_run`: Uses `asyncio.sleep` (non-blocking)
-- `run`: Uses cooperative scheduling or `time.sleep`
-
-### GetTime - Get Current Time
-
-```python
-from doeff import do, GetTime, Delay, Log
-
-@do
-def measure_duration():
-    start = yield GetTime()
-    yield Log(f"Start time: {start}")
-
-    yield Delay(1.0)
-
-    end = yield GetTime()
-    duration = (end - start).total_seconds()
-    yield Log(f"Duration: {duration}s")
-
-    return duration
-```
-
-### WaitUntil - Wait Until Specific Time
-
-```python
-from datetime import datetime, timedelta
-from doeff import do, WaitUntil, GetTime, Log
-
-@do
-def wait_until_example():
-    now = yield GetTime()
-    target = now + timedelta(seconds=5)
-
-    yield Log(f"Current time: {now}")
-    yield Log(f"Waiting until: {target}")
-
-    yield WaitUntil(target)
-
-    yield Log("Target time reached!")
-    return "done"
-```
-
-### Time Effects with run
-
-`run` with cooperative scheduling handles time effects efficiently:
-
-```python
-from doeff import run, default_handlers
-
-@do
-def slow_in_real_time():
-    yield Delay(3600)  # 1 hour delay
-    return "done"
-
-# With run, time advances based on handler implementation
-def test_time_based_program():
-    result = run(slow_in_real_time(), default_handlers())
-    assert result.is_ok()
-    assert result.value == "done"
-```
-
-## Async Integration Patterns
-
-### Async Context Managers
-
-```python
-from contextlib import asynccontextmanager
-
-@asynccontextmanager
-async def database_connection():
-    db = await connect_db()
-    try:
-        yield db
-    finally:
-        await db.close()
-
-@do
-def with_database():
-    # Use async context manager
-    async with database_connection() as db:
-        result = yield Await(db.execute("SELECT * FROM users"))
-        yield Log(f"Query returned {len(result)} rows")
-        return result
-```
-
-### Timeouts
-
-```python
-@do
-def with_timeout():
-    async def slow_operation():
-        await asyncio.sleep(10)
-        return "done"
-
-    try:
-        # Set timeout using asyncio
-        result = yield Await(
-            asyncio.wait_for(slow_operation(), timeout=1.0)
-        )
-        yield Log(f"Completed: {result}")
-        return result
-    except asyncio.TimeoutError:
-        yield Log("Operation timed out")
-        raise Exception("Timeout exceeded")
-```
-
-### Rate Limiting
-
-```python
-@do
-def rate_limited_requests(urls):
-    """Process URLs with rate limiting"""
-    results = []
-
-    for i, url in enumerate(urls):
-        if i > 0:
-            # Wait between requests
-            yield Delay(0.5)
-
-        yield Log(f"Fetching {url}...")
-        response = yield Await(fetch_url(url))
-        results.append(response)
-
-    yield Log(f"Completed {len(results)} requests")
-    return results
-```
-
-### Combining with Other Effects
-
-```python
-@do
-def async_with_state_and_config():
-    # Get config from environment
-    api_url = yield Ask("api_url")
-    max_concurrent = yield Ask("max_concurrent")
-
-    # Track progress in state
-    yield Put("completed", 0)
-    yield Put("total", 10)
-
-    # Run parallel async operations with Gather
-    tasks = [fetch_item(api_url, i) for i in range(max_concurrent)]
-    results = yield Gather(*tasks)
-
-    # Update state
-    yield Modify("completed", lambda x: x + len(results))
-
-    # Log progress
-    completed = yield Get("completed")
-    total = yield Get("total")
-    yield Log(f"Progress: {completed}/{total}")
-
-    return results
-
-@do
-def fetch_item(base_url, item_id):
-    yield Delay(0.1)
-    return f"{base_url}/items/{item_id}"
-```
-
-### Error Handling with Async
-
-```python
-@do
-def safe_async_operation():
-    async def risky_async():
-        await asyncio.sleep(0.1)
-        if random.random() < 0.5:
-            raise Exception("Random failure")
-        return "success"
-
-    # Safe wrapping for async errors
-    safe_result = yield Safe(Await(risky_async()))
-
-    if safe_result.is_ok():
-        result = safe_result.value
-    else:
-        result = f"Failed: {safe_result.error}"
-
-    yield Log(f"Result: {result}")
-    return result
-```
-
-## Best Practices
-
-### When to Use Await
-
-**DO:**
-- Await I/O-bound operations (network, disk, database)
-- Integrate with async libraries
-- Call async functions from other libraries
-
-```python
-@do
-def good_await_usage():
-    # I/O-bound: good use of async
-    data = yield Await(httpx_client.get(url))
-    result = yield Await(db.execute(query))
-    return result
-```
-
-**DON'T:**
-- Await CPU-bound operations (use threading/multiprocessing instead)
-- Await trivial operations
-
-### When to Use Gather
-
-**DO:**
-- Independent operations that all need results
-- Multiple Programs with effect support
-- Batch processing where all results matter
-
-```python
-@do
-def good_gather_usage():
-    # Independent Programs - perfect for Gather
-    results = yield Gather(
-        fetch_users(),
-        fetch_posts(),
-        fetch_comments()
-    )
-    return {"users": results[0], "posts": results[1], "comments": results[2]}
-```
-
-**DON'T:**
-- Fire-and-forget patterns (use Spawn)
-- Single operations
-- Dependent operations that must be sequential
-
-### When to Use Spawn
-
-**DO:**
-- Fire-and-forget operations
-- When you need cancellation
-- When you need state isolation
-- Background work with deferred result retrieval
-
-```python
-@do
-def good_spawn_usage():
-    # Fire-and-forget notification
-    yield Spawn(send_notification())
-
-    # Background work with later Wait
-    task = yield Spawn(expensive_computation())
-    yield do_other_work()
-    result = yield Wait(task)
-
-    return result
-```
-
-**DON'T:**
-- When you need all results immediately (use Gather)
-- Simple sequential operations
-
-### Performance Considerations
-
-**Sequential (slower):**
-```python
-@do
-def sequential():
-    r1 = yield task1()  # 100ms
-    r2 = yield task2()  # 100ms
-    r3 = yield task3()  # 100ms
-    return [r1, r2, r3]
-# Total: ~300ms
-```
-
-**Parallel with Gather (faster):**
-```python
-@do
-def parallel():
-    results = yield Gather(
-        task1(),  # 100ms
-        task2(),  # 100ms
-        task3()   # 100ms
-    )
-    return results
-# Total: ~100ms (all run concurrently)
-```
-
-### Testing Async Programs
-
-```python
-import asyncio
-import pytest
-from doeff import do, Await, Log, async_run, default_handlers
-
-@pytest.mark.asyncio
-async def test_async_program():
-    @do
-    def my_program():
-        result = yield Await(asyncio.sleep(0, result="test"))
-        yield Log(f"Result: {result}")
-        return result
-
-    result = await arun(my_program(), default_handlers())
-
-    assert result.is_ok()
-    assert result.value == "test"
-```
-
-## Summary
-
-| Effect | Purpose | Execution Support |
-|--------|---------|-------------------|
-| `Await(coro)` | Wait for async operation | async_run (native), run (via thread) |
-| `Gather(*progs)` | Run Programs in parallel | async_run (parallel), run (cooperative) |
-| `Spawn(prog)` | Background task with snapshot | async_run (native), run (cooperative) |
-| `Wait(task)` | Wait for spawned task | async_run, run |
-| `task.cancel()` | Request cancellation | async_run, run |
-| `Delay(seconds)` | Sleep for duration | All |
-| `GetTime()` | Get current time | All |
-| `WaitUntil(time)` | Wait until specific time | All |
-
-**Key Points:**
-- `Await` integrates Python's async/await with doeff
-- `Gather` runs Programs in parallel (with full effect support)
-- `Spawn` creates isolated background tasks
-- Time effects behave differently per execution function
-- Use `Safe` for error handling in async operations
-
-## Next Steps
-
-- **[Error Handling](05-error-handling.md)** - Safe effect and RuntimeResult
-- **[Effects Matrix](21-effects-matrix.md)** - Complete effect support reference
-- **[Patterns](12-patterns.md)** - Common async patterns and best practices
+Use these with explicit handler presets so async behavior is intentional and predictable.
