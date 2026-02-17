@@ -150,6 +150,7 @@ struct SemaphoreRuntimeState {
     max_permits: u64,
     available_permits: u64,
     waiters: VecDeque<SemaphoreWaiter>,
+    holders: HashMap<Option<TaskId>, u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -855,6 +856,7 @@ impl SchedulerState {
                 max_permits: permits,
                 available_permits: permits,
                 waiters: VecDeque::new(),
+                holders: HashMap::new(),
             },
         );
         semaphore_id
@@ -901,6 +903,8 @@ impl SchedulerState {
         &mut self,
         semaphore_id: u64,
     ) -> Result<Option<PromiseId>, PyException> {
+        let owner = self.current_task;
+
         if let Some(task_id) = self.current_task {
             if is_task_cancel_requested(task_id) {
                 return Err(task_cancelled_error());
@@ -920,9 +924,24 @@ impl SchedulerState {
         if can_acquire {
             if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
                 semaphore.available_permits -= 1;
+                let held = semaphore.holders.entry(owner).or_insert(0);
+                *held += 1;
                 return Ok(None);
             }
             return Err(unknown_semaphore_error(semaphore_id));
+        }
+
+        let self_deadlock = {
+            let semaphore = self
+                .semaphores
+                .get(&semaphore_id)
+                .ok_or_else(|| unknown_semaphore_error(semaphore_id))?;
+            semaphore.max_permits == 1 && semaphore.holders.get(&owner).copied().unwrap_or(0) > 0
+        };
+        if self_deadlock {
+            return Err(PyException::runtime_error(
+                "circular lazy Ask dependency detected".to_string(),
+            ));
         }
 
         let waiter_promise = self.alloc_promise_id();
@@ -940,6 +959,28 @@ impl SchedulerState {
     }
 
     pub fn release_semaphore(&mut self, semaphore_id: u64) -> Result<(), PyException> {
+        let owner = self.current_task;
+        let released_one = {
+            let semaphore = self
+                .semaphores
+                .get_mut(&semaphore_id)
+                .ok_or_else(|| unknown_semaphore_error(semaphore_id))?;
+            if let Some(held) = semaphore.holders.get_mut(&owner) {
+                *held -= 1;
+                if *held == 0 {
+                    semaphore.holders.remove(&owner);
+                }
+                true
+            } else {
+                false
+            }
+        };
+        if !released_one {
+            return Err(PyException::runtime_error(
+                "semaphore released too many times".to_string(),
+            ));
+        }
+
         loop {
             self.drain_cancelled_head_waiters(semaphore_id)?;
 
@@ -950,6 +991,12 @@ impl SchedulerState {
             };
 
             if let Some(waiter) = next_waiter {
+                if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
+                    let held = semaphore.holders.entry(waiter.waiting_task).or_insert(0);
+                    *held += 1;
+                } else {
+                    return Err(unknown_semaphore_error(semaphore_id));
+                }
                 self.mark_promise_done(waiter.promise, Ok(Value::Unit));
                 return Ok(());
             }

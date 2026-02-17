@@ -1,9 +1,7 @@
 //! Store model shared by handlers and VM.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 
-use crate::ids::PromiseId;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
@@ -12,10 +10,10 @@ struct LazyCacheEntry {
     value: Value,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct LazyInflightEntry {
+#[derive(Debug, Clone)]
+struct LazySemaphoreEntry {
     source_id: usize,
-    promise_id: PromiseId,
+    semaphore: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -23,9 +21,8 @@ pub struct RustStore {
     pub state: HashMap<String, Value>,
     pub env: HashMap<String, Value>,
     pub log: Vec<Value>,
-    lazy_cache: Arc<Mutex<HashMap<String, LazyCacheEntry>>>,
-    lazy_inflight: Arc<Mutex<HashMap<String, LazyInflightEntry>>>,
-    lazy_active: Arc<Mutex<HashSet<(String, usize)>>>,
+    lazy_cache: HashMap<String, LazyCacheEntry>,
+    lazy_semaphores: HashMap<String, LazySemaphoreEntry>,
 }
 
 impl RustStore {
@@ -34,9 +31,8 @@ impl RustStore {
             state: HashMap::new(),
             env: HashMap::new(),
             log: Vec::new(),
-            lazy_cache: Arc::new(Mutex::new(HashMap::new())),
-            lazy_inflight: Arc::new(Mutex::new(HashMap::new())),
-            lazy_active: Arc::new(Mutex::new(HashSet::new())),
+            lazy_cache: HashMap::new(),
+            lazy_semaphores: HashMap::new(),
         }
     }
 
@@ -103,71 +99,28 @@ impl RustStore {
     }
 
     pub fn lazy_cache_get(&self, key: &str, source_id: usize) -> Option<Value> {
-        let cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
-        let entry = cache.get(key)?;
+        let entry = self.lazy_cache.get(key)?;
         if entry.source_id == source_id {
             return Some(entry.value.clone());
         }
         None
     }
 
-    pub fn lazy_cache_put(&self, key: String, source_id: usize, value: Value) {
-        let mut cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
-        cache.insert(key, LazyCacheEntry { source_id, value });
+    pub fn lazy_cache_put(&mut self, key: String, source_id: usize, value: Value) {
+        self.lazy_cache.insert(key, LazyCacheEntry { source_id, value });
     }
 
-    pub fn lazy_inflight_get(&self, key: &str, source_id: usize) -> Option<PromiseId> {
-        let inflight = self
-            .lazy_inflight
-            .lock()
-            .expect("lazy_inflight lock poisoned");
-        let entry = inflight.get(key)?;
+    pub fn lazy_semaphore_get(&self, key: &str, source_id: usize) -> Option<Value> {
+        let entry = self.lazy_semaphores.get(key)?;
         if entry.source_id == source_id {
-            return Some(entry.promise_id);
+            return Some(entry.semaphore.clone());
         }
         None
     }
 
-    pub fn lazy_inflight_put(&self, key: String, source_id: usize, promise_id: PromiseId) {
-        let mut inflight = self
-            .lazy_inflight
-            .lock()
-            .expect("lazy_inflight lock poisoned");
-        inflight.insert(
-            key,
-            LazyInflightEntry {
-                source_id,
-                promise_id,
-            },
-        );
-    }
-
-    pub fn lazy_inflight_remove(&self, key: &str, source_id: usize, promise_id: PromiseId) {
-        let mut inflight = self
-            .lazy_inflight
-            .lock()
-            .expect("lazy_inflight lock poisoned");
-        let should_remove = inflight
-            .get(key)
-            .is_some_and(|entry| entry.source_id == source_id && entry.promise_id == promise_id);
-        if should_remove {
-            inflight.remove(key);
-        }
-    }
-
-    pub fn lazy_active_contains(&self, key: &str, source_id: usize) -> bool {
-        let active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.contains(&(key.to_string(), source_id))
-    }
-
-    pub fn lazy_active_insert(&self, key: String, source_id: usize) {
-        let mut active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.insert((key, source_id));
-    }
-
-    pub fn lazy_active_remove(&self, key: &str, source_id: usize) {
-        let mut active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.remove(&(key.to_string(), source_id));
+    pub fn lazy_semaphore_put(&mut self, key: String, source_id: usize, semaphore: Value) {
+        self.lazy_semaphores
+            .insert(key, LazySemaphoreEntry { source_id, semaphore });
     }
 }
 
