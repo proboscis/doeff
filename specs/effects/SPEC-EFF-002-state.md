@@ -27,12 +27,12 @@ Retrieves the value associated with `key` from the store.
    None-handling when you know the key exists
 
 **Handling missing keys:**
-Use `Safe` to handle potentially missing keys:
+Use `Try` to handle potentially missing keys:
 
 ```python
 @do
 def counter():
-    result = yield Safe(Get("counter"))
+    result = yield Try(Get("counter"))
     current = result.value_or(0)  # Default to 0 if missing
     yield Put("counter", current + 1)
     return current + 1
@@ -84,9 +84,9 @@ def test_immediate_visibility():
 
 **Verified by:** `test_put_get_immediate_visibility`
 
-### Safe + Put: Changes Persist on Caught Error
+### Try + Put: Changes Persist on Caught Error
 
-State modifications made before an error occurs persist even when `Safe` catches the error.
+State modifications made before an error occurs persist even when `Try` catches the error.
 There is NO automatic rollback.
 
 ```python
@@ -98,7 +98,7 @@ def risky_operation():
 @do
 def test_safe_preserves_state():
     yield Put("modified", False)
-    result = yield Safe(risky_operation())
+    result = yield Try(risky_operation())
     # result is Err(ValueError)
     value = yield Get("modified")
     return value  # Returns True - change persisted
@@ -179,16 +179,16 @@ def test_modify_atomicity():
 - **Fail-fast**: Explicit errors catch bugs earlier than silent None propagation
 - **Type safety**: `Get[T]` returns `T`, not `T | None`
 
-**Handling missing keys:** Use `Safe(Get(...))` or `Modify` for initialization patterns.
+**Handling missing keys:** Use `Try(Get(...))` or `Modify` for initialization patterns.
 
 ### D2: No Transaction Rollback on Error
 
-**Decision:** State changes persist through `Safe` error boundaries.
+**Decision:** State changes persist through `Try` error boundaries.
 
 **Considered alternatives:**
-1. Automatic rollback on Safe-caught errors
+1. Automatic rollback on Try-caught errors
 2. Explicit `Transaction` effect wrapper
-3. Copy-on-write semantics for Safe blocks
+3. Copy-on-write semantics for Try blocks
 
 **Rationale:**
 - Complexity of implementing true transaction semantics
@@ -218,7 +218,7 @@ All composition rules are verified by tests in `tests/effects/test_state_semanti
 | Rule | Test |
 |------|------|
 | Put + Get | `test_put_get_immediate_visibility` |
-| Safe + Put | `test_safe_preserves_state_changes` |
+| Try + Put | `test_safe_preserves_state_changes` |
 | Gather + Put | `test_gather_shared_store_semantics` |
 | Modify atomicity | `test_modify_atomic_on_error` |
 | Modify missing key | `test_modify_missing_key_receives_none` |

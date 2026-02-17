@@ -7,14 +7,14 @@
 Defines the canonical `Ok` and `Err` types implemented as Rust `#[pyclass]`
 structs and exposed to Python. These types represent success/failure outcomes
 throughout the doeff system: `RunResult.result`, `TaskCompleted` results,
-`Safe` wrapper outputs, and user-level pattern matching.
+`Try` wrapper outputs, and user-level pattern matching.
 
 ## Motivation
 
 The doeff system has two separate Ok/Err hierarchies:
 
 1. **Python dataclasses** (`doeff._vendor.Ok`, `doeff._vendor.Err`) — used by
-   `Safe`, user code pattern matching, and the public API.
+   `Try`, user code pattern matching, and the public API.
 2. **Rust `#[pyclass]` structs** (`PyResultOk`, `PyResultErr`) — used by
    `RunResult.result` in the VM.
 
@@ -24,8 +24,8 @@ This creates problems:
 - The scheduler's `TaskCompleted` effect uses `value: Option<PyObject>` /
   `error: Option<PyObject>` as a workaround because Rust can't distinguish
   the Python `Ok`/`Err` dataclasses without GIL isinstance checks.
-- `Safe` constructs Python `Ok`/`Err`, but `RunResult` constructs Rust
-  `Ok`/`Err` — a Gather over Safe-wrapped tasks could return a mix of both
+- `Try` constructs Python `Ok`/`Err`, but `RunResult` constructs Rust
+  `Ok`/`Err` — a Gather over Try-wrapped tasks could return a mix of both
   types.
 
 This spec unifies them into a single Rust-backed implementation.
@@ -184,12 +184,12 @@ SchedulerEffect::TaskCompleted { task, result } => {
 ### RunResult (SPEC-008)
 
 No change. `RunResult.result` already returns `PyResultOk`/`PyResultErr`.
-After unification, these are the same types that `Safe` and `TaskCompleted`
+After unification, these are the same types that `Try` and `TaskCompleted`
 use.
 
-### Safe (SPEC-EFF-012)
+### Try (SPEC-EFF-012)
 
-`Safe` wraps sub-program results in `Ok`/`Err`. After unification, it
+`Try` wraps sub-program results in `Ok`/`Err`. After unification, it
 imports from `doeff_vm` (Rust) instead of constructing Python dataclasses:
 
 ```python
@@ -221,7 +221,7 @@ from `doeff_vm` instead of from `doeff._vendor`.
 
 ### Phase 3: Remove Python dataclass versions
 
-Remove `class Ok` and `class Err` from `doeff/_vendor.py`. Update `Safe`
+Remove `class Ok` and `class Err` from `doeff/_vendor.py`. Update `Try`
 and any other code that constructs these types directly.
 
 ### Phase 4: Simplify TaskCompleted
@@ -307,7 +307,7 @@ impl PyResultErr {
 |------|-------------|
 | SPEC-008 | `RunResult.result` returns Ok/Err |
 | SPEC-SCHED-001 | `TaskCompleted.result` is Ok/Err |
-| SPEC-EFF-012 | `Safe` wraps sub-program results in Ok/Err |
+| SPEC-EFF-012 | `Try` wraps sub-program results in Ok/Err |
 
 ## Location
 

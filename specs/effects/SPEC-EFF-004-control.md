@@ -4,7 +4,7 @@
 
 ## Summary
 
-This specification defines the semantics for Control effects in doeff: `Pure`, `Safe`, and `Intercept`. These are foundational effects that control program execution flow, error handling, and effect transformation.
+This specification defines the semantics for Control effects in doeff: `Pure`, `Try`, and `Intercept`. These are foundational effects that control program execution flow, error handling, and effect transformation.
 
 ---
 
@@ -110,7 +110,7 @@ def transform(e):
 **3. Interception always propagates to children:**
 ```python
 Gather(child1, child2).intercept(f)
-Safe(inner_program).intercept(f)
+Try(inner_program).intercept(f)
 Spawn(background_task).intercept(f)
 
 # In ALL cases, f sees effects from children/inner/background
@@ -178,7 +178,7 @@ def handle_pure(effect: PureEffect, task_state, store) -> ContinueValue:
 
 ---
 
-### 2. Safe Effect
+### 2. Try Effect
 
 **Module:** `doeff/effects/result.py`
 
@@ -189,7 +189,7 @@ class ResultSafeEffect(EffectBase):
 ```
 
 **Semantics:**
-- `Safe(program)` executes `program` and catches any exceptions
+- `Try(program)` executes `program` and catches any exceptions
 - Returns `Ok(value)` on success, `Err(exception)` on failure
 - **NO ROLLBACK**: State changes and log entries from `program` persist even on error
 
@@ -218,7 +218,7 @@ def handle_safe(effect: ResultSafeEffect, task_state, store) -> FrameResult:
    @do
    def program():
        yield Put("counter", 0)
-       result = yield Safe(failing_program_that_increments_counter())
+       result = yield Try(failing_program_that_increments_counter())
        # counter is now 1 even though failing_program raised an error
        counter = yield Get("counter")  # Returns 1, not 0
    ```
@@ -227,12 +227,12 @@ def handle_safe(effect: ResultSafeEffect, task_state, store) -> FrameResult:
    ```python
    @do
    def program():
-       result = yield Safe(program_that_logs_then_fails())
+       result = yield Try(program_that_logs_then_fails())
        # Logs from program_that_logs_then_fails ARE preserved
    ```
 
 3. **Environment Scoping:**
-   - Safe captures the environment at creation
+   - Try captures the environment at creation
    - On completion (success or error), environment is restored to the captured state
 
 **Design Decision: No SafeTx (No Rollback)**
@@ -287,7 +287,7 @@ See **Intercept Semantics (Detailed)** section above for full rules.
 
 ## Composition Rules
 
-### Safe + Local
+### Try + Local
 
 **Rule:** Environment is restored even on caught error.
 
@@ -295,18 +295,18 @@ See **Intercept Semantics (Detailed)** section above for full rules.
 @do
 def test_safe_local_env_restored():
     original = yield Ask("key")  # Returns "original"
-    result = yield Safe(Local({"key": "modified"}, failing_program()))
+    result = yield Try(Local({"key": "modified"}, failing_program()))
     after = yield Ask("key")  # Returns "original" (restored)
     return (original, result, after)
 ```
 
 **Semantics:**
 - Local creates LocalFrame to restore environment
-- Safe creates SafeFrame for error catching
+- Try creates SafeFrame for error catching
 - On error: SafeFrame catches error, then LocalFrame restores env
-- Order matters: `Safe(Local(...))` vs `Local(Safe(...))`
+- Order matters: `Try(Local(...))` vs `Local(Try(...))`
 
-### Safe + Put
+### Try + Put
 
 **Rule:** State persists on caught error.
 
@@ -314,7 +314,7 @@ def test_safe_local_env_restored():
 @do
 def test_safe_put_state_persists():
     yield Put("counter", 0)
-    result = yield Safe(increment_then_fail())  # Increments counter then fails
+    result = yield Try(increment_then_fail())  # Increments counter then fails
     counter = yield Get("counter")  # Returns 1 (persisted)
     return (result.is_err(), counter)  # (True, 1)
 ```
@@ -324,23 +324,23 @@ def test_safe_put_state_persists():
 - This matches Python's exception semantics (no automatic rollback)
 - If rollback is needed, use explicit snapshotting
 
-### Nested Safe
+### Nested Try
 
-**Rule:** Inner Safe catches first.
+**Rule:** Inner Try catches first.
 
 ```python
 @do
 def test_nested_safe():
-    result = yield Safe(
-        Safe(failing_program())  # Inner Safe catches
+    result = yield Try(
+        Try(failing_program())  # Inner Try catches
     )
     # result is Ok(Err(exception)), not Err(exception)
 ```
 
 **Semantics:**
-- Inner Safe converts exception to `Err(exception)`
-- Outer Safe sees successful completion (the `Err` value)
-- Outer Safe wraps in `Ok(Err(exception))`
+- Inner Try converts exception to `Err(exception)`
+- Outer Try sees successful completion (the `Err` value)
+- Outer Try wraps in `Ok(Err(exception))`
 
 ### Intercept + Intercept
 
@@ -352,7 +352,7 @@ program.intercept(f).intercept(g)
 # For each effect: try f, if None try g, if None use original
 ```
 
-### Intercept + Gather/Safe/Spawn
+### Intercept + Gather/Try/Spawn
 
 **Rule:** Interception ALWAYS propagates to children.
 
@@ -360,7 +360,7 @@ program.intercept(f).intercept(g)
 Gather(child1, child2).intercept(f)
 # f sees effects from child1 AND child2
 
-Safe(inner).intercept(f)
+Try(inner).intercept(f)
 # f sees effects from inner
 
 Spawn(background).intercept(f)
@@ -468,7 +468,7 @@ This allows implementing custom control flow (transactions, timeouts, retries, r
 | `doeff/effects/pure.py` | PureEffect definition |
 | `doeff/effects/result.py` | ResultSafeEffect definition |
 | `doeff/effects/intercept.py` | InterceptEffect definition |
-| `packages/doeff-vm/src/frame.rs` | Safe/Intercept/Local frame semantics |
+| `packages/doeff-vm/src/frame.rs` | Try/Intercept/Local frame semantics |
 | `packages/doeff-vm/src/handler.rs` | Built-in control handler dispatch |
 | `packages/doeff-vm/src/dispatch.rs` | Dispatch chaining and delegation |
 | `packages/doeff-vm/src/step.rs` | Effect processing and frame handling |
@@ -491,7 +491,7 @@ return {
 
 ## Design Decisions (Resolved)
 
-### 1. Safe rollback semantics
+### 1. Try rollback semantics
 - **Decision:** NO rollback - state/logs persist on error
 - **Rationale:** Simpler, matches Python semantics, rollback is complex in async contexts
 
@@ -499,7 +499,7 @@ return {
 - **Decision:** `p.intercept(f).intercept(g)` - `f` applies first (first non-None wins)
 - **Implementation:** Transforms accumulate in tuple, applied in order
 
-### 3. Intercept + Gather/Safe/Spawn scope
+### 3. Intercept + Gather/Try/Spawn scope
 - **Decision:** Interception ALWAYS propagates to children
 - **Mechanism:** Unified via InterceptFrame - all child effects pass through parent's InterceptFrame
 - **No shallow option:** There is no way to intercept "only this level"
