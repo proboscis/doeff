@@ -7,10 +7,13 @@ pure call-time macro expansion and emits a `Call` DoCtrl directly.
 
 - [What `@do` Returns](#what-do-returns)
 - [Call-Time Macro Expansion](#call-time-macro-expansion)
+- [KPC Non-Effect Invariant](#kpc-non-effect-invariant)
 - [Annotation-Aware Argument Classification](#annotation-aware-argument-classification)
+- [`@do` Handler Authoring Contract](#do-handler-authoring-contract)
 - [Call Metadata](#call-metadata)
 - [Composability of `Call` DoCtrl](#composability-of-call-doctrl)
 - [Kleisli-Level Composition and Partial Application](#kleisli-level-composition-and-partial-application)
+- [Migration Note](#migration-note)
 - [Best Practices](#best-practices)
 
 ## What `@do` Returns
@@ -65,6 +68,17 @@ def __call__(self, *args, **kwargs):
     return Call(Pure(self.execution_kernel), do_expr_args, do_expr_kwargs, metadata)
 ```
 
+## KPC Non-Effect Invariant
+
+> KPC is not an effect type.
+>
+> - It does not extend `PyEffectBase`.
+> - It is never dispatched through `Perform(KPC(...))`.
+> - There is no KPC handler in `default_handlers()` or runtime handler stacks.
+
+Calling a `KleisliProgram` returns a `Call` DoCtrl directly, and the VM evaluates that
+DoExpr normally.
+
 ## Annotation-Aware Argument Classification
 
 `should_unwrap` is derived from parameter annotations.
@@ -108,6 +122,19 @@ call_expr = use_values(Ask("x"), Program.pure(10))
 # x: int -> should_unwrap=True -> Ask("x") becomes Perform(Ask("x"))
 # raw_program: Program[int] -> should_unwrap=False -> Program.pure(10) becomes Pure(...)
 ```
+
+## `@do` Handler Authoring Contract
+
+When a `@do`-decorated function is used as a handler, it must follow the handler
+signature contract:
+
+- It must expose an inspectable signature.
+- It must accept at least two parameters: `(effect, k)`.
+- The first parameter must be annotated as an Effect-family type (`Effect`,
+  `Effect[T]`, `EffectBase`, or an `EffectBase` subclass).
+
+If these rules are violated, handler installation fails with `TypeError` at the
+Python API boundary.
 
 ## Call Metadata
 
@@ -191,6 +218,31 @@ def greet(prefix: str, name: str):
 
 say_hello = greet.partial("Hello")
 ```
+
+### Varargs Auto-Unwrap at Composition Boundaries
+
+For `*args` and `**kwargs`, unwrap policy is computed once from the varargs
+parameter annotation and then applied to each value crossing that call boundary:
+
+- `*args`: one `var_positional` policy for all extra positional arguments
+- `**kwargs`: one `var_keyword` policy for all unmatched keyword arguments
+
+Boundary rules to keep in mind:
+
+- Unannotated varargs default to `should_unwrap=True`, so effect/program values in
+  varargs are resolved at that call boundary.
+- Annotating varargs as `Program[...]` or `Effect[...]` sets `should_unwrap=False`,
+  so those values are passed through as data.
+- `partial(...)` does not bypass classification. Pre-bound arguments and call-time
+  arguments are merged, then classified by the base Kleisli signature.
+
+This is why varargs-heavy composition can feel surprising: every Kleisli call
+boundary applies its own annotation-driven unwrap policy.
+
+## Migration Note
+
+Migration guidance for the removed KPC handler is archived in `docs/revision-log.md`.
+This chapter documents only the current call-time macro architecture.
 
 ## Best Practices
 
