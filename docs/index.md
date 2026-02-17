@@ -37,7 +37,8 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 14. **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery
 15. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
 16. **[Python run_program API](16-run-program-api.md)** - Use CLI-equivalent discovery from Python tests or scripts
-17. **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
+17. **[Effect Boundaries](17-effect-boundaries.md)** - Effect vs escape architecture and runner boundaries
+18. **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
 
 ### Specialized Topics
 
