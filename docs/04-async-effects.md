@@ -18,18 +18,26 @@ This chapter covers async integration and scheduler primitives for cooperative c
 
 ## Runner and Handler Presets
 
-Pair each runner with the matching handler preset.
+Pair each runner with the matching handler preset. The preferred pairings are marked below.
 
-| Runner | Preset | Await Handler | Intended Context |
+| Runner | Preset | Status | Await Behavior |
 | --- | --- | --- | --- |
-| `run(...)` | `default_handlers()` | `sync_await_handler` | Sync entrypoint |
-| `await async_run(...)` | `default_async_handlers()` | `async_await_handler` | Async entrypoint / caller event loop |
+| `run(...)` | `default_handlers()` | Valid (preferred) | Uses `sync_await_handler` |
+| `await async_run(...)` | `default_async_handlers()` | Valid (preferred) | Uses `async_await_handler` |
+| `await async_run(...)` | `default_handlers()` | Valid (non-preferred) | Works, but `Await` work runs sequentially/blocking |
+| `run(...)` | `default_async_handlers()` | Invalid | Raises `TypeError` (`async_await_handler` requires async driver) |
 
 ```python
 from doeff import async_run, default_async_handlers, default_handlers, run
 
 sync_result = run(program(), handlers=default_handlers())
 async_result = await async_run(program(), handlers=default_async_handlers())
+
+# Non-preferred but valid: Await work is sequential/blocking.
+slow_result = await async_run(program(), handlers=default_handlers())
+
+# Invalid pairing: raises TypeError.
+bad_result = run(program(), handlers=default_async_handlers())
 ```
 
 ## Await Effect
@@ -259,19 +267,22 @@ def complete_later(p):
 
 ## Common Mistakes
 
-1. Passing `default_handlers()` to `async_run`.
-Use `default_async_handlers()` for async entrypoints.
+1. Passing `default_handlers()` to `async_run(...)` and expecting overlap.
+This pairing is valid, but `Await` work runs sequentially under `sync_await_handler`.
 
-2. Passing a raw coroutine to `Wait(...)`.
+2. Passing `default_async_handlers()` to `run(...)`.
+This pairing is invalid and raises `TypeError` because sync `run(...)` cannot handle async escape effects.
+
+3. Passing a raw coroutine to `Wait(...)`.
 Use `Await(coroutine)` for Python async work; use `Wait` for scheduler waitables.
 
-3. Passing raw programs directly to `Wait`, `Gather`, or `Race`.
+4. Passing raw programs directly to `Wait`, `Gather`, or `Race`.
 Use `task = yield Spawn(program)` first, then pass the returned `Task` (or a `Future`) handle.
 
-4. Expecting `Gather` to keep going after first failure.
+5. Expecting `Gather` to keep going after first failure.
 Use `Safe(...)` around child programs if you need partial success collection.
 
-5. Assuming `Await` is concurrent under `run(...)`.
+6. Assuming `Await` is concurrent under `run(...)`.
 It is sequential under `sync_await_handler`; use `async_run(...)` for overlap.
 
 ## Quick Reference
