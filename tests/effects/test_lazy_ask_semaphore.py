@@ -259,6 +259,40 @@ class TestLazyAskSemaphoreContract:
         assert logger_count == 1
 
     @pytest.mark.asyncio
+    async def test_nested_local_with_lazy_values(self) -> None:
+        call_count = 0
+
+        @do
+        def make_service():
+            nonlocal call_count
+            call_count += 1
+            db = yield Ask("db_url")
+            host = yield Ask("host")
+            return f"Service({db},{host})"
+
+        @do
+        def program():
+            inner = yield Local(
+                {"host": "inner-host"},
+                Local({"db_url": "test.db"}, Ask("service")),
+            )
+            outer = yield Ask("service")
+            return (inner, outer)
+
+        result = await async_run(
+            program(),
+            handlers=default_async_handlers(),
+            env={
+                "db_url": "prod.db",
+                "host": "prod-host",
+                "service": make_service(),
+            },
+        )
+        assert result.is_ok()
+        assert result.value == ("Service(test.db,inner-host)", "Service(prod.db,prod-host)")
+        assert call_count == 2
+
+    @pytest.mark.asyncio
     async def test_local_non_override_delegates(self) -> None:
         @do
         def program():

@@ -752,8 +752,8 @@ struct LazySemaphoreEntry {
 struct LazyAskState {
     cache: HashMap<HashedPyKey, LazyCacheEntry>,
     semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
-    scope_cache: Option<HashMap<HashedPyKey, LazyCacheEntry>>,
-    scope_semaphores: Option<HashMap<HashedPyKey, LazySemaphoreEntry>>,
+    scope_cache: Vec<HashMap<HashedPyKey, LazyCacheEntry>>,
+    scope_semaphores: Vec<HashMap<HashedPyKey, LazySemaphoreEntry>>,
 }
 
 #[derive(Clone)]
@@ -1289,19 +1289,19 @@ impl LazyAskHandlerProgram {
 
     fn activate_scope_cache(&self) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        state.scope_cache = Some(HashMap::new());
-        state.scope_semaphores = Some(HashMap::new());
+        state.scope_cache.push(HashMap::new());
+        state.scope_semaphores.push(HashMap::new());
     }
 
     fn deactivate_scope_cache(&self) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        state.scope_cache = None;
-        state.scope_semaphores = None;
+        state.scope_cache.pop();
+        state.scope_semaphores.pop();
     }
 
     fn lazy_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
         let state = self.state.lock().expect("LazyAsk lock poisoned");
-        if let Some(scope_cache) = state.scope_cache.as_ref() {
+        if let Some(scope_cache) = state.scope_cache.last() {
             if let Some(entry) = scope_cache.get(key) {
                 if entry.source_id == source_id {
                     return Some(entry.value.clone());
@@ -1318,7 +1318,7 @@ impl LazyAskHandlerProgram {
     fn lazy_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
         let entry = LazyCacheEntry { source_id, value };
-        if let Some(scope_cache) = state.scope_cache.as_mut() {
+        if let Some(scope_cache) = state.scope_cache.last_mut() {
             scope_cache.insert(key, entry);
         } else {
             state.cache.insert(key, entry);
@@ -1327,7 +1327,7 @@ impl LazyAskHandlerProgram {
 
     fn lazy_semaphore_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
         let state = self.state.lock().expect("LazyAsk lock poisoned");
-        if let Some(scope_semaphores) = state.scope_semaphores.as_ref() {
+        if let Some(scope_semaphores) = state.scope_semaphores.last() {
             if let Some(entry) = scope_semaphores.get(key) {
                 if entry.source_id == source_id {
                     return Some(entry.semaphore.clone());
@@ -1347,7 +1347,7 @@ impl LazyAskHandlerProgram {
             source_id,
             semaphore,
         };
-        if let Some(scope_semaphores) = state.scope_semaphores.as_mut() {
+        if let Some(scope_semaphores) = state.scope_semaphores.last_mut() {
             scope_semaphores.insert(key, entry);
         } else {
             state.semaphores.insert(key, entry);
