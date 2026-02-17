@@ -96,7 +96,7 @@ from doeff_pinjected import program_to_injected_result
 @do
 def stateful_program():
     yield Put("status", "initialized")
-    yield Log("Starting computation")
+    yield Tell("Starting computation")
     config = yield Ask("config")
     yield Put("config_loaded", True)
     return config["value"]
@@ -161,7 +161,7 @@ result = await resolver.provide(injected)  # 3. Ask -> resolver.provide("databas
 ### Service Layer Pattern
 
 ```python
-from doeff import do, Ask, Log, Safe
+from doeff import do, Ask, Tell, Safe
 
 @do
 def user_service(user_id: int):
@@ -172,11 +172,11 @@ def user_service(user_id: int):
     cache_result = yield Safe(cache.get(f"user_{user_id}"))
     
     if cache_result.is_ok():
-        yield Log(f"Cache hit for user {user_id}")
+        yield Tell(f"Cache hit for user {user_id}")
         return cache_result.value
     
     # Fetch from database
-    yield Log(f"Fetching user {user_id} from database")
+    yield Tell(f"Fetching user {user_id} from database")
     user = yield db.query_user(user_id)
     
     # Update cache
@@ -197,12 +197,12 @@ def user_repository():
     
     @do
     def get_user(user_id: int):
-        yield Log(f"Repository: fetching user {user_id}")
+        yield Tell(f"Repository: fetching user {user_id}")
         return yield db.query("SELECT * FROM users WHERE id = ?", user_id)
     
     @do
     def save_user(user):
-        yield Log(f"Repository: saving user {user.id}")
+        yield Tell(f"Repository: saving user {user.id}")
         yield db.execute("INSERT OR REPLACE INTO users VALUES (?, ?)", user.id, user.name)
     
     return {"get": get_user, "save": save_user}
@@ -406,7 +406,7 @@ def good_design():
     cache = yield Ask("cache")        # External dependency
     
     value = yield Get("counter")      # Internal state
-    yield Log("Processing")           # Internal effect
+    yield Tell("Processing")           # Internal effect
 ```
 
 **DON'T:**
