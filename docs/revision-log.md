@@ -1,18 +1,35 @@
 # Revision Log
 
-This document keeps historical and migration-only notes. User-facing architecture docs describe
-only the current system.
+Historical and migration notes are collected here so the main documentation chapters stay focused on
+the current architecture and APIs.
 
-## DA-005 (2026-02-17)
+## DA-001 (2026-02-17)
 
-### Archived from `docs/05-error-handling.md`
+`docs/02-core-concepts.md` was rewritten to present only current architecture.
+The following historical topics were moved out of the core chapter:
 
-This section preserves the removed "Migration from Dropped Effects" guidance.
+- legacy `Program` dataclass wrapper representation
+- legacy inheritance discussions around `ProgramBase` / `EffectBase(ProgramBase)`
+- legacy writer-effect references that used `Log` examples
+- legacy KPC-as-effect discussion (superseded by call-time macro model)
+- legacy runtime naming references (`ProgramInterpreter`, `ExecutionContext`, `CESKRuntime`)
 
-If you're migrating from older doeff versions that used `Fail`, `Catch`, `Recover`, `Retry`,
-`Finally`, or `FirstSuccess`, here are the historical migration patterns.
+Current docs should describe the active model directly:
 
-#### Fail to raise
+- `Program[T]` as `DoExpr[T]`
+- explicit `Perform(effect)` dispatch boundary
+- binary `classify_yielded` architecture and current `run` / `async_run` semantics
+
+## DA-002: Writer and Protocol Documentation Cleanup
+
+- Main docs now use the canonical writer API: `Tell`, `StructuredLog`, `slog`, and `Listen`.
+- Inline references to deprecated protocol names were removed from core chapters.
+
+## Error Handling Migration Notes (Archived)
+
+The following migration guide was moved from `docs/05-error-handling.md`.
+
+### Fail to raise
 
 **Before (dropped):**
 ```python
@@ -24,7 +41,7 @@ yield Fail(ValueError("error"))
 raise ValueError("error")
 ```
 
-#### Catch to Safe
+### Catch to Safe
 
 **Before (dropped):**
 ```python
@@ -40,7 +57,7 @@ safe_result = yield Safe(risky_operation())
 result = safe_result.ok() if safe_result.is_ok() else "fallback"
 ```
 
-#### Recover to Safe
+### Recover to Safe
 
 **Before (dropped):**
 ```python
@@ -56,7 +73,7 @@ safe_result = yield Safe(fetch_data())
 data = safe_result.ok() if safe_result.is_ok() else []
 ```
 
-#### Retry to Manual Loop
+### Retry to manual loop
 
 **Before (dropped):**
 ```python
@@ -81,7 +98,7 @@ else:
 final_result = result.ok()
 ```
 
-#### Finally to try/finally
+### Finally to try/finally
 
 **Before (dropped):**
 ```python
@@ -99,7 +116,7 @@ finally:
     yield cleanup_resource()
 ```
 
-#### FirstSuccess to Sequential Safe
+### FirstSuccess to sequential Safe
 
 **Before (dropped):**
 ```python
