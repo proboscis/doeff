@@ -11,7 +11,6 @@ combinator, RuntimeResult protocol, and native Python patterns.
 - [Native Python Patterns](#native-python-patterns)
 - [Error Patterns](#error-patterns)
 - [Stack Traces and Debugging](#stack-traces-and-debugging)
-- [Migration from Dropped Effects](#migration-from-dropped-effects)
 
 ## RuntimeResult Protocol
 
@@ -20,11 +19,11 @@ combinator, RuntimeResult protocol, and native Python patterns.
 ### Basic Usage
 
 ```python
-from doeff import do, Log, Ask, run, default_handlers
+from doeff import do, Tell, Ask, run, default_handlers
 
 @do
 def my_program():
-    yield Log("Processing...")
+    yield Tell("Processing...")
     config = yield Ask("config")
     return config["value"]
 
@@ -158,7 +157,7 @@ surface to `Ok`/`Err`.
 ### Basic Safe Usage
 
 ```python
-from doeff import do, Safe, Log, Ok, Err
+from doeff import do, Safe, Tell, Ok, Err
 
 @do
 def risky_operation():
@@ -170,10 +169,10 @@ def safe_operation():
 
     match result:
         case Ok(value):
-            yield Log(f"Success: {value}")
+            yield Tell(f"Success: {value}")
             return value
         case Err(error):
-            yield Log(f"Error: {error}")
+            yield Tell(f"Error: {error}")
             return "default"
 ```
 
@@ -187,7 +186,7 @@ def with_fallback():
     if result.is_ok():
         return result.ok()
     else:
-        yield Log(f"Fetch failed: {result.err()}")
+        yield Tell(f"Fetch failed: {result.err()}")
         return []  # Fallback value
 ```
 
@@ -201,8 +200,8 @@ def transform_errors():
     result = yield Safe(risky_operation())
 
     if result.is_err():
-        # Log and transform the error
-        yield Log(f"Operation failed: {result.err()}")
+        # Record and transform the error
+        yield Tell(f"Operation failed: {result.err()}")
         raise RuntimeError(f"Wrapped error: {result.err()}")
 
     return result.ok()
@@ -224,7 +223,7 @@ def multiple_safe_operations():
     successes = [r.ok() for r in results if r.is_ok()]
     failures = [r.err() for r in results if r.is_err()]
 
-    yield Log(f"Successes: {len(successes)}, Failures: {len(failures)}")
+    yield Tell(f"Successes: {len(successes)}, Failures: {len(failures)}")
 
     return successes
 ```
@@ -232,7 +231,7 @@ def multiple_safe_operations():
 ### Safe with Gather
 
 ```python
-from doeff import do, Safe, Gather, Log
+from doeff import do, Safe, Gather, Tell
 
 @do
 def parallel_safe_operations():
@@ -247,7 +246,7 @@ def parallel_safe_operations():
 
     # Process results
     successes = [r.ok() for r in results if r.is_ok()]
-    yield Log(f"Completed {len(successes)}/10 tasks")
+    yield Tell(f"Completed {len(successes)}/10 tasks")
 
     return successes
 ```
@@ -263,7 +262,7 @@ def fetch_with_fallback():
     if result.is_ok():
         return result.ok()
 
-    yield Log(f"Primary failed: {result.err()}, trying backup...")
+    yield Tell(f"Primary failed: {result.err()}, trying backup...")
 
     # Try backup source
     backup_result = yield Safe(fetch_from_backup())
@@ -272,7 +271,7 @@ def fetch_with_fallback():
         return backup_result.ok()
 
     # Both failed, use default
-    yield Log("All sources failed, using default")
+    yield Tell("All sources failed, using default")
     return get_default_data()
 ```
 
@@ -292,7 +291,7 @@ def demo_no_rollback():
 
     # Even though the operation failed, counter is 10
     counter = yield Get("counter")
-    yield Log(f"Counter after failure: {counter}")  # 10, not 0!
+    yield Tell(f"Counter after failure: {counter}")  # 10, not 0!
 
     return result
 
@@ -377,7 +376,7 @@ def validate_input(value):
     if value > 100:
         raise ValueError("Value must be <= 100")
 
-    yield Log(f"Valid value: {value}")
+    yield Tell(f"Valid value: {value}")
     return value
 ```
 
@@ -406,7 +405,7 @@ def validate_user(user_data):
 Implement retry logic using a simple loop:
 
 ```python
-from doeff import do, Safe, Await, Log, Delay
+from doeff import do, Safe, Await, Tell, Delay
 
 @do
 def retry_with_backoff(max_attempts=3, base_delay=0.1):
@@ -422,7 +421,7 @@ def retry_with_backoff(max_attempts=3, base_delay=0.1):
         last_error = result.err()
         if attempt < max_attempts - 1:
             delay = base_delay * (2 ** attempt)
-            yield Log(f"Attempt {attempt + 1} failed, retrying in {delay}s...")
+            yield Tell(f"Attempt {attempt + 1} failed, retrying in {delay}s...")
             yield Delay(delay)
 
     raise Exception(f"Failed after {max_attempts} attempts: {last_error}")
@@ -433,14 +432,14 @@ def retry_with_backoff(max_attempts=3, base_delay=0.1):
 ```python
 @do
 def with_resource_cleanup():
-    yield Log("Acquiring resource...")
+    yield Tell("Acquiring resource...")
     yield Put("resource_acquired", True)
 
     try:
         result = yield risky_operation()
         return result
     finally:
-        yield Log("Cleaning up resource...")
+        yield Tell("Cleaning up resource...")
         yield Put("resource_acquired", False)
 ```
 
@@ -461,10 +460,10 @@ def validate_process_handle(data):
     # Handle result
     match result:
         case Ok(value):
-            yield Log(f"Processed successfully: {value}")
+            yield Tell(f"Processed successfully: {value}")
             return value
         case Err(error):
-            yield Log(f"Processing failed: {error}")
+            yield Tell(f"Processing failed: {error}")
             return default_value()
 ```
 
@@ -476,7 +475,7 @@ def with_circuit_breaker(service_name):
     failures = yield Get(f"{service_name}_failures")
 
     if failures >= 5:
-        yield Log(f"Circuit breaker OPEN for {service_name}")
+        yield Tell(f"Circuit breaker OPEN for {service_name}")
         raise Exception("Circuit breaker open")
 
     result = yield Safe(call_service(service_name))
@@ -505,10 +504,10 @@ def process_batch_with_errors(items):
         else:
             errors.append({"item": item, "error": str(result.err())})
 
-    yield Log(f"Processed {len(results)}/{len(items)} items")
+    yield Tell(f"Processed {len(results)}/{len(items)} items")
 
     if errors:
-        yield Log(f"Errors: {errors}")
+        yield Tell(f"Errors: {errors}")
 
     return {"successes": results, "errors": errors}
 ```
@@ -584,13 +583,13 @@ Continuation Stack (K):
   [1] LocalFrame           - env={'debug': True}
 
 -------------------------------------------------------------------------------
-                              STATE & LOG
+                              STATE & MESSAGES
 -------------------------------------------------------------------------------
 State:
   initialized: True
   step: 3
 
-Log:
+Messages:
   [0] "Starting application"
   [1] "Loading settings..."
 
@@ -656,120 +655,6 @@ def with_context():
 
     data = yield fetch_user_data(user_id)
     return data
-```
-
-## Migration from Dropped Effects
-
-If you're migrating from older doeff versions that used `Fail`, `Catch`, `Recover`, `Retry`, `Finally`, or `FirstSuccess`, here's how to update your code.
-
-### Fail to raise
-
-**Before (dropped):**
-```python
-yield Fail(ValueError("error"))
-```
-
-**After:**
-```python
-raise ValueError("error")
-```
-
-### Catch to Safe
-
-**Before (dropped):**
-```python
-result = yield Catch(
-    risky_operation(),
-    lambda e: "fallback"
-)
-```
-
-**After:**
-```python
-safe_result = yield Safe(risky_operation())
-result = safe_result.ok() if safe_result.is_ok() else "fallback"
-```
-
-### Recover to Safe
-
-**Before (dropped):**
-```python
-data = yield Recover(
-    fetch_data(),
-    fallback=[]
-)
-```
-
-**After:**
-```python
-safe_result = yield Safe(fetch_data())
-data = safe_result.ok() if safe_result.is_ok() else []
-```
-
-### Retry to Manual Loop
-
-**Before (dropped):**
-```python
-result = yield Retry(
-    unstable_operation(),
-    max_attempts=5,
-    delay_ms=100
-)
-```
-
-**After:**
-```python
-for attempt in range(5):
-    result = yield Safe(unstable_operation())
-    if result.is_ok():
-        break
-    if attempt < 4:
-        yield Delay(0.1)
-else:
-    raise Exception("Max retries exceeded")
-
-final_result = result.ok()
-```
-
-### Finally to try/finally
-
-**Before (dropped):**
-```python
-result = yield Finally(
-    use_resource(),
-    cleanup_resource()
-)
-```
-
-**After:**
-```python
-try:
-    result = yield use_resource()
-finally:
-    yield cleanup_resource()
-```
-
-### FirstSuccess to Sequential Safe
-
-**Before (dropped):**
-```python
-result = yield FirstSuccess(
-    fetch_from_cache(),
-    fetch_from_db(),
-    fetch_from_api()
-)
-```
-
-**After:**
-```python
-for fetch_fn in [fetch_from_cache, fetch_from_db, fetch_from_api]:
-    result = yield Safe(fetch_fn())
-    if result.is_ok():
-        break
-else:
-    raise Exception("All sources failed")
-
-final_result = result.ok()
 ```
 
 ## Summary
