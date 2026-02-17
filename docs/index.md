@@ -39,7 +39,8 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 16. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
 17. **[Python run_program API](16-run-program-api.md)** - Use CLI-equivalent discovery from Python tests or scripts
 18. **[Effect Boundaries](17-effect-boundaries.md)** - Effect vs escape architecture and runner boundaries
-19. **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
+19. **[Effect Combinations](18-effect-combinations.md)** - Composition laws and interaction guarantees across effects
+20. **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
 
 ### Specialized Topics
 
