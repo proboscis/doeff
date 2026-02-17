@@ -224,6 +224,87 @@ def comparison():
     return results, result
 ```
 
+## Intercept Effect
+
+`Intercept` transforms effects yielded by a program in a scoped way.
+
+```python
+program.intercept(transform)
+# same as:
+Intercept(program, transform)
+```
+
+### Transform Contract
+
+```python
+from doeff import Effect, Program
+
+def transform(effect: Effect) -> Effect | Program | None:
+    ...
+```
+
+- `None`: pass through to the next transform (or the original effect)
+- `Effect`: substitute with that effect (it is not re-transformed by this chain)
+- `Program`: replace the effect by running that program
+
+### Intercept Semantics
+
+1. Returned `Effect` values are not re-transformed by the same transform chain.
+2. Replacement `Program` values execute under intercept, so their yielded effects are intercepted.
+3. Interception propagates to children in `Gather`, `Spawn`, and `Safe` (including background tasks).
+4. In chained intercepts, first non-`None` wins.
+5. In parallel contexts, interception order is undefined.
+
+```python
+from doeff import Ask, AskEffect, Gather, Intercept, Program, Spawn, do
+
+@do
+def fallback_user():
+    value = yield Ask("fallback_user")
+    return f"user:{value}"
+
+def transform(effect):
+    if isinstance(effect, AskEffect) and effect.key == "user":
+        return fallback_user()  # Program replacement
+    return None
+
+@do
+def child():
+    return (yield Ask("user"))
+
+@do
+def run_with_intercept():
+    t1 = yield Spawn(child())
+    t2 = yield Spawn(child())
+    return (yield Intercept(Gather(t1, t2), transform))
+```
+
+### Chained Intercepts
+
+```python
+program.intercept(f).intercept(g)
+# per yielded effect:
+# 1) try f
+# 2) if f returns None, try g
+# 3) if both return None, run original effect
+```
+
+## Custom Control Effects with Frames
+
+Doeff supports custom control effects by adding handlers that push custom continuation frames.
+The frame contract is:
+
+```python
+from typing import Protocol
+
+class Frame(Protocol):
+    def on_value(self, value, env, store, k_rest) -> FrameResult: ...
+    def on_error(self, error, env, store, k_rest) -> FrameResult: ...
+```
+
+Use this pattern to implement domain-specific control flow such as transactions, timeouts, and
+retries without modifying the runtime internals.
+
 ## Time Effects Runtime Matrix
 
 `Delay`, `GetTime`, and `WaitUntil` are runtime-dependent. Use this behavior matrix:
@@ -314,12 +395,24 @@ This does not require adding `__interpreter__` to your environment.
 - Skip `ReleaseSemaphore` on error paths
 - Use huge permit counts as a substitute for backpressure design
 
+### When to Use Intercept
+
+**DO:**
+- Rewrite or short-circuit selected effects in a scoped subtree
+- Inject fallback programs for missing data or policy checks
+- Layer transforms with clear first-match precedence
+
+**DON'T:**
+- Assume deterministic transform order across parallel child effects
+- Return replacement programs that recursively trigger the same transform without a stop condition
+
 ## Summary
 
 | Effect | Purpose | Use Case |
 |--------|---------|----------|
 | `Gather(*progs)` | Parallel Programs | Fan-out computation |
 | `Spawn(prog)` | Background execution | Non-blocking tasks |
+| `Intercept(prog, *transforms)` | Scoped effect transformation | Policy injection, effect rewriting |
 | `Modify(key, fn)` | Atomic read-modify-write | Shared-state updates |
 | `CreateSemaphore / AcquireSemaphore / ReleaseSemaphore` | Cooperative concurrency limit | Rate limiting, mutex, pools |
 | `Delay / GetTime / WaitUntil` | Runtime-aware time control | Time-based workflows |
