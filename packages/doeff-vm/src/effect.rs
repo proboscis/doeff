@@ -97,6 +97,12 @@ pub struct PyFailPromise {
 #[pyclass(frozen, name = "CreateExternalPromiseEffect", extends=PyEffectBase)]
 pub struct PyCreateExternalPromise;
 
+#[pyclass(frozen, name = "PyCancelEffect", extends=PyEffectBase)]
+pub struct PyCancelEffect {
+    #[pyo3(get)]
+    pub task: Py<PyAny>,
+}
+
 #[pyclass(frozen, name = "_SchedulerTaskCompleted", extends=PyEffectBase)]
 pub struct PyTaskCompleted {
     #[pyo3(get)]
@@ -338,6 +344,20 @@ impl PyTaskCompleted {
             handle_id: handle_id.unwrap_or_else(|| py.None()),
             result: result.unwrap_or_else(|| py.None()),
         })
+    }
+}
+
+#[pymethods]
+impl PyCancelEffect {
+    #[classattr]
+    const __doeff_scheduler_cancel__: bool = true;
+
+    #[new]
+    fn new(task: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyCancelEffect { task })
     }
 }
 

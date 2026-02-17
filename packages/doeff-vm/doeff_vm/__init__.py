@@ -111,6 +111,7 @@ CreatePromiseEffect = _ext.CreatePromiseEffect
 CompletePromiseEffect = _ext.CompletePromiseEffect
 FailPromiseEffect = _ext.FailPromiseEffect
 CreateExternalPromiseEffect = _ext.CreateExternalPromiseEffect
+PyCancelEffect = _ext.PyCancelEffect
 _SchedulerTaskCompleted = _ext._SchedulerTaskCompleted
 
 # R13-I: DoExprTag constants
@@ -142,6 +143,7 @@ PyCreatePromise = CreatePromiseEffect
 PyCompletePromise = CompletePromiseEffect
 PyFailPromise = FailPromiseEffect
 PyCreateExternalPromise = CreateExternalPromiseEffect
+PyCancel = PyCancelEffect
 PyTaskCompleted = _SchedulerTaskCompleted
 
 __all__ = [
@@ -165,6 +167,8 @@ __all__ = [
     "PyCompletePromise",
     "PyFailPromise",
     "PyCreateExternalPromise",
+    "PyCancel",
+    "PyCancelEffect",
     "PyTaskCompleted",
     "SpawnEffect",
     "GatherEffect",
