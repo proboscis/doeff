@@ -41,6 +41,17 @@ Current docs should describe the active model directly:
 - Main docs now use the canonical writer API: `Tell`, `StructuredLog`, `slog`, and `Listen`.
 - Inline references to deprecated protocol names were removed from core chapters.
 
+## DA2-002 (2026-02-17)
+
+`docs/13-api-reference.md` was realigned to current APIs:
+
+- removed stale `ExecutionContext` API section
+- replaced protocol-style effect documentation with the `EffectBase`/`EffectValue` model
+- updated stale signatures (`RunResult`, `run`/`async_run`, graph utilities, and effect constructors)
+
+Historical/deprecated protocol-era references are tracked in this revision log instead of inline
+API chapters.
+
 ## DA-011 (2026-02-17)
 
 `docs/program-architecture-overview.md` was fully rewritten to match:
