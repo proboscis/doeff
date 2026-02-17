@@ -19,7 +19,7 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 
 3. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
 4. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
-5. **[Error Handling](05-error-handling.md)** - Result, Safe for error handling
+5. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
 6. **[IO Effects](06-io-effects.md)** - IO for side effects
 7. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
 8. **[Graph Tracking](08-graph-tracking.md)** - Execution tracking and visualization
@@ -163,7 +163,7 @@ main()
 | **State** | Get, Put, Modify, AtomicGet, AtomicUpdate | [03](03-basic-effects.md#state-effects), [09](09-advanced-effects.md#atomic-effects) |
 | **Writer** | Tell, Listen, StructuredLog, slog | [03](03-basic-effects.md#writer-effects) |
 | **Future** | Await, Gather | [04](04-async-effects.md) |
-| **Result** | Safe | [05](05-error-handling.md) |
+| **Result** | Try | [05](05-error-handling.md) |
 | **IO** | IO | [06](06-io-effects.md) |
 | **Cache** | CacheGet, CachePut | [07](07-cache-system.md) |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph | [08](08-graph-tracking.md) |
@@ -188,7 +188,7 @@ def application():
 ```python
 @do
 def robust_fetch(url):
-    result = yield Safe(Await(httpx.get(url)))
+    result = yield Try(Await(httpx.get(url)))
     if result.is_ok():
         return result.value
     else:

@@ -76,7 +76,7 @@ class RunResult[T](Protocol):
 
 ### Result[T]
 
-Success/failure sum type used by `RunResult.result` and `Safe(...)`.
+Success/failure sum type used by `RunResult.result` and `Try(...)`.
 
 ```python
 Result[T] = Ok[T] | Err
@@ -421,7 +421,7 @@ Cancellation behavior depends on the target task state:
 Raised by `Wait`, `Gather`, or `Race` when a waited task was cancelled.
 
 ```python
-joined = yield Safe(Wait(task))
+joined = yield Try(Wait(task))
 if joined.is_err() and joined.error.__class__.__name__ == "TaskCancelledError":
     ...
 ```
@@ -540,26 +540,26 @@ result = yield Intercept(worker(), transform)
 For multiple transforms, pass additional transform functions to `Intercept(...)`; first non-`None`
 result wins.
 
-Interception propagates to child execution contexts (for example `Gather`, `Safe`, and `Spawn`).
+Interception propagates to child execution contexts (for example `Gather`, `Try`, and `Spawn`).
 
 ---
 
 ## Error Handling Effects
 
-### Safe(sub_program)
+### Try(sub_program)
 
 Run a sub-program and capture errors as `Result`.
 
 ```python
-result = yield Safe(risky_operation())
+result = yield Try(risky_operation())
 if result.is_ok():
     return result.value
 return "fallback"
 ```
 
-**Signature:** `Safe(sub_program: ProgramLike)`
+**Signature:** `Try(sub_program: ProgramLike)`
 
-**See:** [Error Handling](05-error-handling.md#safe-effect)
+**See:** [Error Handling](05-error-handling.md#try-effect)
 
 ---
 
@@ -889,7 +889,7 @@ path = run(write_graph_html(graph, "output.html"), handlers=default_handlers()).
 | **Async/Concurrency** | Await, Spawn, Wait, Gather, Race, Task.cancel, TaskCancelledError |
 | **Semaphore** | CreateSemaphore, AcquireSemaphore, ReleaseSemaphore |
 | **Control** | Pure, Intercept |
-| **Error** | Safe, Ok, Err |
+| **Error** | Try, Ok, Err |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
 | **Atomic** | AtomicGet, AtomicUpdate |
@@ -918,7 +918,7 @@ from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
 from doeff import Pure, Intercept
 
 # Error handling
-from doeff import Safe, Ok, Err
+from doeff import Try, Ok, Err
 
 # Cache
 from doeff import CacheGet, CachePut, cache
