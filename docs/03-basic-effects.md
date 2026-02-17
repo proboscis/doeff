@@ -177,21 +177,13 @@ def read_counter():
 
 **Returns:** The value if key exists.
 
-**Raises:** `KeyError` if key doesn't exist.
-
-This strict lookup behavior is intentional. `None` is valid state data, so
-returning `None` for missing keys would make "missing" and "stored None"
-indistinguishable.
-
-Use `Safe` when a key may be missing:
+**Raises:** `KeyError` if key doesn't exist. Use `Safe` to handle missing keys:
 
 ```python
 @do
-def read_counter_or_default():
-    result = yield Safe(Get("counter"))
-    if result.is_ok():
-        return result.value
-    return 0
+def safe_read():
+    result = yield Safe(Get("maybe_missing"))
+    return result.ok() if result.is_ok() else "default"
 ```
 
 ### Put - Write State
@@ -212,25 +204,7 @@ def initialize_state():
 - Overwrites existing value
 - Returns `None`
 
-### Safe + Put - No Automatic Rollback
-
-`Safe` catches exceptions and returns them as `Err`, but it does **not** roll back state writes.
-
-```python
-@do
-def risky_update():
-    yield Put("status", "dirty")
-    raise ValueError("boom")
-
-@do
-def safe_wrapper():
-    yield Put("status", "clean")
-    result = yield Safe(risky_update())
-    final_status = yield Get("status")
-    return (result.is_err(), final_status)  # (True, "dirty")
-```
-
-### Modify - Transform State Atomically
+### Modify - Transform State
 
 `Modify(key, func)` applies a function to current state and returns the new value:
 
@@ -245,50 +219,16 @@ def increment_counter():
 
 **Returns:** The new (transformed) value after applying the function.
 
-If the key doesn't exist, `Modify` passes `None` to `func` (unlike `Get`, which raises `KeyError`):
+**Note:** If the key doesn't exist, `Modify` passes `None` to the function (unlike `Get` which raises `KeyError`).
 
+**Equivalent to:**
 ```python
 @do
-def increment_with_init():
-    return (yield Modify("counter", lambda x: (x or 0) + 1))
-```
-
-If `func` raises, the store is unchanged (atomic update behavior):
-
-```python
-@do
-def atomic_modify_demo():
-    yield Put("value", 10)
-
-    def failing_transform(x):
-        raise ValueError("transform failed")
-
-    result = yield Safe(Modify("value", failing_transform))
-    current = yield Get("value")
-    return (result.is_err(), current)  # (True, 10)
-```
-
-### Gather + State - Shared Store Semantics
-
-`Gather` branches share the same store. State updates in one branch are visible
-to sibling branches and to the parent.
-
-- With `run(...)`, scheduling is deterministic.
-- With `async_run(...)`, branch interleaving is concurrent and race conditions are possible.
-
-```python
-@do
-def increment():
+def increment_counter_manual():
     current = yield Get("counter")
-    yield Put("counter", current + 1)
-    return current
-
-@do
-def gather_with_state():
-    yield Put("counter", 0)
-    results = yield Gather(increment(), increment(), increment())
-    final = yield Get("counter")
-    return (results, final)  # sync run: ([0, 1, 2], 3)
+    new_value = current + 1
+    yield Put("counter", new_value)
+    return new_value
 ```
 
 ### State Pattern Examples
@@ -348,14 +288,14 @@ def state_machine():
 
 ## Writer Effects
 
-Writer effects accumulate output (logs, messages, events) throughout program execution.
+Writer effects accumulate output (messages, events, structured entries) throughout execution.
 
-### Tell - Append Writer Output
+### Tell - Append to Writer Log
 
-`Tell(message)` appends a message to the log:
+`Tell(message)` appends any Python object to the shared writer log:
 
 ```python
-from doeff import run, default_handlers
+from doeff import do, Get, Tell, default_handlers, run
 
 @do
 def with_logging():
@@ -370,17 +310,26 @@ def with_logging():
 
 def main():
     result = run(with_logging(), default_handlers(), store={"count": 0})
-    # Logs are in result.raw_store.get("__log__", [])
+    # All entries are in result.raw_store.get("__log__", [])
 
 main()
 ```
 
-### StructuredLog - Structured Logging
+### StructuredLog / slog - Structured Entries
 
-`StructuredLog(**kwargs)` logs structured data:
+`StructuredLog(**entries)` logs a dictionary payload.
+`slog(**entries)` is the lowercase alias.
 
 ```python
-from doeff import run, default_handlers
+def StructuredLog(**entries: object) -> Effect:
+    """Log a dictionary of key-value pairs."""
+
+def slog(**entries: object) -> WriterTellEffect:
+    """Lowercase alias for StructuredLog."""
+```
+
+```python
+from doeff import StructuredLog, do, slog
 
 @do
 def structured_logging():
@@ -388,65 +337,62 @@ def structured_logging():
         level="info",
         message="User logged in",
         user_id=12345,
-        ip="192.168.1.1"
+        ip="192.168.1.1",
     )
-
-    yield StructuredLog(
+    yield slog(
         level="warn",
         message="High memory usage",
         memory_mb=512,
-        threshold_mb=400
+        threshold_mb=400,
     )
-
-    return "logged"
-
-def main():
-    result = run(structured_logging(), default_handlers())
-    # Structured logs in result.raw_store.get("__log__", [])
-
-main()
 ```
 
 ### Listen - Capture Sub-Program Logs
 
-`Listen(sub_program)` runs a sub-program and captures its log output. Per [SPEC-EFF-003](../specs/effects/SPEC-EFF-003-writer.md), logs from the inner program are **propagated to the outer scope** in addition to being captured:
+`Listen(sub_program)` runs a sub-program and returns `ListenResult(value, log)`.
+
+Mechanism (SPEC-EFF-003):
+- Record the current log start index before running the sub-program.
+- Push an internal listen frame using that start index.
+- Execute the sub-program.
+- Capture entries from that start index onward into the returned `ListenResult`.
+- Keep those captured entries in the shared log store (they are not removed).
 
 ```python
-from doeff import run, default_handlers
+from doeff import Listen, Tell, do
 
 @do
 def inner_operation():
-    yield Tell("Inner step 1")
-    yield Tell("Inner step 2")
+    yield Tell("inner step 1")
+    yield Tell("inner step 2")
     return 42
 
 @do
 def outer_operation():
-    yield Tell("Before inner")
-
-    # Capture inner logs (they're also propagated to outer)
+    yield Tell("before inner")
     listen_result = yield Listen(inner_operation())
-
-    yield Tell("After inner")
-    yield Tell(f"Inner returned: {listen_result.value}")
-    yield Tell(f"Inner logs: {listen_result.log}")
-
-    return listen_result.value
-
-def main():
-    result = run(outer_operation(), default_handlers())
-    # All logs (outer AND inner) are in result.raw_store.get("__log__", [])
-
-main()
+    yield Tell("after inner")
+    return listen_result
 ```
 
-**ListenResult structure:**
+`ListenResult.log` is a `BoundedLog` (list-like), not a plain `list`:
+
 ```python
 @dataclass
 class ListenResult(Generic[T]):
-    value: T           # Return value of sub-program
-    log: list[Any]     # Entries captured from sub-program
+    value: T
+    log: BoundedLog
 ```
+
+### Listen Composition Rules
+
+- `Listen + Tell`: entries told in the Listen scope appear in `ListenResult.log`.
+- `Listen + Local`: entries from inside `Local(...)` are captured normally by Listen.
+- `Listen + Safe`: entries before an error are preserved; `Safe` does not clear writer logs.
+- `Listen + Gather`: gathered programs share the same log store.
+- `Listen + Gather` in `SyncRuntime`: ordering is sequential in program order.
+- `Listen + Gather` in `AsyncRuntime`: ordering is non-deterministic and may interleave.
+- `Listen + Listen` (nested): inner Listen captures its own scope; outer Listen sees all entries.
 
 ### Writer Pattern Examples
 
@@ -550,26 +496,27 @@ def process_with_feature():
     return f"processed with {mode}"
 ```
 
-### Shared State with Listen
+### Scoped State with Listen
 
 ```python
 @do
-def shared_operation():
+def isolated_operation():
     # Main state
     yield Put("main_counter", 0)
 
-    # Run sub-operation and capture its writer output
-    listen_result = yield Listen(shared_sub_operation())
+    # Run isolated sub-operation
+    listen_result = yield Listen(isolated_sub_operation())
 
-    # State changes in the sub-program are visible here
+    # Sub-operation's state changes don't affect main state
     main_count = yield Get("main_counter")
-    yield Tell(f"Main counter after sub-operation: {main_count}")
+    yield Tell(f"Main counter unchanged: {main_count}")
 
     return listen_result.value
 
 @do
-def shared_sub_operation():
-    yield Modify("main_counter", lambda x: (x or 0) + 10)
+def isolated_sub_operation():
+    # This operates on the same state
+    yield Modify("main_counter", lambda x: x + 10)
     yield Tell("Modified counter in sub-operation")
     return "sub-done"
 ```
@@ -605,7 +552,14 @@ def get_database_config():
 ```python
 @do
 def safe_increment():
-    return (yield Modify("counter", lambda x: (x or 0) + 1))
+    # Initialize if not exists
+    try:
+        count = yield Get("counter")
+    except KeyError:
+        yield Put("counter", 0)
+        count = 0
+
+    yield Put("counter", count + 1)
 ```
 
 **DON'T:**
@@ -616,7 +570,7 @@ def safe_increment():
 
 **DO:**
 - Use consistent log formats
-- Record important state transitions
+- Log important state transitions
 - Use `StructuredLog` for machine-readable logs
 
 ```python
@@ -636,9 +590,9 @@ def well_logged_operation():
 ```
 
 **DON'T:**
-- Emit excessively in tight loops
-- Emit sensitive information (passwords, tokens)
-- Use `Tell` for control flow
+- Log excessively in tight loops
+- Log sensitive information (passwords, tokens)
+- Use writer output for control flow
 
 ### Combining Effects
 
@@ -661,7 +615,7 @@ def well_logged_operation():
 | `Put(key, val)` | Write state | Initialize, update |
 | `Modify(key, f)` | Transform state | Increment, append |
 | `Tell(msg)` | Append to log | Debugging, audit |
-| `StructuredLog(**kw)` | Structured logging | Machine-readable logs |
+| `StructuredLog(**kw)` / `slog(**kw)` | Structured logging | Machine-readable logs |
 | `Listen(prog)` | Capture sub-logs | Nested operations |
 
 ## Next Steps
