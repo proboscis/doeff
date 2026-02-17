@@ -130,7 +130,7 @@ async def _call_async_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) 
 
 def _core_handler_sentinels(vm: Any) -> list[Any]:
     """Return the shared core handler sentinel stack from doeff_vm."""
-    required = ("state", "reader", "writer", "result_safe", "scheduler")
+    required = ("state", "reader", "writer", "result_safe", "scheduler", "lazy_ask")
     if all(hasattr(vm, name) for name in required):
         return [getattr(vm, name) for name in required]
     missing = [name for name in required if not hasattr(vm, name)]
@@ -284,6 +284,7 @@ def __getattr__(name: str) -> Any:
         "reader",
         "writer",
         "result_safe",
+        "lazy_ask",
         "await_handler",
     }:
         vm = _vm()
@@ -318,5 +319,6 @@ __all__ = [
     "reader",
     "writer",
     "result_safe",
+    "lazy_ask",
     "await_handler",
 ]
