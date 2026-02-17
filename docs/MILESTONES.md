@@ -226,10 +226,10 @@ No docs build system exists (no mkdocs.yml, no sphinx).
 | `09-advanced-effects.md` | LOW | 1 |
 | `13-api-reference.md` | LOW | 1 (`ExecutionContext` section) |
 
-- [ ] Rewrite all examples to use `run()` / `arun()` + `default_handlers()`
+- [ ] Rewrite all examples to use `run()` / `async_run()` + `default_handlers()` / `default_async_handlers()`
 
 ### M4.3 — Fix naming inconsistency
-- [ ] Standardize on `arun` (not `async_run`) across all docs
+- [ ] Standardize on `async_run` across all docs
 - [ ] `01-getting-started.md` and `02-core-concepts.md` reference `async_run`
 
 ### M4.4 — Write missing critical docs
@@ -239,7 +239,7 @@ Biggest structural gaps:
 - [ ] **Custom effects guide** — full lifecycle: define → handler → register → use
 - [ ] **Handler writing tutorial** — handler function signature and conventions
 - [ ] **Testing guide** — how to mock effects, test handlers, use `WithHandler` for test stubs
-- [ ] **Migration guide (standalone)** — comprehensive `ProgramInterpreter` → `run`/`arun` migration
+- [ ] **Migration guide (standalone)** — comprehensive `ProgramInterpreter` → `run`/`async_run` migration
 
 ### M4.5 — Clean up stale artifacts
 - [ ] Delete empty legacy runtime examples directory

@@ -83,7 +83,7 @@ class ExecutionContext:
 
 ### RuntimeResult[T]
 
-Result of Program execution returned by `run()` and `arun()`.
+Result of Program execution returned by `run()` and `async_run()`.
 
 ```python
 class RuntimeResult[T](Protocol):
@@ -756,15 +756,15 @@ def run(
 Executes Programs asynchronously with real async I/O support.
 
 ```python
-from doeff import async_run, default_handlers
+from doeff import async_run, default_async_handlers
 
 # Run a program asynchronously
-result = await arun(my_program(), default_handlers())
+result = await async_run(my_program(), handlers=default_async_handlers())
 
 # With initial environment and store
-result = await arun(
+result = await async_run(
     my_program(),
-    default_handlers(),
+    handlers=default_async_handlers(),
     env={"key": "value"},
     store={"state": 0}
 )
@@ -773,7 +773,7 @@ result = await arun(
 **Signature:**
 
 ```python
-async def arun(
+async def async_run(
     program: Program[T],
     handlers: list[Handler],
     env: dict | None = None,
@@ -784,7 +784,7 @@ async def arun(
 **Parameters:**
 
 - **`program`** - Program to execute
-- **`handlers`** - List of effect handlers (use `default_handlers()` for defaults)
+- **`handlers`** - List of effect handlers (use `default_async_handlers()` for defaults)
 - **`env`** (optional) - Initial environment (Reader effects)
 - **`store`** (optional) - Initial store (State effects)
 
@@ -931,7 +931,7 @@ from doeff import do, Program
 
 # Execution
 from doeff import run, default_handlers
-from doeff import async_run, default_handlers
+from doeff import async_run, default_async_handlers
 
 # Basic Effects
 from doeff import Ask, Local, Get, Put, Modify, Log, Tell, Listen
