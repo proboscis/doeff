@@ -3,6 +3,25 @@
 Historical and migration notes are collected here so the main documentation chapters stay focused on
 the current architecture and APIs.
 
+## DA7-004 (2026-02-17)
+
+### Safe to Try
+
+The `Safe` effect has been renamed to `Try` to better convey its purpose as an error-catching wrapper.
+The internal class `ResultSafeEffect` is unchanged.
+
+**Before (deprecated):**
+```uv run python
+from doeff import Safe
+result = yield Safe(risky_operation())
+```
+
+**After (current):**
+```uv run python
+from doeff import Try
+result = yield Try(risky_operation())
+```
+
 ## DA3-007 (2026-02-17)
 
 Removed component matrix for the KPC transition (historical reference):
@@ -93,7 +112,9 @@ yield Fail(ValueError("error"))
 raise ValueError("error")
 ```
 
-### Catch to Safe
+### Catch to Safe to Try
+
+Current API name: `Try` (historically `Catch` -> `Safe` -> `Try`).
 
 **Before (dropped):**
 ```python
@@ -105,11 +126,13 @@ result = yield Catch(
 
 **After:**
 ```python
-safe_result = yield Safe(risky_operation())
+safe_result = yield Try(risky_operation())
 result = safe_result.ok() if safe_result.is_ok() else "fallback"
 ```
 
-### Recover to Safe
+### Recover to Safe to Try
+
+Current API name: `Try` (historically `Recover` -> `Safe` -> `Try`).
 
 **Before (dropped):**
 ```python
@@ -121,7 +144,7 @@ data = yield Recover(
 
 **After:**
 ```python
-safe_result = yield Safe(fetch_data())
+safe_result = yield Try(fetch_data())
 data = safe_result.ok() if safe_result.is_ok() else []
 ```
 
@@ -139,7 +162,7 @@ result = yield Retry(
 **After:**
 ```python
 for attempt in range(5):
-    result = yield Safe(unstable_operation())
+    result = yield Try(unstable_operation())
     if result.is_ok():
         break
     if attempt < 4:
@@ -168,7 +191,7 @@ finally:
     yield cleanup_resource()
 ```
 
-### FirstSuccess to sequential Safe
+### FirstSuccess to sequential Try
 
 **Before (dropped):**
 ```python
@@ -182,7 +205,7 @@ result = yield FirstSuccess(
 **After:**
 ```python
 for fetch_fn in [fetch_from_cache, fetch_from_db, fetch_from_api]:
-    result = yield Safe(fetch_fn())
+    result = yield Try(fetch_fn())
     if result.is_ok():
         break
 else:
