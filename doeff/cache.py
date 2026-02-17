@@ -14,7 +14,7 @@ from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
 from doeff.effects.callstack import ProgramCallStack
-from doeff.effects.result import Safe
+from doeff.effects.result import Try
 from doeff.effects.writer import slog
 from doeff.types import EffectCreationContext, EffectGenerator, FrozenDict, Result
 
@@ -119,7 +119,7 @@ def cache(
     metadata: Mapping[str, Any] | None = None,
     policy: CachePolicy | Mapping[str, Any] | None = None,
 ):
-    """Cache decorator that uses CacheGet/CachePut effects with Safe for misses.
+    """Cache decorator that uses CacheGet/CachePut effects with Try for misses.
 
     The decorator automatically caches results produced by the wrapped function. On a cache miss
     (when ``CacheGet`` fails), it evaluates the original function, caches the ``Result`` via
@@ -303,7 +303,7 @@ def cache(
             def compute_and_cache() -> EffectGenerator[T]:
                 yield slog(msg=f"Cache miss for {func_name}, computing...", level="DEBUG")
                 program_call = wrapped_func(*args, **kwargs)
-                result: Result = yield Safe(program_call)
+                result: Result = yield Try(program_call)
 
                 if result.is_ok():
                     yield ensure_serializable(cache_key_obj)
@@ -333,7 +333,7 @@ def cache(
                 yield ensure_serializable(cache_key_obj, log_success=False)
                 return (yield CacheGet(cache_key_obj))
 
-            cache_result = yield Safe(try_cache_get())
+            cache_result = yield Try(try_cache_get())
             if cache_result.is_ok():
                 result = cache_result.value
             else:

@@ -10,8 +10,8 @@ from doeff import (
     Await,
     EffectGenerator,
     Gather,
-    Safe,
     Tell,
+    Try,
     do,
 )
 from doeff_openai.client import get_openai_client, track_api_call
@@ -30,7 +30,7 @@ def create_embedding(
 ) -> EffectGenerator[CreateEmbeddingResponse]:
     """
     Create embeddings with full observability.
-    
+
     Tracks:
     - Request/response in Graph with metadata
     - Token usage and costs
@@ -85,12 +85,14 @@ def create_embedding(
             )
 
             # Log embedding details
-            yield Tell(f"Created {len(response.data)} embeddings, dimensions={len(response.data[0].embedding) if response.data else 0}")
+            yield Tell(
+                f"Created {len(response.data)} embeddings, dimensions={len(response.data[0].embedding) if response.data else 0}"
+            )
 
             return response
 
-        # Use Safe to track both success and failure
-        safe_result = yield Safe(api_call_with_tracking())
+        # Use Try to track both success and failure
+        safe_result = yield Try(api_call_with_tracking())
         if safe_result.is_err():
             # Track failed API call attempt (tracking will log the error)
             e = safe_result.error
@@ -111,13 +113,15 @@ def create_embedding(
     delay_seconds = 1.0
     last_error = None
     for attempt in range(max_attempts):
-        safe_result = yield Safe(make_api_call())
+        safe_result = yield Try(make_api_call())
         if safe_result.is_ok():
             result = safe_result.value
             break
         last_error = safe_result.error
         if attempt < max_attempts - 1:
-            yield Tell(f"Embedding API call failed (attempt {attempt + 1}/{max_attempts}), retrying in {delay_seconds}s...")
+            yield Tell(
+                f"Embedding API call failed (attempt {attempt + 1}/{max_attempts}), retrying in {delay_seconds}s..."
+            )
             yield Await(asyncio.sleep(delay_seconds))
     else:
         assert last_error is not None, "Should have an error if all retries failed"
@@ -172,8 +176,8 @@ def create_embedding_async(
 
         return response
 
-    # Execute with Safe to handle errors
-    safe_result = yield Safe(main_operation())
+    # Execute with Try to handle errors
+    safe_result = yield Try(main_operation())
     if safe_result.is_err():
         # Track error
         e = safe_result.error
@@ -198,7 +202,7 @@ def batch_embeddings(
 ) -> EffectGenerator[list[list[float]]]:
     """
     Create embeddings for a large list of texts in batches.
-    
+
     Uses Gather effect to process batches in parallel while tracking each batch.
     """
     yield Tell(f"Batch embedding: {len(texts)} texts in batches of {batch_size}")
@@ -206,16 +210,13 @@ def batch_embeddings(
     # Split into batches
     batches = []
     for i in range(0, len(texts), batch_size):
-        batch = texts[i:i + batch_size]
+        batch = texts[i : i + batch_size]
         batches.append(batch)
 
     yield Tell(f"Processing {len(batches)} batches")
 
     # Process batches in parallel using Gather
-    batch_responses = yield Gather(*[
-        create_embedding(batch, model, **kwargs)
-        for batch in batches
-    ])
+    batch_responses = yield Gather(*[create_embedding(batch, model, **kwargs) for batch in batches])
 
     # Flatten the embeddings
     all_embeddings = []
@@ -236,7 +237,7 @@ def get_single_embedding(
 ) -> EffectGenerator[list[float]]:
     """
     Get a single embedding vector for a text.
-    
+
     Convenience function that returns just the embedding vector.
     """
     response = yield create_embedding(text, model, **kwargs)
@@ -255,16 +256,18 @@ def cosine_similarity(
 ) -> EffectGenerator[float]:
     """
     Calculate cosine similarity between two texts using embeddings.
-    
+
     Uses Gather to get both embeddings in parallel.
     """
     yield Tell(f"Calculating cosine similarity using {model}")
 
     # Get embeddings in parallel
-    embeddings = yield Gather(*[
-        get_single_embedding(text1, model),
-        get_single_embedding(text2, model),
-    ])
+    embeddings = yield Gather(
+        *[
+            get_single_embedding(text1, model),
+            get_single_embedding(text2, model),
+        ]
+    )
 
     embedding1, embedding2 = embeddings
 
@@ -294,7 +297,7 @@ def semantic_search(
 ) -> EffectGenerator[list[tuple[int, float, str]]]:
     """
     Perform semantic search over documents.
-    
+
     Returns top-k most similar documents with their indices and scores.
     """
     yield Tell(f"Semantic search: query over {len(documents)} documents")
@@ -324,7 +327,11 @@ def semantic_search(
     similarities.sort(key=lambda x: x[1], reverse=True)
     results = similarities[:top_k]
 
-    yield Tell(f"Search complete: top {len(results)} results, best similarity={results[0][1]:.4f}" if results else "No results")
+    yield Tell(
+        f"Search complete: top {len(results)} results, best similarity={results[0][1]:.4f}"
+        if results
+        else "No results"
+    )
 
     best_score = results[0][1] if results else 0.0
     yield Tell(

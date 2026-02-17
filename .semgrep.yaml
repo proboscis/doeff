@@ -727,6 +727,32 @@ rules:
   # PUBLIC API LOCATION GUARDS
   # ---------------------------------------------------------------------------
 
+  - id: doeff-no-removed-api
+    pattern-regex: 'from\s+doeff\s+import\s+[^#\n]*(wrap_with_handler_map|run_with_handler_map|async_run_with_handler_map|run_program|ProgramRunResult)\b'
+    message: |
+      This symbol has been removed from the public API.
+      - wrap_with_handler_map: internal helper
+      - run_with_handler_map / async_run_with_handler_map: use run() + WithHandler
+      - run_program / ProgramRunResult: use run()
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: public-api-removed
+
+  - id: doeff-no-safe-use-try
+    pattern-regex: '(from\s+doeff[.\w]*\s+import\s+[^#\n]*\bSafe\b|yield\s+Safe\()'
+    paths:
+      exclude:
+        - "**/doeff/effects/result.py"
+    message: |
+      Safe is renamed to Try. Use:
+        from doeff import Try
+        result = yield Try(sub_program())
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: public-api-renamed
+
   - id: doeff-public-api-no-subpackage-imports
     patterns:
       - pattern-either:
@@ -737,13 +763,14 @@ rules:
         - "**/tests/public_api/**/*.py"
         - "**/examples/**/*.py"
     message: |
-      Public-facing migration policy: import from top-level `doeff` only.
-      Replace `from doeff.<subpackage> import ...` with `from doeff import ...`.
+      Subpackage imports are allowed, but top-level imports are preferred.
+      Prefer `from doeff import X` when X is available at the top level.
+      Use subpackage imports when you need module-specific internals.
     languages: [python]
-    severity: ERROR
+    severity: WARNING
     metadata:
       category: public-api-location
-      rationale: "Public API location is fixed at top-level doeff"
+      rationale: "Top-level import is preferred, but subpackage imports are permitted"
 
   - id: doeff-public-docs-no-subpackage-imports
     patterns:

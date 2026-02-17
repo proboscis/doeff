@@ -5,8 +5,8 @@ from doeff import (
     CreateSemaphore,
     Gather,
     ReleaseSemaphore,
-    Safe,
     Spawn,
+    Try,
     Wait,
     default_handlers,
     do,
@@ -210,7 +210,7 @@ class TestSemaphoreRuntimeBehavior:
             yield ReleaseSemaphore(sem)
             yield Gather(second, third)
 
-            cancelled_result = yield Safe(Wait(cancelled))
+            cancelled_result = yield Try(Wait(cancelled))
             return wake_order, cancelled_result
 
         result = run(program(), handlers=default_handlers())

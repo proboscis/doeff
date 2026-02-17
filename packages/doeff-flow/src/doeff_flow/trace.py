@@ -351,7 +351,7 @@ def trace_observer(
                 and effect_cls.__module__.startswith("doeff")
             )
             if is_writer_tell and hasattr(current_effect, "message"):
-                msg = getattr(current_effect, "message")
+                msg = current_effect.message
                 if isinstance(msg, dict):
                     last_slog = msg
 

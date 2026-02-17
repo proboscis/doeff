@@ -14,7 +14,8 @@ from dataclasses import dataclass
 
 from doeff_preset import preset_handlers
 
-from doeff import Delegate, EffectBase, Resume, do, run_with_handler_map, slog
+from doeff import Delegate, EffectBase, Resume, do, slog
+from doeff.rust_vm import run_with_handler_map
 
 
 # Define a custom domain effect

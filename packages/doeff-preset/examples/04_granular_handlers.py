@@ -12,7 +12,8 @@ Run:
 
 from doeff_preset import config_handlers, log_display_handlers
 
-from doeff import Ask, do, run_with_handler_map, slog
+from doeff import Ask, do, slog
+from doeff.rust_vm import run_with_handler_map
 
 
 @do
@@ -49,11 +50,13 @@ def main():
     # Example 3: Custom combination
     print("\n=== Custom Handler Combination ===\n")
     # Just slog display + custom config
-    custom_config = config_handlers(defaults={
-        "preset.show_logs": True,
-        "preset.log_level": "debug",
-        "preset.log_format": "simple",
-    })
+    custom_config = config_handlers(
+        defaults={
+            "preset.show_logs": True,
+            "preset.log_level": "debug",
+            "preset.log_format": "simple",
+        }
+    )
     handlers = {**log_display_handlers(), **custom_config}
 
     @do

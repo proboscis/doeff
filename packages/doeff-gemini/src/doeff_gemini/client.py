@@ -14,8 +14,8 @@ from doeff import (
     EffectGenerator,
     Get,
     Put,
-    Safe,
     Tell,
+    Try,
     do,
     slog,
 )
@@ -82,14 +82,12 @@ def _summarize_payload_for_log(value: Any, *, max_string_length: int = 200) -> A
 
     if isinstance(value, list):
         return [
-            _summarize_payload_for_log(item, max_string_length=max_string_length)
-            for item in value
+            _summarize_payload_for_log(item, max_string_length=max_string_length) for item in value
         ]
 
     if isinstance(value, tuple):
         return tuple(
-            _summarize_payload_for_log(item, max_string_length=max_string_length)
-            for item in value
+            _summarize_payload_for_log(item, max_string_length=max_string_length) for item in value
         )
 
     return value
@@ -196,13 +194,13 @@ DEFAULT_LOCATION = "global"
 
 @do
 def _result_ok(value: Any) -> EffectGenerator[Any]:
-    """Wrap a value as an Ok result via the Safe effect."""
+    """Wrap a value as an Ok result via the Try effect."""
     return value
 
 
 @do
 def _result_err(exc: Exception) -> EffectGenerator[Any]:
-    """Wrap an exception as an Err result via the Safe effect."""
+    """Wrap an exception as an Err result via the Try effect."""
     raise exc
     yield  # type: ignore[misc]  # unreachable, keeps generator typing valid
 
@@ -217,10 +215,10 @@ def get_gemini_client() -> EffectGenerator[GeminiClient]:
 
     @do
     def ask_optional(name: str) -> EffectGenerator[Any]:
-        safe_result = yield Safe(ask(name))
+        safe_result = yield Try(ask(name))
         return safe_result.value if safe_result.is_ok() else None
 
-    safe_client = yield Safe(ask("gemini_client"))
+    safe_client = yield Try(ask("gemini_client"))
     client = safe_client.value if safe_client.is_ok() else None
     if client:
         return client
@@ -269,9 +267,7 @@ def get_gemini_client() -> EffectGenerator[GeminiClient]:
             from google.auth import default as google_auth_default
             from google.auth.exceptions import DefaultCredentialsError
         except ModuleNotFoundError as exc:  # pragma: no cover - configuration issue
-            yield Tell(
-                "google-auth is not installed; install google-auth or set GEMINI API key"
-            )
+            yield Tell("google-auth is not installed; install google-auth or set GEMINI API key")
             raise exc
 
         try:
@@ -369,11 +365,14 @@ def _extract_usage(response: Any) -> TokenUsage | None:
 
     derived_total = total_tokens
     if derived_total is None:
-        derived_total = sum(
-            token
-            for token in [input_tokens, output_tokens, image_input_tokens, image_output_tokens]
-            if token is not None
-        ) or 0
+        derived_total = (
+            sum(
+                token
+                for token in [input_tokens, output_tokens, image_input_tokens, image_output_tokens]
+                if token is not None
+            )
+            or 0
+        )
 
     return TokenUsage(
         input_tokens=input_tokens or 0,
@@ -428,9 +427,7 @@ def track_api_call(
             raise ValueError("gemini_cost_calculator returned None")
 
         if not isinstance(estimate, GeminiCostEstimate):
-            raise TypeError(
-                "gemini_cost_calculator must return GeminiCostEstimate"
-            )
+            raise TypeError("gemini_cost_calculator must return GeminiCostEstimate")
 
         return estimate
 
@@ -452,9 +449,9 @@ def track_api_call(
         if token_usage:
             payload["token_usage"] = token_usage.to_dict()
         if error is None:
-            result_for_cost = yield Safe(_result_ok(response))
+            result_for_cost = yield Try(_result_ok(response))
         else:
-            result_for_cost = yield Safe(_result_err(error))
+            result_for_cost = yield Try(_result_err(error))
         return GeminiCallResult(
             model_name=model,
             payload=payload,
@@ -465,21 +462,21 @@ def track_api_call(
     if token_usage:
         call_result = yield _build_cost_input()
 
-        safe_calculator = yield Safe(Ask("gemini_cost_calculator"))
+        safe_calculator = yield Try(Ask("gemini_cost_calculator"))
         calculator = safe_calculator.value if safe_calculator.is_ok() else None
 
         calculator_errors: list[str] = []
 
         estimate: GeminiCostEstimate | None = None
         if calculator is not None:
-            safe_estimate = yield Safe(_invoke_cost_calculator(calculator, call_result))
+            safe_estimate = yield Try(_invoke_cost_calculator(calculator, call_result))
             if safe_estimate.is_ok():
                 estimate = safe_estimate.value
             else:
                 calculator_errors.append(str(safe_estimate.error))
 
         if estimate is None:
-            safe_default_estimate = yield Safe(
+            safe_default_estimate = yield Try(
                 _invoke_cost_calculator(gemini_cost_calculator__default, call_result)
             )
             if safe_default_estimate.is_ok():
@@ -511,11 +508,14 @@ def track_api_call(
 
     if error:
         yield slog(
-            msg=f"Gemini API error: operation={operation}, model={model}, latency={latency_ms:.2f}ms, error={error}",level="error",
-            error=error
+            msg=f"Gemini API error: operation={operation}, model={model}, latency={latency_ms:.2f}ms, error={error}",
+            level="error",
+            error=error,
         )
     else:
-        log_line = f"Gemini API call: operation={operation}, model={model}, latency={latency_ms:.2f}ms"
+        log_line = (
+            f"Gemini API call: operation={operation}, model={model}, latency={latency_ms:.2f}ms"
+        )
         if token_usage:
             log_line += f", tokens={token_usage.total_tokens}"
         if cost_info:
@@ -558,7 +558,7 @@ def track_api_call(
         "prompt_images": prompt_images,
     }
 
-    safe_calls = yield Safe(Get("gemini_api_calls"))
+    safe_calls = yield Try(Get("gemini_api_calls"))
     current_calls = safe_calls.value if safe_calls.is_ok() else []
     entries = list(current_calls) if isinstance(current_calls, list) else []
     entries.append(call_entry)
@@ -566,12 +566,12 @@ def track_api_call(
 
     if cost_info:
         model_cost_key = f"gemini_cost_{model}"
-        safe_total = yield Safe(Get("gemini_total_cost"))
+        safe_total = yield Try(Get("gemini_total_cost"))
         current_total = safe_total.value if safe_total.is_ok() else 0.0
         total_base = current_total if isinstance(current_total, (int, float)) else 0.0
         yield Put("gemini_total_cost", total_base + cost_info.total_cost)
 
-        safe_model_total = yield Safe(Get(model_cost_key))
+        safe_model_total = yield Try(Get(model_cost_key))
         current_model_total = safe_model_total.value if safe_model_total.is_ok() else 0.0
         model_base = current_model_total if isinstance(current_model_total, (int, float)) else 0.0
         yield Put(model_cost_key, model_base + cost_info.total_cost)

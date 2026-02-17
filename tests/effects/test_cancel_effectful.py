@@ -5,8 +5,8 @@ from doeff import (
     CreateSemaphore,
     Pure,
     ReleaseSemaphore,
-    Safe,
     Spawn,
+    Try,
     Wait,
     default_handlers,
     do,
@@ -41,7 +41,7 @@ def test_cancel_pending_task() -> None:
     def program():
         task = yield Spawn(Pure("never runs"))
         _ = yield task.cancel()
-        return (yield Safe(Wait(task)))
+        return (yield Try(Wait(task)))
 
     result = run(program(), handlers=default_handlers())
     assert result.is_ok()
@@ -63,7 +63,7 @@ def test_cancel_running_task_cooperative() -> None:
         task = yield Spawn(cooperative_spin())
         yield Pure(None)
         _ = yield task.cancel()
-        return (yield Safe(Wait(task)))
+        return (yield Try(Wait(task)))
 
     result = run(program(), handlers=default_handlers())
     assert result.is_ok()
@@ -91,7 +91,7 @@ def test_cancel_cleans_semaphore_waiters() -> None:
         yield ReleaseSemaphore(sem)
         yield AcquireSemaphore(sem)
         yield ReleaseSemaphore(sem)
-        return (yield Safe(Wait(blocked)))
+        return (yield Try(Wait(blocked)))
 
     result = run(program(), handlers=default_handlers())
     assert result.is_ok()

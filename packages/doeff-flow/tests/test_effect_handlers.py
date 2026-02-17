@@ -8,7 +8,8 @@ from pathlib import Path
 from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
 from doeff_flow.handlers import mock_handlers, production_handlers
 
-from doeff import do, run_with_handler_map
+from doeff import do
+from doeff.rust_vm import run_with_handler_map
 
 
 def _read_entries(trace_dir: Path, workflow_id: str) -> list[dict]:
