@@ -1,34 +1,16 @@
 # Core Concepts
 
-This chapter defines the current doeff execution model:
+This chapter defines the doeff execution model:
 
-- `Program[T]` is the user-facing name for `DoExpr[T]`
-- `DoExpr` is control IR evaluated by the VM
-- effect values are user-space data, dispatched only through `Perform(effect)`
-- generators produced by `@do` are lazy ASTs interpreted by the Rust VM
+- `Program[T]` is `DoExpr[T]`
+- `DoExpr` is control IR evaluated by the Rust VM
+- effect values are user-space data and dispatch through `Perform(effect)`
+- `@do` generators are lazy ASTs interpreted by the runtime
 
-## Mental Model
+## Program Model
 
-doeff is an algebraic-effects runtime with one-shot continuations.
-
-1. Programs build control expressions (`DoExpr`).
-2. Programs request operations by yielding effect values.
-3. Runtime lowering inserts `Perform(effect)` at the dispatch boundary.
-4. Handlers interpret effects and resume continuations exactly once.
-5. The Rust VM evaluates control nodes and manages continuation state.
-
-## Program[T] Is Not a Dataclass Wrapper
-
-Older docs described `Program[T]` as a dataclass wrapping a generator function.
-That is stale.
-
-Current model:
-
-- `DoExpr[T]`: composable control expression type
-- `DoCtrl[T]`: VM instruction set (control nodes)
-- `Program[T]`: public alias/type name for user code working with `DoExpr`
-
-Conceptually:
+`Program[T]` is the user-facing program type for effectful computations.
+In the type model, `Program[T]` is `DoExpr[T]`.
 
 ```python
 class DoExpr(Generic[T]):
@@ -40,49 +22,45 @@ class DoExpr(Generic[T]):
 class DoCtrl(DoExpr[T]):
     ...
 
-Program = DoExpr  # user-facing name
+Program = DoExpr
 ```
 
-In the Python package, `Program` is exposed via `ProgramBase`, which is a `DoExpr` subtype.
+## Control vs Effect Data
 
-## DoExpr vs DoCtrl vs EffectValue
+The execution boundary is explicit:
 
-The key boundary is explicit:
-
-- `DoExpr[T]`: control IR evaluated by VM
+- `DoExpr[T]`: control expression evaluated by VM
 - `DoCtrl[T]`: concrete control nodes (`Pure`, `Call`, `Map`, `FlatMap`, `Perform`, ...)
-- `EffectValue[T]`: user-space operation data (`Ask`, `Get`, `Put`, `Tell`, ...)
+- `EffectValue[T]`: operation payload (`Ask`, `Get`, `Put`, `Tell`, ...)
 
-Effect values are not control nodes. They become executable only when lifted:
+Effect values are lifted into control IR with `Perform(effect)`.
 
 ```python
-from doeff import Perform
+from doeff import Ask, Perform
 
-expr = Perform(Ask("key"))  # EffectValue -> DoExpr
+expr = Perform(Ask("key"))
 ```
 
-Source-level ergonomics are preserved:
+At source level, programs can still yield effect values directly:
 
 ```python
-# user code
 value = yield Ask("key")
+```
 
-# lowered control form
+Lowering represents this as:
+
+```python
 value = yield Perform(Ask("key"))
 ```
 
-`Perform(effect)` is the control boundary for handler dispatch.
+## Generator-as-AST
 
-## Generator-as-AST (Free Monad)
+`@do` programs are interpreted as lazy AST streams:
 
-For `@do` programs, the generator is not a thin wrapper. It is lazy program text.
-
-From the VM perspective:
-
-1. `next(gen)` reads the next expression node.
-2. VM evaluates that node.
-3. VM sends the result back via `gen.send(value)`.
-4. Generator yields the next node, until `StopIteration`.
+1. `next(gen)` yields a control expression.
+2. VM evaluates the expression.
+3. VM sends the result with `gen.send(value)`.
+4. Generator yields the next expression, until completion.
 
 Free-monad interpretation:
 
@@ -90,36 +68,31 @@ Free-monad interpretation:
 yield expr  ≡  Bind(expr, λresult. rest_of_program)
 ```
 
-So each `yield` captures continuation state, and VM drives evaluation.
-
 ## DoCtrl Instruction Set
 
-Core control forms include:
+Core control nodes include:
 
-- `Pure(value)` literal leaf node
-- `Call(f, args, kwargs, metadata)` function/generator invocation
-- `Eval(expr, handlers)` scoped evaluation
-- `Map(source, f)` functor map
-- `FlatMap(source, f)` monadic bind
-- `Perform(effect)` explicit effect dispatch
-- `WithHandler(handler, body)` handler scoping
+- `Pure(value)` literal node
+- `Call(f, args, kwargs, metadata)` invocation node
+- `Eval(expr, handlers)` scoped evaluation node
+- `Map(source, f)` composition node
+- `FlatMap(source, f)` bind node
+- `Perform(effect)` effect dispatch node
+- `WithHandler(handler, body)` handler scoping node
 - continuation/control nodes such as `Resume`, `Transfer`, `Delegate`, `ResumeContinuation`
-- async escape node/result integration via `PythonAsyncSyntaxEscape` in async path
 
-`Map` and `FlatMap` are DoCtrl nodes, not ad-hoc Python wrappers. This is why composition stays in IR.
+These nodes are VM syntax, so composition remains in IR.
 
-## `@do` and Call-Time Macro Expansion
+## `@do` and Macro Expansion
 
-`@do` returns a `KleisliProgram`. Calling it does not execute immediately; it emits a `Call` control node.
+`@do` returns a `KleisliProgram`. Calling it emits a `Call` node.
 
 `KleisliProgram.__call__()`:
 
-1. Computes auto-unwrap strategy from annotations.
+1. Computes argument unwrap policy from annotations.
 2. Lifts unwrapable effect arguments to `Perform(arg)`.
-3. Wraps non-unwrapped values as `Pure(arg)`.
+3. Wraps pass-through values as `Pure(arg)`.
 4. Returns `Call(Pure(func), args, kwargs, metadata)`.
-
-This is a call-time macro expansion step, not handler dispatch.
 
 Example:
 
@@ -132,31 +105,32 @@ def fetch_user(user_id: int):
     return db[user_id]
 
 program = fetch_user(Ask("active_user_id"))
-# program is a DoExpr (Call node), not an executed result
 ```
 
-## Rust VM Architecture
+`program` above is a `DoExpr` (`Call`) that is evaluated by `run`/`async_run`.
 
-Execution pipeline:
+## Rust VM Execution Pipeline
 
-1. Python driver obtains yielded object from generator frame.
+Runtime flow:
+
+1. Driver reads yielded object from current generator frame.
 2. `classify_yielded` performs binary classification:
-   - `DoCtrlBase` -> evaluate as control
-   - `EffectBase` -> dispatch through handler stack (or normalize to `Perform`)
-3. VM step loop processes control until `Done`, `Failed`, `Continue`, or async escape.
+   - `DoCtrlBase` -> VM control evaluation path
+   - `EffectBase` -> handler dispatch path (normalized through `Perform`)
+3. VM step loop advances until `Done`, `Failed`, `Continue`, or async escape state.
 
-Important properties:
+Key properties:
 
-- Binary classifier (`DoCtrlBase | EffectBase`) replaces older multi-branch string matching.
-- Tag-based dispatch in VM is designed for low-overhead/GIL-minimized hot paths.
-- Effects remain opaque payloads to VM; handler logic owns effect interpretation.
+- binary yield classification (`DoCtrlBase | EffectBase`)
+- low-overhead tag-based dispatch in hot paths
+- effect payload fields stay opaque to VM core and are interpreted by handlers
 
-## `run` vs `async_run`
+## `run` and `async_run`
 
 Both entrypoints accept:
 
-- `DoExpr[T]` directly
-- raw effect value (`EffectValue[T]`), normalized at boundary to `Perform(effect)`
+- `DoExpr[T]`
+- raw effect values, normalized at the boundary to `Perform(effect)`
 
 Conceptual sync runner:
 
@@ -191,29 +165,27 @@ async def async_run(program, handlers):
             state = out.resume(resolved)
 ```
 
-Key distinction:
+`PythonAsyncSyntaxEscape` is handled in the async execution path.
 
-- `run`: no async escape handling; sync-compatible handlers must resolve awaitables internally.
-- `async_run`: handles `PythonAsyncSyntaxEscape` by awaiting in the caller's event loop.
+## Handler Contract
 
-## Handlers and the Dispatch Contract
+Handlers interpret effects with this shape:
 
-Handlers operate at the effect boundary:
-
-- input: `(effect, k)` where `k` is continuation
+- input: `(effect, k)`
 - output: `DoExpr`
 
-If a host handler returns raw effect data, runtime normalizes it back through `Perform(effect)` before continuation.
+If a host handler returns an effect value, runtime normalizes it through `Perform(effect)`
+before continuing.
 
-## Composition and Lifting
+## Composition
 
-Composition is IR-native:
+IR-level composition primitives:
 
-- `Program.pure(x)` creates `Pure(x)`
-- `expr.map(f)` creates `Map(expr, f)`
-- `expr.flat_map(f)` creates `FlatMap(expr, f)`
+- `Program.pure(x)` -> `Pure(x)`
+- `expr.map(f)` -> `Map(expr, f)`
+- `expr.flat_map(f)` -> `FlatMap(expr, f)`
 
-Effects compose after lifting:
+Effect payloads compose after lifting:
 
 ```python
 from doeff import Ask, Perform
@@ -221,10 +193,10 @@ from doeff import Ask, Perform
 program = Perform(Ask("key")).map(str.upper)
 ```
 
-## Core Example (Current Semantics)
+## Core Example
 
 ```python
-from doeff import Ask, Get, Put, Tell, do, run, default_handlers
+from doeff import Ask, Get, Put, Tell, default_handlers, do, run
 
 @do
 def update_counter():
@@ -242,13 +214,10 @@ result = run(
 )
 ```
 
-Use `Tell` for writer output in docs and examples. `Log` is not part of the current core conceptual model.
-
 ## Summary
 
-- `Program[T]` is the public `DoExpr[T]` model, not a dataclass wrapper.
-- `DoExpr` (control) and `EffectValue` (data) are separate.
-- `Perform(effect)` is the explicit dispatch boundary.
-- `@do` calls macro-expand to `Call` nodes.
-- The Rust VM interprets a lazy free-monad AST via binary yield classification.
-- `run` and `async_run` share control evaluation but differ at async escape handling.
+- `Program[T]` is `DoExpr[T]`
+- effect dispatch is explicit via `Perform(effect)`
+- VM evaluates control IR and handlers interpret effect payloads
+- `@do` calls emit `Call` nodes that are evaluated by the runtime
+- `run` and `async_run` share core stepping semantics with different async integration paths
