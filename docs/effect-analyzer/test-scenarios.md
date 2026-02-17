@@ -21,8 +21,8 @@ Status legend:
 14. ✅ `Program.first_some(...)` with lambdas returning optional programs (`tests/effect_tracking.rs::scenario_first_success_some`).
 15. ✅ `Program.list` composed with `.map`/`.flat_map` downstream (`tests/effect_tracking.rs::complex_program_structure`).
 16. ✅ Effect interception via `.intercept(...)` altering yielded effects (`tests/effect_tracking.rs::scenario_intercept_and_lift`).
-17. ✅ `ProgramBase.lift(...)` on plain values and existing programs inside a `@do` function (`tests/effect_tracking.rs::scenario_intercept_and_lift`).
-18. ✅ `ProgramBase.dict(...)` called outside of `@do` context and later yielded (`tests/effect_tracking.rs::scenario_intercept_and_lift`).
+17. ✅ `Program.lift(...)` on plain values and existing programs inside a `@do` function (`tests/effect_tracking.rs::scenario_intercept_and_lift`).
+18. ✅ `Program.dict(...)` called outside of `@do` context and later yielded (`tests/effect_tracking.rs::scenario_intercept_and_lift`).
 19. ❌ Recursive `@do` definition guarded to avoid infinite traversal (mutual recursion).
 20. ✅ `@do` functions defined across multiple modules, imported and composed (`tests/effect_tracking.rs::complex_program_structure`).
 21. ❌ Effects yielded inside list/dict comprehensions referenced in a `@do` body.
