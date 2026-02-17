@@ -158,6 +158,60 @@ def transfer_money(from_account, to_account, amount):
 
 ## Effect Composition Patterns
 
+This section summarizes the composition guarantees from
+`specs/effects/SPEC-EFF-100-combinations.md`.
+
+### Effect Combination Matrix
+
+| Outer / Inner | Ask | Get | Put | Tell | Safe | Local | Listen | Intercept | Gather |
+|---------------|-----|-----|-----|------|------|-------|--------|-----------|--------|
+| **Local**     | Scoped | Propagates | Propagates | Propagates | Propagates | Scoped | Propagates | Propagates | Propagates |
+| **Listen**    | - | - | - | Captured* | - | - | Nested | - | All captured* |
+| **Safe**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
+| **Intercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
+| **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
+
+Matrix key:
+- `Scoped`: Effect operates within a bounded scope and is restored afterward.
+- `Propagates`: Effect passes through unchanged.
+- `Captured`: Output is captured by the outer effect (success path only).
+- `Persists`: Side effects persist even when errors occur.
+- `Wrapped`: Result is wrapped in the outer effect's result type.
+- `Restores`: Environment context is restored after inner completion.
+- `Transform`: Effect may be transformed by the outer effect.
+- `Isolated`: Branch-local error handling boundaries apply.
+- `Inherit`: Child inherits parent context snapshot at invocation time.
+- `Shared`: Branches share the same underlying store/runtime resource.
+- `Merged`: Outputs from child branches are combined.
+- `Nested`: Inner effect nests inside the outer effect.
+
+\* `Listen` captures `Tell` output only when the listened program succeeds.  
+\** `Gather` store sharing is runtime-dependent (see runtime caveats below).
+
+### Composition Laws
+
+The following laws from SPEC-EFF-100 apply to all compositions:
+
+1. **Local Restoration Law**: Environment MUST restore after `Local` scope, on both success and error.
+2. **Local Non-State-Scoping Law**: `Local` does NOT scope `Get`/`Put`; state changes propagate.
+3. **Listen Capture Law**: `Listen` captures `Tell` output ONLY on success; on error it propagates the error.
+4. **Safe Non-Rollback Law**: `Safe` does NOT roll back state on error.
+5. **Safe Environment Restoration Law**: `Safe` restores environment context, but not state.
+6. **Intercept Transformation Law**: `Intercept` transforms effects in nested programs, including `Gather` children.
+7. **Gather Environment Inheritance Law**: `Gather` children inherit parent environment snapshot at invocation.
+8. **Gather Store Sharing Law**: Store sharing under `Gather` is runtime-dependent.
+9. **Gather Error Propagation Law**: First child error propagates; sibling behavior is runtime-dependent.
+
+### Runtime Behavior Caveats
+
+`SyncRuntime` and `AsyncRuntime` intentionally differ in `Gather`-related behavior:
+
+| Concern | SyncRuntime | AsyncRuntime |
+|---------|-------------|--------------|
+| Gather store sharing | Sequential execution with deterministic state observation | Parallel execution with shared store and race-condition risk |
+| Listen + Gather log ordering | Deterministic (sequential execution order) | Non-deterministic (concurrent interleaving) |
+| Gather error propagation | Stops at first error; later children do not run | First error propagates to parent; other children may keep running |
+
 ### Error Handling Sandwich
 
 Wrap operations with consistent error handling:
