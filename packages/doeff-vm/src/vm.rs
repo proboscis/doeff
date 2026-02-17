@@ -2794,7 +2794,9 @@ mod tests {
         let mut store = RustStore::new();
         store.put("key".to_string(), Value::Int(42));
         store.tell(Value::String("log".to_string()));
-        store.env.insert("env_key".to_string(), Value::Bool(true));
+        store
+            .env
+            .insert("env_key".to_string().into(), Value::Bool(true));
 
         let cloned = store.clone();
         assert_eq!(cloned.get("key").unwrap().as_int(), Some(42));
@@ -3012,10 +3014,13 @@ mod tests {
         let mut store = RustStore::new();
         store
             .env
-            .insert("db".to_string(), Value::String("prod".to_string()));
+            .insert("db".to_string().into(), Value::String("prod".to_string()));
         store
             .env
-            .insert("host".to_string(), Value::String("localhost".to_string()));
+            .insert(
+                "host".to_string().into(),
+                Value::String("localhost".to_string()),
+            );
 
         let result = store.with_local(
             HashMap::from([
