@@ -50,7 +50,7 @@ from doeff import run, default_handlers
 
 @do
 def expensive_computation():
-    yield Log("This doesn't execute yet")
+    yield Tell("This doesn't execute yet")
     return perform_heavy_work()
 
 # No execution happens here
@@ -90,7 +90,7 @@ constant_program = Program.pure(42)
 
 **Method 3: Use an effect directly (single effect)**
 ```python
-log_program = Log("test")
+log_program = Tell("test")
 ```
 
 **Method 4: Manual construction (advanced)**
@@ -126,7 +126,7 @@ doeff provides effects for:
 |----------|----------|---------|
 | **Reader** | `Ask`, `Local` | Read-only environment access |
 | **State** | `Get`, `Put`, `Modify` | Mutable state management |
-| **Writer** | `Log`, `Tell`, `Listen` | Accumulate output/logs |
+| **Writer** | `Tell`, `StructuredLog`, `slog`, `Listen` | Accumulate output/logs |
 | **Future** | `Await`, `Gather` | Async operations |
 | **Result** | `Safe` | Error handling |
 | **IO** | `IO` | Side effects |
@@ -170,7 +170,7 @@ doeff ships with handlers for all built-in effects:
 |--------|---------|-------------|
 | `Ask`, `Local` | Reader handler | Reads from / scopes the environment |
 | `Get`, `Put`, `Modify` | State handler | Manages mutable store |
-| `Log`, `Tell`, `Listen` | Writer handler | Accumulates log entries |
+| `Tell`, `StructuredLog`, `slog`, `Listen` | Writer handler | Accumulates log entries |
 | `Await`, `Gather` | Async handler | Bridges to async I/O |
 | `Safe` | Result handler | Captures errors as `Result` values |
 | `IO` | IO handler | Executes side-effecting thunks |
@@ -499,7 +499,7 @@ Program.of("hello")  # Program[str]
 
 **Effects**: Use any effect instance directly when you need a single operation
 ```python
-single_log = Log("test")
+single_log = Tell("test")
 ```
 
 **lift**: Smart constructor
@@ -612,7 +612,7 @@ T = TypeVar("T")
 
 @do
 def identity(x: T) -> EffectGenerator[T]:
-    yield Log(f"Identity: {x}")
+    yield Tell(f"Identity: {x}")
     return x
 
 # Type: KleisliProgram[(T,), T]
