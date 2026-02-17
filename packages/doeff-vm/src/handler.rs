@@ -752,6 +752,8 @@ struct LazySemaphoreEntry {
 struct LazyAskState {
     cache: HashMap<HashedPyKey, LazyCacheEntry>,
     semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
+    scope_cache: Vec<HashMap<HashedPyKey, LazyCacheEntry>>,
+    scope_semaphores: Vec<HashMap<HashedPyKey, LazySemaphoreEntry>>,
 }
 
 #[derive(Clone)]
@@ -832,41 +834,20 @@ impl RustProgramHandler for LazyAskHandlerFactory {
 struct LazyLocalScopeState {
     cache: HashMap<HashedPyKey, LazyCacheEntry>,
     semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
-    tainted: bool,
 }
 
 #[derive(Debug, Clone)]
 struct LazyLocalScopeFactory {
     overrides: Arc<HashMap<HashedPyKey, Value>>,
-    global_state: Arc<Mutex<LazyAskState>>,
     scope_state: Arc<Mutex<LazyLocalScopeState>>,
 }
 
 impl LazyLocalScopeFactory {
-    fn new(overrides: HashMap<HashedPyKey, Value>, global_state: Arc<Mutex<LazyAskState>>) -> Self {
+    fn new(overrides: HashMap<HashedPyKey, Value>) -> Self {
         LazyLocalScopeFactory {
             overrides: Arc::new(overrides),
-            global_state,
             scope_state: Arc::new(Mutex::new(LazyLocalScopeState::default())),
         }
-    }
-
-    fn mark_tainted(&self) {
-        let mut state = self.scope_state.lock().expect("LazyLocalScope lock poisoned");
-        state.tainted = true;
-    }
-
-    fn is_tainted(&self) -> bool {
-        let state = self.scope_state.lock().expect("LazyLocalScope lock poisoned");
-        state.tainted
-    }
-
-    fn invalidate_global_cache_if_tainted(&self) {
-        if !self.is_tainted() {
-            return;
-        }
-        let mut global = self.global_state.lock().expect("LazyAsk lock poisoned");
-        global.cache.clear();
     }
 }
 
@@ -885,7 +866,6 @@ impl RustProgramHandler for LazyLocalScopeFactory {
         Arc::new(Mutex::new(Box::new(LazyLocalScopeProgram::new(
             self.overrides.clone(),
             self.scope_state.clone(),
-            self.clone(),
         ))))
     }
 
@@ -928,20 +908,17 @@ struct LazyLocalScopeProgram {
     phase: LazyLocalScopePhase,
     overrides: Arc<HashMap<HashedPyKey, Value>>,
     scope_state: Arc<Mutex<LazyLocalScopeState>>,
-    scope_factory: LazyLocalScopeFactory,
 }
 
 impl LazyLocalScopeProgram {
     fn new(
         overrides: Arc<HashMap<HashedPyKey, Value>>,
         scope_state: Arc<Mutex<LazyLocalScopeState>>,
-        scope_factory: LazyLocalScopeFactory,
     ) -> Self {
         LazyLocalScopeProgram {
             phase: LazyLocalScopePhase::Idle,
             overrides,
             scope_state,
-            scope_factory,
         }
     }
 
@@ -1060,8 +1037,6 @@ impl LazyLocalScopeProgram {
         continuation: Continuation,
         value: Value,
     ) -> RustProgramStep {
-        self.scope_factory.mark_tainted();
-
         let Some(expr) = as_lazy_eval_expr(&value) else {
             return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                 continuation,
@@ -1253,7 +1228,6 @@ enum LazyAskPhase {
     },
     AwaitLocalEval {
         continuation: Continuation,
-        scope: LazyLocalScopeFactory,
     },
     AwaitDelegate {
         key: HashedPyKey,
@@ -1313,8 +1287,27 @@ impl LazyAskHandlerProgram {
         }))
     }
 
+    fn activate_scope_cache(&self) {
+        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
+        state.scope_cache.push(HashMap::new());
+        state.scope_semaphores.push(HashMap::new());
+    }
+
+    fn deactivate_scope_cache(&self) {
+        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
+        state.scope_cache.pop();
+        state.scope_semaphores.pop();
+    }
+
     fn lazy_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
         let state = self.state.lock().expect("LazyAsk lock poisoned");
+        if let Some(scope_cache) = state.scope_cache.last() {
+            if let Some(entry) = scope_cache.get(key) {
+                if entry.source_id == source_id {
+                    return Some(entry.value.clone());
+                }
+            }
+        }
         let entry = state.cache.get(key)?;
         if entry.source_id == source_id {
             return Some(entry.value.clone());
@@ -1324,11 +1317,23 @@ impl LazyAskHandlerProgram {
 
     fn lazy_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        state.cache.insert(key, LazyCacheEntry { source_id, value });
+        let entry = LazyCacheEntry { source_id, value };
+        if let Some(scope_cache) = state.scope_cache.last_mut() {
+            scope_cache.insert(key, entry);
+        } else {
+            state.cache.insert(key, entry);
+        }
     }
 
     fn lazy_semaphore_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
         let state = self.state.lock().expect("LazyAsk lock poisoned");
+        if let Some(scope_semaphores) = state.scope_semaphores.last() {
+            if let Some(entry) = scope_semaphores.get(key) {
+                if entry.source_id == source_id {
+                    return Some(entry.semaphore.clone());
+                }
+            }
+        }
         let entry = state.semaphores.get(key)?;
         if entry.source_id == source_id {
             return Some(entry.semaphore.clone());
@@ -1338,13 +1343,15 @@ impl LazyAskHandlerProgram {
 
     fn lazy_semaphore_put(&self, key: HashedPyKey, source_id: usize, semaphore: Value) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        state.semaphores.insert(
-            key,
-            LazySemaphoreEntry {
-                source_id,
-                semaphore,
-            },
-        );
+        let entry = LazySemaphoreEntry {
+            source_id,
+            semaphore,
+        };
+        if let Some(scope_semaphores) = state.scope_semaphores.last_mut() {
+            scope_semaphores.insert(key, entry);
+        } else {
+            state.semaphores.insert(key, entry);
+        }
     }
 
     fn begin_delegate_phase(
@@ -1459,7 +1466,8 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             match parse_local_python_effect(&obj) {
                 Ok(Some(local_effect)) => {
-                    let scope = LazyLocalScopeFactory::new(local_effect.overrides, self.state.clone());
+                    let scope = LazyLocalScopeFactory::new(local_effect.overrides);
+                    self.activate_scope_cache();
                     self.phase = LazyAskPhase::AwaitLocalHandlers {
                         continuation: k,
                         scope,
@@ -1511,21 +1519,15 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
                     }
                 };
                 handlers.insert(0, Handler::RustProgram(Arc::new(scope.clone())));
-                self.phase = LazyAskPhase::AwaitLocalEval {
-                    continuation,
-                    scope,
-                };
+                self.phase = LazyAskPhase::AwaitLocalEval { continuation };
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
                     expr: sub_program,
                     handlers,
                     metadata: None,
                 }))
             }
-            LazyAskPhase::AwaitLocalEval {
-                continuation,
-                scope,
-            } => {
-                scope.invalidate_global_cache_if_tainted();
+            LazyAskPhase::AwaitLocalEval { continuation } => {
+                self.deactivate_scope_cache();
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                     continuation,
                     value,
@@ -1620,16 +1622,9 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
 
     fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
-            LazyAskPhase::AwaitLocalHandlers {
-                continuation,
-                scope,
-                ..
-            }
-            | LazyAskPhase::AwaitLocalEval {
-                continuation,
-                scope,
-            } => {
-                scope.invalidate_global_cache_if_tainted();
+            LazyAskPhase::AwaitLocalHandlers { continuation, .. }
+            | LazyAskPhase::AwaitLocalEval { continuation } => {
+                self.deactivate_scope_cache();
                 Self::transfer_throw(continuation, exc)
             }
             LazyAskPhase::AwaitDelegate { continuation, .. } => {

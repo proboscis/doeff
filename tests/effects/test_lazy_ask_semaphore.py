@@ -216,6 +216,83 @@ class TestLazyAskSemaphoreContract:
         assert call_count == 2
 
     @pytest.mark.asyncio
+    async def test_non_dependent_cache_survives_local_exit(self) -> None:
+        """Global cache entries that do not depend on overrides should survive Local scope exit."""
+        service_count = 0
+        logger_count = 0
+
+        @do
+        def make_service():
+            nonlocal service_count
+            service_count += 1
+            db = yield Ask("db_url")
+            return f"Service({db})"
+
+        @do
+        def make_logger():
+            nonlocal logger_count
+            logger_count += 1
+            return "Logger()"
+
+        @do
+        def program():
+            _ = yield Ask("logger")
+            assert logger_count == 1
+
+            inner_service = yield Local({"db_url": "test.db"}, Ask("service"))
+            outer_service = yield Ask("service")
+            outer_logger = yield Ask("logger")
+            return (inner_service, outer_service, outer_logger)
+
+        result = await async_run(
+            program(),
+            handlers=default_async_handlers(),
+            env={
+                "db_url": "prod.db",
+                "service": make_service(),
+                "logger": make_logger(),
+            },
+        )
+        assert result.is_ok()
+        assert result.value == ("Service(test.db)", "Service(prod.db)", "Logger()")
+        assert service_count == 2
+        assert logger_count == 1
+
+    @pytest.mark.asyncio
+    async def test_nested_local_with_lazy_values(self) -> None:
+        call_count = 0
+
+        @do
+        def make_service():
+            nonlocal call_count
+            call_count += 1
+            db = yield Ask("db_url")
+            host = yield Ask("host")
+            return f"Service({db},{host})"
+
+        @do
+        def program():
+            inner = yield Local(
+                {"host": "inner-host"},
+                Local({"db_url": "test.db"}, Ask("service")),
+            )
+            outer = yield Ask("service")
+            return (inner, outer)
+
+        result = await async_run(
+            program(),
+            handlers=default_async_handlers(),
+            env={
+                "db_url": "prod.db",
+                "host": "prod-host",
+                "service": make_service(),
+            },
+        )
+        assert result.is_ok()
+        assert result.value == ("Service(test.db,inner-host)", "Service(prod.db,prod-host)")
+        assert call_count == 2
+
+    @pytest.mark.asyncio
     async def test_local_non_override_delegates(self) -> None:
         @do
         def program():
