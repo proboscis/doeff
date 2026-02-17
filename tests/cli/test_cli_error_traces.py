@@ -190,3 +190,30 @@ def test_disable_default_env_flag(tmp_path: Path) -> None:
     assert payload["status"] == "ok"
     assert payload["result"] == 5
     assert "Error executing ~/.doeff.py" not in result.stderr
+
+
+def test_cli_json_uses_doeff_traceback() -> None:
+    result = run_cli(
+        "-c",
+        "from doeff import Ask, do\n@do\ndef f():\n    yield Ask('x')\n    return 1\nf()",
+        "--interpreter",
+        "tests.cli.cli_assets.sync_interpreter",
+        "--format",
+        "json",
+    )
+
+    assert result.returncode == 1
+    payload = parse_json(result.stdout)
+    assert "doeff Traceback" in str(payload.get("traceback", ""))
+
+
+def test_cli_text_uses_doeff_traceback() -> None:
+    result = run_cli(
+        "-c",
+        "from doeff import Ask, do\n@do\ndef f():\n    yield Ask('x')\n    return 1\nf()",
+        "--interpreter",
+        "tests.cli.cli_assets.sync_interpreter",
+    )
+
+    assert result.returncode == 1
+    assert "doeff Traceback" in result.stderr

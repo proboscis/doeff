@@ -30,7 +30,13 @@ def sync_run(
     store: dict[str, Any] | None = None,
 ) -> RunResult[Any]:
     selected_handlers = sync_handlers_preset if handlers is None else handlers
-    return vm_run(program, handlers=selected_handlers, env=env, store=store)
+    return vm_run(
+        program,
+        handlers=selected_handlers,
+        env=env,
+        store=store,
+        print_doeff_trace=False,
+    )
 
 
 @dataclass
@@ -126,7 +132,9 @@ class ProgramBuilder:
 
         merged_env_program = self._merger.merge_envs(env_sources)
         try:
-            merged_env_dict = vm_run(merged_env_program, handlers=default_handlers()).value
+            merged_env_dict = vm_run(
+                merged_env_program, handlers=default_handlers(), print_doeff_trace=False
+            ).value
         except Exception as exc:
             print("[DOEFF][DISCOVERY] Environment merge failed:", file=sys.stderr)
             print(repr(exc), file=sys.stderr)
@@ -479,7 +487,7 @@ def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
     from doeff.program import Program as ProgramType
 
     if isinstance(value, ProgramType):
-        result = vm_run(value, handlers=default_handlers())
+        result = vm_run(value, handlers=default_handlers(), print_doeff_trace=False)
         return result.value, None
     if isinstance(value, RunResult):
         return _unwrap_run_result(value), value
@@ -804,6 +812,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         return args.func(args)
     except Exception as exc:
+        doeff_tb = getattr(exc, "__doeff_traceback__", None)
         captured = capture_traceback(exc)
         if getattr(args, "format", "text") == "json":
             payload = {
@@ -811,9 +820,13 @@ def main(argv: Iterable[str] | None = None) -> int:
                 "error": exc.__class__.__name__,
                 "message": str(exc),
             }
-            if captured is not None:
+            if doeff_tb is not None:
+                payload["traceback"] = doeff_tb.format_chained()
+            elif captured is not None:
                 payload["traceback"] = captured.format(condensed=False, max_lines=200)
             print(json.dumps(payload))
+        elif doeff_tb is not None:
+            print(doeff_tb.format_chained(), file=sys.stderr)
         elif captured is not None:
             print(captured.format(condensed=False, max_lines=200), file=sys.stderr)
         else:
