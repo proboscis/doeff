@@ -165,7 +165,7 @@ LangChain:
                = tightly coupled, every layer adds latency and complexity
 
 doeff:
-  User Code:  yield LLMChat(...)  yield Parse(...)  yield Log(...)
+  User Code:  yield LLMChat(...)  yield Parse(...)  yield Tell(...)
                     |                    |                  |
                     v                    v                  v
   Handler Stack:  [openai_handler]  [parse_handler]  [log_handler]
