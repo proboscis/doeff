@@ -79,7 +79,7 @@ run_program(
 ```
 
 - `program` (`str | Program`): Program path (enables discovery) or Program instance.
-- `interpreter` (`str | ProgramInterpreter | callable | None`): Override interpreter. Strings use
+- `interpreter` (`str | callable | None`): Override interpreter. Strings use
   marker resolution; callables receive the Program.
 - `envs` (`list[str | Program[dict] | Mapping] | None`): Add environments by path, Program[dict],
   or plain dict.
@@ -97,8 +97,9 @@ run_program(
   loads `__default_env__` from `~/.doeff.py`, honors `--report` flags, and prints nothing when
   `quiet=True`.
 - **Object inputs** (Program instances, callables, dict envs, etc.): bypasses discovery and runs
-  directly. Kleislis/transforms are applied in-process, `ProgramInterpreter()` is used when no
-  interpreter is supplied, and `load_default_env=False` skips the `~/.doeff.py` injection.
+  directly. Kleislis/transforms are applied in-process, `run(..., handlers=default_handlers())`
+  is used when no interpreter is supplied, and `load_default_env=False` skips the `~/.doeff.py`
+  injection.
 
 ## ProgramRunResult
 
