@@ -6,7 +6,7 @@ from typing import Any, Generic, TypeVar
 import doeff_vm
 
 from .base import Effect, create_effect_with_trace
-from .spawn import Waitable, normalize_waitable
+from .spawn import TaskCancelledError, Waitable, is_task_cancelled, normalize_waitable
 
 T = TypeVar("T")
 
@@ -45,6 +45,10 @@ def Race(*futures: Waitable[Any]):
 
     @do
     def _program():
+        for waitable in validated:
+            if is_task_cancelled(waitable):
+                raise TaskCancelledError("Task was cancelled")
+
         value = yield create_effect_with_trace(RaceEffect(validated), skip_frames=3)
         return RaceResult(first=validated[0], value=value, rest=tuple(validated[1:]))
 
