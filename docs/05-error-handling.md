@@ -9,6 +9,7 @@ This chapter covers error handling in doeff using `RunResult`, the `Safe` effect
 - [Result Methods](#result-methods)
 - [Pattern Matching](#pattern-matching)
 - [Safe Effect](#safe-effect)
+- [Safe Composition Guarantees](#safe-composition-guarantees)
 - [Captured Traceback on Err](#captured-traceback-on-err)
 - [Practical Patterns](#practical-patterns)
 
@@ -122,6 +123,79 @@ def app(raw: str):
 
 result = run(app("not-a-number"), handlers=default_handlers())
 print(result.value)  # 0
+```
+
+## Safe Composition Guarantees
+
+### 1. No-Rollback Rule
+
+`Safe(...)` catches exceptions as `Err(...)`, but it does not rollback effects that already happened.
+State updates and `Tell(...)` log entries persist.
+
+```python
+from doeff import Get, Put, Safe, default_handlers, do, run
+
+@do
+def mutate_then_fail():
+    yield Put("counter", 1)
+    raise ValueError("boom")
+
+@do
+def app():
+    yield Put("counter", 0)
+    result = yield Safe(mutate_then_fail())
+    counter = yield Get("counter")
+    return (result.is_err(), counter)  # (True, 1)
+
+print(run(app(), handlers=default_handlers()).value)
+```
+
+### 2. Env Restoration with `Local`
+
+`Safe(Local(...))` still respects `Local` frame restoration: env overrides are scoped and restored on
+both success and failure. This env restoration is independent from the no-rollback behavior for
+state/log.
+
+```python
+from doeff import Ask, Local, Safe, default_handlers, do, run
+
+@do
+def failing_inner():
+    _ = yield Ask("key")
+    raise ValueError("fail inside local")
+
+@do
+def app():
+    before = yield Ask("key")
+    _ = yield Safe(Local({"key": "inner"}, failing_inner()))
+    after = yield Ask("key")
+    return (before, after)  # ("outer", "outer")
+
+print(run(app(), handlers=default_handlers(), env={"key": "outer"}).value)
+```
+
+### 3. Nested `Safe` Result Shape
+
+A nested Safe does not collapse wrappers. `Safe(Safe(x))` returns nested results.
+
+```python
+from doeff import Safe, default_handlers, do, run
+
+@do
+def succeeds():
+    return 5
+
+@do
+def fails():
+    raise ValueError("inner failure")
+
+@do
+def app():
+    a = yield Safe(Safe(succeeds()))
+    b = yield Safe(Safe(fails()))
+    return (a, b)  # (Ok(Ok(5)), Ok(Err(ValueError(...))))
+
+print(run(app(), handlers=default_handlers()).value)
 ```
 
 ## Captured Traceback on Err
