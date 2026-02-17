@@ -65,7 +65,7 @@ Required behavior:
 |-------------|----------|
 | Local + Ask | Ask sees override inside, original restored after |
 | Local + Local | Inner wins, both restore independently (LIFO) |
-| Local + Safe | Env restored even on error |
+| Local + Try | Env restored even on error |
 | Local + Gather | Children inherit parent env; child's Local isolated |
 | Local + State | State (Get/Put) persists outside Local (intentional) |
 
