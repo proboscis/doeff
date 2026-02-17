@@ -1,12 +1,13 @@
 # Error Handling
 
-This chapter covers doeff's error handling approach using the Result type, the Safe effect (an algebraic effect handled by the Result handler), RuntimeResult protocol, and native Python patterns.
+This chapter covers doeff's error handling approach using the Result type, the Safe program
+combinator, RuntimeResult protocol, and native Python patterns.
 
 ## Table of Contents
 
 - [RuntimeResult Protocol](#runtimeresult-protocol)
 - [Result Type](#result-type)
-- [Safe Effect](#safe-effect)
+- [Safe Program Combinator](#safe-program-combinator)
 - [Native Python Patterns](#native-python-patterns)
 - [Error Patterns](#error-patterns)
 - [Stack Traces and Debugging](#stack-traces-and-debugging)
@@ -117,9 +118,42 @@ assert failure.is_err()
 print(failure.err())  # Exception("error")
 ```
 
-## Safe Effect
+## Safe Program Combinator
 
-`Safe(sub_program)` wraps execution and returns a `Result` type, allowing you to handle errors explicitly without stopping program execution.
+`Safe(sub_program)` is a Python-level program combinator. It wraps a sub-program and returns a
+`Result` value:
+
+- Success: `Ok(value)`
+- Failure: `Err(exception)`
+
+Unlike handler-dispatched algebraic effects, `Safe` does not require a dedicated handler. It
+works by wrapping the sub-program execution kernel at the generator boundary.
+
+### How Safe Works Internally
+
+```python
+def _wrap_kernel_as_result(execution_kernel):
+    def wrapped_kernel(*args, **kwargs):
+        try:
+            gen_or_value = execution_kernel(*args, **kwargs)
+        except Exception as exc:
+            return Err(exc)
+
+        if not inspect.isgenerator(gen_or_value):
+            return Ok(gen_or_value)
+
+        gen = gen_or_value
+        # forward yields as-is
+        # StopIteration(value) -> Ok(value)
+        # Exception(exc) -> Err(exc)
+        ...
+
+    return wrapped_kernel
+```
+
+This wrapper is transparent to inner effects. The inner program still yields `Ask`, `Put`,
+`Local`, `Intercept`, and other effects normally. `Safe` only changes the final success/failure
+surface to `Ok`/`Err`.
 
 ### Basic Safe Usage
 
@@ -242,9 +276,12 @@ def fetch_with_fallback():
     return get_default_data()
 ```
 
-### Safe Does NOT Rollback State
+### Composition Rules
 
-Per [SPEC-EFF-004](../specs/effects/SPEC-EFF-004-control.md), the `Safe` effect does **NOT** rollback state changes when an error occurs:
+#### Safe + Put (No Rollback)
+
+Per [SPEC-EFF-004](../specs/effects/SPEC-EFF-004-control.md), `Safe` does **NOT** roll back state
+changes when an error occurs:
 
 ```python
 @do
@@ -264,6 +301,66 @@ def failing_with_side_effects():
     yield Modify("counter", lambda x: x + 10)  # This persists!
     raise ValueError("Oops!")
 ```
+
+#### Safe + Local (Environment Restored)
+
+Environment changes from `Local` are restored after `Safe` completes, including caught errors:
+
+```python
+@do
+def failing_in_local():
+    _ = yield Ask("key")  # "modified"
+    raise ValueError("boom")
+
+@do
+def safe_local_example():
+    before = yield Ask("key")  # "original"
+    result = yield Safe(Local({"key": "modified"}, failing_in_local()))
+    after = yield Ask("key")  # "original" (restored)
+    return (before, result.is_err(), after)
+```
+
+#### Nested Safe (Inner Catches First)
+
+Nested `Safe` catches from the inside out:
+
+```python
+@do
+def failing_program():
+    raise ValueError("inner error")
+
+@do
+def nested_safe_example():
+    result = yield Safe(Safe(failing_program()))
+    # result is Ok(Err(ValueError("inner error")))
+    return result
+```
+
+The inner `Safe` converts the exception to `Err(...)`. The outer `Safe` sees a normal return
+value and wraps it in `Ok(...)`.
+
+#### Safe + Intercept
+
+`Safe` and `Intercept` compose directly:
+
+```python
+@do
+def failing_program():
+    _ = yield Ask("key")
+    raise ValueError("caught error")
+
+def passthrough(effect):
+    return None
+
+@do
+def safe_intercept_example():
+    result = yield Safe(Intercept(failing_program(), passthrough))
+    return result
+```
+
+`Intercept` still sees and can transform effects inside `failing_program`. If execution still
+raises, `Safe` converts that failure to `Err(exception)` instead of terminating the parent
+program.
 
 ## Native Python Patterns
 
@@ -692,7 +789,7 @@ final_result = result.ok()
 - Use `result.error` to get the exception (raises on success)
 - Use `result.raw_store` to access final store state
 - Access logs via `result.raw_store.get("__log__", [])`
-- Use `Safe` effect to catch errors and continue execution
+- Use `Safe` program combinator to catch errors and continue execution
 - Use native Python `raise` for signaling errors
 - Use `try/finally` for cleanup logic
 - Access stack traces via `k_stack`, `effect_stack`, `python_stack`
