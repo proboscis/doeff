@@ -14,9 +14,10 @@ use crate::continuation::Continuation;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect, PyAsk,
 };
 use crate::ids::SegmentId;
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
 use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
@@ -191,38 +192,28 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffe
     })
 }
 
-fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, String> {
+fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<HashedPyKey>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if is_instance_from(obj, "doeff.effects.reader", "AskEffect") {
-            let key: String = obj
-                .getattr("key")
-                .map_err(|e| e.to_string())?
-                .extract::<String>()
-                .map_err(|e| e.to_string())?;
-            return Ok(Some(key));
-        }
-
-        if is_instance_from(obj, "doeff.effects.reader", "HashableAskEffect") {
+        if obj.is_instance_of::<PyAsk>()
+            || is_instance_from(obj, "doeff.effects.reader", "AskEffect")
+            || is_instance_from(obj, "doeff.effects.reader", "HashableAskEffect")
+        {
             let key_obj = obj.getattr("key").map_err(|e| e.to_string())?;
-            let key = key_obj
-                .str()
-                .map_err(|e| e.to_string())?
-                .to_str()
-                .map_err(|e| e.to_string())?
-                .to_string();
-            return Ok(Some(key));
+            let hashed = HashedPyKey::from_bound(&key_obj)
+                .map_err(|e| format!("Ask key is not hashable: {e}"))?;
+            return Ok(Some(hashed));
         }
 
         Ok(None)
     })
 }
 
-fn missing_env_key_error(key: &str) -> PyException {
+fn missing_env_key_error(key: &HashedPyKey) -> PyException {
     Python::attach(|py| {
         let maybe_exc = (|| -> PyResult<Py<PyAny>> {
             let cls = py.import("doeff.errors")?.getattr("MissingEnvKeyError")?;
-            let value = cls.call1((key,))?;
+            let value = cls.call1((key.to_pyobject(py),))?;
             Ok(value.unbind())
         })();
 
@@ -232,7 +223,7 @@ fn missing_env_key_error(key: &str) -> PyException {
                 PyException::new(exc_type, exc_value, None)
             }
             Err(_) => {
-                let err = pyo3::exceptions::PyKeyError::new_err(key.to_string());
+                let err = pyo3::exceptions::PyKeyError::new_err(key.display_for_error());
                 let exc_value = err.value(py).clone().into_any().unbind();
                 let exc_type = exc_value.bind(py).get_type().into_any().unbind();
                 PyException::new(exc_type, exc_value, None)
@@ -714,8 +705,8 @@ struct LazySemaphoreEntry {
 
 #[derive(Debug, Default)]
 struct LazyAskState {
-    cache: HashMap<String, LazyCacheEntry>,
-    semaphores: HashMap<String, LazySemaphoreEntry>,
+    cache: HashMap<HashedPyKey, LazyCacheEntry>,
+    semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
 }
 
 #[derive(Clone)]
@@ -795,25 +786,25 @@ impl RustProgramHandler for LazyAskHandlerFactory {
 enum LazyAskPhase {
     Idle,
     AwaitDelegate {
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
     },
     AwaitAcquire {
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         expr: PyShared,
         source_id: usize,
         semaphore: Option<Value>,
     },
     AwaitCache {
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         expr: PyShared,
         source_id: usize,
         semaphore: Value,
     },
     AwaitEval {
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         source_id: usize,
         semaphore: Value,
@@ -852,7 +843,7 @@ impl LazyAskHandlerProgram {
         }))
     }
 
-    fn lazy_cache_get(&self, key: &str, source_id: usize) -> Option<Value> {
+    fn lazy_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
         let state = self.state.lock().expect("LazyAsk lock poisoned");
         let entry = state.cache.get(key)?;
         if entry.source_id == source_id {
@@ -861,12 +852,12 @@ impl LazyAskHandlerProgram {
         None
     }
 
-    fn lazy_cache_put(&self, key: String, source_id: usize, value: Value) {
+    fn lazy_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
         state.cache.insert(key, LazyCacheEntry { source_id, value });
     }
 
-    fn lazy_semaphore_get(&self, key: &str, source_id: usize) -> Option<Value> {
+    fn lazy_semaphore_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
         let state = self.state.lock().expect("LazyAsk lock poisoned");
         let entry = state.semaphores.get(key)?;
         if entry.source_id == source_id {
@@ -875,7 +866,7 @@ impl LazyAskHandlerProgram {
         None
     }
 
-    fn lazy_semaphore_put(&self, key: String, source_id: usize, semaphore: Value) {
+    fn lazy_semaphore_put(&self, key: HashedPyKey, source_id: usize, semaphore: Value) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
         state.semaphores.insert(
             key,
@@ -889,7 +880,7 @@ impl LazyAskHandlerProgram {
     fn begin_delegate_phase(
         &mut self,
         effect: DispatchEffect,
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
     ) -> RustProgramStep {
         self.phase = LazyAskPhase::AwaitDelegate { key, continuation };
@@ -898,7 +889,7 @@ impl LazyAskHandlerProgram {
 
     fn begin_create_then_acquire_phase(
         &mut self,
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         expr: PyShared,
         source_id: usize,
@@ -915,7 +906,7 @@ impl LazyAskHandlerProgram {
 
     fn begin_acquire_phase(
         &mut self,
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         expr: PyShared,
         source_id: usize,
@@ -947,7 +938,7 @@ impl LazyAskHandlerProgram {
 
     fn handle_delegated_ask_value(
         &mut self,
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         value: Value,
         store: &mut RustStore,
@@ -962,7 +953,7 @@ impl LazyAskHandlerProgram {
         let source_id = lazy_source_id(&value).unwrap_or_default();
 
         if let Some(cached) = self.lazy_cache_get(&key, source_id) {
-            store.env.insert(key, cached.clone());
+            store.env.insert(key.clone(), cached.clone());
             return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                 continuation,
                 value: cached,
@@ -987,8 +978,9 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
     ) -> RustProgramStep {
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
-            let Some(value) = _store.ask(&key).cloned() else {
-                return RustProgramStep::Throw(missing_env_key_error(&key));
+            let hashed_key = HashedPyKey::from_test_string(key);
+            let Some(value) = _store.ask(&hashed_key).cloned() else {
+                return RustProgramStep::Throw(missing_env_key_error(&hashed_key));
             };
             return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                 continuation: k,
@@ -1043,7 +1035,7 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
                 };
 
                 if let Some(cached) = self.lazy_cache_get(&key, source_id) {
-                    store.env.insert(key, cached.clone());
+                    store.env.insert(key.clone(), cached.clone());
                     return self.begin_release_phase(continuation, Ok(cached), semaphore);
                 }
 
@@ -1166,7 +1158,7 @@ struct ReaderHandlerProgram;
 
 impl ReaderHandlerProgram {
     fn handle_ask(
-        key: String,
+        key: HashedPyKey,
         continuation: Continuation,
         store: &mut RustStore,
     ) -> RustProgramStep {
@@ -1191,7 +1183,7 @@ impl RustHandlerProgram for ReaderHandlerProgram {
     ) -> RustProgramStep {
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
-            return ReaderHandlerProgram::handle_ask(key, k, store);
+            return ReaderHandlerProgram::handle_ask(HashedPyKey::from_test_string(key), k, store);
         }
 
         if let Some(obj) = dispatch_into_python(effect.clone()) {
@@ -1761,9 +1753,7 @@ mod tests {
     fn test_reader_factory_ask() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-            store
-                .env
-                .insert("config".to_string(), Value::String("value".to_string()));
+            store.set_env_str("config", Value::String("value".to_string()));
             let k = make_test_continuation();
             let program_ref = ReaderHandlerFactory.create_program();
             let step = {
