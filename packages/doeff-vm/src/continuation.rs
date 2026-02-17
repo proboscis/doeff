@@ -124,7 +124,12 @@ impl Continuation {
         handlers: Vec<Handler>,
         handler_identities: Vec<Option<PyShared>>,
     ) -> Self {
-        Self::create_unstarted_with_identities_and_metadata(expr, handlers, handler_identities, None)
+        Self::create_unstarted_with_identities_and_metadata(
+            expr,
+            handlers,
+            handler_identities,
+            None,
+        )
     }
 
     pub fn create_unstarted_with_identities_and_metadata(
