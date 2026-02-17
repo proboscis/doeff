@@ -117,6 +117,7 @@ The package includes several examples demonstrating different use cases:
 | `02_data_pipeline.py` | ETL pipeline with multiple stages |
 | `03_error_handling.py` | Error capture and failure tracing |
 | `04_concurrent_workflows.py` | Multiple concurrent workers with separate traces |
+| `06_testing_with_mocks.py` | In-memory trace assertions with mock handlers |
 | `07_workflow_status.py` | Workflow status with slog for semantic status updates |
 
 Run examples from the `packages/doeff-flow` directory:
@@ -158,12 +159,13 @@ with trace_observer("wf-001", ".doeff-flow") as on_step:
 ### With Durable Storage
 
 ```python
+from doeff import WithHandler
 from doeff.storage import SQLiteStorage
 
+storage = SQLiteStorage(".doeff-cache.db")
 result = run_workflow(
-    my_workflow(),
+    WithHandler(cache_handler(storage), my_workflow()),
     workflow_id="durable-wf",
-    storage=SQLiteStorage(".doeff-cache.db"),
 )
 ```
 
