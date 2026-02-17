@@ -92,6 +92,7 @@ reader = _ext.reader
 writer = _ext.writer
 result_safe = _ext.result_safe
 scheduler = _ext.scheduler
+lazy_ask = _ext.lazy_ask
 await_handler = _ext.await_handler
 CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
@@ -197,6 +198,7 @@ __all__ = [
     "reader",
     "run",
     "scheduler",
+    "lazy_ask",
     "state",
     "result_safe",
     "await_handler",

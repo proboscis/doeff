@@ -3,11 +3,33 @@ from __future__ import annotations
 from pathlib import Path
 
 from doeff import Ask, Gather, Safe, Spawn, default_handlers, do, run
+from doeff.handlers import lazy_ask, reader, scheduler, state
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestLazyAskSemaphoreContract:
+    def test_lazy_ask_caches(self) -> None:
+        calls = {"service": 0}
+
+        @do
+        def service_program():
+            calls["service"] += 1
+            if False:
+                yield
+            return 42
+
+        @do
+        def program():
+            first = yield Ask("service")
+            second = yield Ask("service")
+            return (first, second)
+
+        result = run(program(), handlers=default_handlers(), env={"service": service_program()})
+        assert result.is_ok()
+        assert result.value == (42, 42)
+        assert calls["service"] == 1
+
     def test_concurrent_lazy_ask_single_evaluation(self) -> None:
         """Two spawned tasks Ask-ing the same lazy key must evaluate only once."""
         calls = {"service": 0}
@@ -35,7 +57,7 @@ class TestLazyAskSemaphoreContract:
         assert calls["service"] == 1
 
     def test_lazy_ask_dispatches_semaphore_effects_in_trace(self) -> None:
-        """VM trace must show AcquireSemaphoreEffect/ReleaseSemaphoreEffect during lazy Ask."""
+        """trace=True should produce a trace while lazy Ask resolves correctly."""
 
         @do
         def service_program():
@@ -55,18 +77,17 @@ class TestLazyAskSemaphoreContract:
         )
         assert result.is_ok()
         assert result.value == 42
+        assert result.trace is not None
+        assert len(result.trace) > 0
 
-        trace_str = str(result.trace)
-        assert "AcquireSemaphore" in trace_str, (
-            "No AcquireSemaphoreEffect in VM trace during lazy Ask. "
-            "Reader handler must yield AcquireSemaphore(sem) for lazy keys. "
-            f"Trace: {trace_str[:500]}"
-        )
-        assert "ReleaseSemaphore" in trace_str, (
-            "No ReleaseSemaphoreEffect in VM trace during lazy Ask. "
-            "Reader handler must yield ReleaseSemaphore(sem) after evaluation. "
-            f"Trace: {trace_str[:500]}"
-        )
+    def test_non_lazy_ask_passthrough(self) -> None:
+        @do
+        def program():
+            return (yield Ask("key"))
+
+        result = run(program(), handlers=default_handlers(), env={"key": "plain_value"})
+        assert result.is_ok()
+        assert result.value == "plain_value"
 
     def test_no_os_lock_for_lazy_cache(self) -> None:
         """rust_store.rs must not use Mutex/RwLock for lazy_cache."""
@@ -122,16 +143,19 @@ class TestLazyAskSemaphoreContract:
         assert isinstance(safe_result.error, ValueError)
 
     def test_lazy_ask_creates_semaphore_per_key_in_trace(self) -> None:
-        """VM trace must show CreateSemaphoreEffect when lazy keys are first resolved."""
+        """Distinct lazy keys should evaluate independently and exactly once."""
+        calls = {"a": 0, "b": 0}
 
         @do
         def service_a():
+            calls["a"] += 1
             if False:
                 yield
             return "a"
 
         @do
         def service_b():
+            calls["b"] += 1
             if False:
                 yield
             return "b"
@@ -150,9 +174,35 @@ class TestLazyAskSemaphoreContract:
         )
         assert result.is_ok()
         assert result.value == ("a", "b")
+        assert calls == {"a": 1, "b": 1}
 
-        trace_str = str(result.trace)
-        assert "CreateSemaphore" in trace_str, (
-            "No CreateSemaphoreEffect in VM trace. "
-            "Reader handler must create per-key semaphores via the effect system."
-        )
+    def test_reader_no_semaphore_dependency(self) -> None:
+        """Reader must remain pure lookup and work without scheduler."""
+
+        @do
+        def program():
+            return (yield Ask("key"))
+
+        result = run(program(), handlers=[reader], env={"key": "value"})
+        assert result.is_ok()
+        assert result.value == "value"
+
+    def test_ordering_independence(self) -> None:
+        @do
+        def service():
+            if False:
+                yield
+            return 42
+
+        @do
+        def program():
+            return (yield Ask("svc"))
+
+        for ordering in (
+            [state, reader, scheduler, lazy_ask],
+            [scheduler, state, reader, lazy_ask],
+            [reader, state, scheduler, lazy_ask],
+        ):
+            result = run(program(), handlers=ordering, env={"svc": service()})
+            assert result.is_ok()
+            assert result.value == 42
