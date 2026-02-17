@@ -38,12 +38,12 @@ def order_service(order_id):
 # API layer - external interface
 @do
 def get_order_handler(order_id):
-    yield Log(f"Request: GET /orders/{order_id}")
+    yield Tell(f"Request: GET /orders/{order_id}")
     
     result = yield Safe(order_service(order_id))
     order = result.value if result.is_ok() else {"error": str(result.error)}
     
-    yield Log(f"Response: {order}")
+    yield Tell(f"Response: {order}")
     return order
 ```
 
@@ -136,12 +136,12 @@ def unit_of_work(operations):
         
         # Commit
         yield db.commit()
-        yield Log("Transaction committed")
+        yield Tell("Transaction committed")
         return result
     except Exception as e:
         # Rollback on error
         yield db.rollback()
-        yield Log(f"Transaction rolled back: {e}")
+        yield Tell(f"Transaction rolled back: {e}")
         raise e
 
 # Usage
@@ -165,7 +165,7 @@ Wrap operations with consistent error handling:
 ```python
 @do
 def with_error_handling(operation, operation_name):
-    yield Log(f"Starting: {operation_name}")
+    yield Tell(f"Starting: {operation_name}")
     yield Step(f"start_{operation_name}")
     
     safe_result = yield Safe(operation())
@@ -174,13 +174,13 @@ def with_error_handling(operation, operation_name):
     result = safe_result.value if safe_result.is_ok() else None
     
     yield Step(f"end_{operation_name}")
-    yield Log(f"Completed: {operation_name}")
+    yield Tell(f"Completed: {operation_name}")
     
     return result
 
 @do
 def handle_error(operation_name, error):
-    yield Log(f"Error in {operation_name}: {error}")
+    yield Tell(f"Error in {operation_name}: {error}")
     yield Annotate({"error": str(error), "operation": operation_name})
 
 # Usage
@@ -207,7 +207,7 @@ def retry_with_exponential_backoff(operation, max_attempts=5):
         
         if attempt < max_attempts:
             delay = 2 ** attempt  # Exponential backoff
-            yield Log(f"Retry {attempt} failed, waiting {delay}s")
+            yield Tell(f"Retry {attempt} failed, waiting {delay}s")
             yield Await(asyncio.sleep(delay))
         else:
             raise safe_result.error
@@ -234,7 +234,7 @@ def with_resource(acquire, release, operation):
         return result
     finally:
         yield release(resource)
-        yield Log("Resource released")
+        yield Tell("Resource released")
 
 # Usage
 @do
@@ -243,7 +243,7 @@ def use_database_connection():
     def acquire():
         db = yield Ask("database")
         conn = yield db.get_connection()
-        yield Log("Connection acquired")
+        yield Tell("Connection acquired")
         return conn
     
     @do
@@ -271,7 +271,7 @@ def circuit_breaker(operation, threshold=5, timeout=60):
     now = yield IO(lambda: time.time())
     if failures >= threshold:
         if last_failure_time and (now - last_failure_time) < timeout:
-            yield Log("Circuit breaker OPEN")
+            yield Tell("Circuit breaker OPEN")
             raise Exception("Circuit breaker is open")
         else:
             # Reset after timeout
@@ -306,17 +306,17 @@ def order_state_machine(order_id):
     if state == "pending":
         yield process_payment(order_id)
         yield Put(f"order_{order_id}_state", "paid")
-        yield Log(f"Order {order_id}: pending -> paid")
+        yield Tell(f"Order {order_id}: pending -> paid")
     
     elif state == "paid":
         yield ship_order(order_id)
         yield Put(f"order_{order_id}_state", "shipped")
-        yield Log(f"Order {order_id}: paid -> shipped")
+        yield Tell(f"Order {order_id}: paid -> shipped")
     
     elif state == "shipped":
         yield complete_order(order_id)
         yield Put(f"order_{order_id}_state", "completed")
-        yield Log(f"Order {order_id}: shipped -> completed")
+        yield Tell(f"Order {order_id}: shipped -> completed")
     
     else:
         raise ValueError(f"Invalid state: {state}")
@@ -365,7 +365,7 @@ def with_state_snapshot(operation):
     if safe_result.is_err():
         # Restore state and raise
         yield Put("_state", snapshot)
-        yield Log("State restored from snapshot")
+        yield Tell("State restored from snapshot")
         raise safe_result.error
     
     return safe_result.value
@@ -411,7 +411,7 @@ def batch_processor(items, batch_size=100):
 
     for i in range(0, len(items), batch_size):
         batch = items[i:i + batch_size]
-        yield Log(f"Processing batch {i//batch_size + 1}")
+        yield Tell(f"Processing batch {i//batch_size + 1}")
 
         # Use Gather to run Programs in parallel
         batch_results = yield Gather(*[
@@ -484,7 +484,7 @@ def test_effects_executed():
     @do
     def program():
         yield Put("key", "value")
-        yield Log("Logged message")
+        yield Tell("Logged message")
         yield Step("step1")
         return "result"
 
@@ -602,7 +602,7 @@ def good_error_handling():
     result = yield Safe(risky_operation())
     
     if result.is_err():
-        yield Log(f"Error occurred: {result.error}")
+        yield Tell(f"Error occurred: {result.error}")
         yield Annotate({"error": str(result.error)})
         # Return default value or re-raise
         raise result.error
