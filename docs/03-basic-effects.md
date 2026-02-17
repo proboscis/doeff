@@ -94,6 +94,11 @@ This is useful for:
 - Deferred initialization of complex configurations
 - Lazy loading of resources
 
+**Concurrency note for lazy `Ask`:**
+- Concurrent `Ask(key)` calls for the same lazy key are coordinated with a per-key semaphore.
+- At most one task evaluates the lazy program; other tasks wait cooperatively and reuse the cached result.
+- Waiting on the same key is not treated as a circular dependency.
+
 See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
 ### Local - Temporary Environment Override
@@ -130,6 +135,12 @@ def fetch_data():
 - Different settings for sub-operations
 - Scoped feature flags
 - Temporary overrides
+
+#### Local Composition Rules
+
+- `Local + Local`: nested scopes are LIFO. Inner overrides win inside the inner scope, then each scope restores independently.
+- `Local + Safe`: environment restoration still happens if the inner program raises and the error is caught by `Safe`.
+- `Local + Gather`: gathered child programs inherit the enclosing Local environment snapshot. A child's own `Local` stays isolated to that child scope.
 
 ### Reader Pattern Example
 
@@ -219,9 +230,11 @@ def increment_counter():
 
 **Returns:** The new (transformed) value after applying the function.
 
-**Note:** If the key doesn't exist, `Modify` passes `None` to the function (unlike `Get` which raises `KeyError`).
+**Missing-key behavior:** If the key doesn't exist, `Modify` passes `None` to the function (unlike `Get` which raises `KeyError`).
 
-**Equivalent to:**
+**Atomicity:** If the transform function raises, the store is unchanged.
+
+**Equivalent when the key already exists:**
 ```python
 @do
 def increment_counter_manual():
@@ -230,6 +243,14 @@ def increment_counter_manual():
     yield Put("counter", new_value)
     return new_value
 ```
+
+For missing keys, `Modify` and `Get` + `Put` are not equivalent because `Get` raises `KeyError` while `Modify` passes `None`.
+
+### State Composition Rules
+
+- `State + Safe`: state changes made before an error persist even when `Safe` catches that error. There is no automatic rollback.
+- `State + Gather` in `SyncRuntime`: gathered branches run sequentially in input order and share one store.
+- `State + Gather` in `AsyncRuntime`: branches share one store but execution can interleave, so read-modify-write patterns can race without explicit coordination.
 
 ### State Pattern Examples
 
@@ -315,6 +336,8 @@ def main():
 main()
 ```
 
+`Tell` is not string-only. It accepts and stores any Python object unchanged, including dictionaries, numbers, and custom objects.
+
 ### StructuredLog / slog - Structured Entries
 
 `StructuredLog(**entries)` logs a dictionary payload.
@@ -375,24 +398,26 @@ def outer_operation():
     return listen_result
 ```
 
-`ListenResult.log` is a `BoundedLog` (list-like), not a plain `list`:
+`ListenResult.log` is a plain typed `list`:
 
 ```python
 @dataclass
 class ListenResult(Generic[T]):
     value: T
-    log: BoundedLog
+    log: list[object]
 ```
 
 ### Listen Composition Rules
 
 - `Listen + Tell`: entries told in the Listen scope appear in `ListenResult.log`.
 - `Listen + Local`: entries from inside `Local(...)` are captured normally by Listen.
-- `Listen + Safe`: entries before an error are preserved; `Safe` does not clear writer logs.
+- `Listen + Safe`:
+  - `Listen(Safe(sub_program))` returns `ListenResult` whose `.value` is a `Result`; entries before the caught error remain in `.log`.
+  - `Safe(Listen(sub_program))` returns `Err(...)` if `sub_program` fails before Listen completes; no `ListenResult` is produced on that path.
 - `Listen + Gather`: gathered programs share the same log store.
 - `Listen + Gather` in `SyncRuntime`: ordering is sequential in program order.
 - `Listen + Gather` in `AsyncRuntime`: ordering is non-deterministic and may interleave.
-- `Listen + Listen` (nested): inner Listen captures its own scope; outer Listen sees all entries.
+- `Listen + Listen` (nested): the inner Listen captures only its own scope; the outer Listen captures the full outer scope, including entries produced by the inner scope.
 
 ### Writer Pattern Examples
 
