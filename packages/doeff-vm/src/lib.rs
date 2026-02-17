@@ -45,7 +45,8 @@ pub use effect::{Effect, PyAsk, PyGet, PyModify, PyPut, PyTell};
 pub use error::VMError;
 pub use frame::Frame;
 pub use handler::{
-    Handler, HandlerEntry, ReaderHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
+    Handler, HandlerEntry, LazyAskHandlerFactory, ReaderHandlerFactory, StateHandlerFactory,
+    WriterHandlerFactory,
 };
 pub use ids::{CallbackId, ContId, DispatchId, Marker, RunnableId, SegmentId};
 pub use pyvm::{DoExprTag, PyStdlib, PyVM};

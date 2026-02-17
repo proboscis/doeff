@@ -289,11 +289,15 @@ class TestG24HandlerResumeSemantics:
     """G24: Reader/Writer handlers resume() must be unreachable, not Return."""
 
     def test_reader_handler_resume_is_unreachable(self) -> None:
-        """ReaderHandlerProgram::resume should implement phased resume flow."""
+        """ReaderHandlerProgram::resume must be unreachable for one-shot lookup."""
         import pathlib
 
         handler_src = pathlib.Path(
-            "/Users/s22625/repos/doeff/packages/doeff-vm/src/handler.rs"
+            pathlib.Path(__file__).resolve().parents[2]
+            / "packages"
+            / "doeff-vm"
+            / "src"
+            / "handler.rs"
         ).read_text()
 
         # Find ReaderHandlerProgram's resume method
@@ -301,17 +305,21 @@ class TestG24HandlerResumeSemantics:
         reader_section = _extract_impl_resume(handler_src, "ReaderHandlerProgram")
         assert reader_section is not None, "Could not find ReaderHandlerProgram::resume"
 
-        assert "ReaderPhase::AwaitHandlers" in reader_section
-        assert "ReaderPhase::AwaitEval" in reader_section
-        assert "DoCtrl::Eval" in reader_section
-        assert "DoCtrl::Resume" in reader_section
+        assert "unreachable!" in reader_section, (
+            "ReaderHandlerProgram::resume should be unreachable for pure Ask lookup, "
+            f"but contains: {reader_section.strip()}"
+        )
 
     def test_writer_handler_resume_is_unreachable(self) -> None:
         """WriterHandlerProgram::resume must use unreachable!(), not Return."""
         import pathlib
 
         handler_src = pathlib.Path(
-            "/Users/s22625/repos/doeff/packages/doeff-vm/src/handler.rs"
+            pathlib.Path(__file__).resolve().parents[2]
+            / "packages"
+            / "doeff-vm"
+            / "src"
+            / "handler.rs"
         ).read_text()
 
         writer_section = _extract_impl_resume(handler_src, "WriterHandlerProgram")
