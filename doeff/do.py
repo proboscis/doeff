@@ -132,8 +132,8 @@ def do(
     EFFECT-BASED ALTERNATIVES (for complex error handling):
         @do
         def my_program():
-            # Use Safe to capture errors as Result values
-            safe_result = yield Safe(some_effect())
+            # Use Try to capture errors as Result values
+            safe_result = yield Try(some_effect())
             if safe_result.is_ok():
                 value = safe_result.value
             else:
@@ -141,7 +141,7 @@ def do(
 
             return value
 
-    Both approaches work. Use native try-except for simple cases and the Safe effect
+    Both approaches work. Use native try-except for simple cases and the Try effect
     for capturing errors as Result values that can be inspected and handled.
 
     TYPE SIGNATURE CHANGE:

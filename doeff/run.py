@@ -5,7 +5,7 @@ This module provides a programmatic interface to run doeff programs with the sam
 auto-discovery and environment loading logic as the `doeff run` CLI command.
 
 Example:
-    >>> from doeff import run_program
+    >>> from doeff.run import run_program
     >>> result = run_program("myapp.features.auth.login_program")
     >>> print(result.value)
 
@@ -350,7 +350,8 @@ def _apply_envs(
 ) -> tuple[Program[Any], list[str]]:
     from doeff.__main__ import RunServices
     from doeff.effects import Local
-    from doeff.rust_vm import default_handlers, run as vm_run
+    from doeff.rust_vm import default_handlers
+    from doeff.rust_vm import run as vm_run
 
     env_sources: list[str] = []
     merged_env: dict[str, Any] = {}
@@ -448,7 +449,8 @@ def _execute_program(
     interpreter_obj: Any,
 ) -> Any:
     from doeff.__main__ import _call_interpreter, _finalize_result
-    from doeff.rust_vm import default_handlers, run as vm_run
+    from doeff.rust_vm import default_handlers
+    from doeff.rust_vm import run as vm_run
 
     if interpreter_obj is None:
         return vm_run(program, handlers=default_handlers()).value

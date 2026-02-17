@@ -13,7 +13,8 @@ import asyncio
 
 from doeff_preset import preset_handlers
 
-from doeff import Ask, async_run_with_handler_map, do, run_with_handler_map, slog
+from doeff import Ask, do, slog
+from doeff.rust_vm import async_run_with_handler_map, run_with_handler_map
 
 
 @do

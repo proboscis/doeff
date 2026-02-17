@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
 import importlib
 import inspect
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 
@@ -154,13 +154,13 @@ def default_async_handlers() -> list[Any]:
     return [*_core_handler_sentinels(vm), async_await_handler]
 
 
-def wrap_with_handler_map(
+def _wrap_with_handler_map(
     program: Any, handler_map: Mapping[type, Callable[[Any, Any], Any]]
 ) -> Any:
     """Wrap a program with typed WithHandler layers from an effect->handler mapping."""
     vm = _vm()
-    with_handler = getattr(vm, "WithHandler")
-    delegate = getattr(vm, "Delegate")
+    with_handler = vm.WithHandler
+    delegate = vm.Delegate
 
     wrapped = _coerce_program(program)
     for effect_type, handler in reversed(list(handler_map.items())):
@@ -186,7 +186,7 @@ def run_with_handler_map(
     trace: bool = False,
 ) -> Any:
     """Run with typed Python handlers plus the standard default handler sentinels."""
-    wrapped = wrap_with_handler_map(program, handler_map)
+    wrapped = _wrap_with_handler_map(program, handler_map)
     return run(wrapped, handlers=default_handlers(), env=env, store=store, trace=trace)
 
 
@@ -199,7 +199,7 @@ async def async_run_with_handler_map(
     trace: bool = False,
 ) -> Any:
     """Async counterpart to run_with_handler_map."""
-    wrapped = wrap_with_handler_map(program, handler_map)
+    wrapped = _wrap_with_handler_map(program, handler_map)
     return await async_run(
         wrapped,
         handlers=default_async_handlers(),
@@ -289,30 +289,27 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "run",
-    "async_run",
-    "run_with_handler_map",
-    "async_run_with_handler_map",
-    "wrap_with_handler_map",
-    "default_handlers",
-    "default_async_handlers",
-    "RunResult",
-    "WithHandler",
-    "Pure",
     "Call",
-    "Eval",
-    "Perform",
-    "Resume",
     "Delegate",
-    "Transfer",
-    "ResumeContinuation",
+    "Eval",
     "GetTrace",
-    "PythonAsyncSyntaxEscape",
     "K",
-    "state",
-    "reader",
-    "writer",
-    "result_safe",
-    "lazy_ask",
+    "Perform",
+    "Pure",
+    "PythonAsyncSyntaxEscape",
+    "Resume",
+    "ResumeContinuation",
+    "RunResult",
+    "Transfer",
+    "WithHandler",
+    "async_run",
     "await_handler",
+    "default_async_handlers",
+    "default_handlers",
+    "lazy_ask",
+    "reader",
+    "result_safe",
+    "run",
+    "state",
+    "writer",
 ]
