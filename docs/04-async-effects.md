@@ -74,13 +74,19 @@ The scheduler primitives are:
 | `Spawn(program)` | doeff program | `Task[T]` | Start child task and continue immediately |
 | `Wait(task_or_future)` | `Task` or `Future` waitable handle | `T` | Suspend until one waitable resolves |
 | `Gather(*waitables)` | `Task`/`Future` waitable handles | `list[T]` | Suspend until all complete (input order) |
-| `Race(*waitables)` | `Task`/`Future` waitable handles | winner value | Suspend until first completion |
+| `Race(*waitables)` | `Task`/`Future` waitable handles | `RaceResult` | Suspend until first completion |
 | `Cancel(task)` | `Task[T]` | `None` | Request task cancellation (`yield task.cancel()`) |
 | `SchedulerYield` | internal | internal | Cooperative preemption point inserted per yield |
 | `CreatePromise()` | none | `Promise[T]` | Allocate doeff-internal promise |
 | `CompletePromise(p, value)` | `Promise[T]`, `T` | `None` | Resolve promise successfully |
 | `FailPromise(p, error)` | `Promise[Any]`, exception | `None` | Resolve promise with error |
 | `CreateExternalPromise()` | none | `ExternalPromise[T]` | Allocate externally-completable promise |
+
+`RaceResult` exposes:
+
+- `result.first`: winning waitable handle (`Task` or `Future`)
+- `result.value`: winning value
+- `result.rest`: remaining waitables (losers)
 
 ## Waitables and Handles
 
@@ -115,9 +121,11 @@ def parallel():
     task1 = yield Spawn(work_1())
     task2 = yield Spawn(work_2())
 
-    winner = yield Race(task1, task2)
+    result = yield Race(task1, task2)
+    winner = result.value
+    losers = result.rest
     all_results = yield Gather(task1, task2)
-    return winner, all_results
+    return winner, losers, all_results
 ```
 
 ## Task Lifecycle and Scheduling Model
@@ -131,6 +139,10 @@ At VM level, scheduling stays handler-internal:
 - Scheduler selects another ready task and continues execution.
 - VM keeps stepping `Continue` states; task switching is not exposed as a VM primitive.
 - When a waitable completes, scheduler callbacks wake blocked tasks and reschedule them.
+
+The scheduler is single-threaded with no OS-style preemption. Ready tasks are interleaved in
+round-robin order, and context switches happen at effect yield points via internal
+`SchedulerYield` dispatch.
 
 ### store isolation
 
@@ -174,11 +186,15 @@ def collect_all_even_on_errors():
 
 `Race(*waitables)` resumes on first completion of a `Task`/`Future` waitable:
 
-- first completed waitable determines result
+- first completed waitable determines the returned `RaceResult`
+- `result.first` is the winning waitable handle
+- `result.value` is the winning value
+- `result.rest` is the remaining waitables
 - if that completion is an error, `Race` raises that error
 - if that completion is cancellation, `Race` raises `TaskCancelledError`
 
-For first-wins workflows, apply sibling cancellation immediately after `Race`.
+Race losers continue running by default. Cancel them explicitly if needed (for Task inputs):
+`for t in result.rest: yield t.cancel()`.
 
 ```python
 from doeff import Race, Spawn, do
@@ -187,12 +203,14 @@ from doeff import Race, Spawn, do
 def first_result():
     t1 = yield Spawn(job("a", 0.3))
     t2 = yield Spawn(job("b", 0.1))
-    value = yield Race(t1, t2)
+    result = yield Race(t1, t2)
+    winner = result.first
+    value = result.value
 
-    # sibling cancellation for branch teardown
-    _ = yield t1.cancel()
-    _ = yield t2.cancel()
-    return value
+    # Race losers continue by default; cancel explicitly for teardown.
+    for t in result.rest:
+        _ = yield t.cancel()
+    return winner, value
 ```
 
 ## Cancel and TaskCancelledError
@@ -200,8 +218,10 @@ def first_result():
 Cancellation is explicit and cooperative:
 
 - request cancellation via `yield task.cancel()`
+- `Cancel` applies to `Pending`, `Running`, `Suspended`, and `Blocked` tasks
+- cancelling `Completed`/`Failed`/`Cancelled` tasks is a no-op
 - waiters (`Wait`, `Gather`, `Race`) observe cancelled tasks as `TaskCancelledError`
-- cancellation request returns immediately; error appears when the task is joined/observed
+- cancellation request returns immediately; running tasks cancel at next `SchedulerYield`
 
 ```python
 from doeff import Safe, Spawn, Wait, do
@@ -262,8 +282,8 @@ It is sequential under `sync_await_handler`; use `async_run(...)` for overlap.
 | `Spawn(program)` | starting concurrent doeff task | Returns `Task[T]` |
 | `Wait(waitable)` | waiting for one task/future handle | Accepts only `Task` or `Future` handles |
 | `Gather(*waitables)` | waiting for all spawned children | Pass `Task`/`Future` handles; fail-fast on first error/cancellation |
-| `Race(*waitables)` | waiting for first spawned child | Pass `Task`/`Future` handles; first completion determines result |
-| `Cancel(task)` | requesting task cancellation | User API is `yield task.cancel()` |
+| `Race(*waitables)` | waiting for first spawned child | Returns `RaceResult` (`first`, `value`, `rest`); losers continue unless cancelled |
+| `Cancel(task)` | requesting task cancellation | Applies to `Pending`/`Running`/`Suspended`/`Blocked`; terminal states are no-op |
 | `SchedulerYield` | understanding scheduler fairness | Internal cooperative preemption point |
 | `CreatePromise()` | internal producer/consumer sync | Complete/fail via effects |
 | `CompletePromise(...)` | resolve internal promise | Wakes waiters |
