@@ -184,7 +184,7 @@ UI edits can be serialized back to Hy code for version control.
 | **Testing** | Requires GPU + models | **Mock handlers, instant** |
 | **Caching** | Custom hash logic | doeff `@cache` decorator |
 | **Events** | Bespoke WebSocket | Effect interception |
-| **Error handling** | Try/catch scattered | `Safe` effect, structured |
+| **Error handling** | Try/catch scattered | `Try` effect, structured |
 | **Extensibility** | Monkey-patch nodes | Compose programs |
 | **Round-trip** | UI → JSON only | UI ↔ Hy ↔ JSON |
 
@@ -283,7 +283,7 @@ doeff-flow workflows compose like functions:
 (defn with-retry [node-fn retries]
   (defnode retry-wrapper [& args]
     (loop [attempts retries]
-      (let [result (yield (Safe (apply node-fn args)))]
+      (let [result (yield (Try (apply node-fn args)))]
         (if (or (.is-ok result) (zero? attempts))
           (.unwrap result)
           (recur (dec attempts)))))))
