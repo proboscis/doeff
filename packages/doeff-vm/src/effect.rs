@@ -38,7 +38,15 @@ pub struct PyModify {
 #[pyclass(frozen, name = "PyAsk", extends=PyEffectBase)]
 pub struct PyAsk {
     #[pyo3(get)]
-    pub key: String,
+    pub key: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "PyLocal", extends=PyEffectBase)]
+pub struct PyLocal {
+    #[pyo3(get)]
+    pub env_update: Py<PyAny>,
+    #[pyo3(get)]
+    pub sub_program: Py<PyAny>,
 }
 
 #[pyclass(frozen, name = "PyTell", extends=PyEffectBase)]
@@ -151,11 +159,25 @@ impl PyModify {
 #[pymethods]
 impl PyAsk {
     #[new]
-    fn new(key: String) -> PyClassInitializer<Self> {
+    fn new(key: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
         })
         .add_subclass(PyAsk { key })
+    }
+}
+
+#[pymethods]
+impl PyLocal {
+    #[new]
+    fn new(env_update: Py<PyAny>, sub_program: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyLocal {
+            env_update,
+            sub_program,
+        })
     }
 }
 

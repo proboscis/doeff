@@ -20,6 +20,7 @@ pub mod error;
 pub mod frame;
 mod handler;
 pub mod ids;
+pub mod py_key;
 pub mod py_shared;
 pub mod python_call;
 pub mod pyvm;
@@ -40,7 +41,7 @@ pub use continuation::Continuation;
 pub use dispatch::DispatchContext;
 pub use do_ctrl::DoCtrl;
 pub use driver::{Mode, StepEvent};
-pub use effect::{Effect, PyAsk, PyCancelEffect, PyGet, PyModify, PyPut, PyTell};
+pub use effect::{Effect, PyAsk, PyCancelEffect, PyGet, PyLocal, PyModify, PyPut, PyTell};
 pub use error::VMError;
 pub use frame::Frame;
 pub use handler::{
@@ -48,6 +49,7 @@ pub use handler::{
     WriterHandlerFactory,
 };
 pub use ids::{CallbackId, ContId, DispatchId, Marker, RunnableId, SegmentId};
+pub use py_key::HashedPyKey;
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 pub use pyvm::{DoExprTag, PyStdlib, PyVM};
 pub use rust_store::RustStore;
