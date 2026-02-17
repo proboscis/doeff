@@ -28,7 +28,7 @@ program in one of two ways:
 ```python
 import asyncio
 
-from doeff import ExecutionContext, ProgramInterpreter, do
+from doeff import async_run, default_async_handlers, do
 from doeff_seedream import edit_image__seedream4
 
 @do
@@ -39,9 +39,13 @@ def main():
     )
     result.images[0].save("harbour.png")
 
-engine = ProgramInterpreter()
-context = ExecutionContext(env={"seedream_api_key": "YOUR_ARK_KEY"})
-run_result = asyncio.run(engine.run(main(), context=context))
+run_result = asyncio.run(
+    async_run(
+        main(),
+        handlers=default_async_handlers(),
+        env={"seedream_api_key": "YOUR_ARK_KEY"},
+    )
+)
 run_result.value
 ```
 
@@ -67,7 +71,7 @@ is automatically encoded as a data URI that satisfies the Ark API requirements.
 Calls to the Ark API are wrapped with ``track_api_call``. The resulting
 ``Step`` entries include latency, number of images generated, and a sanitized
 copy of the request payload so you can inspect program traces produced by the
-interpreter's graph utilities.
+runtime graph utilities.
 
 ## Cost tracking
 
@@ -77,7 +81,7 @@ mapping under ``seedream_cost_per_size_usd`` where keys are ``"1K"``, ``"2K"``,
 ``"4K"`` or explicit resolutions such as ``"2048x2048"``. Each request writes to
 atomic shared state keys:
 
-- ``seedream_total_cost_usd`` – running total across the interpreter session.
+- ``seedream_total_cost_usd`` – running total across the runtime session.
 - ``seedream_cost_<model>`` – model-specific totals.
 - ``seedream_api_calls`` – append-only list capturing per-call cost metadata.
 

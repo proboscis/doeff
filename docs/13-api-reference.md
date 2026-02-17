@@ -49,24 +49,29 @@ All effects implement this protocol.
 
 ---
 
-### ExecutionContext
+### Runtime Inputs (`run` / `async_run`)
 
-Mutable context for Program execution.
+Runtime inputs are passed directly to `run()` and `async_run()` keyword arguments.
 
 ```python
-@dataclass
-class ExecutionContext:
-    env: dict[str, Any] = field(default_factory=dict)
-    state: dict[str, Any] = field(default_factory=dict)
-    log: list[LogEntry] = field(default_factory=list)
-    graph: WGraph = field(default_factory=WGraph.empty)
-    memo: dict[str, Any] = field(default_factory=dict)
-    cache_handler: CacheHandler | None = None
-    atomic_state: dict[str, Any] = field(default_factory=dict)
-    atomic_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+result = run(
+    program,
+    handlers=default_handlers(),
+    env={"feature_flag": True},
+    state={"counter": 0},
+    store={"cache_key": "value"},
+)
+
+result = await async_run(
+    program,
+    handlers=default_async_handlers(),
+    env={"feature_flag": True},
+    state={"counter": 0},
+    store={"cache_key": "value"},
+)
 ```
 
-**Fields:**
+**Common kwargs:**
 
 - **`env`** - Environment variables (Ask/Local effects)
 - **`state`** - Mutable state (Get/Put/Modify effects)
@@ -76,8 +81,9 @@ class ExecutionContext:
 - **`cache_handler`** - Persistent cache handler (CacheGet/CachePut)
 - **`atomic_state`** - Thread-safe state (AtomicGet/AtomicUpdate)
 - **`atomic_lock`** - Lock for atomic operations
+- **`handlers`** - Handler map, typically from `default_handlers()` or `default_async_handlers()`.
 
-**See:** [Core Concepts](02-core-concepts.md#executioncontext)
+**See:** [Core Concepts](02-core-concepts.md#execution-flow)
 
 ---
 

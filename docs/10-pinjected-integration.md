@@ -40,7 +40,7 @@ def service_program():
 
 | Context | Ask Resolution |
 |---------|----------------|
-| Direct Runtime | ExecutionContext.env |
+| Direct Runtime | `run(..., env={...})` / `async_run(..., env={...})` |
 | program_to_injected | pinjected resolver |
 
 When using `program_to_injected`, Ask effects are intercepted and resolved through pinjected's dependency injection system.

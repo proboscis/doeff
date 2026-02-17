@@ -12,8 +12,13 @@ Provide `gemini_api_key`. Optional extras:
 
 Minimal example:
 ```python
-ctx = ExecutionContext(env={"gemini_api_key": "your-api-key"})
-result = await ProgramInterpreter().run_async(my_program(), ctx)
+from doeff import async_run, default_async_handlers
+
+result = await async_run(
+    my_program(),
+    handlers=default_async_handlers(),
+    env={"gemini_api_key": "your-api-key"},
+)
 ```
 
 ## Application Default Credentials (ADC)
@@ -27,11 +32,14 @@ If `gemini_api_key` is absent, the client attempts ADC:
 
 Example with explicit project:
 ```python
-ctx = ExecutionContext(env={
-    "gemini_project": "your-project-id",
-    "gemini_location": "global",  # optional override
-})
-result = await ProgramInterpreter().run_async(my_program(), ctx)
+result = await async_run(
+    my_program(),
+    handlers=default_async_handlers(),
+    env={
+        "gemini_project": "your-project-id",
+        "gemini_location": "global",  # optional override
+    },
+)
 ```
 
 ## Environment keys consulted

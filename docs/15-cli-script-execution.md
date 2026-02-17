@@ -77,13 +77,11 @@ uv run doeff run --program tests.cli_assets.sample_program --interpreter tests.c
 print(f"Initial execution: {value}")
 
 # Re-run using the injected interpreter
-if isinstance(interpreter, ProgramInterpreter):
-    run_again = interpreter.run(program)
-    print(f"Re-run result: {run_again.value}")
-else:
-    # Interpreter is a function
+if callable(interpreter):
     run_again_value = interpreter(program)
     print(f"Re-run result: {run_again_value}")
+else:
+    raise TypeError(f"interpreter is not callable: {type(interpreter)}")
 PY
 ```
 
@@ -157,7 +155,7 @@ The following variables are automatically injected into your script's global nam
 |----------|------|-------------|
 | `program` | `Program[T]` | The executed program (with envs, transforms, etc. applied) |
 | `value` | `T` | The final execution result (unwrapped) |
-| `interpreter` | `ProgramInterpreter \| Callable` | The interpreter used (instance or function) |
+| `interpreter` | `Callable[[Program[T]], Any]` | The interpreter callable used for execution |
 
 ### Utility Classes
 
@@ -165,7 +163,8 @@ The following variables are automatically injected into your script's global nam
 |----------|------|-------------|
 | `RunResult` | `Type[RunResult]` | RunResult class for type checking |
 | `Program` | `Type[Program]` | Program class for type checking |
-| `ProgramInterpreter` | `Type[ProgramInterpreter]` | ProgramInterpreter class for creating new instances |
+| `run` | `Callable[..., RunResult[T]]` | Runtime entrypoint for executing programs |
+| `default_handlers` | `Callable[[], dict]` | Builds the default sync handler set |
 
 ### Standard Library
 
@@ -182,15 +181,19 @@ import json
 
 # Check types
 print(f"Program is Program instance: {isinstance(program, Program)}")
-print(f"Interpreter is ProgramInterpreter: {isinstance(interpreter, ProgramInterpreter)}")
+print(f"Interpreter is callable: {callable(interpreter)}")
 
 # Access result
 print(f"Value: {value}")
 
 # Use utility classes
-if isinstance(interpreter, ProgramInterpreter):
-    new_result = interpreter.run(program)
-    print(f"New result: {new_result.value}")
+if callable(interpreter):
+    new_result = interpreter(program)
+    print(f"New result: {new_result}")
+
+# Use runtime helpers
+runtime_result = run(program, handlers=default_handlers())
+print(f"Runtime helper result: {runtime_result.value}")
 
 # Use standard library
 print(f"Python version: {sys.version}")
@@ -243,10 +246,9 @@ Modify and re-execute programs:
 
 ```bash
 uv run doeff run --program myapp.base_program - <<'PY'
-# Re-run with different interpreter
-new_interpreter = ProgramInterpreter()
-result = new_interpreter.run(program)
-print(f"Re-run with new interpreter: {result.value}")
+# Re-run with runtime helpers
+result = run(program, handlers=default_handlers())
+print(f"Re-run result: {result.value}")
 PY
 ```
 
@@ -321,20 +323,17 @@ print(f"Value: {value}")  # Shell might try to expand {value}
 PY
 ```
 
-### 3. Check Interpreter Type
+### 3. Check Interpreter Callability
 
-Handle both `ProgramInterpreter` instances and functions:
+Handle interpreter objects as generic callables:
 
 ```bash
 uv run doeff run --program myapp.program - <<'PY'
-if isinstance(interpreter, ProgramInterpreter):
-    # Interpreter is an instance
-    result = interpreter.run(program)
-    print(f"Result: {result.value}")
-else:
-    # Interpreter is a function
+if callable(interpreter):
     result = interpreter(program)
     print(f"Result: {result}")
+else:
+    print(f"Unexpected interpreter type: {type(interpreter)}")
 PY
 ```
 
@@ -363,12 +362,11 @@ Handle potential errors in your scripts:
 ```bash
 uv run doeff run --program myapp.program - <<'PY'
 try:
-    if isinstance(interpreter, ProgramInterpreter):
-        result = interpreter.run(program)
-        print(f"Success: {result.value}")
-    else:
+    if callable(interpreter):
         result = interpreter(program)
         print(f"Success: {result}")
+    else:
+        raise TypeError(f"interpreter is not callable: {type(interpreter)}")
 except Exception as e:
     print(f"Error: {e}", file=sys.stderr)
     sys.exit(1)
@@ -459,12 +457,9 @@ uv run doeff run --program myapp.program - <<'PY'
 # Always check type first
 print(f"Interpreter type: {type(interpreter).__name__}")
 
-if isinstance(interpreter, ProgramInterpreter):
-    # It's an instance
-    result = interpreter.run(program)
-elif callable(interpreter):
-    # It's a function
+if callable(interpreter):
     result = interpreter(program)
+    print(f"Result: {result}")
 else:
     print(f"Unknown interpreter type: {type(interpreter)}")
 PY
