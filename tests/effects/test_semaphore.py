@@ -303,4 +303,5 @@ class TestSemaphoreRuntimeBehavior:
         assert result.is_ok()
         waiter_result, remaining = result.value
         assert waiter_result.is_err()
+        assert isinstance(waiter_result.error, TaskCancelledError)
         assert remaining == 0
