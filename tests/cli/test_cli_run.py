@@ -159,7 +159,6 @@ def test_doeff_run_missing_interpreter_argument() -> None:
 # E2E Tests for Auto-Discovery Feature
 
 
-@pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_auto_discover_interpreter_and_env() -> None:
     """Test auto-discovery of interpreter and environments."""
     result = run_cli(
@@ -184,7 +183,6 @@ def test_auto_discover_interpreter_and_env() -> None:
     assert "auth_env" in payload["envs"][2]
 
 
-@pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_manual_interpreter_overrides_discovery() -> None:
     """Test that explicit --interpreter overrides auto-discovery."""
     result = run_cli(
@@ -222,7 +220,6 @@ def test_no_default_interpreter_error() -> None:
     assert "tests.cli_assets.sample_program" in payload["message"]
 
 
-@pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_auto_discovery_with_apply() -> None:
     """Test auto-discovery works with --apply flag."""
     result = run_cli(
@@ -242,7 +239,6 @@ def test_auto_discovery_with_apply() -> None:
     assert "interpreter" in payload or payload["status"] == "error"
 
 
-@pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_auto_discovery_with_transform() -> None:
     """Test auto-discovery works with --transform flag."""
     result = run_cli(
@@ -375,7 +371,6 @@ print(f"sync_handlers_preset present: {has_preset}")
     assert "sync_handlers_preset present: False" in result.stdout
 
 
-@pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_doeff_run_with_script_auto_discovery() -> None:
     """Test that auto-discovered interpreter and environments are loaded in script execution."""
     script = """
