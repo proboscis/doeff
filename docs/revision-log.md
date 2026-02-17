@@ -3,6 +3,16 @@
 Historical and migration notes are collected here so the main documentation chapters stay focused on
 the current architecture and APIs.
 
+## DA3-007 (2026-02-17)
+
+Removed component matrix for the KPC transition (historical reference):
+
+| Removed component | Previous role | Current replacement |
+| --- | --- | --- |
+| `KPC` effect value type | Represented call intent as an effect payload | `Call` DoCtrl emitted directly by `KleisliProgram.__call__` |
+| KPC runtime handler | Interpreted `KPC(...)` through handler dispatch | Standard VM evaluation of `Call(...)` DoExpr |
+| KPC-specific dispatch path | Special-case effect-dispatch branch | Call-time macro expansion + regular DoExpr execution |
+
 ## DA2-007 (2026-02-17)
 
 Updates for KPC/Intercept documentation gaps:

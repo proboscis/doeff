@@ -109,6 +109,36 @@ program = fetch_user(Ask("active_user_id"))
 
 `program` above is a `DoExpr` (`Call`) that is evaluated by `run`/`async_run`.
 
+### Non-Generator `@do` Functions
+
+`@do` also supports non-generator functions that use plain `return` and never
+`yield`. In that case, call-time expansion still produces a valid `Call` node,
+and runtime evaluation returns the function result normally.
+
+### Metadata Preservation
+
+The decorator preserves normal function metadata so tooling still works:
+`__doc__`, `__name__`, `__qualname__`, `__module__`, `__annotations__`, and
+the inspectable signature. This metadata preservation is part of the public
+behavior contract for `@do`.
+
+### Method Decoration via `__get__`
+
+`KleisliProgram` implements descriptor binding (`__get__`), so `@do` works on
+instance methods the same way as regular Python methods. The bound instance is
+applied at call time before `Call(...)` construction.
+
+### Kleisli `>>` Composition
+
+Kleisli arrows support `>>` composition (alias of `and_then_k`) to chain
+`KleisliProgram` values directly. This is Kleisli-level composition, not VM
+instruction composition.
+
+```python
+fetch_user_posts = fetch_user >> fetch_posts
+program = fetch_user_posts(7)
+```
+
 ## Rust VM Execution Pipeline
 
 Runtime flow:

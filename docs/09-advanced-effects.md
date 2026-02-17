@@ -307,6 +307,8 @@ def transform(effect: Effect) -> Effect | Program | None:
 - `Effect`: substitute with that effect (it is not re-transformed by the same `InterceptFrame`).
 - `Program`: replace the effect by executing that program under the current intercept scope.
 - First non-`None` transform wins.
+- If a transform raises an exception, that transform exception propagates and
+  Intercept evaluation fails for that step.
 
 ### Child Propagation
 
