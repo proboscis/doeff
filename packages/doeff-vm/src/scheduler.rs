@@ -972,42 +972,17 @@ impl SchedulerState {
         }
 
         let waiters: Vec<_> = semaphore.waiters.into_iter().collect();
-        let mut blocked_tasks = HashSet::new();
-        let mut waiter_task_by_promise: HashMap<PromiseId, Option<TaskId>> = HashMap::new();
-        for waiter in &waiters {
-            let waiting_task = waiter.waiting_task.or_else(|| {
-                self.waiters
-                    .get(&Waitable::Promise(waiter.promise))
-                    .and_then(|wait_requests| {
-                        wait_requests.iter().find_map(|wait_request| {
-                            wait_request.waiting_task.or_else(|| {
-                                self.task_id_for_continuation(wait_request.continuation.cont_id)
-                            })
-                        })
-                    })
-            });
-
-            if let Some(waiting_task) = waiting_task {
-                blocked_tasks.insert(waiting_task);
-            }
-            waiter_task_by_promise.insert(waiter.promise, waiting_task);
-        }
+        let blocked_tasks: HashSet<_> = waiters.iter().filter_map(|waiter| waiter.waiting_task).collect();
 
         for task_id in blocked_tasks {
             self.finalize_task_cancellation(task_id);
         }
 
         for waiter in waiters {
-            if waiter_task_by_promise
-                .get(&waiter.promise)
-                .copied()
-                .flatten()
-                .is_some()
-            {
-                self.promises.insert(
-                    waiter.promise,
-                    PromiseState::Done(Err(task_cancelled_error())),
-                );
+            if waiter.waiting_task.is_some() {
+                // Promise resolution is no longer observed once the owning task is cancelled.
+                self.promises
+                    .insert(waiter.promise, PromiseState::Done(Err(task_cancelled_error())));
             } else {
                 self.mark_promise_done(waiter.promise, Err(task_cancelled_error()));
             }
@@ -1287,15 +1262,6 @@ impl SchedulerState {
             Some(TaskState::Pending { cont, .. }) => Some(cont.clone()),
             _ => None,
         }
-    }
-
-    fn task_id_for_continuation(&self, cont_id: ContId) -> Option<TaskId> {
-        self.tasks
-            .iter()
-            .find_map(|(task_id, task_state)| match task_state {
-                TaskState::Pending { cont, .. } if cont.cont_id == cont_id => Some(*task_id),
-                _ => None,
-            })
     }
 
     pub fn try_collect(&self, items: &[Waitable]) -> Option<Value> {
@@ -1998,26 +1964,9 @@ impl RustHandlerProgram for SchedulerProgram {
                 match waiter_promise {
                     Some(promise_id) => {
                         let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                        let waiting_task = state.current_task;
-                        let waiting_store = store.clone();
                         let items = [Waitable::Promise(promise_id)];
                         state.wait_on_any(&items, k_user.clone(), store);
-                        let step = state.transfer_next_or(k_user.clone(), store);
-                        let running_task = state.current_task;
-                        let resumed_waiting_owner = step_targets_continuation(&step, &k_user);
-                        if running_task.is_none() || resumed_waiting_owner {
-                            self.phase = SchedulerPhase::Idle;
-                        } else {
-                            self.phase = SchedulerPhase::Driving {
-                                k_user,
-                                items: items.to_vec(),
-                                mode: WaitMode::Any,
-                                running_task,
-                                waiting_task,
-                                waiting_store,
-                            };
-                        }
-                        step
+                        state.transfer_next_or(k_user, store)
                     }
                     None => jump_to_continuation(k_user, Value::Unit),
                 }
