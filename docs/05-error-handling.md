@@ -13,7 +13,7 @@ This chapter covers error handling in doeff using `RunResult`, the `Safe` effect
 
 ## RunResult Overview
 
-`run()` and `arun()` return a `RunResult[T]`.
+`run()` and `async_run()` return a `RunResult[T]`.
 
 ```python
 from doeff import Ask, Tell, default_handlers, do, run

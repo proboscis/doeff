@@ -199,12 +199,14 @@ def simple_interpreter(program: Program):  # doeff: interpreter
 
 ### Async Interpreter
 ```python
+from doeff import async_run, default_async_handlers
+
 async def async_interpreter(  # doeff: interpreter
     program: Program,
     timeout: float = None
 ):
     """Execute program asynchronously with optional timeout."""
-    return await program.arun(timeout=timeout)
+    return await async_run(program, handlers=default_async_handlers())
 ```
 
 ### Transform Chain
