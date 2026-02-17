@@ -41,7 +41,9 @@ pub struct Continuation {
     pub program: Option<PyShared>,
 
     /// Handlers to install when started=false (innermost first).
-    /// Empty for captured (started=true) continuations.
+    ///
+    /// For captured (started=true) dispatch continuations, VM may stash the
+    /// visible handler chain here for internal handler-driven Eval flows.
     pub handlers: Vec<Handler>,
 
     /// Optional Python identities corresponding to handlers by index.
@@ -124,7 +126,12 @@ impl Continuation {
         handlers: Vec<Handler>,
         handler_identities: Vec<Option<PyShared>>,
     ) -> Self {
-        Self::create_unstarted_with_identities_and_metadata(expr, handlers, handler_identities, None)
+        Self::create_unstarted_with_identities_and_metadata(
+            expr,
+            handlers,
+            handler_identities,
+            None,
+        )
     }
 
     pub fn create_unstarted_with_identities_and_metadata(
@@ -159,7 +166,7 @@ impl Continuation {
         if let Some(ref program) = self.program {
             dict.set_item("program", program.bind(py))?;
         }
-        if !self.handlers.is_empty() {
+        if !self.started && !self.handlers.is_empty() {
             let list = PyList::empty(py);
             for (idx, handler) in self.handlers.iter().enumerate() {
                 if let Some(Some(identity)) = self.handler_identities.get(idx) {

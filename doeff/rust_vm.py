@@ -61,7 +61,7 @@ def _run_call_kwargs(
     run_fn: Any,
     *,
     handlers: Sequence[Any],
-    env: dict[str, Any] | None,
+    env: dict[Any, Any] | None,
     store: dict[str, Any] | None,
     trace: bool,
 ) -> dict[str, Any]:
@@ -87,18 +87,12 @@ def _run_call_kwargs(
     return kwargs
 
 
-def _normalize_env(env: dict[Any, Any] | None) -> dict[str, Any] | None:
+def _normalize_env(env: dict[Any, Any] | None) -> dict[Any, Any] | None:
     if env is None:
         return None
     if not isinstance(env, dict):
         raise TypeError(f"env must be a dict, got {type(env).__name__}")
-    normalized: dict[str, Any] = {}
-    for key, value in env.items():
-        if isinstance(key, str):
-            normalized[key] = value
-        else:
-            normalized[str(key)] = value
-    return normalized
+    return dict(env)
 
 
 def _is_unexpected_trace_keyword(exc: TypeError) -> bool:

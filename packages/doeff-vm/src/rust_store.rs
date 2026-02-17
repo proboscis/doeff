@@ -2,12 +2,13 @@
 
 use std::collections::HashMap;
 
+use crate::py_key::HashedPyKey;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub struct RustStore {
     pub state: HashMap<String, Value>,
-    pub env: HashMap<String, Value>,
+    pub env: HashMap<HashedPyKey, Value>,
     pub log: Vec<Value>,
 }
 
@@ -28,8 +29,18 @@ impl RustStore {
         self.state.insert(key, value);
     }
 
-    pub fn ask(&self, key: &str) -> Option<&Value> {
+    pub fn ask(&self, key: &HashedPyKey) -> Option<&Value> {
         self.env.get(key)
+    }
+
+    #[cfg(test)]
+    pub fn ask_str(&self, key: &str) -> Option<&Value> {
+        self.env.get(&HashedPyKey::from_test_string(key))
+    }
+
+    #[cfg(test)]
+    pub fn put_env_str(&mut self, key: &str, value: Value) {
+        self.env.insert(HashedPyKey::from_test_string(key), value);
     }
 
     pub fn tell(&mut self, message: Value) {
@@ -48,15 +59,15 @@ impl RustStore {
         Some(old_clone)
     }
 
-    pub fn with_local<F, R>(&mut self, bindings: HashMap<String, Value>, f: F) -> R
+    pub fn with_local<F, R>(&mut self, bindings: HashMap<HashedPyKey, Value>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        let old: HashMap<String, Value> = bindings
+        let old: HashMap<HashedPyKey, Value> = bindings
             .keys()
             .filter_map(|k| self.env.get(k).map(|v| (k.clone(), v.clone())))
             .collect();
-        let new_keys: Vec<String> = bindings
+        let new_keys: Vec<HashedPyKey> = bindings
             .keys()
             .filter(|k| !old.contains_key(*k))
             .cloned()

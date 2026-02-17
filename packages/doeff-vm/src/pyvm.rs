@@ -7,7 +7,7 @@ use pyo3::types::{PyDict, PyTuple};
 use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::effect::{
     dispatch_from_shared, dispatch_to_pyobject, PyAsk, PyCompletePromise, PyCreateExternalPromise,
-    PyCreatePromise, PyFailPromise, PyGather, PyGet, PyModify, PyPut, PyRace, PySpawn,
+    PyCreatePromise, PyFailPromise, PyGather, PyGet, PyLocal, PyModify, PyPut, PyRace, PySpawn,
     PyTaskCompleted, PyTell,
 };
 
@@ -78,6 +78,7 @@ use crate::handler::{
     ResultSafeHandlerFactory, RustProgramHandlerRef, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerHandler;
 use crate::segment::Segment;
@@ -365,18 +366,19 @@ impl PyVM {
         Ok(())
     }
 
-    pub fn put_env(&mut self, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    pub fn put_env(&mut self, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let env_key = HashedPyKey::from_bound(key)?;
         self.vm
             .rust_store
             .env
-            .insert(key, Value::from_pyobject(value));
+            .insert(env_key, Value::from_pyobject(value));
         Ok(())
     }
 
     pub fn env_items(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = pyo3::types::PyDict::new(py);
         for (k, v) in &self.vm.rust_store.env {
-            dict.set_item(k, v.to_pyobject(py)?)?;
+            dict.set_item(k.to_pyobject(py), v.to_pyobject(py)?)?;
         }
         Ok(dict.into())
     }
@@ -2663,7 +2665,7 @@ fn run(
     // Seed env
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
-            let k: String = key.extract()?;
+            let k = HashedPyKey::from_bound(&key)?;
             vm.vm.rust_store.env.insert(k, Value::from_pyobject(&value));
         }
     }
@@ -2724,7 +2726,7 @@ fn async_run<'py>(
 
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
-            let k: String = key.extract()?;
+            let k = HashedPyKey::from_bound(&key)?;
             vm.vm.rust_store.env.insert(k, Value::from_pyobject(&value));
         }
     }
@@ -2866,6 +2868,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPut>()?;
     m.add_class::<PyModify>()?;
     m.add_class::<PyAsk>()?;
+    m.add_class::<PyLocal>()?;
     m.add_class::<PyTell>()?;
     m.add_class::<PySpawn>()?;
     m.add_class::<PyGather>()?;
