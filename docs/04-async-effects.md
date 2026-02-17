@@ -19,7 +19,7 @@ This chapter covers effects for asynchronous operations: awaiting coroutines, ru
 
 ```python
 import asyncio
-from doeff import do, Await, Log, async_run, default_handlers
+from doeff import do, Await, Tell, async_run, default_handlers
 
 async def fetch_data():
     await asyncio.sleep(0.1)
@@ -27,9 +27,9 @@ async def fetch_data():
 
 @do
 def process_user():
-    yield Log("Fetching user data...")
+    yield Tell("Fetching user data...")
     data = yield Await(fetch_data())
-    yield Log(f"Received: {data}")
+    yield Tell(f"Received: {data}")
     return data["name"]
 
 async def main():
@@ -54,10 +54,10 @@ async def fetch_posts(user_id):
 def load_user_profile(user_id):
     # Sequential async operations
     user = yield Await(fetch_user(user_id))
-    yield Log(f"Loaded user: {user['name']}")
+    yield Tell(f"Loaded user: {user['name']}")
 
     posts = yield Await(fetch_posts(user_id))
-    yield Log(f"Loaded {len(posts)} posts")
+    yield Tell(f"Loaded {len(posts)} posts")
 
     return {"user": user, "posts": posts}
 ```
@@ -76,7 +76,7 @@ def fetch_api_data():
         )
 
         if response.status_code == 200:
-            yield Log("API request successful")
+            yield Tell("API request successful")
             return response.json()
         else:
             raise Exception(f"HTTP {response.status_code}")
@@ -91,7 +91,7 @@ def fetch_api_data():
 ### Basic Parallel Execution
 
 ```python
-from doeff import do, Gather, Log, Delay
+from doeff import do, Gather, Tell, Delay
 
 @do
 def task1():
@@ -110,12 +110,12 @@ def task3():
 
 @do
 def run_parallel_tasks():
-    yield Log("Starting parallel tasks...")
+    yield Tell("Starting parallel tasks...")
 
     # All tasks run concurrently with async_run
     results = yield Gather(task1(), task2(), task3())
 
-    yield Log(f"All tasks complete: {results}")
+    yield Tell(f"All tasks complete: {results}")
     return results  # ["result1", "result2", "result3"]
 ```
 
@@ -130,9 +130,9 @@ def run_parallel_tasks():
 ```python
 @do
 def fetch_from_api(endpoint):
-    yield Log(f"Fetching {endpoint}...")
+    yield Tell(f"Fetching {endpoint}...")
     response = yield Await(httpx_client.get(endpoint))
-    yield Log(f"Got response from {endpoint}")
+    yield Tell(f"Got response from {endpoint}")
     return response.json()
 
 @do
@@ -144,7 +144,7 @@ def fetch_multiple_apis():
         fetch_from_api("https://api3.example.com/data")
     )
 
-    yield Log(f"Fetched {len(results)} responses")
+    yield Tell(f"Fetched {len(results)} responses")
     return results
 ```
 
@@ -155,13 +155,13 @@ from doeff import async_run, default_handlers
 
 @do
 def process_item(item_id):
-    yield Log(f"Processing item {item_id}")
+    yield Tell(f"Processing item {item_id}")
     yield Delay(0.05)
     return f"processed-{item_id}"
 
 @do
 def process_batch(item_ids):
-    yield Log(f"Processing {len(item_ids)} items in parallel")
+    yield Tell(f"Processing {len(item_ids)} items in parallel")
 
     # Create Program for each item
     tasks = [process_item(item_id) for item_id in item_ids]
@@ -169,7 +169,7 @@ def process_batch(item_ids):
     # Process all in parallel
     results = yield Gather(*tasks)
 
-    yield Log("All items processed")
+    yield Tell("All items processed")
     return results
 
 # Usage
@@ -187,30 +187,30 @@ See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for the full sp
 ### Basic Spawn Usage
 
 ```python
-from doeff import do, Spawn, Wait, Log, Delay
+from doeff import do, Spawn, Wait, Tell, Delay
 
 @do
 def background_work():
-    yield Log("Background work starting...")
+    yield Tell("Background work starting...")
     yield Delay(1.0)
-    yield Log("Background work complete")
+    yield Tell("Background work complete")
     return "background_result"
 
 @do
 def main_program():
-    yield Log("Main: Starting")
+    yield Tell("Main: Starting")
 
     # Spawn background task
     task = yield Spawn(background_work())
-    yield Log("Main: Spawned background task")
+    yield Tell("Main: Spawned background task")
 
     # Do other work while background runs
     yield Delay(0.5)
-    yield Log("Main: Did some work")
+    yield Tell("Main: Did some work")
 
     # Wait for background task result
     result = yield Wait(task)
-    yield Log(f"Main: Background returned: {result}")
+    yield Tell(f"Main: Background returned: {result}")
 
     return result
 ```
@@ -254,16 +254,16 @@ def task_operations_example():
 
     # Check if done (returns Effect, must yield)
     is_done = yield task.is_done()
-    yield Log(f"Is done: {is_done}")  # False initially
+    yield Tell(f"Is done: {is_done}")  # False initially
 
     # Cancel the task (returns Effect, must yield)
     yield task.cancel()
-    yield Log("Requested cancellation")
+    yield Tell("Requested cancellation")
 
     # Wait raises TaskCancelledError after cancel
     result = yield Safe(Wait(task))
     if result.is_err():
-        yield Log("Task was cancelled")
+        yield Tell("Task was cancelled")
 ```
 
 ### Spawn for Fire-and-Forget
@@ -271,9 +271,9 @@ def task_operations_example():
 ```python
 @do
 def send_notification():
-    yield Log("Sending notification...")
+    yield Tell("Sending notification...")
     yield Await(email_service.send("Hello!"))
-    yield Log("Notification sent")
+    yield Tell("Notification sent")
     return "sent"
 
 @do
@@ -282,7 +282,7 @@ def main_workflow():
     yield Spawn(send_notification())
 
     # Continue immediately
-    yield Log("Workflow continues...")
+    yield Tell("Workflow continues...")
     return "done"
 ```
 
@@ -304,7 +304,7 @@ def handle_spawn_error():
     if result.is_ok():
         return result.value
     else:
-        yield Log(f"Task failed: {result.error}")
+        yield Tell(f"Task failed: {result.error}")
         return "fallback_value"
 ```
 
@@ -325,15 +325,15 @@ Time effects control timing in your programs.
 ### Delay - Sleep for Duration
 
 ```python
-from doeff import do, Delay, Log
+from doeff import do, Delay, Tell
 
 @do
 def with_delay():
-    yield Log("Starting...")
+    yield Tell("Starting...")
     yield Delay(1.0)  # Sleep for 1 second
-    yield Log("After 1 second")
+    yield Tell("After 1 second")
     yield Delay(0.5)
-    yield Log("After another 0.5 seconds")
+    yield Tell("After another 0.5 seconds")
     return "done"
 ```
 
@@ -344,18 +344,18 @@ def with_delay():
 ### GetTime - Get Current Time
 
 ```python
-from doeff import do, GetTime, Delay, Log
+from doeff import do, GetTime, Delay, Tell
 
 @do
 def measure_duration():
     start = yield GetTime()
-    yield Log(f"Start time: {start}")
+    yield Tell(f"Start time: {start}")
 
     yield Delay(1.0)
 
     end = yield GetTime()
     duration = (end - start).total_seconds()
-    yield Log(f"Duration: {duration}s")
+    yield Tell(f"Duration: {duration}s")
 
     return duration
 ```
@@ -364,19 +364,19 @@ def measure_duration():
 
 ```python
 from datetime import datetime, timedelta
-from doeff import do, WaitUntil, GetTime, Log
+from doeff import do, WaitUntil, GetTime, Tell
 
 @do
 def wait_until_example():
     now = yield GetTime()
     target = now + timedelta(seconds=5)
 
-    yield Log(f"Current time: {now}")
-    yield Log(f"Waiting until: {target}")
+    yield Tell(f"Current time: {now}")
+    yield Tell(f"Waiting until: {target}")
 
     yield WaitUntil(target)
 
-    yield Log("Target time reached!")
+    yield Tell("Target time reached!")
     return "done"
 ```
 
@@ -419,7 +419,7 @@ def with_database():
     # Use async context manager
     async with database_connection() as db:
         result = yield Await(db.execute("SELECT * FROM users"))
-        yield Log(f"Query returned {len(result)} rows")
+        yield Tell(f"Query returned {len(result)} rows")
         return result
 ```
 
@@ -437,10 +437,10 @@ def with_timeout():
         result = yield Await(
             asyncio.wait_for(slow_operation(), timeout=1.0)
         )
-        yield Log(f"Completed: {result}")
+        yield Tell(f"Completed: {result}")
         return result
     except asyncio.TimeoutError:
-        yield Log("Operation timed out")
+        yield Tell("Operation timed out")
         raise Exception("Timeout exceeded")
 ```
 
@@ -457,11 +457,11 @@ def rate_limited_requests(urls):
             # Wait between requests
             yield Delay(0.5)
 
-        yield Log(f"Fetching {url}...")
+        yield Tell(f"Fetching {url}...")
         response = yield Await(fetch_url(url))
         results.append(response)
 
-    yield Log(f"Completed {len(results)} requests")
+    yield Tell(f"Completed {len(results)} requests")
     return results
 ```
 
@@ -485,10 +485,10 @@ def async_with_state_and_config():
     # Update state
     yield Modify("completed", lambda x: x + len(results))
 
-    # Log progress
+    # Track progress
     completed = yield Get("completed")
     total = yield Get("total")
-    yield Log(f"Progress: {completed}/{total}")
+    yield Tell(f"Progress: {completed}/{total}")
 
     return results
 
@@ -517,7 +517,7 @@ def safe_async_operation():
     else:
         result = f"Failed: {safe_result.error}"
 
-    yield Log(f"Result: {result}")
+    yield Tell(f"Result: {result}")
     return result
 ```
 
@@ -624,14 +624,14 @@ def parallel():
 ```python
 import asyncio
 import pytest
-from doeff import do, Await, Log, async_run, default_handlers
+from doeff import do, Await, Tell, async_run, default_handlers
 
 @pytest.mark.asyncio
 async def test_async_program():
     @do
     def my_program():
         result = yield Await(asyncio.sleep(0, result="test"))
-        yield Log(f"Result: {result}")
+        yield Tell(f"Result: {result}")
         return result
 
     result = await arun(my_program(), default_handlers())

@@ -78,11 +78,14 @@ print(async_handlers[-1].__name__)  # async_await_handler
 All effect names mentioned here are current public exports.
 Core categories include:
 
-- Reader/State/Writer: `Ask`, `Local`, `Get`, `Put`, `Modify`, `Tell`, `Log`, `Listen`
+- Reader/State/Writer: `Ask`, `Local`, `Get`, `Put`, `Modify`, `Tell`, `StructuredLog`, `slog`, `Listen`
 - Result/cache: `Safe`, `CacheGet`, `CachePut`, `CacheExists`, `CacheDelete`
 - Scheduler: `Await`, `Spawn`, `Wait`, `Gather`, `Race`, `Future`, `Task`
 - External bridging: `CreateExternalPromise`, `ExternalPromise`
 - Tracing/graph: `ProgramTrace`, `Step`, `Annotate`, `Snapshot`, `CaptureGraph`
+
+Writer convenience helpers:
+- `StructuredLog(**entries)` and `slog(**entries)` are shorthand for `Tell({**entries})`.
 
 ## Handler Architecture (`WithHandler`)
 
