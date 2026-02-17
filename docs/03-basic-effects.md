@@ -400,14 +400,16 @@ def outer_operation():
     return listen_result
 ```
 
-`ListenResult.log` is a plain typed `list`:
+`ListenResult.log` is a `BoundedLog` (see `doeff.utils.BoundedLog`), not a plain `list`:
 
 ```python
 @dataclass
 class ListenResult(Generic[T]):
     value: T
-    log: list[object]
+    log: BoundedLog
 ```
+
+`BoundedLog` keeps bounded retention semantics: when capacity is exceeded, oldest entries are evicted.
 
 ### Listen Composition Rules
 
