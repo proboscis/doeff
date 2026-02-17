@@ -161,7 +161,7 @@ result = await resolver.provide(injected)  # 3. Ask -> resolver.provide("databas
 ### Service Layer Pattern
 
 ```python
-from doeff import do, Ask, Tell, Safe
+from doeff import do, Ask, Tell, Try
 
 @do
 def user_service(user_id: int):
@@ -169,7 +169,7 @@ def user_service(user_id: int):
     cache = yield Ask("cache")
     
     # Try cache first
-    cache_result = yield Safe(cache.get(f"user_{user_id}"))
+    cache_result = yield Try(cache.get(f"user_{user_id}"))
     
     if cache_result.is_ok():
         yield Tell(f"Cache hit for user {user_id}")
@@ -260,7 +260,7 @@ def auth_service():
 def api_handler(username, password):
     # Compose services
     auth = yield auth_service()
-    result = yield Safe(auth(username, password))
+    result = yield Try(auth(username, password))
     
     if result.is_err():
         return {"error": "Authentication failed"}
@@ -353,7 +353,7 @@ async def test_error_handling():
     @do
     def error_handling_program():
         db = yield Ask("database")
-        safe_result = yield Safe(db.query())
+        safe_result = yield Try(db.query())
         if safe_result.is_ok():
             return safe_result.value
         else:
