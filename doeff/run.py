@@ -453,7 +453,7 @@ def _execute_program(
     from doeff.rust_vm import run as vm_run
 
     if interpreter_obj is None:
-        return vm_run(program, handlers=default_handlers()).value
+        return vm_run(program, handlers=default_handlers(), print_doeff_trace=False).value
 
     if callable(interpreter_obj):
         result = _call_interpreter(interpreter_obj, program)
