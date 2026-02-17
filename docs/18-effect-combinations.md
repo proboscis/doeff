@@ -135,6 +135,7 @@ def test_law_6():
 ### Law 7: Gather Environment Inheritance Law
 
 `Gather` children inherit parent environment as a snapshot at gather invocation time.
+Environment changes in one `Gather` child do NOT propagate to sibling children.
 
 ```python
 @do
@@ -163,6 +164,8 @@ def test_law_8a_sync():
 
 Children execute in parallel with shared store. Concurrent writes may race; ordering of
 intermediate observations is non-deterministic.
+Programs using `Gather` with async handlers must not rely on read-modify-write state patterns.
+Use coordination primitives or isolated state partitioning instead.
 
 ```python
 @do
@@ -207,13 +210,19 @@ race-sensitive async state updates.
 
 ## Design Decision Notes
 
-[^D1]: **D1 Intercept Scope**: Intercept applies structural rewriting to nested programs in effect payloads. It does not reach independently spawned tasks that do not share the parent continuation stack.
+[^D1]: **D1 Intercept Scope**: Intercept applies structural rewriting to nested programs in
+effect payloads. Intercept scope across task boundaries is runtime-dependent; in current
+implementation, it does not reach independently spawned tasks that do not share the parent
+continuation stack.
 
 [^D2]: **D2 Listen + Gather Ordering**: No ordering guarantees for logs from parallel gather branches.
 
 [^D3]: **D3 Safe Rollback**: `Safe` provides error capture and environment restoration, not transactional state rollback.
 
-[^D4]: **D4 Gather Store Semantics**: Gather store is shared in both runtimes: sequential and deterministic in sync, parallel and race-prone in async.
+[^D4]: **D4 Gather Store Semantics**: Gather store is shared in both runtimes: sequential and
+deterministic in sync, parallel and race-prone in async. This keeps runtime behavior aligned
+with a shared-store model; for isolation-sensitive flows, use explicit state partitioning,
+coordination, or isolated variants.
 
 [^D5]: **D5 Listen Error Behavior**: `Listen` does not capture logs on error paths; error propagates without `ListenResult` wrapping.
 
