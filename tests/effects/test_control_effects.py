@@ -1,12 +1,12 @@
 """Tests for Control effects composition rules (SPEC-EFF-004).
 
-This module tests the composition behavior of Pure, Safe, and Intercept effects
+This module tests the composition behavior of Pure, Try, and Intercept effects
 as defined in specs/effects/SPEC-EFF-004-control.md.
 
 Composition Rules Tested:
-- Safe + Local: Environment restored even on caught error
-- Safe + Put: State persists on caught error
-- Nested Safe: Inner catches first
+- Try + Local: Environment restored even on caught error
+- Try + Put: State persists on caught error
+- Nested Try: Inner catches first
 - Intercept + Intercept: Composition order
 - Intercept + Gather: Scope rules
 
@@ -23,8 +23,8 @@ from doeff.effects import (
     Local,
     Pure,
     Put,
-    Safe,
     Tell,
+    Try,
 )
 from doeff.effects.reader import AskEffect
 
@@ -65,16 +65,16 @@ class TestPureEffect:
 
 
 # ============================================================================
-# Safe Effect Composition Tests
+# Try Effect Composition Tests
 # ============================================================================
 
 
 class TestSafeLocalComposition:
-    """Tests for Safe + Local composition: Environment restored even on caught error."""
+    """Tests for Try + Local composition: Environment restored even on caught error."""
 
     @pytest.mark.asyncio
     async def test_safe_local_env_restored_on_error(self, parameterized_interpreter) -> None:
-        """Environment is restored after Safe catches error in Local scope."""
+        """Environment is restored after Try catches error in Local scope."""
 
         @do
         def failing_in_local():
@@ -84,7 +84,7 @@ class TestSafeLocalComposition:
         @do
         def program():
             original = yield Ask("key")
-            result = yield Safe(Local({"key": "modified"}, failing_in_local()))
+            result = yield Try(Local({"key": "modified"}, failing_in_local()))
             after = yield Ask("key")
             return (original, result.is_err(), after)
 
@@ -98,7 +98,7 @@ class TestSafeLocalComposition:
 
     @pytest.mark.asyncio
     async def test_safe_local_env_restored_on_success(self, parameterized_interpreter) -> None:
-        """Environment is restored after Safe completes successfully in Local scope."""
+        """Environment is restored after Try completes successfully in Local scope."""
 
         @do
         def success_in_local():
@@ -108,7 +108,7 @@ class TestSafeLocalComposition:
         @do
         def program():
             original = yield Ask("key")
-            result = yield Safe(Local({"key": "modified"}, success_in_local()))
+            result = yield Try(Local({"key": "modified"}, success_in_local()))
             after = yield Ask("key")
             return (original, result.value, after)
 
@@ -122,11 +122,11 @@ class TestSafeLocalComposition:
 
 
 class TestSafePutComposition:
-    """Tests for Safe + Put composition: State persists on caught error."""
+    """Tests for Try + Put composition: State persists on caught error."""
 
     @pytest.mark.asyncio
     async def test_safe_put_state_persists_on_error(self, parameterized_interpreter) -> None:
-        """State changes persist even when Safe catches an error."""
+        """State changes persist even when Try catches an error."""
 
         @do
         def increment_then_fail():
@@ -137,7 +137,7 @@ class TestSafePutComposition:
         @do
         def program():
             yield Put("counter", 0)
-            result = yield Safe(increment_then_fail())
+            result = yield Try(increment_then_fail())
             counter = yield Get("counter")
             return (result.is_err(), counter)
 
@@ -161,7 +161,7 @@ class TestSafePutComposition:
 
         @do
         def program():
-            result = yield Safe(multiple_puts_then_fail())
+            result = yield Try(multiple_puts_then_fail())
             a = yield Get("a")
             b = yield Get("b")
             c = yield Get("c")
@@ -176,11 +176,11 @@ class TestSafePutComposition:
 
 
 class TestNestedSafe:
-    """Tests for Nested Safe: Inner catches first."""
+    """Tests for Nested Try: Inner catches first."""
 
     @pytest.mark.asyncio
     async def test_nested_safe_inner_catches_first(self, parameterized_interpreter) -> None:
-        """Inner Safe catches exception, outer Safe sees Ok."""
+        """Inner Try catches exception, outer Try sees Ok."""
 
         @do
         def failing_program():
@@ -188,16 +188,16 @@ class TestNestedSafe:
 
         @do
         def program():
-            result = yield Safe(Safe(failing_program()))
+            result = yield Try(Try(failing_program()))
             return result
 
         result = await parameterized_interpreter.run_async(program())
         assert result.is_ok
 
-        # Outer Safe sees successful completion (Err value from inner)
+        # Outer Try sees successful completion (Err value from inner)
         outer_result = result.value
         assert outer_result.is_ok()
-        # Inner Safe caught the error
+        # Inner Try caught the error
         inner_result = outer_result.value
         assert inner_result.is_err()
         assert isinstance(inner_result.error, ValueError)
@@ -212,7 +212,7 @@ class TestNestedSafe:
 
         @do
         def program():
-            result = yield Safe(Safe(Safe(failing_program())))
+            result = yield Try(Try(Try(failing_program())))
             return result
 
         result = await parameterized_interpreter.run_async(program())
@@ -230,7 +230,7 @@ class TestNestedSafe:
 
     @pytest.mark.asyncio
     async def test_nested_safe_with_intermediate_success(self, parameterized_interpreter) -> None:
-        """Nested Safe where inner succeeds."""
+        """Nested Try where inner succeeds."""
 
         @do
         def success_program():
@@ -238,7 +238,7 @@ class TestNestedSafe:
 
         @do
         def program():
-            result = yield Safe(Safe(success_program()))
+            result = yield Try(Try(success_program()))
             return result
 
         result = await parameterized_interpreter.run_async(program())
@@ -423,7 +423,7 @@ class TestInterceptErrorHandling:
 
     @pytest.mark.asyncio
     async def test_safe_with_intercept(self, parameterized_interpreter) -> None:
-        """Safe can catch errors from intercepted programs."""
+        """Try can catch errors from intercepted programs."""
 
         def passthrough(e):
             return None
@@ -435,7 +435,7 @@ class TestInterceptErrorHandling:
 
         @do
         def program():
-            result = yield Safe(Intercept(failing_program(), passthrough))
+            result = yield Try(Intercept(failing_program(), passthrough))
             return result
 
         result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
@@ -455,7 +455,7 @@ class TestCombinedComposition:
 
     @pytest.mark.asyncio
     async def test_safe_intercept_local_combined(self, parameterized_interpreter) -> None:
-        """Complex combination: Safe + Intercept + Local."""
+        """Complex combination: Try + Intercept + Local."""
 
         def intercept_ask(e):
             if isinstance(e, AskEffect):
@@ -470,8 +470,8 @@ class TestCombinedComposition:
 
         @do
         def program():
-            # Safe wraps Local wraps intercepted program
-            result = yield Safe(
+            # Try wraps Local wraps intercepted program
+            result = yield Try(
                 Local({"key": "modified"}, Intercept(inner_program(), intercept_ask))
             )
             stored = yield Get("result")
@@ -489,7 +489,7 @@ class TestCombinedComposition:
 
     @pytest.mark.asyncio
     async def test_gather_with_safe_children(self, parameterized_interpreter) -> None:
-        """Gather with Safe-wrapped children handles errors independently."""
+        """Gather with Try-wrapped children handles errors independently."""
 
         @do
         def may_fail(should_fail: bool):
@@ -500,7 +500,7 @@ class TestCombinedComposition:
 
         @do
         def safe_task(should_fail: bool):
-            return (yield Safe(may_fail(should_fail)))
+            return (yield Try(may_fail(should_fail)))
 
         @do
         def program():

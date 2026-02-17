@@ -8,10 +8,7 @@ from __future__ import annotations
 
 from doeff import (
     Ask,
-    DoCtrl,
-    DoExpr,
     EffectBase,
-    GeneratorProgram,
     Get,
     Perform,
     Program,
@@ -20,6 +17,7 @@ from doeff import (
     Tell,
     do,
 )
+from doeff.program import DoCtrl, DoExpr, GeneratorProgram
 
 
 class TestTH01DistinctTypes:

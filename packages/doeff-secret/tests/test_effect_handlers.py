@@ -19,7 +19,8 @@ from doeff_secret.testing import (  # noqa: E402
     in_memory_handlers,
 )
 
-from doeff import WithHandler, default_handlers, do, run, run_with_handler_map  # noqa: E402
+from doeff import WithHandler, default_handlers, do, run  # noqa: E402
+from doeff.rust_vm import run_with_handler_map
 
 
 def _is_ok(run_result: Any) -> bool:

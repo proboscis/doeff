@@ -148,9 +148,9 @@ def with_nonblocking_await(program: Any) -> Any:
     awaitables on a persistent background event loop, communicating results
     via ExternalPromise.
     """
-    from doeff.rust_vm import wrap_with_handler_map
+    from doeff.rust_vm import _wrap_with_handler_map
 
-    return wrap_with_handler_map(
+    return _wrap_with_handler_map(
         program,
         {PythonAsyncioAwaitEffect: _nonblocking_await_handler},
     )

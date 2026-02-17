@@ -11,7 +11,7 @@ from typing import Any
 
 from PIL import Image
 
-from doeff import Ask, Await, EffectGenerator, Get, Put, Safe, Tell, do
+from doeff import Ask, Await, EffectGenerator, Get, Put, Tell, Try, do
 
 from .client import get_seedream_client, track_api_call
 from .costs import CostEstimate, calculate_cost
@@ -241,7 +241,7 @@ def _edit_image__seedream4_impl(
 
     @do
     def ask_optional(name: str):
-        safe_result = yield Safe(Ask(name))
+        safe_result = yield Try(Ask(name))
         return safe_result.value if safe_result.is_ok() else None
 
     payload, timeout = _build_payload(
@@ -261,7 +261,8 @@ def _edit_image__seedream4_impl(
     response_format = str(payload.get("response_format", DEFAULT_RESPONSE_FORMAT))
 
     yield Tell(
-        "Preparing Seedream image request using model=%s with %d reference image(s)" % (
+        "Preparing Seedream image request using model=%s with %d reference image(s)"
+        % (
             model,
             len(images) if images else 0,
         )
@@ -291,7 +292,7 @@ def _edit_image__seedream4_impl(
             )
             return response
 
-        safe_result = yield Safe(api_call())
+        safe_result = yield Try(api_call())
         if safe_result.is_err():
             exc = safe_result.error
             yield track_api_call(
@@ -310,7 +311,7 @@ def _edit_image__seedream4_impl(
     response: dict[str, Any] | None = None
     last_error: Exception | None = None
     for attempt in range(max_retries):
-        safe_attempt = yield Safe(make_api_call())
+        safe_attempt = yield Try(make_api_call())
         if safe_attempt.is_ok():
             response = safe_attempt.value
             break
@@ -343,7 +344,11 @@ def _edit_image__seedream4_impl(
     if result_size is None:
         result_size = requested_size
 
-    generated_count = generated_images if isinstance(generated_images, int) and generated_images > 0 else len(result.images)
+    generated_count = (
+        generated_images
+        if isinstance(generated_images, int) and generated_images > 0
+        else len(result.images)
+    )
     cost_estimate: CostEstimate | None = None
     if generated_count > 0:
         try:
@@ -358,7 +363,7 @@ def _edit_image__seedream4_impl(
             cost_estimate = None
 
     if cost_estimate:
-        previous_total_result = yield Safe(Get("seedream_total_cost_usd"))
+        previous_total_result = yield Try(Get("seedream_total_cost_usd"))
         previous_total = previous_total_result.value if previous_total_result.is_ok() else None
         if not isinstance(previous_total, (int, float)):
             previous_total = 0.0
@@ -366,13 +371,13 @@ def _edit_image__seedream4_impl(
         yield Put("seedream_total_cost_usd", new_total)
 
         model_cost_key = f"seedream_cost_{model}"
-        model_cost_result = yield Safe(Get(model_cost_key))
+        model_cost_result = yield Try(Get(model_cost_key))
         model_cost_total = model_cost_result.value if model_cost_result.is_ok() else None
         if not isinstance(model_cost_total, (int, float)):
             model_cost_total = 0.0
         yield Put(model_cost_key, float(model_cost_total) + cost_estimate.total_cost)
 
-        existing_calls_result = yield Safe(Get("seedream_api_calls"))
+        existing_calls_result = yield Try(Get("seedream_api_calls"))
         existing_calls = existing_calls_result.value if existing_calls_result.is_ok() else None
         entries = list(existing_calls) if isinstance(existing_calls, list) else []
         entries.append(

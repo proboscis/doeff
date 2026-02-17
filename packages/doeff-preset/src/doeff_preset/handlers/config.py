@@ -73,7 +73,8 @@ def config_handlers(defaults: dict[str, Any] | None = None) -> dict[type, Any]:
         Handler dict with AskEffect handler that supports preset.* keys.
 
     Example:
-        >>> from doeff import Ask, do, run_with_handler_map
+        >>> from doeff import Ask, do
+        >>> from doeff.rust_vm import run_with_handler_map
         >>> from doeff_preset import config_handlers
         >>>
         >>> @do
