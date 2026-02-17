@@ -16,11 +16,11 @@ contracts.
 
 The matrix below follows `SPEC-EFF-100` outer/inner structure.
 
-| Outer / Inner | Ask | Get | Put | Log | Safe | Local | Listen | Intercept | Gather |
+| Outer / Inner | Ask | Get | Put | Log | Try | Local | Listen | Intercept | Gather |
 |---------------|-----|-----|-----|-----|------|-------|--------|-----------|--------|
 | **Local**     | Scoped | Propagates | Propagates | Propagates | Propagates | Scoped | Propagates | Propagates | Propagates |
 | **Listen**    | - | - | - | Captured* | - | - | Nested | - | All captured* |
-| **Safe**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
+| **Try**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
 | **Intercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
 | **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
 
@@ -82,31 +82,31 @@ def test_law_2():
 ```python
 @do
 def test_law_3_error():
-    result = yield Safe(Listen(failing_with_logs()))
+    result = yield Try(Listen(failing_with_logs()))
     assert result.is_err()
 ```
 
-### Law 4: Safe Non-Rollback Law
+### Law 4: Try Non-Rollback Law
 
-`Safe` does NOT rollback state on error. State changes persist.[^D3]
+`Try` does NOT rollback state on error. State changes persist.[^D3]
 
 ```python
 @do
 def test_law_4():
     yield Put("counter", 0)
-    _ = yield Safe(do_modify_then_fail())
+    _ = yield Try(do_modify_then_fail())
     assert (yield Get("counter")) > 0
 ```
 
-### Law 5: Safe Environment Restoration Law
+### Law 5: Try Environment Restoration Law
 
-`Safe` restores environment context to pre-`Safe` value.
+`Try` restores environment context to pre-`Try` value.
 
 ```python
 @do
 def test_law_5():
-    _ = yield Safe(Local({"x": 1}, failing_program()))
-    # Environment is restored after Safe exits
+    _ = yield Try(Local({"x": 1}, failing_program()))
+    # Environment is restored after Try exits
 ```
 
 ### Law 6: Intercept Transformation Law
@@ -186,7 +186,7 @@ When any `Gather` child fails, error propagates to parent. Sibling behavior depe
 ```python
 @do
 def test_law_9():
-    result = yield Safe(Gather(
+    result = yield Try(Gather(
         succeeds_with_side_effect(),
         fails_immediately(),
         succeeds_with_side_effect(),
@@ -217,7 +217,7 @@ continuation stack.
 
 [^D2]: **D2 Listen + Gather Ordering**: No ordering guarantees for logs from parallel gather branches.
 
-[^D3]: **D3 Safe Rollback**: `Safe` provides error capture and environment restoration, not transactional state rollback.
+[^D3]: **D3 Try Rollback**: `Try` provides error capture and environment restoration, not transactional state rollback.
 
 [^D4]: **D4 Gather Store Semantics**: Gather store is shared in both runtimes: sequential and
 deterministic in sync, parallel and race-prone in async. This keeps runtime behavior aligned
