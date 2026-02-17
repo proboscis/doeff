@@ -83,39 +83,15 @@ def program_to_injected(prog: Program[T]) -> Injected[T]:
     """
 
     async def _runner(__resolver__: AsyncResolver) -> T:
-        use_local_passthrough = not _supports_program_intercept(prog)
-        original_build_local_handler = None
-
-        if use_local_passthrough:
-            import doeff_vm
-
-            from doeff.effects import reader as reader_effects
-
-            original_build_local_handler = reader_effects._build_local_handler
-
-            def _bridge_build_local_handler(_overlay: dict):
-                def handle_local_ask(_effect, _k):
-                    yield doeff_vm.Delegate()
-
-                return handle_local_ask
-
-            reader_effects._build_local_handler = _bridge_build_local_handler
-
         # Create wrapped program that handles dependency resolution
         wrapped_program = _program_with_dependency_interception(prog, __resolver__)
 
-        try:
-            # Run with env containing the resolver for use by ask effects
-            result = await async_run_with_handler_map(
-                wrapped_program,
-                production_handlers(resolver=__resolver__),
-                env={"__resolver__": __resolver__},
-            )
-        finally:
-            if use_local_passthrough and original_build_local_handler is not None:
-                from doeff.effects import reader as reader_effects
-
-                reader_effects._build_local_handler = original_build_local_handler
+        # Run with env containing the resolver for use by ask effects
+        result = await async_run_with_handler_map(
+            wrapped_program,
+            production_handlers(resolver=__resolver__),
+            env={"__resolver__": __resolver__},
+        )
 
         # Handle the result
         if result.is_err():
@@ -158,39 +134,15 @@ def program_to_injected_result(prog: Program[T]) -> Injected[RunResult[T]]:
     """
 
     async def _runner(__resolver__: AsyncResolver) -> RunResult[T]:
-        use_local_passthrough = not _supports_program_intercept(prog)
-        original_build_local_handler = None
-
-        if use_local_passthrough:
-            import doeff_vm
-
-            from doeff.effects import reader as reader_effects
-
-            original_build_local_handler = reader_effects._build_local_handler
-
-            def _bridge_build_local_handler(_overlay: dict):
-                def handle_local_ask(_effect, _k):
-                    yield doeff_vm.Delegate()
-
-                return handle_local_ask
-
-            reader_effects._build_local_handler = _bridge_build_local_handler
-
         # Create wrapped program that handles dependency resolution
         wrapped_program = _program_with_dependency_interception(prog, __resolver__)
 
-        try:
-            # Run with env containing the resolver for use by ask effects
-            result = await async_run_with_handler_map(
-                wrapped_program,
-                production_handlers(resolver=__resolver__),
-                env={"__resolver__": __resolver__},
-            )
-        finally:
-            if use_local_passthrough and original_build_local_handler is not None:
-                from doeff.effects import reader as reader_effects
-
-                reader_effects._build_local_handler = original_build_local_handler
+        # Run with env containing the resolver for use by ask effects
+        result = await async_run_with_handler_map(
+            wrapped_program,
+            production_handlers(resolver=__resolver__),
+            env={"__resolver__": __resolver__},
+        )
 
         # Return the full RunResult with both context and result
         return result

@@ -38,7 +38,7 @@ pub struct PyModify {
 #[pyclass(frozen, name = "PyAsk", extends=PyEffectBase)]
 pub struct PyAsk {
     #[pyo3(get)]
-    pub key: String,
+    pub key: Py<PyAny>,
 }
 
 #[pyclass(frozen, name = "PyTell", extends=PyEffectBase)]
@@ -145,7 +145,7 @@ impl PyModify {
 #[pymethods]
 impl PyAsk {
     #[new]
-    fn new(key: String) -> PyClassInitializer<Self> {
+    fn new(key: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
         })

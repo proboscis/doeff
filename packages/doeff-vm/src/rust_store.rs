@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::ids::PromiseId;
+use crate::py_env_key::PyEnvKey;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
@@ -21,11 +22,17 @@ struct LazyInflightEntry {
 #[derive(Debug, Clone)]
 pub struct RustStore {
     pub state: HashMap<String, Value>,
-    pub env: HashMap<String, Value>,
+    pub env: HashMap<PyEnvKey, Value>,
     pub log: Vec<Value>,
-    lazy_cache: Arc<Mutex<HashMap<String, LazyCacheEntry>>>,
-    lazy_inflight: Arc<Mutex<HashMap<String, LazyInflightEntry>>>,
-    lazy_active: Arc<Mutex<HashSet<(String, usize)>>>,
+    lazy_cache: Arc<Mutex<HashMap<PyEnvKey, LazyCacheEntry>>>,
+    lazy_inflight: Arc<Mutex<HashMap<PyEnvKey, LazyInflightEntry>>>,
+    lazy_active: Arc<Mutex<HashSet<(PyEnvKey, usize)>>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LocalEnvSnapshot {
+    previous: HashMap<PyEnvKey, Value>,
+    inserted: Vec<PyEnvKey>,
 }
 
 impl RustStore {
@@ -48,7 +55,7 @@ impl RustStore {
         self.state.insert(key, value);
     }
 
-    pub fn ask(&self, key: &str) -> Option<&Value> {
+    pub fn ask(&self, key: &PyEnvKey) -> Option<&Value> {
         self.env.get(key)
     }
 
@@ -68,41 +75,48 @@ impl RustStore {
         Some(old_clone)
     }
 
-    pub fn with_local<F, R>(&mut self, bindings: HashMap<String, Value>, f: F) -> R
+    pub fn with_local<F, R>(&mut self, bindings: HashMap<PyEnvKey, Value>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        let old: HashMap<String, Value> = bindings
-            .keys()
-            .filter_map(|k| self.env.get(k).map(|v| (k.clone(), v.clone())))
-            .collect();
-        let new_keys: Vec<String> = bindings
-            .keys()
-            .filter(|k| !old.contains_key(*k))
-            .cloned()
-            .collect();
-
-        for (k, v) in bindings {
-            self.env.insert(k, v);
-        }
-
+        let snapshot = self.push_local_bindings(bindings);
         let result = f(self);
-
-        for (k, v) in old {
-            self.env.insert(k, v);
-        }
-        for k in new_keys {
-            self.env.remove(&k);
-        }
-
+        self.pop_local_bindings(snapshot);
         result
+    }
+
+    pub(crate) fn push_local_bindings(
+        &mut self,
+        bindings: HashMap<PyEnvKey, Value>,
+    ) -> LocalEnvSnapshot {
+        let mut previous = HashMap::new();
+        let mut inserted = Vec::new();
+
+        for (key, value) in bindings {
+            if let Some(old_value) = self.env.insert(key.clone(), value) {
+                previous.insert(key, old_value);
+            } else {
+                inserted.push(key);
+            }
+        }
+
+        LocalEnvSnapshot { previous, inserted }
+    }
+
+    pub(crate) fn pop_local_bindings(&mut self, snapshot: LocalEnvSnapshot) {
+        for (key, value) in snapshot.previous {
+            self.env.insert(key, value);
+        }
+        for key in snapshot.inserted {
+            self.env.remove(&key);
+        }
     }
 
     pub fn clear_logs(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.log)
     }
 
-    pub fn lazy_cache_get(&self, key: &str, source_id: usize) -> Option<Value> {
+    pub fn lazy_cache_get(&self, key: &PyEnvKey, source_id: usize) -> Option<Value> {
         let cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
         let entry = cache.get(key)?;
         if entry.source_id == source_id {
@@ -111,12 +125,12 @@ impl RustStore {
         None
     }
 
-    pub fn lazy_cache_put(&self, key: String, source_id: usize, value: Value) {
+    pub fn lazy_cache_put(&self, key: PyEnvKey, source_id: usize, value: Value) {
         let mut cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
         cache.insert(key, LazyCacheEntry { source_id, value });
     }
 
-    pub fn lazy_inflight_get(&self, key: &str, source_id: usize) -> Option<PromiseId> {
+    pub fn lazy_inflight_get(&self, key: &PyEnvKey, source_id: usize) -> Option<PromiseId> {
         let inflight = self
             .lazy_inflight
             .lock()
@@ -128,7 +142,7 @@ impl RustStore {
         None
     }
 
-    pub fn lazy_inflight_put(&self, key: String, source_id: usize, promise_id: PromiseId) {
+    pub fn lazy_inflight_put(&self, key: PyEnvKey, source_id: usize, promise_id: PromiseId) {
         let mut inflight = self
             .lazy_inflight
             .lock()
@@ -142,7 +156,7 @@ impl RustStore {
         );
     }
 
-    pub fn lazy_inflight_remove(&self, key: &str, source_id: usize, promise_id: PromiseId) {
+    pub fn lazy_inflight_remove(&self, key: &PyEnvKey, source_id: usize, promise_id: PromiseId) {
         let mut inflight = self
             .lazy_inflight
             .lock()
@@ -155,19 +169,19 @@ impl RustStore {
         }
     }
 
-    pub fn lazy_active_contains(&self, key: &str, source_id: usize) -> bool {
+    pub fn lazy_active_contains(&self, key: &PyEnvKey, source_id: usize) -> bool {
         let active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.contains(&(key.to_string(), source_id))
+        active.contains(&(key.clone(), source_id))
     }
 
-    pub fn lazy_active_insert(&self, key: String, source_id: usize) {
+    pub fn lazy_active_insert(&self, key: PyEnvKey, source_id: usize) {
         let mut active = self.lazy_active.lock().expect("lazy_active lock poisoned");
         active.insert((key, source_id));
     }
 
-    pub fn lazy_active_remove(&self, key: &str, source_id: usize) {
+    pub fn lazy_active_remove(&self, key: &PyEnvKey, source_id: usize) {
         let mut active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.remove(&(key.to_string(), source_id));
+        active.remove(&(key.clone(), source_id));
     }
 }
 

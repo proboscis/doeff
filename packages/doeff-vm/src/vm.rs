@@ -20,6 +20,8 @@ use crate::error::VMError;
 use crate::frame::{CallMetadata, Frame};
 use crate::handler::{Handler, HandlerEntry};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
+#[cfg(test)]
+use crate::py_env_key::PyEnvKey;
 use crate::pyvm::{PyDoExprBase, PyEffectBase};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
@@ -2794,12 +2796,12 @@ mod tests {
         let mut store = RustStore::new();
         store.put("key".to_string(), Value::Int(42));
         store.tell(Value::String("log".to_string()));
-        store.env.insert("env_key".to_string(), Value::Bool(true));
+        store.env.insert(PyEnvKey::from_str("env_key"), Value::Bool(true));
 
         let cloned = store.clone();
         assert_eq!(cloned.get("key").unwrap().as_int(), Some(42));
         assert_eq!(cloned.logs().len(), 1);
-        assert_eq!(cloned.ask("env_key").unwrap().as_bool(), Some(true));
+        assert_eq!(cloned.ask(&PyEnvKey::from_str("env_key")).unwrap().as_bool(), Some(true));
 
         // Verify independence
         store.put("key".to_string(), Value::Int(99));
@@ -3012,28 +3014,34 @@ mod tests {
         let mut store = RustStore::new();
         store
             .env
-            .insert("db".to_string(), Value::String("prod".to_string()));
+            .insert(PyEnvKey::from_str("db"), Value::String("prod".to_string()));
         store
             .env
-            .insert("host".to_string(), Value::String("localhost".to_string()));
+            .insert(PyEnvKey::from_str("host"), Value::String("localhost".to_string()));
 
         let result = store.with_local(
             HashMap::from([
-                ("db".to_string(), Value::String("test".to_string())),
-                ("temp".to_string(), Value::Int(42)),
+                (PyEnvKey::from_str("db"), Value::String("test".to_string())),
+                (PyEnvKey::from_str("temp"), Value::Int(42)),
             ]),
             |s| {
-                assert_eq!(s.ask("db").unwrap().as_str(), Some("test"));
-                assert_eq!(s.ask("temp").unwrap().as_int(), Some(42));
-                assert_eq!(s.ask("host").unwrap().as_str(), Some("localhost"));
+                assert_eq!(s.ask(&PyEnvKey::from_str("db")).unwrap().as_str(), Some("test"));
+                assert_eq!(s.ask(&PyEnvKey::from_str("temp")).unwrap().as_int(), Some(42));
+                assert_eq!(
+                    s.ask(&PyEnvKey::from_str("host")).unwrap().as_str(),
+                    Some("localhost")
+                );
                 "done"
             },
         );
         assert_eq!(result, "done");
         // After with_local, old bindings restored, temp removed
-        assert_eq!(store.ask("db").unwrap().as_str(), Some("prod"));
-        assert!(store.ask("temp").is_none());
-        assert_eq!(store.ask("host").unwrap().as_str(), Some("localhost"));
+        assert_eq!(store.ask(&PyEnvKey::from_str("db")).unwrap().as_str(), Some("prod"));
+        assert!(store.ask(&PyEnvKey::from_str("temp")).is_none());
+        assert_eq!(
+            store.ask(&PyEnvKey::from_str("host")).unwrap().as_str(),
+            Some("localhost")
+        );
     }
 
     /// G12: DispatchContext should not have callsite_cont_id field.
