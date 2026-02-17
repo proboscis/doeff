@@ -98,6 +98,7 @@ This is useful for:
 - Concurrent `Ask(key)` calls for the same lazy key are coordinated with a per-key semaphore.
 - At most one task evaluates the lazy program; other tasks wait cooperatively and reuse the cached result.
 - Waiting on the same key is not treated as a circular dependency.
+- Lazy program results are cached per `run()` invocation.
 
 See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
@@ -141,6 +142,7 @@ def fetch_data():
 - `Local + Local`: nested scopes are LIFO. Inner overrides win inside the inner scope, then each scope restores independently.
 - `Local + Safe`: environment restoration still happens if the inner program raises and the error is caught by `Safe`.
 - `Local + Gather`: gathered child programs inherit the enclosing Local environment snapshot. A child's own `Local` stays isolated to that child scope.
+- `Local + Ask` (lazy `Program` values): overriding a key with a different `Program` object invalidates that key's lazy cache entry.
 
 ### Reader Pattern Example
 
@@ -521,7 +523,7 @@ def process_with_feature():
     return f"processed with {mode}"
 ```
 
-### Scoped State with Listen
+### State Propagation with Listen
 
 ```python
 @do
@@ -529,22 +531,25 @@ def isolated_operation():
     # Main state
     yield Put("main_counter", 0)
 
-    # Run isolated sub-operation
+    # Run sub-operation under Listen (captures logs, not state)
     listen_result = yield Listen(isolated_sub_operation())
 
-    # Sub-operation's state changes don't affect main state
+    # State changes inside Listen persist in the shared store
     main_count = yield Get("main_counter")
-    yield Tell(f"Main counter unchanged: {main_count}")
+    yield Tell(f"Main counter after Listen: {main_count}")  # 10
 
     return listen_result.value
 
 @do
 def isolated_sub_operation():
-    # This operates on the same state
+    # This mutates the same state store as the caller
     yield Modify("main_counter", lambda x: x + 10)
     yield Tell("Modified counter in sub-operation")
     return "sub-done"
 ```
+
+`Listen` captures writer output (`Tell`) from the sub-program. It does not isolate state:
+`Get`/`Put`/`Modify` effects inside `Listen(...)` remain visible after `Listen` completes.
 
 ## Best Practices
 
