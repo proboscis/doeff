@@ -4,8 +4,18 @@ from dataclasses import dataclass
 
 import pytest
 
-from doeff import Ask, Delegate, EffectBase, Program, WithHandler, async_run, default_async_handlers
-from doeff import default_handlers, do, run
+from doeff import (
+    Ask,
+    Delegate,
+    EffectBase,
+    Program,
+    WithHandler,
+    async_run,
+    default_async_handlers,
+    default_handlers,
+    do,
+    run,
+)
 
 
 def test_run_prints_doeff_trace_to_stderr_on_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -64,7 +74,7 @@ def test_run_no_stderr_on_success(capsys: pytest.CaptureFixture[str]) -> None:
     assert captured.err == ""
 
 
-def test_doeff_trace_includes_handler_chain(capsys: pytest.CaptureFixture[str]) -> None:
+def test_doeff_trace_renders_active_chain(capsys: pytest.CaptureFixture[str]) -> None:
     @dataclass(frozen=True, kw_only=True)
     class Boom(EffectBase):
         pass
@@ -83,6 +93,8 @@ def test_doeff_trace_includes_handler_chain(capsys: pytest.CaptureFixture[str]) 
     assert result.is_err()
 
     captured = capsys.readouterr()
-    assert "[handler]" in captured.err
     assert "exploding_handler" in captured.err
+    assert "handler exploded" in captured.err
+    assert "exploding_handler✗" in captured.err
+    assert "·" in captured.err
     assert "Boom" in captured.err

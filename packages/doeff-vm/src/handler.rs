@@ -290,7 +290,9 @@ fn pyerr_to_exception(py: Python<'_>, err: PyErr) -> PyException {
     let exc_type = err.get_type(py).into_any().unbind();
     let exc_value = err.value(py).clone().into_any().unbind();
     let exc_tb = err.traceback(py).map(|tb| tb.into_any().unbind());
-    PyException::new(exc_type, exc_value, exc_tb)
+    let exc = PyException::new(exc_type, exc_value, exc_tb);
+    crate::scheduler::preserve_exception_origin(&exc);
+    exc
 }
 
 fn wrap_value_as_result_ok(value: Value) -> Result<Value, PyException> {

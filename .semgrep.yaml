@@ -589,6 +589,29 @@ rules:
       rationale: "Monkey-patching masks incomplete migrations"
 
   # ---------------------------------------------------------------------------
+  # TRACEBACK DEFAULT FORMAT
+  # ---------------------------------------------------------------------------
+
+  - id: traceback-must-use-format-default
+    patterns:
+      - pattern-inside: |
+          def _print_doeff_trace_if_present(...):
+              ...
+      - pattern: print($TB.format_chained(), file=sys.stderr)
+    paths:
+      include:
+        - "**/doeff/rust_vm.py"
+    message: |
+      Default stderr traceback output must use format_default().
+      format_chained() remains available for explicit debug views, but the
+      default print path must render the active-chain format.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: traceback
+      rationale: "SPEC-TRACE-001 default format requirement"
+
+  # ---------------------------------------------------------------------------
   # DOEFF DOEXPR HIERARCHY ENFORCEMENT
   # ---------------------------------------------------------------------------
 
