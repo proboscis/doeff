@@ -821,12 +821,12 @@ def main(argv: Iterable[str] | None = None) -> int:
                 "message": str(exc),
             }
             if doeff_tb is not None:
-                payload["traceback"] = doeff_tb.format_chained()
+                payload["traceback"] = doeff_tb.format_default()
             elif captured is not None:
                 payload["traceback"] = captured.format(condensed=False, max_lines=200)
             print(json.dumps(payload))
         elif doeff_tb is not None:
-            print(doeff_tb.format_chained(), file=sys.stderr)
+            print(doeff_tb.format_default(), file=sys.stderr)
         elif captured is not None:
             print(captured.format(condensed=False, max_lines=200), file=sys.stderr)
         else:

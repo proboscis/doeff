@@ -330,7 +330,7 @@ handles, use `Wait` instead.
 
 ---
 
-### Spawn(program, *, preferred_backend=None, **options)
+### Spawn(program, **options)
 
 Spawn a Program in the background and return a `Task` handle.
 

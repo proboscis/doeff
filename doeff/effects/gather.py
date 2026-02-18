@@ -39,19 +39,10 @@ def gather(*items: "Waitable[Any] | ProgramBase[Any]") -> GatherEffect:
 
 def Gather(*items: "Waitable[Any] | ProgramBase[Any]") -> Any:
     validated = _validate_gather_items(tuple(items))
-
-    from doeff import do
-
-    @do
-    def _program():
-        return (
-            yield create_effect_with_trace(
-                GatherEffect(items=validated),
-                skip_frames=3,
-            )
-        )
-
-    return _program()
+    return create_effect_with_trace(
+        GatherEffect(items=validated),
+        skip_frames=3,
+    )
 
 
 __all__ = [

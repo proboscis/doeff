@@ -60,8 +60,6 @@ pub struct PySpawn {
     #[pyo3(get)]
     pub program: Py<PyAny>,
     #[pyo3(get)]
-    pub preferred_backend: Option<String>,
-    #[pyo3(get)]
     pub options: Py<PyAny>,
     #[pyo3(get)]
     pub handlers: Py<PyAny>,
@@ -123,14 +121,27 @@ pub struct PyTaskCompleted {
     pub result: Py<PyAny>,
 }
 
+fn py_repr_or(py: Python<'_>, value: &Py<PyAny>, fallback: &str) -> String {
+    value
+        .bind(py)
+        .repr()
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| fallback.to_string())
+}
+
 #[pymethods]
 impl PyGet {
     #[new]
     fn new(key: String) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyGet { key })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Get({:?})", self.key)
     }
 }
 
@@ -140,8 +151,14 @@ impl PyPut {
     fn new(key: String, value: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyPut { key, value })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let value_repr = py_repr_or(py, &self.value, "<value>");
+        format!("Put({:?}, {})", self.key, value_repr)
     }
 }
 
@@ -151,8 +168,14 @@ impl PyModify {
     fn new(key: String, func: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyModify { key, func })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let func_repr = py_repr_or(py, &self.func, "<modifier>");
+        format!("Modify({:?}, {})", self.key, func_repr)
     }
 }
 
@@ -162,8 +185,14 @@ impl PyAsk {
     fn new(key: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyAsk { key })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let key_repr = py_repr_or(py, &self.key, "<key>");
+        format!("Ask({})", key_repr)
     }
 }
 
@@ -173,11 +202,18 @@ impl PyLocal {
     fn new(env_update: Py<PyAny>, sub_program: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyLocal {
             env_update,
             sub_program,
         })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let env_repr = py_repr_or(py, &self.env_update, "<env_update>");
+        let sub_program_repr = py_repr_or(py, &self.sub_program, "<sub_program>");
+        format!("Local({}, {})", env_repr, sub_program_repr)
     }
 }
 
@@ -187,6 +223,7 @@ impl PyTell {
     fn new(message: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyTell { message })
     }
@@ -206,17 +243,16 @@ impl PySpawn {
     pub(crate) fn create(
         py: Python<'_>,
         program: Py<PyAny>,
-        preferred_backend: Option<String>,
         options: Option<Py<PyAny>>,
         handlers: Option<Py<PyAny>>,
         store_mode: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PySpawn {
             program,
-            preferred_backend,
             options: options.unwrap_or_else(|| pyo3::types::PyDict::new(py).into_any().unbind()),
             handlers: handlers
                 .unwrap_or_else(|| pyo3::types::PyList::empty(py).into_any().unbind()),
@@ -231,22 +267,24 @@ impl PySpawn {
     const __doeff_scheduler_spawn__: bool = true;
 
     #[new]
-    #[pyo3(signature = (program, preferred_backend=None, options=None, handlers=None, store_mode=None))]
+    #[pyo3(signature = (program, options=None, handlers=None, store_mode=None))]
     fn new(
         py: Python<'_>,
         program: Py<PyAny>,
-        preferred_backend: Option<String>,
         options: Option<Py<PyAny>>,
         handlers: Option<Py<PyAny>>,
         store_mode: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
-        Self::create(
-            py,
-            program,
-            preferred_backend,
-            options,
-            handlers,
-            store_mode,
+        Self::create(py, program, options, handlers, store_mode)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let program_repr = py_repr_or(py, &self.program, "<program>");
+        let handlers_repr = py_repr_or(py, &self.handlers, "<handlers>");
+        let store_mode_repr = py_repr_or(py, &self.store_mode, "<store_mode>");
+        format!(
+            "Spawn(program={}, handlers={}, store_mode={})",
+            program_repr, handlers_repr, store_mode_repr
         )
     }
 }
@@ -259,6 +297,7 @@ impl PyGather {
     ) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyGather {
             items,
@@ -281,6 +320,11 @@ impl PyGather {
     ) -> PyClassInitializer<Self> {
         Self::create(py, items, _partial_results)
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let items_repr = py_repr_or(py, &self.items, "<items>");
+        format!("Gather({})", items_repr)
+    }
 }
 
 #[pymethods]
@@ -292,8 +336,14 @@ impl PyRace {
     fn new(futures: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyRace { futures })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let futures_repr = py_repr_or(py, &self.futures, "<futures>");
+        format!("Race({})", futures_repr)
     }
 }
 
@@ -306,8 +356,13 @@ impl PyCreatePromise {
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyCreatePromise)
+    }
+
+    fn __repr__(&self) -> String {
+        "CreatePromise()".to_string()
     }
 }
 
@@ -320,8 +375,15 @@ impl PyCompletePromise {
     fn new(promise: Py<PyAny>, value: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyCompletePromise { promise, value })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let promise_repr = py_repr_or(py, &self.promise, "<promise>");
+        let value_repr = py_repr_or(py, &self.value, "<value>");
+        format!("CompletePromise({}, {})", promise_repr, value_repr)
     }
 }
 
@@ -334,8 +396,15 @@ impl PyFailPromise {
     fn new(promise: Py<PyAny>, error: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyFailPromise { promise, error })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let promise_repr = py_repr_or(py, &self.promise, "<promise>");
+        let error_repr = py_repr_or(py, &self.error, "<error>");
+        format!("FailPromise({}, {})", promise_repr, error_repr)
     }
 }
 
@@ -348,8 +417,13 @@ impl PyCreateExternalPromise {
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyCreateExternalPromise)
+    }
+
+    fn __repr__(&self) -> String {
+        "CreateExternalPromise()".to_string()
     }
 }
 
@@ -362,8 +436,14 @@ impl PyCancelEffect {
     fn new(task: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyCancelEffect { task })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let task_repr = py_repr_or(py, &self.task, "<task>");
+        format!("CancelTask({})", task_repr)
     }
 }
 
@@ -383,6 +463,7 @@ impl PyTaskCompleted {
     ) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyTaskCompleted {
             task: task.unwrap_or_else(|| py.None()),
@@ -390,6 +471,12 @@ impl PyTaskCompleted {
             handle_id: handle_id.unwrap_or_else(|| py.None()),
             result: result.unwrap_or_else(|| py.None()),
         })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let task_repr = py_repr_or(py, &self.task, "<task>");
+        let result_repr = py_repr_or(py, &self.result, "<result>");
+        format!("TaskCompleted(task={}, result={})", task_repr, result_repr)
     }
 }
 

@@ -20,7 +20,7 @@ from doeff.types import EffectBase
 
 def test_cancel_yields_effect() -> None:
     """Task.cancel() must yield an EffectBase, not Program.pure()."""
-    task = Task(backend="thread", _handle={"type": "Task", "task_id": 0})
+    task = Task(_handle={"type": "Task", "task_id": 0})
     result = task.cancel()
 
     assert isinstance(result, EffectBase)

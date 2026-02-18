@@ -2,7 +2,7 @@
 
 use crate::effect::DispatchEffect;
 use crate::ids::{ContId, Marker};
-use crate::capture::TraceEntry;
+use crate::capture::{ActiveChainEntry, TraceEntry};
 use crate::step::PyException;
 
 #[derive(Debug, Clone)]
@@ -19,6 +19,7 @@ pub enum VMError {
     UncaughtException {
         exception: PyException,
         trace: Vec<TraceEntry>,
+        active_chain: Vec<ActiveChainEntry>,
     },
 }
 
@@ -100,8 +101,16 @@ impl VMError {
         }
     }
 
-    pub fn uncaught_exception(exception: PyException, trace: Vec<TraceEntry>) -> Self {
-        VMError::UncaughtException { exception, trace }
+    pub fn uncaught_exception(
+        exception: PyException,
+        trace: Vec<TraceEntry>,
+        active_chain: Vec<ActiveChainEntry>,
+    ) -> Self {
+        VMError::UncaughtException {
+            exception,
+            trace,
+            active_chain,
+        }
     }
 }
 

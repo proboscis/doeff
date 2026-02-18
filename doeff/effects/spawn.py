@@ -12,17 +12,13 @@ Design Decisions (from spec):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Generic, Literal, TypeVar, runtime_checkable, Protocol, cast
+from typing import Any, Generic, TypeVar, runtime_checkable, Protocol
 
 import doeff_vm
 
 from ._program_types import ProgramLike
-from ._validators import ensure_dict_str_any, ensure_program_like, ensure_str
+from ._validators import ensure_dict_str_any, ensure_program_like
 from .base import Effect, EffectBase, create_effect_with_trace
-
-SpawnBackend = Literal["thread", "process", "ray"]
-
-_VALID_BACKENDS: tuple[SpawnBackend, ...] = ("thread", "process", "ray")
 
 T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
@@ -82,7 +78,6 @@ TaskCancelEffect = doeff_vm.PyCancelEffect
 @dataclass(frozen=True, eq=False)
 class Task(Generic[T]):
     # eq=False: hashable by id since snapshot dicts are unhashable
-    backend: SpawnBackend
     _handle: Any = field(repr=False)
     _env_snapshot: dict[Any, Any] = field(default_factory=dict, repr=False, hash=False)
     _state_snapshot: dict[str, Any] = field(default_factory=dict, repr=False, hash=False)
@@ -166,15 +161,11 @@ def promise_id_of(value: Any) -> int | None:
     return None
 
 
-def coerce_task_handle(value: Any, preferred_backend: SpawnBackend | None = None) -> Task[Any]:
+def coerce_task_handle(value: Any) -> Task[Any]:
     if isinstance(value, Task):
         return value
     if _is_handle_dict(value) and value.get("type") == "Task":
-        backend: SpawnBackend = cast(
-            SpawnBackend,
-            preferred_backend if preferred_backend in _VALID_BACKENDS else "thread",
-        )
-        return Task(backend=backend, _handle=value)
+        return Task(_handle=value)
     raise TypeError(f"expected Task handle, got {type(value).__name__}")
 
 
@@ -198,100 +189,74 @@ def normalize_waitable(value: Any) -> Waitable[Any]:
     )
 
 
-def _spawn_program(
-    effect: SpawnEffect,
-    preferred_backend: SpawnBackend | None,
-):
+def _spawn_program(effect: SpawnEffect):
     from doeff import do
 
     @do
-    def _program():
+    def _spawn_task():
         raw_task = yield effect
-        return coerce_task_handle(raw_task, preferred_backend)
+        return coerce_task_handle(raw_task)
 
-    return _program()
+    return _spawn_task()
 
 
 def spawn(
     program: ProgramLike,
-    *,
-    preferred_backend: SpawnBackend | None = None,
     **options: Any,
 ) -> Any:
     """Spawn a program as a background task.
 
     Args:
         program: The program to run in the background.
-        preferred_backend: Optional backend hint ("thread", "process", or "ray").
         **options: Additional backend-specific options.
 
     Returns:
         SpawnEffect that yields a Task handle when executed.
     """
     ensure_program_like(program, name="program")
-    if preferred_backend is not None:
-        ensure_str(preferred_backend, name="preferred_backend")
-        if preferred_backend not in _VALID_BACKENDS:
-            raise ValueError(
-                "preferred_backend must be one of 'thread', 'process', or 'ray', "
-                f"got {preferred_backend!r}"
-            )
     ensure_dict_str_any(options, name="options")
 
     effect = create_effect_with_trace(
         SpawnEffect(
             program=program,
-            preferred_backend=preferred_backend,
             options=options,
             store_mode="isolated",
         )
     )
-    return _spawn_program(effect, preferred_backend)
+    return _spawn_program(effect)
 
 
 def Spawn(
     program: ProgramLike,
-    *,
-    preferred_backend: SpawnBackend | None = None,
     **options: Any,
 ) -> Any:
     """Spawn a program as a background task (capitalized alias).
 
     Args:
         program: The program to run in the background.
-        preferred_backend: Optional backend hint ("thread", "process", or "ray").
         **options: Additional backend-specific options.
 
     Returns:
         Effect that yields a Task handle when executed.
     """
     ensure_program_like(program, name="program")
-    if preferred_backend is not None:
-        ensure_str(preferred_backend, name="preferred_backend")
-        if preferred_backend not in _VALID_BACKENDS:
-            raise ValueError(
-                "preferred_backend must be one of 'thread', 'process', or 'ray', "
-                f"got {preferred_backend!r}"
-            )
     ensure_dict_str_any(options, name="options")
 
     effect = create_effect_with_trace(
         SpawnEffect(
             program=program,
-            preferred_backend=preferred_backend,
             options=options,
             store_mode="isolated",
         ),
         skip_frames=3,
     )
-    return _spawn_program(effect, preferred_backend)
+    return _spawn_program(effect)
 
 
 __all__ = [
     "Future",
     "Promise",
     "Spawn",
-    "SpawnBackend",
     "SpawnEffect",
     "Task",
     "TaskCancelEffect",

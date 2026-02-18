@@ -11,6 +11,7 @@ import inspect
 from collections.abc import Callable, Generator
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar, cast
+from weakref import WeakKeyDictionary
 
 from doeff.kleisli import KleisliProgram
 from doeff.program import Program, _build_auto_unwrap_strategy
@@ -24,24 +25,166 @@ T = TypeVar("T")
 # effects/programs and returns T.
 _GeneratorFunc = Callable[..., Generator[Effect | Program, Any, T]]
 
+_BRIDGE_INNER_BY_GENERATOR: WeakKeyDictionary[object, Generator[Effect | Program, Any, Any]] = (
+    WeakKeyDictionary()
+)
+_BRIDGE_CODE_OBJECTS: set[object] = set()
+
+
+def resolve_doeff_inner(generator: object) -> Generator[Effect | Program, Any, Any] | None:
+    return _BRIDGE_INNER_BY_GENERATOR.get(generator)
+
+
+def resolve_generator_line(generator: object) -> int | None:
+    current = generator
+    for _ in range(8):
+        inner = _BRIDGE_INNER_BY_GENERATOR.get(current)
+        if inner is None:
+            inner = getattr(current, "__doeff_inner__", None)
+        if inner is None:
+            break
+        current = inner
+    frame = getattr(current, "gi_frame", None)
+    if frame is None:
+        return None
+    return getattr(frame, "f_lineno", None)
+
+
+def resolve_generator_location(generator: object) -> tuple[str, int] | None:
+    current = generator
+    for _ in range(8):
+        inner = _BRIDGE_INNER_BY_GENERATOR.get(current)
+        if inner is None:
+            inner = getattr(current, "__doeff_inner__", None)
+        if inner is None:
+            break
+        current = inner
+    frame = getattr(current, "gi_frame", None)
+    if frame is None:
+        return None
+    code = getattr(frame, "f_code", None)
+    if code is None:
+        return None
+    filename = getattr(code, "co_filename", None)
+    lineno = getattr(frame, "f_lineno", None)
+    if filename is None or lineno is None:
+        return None
+    return (filename, lineno)
+
+
+def resolve_exception_location(exc: BaseException) -> tuple[str, str, int] | None:
+    origin = getattr(exc, "__doeff_exception_origin__", None)
+    if origin is not None:
+        fn_name = origin.get("function_name")
+        filename = origin.get("source_file")
+        line = origin.get("source_line")
+        if fn_name is not None and filename is not None and line is not None:
+            return (fn_name, filename, line)
+
+    tb = getattr(exc, "__traceback__", None)
+    if tb is None:
+        return None
+
+    last_tb = tb
+    while True:
+        next_tb = getattr(last_tb, "tb_next", None)
+        if next_tb is None:
+            break
+        last_tb = next_tb
+
+    frame = getattr(last_tb, "tb_frame", None)
+    if frame is None:
+        return None
+    code = getattr(frame, "f_code", None)
+    if code is None:
+        return None
+
+    if code not in _BRIDGE_CODE_OBJECTS:
+        return None
+
+    locals_dict = getattr(frame, "f_locals", {})
+    gen = locals_dict.get("gen")
+    if gen is None:
+        return None
+
+    gen_code = getattr(gen, "gi_code", None)
+    if gen_code is None:
+        return None
+
+    fn_name = getattr(gen_code, "co_qualname", None) or getattr(gen_code, "co_name", "<unknown>")
+    filename = getattr(gen_code, "co_filename", "<unknown>")
+
+    user_line = 0
+    scan = tb
+    while scan is not None:
+        scan_frame = getattr(scan, "tb_frame", None)
+        if scan_frame is not None:
+            scan_code = getattr(scan_frame, "f_code", None)
+            if scan_code is gen_code:
+                user_line = getattr(scan, "tb_lineno", 0)
+        scan = getattr(scan, "tb_next", None)
+
+    if user_line == 0:
+        return None
+
+    return (fn_name, filename, user_line)
+
+
+class _DoGeneratorProxy:
+    """Generator-like proxy that carries the user generator for traceback line mapping."""
+
+    __slots__ = ("_outer", "__doeff_inner__", "__weakref__")
+
+    def __init__(
+        self,
+        outer: Generator[Effect | Program, Any, T],
+        inner: Generator[Effect | Program, Any, T],
+    ) -> None:
+        self._outer = outer
+        self.__doeff_inner__ = inner
+
+    def __iter__(self) -> _DoGeneratorProxy:
+        return self
+
+    def __next__(self) -> Effect | Program:
+        return next(self._outer)
+
+    def send(self, value: Any) -> Effect | Program:
+        return self._outer.send(value)
+
+    def throw(self, typ: BaseException, val: Any | None = None, tb: Any | None = None) -> Any:
+        if tb is None and val is None:
+            return self._outer.throw(typ)
+        if tb is None:
+            return self._outer.throw(typ, val)
+        return self._outer.throw(typ, val, tb)
+
+    def close(self) -> Any:
+        return self._outer.close()
+
+    @property
+    def gi_frame(self) -> Any:
+        return cast(Any, self._outer).gi_frame
+
+    @property
+    def gi_code(self) -> Any:
+        return cast(Any, self._outer).gi_code
+
+    @property
+    def gi_running(self) -> Any:
+        return cast(Any, self._outer).gi_running
+
+    def __repr__(self) -> str:
+        return repr(self._outer)
+
 
 class DoYieldFunction(KleisliProgram[P, T]):
     """Specialised KleisliProgram for generator-based @do functions."""
 
     def __init__(self, func: Callable[P, EffectGenerator[T]]) -> None:
-        @wraps(func)
-        def generator_wrapper(
-            *args: P.args, **kwargs: P.kwargs
+        def bridge_generator(
+            gen: Generator[Effect | Program, Any, T],
         ) -> Generator[Effect | Program, Any, T]:
-            gen_or_value = func(*args, **kwargs)
-            if not inspect.isgenerator(gen_or_value):
-                # Early return for non-generator callables (e.g., async functions
-                # or plain functions mistakenly decorated). Pyright sees this as
-                # returning T from a Generator function, but at runtime Python
-                # allows returning before any yield. We cast to satisfy the checker.
-                return cast(T, gen_or_value)  # type: ignore[return-value]
-
-            gen = gen_or_value
             try:
                 current = next(gen)
             except StopIteration as stop_exc:
@@ -63,6 +206,23 @@ class DoYieldFunction(KleisliProgram[P, T]):
                     current = gen.send(sent_value)
                 except StopIteration as stop_exc:
                     return stop_exc.value
+
+        _BRIDGE_CODE_OBJECTS.add(bridge_generator.__code__)
+
+        @wraps(func)
+        def generator_wrapper(
+            *args: P.args, **kwargs: P.kwargs
+        ) -> Generator[Effect | Program, Any, T] | T:
+            gen_or_value = func(*args, **kwargs)
+            if not inspect.isgenerator(gen_or_value):
+                return cast(T, gen_or_value)
+
+            gen = cast(Generator[Effect | Program, Any, T], gen_or_value)
+            outer = bridge_generator(gen)
+            proxy = _DoGeneratorProxy(outer, gen)
+            _BRIDGE_INNER_BY_GENERATOR[outer] = gen
+            _BRIDGE_INNER_BY_GENERATOR[proxy] = gen
+            return cast(Generator[Effect | Program, Any, T], proxy)
 
         # KleisliProgram.func expects Callable[P, Program[T]], but we pass a
         # generator function. Runtime call dispatch handles both Program and

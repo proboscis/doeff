@@ -8,7 +8,6 @@ from doeff._types_internal import EffectBase
 from doeff.effects import ProgramCallStack, ProgramTrace, Put, slog
 from doeff.rust_vm import Delegate, Resume, WithHandler, default_handlers, run
 from doeff.trace import TraceDispatch, TraceFrame
-from doeff.traceback import HandlerFrame, project_trace
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -118,11 +117,18 @@ def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
     assert hasattr(error, "__doeff_traceback_data__")
     assert hasattr(error, "__doeff_traceback__")
 
+    payload = error.__doeff_traceback_data__
+    assert isinstance(payload, dict)
+    assert "trace" in payload
+    assert "active_chain" in payload
+
     doeff_tb = error.__doeff_traceback__
+    default = doeff_tb.format_default()
     chained = doeff_tb.format_chained()
     sectioned = doeff_tb.format_sectioned()
     short = doeff_tb.format_short()
 
+    assert "doeff Traceback (most recent call last):" in default
     assert "doeff Traceback (most recent call last):" in chained
     assert "Program Stack:" in sectioned
     assert "ValueError: boom" in short
@@ -199,7 +205,8 @@ def test_handler_sources_and_exception_repr_for_thrown_handler() -> None:
     assert result.is_err()
 
     error = result.error
-    trace_entries = error.__doeff_traceback_data__
+    payload = error.__doeff_traceback_data__
+    trace_entries = payload["trace"] if isinstance(payload, dict) else payload
     dispatches = [entry for entry in trace_entries if isinstance(entry, TraceDispatch)]
     assert dispatches
 
