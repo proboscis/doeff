@@ -82,3 +82,4 @@ VAULT
 !examples/
 ORCH_PROMPT.md
 .worktrees/
+durable_workflow.db
