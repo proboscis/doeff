@@ -83,6 +83,5 @@ def test_doeff_trace_includes_handler_chain(capsys: pytest.CaptureFixture[str]) 
     assert result.is_err()
 
     captured = capsys.readouterr()
-    assert "[handler]" in captured.err
     assert "exploding_handler" in captured.err
     assert "Boom" in captured.err

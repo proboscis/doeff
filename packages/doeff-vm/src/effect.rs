@@ -132,6 +132,10 @@ impl PyGet {
         })
         .add_subclass(PyGet { key })
     }
+
+    fn __repr__(&self) -> String {
+        format!("Get({:?})", self.key)
+    }
 }
 
 #[pymethods]
@@ -142,6 +146,16 @@ impl PyPut {
             tag: DoExprTag::Effect as u8,
         })
         .add_subclass(PyPut { key, value })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let value_repr = self
+            .value
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<value>".to_string());
+        format!("Put({:?}, {})", self.key, value_repr)
     }
 }
 
@@ -154,6 +168,16 @@ impl PyModify {
         })
         .add_subclass(PyModify { key, func })
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let modifier_repr = self
+            .func
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<modifier>".to_string());
+        format!("Modify({:?}, {})", self.key, modifier_repr)
+    }
 }
 
 #[pymethods]
@@ -164,6 +188,16 @@ impl PyAsk {
             tag: DoExprTag::Effect as u8,
         })
         .add_subclass(PyAsk { key })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let key_repr = self
+            .key
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<key>".to_string());
+        format!("Ask({})", key_repr)
     }
 }
 
@@ -178,6 +212,22 @@ impl PyLocal {
             env_update,
             sub_program,
         })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let update_repr = self
+            .env_update
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<env_update>".to_string());
+        let sub_repr = self
+            .sub_program
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<program>".to_string());
+        format!("Local({}, {})", update_repr, sub_repr)
     }
 }
 
@@ -249,6 +299,31 @@ impl PySpawn {
             store_mode,
         )
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let program_repr = self
+            .program
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<program>".to_string());
+        let handlers_repr = self
+            .handlers
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "[]".to_string());
+        let store_mode_repr = self
+            .store_mode
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "None".to_string());
+        format!(
+            "Spawn(program={}, handlers={}, store_mode={})",
+            program_repr, handlers_repr, store_mode_repr
+        )
+    }
 }
 
 impl PyGather {
@@ -281,6 +356,16 @@ impl PyGather {
     ) -> PyClassInitializer<Self> {
         Self::create(py, items, _partial_results)
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let items_repr = self
+            .items
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<items>".to_string());
+        format!("Gather({})", items_repr)
+    }
 }
 
 #[pymethods]
@@ -294,6 +379,16 @@ impl PyRace {
             tag: DoExprTag::Effect as u8,
         })
         .add_subclass(PyRace { futures })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let futures_repr = self
+            .futures
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<futures>".to_string());
+        format!("Race({})", futures_repr)
     }
 }
 
@@ -309,6 +404,10 @@ impl PyCreatePromise {
         })
         .add_subclass(PyCreatePromise)
     }
+
+    fn __repr__(&self) -> String {
+        "CreatePromise()".to_string()
+    }
 }
 
 #[pymethods]
@@ -322,6 +421,22 @@ impl PyCompletePromise {
             tag: DoExprTag::Effect as u8,
         })
         .add_subclass(PyCompletePromise { promise, value })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let promise_repr = self
+            .promise
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<promise>".to_string());
+        let value_repr = self
+            .value
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<value>".to_string());
+        format!("CompletePromise({}, {})", promise_repr, value_repr)
     }
 }
 
@@ -337,6 +452,22 @@ impl PyFailPromise {
         })
         .add_subclass(PyFailPromise { promise, error })
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let promise_repr = self
+            .promise
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<promise>".to_string());
+        let error_repr = self
+            .error
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<error>".to_string());
+        format!("FailPromise({}, {})", promise_repr, error_repr)
+    }
 }
 
 #[pymethods]
@@ -351,6 +482,10 @@ impl PyCreateExternalPromise {
         })
         .add_subclass(PyCreateExternalPromise)
     }
+
+    fn __repr__(&self) -> String {
+        "CreateExternalPromise()".to_string()
+    }
 }
 
 #[pymethods]
@@ -364,6 +499,16 @@ impl PyCancelEffect {
             tag: DoExprTag::Effect as u8,
         })
         .add_subclass(PyCancelEffect { task })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let task_repr = self
+            .task
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<task>".to_string());
+        format!("CancelTask({})", task_repr)
     }
 }
 
@@ -390,6 +535,22 @@ impl PyTaskCompleted {
             handle_id: handle_id.unwrap_or_else(|| py.None()),
             result: result.unwrap_or_else(|| py.None()),
         })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let task_repr = self
+            .task
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "None".to_string());
+        let result_repr = self
+            .result
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "None".to_string());
+        format!("TaskCompleted(task={}, result={})", task_repr, result_repr)
     }
 }
 

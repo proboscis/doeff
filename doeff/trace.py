@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, NamedTuple, TypeAlias
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,11 @@ class TraceDelegationEntry:
     source_line: int | None
 
 
+class HandlerStackEntry(NamedTuple):
+    name: str
+    status: Literal["delegated", "resumed", "threw", "transferred", "active", "pending"]
+
+
 @dataclass(frozen=True)
 class TraceDispatch:
     dispatch_id: int
@@ -32,6 +37,7 @@ class TraceDispatch:
     handler_source_file: str | None
     handler_source_line: int | None
     delegation_chain: tuple[TraceDelegationEntry, ...]
+    handler_stack: tuple[HandlerStackEntry, ...]
     action: Literal["active", "resumed", "transferred", "returned", "threw"]
     value_repr: str | None
     exception_repr: str | None
@@ -63,6 +69,22 @@ def _coerce_delegation_entry(entry: Any) -> TraceDelegationEntry:
     raise TypeError(f"Unsupported delegation entry type: {type(entry).__name__}")
 
 
+def _coerce_handler_stack_entry(entry: Any) -> HandlerStackEntry:
+    if isinstance(entry, HandlerStackEntry):
+        return entry
+    if isinstance(entry, dict):
+        return HandlerStackEntry(
+            name=str(entry.get("name", "<handler>")),
+            status=str(entry.get("status", "pending")),  # type: ignore[arg-type]
+        )
+    if isinstance(entry, (tuple, list)) and len(entry) == 2:
+        return HandlerStackEntry(
+            name=str(entry[0]),
+            status=str(entry[1]),  # type: ignore[arg-type]
+        )
+    raise TypeError(f"Unsupported handler stack entry type: {type(entry).__name__}")
+
+
 def coerce_trace_entry(entry: Any) -> TraceEntry:
     if isinstance(entry, (TraceFrame, TraceDispatch, TraceResumePoint)):
         return entry
@@ -84,6 +106,23 @@ def coerce_trace_entry(entry: Any) -> TraceEntry:
     if kind == "dispatch" or "effect_repr" in entry:
         chain_raw = entry.get("delegation_chain", ())
         chain = tuple(_coerce_delegation_entry(item) for item in chain_raw)
+        handler_stack_raw = entry.get("handler_stack", ())
+        handler_stack = tuple(_coerce_handler_stack_entry(item) for item in handler_stack_raw)
+        if not handler_stack:
+            synthesized: list[HandlerStackEntry] = []
+            for delegated in chain[:-1]:
+                synthesized.append(HandlerStackEntry(name=delegated.handler_name, status="delegated"))
+            final_name = str(entry.get("handler_name", "<handler>"))
+            final_status = str(entry.get("action", "active"))
+            if final_status == "returned":
+                final_status = "resumed"
+            synthesized.append(
+                HandlerStackEntry(
+                    name=final_name,
+                    status=final_status,  # type: ignore[arg-type]
+                )
+            )
+            handler_stack = tuple(synthesized)
         return TraceDispatch(
             dispatch_id=int(entry["dispatch_id"]),
             effect_repr=str(entry["effect_repr"]),
@@ -92,6 +131,7 @@ def coerce_trace_entry(entry: Any) -> TraceEntry:
             handler_source_file=entry.get("handler_source_file"),
             handler_source_line=entry.get("handler_source_line"),
             delegation_chain=chain,
+            handler_stack=handler_stack,
             action=str(entry.get("action", "active")),  # type: ignore[arg-type]
             value_repr=entry.get("value_repr"),
             exception_repr=entry.get("exception_repr"),
@@ -115,11 +155,12 @@ def coerce_trace_entries(entries: list[Any] | tuple[Any, ...]) -> list[TraceEntr
 
 
 __all__ = [
-    "TraceFrame",
+    "HandlerStackEntry",
     "TraceDelegationEntry",
     "TraceDispatch",
-    "TraceResumePoint",
     "TraceEntry",
-    "coerce_trace_entry",
+    "TraceFrame",
+    "TraceResumePoint",
     "coerce_trace_entries",
+    "coerce_trace_entry",
 ]

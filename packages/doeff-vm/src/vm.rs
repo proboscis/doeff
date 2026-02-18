@@ -8,7 +8,8 @@ use pyo3::types::PyDict;
 
 use crate::arena::SegmentArena;
 use crate::capture::{
-    CaptureEvent, DelegationEntry, DispatchAction, FrameId, HandlerAction, HandlerKind, TraceEntry,
+    CaptureEvent, DelegationEntry, DispatchAction, FrameId, HandlerAction, HandlerDispatchEntry,
+    HandlerKind, HandlerSnapshotEntry, HandlerStatus, TraceEntry,
 };
 use crate::continuation::Continuation;
 use crate::do_ctrl::{CallArg, DoCtrl};
@@ -382,6 +383,78 @@ impl VM {
             .map(|entry| Self::handler_trace_info(&entry.handler))
     }
 
+    fn handler_stack_snapshot(&self, handler_chain: &[Marker]) -> Vec<HandlerSnapshotEntry> {
+        handler_chain
+            .iter()
+            .enumerate()
+            .map(|(idx, marker)| HandlerSnapshotEntry {
+                name: self
+                    .marker_handler_trace_info(*marker)
+                    .map(|(name, _, _, _)| name)
+                    .unwrap_or_else(|| "<handler>".to_string()),
+                handler_idx: idx,
+            })
+            .collect()
+    }
+
+    fn handler_stack_with_active(
+        handler_stack: &[HandlerSnapshotEntry],
+        active_idx: usize,
+    ) -> Vec<HandlerDispatchEntry> {
+        handler_stack
+            .iter()
+            .map(|entry| HandlerDispatchEntry {
+                name: entry.name.clone(),
+                status: if entry.handler_idx == active_idx {
+                    HandlerStatus::Active
+                } else {
+                    HandlerStatus::Pending
+                },
+            })
+            .collect()
+    }
+
+    fn update_handler_status_for_delegation(
+        handler_stack: &mut [HandlerDispatchEntry],
+        to_handler_name: &str,
+    ) {
+        if let Some(active) = handler_stack
+            .iter_mut()
+            .find(|entry| entry.status == HandlerStatus::Active)
+        {
+            active.status = HandlerStatus::Delegated;
+        }
+
+        if let Some(next) = handler_stack.iter_mut().find(|entry| {
+            entry.name == to_handler_name
+                && matches!(
+                    entry.status,
+                    HandlerStatus::Pending | HandlerStatus::Delegated | HandlerStatus::Active
+                )
+        }) {
+            next.status = HandlerStatus::Active;
+        }
+    }
+
+    fn update_handler_status_for_completion(
+        handler_stack: &mut [HandlerDispatchEntry],
+        action: &HandlerAction,
+    ) {
+        let status = match action {
+            HandlerAction::Resumed { .. } => HandlerStatus::Resumed,
+            HandlerAction::Transferred { .. } => HandlerStatus::Transferred,
+            HandlerAction::Returned { .. } => HandlerStatus::Resumed,
+            HandlerAction::Threw { .. } => HandlerStatus::Threw,
+        };
+
+        if let Some(active) = handler_stack
+            .iter_mut()
+            .find(|entry| entry.status == HandlerStatus::Active)
+        {
+            active.status = status;
+        }
+    }
+
     fn current_handler_name_for_dispatch(&self, dispatch_id: DispatchId) -> String {
         let info = self
             .dispatch_stack
@@ -505,6 +578,39 @@ impl VM {
         }
     }
 
+    fn attach_trace_payload_to_exception_obj(
+        py: Python<'_>,
+        exc_obj: &Bound<'_, PyAny>,
+        trace_obj: Bound<'_, PyAny>,
+    ) {
+        let existing = exc_obj.getattr("__doeff_traceback_data__").ok();
+
+        if let Some(existing_payload) = existing {
+            let payload = PyDict::new(py);
+            let _ = payload.set_item("trace", trace_obj);
+            let _ = payload.set_item("spawned_from", existing_payload);
+            let _ = exc_obj.setattr("__doeff_traceback_data__", payload);
+            return;
+        }
+
+        let _ = exc_obj.setattr("__doeff_traceback_data__", trace_obj);
+    }
+
+    fn maybe_snapshot_trace_on_exception(&self, exception: &PyException) {
+        let PyException::Materialized { exc_value, .. } = exception else {
+            return;
+        };
+
+        let trace_entries = self.assemble_trace();
+        Python::attach(|py| {
+            let exc_obj = exc_value.bind(py);
+            let Ok(trace_obj) = Value::Trace(trace_entries).to_pyobject(py) else {
+                return;
+            };
+            Self::attach_trace_payload_to_exception_obj(py, exc_obj, trace_obj);
+        });
+    }
+
     pub fn assemble_trace(&self) -> Vec<TraceEntry> {
         let mut trace: Vec<TraceEntry> = Vec::new();
         let mut dispatch_positions: HashMap<DispatchId, usize> = HashMap::new();
@@ -531,9 +637,11 @@ impl VM {
                     dispatch_id,
                     effect_repr,
                     handler_name,
+                    handler_idx,
                     handler_kind,
                     handler_source_file,
                     handler_source_line,
+                    handler_stack,
                 } => {
                     let pos = trace.len();
                     dispatch_positions.insert(*dispatch_id, pos);
@@ -550,6 +658,7 @@ impl VM {
                             handler_source_file: handler_source_file.clone(),
                             handler_source_line: *handler_source_line,
                         }],
+                        handler_stack: Self::handler_stack_with_active(handler_stack, *handler_idx),
                         action: DispatchAction::Active,
                         value_repr: None,
                         exception_repr: None,
@@ -570,6 +679,7 @@ impl VM {
                             handler_source_file,
                             handler_source_line,
                             delegation_chain,
+                            handler_stack,
                             ..
                         } = &mut trace[pos]
                         {
@@ -583,6 +693,7 @@ impl VM {
                                 handler_source_file: to_handler_source_file.clone(),
                                 handler_source_line: *to_handler_source_line,
                             });
+                            Self::update_handler_status_for_delegation(handler_stack, to_handler_name);
                         }
                     }
                 }
@@ -596,9 +707,11 @@ impl VM {
                             action: dispatch_action,
                             value_repr,
                             exception_repr,
+                            handler_stack,
                             ..
                         } = &mut trace[pos]
                         {
+                            Self::update_handler_status_for_completion(handler_stack, action);
                             match action {
                                 HandlerAction::Resumed { value_repr: repr } => {
                                     *dispatch_action = DispatchAction::Resumed;
@@ -735,6 +848,10 @@ impl VM {
                     handler_source_file,
                     handler_source_line,
                 }],
+                handler_stack: Self::handler_stack_with_active(
+                    &self.handler_stack_snapshot(&ctx.handler_chain),
+                    ctx.handler_idx,
+                ),
                 action: DispatchAction::Active,
                 value_repr: None,
                 exception_repr: None,
@@ -1045,6 +1162,9 @@ impl VM {
             }
 
             Frame::RustProgram { program } => {
+                if let Mode::Throw(exc) = &mode {
+                    self.maybe_snapshot_trace_on_exception(exc);
+                }
                 let step = Python::attach(|_py| {
                     let mut guard = program.lock().expect("Rust program lock poisoned");
                     match mode {
@@ -1673,9 +1793,11 @@ impl VM {
             dispatch_id,
             effect_repr: Self::effect_repr(&effect),
             handler_name,
+            handler_idx,
             handler_kind,
             handler_source_file,
             handler_source_line,
+            handler_stack: self.handler_stack_snapshot(&handler_chain),
         });
 
         match handler {

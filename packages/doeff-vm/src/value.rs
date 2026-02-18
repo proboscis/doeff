@@ -5,7 +5,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString};
 
-use crate::capture::{DispatchAction, HandlerKind, TraceEntry};
+use crate::capture::{DispatchAction, HandlerKind, HandlerStatus, TraceEntry};
 use crate::frame::CallMetadata;
 use crate::handler::Handler;
 use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
@@ -47,6 +47,17 @@ impl Value {
             DispatchAction::Transferred => "transferred",
             DispatchAction::Returned => "returned",
             DispatchAction::Threw => "threw",
+        }
+    }
+
+    fn handler_status_to_str(status: &HandlerStatus) -> &'static str {
+        match status {
+            HandlerStatus::Delegated => "delegated",
+            HandlerStatus::Resumed => "resumed",
+            HandlerStatus::Threw => "threw",
+            HandlerStatus::Transferred => "transferred",
+            HandlerStatus::Active => "active",
+            HandlerStatus::Pending => "pending",
         }
     }
 
@@ -92,12 +103,14 @@ impl Value {
                 handler_source_file,
                 handler_source_line,
                 delegation_chain,
+                handler_stack,
                 action,
                 value_repr,
                 exception_repr,
             } => {
                 if let Some(mod_) = &trace_mod {
                     let delegation_cls = mod_.getattr("TraceDelegationEntry")?;
+                    let handler_stack_cls = mod_.getattr("HandlerStackEntry")?;
                     let chain_items = PyList::empty(py);
                     for item in delegation_chain {
                         let obj = delegation_cls.call1((
@@ -108,6 +121,14 @@ impl Value {
                         ))?;
                         chain_items.append(obj)?;
                     }
+                    let stack_items = PyList::empty(py);
+                    for item in handler_stack {
+                        let obj = handler_stack_cls.call1((
+                            item.name.as_str(),
+                            Self::handler_status_to_str(&item.status),
+                        ))?;
+                        stack_items.append(obj)?;
+                    }
                     let cls = mod_.getattr("TraceDispatch")?;
                     let obj = cls.call1((
                         dispatch_id.raw(),
@@ -117,6 +138,7 @@ impl Value {
                         handler_source_file.clone(),
                         *handler_source_line,
                         chain_items.to_tuple(),
+                        stack_items.to_tuple(),
                         Self::dispatch_action_to_str(action),
                         value_repr.clone(),
                         exception_repr.clone(),
@@ -144,6 +166,14 @@ impl Value {
                         chain.append(row)?;
                     }
                     dict.set_item("delegation_chain", chain)?;
+                    let stack = PyList::empty(py);
+                    for item in handler_stack {
+                        let row = PyDict::new(py);
+                        row.set_item("name", item.name.as_str())?;
+                        row.set_item("status", Self::handler_status_to_str(&item.status))?;
+                        stack.append(row)?;
+                    }
+                    dict.set_item("handler_stack", stack)?;
                     dict.set_item("action", Self::dispatch_action_to_str(action))?;
                     dict.set_item("value_repr", value_repr.clone())?;
                     dict.set_item("exception_repr", exception_repr.clone())?;

@@ -71,7 +71,7 @@ def _print_doeff_trace_if_present(run_result: Any) -> None:
     try:
         import sys
 
-        print(doeff_tb.format_chained(), file=sys.stderr)
+        print(doeff_tb.format_default(), file=sys.stderr)
     except Exception:
         return
 

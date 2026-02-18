@@ -47,6 +47,7 @@ else:
     import traceback as _py_traceback
 
     from doeff.trace import (
+        HandlerStackEntry,
         TraceDispatch,
         TraceFrame,
         TraceResumePoint,
@@ -275,11 +276,32 @@ else:
 
         return projected
 
+    _STATUS_MARKERS: dict[str, str] = {
+        "resumed": "✓",
+        "delegated": "↗",
+        "threw": "✗",
+        "transferred": "⇢",
+        "active": "⚡",
+        "pending": "·",
+    }
+    _INTERNAL_DELEGATE_ONLY_HANDLERS = {"sync_await_handler", "async_await_handler"}
+
+    @dataclass(frozen=True)
+    class SpawnSite:
+        function_name: str
+        file: str
+        line: int
+
     @dataclass(frozen=True)
     class DoeffTraceback:
         chain: tuple[DoeffTraceEntry, ...]
+        raw_trace: tuple[TraceFrame | TraceDispatch | TraceResumePoint, ...]
         python_traceback: Any | None
         exception: BaseException
+        spawned_from: DoeffTraceback | None = None
+        task_id: int | None = None
+        parent_task: int | None = None
+        spawn_site: SpawnSite | None = None
 
         def _format_program_entry(self, entry: ProgramFrame | ResumeMarker) -> tuple[str, str | None]:
             location = f"{entry.source_file}:{entry.source_line}"
@@ -298,6 +320,206 @@ else:
                 f"  -> handling {entry.effect_repr}"
             )
             return head, entry.action_detail
+
+        def format(self) -> str:
+            return self.format_default()
+
+        def _python_frames(self) -> list[tuple[str, str, int]]:
+            tb_obj = self.exception.__traceback__
+            if tb_obj is None and self.python_traceback is not None:
+                tb_obj = getattr(self.python_traceback, "traceback_obj", None)
+            if tb_obj is None:
+                return []
+
+            frames = _py_traceback.extract_tb(tb_obj)
+            filtered: list[tuple[str, str, int]] = []
+            for frame in frames:
+                normalized = frame.filename.replace("\\", "/")
+                if frame.name in {"generator_wrapper", "_wrap"}:
+                    continue
+                if normalized.endswith("/doeff/do.py"):
+                    continue
+                filtered.append((frame.name, frame.filename, frame.lineno))
+            return filtered
+
+        def _default_dispatch_rows(self) -> list[tuple[TraceDispatch, TraceResumePoint | None]]:
+            dispatches = [entry for entry in self.raw_trace if isinstance(entry, TraceDispatch)]
+            if not dispatches:
+                return []
+
+            resume_points = [entry for entry in self.raw_trace if isinstance(entry, TraceResumePoint)]
+            resume_by_dispatch = {resume.dispatch_id: resume for resume in resume_points}
+            selected_ids: set[int] = set()
+
+            for function_name, source_file, source_line in self._python_frames():
+                exact = next(
+                    (
+                        rp
+                        for rp in reversed(resume_points)
+                        if rp.resumed_function_name == function_name
+                        and rp.source_file == source_file
+                        and rp.source_line == source_line
+                    ),
+                    None,
+                )
+                if exact is not None:
+                    selected_ids.add(exact.dispatch_id)
+                    continue
+                by_function = next(
+                    (
+                        rp
+                        for rp in reversed(resume_points)
+                        if rp.resumed_function_name == function_name and rp.source_file == source_file
+                    ),
+                    None,
+                )
+                if by_function is not None:
+                    selected_ids.add(by_function.dispatch_id)
+
+            thrown_dispatch = next(
+                (dispatch for dispatch in reversed(dispatches) if dispatch.action == "threw"),
+                None,
+            )
+            if thrown_dispatch is not None:
+                selected_ids.add(thrown_dispatch.dispatch_id)
+
+            if not selected_ids:
+                selected_ids.add(dispatches[-1].dispatch_id)
+
+            rows: list[tuple[TraceDispatch, TraceResumePoint | None]] = []
+            for dispatch in dispatches:
+                if dispatch.dispatch_id in selected_ids:
+                    rows.append((dispatch, resume_by_dispatch.get(dispatch.dispatch_id)))
+            return rows
+
+        @staticmethod
+        def _truncate(text: str, limit: int) -> str:
+            return text if len(text) <= limit else f"{text[:limit]}..."
+
+        @staticmethod
+        def _normalized_status(action: str) -> str:
+            if action == "returned":
+                return "resumed"
+            return action
+
+        def _render_stack(
+            self,
+            dispatch: TraceDispatch,
+            previous: str | None,
+        ) -> tuple[str, str]:
+            stack = dispatch.handler_stack
+            if not stack:
+                fallback_status = self._normalized_status(dispatch.action)
+                stack = (HandlerStackEntry(dispatch.handler_name, fallback_status),)
+
+            parts: list[str] = []
+            for entry in stack:
+                if (
+                    entry.name in _INTERNAL_DELEGATE_ONLY_HANDLERS
+                    and entry.status == "delegated"
+                ):
+                    continue
+                marker = _STATUS_MARKERS.get(entry.status, "?")
+                parts.append(f"{entry.name}{marker}")
+
+            if not parts:
+                marker = _STATUS_MARKERS.get(self._normalized_status(dispatch.action), "?")
+                parts.append(f"{dispatch.handler_name}{marker}")
+
+            rendered = f"[{' > '.join(parts)}]"
+            if previous == rendered:
+                return "[same]", rendered
+            return rendered, rendered
+
+        def _result_line(
+            self,
+            dispatch: TraceDispatch,
+            resume_point: TraceResumePoint | None,
+        ) -> str | None:
+            action = dispatch.action
+            if action in {"resumed", "returned"}:
+                value = dispatch.value_repr if dispatch.value_repr is not None else "None"
+                return f"→ resumed with {self._truncate(value, 80)}"
+            if action == "threw":
+                detail = dispatch.exception_repr
+                if detail is None:
+                    detail = f"{type(self.exception).__name__}({str(self.exception)!r})"
+                return f"✗ {dispatch.handler_name} raised {detail}"
+            if action == "transferred":
+                target = "<target>"
+                if resume_point is not None:
+                    target = (
+                        f"{resume_point.resumed_function_name}() "
+                        f"{resume_point.source_file}:{resume_point.source_line}"
+                    )
+                return f"⇢ {dispatch.handler_name} transferred to {target}"
+            if action == "active":
+                return f"⚡ {dispatch.handler_name} is active"
+            return None
+
+        def _default_segment_lines(self) -> list[str]:
+            lines: list[str] = []
+            previous_stack: str | None = None
+            fallback_frames = self._python_frames()
+
+            for dispatch, resume_point in self._default_dispatch_rows():
+                if resume_point is not None:
+                    function_name = resume_point.resumed_function_name
+                    source_file = resume_point.source_file
+                    source_line = resume_point.source_line
+                elif fallback_frames:
+                    function_name, source_file, source_line = fallback_frames[-1]
+                else:
+                    function_name, source_file, source_line = ("<unknown>", "<unknown>", 0)
+
+                lines.append(f"  {function_name}()  {source_file}:{source_line}")
+                lines.append(f"    yield {dispatch.effect_repr}")
+                stack_line, previous_stack = self._render_stack(dispatch, previous_stack)
+                lines.append(f"    {stack_line}")
+                result_line = self._result_line(dispatch, resume_point)
+                if result_line:
+                    lines.append(f"    {result_line}")
+
+            if fallback_frames:
+                function_name, source_file, source_line = fallback_frames[-1]
+            else:
+                function_name, source_file, source_line = ("<unknown>", "<unknown>", 0)
+            lines.append(f"  {function_name}()  {source_file}:{source_line}")
+            message = str(self.exception)
+            if message:
+                lines.append(f"    raise {type(self.exception).__name__}({message!r})")
+            else:
+                lines.append(f"    raise {type(self.exception).__name__}()")
+            return lines
+
+        def _task_separator(self) -> str:
+            if self.task_id is None:
+                return "── in spawned task ──"
+            if self.spawn_site is None:
+                return f"── in task {self.task_id} ──"
+            return (
+                f"── in task {self.task_id} "
+                f"(spawned at {self.spawn_site.function_name} "
+                f"{self.spawn_site.file}:{self.spawn_site.line}) ──"
+            )
+
+        def format_default(self) -> str:
+            lines: list[str] = ["doeff Traceback (most recent call last):", ""]
+
+            segments: list[DoeffTraceback] = []
+            current: DoeffTraceback | None = self
+            while current is not None:
+                segments.append(current)
+                current = current.spawned_from
+
+            for idx, segment in enumerate(segments):
+                if idx > 0:
+                    lines.append(segment._task_separator())
+                lines.extend(segment._default_segment_lines())
+                lines.append("")
+
+            lines.append(f"{type(self.exception).__name__}: {self.exception}")
+            return "\n".join(lines)
 
         def format_chained(self) -> str:
             lines: list[str] = ["doeff Traceback (most recent call last):", ""]
@@ -365,19 +587,87 @@ else:
                 return f"{type(self.exception).__name__}: {self.exception}"
             return " -> ".join(parts) + f": {type(self.exception).__name__}: {self.exception}"
 
+    def _coerce_spawn_site(raw: Any) -> SpawnSite | None:
+        if not isinstance(raw, dict):
+            return None
+        function_name = raw.get("function_name")
+        source_file = raw.get("file")
+        line = raw.get("line")
+        if not isinstance(function_name, str) or not isinstance(source_file, str):
+            return None
+        if not isinstance(line, int):
+            return None
+        return SpawnSite(function_name=function_name, file=source_file, line=line)
+
+    def _parse_trace_payload(
+        trace_payload: Any,
+    ) -> tuple[list[Any], dict[str, Any], Any | None]:
+        if isinstance(trace_payload, (list, tuple)):
+            return list(trace_payload), {}, None
+        if isinstance(trace_payload, dict):
+            trace_entries = trace_payload.get("trace", [])
+            if not isinstance(trace_entries, (list, tuple)):
+                trace_entries = []
+            metadata = {
+                "task_id": trace_payload.get("task_id"),
+                "parent_task": trace_payload.get("parent_task"),
+                "spawn_site": _coerce_spawn_site(trace_payload.get("spawn_site")),
+            }
+            return list(trace_entries), metadata, trace_payload.get("spawned_from")
+        return [], {}, None
+
     def build_doeff_traceback(
         exception: BaseException,
-        trace_entries: list[Any] | tuple[Any, ...],
+        trace_entries: Any,
         *,
         allow_active: bool = False,
+        _captured_traceback: Any | None = None,
+        _seen_payload_ids: set[int] | None = None,
     ) -> DoeffTraceback:
         from doeff.types import capture_traceback, get_captured_traceback
 
-        projected = project_trace(trace_entries, allow_active=allow_active)
-        captured = get_captured_traceback(exception)
+        if _seen_payload_ids is None:
+            _seen_payload_ids = set()
+
+        payload_id = id(trace_entries)
+        if payload_id in _seen_payload_ids:
+            trace_entries = []
+        else:
+            _seen_payload_ids.add(payload_id)
+
+        raw_entries, metadata, spawned_payload = _parse_trace_payload(trace_entries)
+        coerced_entries = coerce_trace_entries(raw_entries)
+        segment_allow_active = allow_active or isinstance(metadata.get("task_id"), int)
+        projected = project_trace(coerced_entries, allow_active=segment_allow_active)
+
+        captured = _captured_traceback
         if captured is None:
-            captured = capture_traceback(exception)
-        return DoeffTraceback(chain=tuple(projected), python_traceback=captured, exception=exception)
+            captured = get_captured_traceback(exception)
+            if captured is None:
+                captured = capture_traceback(exception)
+
+        spawned_tb = None
+        if spawned_payload is not None:
+            spawned_tb = build_doeff_traceback(
+                exception,
+                spawned_payload,
+                allow_active=segment_allow_active,
+                _captured_traceback=captured,
+                _seen_payload_ids=_seen_payload_ids,
+            )
+
+        task_id = metadata.get("task_id")
+        parent_task = metadata.get("parent_task")
+        return DoeffTraceback(
+            chain=tuple(projected),
+            raw_trace=tuple(coerced_entries),
+            python_traceback=captured,
+            exception=exception,
+            spawned_from=spawned_tb,
+            task_id=task_id if isinstance(task_id, int) else None,
+            parent_task=parent_task if isinstance(parent_task, int) else None,
+            spawn_site=metadata.get("spawn_site"),
+        )
 
     def attach_doeff_traceback(
         exception: BaseException,
@@ -391,7 +681,7 @@ else:
         raw_trace = getattr(exception, "__doeff_traceback_data__", None)
         if raw_trace is None:
             return None
-        if not isinstance(raw_trace, (list, tuple)):
+        if not isinstance(raw_trace, (list, tuple, dict)):
             return None
 
         tb = build_doeff_traceback(exception, raw_trace, allow_active=allow_active)
