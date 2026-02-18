@@ -398,28 +398,19 @@ impl VM {
             .map(|entry| Self::handler_trace_info(&entry.handler))
     }
 
-    fn current_handler_name_for_dispatch(&self, dispatch_id: DispatchId) -> String {
-        let info = self
+    fn current_handler_identity_for_dispatch(
+        &self,
+        dispatch_id: DispatchId,
+    ) -> Option<(usize, String)> {
+        let ctx = self
             .dispatch_stack
             .iter()
             .rev()
             .find(|ctx| ctx.dispatch_id == dispatch_id)
-            .and_then(|ctx| {
-                ctx.handler_chain
-                    .get(ctx.handler_idx)
-                    .and_then(|marker| self.marker_handler_trace_info(*marker))
-            });
-        info.map(|(name, _, _, _)| name)
-            .unwrap_or_else(|| "<handler>".to_string())
-    }
-
-    fn current_handler_index_for_dispatch(&self, dispatch_id: DispatchId) -> usize {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-            .map(|ctx| ctx.handler_idx)
-            .unwrap_or(0)
+            .cloned()?;
+        let marker = *ctx.handler_chain.get(ctx.handler_idx)?;
+        let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
+        Some((ctx.handler_idx, name))
     }
 
     fn current_active_handler_dispatch_id(&self) -> Option<DispatchId> {
@@ -545,8 +536,11 @@ impl VM {
     }
 
     fn maybe_emit_handler_threw_for_dispatch(&mut self, dispatch_id: DispatchId, exc: &PyException) {
-        let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
-        let handler_index = self.current_handler_index_for_dispatch(dispatch_id);
+        let Some((handler_index, handler_name)) =
+            self.current_handler_identity_for_dispatch(dispatch_id)
+        else {
+            return;
+        };
         self.capture_log.push(CaptureEvent::HandlerCompleted {
             dispatch_id,
             handler_name,
@@ -801,20 +795,13 @@ impl VM {
                 continue;
             }
 
-            let handler_info = ctx
+            let Some((handler_name, handler_kind, handler_source_file, handler_source_line)) = ctx
                 .handler_chain
                 .get(ctx.handler_idx)
                 .and_then(|marker| self.marker_handler_trace_info(*marker))
-                .unwrap_or_else(|| {
-                    (
-                        "<handler>".to_string(),
-                        HandlerKind::RustBuiltin,
-                        None,
-                        None,
-                    )
-                });
-            let (handler_name, handler_kind, handler_source_file, handler_source_line) =
-                handler_info;
+            else {
+                continue;
+            };
 
             trace.push(TraceEntry::Dispatch {
                 dispatch_id: ctx.dispatch_id,
@@ -1112,17 +1099,17 @@ impl VM {
                 CaptureEvent::DispatchStarted {
                     dispatch_id,
                     effect_repr,
-                    handler_name,
-                    handler_kind,
-                    handler_source_file,
-                    handler_source_line,
+                    handler_name: _,
+                    handler_kind: _,
+                    handler_source_file: _,
+                    handler_source_line: _,
                     handler_chain_snapshot,
                     effect_frame_id,
                     effect_function_name,
                     effect_source_file,
                     effect_source_line,
                 } => {
-                    let mut handler_stack: Vec<HandlerDispatchEntry> = handler_chain_snapshot
+                    let handler_stack: Vec<HandlerDispatchEntry> = handler_chain_snapshot
                         .iter()
                         .enumerate()
                         .map(|(index, snapshot)| HandlerDispatchEntry {
@@ -1137,16 +1124,6 @@ impl VM {
                             },
                         })
                         .collect();
-
-                    if handler_stack.is_empty() {
-                        handler_stack.push(HandlerDispatchEntry {
-                            handler_name: handler_name.clone(),
-                            handler_kind: handler_kind.clone(),
-                            source_file: handler_source_file.clone(),
-                            source_line: *handler_source_line,
-                            status: HandlerStatus::Active,
-                        });
-                    }
 
                     if let Some(frame_id) = effect_frame_id {
                         frame_dispatch.insert(*frame_id, *dispatch_id);
@@ -1173,44 +1150,21 @@ impl VM {
                     dispatch_id,
                     from_handler_name: _,
                     from_handler_index,
-                    to_handler_name,
+                    to_handler_name: _,
                     to_handler_index,
-                    to_handler_kind,
-                    to_handler_source_file,
-                    to_handler_source_line,
+                    to_handler_kind: _,
+                    to_handler_source_file: _,
+                    to_handler_source_line: _,
                 } => {
                     if let Some(dispatch) = dispatches.get_mut(dispatch_id) {
-                        let mut from_updated = false;
                         if let Some(from_entry) = dispatch.handler_stack.get_mut(*from_handler_index) {
                             if from_entry.status == HandlerStatus::Active {
                                 from_entry.status = HandlerStatus::Delegated;
-                                from_updated = true;
-                            }
-                        }
-                        if !from_updated {
-                            if let Some(last_active) = dispatch
-                                .handler_stack
-                                .iter_mut()
-                                .rev()
-                                .find(|entry| entry.status == HandlerStatus::Active)
-                            {
-                                last_active.status = HandlerStatus::Delegated;
                             }
                         }
 
-                        let mut to_updated = false;
                         if let Some(to_entry) = dispatch.handler_stack.get_mut(*to_handler_index) {
                             to_entry.status = HandlerStatus::Active;
-                            to_updated = true;
-                        }
-                        if !to_updated {
-                            dispatch.handler_stack.push(HandlerDispatchEntry {
-                                handler_name: to_handler_name.clone(),
-                                handler_kind: to_handler_kind.clone(),
-                                source_file: to_handler_source_file.clone(),
-                                source_line: *to_handler_source_line,
-                                status: HandlerStatus::Active,
-                            });
                         }
                     }
                 }
@@ -1228,20 +1182,8 @@ impl VM {
                             HandlerAction::Threw { .. } => HandlerStatus::Threw,
                         };
 
-                        let mut status_applied = false;
                         if let Some(target) = dispatch.handler_stack.get_mut(*handler_index) {
                             target.status = status;
-                            status_applied = true;
-                        }
-                        if !status_applied {
-                            if let Some(last) = dispatch
-                                .handler_stack
-                                .iter_mut()
-                                .rev()
-                                .find(|entry| entry.status == HandlerStatus::Active)
-                            {
-                                last.status = status;
-                            }
                         }
 
                         dispatch.result = match action {
@@ -2637,11 +2579,19 @@ impl VM {
                 self.consumed_cont_ids.insert(cont_id);
                 continue;
             }
-            let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
+            let Some((handler_index, handler_name)) =
+                self.current_handler_identity_for_dispatch(dispatch_id)
+            else {
+                if let Some(ctx) = self.dispatch_stack.get_mut(idx) {
+                    ctx.completed = true;
+                }
+                self.consumed_cont_ids.insert(cont_id);
+                continue;
+            };
             self.capture_log.push(CaptureEvent::HandlerCompleted {
                 dispatch_id,
                 handler_name,
-                handler_index: self.current_handler_index_for_dispatch(dispatch_id),
+                handler_index,
                 action: HandlerAction::Threw {
                     exception_repr: exception_repr.clone(),
                 },
@@ -2681,24 +2631,26 @@ impl VM {
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
         if let Some(dispatch_id) = k.dispatch_id {
-            let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
-            let handler_index = self.current_handler_index_for_dispatch(dispatch_id);
-            let value_repr = Self::value_repr(&value);
-            self.capture_log.push(CaptureEvent::HandlerCompleted {
-                dispatch_id,
-                handler_name: handler_name.clone(),
-                handler_index,
-                action: HandlerAction::Resumed {
-                    value_repr: value_repr.clone(),
-                },
-            });
-            self.maybe_emit_resume_event(
-                dispatch_id,
-                handler_name,
-                value_repr,
-                &k,
-                false,
-            );
+            if let Some((handler_index, handler_name)) =
+                self.current_handler_identity_for_dispatch(dispatch_id)
+            {
+                let value_repr = Self::value_repr(&value);
+                self.capture_log.push(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name: handler_name.clone(),
+                    handler_index,
+                    action: HandlerAction::Resumed {
+                        value_repr: value_repr.clone(),
+                    },
+                });
+                self.maybe_emit_resume_event(
+                    dispatch_id,
+                    handler_name,
+                    value_repr,
+                    &k,
+                    false,
+                );
+            }
         }
         if let Some(dispatch_id) = k.dispatch_id {
             if !self.active_dispatch_handler_is_python(dispatch_id) {
@@ -2737,24 +2689,26 @@ impl VM {
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
         if let Some(dispatch_id) = k.dispatch_id {
-            let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
-            let handler_index = self.current_handler_index_for_dispatch(dispatch_id);
-            let value_repr = Self::value_repr(&value);
-            self.capture_log.push(CaptureEvent::HandlerCompleted {
-                dispatch_id,
-                handler_name: handler_name.clone(),
-                handler_index,
-                action: HandlerAction::Transferred {
-                    value_repr: value_repr.clone(),
-                },
-            });
-            self.maybe_emit_resume_event(
-                dispatch_id,
-                handler_name,
-                value_repr,
-                &k,
-                true,
-            );
+            if let Some((handler_index, handler_name)) =
+                self.current_handler_identity_for_dispatch(dispatch_id)
+            {
+                let value_repr = Self::value_repr(&value);
+                self.capture_log.push(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name: handler_name.clone(),
+                    handler_index,
+                    action: HandlerAction::Transferred {
+                        value_repr: value_repr.clone(),
+                    },
+                });
+                self.maybe_emit_resume_event(
+                    dispatch_id,
+                    handler_name,
+                    value_repr,
+                    &k,
+                    true,
+                );
+            }
         }
         self.check_dispatch_completion(&k);
 
@@ -2787,16 +2741,18 @@ impl VM {
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
         if let Some(dispatch_id) = k.dispatch_id {
-            let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
-            let handler_index = self.current_handler_index_for_dispatch(dispatch_id);
-            self.capture_log.push(CaptureEvent::HandlerCompleted {
-                dispatch_id,
-                handler_name,
-                handler_index,
-                action: HandlerAction::Threw {
-                    exception_repr: Self::exception_repr(&exception),
-                },
-            });
+            if let Some((handler_index, handler_name)) =
+                self.current_handler_identity_for_dispatch(dispatch_id)
+            {
+                self.capture_log.push(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name,
+                    handler_index,
+                    action: HandlerAction::Threw {
+                        exception_repr: Self::exception_repr(&exception),
+                    },
+                });
+            }
         }
         self.check_dispatch_completion(&k);
 
@@ -2908,29 +2864,25 @@ impl VM {
                     let from_marker = handler_chain.get(from_idx).copied();
                     let from_name = from_marker
                         .and_then(|m| self.marker_handler_trace_info(m))
-                        .map(|(name, _, _, _)| name)
-                        .unwrap_or_else(|| "<handler>".to_string());
+                        .map(|(name, _, _, _)| name);
                     let to_info = self
-                        .marker_handler_trace_info(marker)
-                        .unwrap_or_else(|| {
-                            (
-                                "<handler>".to_string(),
-                                HandlerKind::RustBuiltin,
-                                None,
-                                None,
-                            )
+                        .marker_handler_trace_info(marker);
+                    if let (
+                        Some(from_name),
+                        Some((to_name, to_kind, to_source_file, to_source_line)),
+                    ) = (from_name, to_info)
+                    {
+                        self.capture_log.push(CaptureEvent::Delegated {
+                            dispatch_id,
+                            from_handler_name: from_name,
+                            from_handler_index: from_idx,
+                            to_handler_name: to_name,
+                            to_handler_index: idx,
+                            to_handler_kind: to_kind,
+                            to_handler_source_file: to_source_file,
+                            to_handler_source_line: to_source_line,
                         });
-                    let (to_name, to_kind, to_source_file, to_source_line) = to_info;
-                    self.capture_log.push(CaptureEvent::Delegated {
-                        dispatch_id,
-                        from_handler_name: from_name,
-                        from_handler_index: from_idx,
-                        to_handler_name: to_name,
-                        to_handler_index: idx,
-                        to_handler_kind: to_kind,
-                        to_handler_source_file: to_source_file,
-                        to_handler_source_line: to_source_line,
-                    });
+                    }
                     let k_user = {
                         let top = self.dispatch_stack.last_mut().unwrap();
                         top.handler_idx = idx;
@@ -3008,12 +2960,17 @@ impl VM {
             return StepEvent::Error(VMError::internal("Return outside of dispatch"));
         };
 
-        let handler_name = self.current_handler_name_for_dispatch(top_snapshot.dispatch_id);
+        let Some((handler_index, handler_name)) =
+            self.current_handler_identity_for_dispatch(top_snapshot.dispatch_id)
+        else {
+            self.mode = Mode::Deliver(value);
+            return StepEvent::Continue;
+        };
         let value_repr = Self::value_repr(&value);
         self.capture_log.push(CaptureEvent::HandlerCompleted {
             dispatch_id: top_snapshot.dispatch_id,
             handler_name: handler_name.clone(),
-            handler_index: top_snapshot.handler_idx,
+            handler_index,
             action: HandlerAction::Returned {
                 value_repr: value_repr.clone(),
             },
