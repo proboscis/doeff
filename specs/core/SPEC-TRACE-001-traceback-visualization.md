@@ -11,7 +11,7 @@ This spec defines the **default error traceback format** for doeff — what user
 ### Current Problems
 
 1. **Line numbers wrong** — shows `@do` decorator line (`co_firstlineno`), not the actual `yield` site
-2. **Starts from internal handler** — trace begins with `sync_await_handler`, not the user's program
+2. **Starts from helper handler** — trace begins with `sync_await_handler`, not the user's program
 3. **No handler stack context** — can't see which handlers were active at each yield
 4. **Full history, not crash state** — dumps every effect dispatch since `run()` started, even successful ones from earlier iterations
 5. **Python traceback noise** — `_effect_wrap` / `generator_wrapper` frames are VM plumbing, meaningless to users
@@ -21,8 +21,14 @@ This spec defines the **default error traceback format** for doeff — what user
 - Show the **active call chain** at crash time (like Python's traceback, but through `yield` boundaries)
 - Show the **handler stack** with per-handler status markers at each effect yield
 - Use **human-readable effect repr** (not `<builtins.PyPut object at 0x...>`)
-- No internal handler noise (`sync_await_handler` hidden unless it actually handled something)
+- Show every handler and effect exactly as captured at dispatch/crash time
 - No Python traceback section (the doeff trace IS the trace)
+
+### Architectural Invariant
+
+Neither Rust nor Python may filter, hide, omit, or abbreviate handlers/effects in traceback output.
+Every handler present in the handler chain at dispatch time must be rendered in order with its
+actual status marker. Every yielded effect represented in the active chain must be rendered.
 
 ---
 
@@ -69,18 +75,20 @@ Each handler in the stack is annotated with what it did for that effect:
 | `⚡` | Active | handler yielded its own effect (suspended mid-execution) |
 | `·` | Pending | handler never saw this effect (downstream of the handler that resolved it) |
 
-> **Note**: Handler `return` (⏎ — abandon continuation) is not shown in the default format.
-> By the time a trace is captured (error or `GetStackTrace`), a handler return has already
-> completed — the `WithHandler` delivered its value, the parent continued. The return is
-> historical, never in the active call chain. It only appears in the full chronological
-> event log (`format_chained()`).
+> **Note**: `format_default()` has no separate `⏎` marker. A handler `return value` that resolves
+> an effect is rendered as `✓` with `→ resumed with <value>`. Historical return events that are
+> no longer on the active call chain are omitted from `format_default()` and remain visible only
+> in the full chronological event log (`format_chained()`).
 
 ### Handler Stack Display Rules
 
 - Show the full handler stack per effect frame, with markers
-- Handlers are ordered left-to-right from innermost (first to see effects) to outermost
-- Internal-only handlers (`sync_await_handler`) are hidden unless they actually handled an effect (i.e., not just delegated)
-- When the handler stack is unchanged from the previous effect frame, display `[same]` instead of repeating
+- Handlers are ordered left-to-right by dispatch order (first handler invoked to last)
+- For `default_handlers()`, the default dispatch order is:
+  `sync_await_handler > LazyAskHandler > SchedulerHandler > ResultSafeHandler > WriterHandler > ReaderHandler > StateHandler`
+- For `default_async_handlers()`, replace `sync_await_handler` with `async_await_handler`
+- No filtering by hardcoded handler names, handler kinds, actions, or statuses
+- No abbreviation protocol exists; each stack line renders concrete handler names (never `[same]` or `...`)
 - On `WithHandler` boundary crossings, show the full updated stack
 
 ### Frame Selection Rules
@@ -111,7 +119,7 @@ The cooperative scheduler SHOULD use `Transfer` (not `Resume`) for task switches
 
 Since the scheduler uses Transfer for every task switch, Transfer is a **common** operation in concurrent programs. Therefore:
 - Transfer is shown **inline** as a handler action (`⇢`), not as a visual separator
-- Scheduler-internal transfers between tasks are visible only when relevant to the crash (the trace only follows the failing task's path, not every task switch)
+- Scheduler transfers between tasks are visible only when relevant to the crash (the trace only follows the failing task's path, not every task switch)
 - The `── in task N ──` separator marks **spawn boundaries**, not transfer boundaries
 
 ### Line Numbers
@@ -175,7 +183,7 @@ doeff Traceback (most recent call last):
 
   fetch_config()  app.py:5
     yield Ask("timeout")
-    [LazyAsk✓ > Reader· > Writer· > StateHandler·]
+    [sync_await_handler↗ > LazyAskHandler✓ > SchedulerHandler· > ResultSafeHandler· > WriterHandler· > ReaderHandler· > StateHandler·]
     → resumed with 30
 
   process_item()  app.py:14
@@ -187,7 +195,7 @@ RuntimeError: Connection refused: https://api.example.com/items/item/2
 Notes:
 - Items 0 and 1 succeeded — not in trace
 - `fetch_config` shows only its last yield before returning (the one active when control returned to `process_item`)
-- `sync_await_handler` hidden (always delegates)
+- `sync_await_handler` is rendered with its actual status as part of the full handler stack
 - Line numbers are yield sites, not decorator lines
 
 ### Example 2: Custom handler with WithHandler
@@ -221,7 +229,7 @@ doeff Traceback (most recent call last):
 
   call_api()  app.py:16
     yield Ask("rate_limit")
-    [rate_limiter✓ > auth_handler· > LazyAsk· > Reader· > StateHandler·]
+    [rate_limiter✓ > auth_handler· > sync_await_handler· > LazyAskHandler· > SchedulerHandler· > ResultSafeHandler· > WriterHandler· > ReaderHandler· > StateHandler·]
     → resumed with 100
 
   call_api()  app.py:17
@@ -231,7 +239,7 @@ ConnectionError: timeout
 ```
 
 Notes:
-- Handler stack shows `rate_limiter` innermost (added by inner `WithHandler`)
+- Handler stack shows `rate_limiter` first in dispatch order (added by inner `WithHandler`)
 - `auth_handler` is `·` because `rate_limiter` handled `Ask("rate_limit")` before it
 - Previous `Ask("token")` not shown — only the active yield matters
 
@@ -259,7 +267,7 @@ doeff Traceback (most recent call last):
 
   main()  app.py:10
     yield Put("result", "not-an-int")
-    [strict_handler✗ > StateHandler· > LazyAsk· > Reader·]
+    [strict_handler✗ > sync_await_handler· > LazyAskHandler· > SchedulerHandler· > ResultSafeHandler· > WriterHandler· > ReaderHandler· > StateHandler·]
     ✗ strict_handler raised TypeError("expected int, got str")
 
 TypeError: expected int, got str
@@ -287,14 +295,14 @@ doeff Traceback (most recent call last):
 
   needs_db()  app.py:3
     yield Ask("database_url")
-    [LazyAsk✗ > Reader· > StateHandler·]
-    ✗ LazyAsk raised MissingEnvKeyError("Environment key not found: 'database_url'")
+    [sync_await_handler↗ > LazyAskHandler✗ > SchedulerHandler· > ResultSafeHandler· > WriterHandler· > ReaderHandler· > StateHandler·]
+    ✗ LazyAskHandler raised MissingEnvKeyError("Environment key not found: 'database_url'")
 
 MissingEnvKeyError: Environment key not found: 'database_url'
 Hint: Provide this key via `env={'database_url': value}` or wrap with `Local({'database_url': value}, ...)`
 ```
 
-### Example 5: Handler stack changes with [same]
+### Example 5: Handler stack changes across frames
 
 ```python
 @do
@@ -315,7 +323,7 @@ doeff Traceback (most recent call last):
 
   outer()  app.py:3
     yield Put("x", 1)
-    [StateHandler✓ > LazyAsk· > Reader· > Writer·]
+    [sync_await_handler↗ > LazyAskHandler↗ > SchedulerHandler↗ > ResultSafeHandler↗ > WriterHandler↗ > ReaderHandler↗ > StateHandler✓]
     → resumed with None
 
   outer()  app.py:4
@@ -323,7 +331,7 @@ doeff Traceback (most recent call last):
 
   inner()  app.py:8
     yield Put("y", 2)
-    [my_handler↗ > StateHandler✓ > LazyAsk· > Reader· > Writer·]
+    [my_handler↗ > sync_await_handler↗ > LazyAskHandler↗ > SchedulerHandler↗ > ResultSafeHandler↗ > WriterHandler↗ > ReaderHandler↗ > StateHandler✓]
     → resumed with None
 
   inner()  app.py:9
@@ -334,18 +342,13 @@ ValueError: inner error
 
 Notes:
 - `outer` shows stack without `my_handler`
-- `inner` shows stack with `my_handler` prepended (innermost, added by `WithHandler`)
+- `inner` shows stack with `my_handler` prepended (first in dispatch order, added by `WithHandler`)
 
-### Example 6: Handler returns value (⏎ — abandoned continuation)
+### Example 6: Handler returns value (rendered as resumed `✓`)
 
-> **Note**: In doeff's one-shot continuation model, handler `return` (abandon continuation)
-> is practically redundant. Every use case is covered by `raise` (abort with error) or
-> `yield Resume(k, fallback)` (provide value, let program continue). The only pattern that
-> truly requires discarding continuations — backtracking/nondeterminism — needs multi-shot
-> continuations, which doeff does not support. We keep this for algebraic effects completeness
-> but don't expect it to be used in practice.
-
-When a handler does `return value` instead of `yield Resume(k, value)`, the continuation is abandoned — the `WithHandler` expression evaluates to the returned value. The program that yielded the effect never resumes.
+In the default traceback format, a plain handler `return value` is rendered as a successful handler
+resolution (`✓`) with `→ resumed with <value>`. There is no separate `⏎` rendering in
+`format_default()`.
 
 ```python
 def short_circuit_handler(effect, k):
@@ -355,48 +358,34 @@ def short_circuit_handler(effect, k):
 
 @do
 def inner():
-    mode = yield Ask("mode")       # handler returns here, inner() never resumes
-    yield Put("result", mode)      # never reached
-    return mode                    # never reached
+    mode = yield Ask("mode")
+    yield Put("result", mode)
+    return mode
 
 @do
 def outer():
     result = yield WithHandler(short_circuit_handler, inner())
-    # result is "fallback" (handler's return value, NOT inner()'s return)
     raise ValueError(f"Unexpected: {result}")
 ```
 
-Since the abandoned `inner()` is no longer in the active call chain at crash time, the trace only shows `outer()`:
+Output:
 
 ```
 doeff Traceback (most recent call last):
 
-  outer()  app.py:13
-    raise ValueError("Unexpected: fallback")
-
-ValueError: Unexpected: fallback
-```
-
-If the `return` itself is the terminal event (the `WithHandler` result causes the crash), and we want to show WHY the value was `"fallback"`, we may need to include the abandoned frame as context:
-
-```
-doeff Traceback (most recent call last):
-
-  outer()  app.py:11
+  outer()  app.py:12
     yield WithHandler(short_circuit_handler, inner())
 
-  inner()  app.py:7                                          (abandoned)
+  inner()  app.py:7
     yield Ask("mode")
-    [short_circuit_handler⏎ > LazyAsk· > Reader·]
-    ⏎ short_circuit_handler returned "fallback" (continuation abandoned)
+    [short_circuit_handler✓ > sync_await_handler· > LazyAskHandler· > SchedulerHandler· > ResultSafeHandler· > WriterHandler· > ReaderHandler· > StateHandler·]
+    → resumed with "fallback"
 
   outer()  app.py:13
     raise ValueError("Unexpected: fallback")
 
 ValueError: Unexpected: fallback
 ```
-
-Open question: when to include the abandoned frame vs omit it. For the default implementation, we omit it (it's not in the active call chain). A verbose/debug mode could include it.
 
 ### Example 7: Handler transfers to another continuation (⇢)
 
@@ -430,12 +419,12 @@ doeff Traceback (most recent call last):
 
   trigger()  app.py:12
     yield Ask("redirect")
-    [redirect_handler⇢ > StateHandler· > LazyAsk·]
+    [redirect_handler⇢ > sync_await_handler· > LazyAskHandler· > SchedulerHandler· > ResultSafeHandler· > WriterHandler· > ReaderHandler· > StateHandler·]
     ⇢ redirect_handler transferred to program_a
 
   program_a()  app.py:7
     yield Put("result", "redirected_value")
-    [StateHandler✓ > LazyAsk·]
+    [sync_await_handler↗ > LazyAskHandler↗ > SchedulerHandler↗ > ResultSafeHandler↗ > WriterHandler↗ > ReaderHandler↗ > StateHandler✓]
     → resumed with None
 
   program_a()  app.py:8
@@ -488,18 +477,18 @@ doeff Traceback (most recent call last):
 
   process_batch()  app.py:13
     yield Gather(*tasks)
-    [scheduler⇢ > StateHandler· > LazyAsk·]
-    ⇢ task 3 failed during Gather
+    [sync_await_handler↗ > LazyAskHandler· > SchedulerHandler✗ > ResultSafeHandler· > WriterHandler· > ReaderHandler· > StateHandler·]
+    ✗ SchedulerHandler raised ConnectionError("Failed: https://api.example.com/item/3 → 500")
 
   ── in task 3 (spawned at process_batch() app.py:11) ──
 
   fetch_data("https://api.example.com/item/3")  app.py:3
     yield Await(http_get(url))
-    [async_await✓ > ...]
+    [async_await_handler✓ > LazyAskHandler· > SchedulerHandler· > ResultSafeHandler· > WriterHandler· > ReaderHandler· > StateHandler·]
     → resumed with Response(status=500)
 
   fetch_data()  app.py:5
-    raise ConnectionError("Failed: .../item/3 → 500")
+    raise ConnectionError("Failed: https://api.example.com/item/3 → 500")
 
 ConnectionError: Failed: https://api.example.com/item/3 → 500
 ```
@@ -509,7 +498,7 @@ Notes:
 - `── in task 3 (spawned at ...) ──` separator shows the task boundary with spawn-site attribution
 - Bottom section: the **task's own trace** — `fetch_data`'s execution to the crash
 - Tasks 0, 1, 2 succeeded — not shown (only the crashing task matters)
-- The scheduler's `⇢` shows it transferred to the failing task (scheduler uses Transfer for task switches)
+- `SchedulerHandler✗` shows the Gather site where the task failure is re-raised to the parent
 
 ### Example 9: Nested spawn chain (A → B → C, C crashes)
 
@@ -545,15 +534,15 @@ doeff Traceback (most recent call last):
 
   orchestrator()  app.py:16
     yield Gather(*batches)
-    [scheduler⇢ > ...]
-    ⇢ task 2 failed during Gather
+    [sync_await_handler↗ > LazyAskHandler· > SchedulerHandler✗ > ResultSafeHandler· > WriterHandler· > ReaderHandler· > StateHandler·]
+    ✗ SchedulerHandler raised RuntimeError("corrupt data for item 1-2")
 
   ── in task 2 (spawned at orchestrator() app.py:14) ──
 
   batch_worker(1)  app.py:10
     yield Gather(*tasks)
-    [scheduler⇢ > ...]
-    ⇢ task 5 failed during Gather
+    [sync_await_handler↗ > LazyAskHandler· > SchedulerHandler✗ > ResultSafeHandler· > WriterHandler· > ReaderHandler· > StateHandler·]
+    ✗ SchedulerHandler raised RuntimeError("corrupt data for item 1-2")
 
   ── in task 5 (spawned at batch_worker() app.py:8) ──
 
@@ -615,8 +604,11 @@ For each generator on the active segment chain:
 
 For the most recent effect yielded by each active generator:
 - `effect_repr` — human-readable repr of the effect
-- `handler_stack` — ordered list of handler names from innermost to outermost
+- `handler_stack` — ordered list of handler names in dispatch order (first invoked to last)
 - `handler_status` — per-handler: delegated / resumed / threw / transferred / pending
+- `handler_identity` — stable per-dispatch identity (index or ID) for each handler stack entry
+- Completion events (`resumed` / `threw` / `transferred` / `returned`) must target handlers by `handler_identity`,
+  not by handler name, so duplicate names are rendered correctly
 - `resume_value_repr` — value returned to the generator (if resumed)
 
 ### Transfer chain (from capture log)
@@ -626,7 +618,7 @@ When a Transfer severs the caller chain, pre-transfer frames are not reachable f
 - Pre-transfer frames are reconstructed by walking the capture_log backwards from the Transfer event
 - Multiple transfers create multiple segments in the trace, each linked by the Transfer event
 
-### Spawn chain (NEW — currently not tracked)
+### Spawn chain
 
 To show the full path from root to a crashing spawned task, the VM must track:
 
@@ -664,9 +656,8 @@ When assembling a trace for an error propagated through Gather/Wait/Race:
 1. New `format_default()` method on `DoeffTraceback` replacing `format_chained()` as the stderr output
 2. Frame selection: filter to active call chain only, not full chronological log
 3. Handler stack rendering with markers
-4. `sync_await_handler` filtering (hide if action was delegate)
-5. **Transfer chain reconstruction** — when a Transfer event is found in capture_log, include pre-transfer frames in the trace (not reachable from live segment walk due to `caller: None`)
-6. **Spawn chain rendering** — when an exception carries a task trace (from a spawned task), render the spawn chain with `── in task N (spawned at ...) ──` separators between parent and child trace sections
+4. **Transfer chain reconstruction** — when a Transfer event is found in capture_log, include pre-transfer frames in the trace (not reachable from live segment walk due to `caller: None`)
+5. **Spawn chain rendering** — when an exception carries a task trace (from a spawned task), render the spawn chain with `── in task N (spawned at ...) ──` separators between parent and child trace sections
 
 ### What does NOT change
 
@@ -685,23 +676,24 @@ When assembling a trace for an error propagated through Gather/Wait/Race:
 2. Only active call chain frames shown — no historical dispatches
 3. Line numbers match actual yield sites, not decorator lines
 4. Handler stack with status markers shown per effect yield
-5. Internal handlers hidden when they only delegate
-6. Handler stack diff (`[same]`) used when stack unchanged between consecutive effect frames
+5. No handler is filtered/hidden; all handlers in the dispatch chain are rendered
+6. No abbreviation protocol; stack rows always render concrete handler names and markers
 7. Effect repr is human-readable (`Put("key", value)` not `<builtins.PyPut ...>`)
 8. Handler throw shown with `✗` marker and exception info
 9. `format_chained()`, `format_sectioned()`, `format_short()` continue to work unchanged
+10. Duplicate handler names in one stack still produce correct per-entry markers (status mapped by handler identity, not name)
 
 ### Transfer
-10. Transfer shown inline with `⇢` marker on the handler that transferred
-11. Pre-transfer call chain included in trace (reconstructed from capture_log)
-12. No visual separator for Transfer — it's a regular handler action
+11. Transfer shown inline with `⇢` marker on the handler that transferred
+12. Pre-transfer call chain included in trace (reconstructed from capture_log)
+13. No visual separator for Transfer — it's a regular handler action
 
 ### Spawn chain
-13. Spawned task crash shows spawn chain from root to waiting site (Gather/Wait/Race)
-14. `── in task N (spawned at <function> <file>:<line>) ──` separator between parent and task trace
-15. Nested spawn chains show multiple separators (one per spawn level)
-16. Only the crashing task's branch is shown — other tasks omitted
+14. Spawned task crash shows spawn chain from root to waiting site (Gather/Wait/Race)
+15. `── in task N (spawned at <function> <file>:<line>) ──` separator between parent and task trace
+16. Nested spawn chains show multiple separators (one per spawn level)
+17. Only the crashing task's branch is shown — other tasks omitted
 
 ### Scheduler
-17. Scheduler uses Transfer for task switches (no unbounded segment growth)
-18. Scheduler-internal transfers only visible when relevant to the crash path
+18. Scheduler uses Transfer for task switches (no unbounded segment growth)
+19. Scheduler task-switch transfers only visible when relevant to the crash path

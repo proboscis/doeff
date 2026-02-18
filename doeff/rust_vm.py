@@ -10,6 +10,12 @@ def _vm() -> Any:
     return importlib.import_module("doeff_vm")
 
 
+def _is_generator_like(value: Any) -> bool:
+    return inspect.isgenerator(value) or (
+        hasattr(value, "__next__") and hasattr(value, "send") and hasattr(value, "throw")
+    )
+
+
 def _coerce_program(program: Any) -> Any:
     vm = _vm()
 
@@ -71,7 +77,7 @@ def _print_doeff_trace_if_present(run_result: Any) -> None:
     try:
         import sys
 
-        print(doeff_tb.format_chained(), file=sys.stderr)
+        print(doeff_tb.format_default(), file=sys.stderr)
     except Exception:
         return
 
@@ -187,7 +193,7 @@ def _wrap_with_handler_map(
         def typed_handler(effect, k, _effect_type=effect_type, _handler=handler):
             if isinstance(effect, _effect_type):
                 result = _handler(effect, k)
-                if inspect.isgenerator(result):
+                if _is_generator_like(result):
                     return (yield from result)
                 return result
             yield delegate()

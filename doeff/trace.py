@@ -1,9 +1,21 @@
-"""Unified VM trace entry types."""
+"""Unified VM trace entry and active-chain types."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
+
+TraceHandlerKind: TypeAlias = Literal["python", "rust_builtin"]
+TraceDispatchAction: TypeAlias = Literal["active", "resumed", "transferred", "returned", "threw"]
+HandlerStatusKind: TypeAlias = Literal[
+    "active",
+    "pending",
+    "delegated",
+    "resumed",
+    "transferred",
+    "returned",
+    "threw",
+]
 
 
 @dataclass(frozen=True)
@@ -18,7 +30,7 @@ class TraceFrame:
 @dataclass(frozen=True)
 class TraceDelegationEntry:
     handler_name: str
-    handler_kind: Literal["python", "rust_builtin"]
+    handler_kind: TraceHandlerKind
     source_file: str | None
     source_line: int | None
 
@@ -28,11 +40,11 @@ class TraceDispatch:
     dispatch_id: int
     effect_repr: str
     handler_name: str
-    handler_kind: Literal["python", "rust_builtin"]
+    handler_kind: TraceHandlerKind
     handler_source_file: str | None
     handler_source_line: int | None
     delegation_chain: tuple[TraceDelegationEntry, ...]
-    action: Literal["active", "resumed", "transferred", "returned", "threw"]
+    action: TraceDispatchAction
     value_repr: str | None
     exception_repr: str | None
 
@@ -50,13 +62,136 @@ class TraceResumePoint:
 TraceEntry: TypeAlias = TraceFrame | TraceDispatch | TraceResumePoint
 
 
+@dataclass(frozen=True)
+class HandlerStackEntry:
+    handler_name: str
+    handler_kind: TraceHandlerKind
+    source_file: str | None
+    source_line: int | None
+    status: HandlerStatusKind
+
+
+@dataclass(frozen=True)
+class EffectResultActive:
+    kind: Literal["active"] = "active"
+
+
+@dataclass(frozen=True)
+class EffectResultResumed:
+    value_repr: str
+    kind: Literal["resumed"] = "resumed"
+
+
+@dataclass(frozen=True)
+class EffectResultThrew:
+    handler_name: str
+    exception_repr: str
+    kind: Literal["threw"] = "threw"
+
+
+@dataclass(frozen=True)
+class EffectResultTransferred:
+    handler_name: str
+    target_repr: str
+    kind: Literal["transferred"] = "transferred"
+
+
+EffectResult: TypeAlias = (
+    EffectResultActive | EffectResultResumed | EffectResultThrew | EffectResultTransferred
+)
+
+
+@dataclass(frozen=True)
+class ProgramYield:
+    function_name: str
+    source_file: str
+    source_line: int
+    sub_program_repr: str
+
+
+@dataclass(frozen=True)
+class EffectYield:
+    function_name: str
+    source_file: str
+    source_line: int
+    effect_repr: str
+    handler_stack: tuple[HandlerStackEntry, ...]
+    result: EffectResult
+
+
+@dataclass(frozen=True)
+class SpawnSite:
+    function_name: str
+    source_file: str
+    source_line: int
+
+
+@dataclass(frozen=True)
+class SpawnBoundary:
+    task_id: int
+    parent_task: int | None
+    spawn_site: SpawnSite | None
+
+
+@dataclass(frozen=True)
+class ExceptionSite:
+    function_name: str
+    source_file: str
+    source_line: int
+    exception_type: str
+    message: str
+
+
+ActiveChainEntry: TypeAlias = ProgramYield | EffectYield | SpawnBoundary | ExceptionSite
+
+
+def _coerce_handler_kind(value: Any) -> TraceHandlerKind:
+    text = str(value)
+    if text == "python":
+        return "python"
+    if text == "rust_builtin":
+        return "rust_builtin"
+    raise ValueError(f"Unknown handler kind: {text!r}")
+
+
+def _coerce_dispatch_action(value: Any) -> TraceDispatchAction:
+    text = str(value)
+    if text == "active":
+        return "active"
+    if text == "resumed":
+        return "resumed"
+    if text == "transferred":
+        return "transferred"
+    if text == "returned":
+        return "returned"
+    if text == "threw":
+        return "threw"
+    raise ValueError(f"Unknown dispatch action: {text!r}")
+
+
+def _coerce_handler_status(value: Any) -> HandlerStatusKind:
+    text = str(value)
+    lookup: dict[str, HandlerStatusKind] = {
+        "active": "active",
+        "pending": "pending",
+        "delegated": "delegated",
+        "resumed": "resumed",
+        "transferred": "transferred",
+        "returned": "returned",
+        "threw": "threw",
+    }
+    if text in lookup:
+        return lookup[text]
+    raise ValueError(f"Unknown handler status: {text!r}")
+
+
 def _coerce_delegation_entry(entry: Any) -> TraceDelegationEntry:
     if isinstance(entry, TraceDelegationEntry):
         return entry
     if isinstance(entry, dict):
         return TraceDelegationEntry(
             handler_name=str(entry.get("handler_name", "<handler>")),
-            handler_kind=str(entry.get("handler_kind", "rust_builtin")),  # type: ignore[arg-type]
+            handler_kind=_coerce_handler_kind(entry.get("handler_kind", "rust_builtin")),
             source_file=entry.get("source_file"),
             source_line=entry.get("source_line"),
         )
@@ -88,11 +223,11 @@ def coerce_trace_entry(entry: Any) -> TraceEntry:
             dispatch_id=int(entry["dispatch_id"]),
             effect_repr=str(entry["effect_repr"]),
             handler_name=str(entry["handler_name"]),
-            handler_kind=str(entry["handler_kind"]),  # type: ignore[arg-type]
+            handler_kind=_coerce_handler_kind(entry.get("handler_kind", "rust_builtin")),
             handler_source_file=entry.get("handler_source_file"),
             handler_source_line=entry.get("handler_source_line"),
             delegation_chain=chain,
-            action=str(entry.get("action", "active")),  # type: ignore[arg-type]
+            action=_coerce_dispatch_action(entry.get("action", "active")),
             value_repr=entry.get("value_repr"),
             exception_repr=entry.get("exception_repr"),
         )
@@ -114,12 +249,126 @@ def coerce_trace_entries(entries: list[Any] | tuple[Any, ...]) -> list[TraceEntr
     return [coerce_trace_entry(entry) for entry in entries]
 
 
+def _coerce_handler_stack_entry(entry: Any) -> HandlerStackEntry:
+    if isinstance(entry, HandlerStackEntry):
+        return entry
+    if isinstance(entry, dict):
+        return HandlerStackEntry(
+            handler_name=str(entry.get("handler_name", "<handler>")),
+            handler_kind=_coerce_handler_kind(entry.get("handler_kind", "rust_builtin")),
+            source_file=entry.get("source_file"),
+            source_line=entry.get("source_line"),
+            status=_coerce_handler_status(entry.get("status", "active")),
+        )
+    raise TypeError(f"Unsupported handler stack entry type: {type(entry).__name__}")
+
+
+def _coerce_effect_result(result: Any) -> EffectResult:
+    if isinstance(
+        result,
+        (EffectResultActive, EffectResultResumed, EffectResultThrew, EffectResultTransferred),
+    ):
+        return result
+    if not isinstance(result, dict):
+        raise ValueError(f"Effect result payload must be dict, got {type(result).__name__}")
+
+    kind = str(result.get("kind", "active"))
+    if kind == "active":
+        return EffectResultActive()
+    if kind == "resumed":
+        return EffectResultResumed(value_repr=str(result.get("value_repr", "None")))
+    if kind == "threw":
+        return EffectResultThrew(
+            handler_name=str(result.get("handler_name", "<handler>")),
+            exception_repr=str(result.get("exception_repr", "<exception>")),
+        )
+    if kind == "transferred":
+        return EffectResultTransferred(
+            handler_name=str(result.get("handler_name", "<handler>")),
+            target_repr=str(result.get("target_repr", "<target>")),
+        )
+    raise ValueError(f"Unknown effect result kind: {kind!r}")
+
+
+def coerce_active_chain_entry(entry: Any) -> ActiveChainEntry:
+    if isinstance(entry, (ProgramYield, EffectYield, SpawnBoundary, ExceptionSite)):
+        return entry
+    if not isinstance(entry, dict):
+        raise TypeError(f"Unsupported active-chain entry type: {type(entry).__name__}")
+
+    kind = entry.get("kind")
+    if kind == "program_yield":
+        return ProgramYield(
+            function_name=str(entry.get("function_name", "<unknown>")),
+            source_file=str(entry.get("source_file", "<unknown>")),
+            source_line=int(entry.get("source_line", 0)),
+            sub_program_repr=str(entry.get("sub_program_repr", "<sub_program>")),
+        )
+
+    if kind == "effect_yield":
+        stack_raw = entry.get("handler_stack", ())
+        return EffectYield(
+            function_name=str(entry.get("function_name", "<unknown>")),
+            source_file=str(entry.get("source_file", "<unknown>")),
+            source_line=int(entry.get("source_line", 0)),
+            effect_repr=str(entry.get("effect_repr", "<effect>")),
+            handler_stack=tuple(_coerce_handler_stack_entry(item) for item in stack_raw),
+            result=_coerce_effect_result(entry.get("result")),
+        )
+
+    if kind == "spawn_boundary":
+        spawn_site_raw = entry.get("spawn_site")
+        spawn_site: SpawnSite | None = None
+        if isinstance(spawn_site_raw, dict):
+            spawn_site = SpawnSite(
+                function_name=str(spawn_site_raw.get("function_name", "<unknown>")),
+                source_file=str(spawn_site_raw.get("source_file", "<unknown>")),
+                source_line=int(spawn_site_raw.get("source_line", 0)),
+            )
+        parent_task_raw = entry.get("parent_task")
+        parent_task = None if parent_task_raw is None else int(parent_task_raw)
+        return SpawnBoundary(
+            task_id=int(entry.get("task_id", 0)),
+            parent_task=parent_task,
+            spawn_site=spawn_site,
+        )
+
+    if kind == "exception_site":
+        return ExceptionSite(
+            function_name=str(entry.get("function_name", "<unknown>")),
+            source_file=str(entry.get("source_file", "<unknown>")),
+            source_line=int(entry.get("source_line", 0)),
+            exception_type=str(entry.get("exception_type", "Exception")),
+            message=str(entry.get("message", "")),
+        )
+
+    raise ValueError(f"Unsupported active-chain entry payload: {entry!r}")
+
+
+def coerce_active_chain_entries(entries: list[Any] | tuple[Any, ...]) -> list[ActiveChainEntry]:
+    return [coerce_active_chain_entry(entry) for entry in entries]
+
+
 __all__ = [
-    "TraceFrame",
+    "ActiveChainEntry",
+    "EffectResult",
+    "EffectResultActive",
+    "EffectResultResumed",
+    "EffectResultThrew",
+    "EffectResultTransferred",
+    "EffectYield",
+    "ExceptionSite",
+    "HandlerStackEntry",
+    "ProgramYield",
+    "SpawnBoundary",
+    "SpawnSite",
     "TraceDelegationEntry",
     "TraceDispatch",
-    "TraceResumePoint",
     "TraceEntry",
-    "coerce_trace_entry",
+    "TraceFrame",
+    "TraceResumePoint",
+    "coerce_active_chain_entries",
+    "coerce_active_chain_entry",
     "coerce_trace_entries",
+    "coerce_trace_entry",
 ]
