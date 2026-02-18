@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
+use pyo3::types::{PyDict, PyTuple};
 
 use crate::continuation::Continuation;
 #[cfg(test)]
@@ -18,6 +18,7 @@ use crate::effect::{
     PyCancelEffect, PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyFailPromise,
     PyGather, PyRace, PySpawn, PyTaskCompleted,
 };
+use crate::frame::Frame;
 use crate::handler::{
     Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
 };
@@ -172,6 +173,19 @@ struct WaitRequest {
     waiting_store: RustStore,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpawnSite {
+    pub function_name: String,
+    pub file: String,
+    pub line: u32,
+}
+
+#[derive(Clone, Debug)]
+struct TaskMetadata {
+    parent_task: Option<TaskId>,
+    spawn_site: Option<SpawnSite>,
+}
+
 fn transfer_to_continuation(k: Continuation, value: Value) -> RustProgramStep {
     if k.started {
         return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
@@ -232,6 +246,7 @@ pub struct SchedulerState {
     pub ready: VecDeque<TaskId>,
     ready_waiters: VecDeque<WaitRequest>,
     pub tasks: HashMap<TaskId, TaskState>,
+    task_metadata: HashMap<TaskId, TaskMetadata>,
     pub promises: HashMap<PromiseId, PromiseState>,
     semaphores: HashMap<u64, SemaphoreRuntimeState>,
     waiters: HashMap<Waitable, Vec<WaitRequest>>,
@@ -679,6 +694,36 @@ fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyExce
     PyException::new(exc_type, exc_value, Some(exc_tb))
 }
 
+fn generator_current_line(generator: &crate::py_shared::PyShared) -> Option<u32> {
+    Python::attach(|py| {
+        let gi_frame = generator.bind(py).getattr("gi_frame").ok()?;
+        if gi_frame.is_none() {
+            return None;
+        }
+        gi_frame.getattr("f_lineno").ok()?.extract::<u32>().ok()
+    })
+}
+
+fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
+    for frame in k.frames_snapshot.iter().rev() {
+        let Frame::PythonGenerator {
+            generator,
+            metadata: Some(metadata),
+            ..
+        } = frame
+        else {
+            continue;
+        };
+        let line = generator_current_line(generator).unwrap_or(metadata.source_line);
+        return Some(SpawnSite {
+            function_name: metadata.function_name.clone(),
+            file: metadata.source_file.clone(),
+            line,
+        });
+    }
+    None
+}
+
 fn task_cancelled_error() -> PyException {
     Python::attach(|py| {
         let message = "Task was cancelled";
@@ -735,6 +780,7 @@ impl SchedulerState {
             ready: VecDeque::new(),
             ready_waiters: VecDeque::new(),
             tasks: HashMap::new(),
+            task_metadata: HashMap::new(),
             promises: HashMap::new(),
             semaphores: HashMap::new(),
             waiters: HashMap::new(),
@@ -1221,8 +1267,60 @@ impl SchedulerState {
         }
     }
 
+    fn annotate_failed_task(&self, task_id: TaskId, error: &PyException) {
+        let PyException::Materialized { exc_value, .. } = error else {
+            return;
+        };
+
+        let metadata = self.task_metadata.get(&task_id).cloned().unwrap_or(TaskMetadata {
+            parent_task: None,
+            spawn_site: None,
+        });
+
+        Python::attach(|py| {
+            let exc_obj = exc_value.bind(py);
+            let payload = PyDict::new(py);
+            let _ = payload.set_item("trace", pyo3::types::PyList::empty(py));
+
+            if let Ok(existing) = exc_obj.getattr("__doeff_traceback_data__") {
+                if let Ok(existing_dict) = existing.cast::<PyDict>() {
+                    let has_task_id = existing_dict.contains("task_id").unwrap_or(false);
+                    if has_task_id {
+                        let existing_trace = existing_dict
+                            .get_item("trace")
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| existing.clone());
+                        let _ = payload.set_item("trace", existing_trace);
+                        let _ = payload.set_item("spawned_from", existing);
+                    } else {
+                        for (key, value) in existing_dict.iter() {
+                            let _ = payload.set_item(key, value);
+                        }
+                    }
+                } else {
+                    let _ = payload.set_item("trace", existing);
+                }
+            }
+
+            let _ = payload.set_item("task_id", task_id.raw());
+            let _ = payload.set_item("parent_task", metadata.parent_task.map(|id| id.raw()));
+            if let Some(site) = metadata.spawn_site {
+                let spawn_site = PyDict::new(py);
+                let _ = spawn_site.set_item("function_name", site.function_name);
+                let _ = spawn_site.set_item("file", site.file);
+                let _ = spawn_site.set_item("line", site.line);
+                let _ = payload.set_item("spawn_site", spawn_site);
+            }
+            let _ = exc_obj.setattr("__doeff_traceback_data__", payload);
+        });
+    }
+
     pub fn mark_task_done(&mut self, task_id: TaskId, result: Result<Value, PyException>) {
         self.cancel_requested.remove(&task_id);
+        if let Err(error) = &result {
+            self.annotate_failed_task(task_id, error);
+        }
         if let Some(state) = self.tasks.remove(&task_id) {
             let task_store = match state {
                 TaskState::Pending { store, .. } => store,
@@ -2063,6 +2161,14 @@ impl RustHandlerProgram for SchedulerProgram {
 
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let task_id = state.alloc_task_id();
+                let parent_task = state.current_task;
+                state.task_metadata.insert(
+                    task_id,
+                    TaskMetadata {
+                        parent_task,
+                        spawn_site: spawn_site_from_continuation(&k_user),
+                    },
+                );
                 state.tasks.insert(
                     task_id,
                     TaskState::Pending {
@@ -2202,10 +2308,12 @@ impl RustProgramHandler for SchedulerHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame::{CallMetadata, Frame};
+    use crate::py_shared::PyShared;
+    use crate::segment::Segment;
 
     fn make_test_continuation() -> Continuation {
         use crate::ids::{Marker, SegmentId};
-        use crate::segment::Segment;
 
         let marker = Marker::fresh();
         let seg = Segment::new(marker, None, vec![marker]);
@@ -2217,6 +2325,33 @@ mod tests {
         let mut cont = make_test_continuation();
         cont.started = false;
         cont
+    }
+
+    fn make_test_continuation_with_spawn_site(
+        function_name: &str,
+        source_file: &str,
+        source_line: u32,
+    ) -> Continuation {
+        use crate::ids::{Marker, SegmentId};
+
+        let marker = Marker::fresh();
+        let mut seg = Segment::new(marker, None, vec![marker]);
+        Python::attach(|py| {
+            seg.push_frame(Frame::PythonGenerator {
+                generator: PyShared::new(py.None()),
+                started: true,
+                metadata: Some(CallMetadata::new(
+                    function_name.to_string(),
+                    source_file.to_string(),
+                    source_line,
+                    None,
+                    None,
+                )),
+            });
+        });
+
+        let seg_id = SegmentId::from_index(0);
+        Continuation::capture(&seg, seg_id, None)
     }
 
     #[test]
@@ -2344,6 +2479,104 @@ mod tests {
             }
             _ => panic!("completed waiter must resume via DoCtrl::Resume"),
         }
+    }
+
+    #[test]
+    fn test_spawn_records_parent_task() {
+        let mut state = SchedulerState::new();
+        let parent_task = TaskId::from_raw(42);
+        state.current_task = Some(parent_task);
+
+        let child = state.alloc_task_id();
+        state.task_metadata.insert(
+            child,
+            TaskMetadata {
+                parent_task: state.current_task,
+                spawn_site: None,
+            },
+        );
+
+        let metadata = state
+            .task_metadata
+            .get(&child)
+            .expect("missing task metadata");
+        assert_eq!(metadata.parent_task, Some(parent_task));
+    }
+
+    #[test]
+    fn test_spawn_records_spawn_site() {
+        let k = make_test_continuation_with_spawn_site("parent_fn", "/tmp/parent.py", 123);
+        let site = spawn_site_from_continuation(&k).expect("missing spawn site");
+        assert_eq!(site.function_name, "parent_fn");
+        assert_eq!(site.file, "/tmp/parent.py");
+        assert_eq!(site.line, 123);
+    }
+
+    #[test]
+    fn test_failed_task_carries_trace() {
+        let mut state = SchedulerState::new();
+        let task_id = state.alloc_task_id();
+        state.task_metadata.insert(
+            task_id,
+            TaskMetadata {
+                parent_task: Some(TaskId::from_raw(7)),
+                spawn_site: Some(SpawnSite {
+                    function_name: "spawn_parent".to_string(),
+                    file: "/tmp/parent.py".to_string(),
+                    line: 88,
+                }),
+            },
+        );
+        state.tasks.insert(
+            task_id,
+            TaskState::Pending {
+                cont: make_test_continuation(),
+                store: TaskStore::Shared,
+            },
+        );
+
+        let err = Python::attach(|py| {
+            let err_obj = pyo3::exceptions::PyRuntimeError::new_err("boom")
+                .value(py)
+                .clone()
+                .into_any()
+                .unbind();
+            let _ = err_obj
+                .bind(py)
+                .setattr("__doeff_traceback_data__", pyo3::types::PyList::empty(py));
+            pyobject_to_exception(py, err_obj.bind(py))
+        });
+
+        state.mark_task_done(task_id, Err(err));
+        let done_error = match state.tasks.get(&task_id) {
+            Some(TaskState::Done {
+                result: Err(error), ..
+            }) => error,
+            _ => panic!("task should be completed with an error"),
+        };
+
+        Python::attach(|py| {
+            let payload = done_error
+                .value_clone_ref(py)
+                .bind(py)
+                .getattr("__doeff_traceback_data__")
+                .expect("missing traceback data");
+            let payload = payload.cast::<PyDict>().expect("payload must be dict");
+            let seen_task_id = payload
+                .get_item("task_id")
+                .expect("task_id lookup failed")
+                .expect("missing task_id")
+                .extract::<u64>()
+                .expect("task_id must be int");
+            assert_eq!(seen_task_id, task_id.raw());
+            assert!(
+                payload
+                    .get_item("spawn_site")
+                    .expect("spawn_site lookup failed")
+                    .is_some(),
+                "spawn_site should be attached",
+            );
+        });
     }
 
     #[test]

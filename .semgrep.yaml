@@ -807,3 +807,17 @@ rules:
     metadata:
       category: public-api-location
       rationale: "Docs should reflect stable top-level public API"
+
+  - id: traceback-must-use-format-default
+    patterns:
+      - pattern: format_chained()
+      - pattern-inside: |
+          def _print_doeff_trace_if_present(...):
+              ...
+    message: >
+      SPEC-TRACE-001 violation: _print_doeff_trace_if_present must use
+      format_default() (not format_chained()) as the default stderr output.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      spec: SPEC-TRACE-001

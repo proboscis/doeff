@@ -99,9 +99,15 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
             let py = unsafe { Python::assume_attached() };
             let exc_value = exception.value_clone_ref(py);
             if let Ok(trace_obj) = Value::Trace(trace).to_pyobject(py) {
-                let _ = exc_value
-                    .bind(py)
-                    .setattr("__doeff_traceback_data__", trace_obj);
+                let exc_bound = exc_value.bind(py);
+                if let Ok(existing) = exc_bound.getattr("__doeff_traceback_data__") {
+                    let payload = pyo3::types::PyDict::new(py);
+                    let _ = payload.set_item("trace", trace_obj);
+                    let _ = payload.set_item("spawned_from", existing);
+                    let _ = exc_bound.setattr("__doeff_traceback_data__", payload);
+                } else {
+                    let _ = exc_bound.setattr("__doeff_traceback_data__", trace_obj);
+                }
             }
             PyErr::from_value(exc_value.bind(py).clone())
         }
