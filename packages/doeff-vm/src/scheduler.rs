@@ -688,7 +688,36 @@ fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyExce
     PyException::new(exc_type, exc_value, Some(exc_tb))
 }
 
+fn is_internal_effect_wrapper_source(source_file: &str) -> bool {
+    let normalized = source_file.replace('\\', "/");
+    normalized.contains("doeff/effects/")
+}
+
+fn generator_current_line(generator: &PyShared) -> Option<u32> {
+    Python::attach(|py| {
+        let gi_frame = generator.bind(py).getattr("gi_frame").ok()?;
+        if gi_frame.is_none() {
+            return None;
+        }
+        if let Ok(locals) = gi_frame.getattr("f_locals") {
+            if let Ok(inner_gen) = locals.get_item("_doeff_inner") {
+                if let Ok(inner_frame) = inner_gen.getattr("gi_frame") {
+                    if !inner_frame.is_none() {
+                        if let Ok(line) = inner_frame.getattr("f_lineno") {
+                            if let Ok(lineno) = line.extract::<u32>() {
+                                return Some(lineno);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        gi_frame.getattr("f_lineno").ok()?.extract::<u32>().ok()
+    })
+}
+
 pub fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
+    let mut fallback_site: Option<SpawnSite> = None;
     for frame in k.frames_snapshot.iter().rev() {
         let Frame::PythonGenerator {
             generator,
@@ -699,24 +728,21 @@ pub fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
             continue;
         };
 
-        let source_line = Python::attach(|py| {
-            let gi_frame = generator.bind(py).getattr("gi_frame").ok()?;
-            if gi_frame.is_none() {
-                return None;
-            }
-            gi_frame.getattr("f_lineno").ok()?.extract::<u32>().ok()
-        })
-        .unwrap_or(metadata.source_line);
-
-        // TODO(doeff-trace): prefer the user Spawn callsite when wrapper/internal
-        // frames (e.g. doeff.effects.spawn._program) are on top of the continuation.
-        return Some(SpawnSite {
+        let source_line = generator_current_line(generator).unwrap_or(metadata.source_line);
+        let site = SpawnSite {
             function_name: metadata.function_name.clone(),
             source_file: metadata.source_file.clone(),
             source_line,
-        });
+        };
+        if is_internal_effect_wrapper_source(&site.source_file) {
+            if fallback_site.is_none() {
+                fallback_site = Some(site);
+            }
+            continue;
+        }
+        return Some(site);
     }
-    None
+    fallback_site
 }
 
 fn task_cancelled_error() -> PyException {
