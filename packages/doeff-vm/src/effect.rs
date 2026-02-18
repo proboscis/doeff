@@ -137,6 +137,7 @@ impl PyGet {
     fn new(key: String) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyGet { key })
     }
@@ -152,6 +153,7 @@ impl PyPut {
     fn new(key: String, value: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyPut { key, value })
     }
@@ -168,6 +170,7 @@ impl PyModify {
     fn new(key: String, func: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyModify { key, func })
     }
@@ -184,6 +187,7 @@ impl PyAsk {
     fn new(key: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyAsk { key })
     }
@@ -200,6 +204,7 @@ impl PyLocal {
     fn new(env_update: Py<PyAny>, sub_program: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyLocal {
             env_update,
@@ -220,6 +225,7 @@ impl PyTell {
     fn new(message: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyTell { message })
     }
@@ -246,6 +252,7 @@ impl PySpawn {
     ) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PySpawn {
             program,
@@ -308,6 +315,7 @@ impl PyGather {
     ) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyGather {
             items,
@@ -346,6 +354,7 @@ impl PyRace {
     fn new(futures: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyRace { futures })
     }
@@ -365,6 +374,7 @@ impl PyCreatePromise {
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyCreatePromise)
     }
@@ -383,6 +393,7 @@ impl PyCompletePromise {
     fn new(promise: Py<PyAny>, value: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyCompletePromise { promise, value })
     }
@@ -403,6 +414,7 @@ impl PyFailPromise {
     fn new(promise: Py<PyAny>, error: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyFailPromise { promise, error })
     }
@@ -423,6 +435,7 @@ impl PyCreateExternalPromise {
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyCreateExternalPromise)
     }
@@ -441,6 +454,7 @@ impl PyCancelEffect {
     fn new(task: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyCancelEffect { task })
     }
@@ -467,6 +481,7 @@ impl PyTaskCompleted {
     ) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: std::sync::Mutex::new(None),
         })
         .add_subclass(PyTaskCompleted {
             task: task.unwrap_or_else(|| py.None()),

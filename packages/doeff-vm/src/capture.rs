@@ -51,12 +51,38 @@ pub struct SpawnSite {
     pub source_line: u32,
 }
 
+/// Effect constructor callsite captured from Python `effect.created_at`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectCreationSite {
+    pub function_name: String,
+    pub source_file: String,
+    pub source_line: u32,
+}
+
+impl From<EffectCreationSite> for SpawnSite {
+    fn from(value: EffectCreationSite) -> Self {
+        SpawnSite {
+            function_name: value.function_name,
+            source_file: value.source_file,
+            source_line: value.source_line,
+        }
+    }
+}
+
 /// Result status for an effect yield in the active chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EffectResult {
-    Resumed { value_repr: String },
-    Threw { handler_name: String, exception_repr: String },
-    Transferred { handler_name: String, target_repr: String },
+    Resumed {
+        value_repr: String,
+    },
+    Threw {
+        handler_name: String,
+        exception_repr: String,
+    },
+    Transferred {
+        handler_name: String,
+        target_repr: String,
+    },
     Active,
 }
 
@@ -117,6 +143,7 @@ pub enum CaptureEvent {
     DispatchStarted {
         dispatch_id: DispatchId,
         effect_repr: String,
+        creation_site: Option<EffectCreationSite>,
         handler_name: String,
         handler_kind: HandlerKind,
         handler_source_file: Option<String>,

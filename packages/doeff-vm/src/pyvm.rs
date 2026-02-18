@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
@@ -214,12 +214,14 @@ impl PyDoExprBase {
 pub struct PyEffectBase {
     #[pyo3(get)]
     pub tag: u8,
+    pub created_at: Mutex<Option<Py<PyAny>>>,
 }
 
 impl PyEffectBase {
     fn new_base() -> Self {
         PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: Mutex::new(None),
         }
     }
 }
@@ -230,6 +232,27 @@ impl PyEffectBase {
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         PyEffectBase::new_base()
+    }
+
+    #[getter]
+    fn created_at(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.created_at
+            .lock()
+            .expect("EffectBase created_at lock poisoned")
+            .as_ref()
+            .map(|ctx| ctx.clone_ref(py))
+    }
+
+    fn with_created_at(slf: Py<Self>, py: Python<'_>, created_at: Option<Py<PyAny>>) -> Py<Self> {
+        {
+            let this = slf.borrow(py);
+            let mut slot = this
+                .created_at
+                .lock()
+                .expect("EffectBase created_at lock poisoned");
+            *slot = created_at;
+        }
+        slf
     }
 }
 
