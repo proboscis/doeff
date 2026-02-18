@@ -72,6 +72,21 @@ rules:
       category: architecture
       rationale: "Scheduler state ownership — cancel state lives in Rust"
 
+  - id: scheduler-must-use-transfer-not-resume
+    pattern: 'DoCtrl::Resume { continuation: k, value }'
+    paths:
+      include:
+        - "/packages/doeff-vm/src/scheduler.rs"
+    message: |
+      SPEC-SCHED-001 violation: jump_to_continuation must use DoCtrl::Transfer
+      (not DoCtrl::Resume) for started continuations. Resume causes unbounded
+      segment chain growth during task switching.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      spec: SPEC-SCHED-001
+      section: "§resume_task, Invariant S1"
+
   - id: doeff-cancel-must-be-effectful
     patterns:
       - pattern-inside: |
