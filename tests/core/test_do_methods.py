@@ -73,3 +73,13 @@ def test_do_static_method_signature_and_execution() -> None:
     program = math.double(3)
     assert isinstance(program, Program)
     assert _run_program(program) == 6
+
+
+def test_do_generator_wrapper_exposes_inner_generator_attribute() -> None:
+    @do
+    def sample():
+        yield Program.pure(1)
+        return 2
+
+    wrapper = sample.func()
+    assert hasattr(wrapper, "__doeff_inner__")

@@ -598,7 +598,7 @@ class EffectBase(_RustEffectBase, metaclass=_EffectBaseMeta):
     Dispatch occurs when lifted into control IR via Perform(effect).
     """
 
-    created_at: EffectCreationContext | None = field(default=None, compare=False)
+    created_at: EffectCreationContext | None = field(default=None, compare=False, repr=False)
     __doeff_effect_base__: bool = field(default=True, init=False, repr=False, compare=False)
 
     def with_created_at(self: E, created_at: EffectCreationContext | None) -> E:
