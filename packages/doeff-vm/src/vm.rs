@@ -3897,4 +3897,125 @@ mod tests {
             "G1 FAIL: vm.rs step/runtime path still uses assume_attached"
         );
     }
+
+    #[test]
+    fn test_jump_to_continuation_only_in_transfer_next_or() {
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/scheduler.rs"
+        ));
+        let test_boundary = src.find("#[cfg(test)]").unwrap_or(src.len());
+        let runtime_src = &src[..test_boundary];
+
+        let mut violations: Vec<String> = Vec::new();
+        let target_fn = "fn transfer_next_or";
+        let call_pattern = "jump_to_continuation(";
+
+        let fn_start = runtime_src.find(target_fn);
+
+        for (line_no, line) in runtime_src.lines().enumerate() {
+            if !line.contains(call_pattern) {
+                continue;
+            }
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || trimmed.starts_with("fn ") {
+                continue;
+            }
+
+            let line_offset = runtime_src.lines().take(line_no).map(|l| l.len() + 1).sum::<usize>();
+            let inside_transfer_next_or = match fn_start {
+                Some(start) => {
+                    if line_offset < start {
+                        false
+                    } else {
+                        let between = &runtime_src[start..line_offset];
+                        let next_fn = between[target_fn.len()..].find("\nfn ");
+                        next_fn.is_none()
+                    }
+                }
+                None => false,
+            };
+
+            if !inside_transfer_next_or {
+                violations.push(format!(
+                    "  line {}: {}",
+                    line_no + 1,
+                    trimmed
+                ));
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "jump_to_continuation (Transfer) must only be called from transfer_next_or. \
+             Found in other locations:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    fn caller_chain_length(vm: &VM) -> usize {
+        let mut count: usize = 0;
+        let mut current = vm.current_segment;
+        while let Some(seg_id) = current {
+            count += 1;
+            current = vm.segments.get(seg_id).and_then(|s| s.caller);
+        }
+        count
+    }
+
+    #[test]
+    fn test_transfer_caller_chain_stays_bounded() {
+        let mut vm = VM::new();
+
+        let mut continuations: Vec<Continuation> = Vec::new();
+        for _ in 0..2 {
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![marker]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+            continuations.push(vm.capture_continuation(None).unwrap());
+        }
+
+        for round in 0..64 {
+            let target: &Continuation = &continuations[round % 2];
+            let event = vm.handle_transfer(target.clone(), Value::Int(round as i64));
+            assert!(matches!(event, StepEvent::Continue));
+
+            let chain_len = caller_chain_length(&vm);
+            assert!(
+                chain_len <= 2,
+                "Round {}: caller chain length is {} — Transfer should sever \
+                 the chain (caller: None), keeping it at 1.",
+                round, chain_len
+            );
+
+            vm.consumed_cont_ids.clear();
+            continuations[round % 2] = vm.capture_continuation(None).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_resume_caller_chain_grows_linearly() {
+        let mut vm = VM::new();
+
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![marker]);
+        let seg_id = vm.alloc_segment(seg);
+        vm.current_segment = Some(seg_id);
+        let k = vm.capture_continuation(None).unwrap();
+
+        for round in 0..64 {
+            let event = vm.handle_resume(k.clone(), Value::Int(round as i64));
+            assert!(matches!(event, StepEvent::Continue));
+            vm.consumed_cont_ids.clear();
+        }
+
+        let chain_len = caller_chain_length(&vm);
+        assert!(
+            chain_len >= 60,
+            "Resume caller chain length is {} after 64 resumes — \
+             Resume should chain segments via caller, growing linearly.",
+            chain_len
+        );
+    }
 }
