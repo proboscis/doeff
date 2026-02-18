@@ -172,7 +172,7 @@ struct WaitRequest {
     waiting_store: RustStore,
 }
 
-fn jump_to_continuation(k: Continuation, value: Value) -> RustProgramStep {
+fn transfer_to_continuation(k: Continuation, value: Value) -> RustProgramStep {
     if k.started {
         return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
             continuation: k,
@@ -985,7 +985,10 @@ impl SchedulerState {
         }
 
         let waiters: Vec<_> = semaphore.waiters.into_iter().collect();
-        let blocked_tasks: HashSet<_> = waiters.iter().filter_map(|waiter| waiter.waiting_task).collect();
+        let blocked_tasks: HashSet<_> = waiters
+            .iter()
+            .filter_map(|waiter| waiter.waiting_task)
+            .collect();
 
         for task_id in blocked_tasks {
             self.finalize_task_cancellation(task_id);
@@ -994,8 +997,10 @@ impl SchedulerState {
         for waiter in waiters {
             if waiter.waiting_task.is_some() {
                 // Promise resolution is no longer observed once the owning task is cancelled.
-                self.promises
-                    .insert(waiter.promise, PromiseState::Done(Err(task_cancelled_error())));
+                self.promises.insert(
+                    waiter.promise,
+                    PromiseState::Done(Err(task_cancelled_error())),
+                );
             } else {
                 self.mark_promise_done(waiter.promise, Err(task_cancelled_error()));
             }
@@ -1453,7 +1458,7 @@ impl SchedulerState {
                     // Load new task's store
                     self.load_task_store(task_id, store);
                     self.current_task = Some(task_id);
-                    return jump_to_continuation(task_k, Value::Unit);
+                    return transfer_to_continuation(task_k, Value::Unit);
                 }
             }
 
@@ -2215,13 +2220,16 @@ mod tests {
     }
 
     #[test]
-    fn test_jump_to_continuation_started_emits_transfer() {
+    fn test_transfer_to_continuation_started_emits_transfer() {
         let cont = make_test_continuation();
         let cont_id = cont.cont_id;
-        let step = jump_to_continuation(cont, Value::Int(123));
+        let step = transfer_to_continuation(cont, Value::Int(123));
 
         match step {
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer { continuation, value })) => {
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
+                continuation,
+                value,
+            })) => {
                 assert_eq!(continuation.cont_id, cont_id);
                 assert_eq!(value.as_int(), Some(123));
             }
@@ -2230,10 +2238,10 @@ mod tests {
     }
 
     #[test]
-    fn test_jump_to_continuation_unstarted_emits_resume_continuation() {
+    fn test_transfer_to_continuation_unstarted_emits_resume_continuation() {
         let cont = make_unstarted_test_continuation();
         let cont_id = cont.cont_id;
-        let step = jump_to_continuation(cont, Value::Int(456));
+        let step = transfer_to_continuation(cont, Value::Int(456));
 
         match step {
             RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
@@ -2283,7 +2291,9 @@ mod tests {
 
             let step = state.transfer_next_or(scheduler_k.clone(), &mut store);
             match step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer { continuation, .. })) => {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
+                    continuation, ..
+                })) => {
                     assert_eq!(continuation.cont_id, expected_cont);
                 }
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { .. })) => {
@@ -2319,7 +2329,10 @@ mod tests {
         // transfer_next_or only resumes waiters that belong to the same owner continuation.
         let step = state.transfer_next_or(waiter.clone(), &mut store);
         match step {
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { continuation, value })) => {
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation,
+                value,
+            })) => {
                 assert_eq!(continuation.cont_id, waiter.cont_id);
                 match value {
                     Value::List(values) => {

@@ -3899,7 +3899,7 @@ mod tests {
     }
 
     #[test]
-    fn test_jump_to_continuation_only_in_transfer_next_or() {
+    fn test_transfer_to_continuation_only_in_transfer_next_or() {
         let src = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/scheduler.rs"
@@ -3909,7 +3909,7 @@ mod tests {
 
         let mut violations: Vec<String> = Vec::new();
         let target_fn = "fn transfer_next_or";
-        let call_pattern = "jump_to_continuation(";
+        let call_pattern = "transfer_to_continuation(";
 
         let fn_start = runtime_src.find(target_fn);
 
@@ -3947,7 +3947,7 @@ mod tests {
 
         assert!(
             violations.is_empty(),
-            "jump_to_continuation (Transfer) must only be called from transfer_next_or. \
+            "transfer_to_continuation (Transfer) must only be called from transfer_next_or. \
              Found in other locations:\n{}",
             violations.join("\n")
         );
