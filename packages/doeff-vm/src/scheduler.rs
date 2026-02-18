@@ -174,7 +174,7 @@ struct WaitRequest {
 
 fn jump_to_continuation(k: Continuation, value: Value) -> RustProgramStep {
     if k.started {
-        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
             continuation: k,
             value,
         }));
@@ -182,6 +182,19 @@ fn jump_to_continuation(k: Continuation, value: Value) -> RustProgramStep {
     RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
         continuation: k,
         value,
+    }))
+}
+
+fn resume_to_continuation(cont: Continuation, result: Value) -> RustProgramStep {
+    if cont.started {
+        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            continuation: cont,
+            value: result,
+        }));
+    }
+    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+        continuation: cont,
+        value: result,
     }))
 }
 
@@ -1476,7 +1489,7 @@ impl SchedulerState {
                             if waiter.items.len() > 1 {
                                 self.merge_gather_logs(&waiter.items, store);
                             }
-                            return jump_to_continuation(waiter.continuation, value);
+                            return resume_to_continuation(waiter.continuation, value);
                         }
                         Some(Err(error)) => {
                             let cont_id = waiter.continuation.cont_id;
@@ -1511,7 +1524,7 @@ impl SchedulerState {
                             } else {
                                 *store = waiter.waiting_store.clone();
                             }
-                            return jump_to_continuation(waiter.continuation, value);
+                            return resume_to_continuation(waiter.continuation, value);
                         }
                         Some(Err(error)) => {
                             let cont_id = waiter.continuation.cont_id;
@@ -1542,7 +1555,7 @@ impl SchedulerState {
             }
 
             // No ready tasks, resume the caller
-            return jump_to_continuation(k, Value::Unit);
+            return resume_to_continuation(k, Value::Unit);
         }
     }
 }
@@ -1627,7 +1640,7 @@ impl SchedulerProgram {
                     if items.len() > 1 {
                         state.merge_gather_logs(&items, store);
                     }
-                    jump_to_continuation(k_user, results)
+                    resume_to_continuation(k_user, results)
                 }
                 Err(error) => throw_to_continuation(k_user, error),
             };
@@ -1663,7 +1676,7 @@ impl SchedulerProgram {
         if let Some(first) = state.collect_any_result(&items) {
             state.clear_waiters_for_continuation(k_user.cont_id);
             return match first {
-                Ok(value) => jump_to_continuation(k_user, value),
+                Ok(value) => resume_to_continuation(k_user, value),
                 Err(error) => throw_to_continuation(k_user, error),
             };
         }
@@ -1737,7 +1750,7 @@ impl SchedulerProgram {
                             if items.len() > 1 {
                                 state.merge_gather_logs(&items, store);
                             }
-                            jump_to_continuation(k_user, value)
+                            resume_to_continuation(k_user, value)
                         }
                         Err(error) => {
                             state.clear_waiters_for_continuation(waiting_cont_id);
@@ -1765,7 +1778,7 @@ impl SchedulerProgram {
                             } else {
                                 *store = waiting_store.clone();
                             }
-                            jump_to_continuation(k_user, value)
+                            resume_to_continuation(k_user, value)
                         }
                         Err(error) => {
                             state.clear_waiters_for_continuation(waiting_cont_id);
@@ -1888,7 +1901,7 @@ impl RustHandlerProgram for SchedulerProgram {
             SchedulerEffect::CancelTask { task } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 state.request_task_cancellation(task);
-                jump_to_continuation(k_user, Value::Unit)
+                resume_to_continuation(k_user, Value::Unit)
             }
 
             SchedulerEffect::TaskCompleted { task, result } => {
@@ -1907,7 +1920,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
-                jump_to_continuation(k_user, Value::Promise(PromiseHandle { id: pid }))
+                resume_to_continuation(k_user, Value::Promise(PromiseHandle { id: pid }))
             }
 
             SchedulerEffect::CompletePromise { promise, value } => {
@@ -1930,7 +1943,7 @@ impl RustHandlerProgram for SchedulerProgram {
                     Ok(queue) => queue,
                     Err(error) => return RustProgramStep::Throw(error),
                 };
-                jump_to_continuation(
+                resume_to_continuation(
                     k_user,
                     Value::ExternalPromise(ExternalPromise {
                         id: pid,
@@ -1950,7 +1963,7 @@ impl RustHandlerProgram for SchedulerProgram {
                         Ok(value) => value,
                         Err(error) => return RustProgramStep::Throw(error),
                     };
-                jump_to_continuation(k_user, semaphore_value)
+                resume_to_continuation(k_user, semaphore_value)
             }
 
             SchedulerEffect::AcquireSemaphore { semaphore_id } => {
@@ -1968,7 +1981,7 @@ impl RustHandlerProgram for SchedulerProgram {
                         state.wait_on_any(&items, k_user.clone(), store);
                         state.transfer_next_or(k_user, store)
                     }
-                    None => jump_to_continuation(k_user, Value::Unit),
+                    None => resume_to_continuation(k_user, Value::Unit),
                 }
             }
 
@@ -1977,7 +1990,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 if let Err(error) = state.release_semaphore(semaphore_id) {
                     return RustProgramStep::Throw(error);
                 }
-                jump_to_continuation(k_user, Value::Unit)
+                resume_to_continuation(k_user, Value::Unit)
             }
         }
     }
@@ -2055,7 +2068,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 state.ready.push_back(task_id);
 
                 // Transfer back to caller with the task handle
-                jump_to_continuation(k_user, Value::Task(TaskHandle { id: task_id }))
+                resume_to_continuation(k_user, Value::Task(TaskHandle { id: task_id }))
             }
 
             SchedulerPhase::Driving {
@@ -2193,6 +2206,131 @@ mod tests {
         let seg = Segment::new(marker, None, vec![marker]);
         let seg_id = SegmentId::from_index(0);
         Continuation::capture(&seg, seg_id, None)
+    }
+
+    fn make_unstarted_test_continuation() -> Continuation {
+        let mut cont = make_test_continuation();
+        cont.started = false;
+        cont
+    }
+
+    #[test]
+    fn test_jump_to_continuation_started_emits_transfer() {
+        let cont = make_test_continuation();
+        let cont_id = cont.cont_id;
+        let step = jump_to_continuation(cont, Value::Int(123));
+
+        match step {
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer { continuation, value })) => {
+                assert_eq!(continuation.cont_id, cont_id);
+                assert_eq!(value.as_int(), Some(123));
+            }
+            _ => panic!("started continuation must emit DoCtrl::Transfer"),
+        }
+    }
+
+    #[test]
+    fn test_jump_to_continuation_unstarted_emits_resume_continuation() {
+        let cont = make_unstarted_test_continuation();
+        let cont_id = cont.cont_id;
+        let step = jump_to_continuation(cont, Value::Int(456));
+
+        match step {
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+                continuation,
+                value,
+            })) => {
+                assert_eq!(continuation.cont_id, cont_id);
+                assert_eq!(value.as_int(), Some(456));
+            }
+            _ => panic!("unstarted continuation must emit DoCtrl::ResumeContinuation"),
+        }
+    }
+
+    #[test]
+    fn test_scheduler_task_switch_no_segment_growth() {
+        let mut state = SchedulerState::new();
+        let mut store = RustStore::new();
+        let scheduler_k = make_test_continuation();
+
+        let task0 = state.alloc_task_id();
+        let task1 = state.alloc_task_id();
+
+        let cont0 = make_test_continuation();
+        let cont1 = make_test_continuation();
+        state.tasks.insert(
+            task0,
+            TaskState::Pending {
+                cont: cont0.clone(),
+                store: TaskStore::Shared,
+            },
+        );
+        state.tasks.insert(
+            task1,
+            TaskState::Pending {
+                cont: cont1.clone(),
+                store: TaskStore::Shared,
+            },
+        );
+
+        for i in 0..128 {
+            let (task, expected_cont) = if i % 2 == 0 {
+                (task0, cont0.cont_id)
+            } else {
+                (task1, cont1.cont_id)
+            };
+            state.ready.push_back(task);
+
+            let step = state.transfer_next_or(scheduler_k.clone(), &mut store);
+            match step {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer { continuation, .. })) => {
+                    assert_eq!(continuation.cont_id, expected_cont);
+                }
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { .. })) => {
+                    panic!("task switches must not emit DoCtrl::Resume")
+                }
+                _ => panic!("task switches must emit DoCtrl::Transfer"),
+            }
+
+            // Simulate that the resumed task yielded back to scheduler.
+            state.current_task = None;
+        }
+    }
+
+    #[test]
+    fn test_scheduler_task_completion_routes_via_envelope() {
+        let mut state = SchedulerState::new();
+        let mut store = RustStore::new();
+
+        let task_id = state.alloc_task_id();
+        state.tasks.insert(
+            task_id,
+            TaskState::Pending {
+                cont: make_test_continuation(),
+                store: TaskStore::Shared,
+            },
+        );
+
+        let waiter = make_test_continuation();
+        state.wait_on_all(&[Waitable::Task(task_id)], waiter.clone(), &store);
+        state.mark_task_done(task_id, Ok(Value::Int(7)));
+        state.wake_waiters(Waitable::Task(task_id));
+
+        // transfer_next_or only resumes waiters that belong to the same owner continuation.
+        let step = state.transfer_next_or(waiter.clone(), &mut store);
+        match step {
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { continuation, value })) => {
+                assert_eq!(continuation.cont_id, waiter.cont_id);
+                match value {
+                    Value::List(values) => {
+                        assert_eq!(values.len(), 1);
+                        assert_eq!(values[0].as_int(), Some(7));
+                    }
+                    _ => panic!("wait completion should resume waiter with gathered value"),
+                }
+            }
+            _ => panic!("completed waiter must resume via DoCtrl::Resume"),
+        }
     }
 
     #[test]
