@@ -205,11 +205,11 @@ def _spawn_program(
     from doeff import do
 
     @do
-    def _program():
+    def _spawn_task():
         raw_task = yield effect
         return coerce_task_handle(raw_task, preferred_backend)
 
-    return _program()
+    return _spawn_task()
 
 
 def spawn(

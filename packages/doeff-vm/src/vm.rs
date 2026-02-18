@@ -345,11 +345,6 @@ impl VM {
         Self::truncate_repr(repr)
     }
 
-    fn is_internal_effect_wrapper_source(source_file: &str) -> bool {
-        let normalized = source_file.replace('\\', "/");
-        normalized.contains("doeff/effects/")
-    }
-
     fn python_handler_name(handler: &PyShared) -> String {
         Python::attach(|py| {
             let bound = handler.bind(py);
@@ -494,7 +489,6 @@ impl VM {
     }
 
     fn effect_site_from_continuation(k: &Continuation) -> Option<(FrameId, String, String, u32)> {
-        let mut fallback_site: Option<(FrameId, String, String, u32)> = None;
         for frame in k.frames_snapshot.iter().rev() {
             if let Frame::PythonGenerator {
                 generator,
@@ -503,22 +497,15 @@ impl VM {
             } = frame
             {
                 let line = Self::generator_current_line(generator).unwrap_or(metadata.source_line);
-                let site = (
+                return Some((
                     metadata.frame_id as FrameId,
                     metadata.function_name.clone(),
                     metadata.source_file.clone(),
                     line,
-                );
-                if Self::is_internal_effect_wrapper_source(&metadata.source_file) {
-                    if fallback_site.is_none() {
-                        fallback_site = Some(site);
-                    }
-                    continue;
-                }
-                return Some(site);
+                ));
             }
         }
-        fallback_site
+        None
     }
 
     fn maybe_emit_frame_entered(&mut self, metadata: &CallMetadata) {
@@ -1361,16 +1348,8 @@ impl VM {
             }
         }
 
-        let mut chain_frames: Vec<&FrameState> = frame_stack
-            .iter()
-            .filter(|frame| !Self::is_internal_effect_wrapper_source(&frame.source_file))
-            .collect();
-        if chain_frames.is_empty() {
-            chain_frames = frame_stack.iter().collect();
-        }
-
         let mut active_chain = Vec::new();
-        for (index, frame) in chain_frames.iter().enumerate() {
+        for (index, frame) in frame_stack.iter().enumerate() {
             let dispatch = frame_dispatch
                 .get(&frame.frame_id)
                 .and_then(|dispatch_id| dispatches.get(dispatch_id));
@@ -1395,7 +1374,7 @@ impl VM {
                 }
             }
 
-            let inferred_sub_program = chain_frames
+            let inferred_sub_program = frame_stack
                 .get(index + 1)
                 .map(|next| format!("{}()", next.function_name));
             let sub_program_repr = if frame.sub_program_repr == "<sub_program>" {
@@ -1439,7 +1418,7 @@ impl VM {
                     .rev()
                     .find(|ctx| ctx.dispatch_id == dispatch_id)
                 {
-                    let snapshot_frames_all: Vec<FrameState> = dispatch_ctx
+                    let snapshot_frames: Vec<FrameState> = dispatch_ctx
                         .k_user
                         .frames_snapshot
                         .iter()
@@ -1465,14 +1444,6 @@ impl VM {
                             })
                         })
                         .collect();
-                    let mut snapshot_frames: Vec<FrameState> = snapshot_frames_all
-                        .iter()
-                        .filter(|frame| !Self::is_internal_effect_wrapper_source(&frame.source_file))
-                        .cloned()
-                        .collect();
-                    if snapshot_frames.is_empty() {
-                        snapshot_frames = snapshot_frames_all;
-                    }
 
                     if let Some(dispatch) = dispatches.get(&dispatch_id) {
                         if snapshot_frames.is_empty() {
