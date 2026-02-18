@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
@@ -94,14 +94,30 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
             PyTypeError::new_err(format!("UnhandledEffect: {}", e))
         }
         VMError::TypeError { .. } => PyTypeError::new_err(e.to_string()),
-        VMError::UncaughtException { exception, trace } => {
+        VMError::UncaughtException {
+            exception,
+            trace,
+            active_chain,
+        } => {
             // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
             let py = unsafe { Python::assume_attached() };
             let exc_value = exception.value_clone_ref(py);
-            if let Ok(trace_obj) = Value::Trace(trace).to_pyobject(py) {
+            let payload = PyDict::new(py);
+            let trace_obj = Value::Trace(trace).to_pyobject(py);
+            let active_chain_obj = Value::ActiveChain(active_chain).to_pyobject(py);
+            if let (Ok(trace_obj), Ok(active_chain_obj)) = (trace_obj, active_chain_obj) {
+                let _ = payload.set_item("trace", trace_obj);
+                let _ = payload.set_item("active_chain", active_chain_obj);
+
+                if let Ok(spawned_from) = exc_value.bind(py).getattr("__doeff_spawned_from__") {
+                    if !spawned_from.is_none() {
+                        let _ = payload.set_item("spawned_from", spawned_from);
+                    }
+                }
+
                 let _ = exc_value
                     .bind(py)
-                    .setattr("__doeff_traceback_data__", trace_obj);
+                    .setattr("__doeff_traceback_data__", payload);
             }
             PyErr::from_value(exc_value.bind(py).clone())
         }
@@ -198,12 +214,14 @@ impl PyDoExprBase {
 pub struct PyEffectBase {
     #[pyo3(get)]
     pub tag: u8,
+    pub created_at: Mutex<Option<Py<PyAny>>>,
 }
 
 impl PyEffectBase {
     fn new_base() -> Self {
         PyEffectBase {
             tag: DoExprTag::Effect as u8,
+            created_at: Mutex::new(None),
         }
     }
 }
@@ -214,6 +232,27 @@ impl PyEffectBase {
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         PyEffectBase::new_base()
+    }
+
+    #[getter]
+    fn created_at(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.created_at
+            .lock()
+            .expect("EffectBase created_at lock poisoned")
+            .as_ref()
+            .map(|ctx| ctx.clone_ref(py))
+    }
+
+    fn with_created_at(slf: Py<Self>, py: Python<'_>, created_at: Option<Py<PyAny>>) -> Py<Self> {
+        {
+            let this = slf.borrow(py);
+            let mut slot = this
+                .created_at
+                .lock()
+                .expect("EffectBase created_at lock poisoned");
+            *slot = created_at;
+        }
+        slf
     }
 }
 
@@ -1226,7 +1265,9 @@ fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
     let exc_type = e.get_type(py).into_any().unbind();
     let exc_value = e.value(py).clone().into_any().unbind();
     let exc_tb = e.traceback(py).map(|tb| tb.into_any().unbind());
-    Ok(PyException::new(exc_type, exc_value, exc_tb))
+    let exc = PyException::new(exc_type, exc_value, exc_tb);
+    crate::scheduler::preserve_exception_origin(&exc);
+    Ok(exc)
 }
 
 fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
