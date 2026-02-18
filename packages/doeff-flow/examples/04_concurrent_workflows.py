@@ -18,7 +18,9 @@ Watch a specific workflow:
 Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 """
 
+import argparse
 import random
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -139,7 +141,7 @@ def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
 
     total_tasks = 0
     for worker_id, result in sorted(results.items()):
-        if result.is_ok:
+        if result.is_ok():
             tasks = result.value["tasks_completed"]
             worker_elapsed = result.value["elapsed_seconds"]
             total_tasks += tasks
@@ -158,7 +160,20 @@ def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
 # =============================================================================
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Run concurrent workflow workers.")
+    parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Start immediately without waiting for interactive confirmation.",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     print("=" * 60)
     print("Concurrent Workflows Example")
     print("=" * 60)
@@ -171,7 +186,10 @@ def main():
     print("  doeff-flow ps                          # List all workflows")
     print("  doeff-flow watch worker-001            # Watch specific worker")
     print()
-    input("Press Enter to start workers...")
+    if not args.no_wait and sys.stdin.isatty():
+        input("Press Enter to start workers...")
+    else:
+        print("Skipping wait prompt (--no-wait or non-interactive stdin detected).")
 
     # Run 3 workers, each processing 4 tasks
     run_concurrent_workers(
