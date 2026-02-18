@@ -688,11 +688,6 @@ fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyExce
     PyException::new(exc_type, exc_value, Some(exc_tb))
 }
 
-fn is_internal_effect_wrapper_source(source_file: &str) -> bool {
-    let normalized = source_file.replace('\\', "/");
-    normalized.contains("doeff/effects/")
-}
-
 fn generator_current_line(generator: &PyShared) -> Option<u32> {
     Python::attach(|py| {
         let gi_frame = generator.bind(py).getattr("gi_frame").ok()?;
@@ -717,7 +712,6 @@ fn generator_current_line(generator: &PyShared) -> Option<u32> {
 }
 
 pub fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
-    let mut fallback_site: Option<SpawnSite> = None;
     for frame in k.frames_snapshot.iter().rev() {
         let Frame::PythonGenerator {
             generator,
@@ -729,20 +723,13 @@ pub fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
         };
 
         let source_line = generator_current_line(generator).unwrap_or(metadata.source_line);
-        let site = SpawnSite {
+        return Some(SpawnSite {
             function_name: metadata.function_name.clone(),
             source_file: metadata.source_file.clone(),
             source_line,
-        };
-        if is_internal_effect_wrapper_source(&site.source_file) {
-            if fallback_site.is_none() {
-                fallback_site = Some(site);
-            }
-            continue;
-        }
-        return Some(site);
+        });
     }
-    fallback_site
+    None
 }
 
 fn task_cancelled_error() -> PyException {
