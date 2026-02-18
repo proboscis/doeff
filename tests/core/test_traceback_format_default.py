@@ -510,10 +510,7 @@ def test_format_default_shows_program_yield_chain() -> None:
     assert "crash_handler✗" in rendered
     assert "handler exploded" in rendered
     assert "sync_await_handler" not in rendered
-    assert (
-        f"{source_file}:{outer_line}" in rendered
-        or f"{source_file}:{outer_line - 1}" in rendered
-    )
+    assert f"{source_file}:{outer_line}" in rendered
     assert f"{source_file}:{inner_line}" in rendered
     assert "yield inner()\n\n  inner()" in rendered
     assert "\n  crash_handler()  " not in rendered
@@ -598,3 +595,10 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     gather_pos = rendered.index("yield Gather(")
     child_pos = rendered.index("  child()")
     assert gather_pos < boundary_pos < child_pos
+    child_stack_line = next(
+        line.strip() for line in rendered.splitlines() if line.strip().startswith("[crash_handler")
+    )
+    assert child_stack_line.count("ResultSafeHandler·") == 1
+    assert child_stack_line.count("WriterHandler·") == 1
+    assert child_stack_line.count("ReaderHandler·") == 1
+    assert child_stack_line.count("StateHandler·") == 1

@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
+use pyo3::types::{PyDict, PyTuple};
 
+use crate::capture::SpawnSite;
 use crate::continuation::Continuation;
 #[cfg(test)]
 use crate::effect::Effect;
@@ -22,6 +23,7 @@ use crate::handler::{
     Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
 };
 use crate::ids::{ContId, PromiseId, TaskId};
+use crate::frame::Frame;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
 use crate::step::{DoCtrl, PyException, Yielded};
@@ -143,6 +145,12 @@ pub struct ExternalPromise {
     pub completion_queue: Option<PyShared>,
 }
 
+#[derive(Clone, Debug)]
+pub struct TaskMetadata {
+    pub parent_task: Option<TaskId>,
+    pub spawn_site: Option<SpawnSite>,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct SemaphoreWaiter {
     promise: PromiseId,
@@ -232,6 +240,7 @@ pub struct SchedulerState {
     pub ready: VecDeque<TaskId>,
     ready_waiters: VecDeque<WaitRequest>,
     pub tasks: HashMap<TaskId, TaskState>,
+    task_metadata: HashMap<TaskId, TaskMetadata>,
     pub promises: HashMap<PromiseId, PromiseState>,
     semaphores: HashMap<u64, SemaphoreRuntimeState>,
     waiters: HashMap<Waitable, Vec<WaitRequest>>,
@@ -679,6 +688,37 @@ fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyExce
     PyException::new(exc_type, exc_value, Some(exc_tb))
 }
 
+pub fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
+    for frame in k.frames_snapshot.iter().rev() {
+        let Frame::PythonGenerator {
+            generator,
+            metadata: Some(metadata),
+            ..
+        } = frame
+        else {
+            continue;
+        };
+
+        let source_line = Python::attach(|py| {
+            let gi_frame = generator.bind(py).getattr("gi_frame").ok()?;
+            if gi_frame.is_none() {
+                return None;
+            }
+            gi_frame.getattr("f_lineno").ok()?.extract::<u32>().ok()
+        })
+        .unwrap_or(metadata.source_line);
+
+        // TODO(doeff-trace): prefer the user Spawn callsite when wrapper/internal
+        // frames (e.g. doeff.effects.spawn._program) are on top of the continuation.
+        return Some(SpawnSite {
+            function_name: metadata.function_name.clone(),
+            source_file: metadata.source_file.clone(),
+            source_line,
+        });
+    }
+    None
+}
+
 fn task_cancelled_error() -> PyException {
     Python::attach(|py| {
         let message = "Task was cancelled";
@@ -735,6 +775,7 @@ impl SchedulerState {
             ready: VecDeque::new(),
             ready_waiters: VecDeque::new(),
             tasks: HashMap::new(),
+            task_metadata: HashMap::new(),
             promises: HashMap::new(),
             semaphores: HashMap::new(),
             waiters: HashMap::new(),
@@ -1223,6 +1264,10 @@ impl SchedulerState {
 
     pub fn mark_task_done(&mut self, task_id: TaskId, result: Result<Value, PyException>) {
         self.cancel_requested.remove(&task_id);
+        if let Err(error) = &result {
+            self.annotate_failed_task(task_id, error);
+        }
+        self.task_metadata.remove(&task_id);
         if let Some(state) = self.tasks.remove(&task_id) {
             let task_store = match state {
                 TaskState::Pending { store, .. } => store,
@@ -1236,6 +1281,49 @@ impl SchedulerState {
                 },
             );
         }
+    }
+
+    fn annotate_failed_task(&self, task_id: TaskId, error: &PyException) {
+        let Some(metadata) = self.task_metadata.get(&task_id) else {
+            return;
+        };
+        let metadata = metadata.clone();
+
+        let PyException::Materialized { exc_value, .. } = error else {
+            return;
+        };
+
+        Python::attach(|py| {
+            let exc_obj = exc_value.bind(py);
+            let payload = PyDict::new(py);
+            let _ = payload.set_item("task_id", task_id.raw());
+            match metadata.parent_task {
+                Some(parent_task) => {
+                    let _ = payload.set_item("parent_task", parent_task.raw());
+                }
+                None => {
+                    let _ = payload.set_item("parent_task", py.None());
+                }
+            }
+
+            if let Some(site) = metadata.spawn_site {
+                let site_dict = PyDict::new(py);
+                let _ = site_dict.set_item("function_name", site.function_name);
+                let _ = site_dict.set_item("source_file", site.source_file);
+                let _ = site_dict.set_item("source_line", site.source_line);
+                let _ = payload.set_item("spawn_site", site_dict);
+            } else {
+                let _ = payload.set_item("spawn_site", py.None());
+            }
+
+            if let Ok(existing) = exc_obj.getattr("__doeff_spawned_from__") {
+                if !existing.is_none() {
+                    let _ = payload.set_item("child", existing);
+                }
+            }
+
+            let _ = exc_obj.setattr("__doeff_spawned_from__", payload);
+        });
     }
 
     pub fn wake_waiters(&mut self, waitable: Waitable) {
@@ -2063,11 +2151,20 @@ impl RustHandlerProgram for SchedulerProgram {
 
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let task_id = state.alloc_task_id();
+                let parent_task = state.current_task;
+                let spawn_site = spawn_site_from_continuation(&k_user);
                 state.tasks.insert(
                     task_id,
                     TaskState::Pending {
                         cont,
                         store: task_store,
+                    },
+                );
+                state.task_metadata.insert(
+                    task_id,
+                    TaskMetadata {
+                        parent_task,
+                        spawn_site,
                     },
                 );
                 state.ready.push_back(task_id);
