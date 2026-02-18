@@ -4,7 +4,7 @@ import inspect
 from dataclasses import dataclass
 from pathlib import Path
 
-from doeff import Delegate, EffectBase, Program, WithHandler, default_handlers, do, run
+from doeff import Ask, Delegate, EffectBase, Program, Resume, WithHandler, default_handlers, do, run
 from doeff.effects import Put
 from doeff.effects.gather import Gather
 from doeff.effects.spawn import Spawn
@@ -28,6 +28,107 @@ def _line_of(function: object, needle: str) -> int:
         if needle in line:
             return start + offset
     raise AssertionError(f"failed to find {needle!r} in source")
+
+
+def _render_single_delegated_handler(handler_name: str) -> str:
+    tb = _tb(
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 7,
+                "effect_repr": "Ask('k')",
+                "handler_stack": [
+                    {
+                        "handler_name": handler_name,
+                        "handler_kind": "python",
+                        "status": "delegated",
+                    },
+                    {
+                        "handler_name": "user_handler",
+                        "handler_kind": "python",
+                        "status": "resumed",
+                    },
+                ],
+                "result": {"kind": "resumed", "value_repr": "1"},
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 8,
+                "exception_type": "RuntimeError",
+                "message": "boom",
+            },
+        ]
+    )
+    return tb.format_default()
+
+
+def test_format_default_shows_sync_await_handler_when_delegated() -> None:
+    rendered = _render_single_delegated_handler("sync_await_handler")
+    assert "sync_await_handler↗" in rendered
+
+
+def test_format_default_shows_async_await_handler_when_delegated() -> None:
+    rendered = _render_single_delegated_handler("async_await_handler")
+    assert "async_await_handler↗" in rendered
+
+
+def test_format_default_shows_rust_await_handler_when_delegated() -> None:
+    rendered = _render_single_delegated_handler("AwaitHandler")
+    assert "AwaitHandler↗" in rendered
+
+
+def test_format_default_shows_every_handler_and_status_marker() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 12,
+                "effect_repr": "Ping()",
+                "handler_stack": [
+                    {"handler_name": "h_active", "handler_kind": "python", "status": "active"},
+                    {"handler_name": "h_pending", "handler_kind": "python", "status": "pending"},
+                    {
+                        "handler_name": "h_delegated",
+                        "handler_kind": "python",
+                        "status": "delegated",
+                    },
+                    {"handler_name": "h_resumed", "handler_kind": "python", "status": "resumed"},
+                    {
+                        "handler_name": "h_transferred",
+                        "handler_kind": "python",
+                        "status": "transferred",
+                    },
+                    {"handler_name": "h_returned", "handler_kind": "python", "status": "returned"},
+                    {"handler_name": "h_threw", "handler_kind": "python", "status": "threw"},
+                ],
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "h_threw",
+                    "exception_repr": "RuntimeError('boom')",
+                },
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 13,
+                "exception_type": "RuntimeError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    assert (
+        "[h_active⚡ > h_pending· > h_delegated↗ > h_resumed✓ > "
+        "h_transferred⇢ > h_returned✓ > h_threw✗]"
+    ) in rendered
 
 
 def test_format_default_program_yield() -> None:
@@ -124,10 +225,70 @@ def test_format_default_handler_stack_same() -> None:
     )
 
     rendered = tb.format_default()
-    assert rendered.count("[same]") == 1
+    stack_line = "[h1↗ > h2✓]"
+    assert rendered.count(stack_line) == 2
+    assert "[same]" not in rendered
 
 
-def test_format_default_hides_internal_handlers() -> None:
+def test_format_default_keeps_duplicate_handler_names_from_vm_chain() -> None:
+    def same_name_handler(_effect: object, _k: object):
+        yield Delegate()
+
+    @do
+    def body() -> Program[None]:
+        yield Put("k", 1)
+        raise ValueError("boom")
+
+    result = run(
+        WithHandler(same_name_handler, WithHandler(same_name_handler, body())),
+        handlers=default_handlers(),
+        store={"k": 0},
+    )
+    assert result.is_err()
+
+    rendered = result.error.__doeff_traceback__.format_default()
+    handler_stack_line = next(
+        line.strip()
+        for line in rendered.splitlines()
+        if line.strip().startswith("[same_name_handler")
+    )
+    assert handler_stack_line.count("same_name_handler↗") == 2
+
+
+def test_format_default_duplicate_name_throw_marks_correct_handler() -> None:
+    def _mk_handler(label: str):
+        def handler(effect: object, k: object):
+            if getattr(effect, "key", None) == "x":
+                _ = yield Resume(k, f"{label}:resumed")
+                raise RuntimeError(f"{label}:boom")
+            yield Delegate()
+
+        return handler
+
+    inner = _mk_handler("inner")
+    outer = _mk_handler("outer")
+
+    @do
+    def body() -> Program[str]:
+        _ = yield Ask("x")
+        return "done"
+
+    result = run(
+        WithHandler(outer, WithHandler(inner, body())),
+        handlers=default_handlers(),
+        env={"x": 1},
+    )
+    assert result.is_err()
+
+    rendered = result.error.__doeff_traceback__.format_default()
+    stack_line = next(
+        line.strip() for line in rendered.splitlines() if line.strip().startswith("[handler")
+    )
+    assert stack_line.startswith("[handler✗ > handler·")
+    assert "inner:boom" in rendered
+
+
+def test_format_default_renders_all_handlers() -> None:
     tb = _tb(
         [
             {
@@ -166,7 +327,7 @@ def test_format_default_hides_internal_handlers() -> None:
     )
 
     rendered = tb.format_default()
-    assert "sync_await_handler" not in rendered
+    assert "sync_await_handler↗" in rendered
     assert "user_handler" in rendered
 
 
@@ -245,14 +406,14 @@ def test_format_default_transfer_inline() -> None:
                 "effect_repr": "Gather(task)",
                 "handler_stack": [
                     {
-                        "handler_name": "scheduler",
+                        "handler_name": "SchedulerHandler",
                         "handler_kind": "rust_builtin",
                         "status": "transferred",
                     }
                 ],
                 "result": {
                     "kind": "transferred",
-                    "handler_name": "scheduler",
+                    "handler_name": "SchedulerHandler",
                     "target_repr": "child() child.py:12",
                 },
             },
@@ -268,7 +429,7 @@ def test_format_default_transfer_inline() -> None:
     )
 
     rendered = tb.format_default()
-    assert "⇢ scheduler transferred to child() child.py:12" in rendered
+    assert "⇢ SchedulerHandler transferred to child() child.py:12" in rendered
 
 
 def test_format_default_spawn_separator() -> None:
@@ -473,7 +634,6 @@ def test_format_default_shows_effect_yield_on_handler_throw() -> None:
     assert "crash_handler✗" in rendered
     assert "·" in rendered
     assert "✗ crash_handler raised RuntimeError('handler exploded')" in rendered
-    assert "sync_await_handler" not in rendered
     assert "\n  crash_handler()  " not in rendered
     assert "/doeff/do.py:52" not in rendered
     assert "\n\nRuntimeError: handler exploded" in rendered
@@ -501,23 +661,21 @@ def test_format_default_shows_program_yield_chain() -> None:
 
     rendered = result.error.__doeff_traceback__.format_default()
     source_file = str(Path(__file__).resolve())
-    outer_line = _line_of(outer.original_generator, "return (yield inner())")
+    outer_line = _line_of(outer.original_generator, 'yield Put("k", 0)')
     inner_line = _line_of(inner.original_generator, "yield Boom()")
     assert "outer()" in rendered
-    assert "yield inner()" in rendered
+    assert "yield Put(" in rendered
     assert "inner()" in rendered
     assert "yield Boom" in rendered
     assert "crash_handler✗" in rendered
     assert "handler exploded" in rendered
-    assert "sync_await_handler" not in rendered
     assert f"{source_file}:{outer_line}" in rendered
     assert f"{source_file}:{inner_line}" in rendered
-    assert "yield inner()\n\n  inner()" in rendered
     assert "\n  crash_handler()  " not in rendered
     assert "/doeff/do.py:52" not in rendered
 
 
-def test_format_default_excludes_resumed_effects() -> None:
+def test_format_default_includes_resumed_effects() -> None:
     @do
     def body() -> Program[int]:
         yield Put("k", 1)
@@ -528,7 +686,8 @@ def test_format_default_excludes_resumed_effects() -> None:
     assert result.is_err()
 
     rendered = result.error.__doeff_traceback__.format_default()
-    assert "yield Put(" not in rendered
+    assert "yield Put(" in rendered
+    assert "→ resumed with" in rendered
     assert "raise ValueError('boom')" in rendered
     assert "/doeff/do.py:52" not in rendered
 
@@ -558,7 +717,6 @@ def test_format_default_shows_delegation_chain() -> None:
     assert "inner_delegate_handler↗" in rendered
     assert "outer_crash_handler✗" in rendered
     assert "StateHandler·" in rendered
-    assert "sync_await_handler" not in rendered
     assert "delegated boom" in rendered
     assert "\n  outer_crash_handler()  " not in rendered
     assert "\n\nRuntimeError: delegated boom" in rendered
@@ -586,17 +744,17 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     rendered = result.error.__doeff_traceback__.format_default()
     source_file = str(Path(__file__).resolve())
     gather_line = _line_of(parent.original_generator, "return (yield Gather(task))")
+    spawn_line = _line_of(parent.original_generator, "task = yield Spawn(")
     assert "yield Boom" in rendered
     assert "crash_handler✗" in rendered
     assert "·" in rendered
-    assert "sync_await_handler" not in rendered
     assert "child exploded" in rendered
     assert "── in task " in rendered
     assert "yield Gather(" in rendered
     assert "_program()" not in rendered
     assert "doeff/effects/gather.py" not in rendered
     assert f"parent()  {source_file}:{gather_line}" in rendered
-    assert "spawned at _spawn_task()" in rendered
+    assert f"spawned at parent() {source_file}:{spawn_line}" in rendered
     boundary_pos = rendered.index("── in task ")
     gather_pos = rendered.index("yield Gather(")
     child_pos = rendered.index("  child()")
@@ -604,7 +762,7 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     child_stack_line = next(
         line.strip() for line in rendered.splitlines() if line.strip().startswith("[crash_handler")
     )
-    assert child_stack_line.count("ResultSafeHandler·") == 1
-    assert child_stack_line.count("WriterHandler·") == 1
-    assert child_stack_line.count("ReaderHandler·") == 1
-    assert child_stack_line.count("StateHandler·") == 1
+    assert child_stack_line.count("ResultSafeHandler·") >= 2
+    assert child_stack_line.count("WriterHandler·") >= 2
+    assert child_stack_line.count("ReaderHandler·") >= 2
+    assert child_stack_line.count("StateHandler·") >= 2

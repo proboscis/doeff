@@ -30,6 +30,8 @@ use crate::step::{DoCtrl, PyException, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
 
+pub const SCHEDULER_HANDLER_NAME: &str = "SchedulerHandler";
+
 /// Effect variants handled by the scheduler.
 #[derive(Debug, Clone)]
 pub enum SchedulerEffect {
@@ -711,25 +713,59 @@ fn generator_current_line(generator: &PyShared) -> Option<u32> {
     })
 }
 
+fn generator_site_from_code(generator: &PyShared) -> Option<(String, String, u32)> {
+    Python::attach(|py| {
+        let gi_frame = generator.bind(py).getattr("gi_frame").ok()?;
+        if gi_frame.is_none() {
+            return None;
+        }
+
+        let f_code = gi_frame.getattr("f_code").ok()?;
+        let function_name = f_code.getattr("co_name").ok()?.extract::<String>().ok()?;
+        let source_file = f_code
+            .getattr("co_filename")
+            .ok()?
+            .extract::<String>()
+            .ok()?;
+        let source_line = gi_frame.getattr("f_lineno").ok()?.extract::<u32>().ok()?;
+        Some((function_name, source_file, source_line))
+    })
+}
+
 pub fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
-    for frame in k.frames_snapshot.iter().rev() {
-        let Frame::PythonGenerator {
+    let mut frames_iter = k.frames_snapshot.iter().rev().filter_map(|frame| {
+        if let Frame::PythonGenerator {
             generator,
-            metadata: Some(metadata),
+            metadata,
             ..
         } = frame
-        else {
-            continue;
-        };
+        {
+            match metadata {
+                Some(metadata) => {
+                    let source_line = generator_current_line(generator).unwrap_or(metadata.source_line);
+                    Some(SpawnSite {
+                        function_name: metadata.function_name.clone(),
+                        source_file: metadata.source_file.clone(),
+                        source_line,
+                    })
+                }
+                None => {
+                    let (function_name, source_file, fallback_line) =
+                        generator_site_from_code(generator)?;
+                    Some(SpawnSite {
+                        function_name,
+                        source_file,
+                        source_line: generator_current_line(generator).unwrap_or(fallback_line),
+                    })
+                }
+            }
+        } else {
+            None
+        }
+    });
 
-        let source_line = generator_current_line(generator).unwrap_or(metadata.source_line);
-        return Some(SpawnSite {
-            function_name: metadata.function_name.clone(),
-            source_file: metadata.source_file.clone(),
-            source_line,
-        });
-    }
-    None
+    let first = frames_iter.next()?;
+    Some(frames_iter.next().unwrap_or(first))
 }
 
 fn task_cancelled_error() -> PyException {
@@ -2300,7 +2336,7 @@ impl RustProgramHandler for SchedulerHandler {
     }
 
     fn handler_name(&self) -> &'static str {
-        "SchedulerHandler"
+        SCHEDULER_HANDLER_NAME
     }
 
     fn on_run_end(&self, run_token: u64) {

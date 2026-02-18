@@ -35,7 +35,9 @@ pub mod yielded;
 // Re-exports for convenience
 pub use arena::SegmentArena;
 pub use capture::{
-    CaptureEvent, DelegationEntry, DispatchAction, FrameId, HandlerAction, HandlerKind, TraceEntry,
+    ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
+    HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus,
+    SpawnSite, TraceEntry,
 };
 pub use continuation::Continuation;
 pub use dispatch::DispatchContext;

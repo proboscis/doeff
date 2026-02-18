@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    ClassVar,
     Literal,
     Protocol,
     TypeAlias,
@@ -304,15 +303,6 @@ else:
         python_traceback: Any | None
         exception: BaseException
 
-        _INTERNAL_DELEGATE_ONLY_HANDLERS: ClassVar[frozenset[str]] = frozenset(
-            {
-                "sync_await_handler",
-                "async_await_handler",
-                "AwaitHandler",
-            }
-        )
-        _INTERNAL_NOISE_STATUSES: ClassVar[frozenset[str]] = frozenset({"delegated", "pending"})
-
         def format(self) -> str:
             return self.format_default()
 
@@ -343,20 +333,7 @@ else:
         def _render_handler_stack(
             self,
             stack: tuple[HandlerStackEntry, ...],
-            previous: tuple[HandlerStackEntry, ...] | None,
-        ) -> tuple[str, tuple[HandlerStackEntry, ...]]:
-            filtered = tuple(
-                entry
-                for entry in stack
-                if not (
-                    entry.handler_name in self._INTERNAL_DELEGATE_ONLY_HANDLERS
-                    and entry.status in self._INTERNAL_NOISE_STATUSES
-                )
-            )
-
-            if previous is not None and filtered == previous:
-                return "[same]", filtered
-
+        ) -> str:
             marker = {
                 "active": "⚡",
                 "pending": "·",
@@ -366,8 +343,8 @@ else:
                 "returned": "✓",
                 "threw": "✗",
             }
-            parts = [f"{entry.handler_name}{marker.get(entry.status, '?')}" for entry in filtered]
-            return f"[{' > '.join(parts)}]" if parts else "[]", filtered
+            parts = [f"{entry.handler_name}{marker.get(entry.status, '?')}" for entry in stack]
+            return f"[{' > '.join(parts)}]" if parts else "[]"
 
         def _render_effect_result(
             self,
@@ -397,7 +374,6 @@ else:
 
         def format_default(self) -> str:
             lines: list[str] = ["doeff Traceback (most recent call last):", ""]
-            previous_stack: tuple[HandlerStackEntry, ...] | None = None
             for entry in self.active_chain:
                 if isinstance(entry, ProgramYield):
                     lines.append(
@@ -408,10 +384,7 @@ else:
                     continue
 
                 if isinstance(entry, EffectYield):
-                    stack_line, previous_stack = self._render_handler_stack(
-                        entry.handler_stack,
-                        previous_stack,
-                    )
+                    stack_line = self._render_handler_stack(entry.handler_stack)
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )

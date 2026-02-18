@@ -94,14 +94,30 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
             PyTypeError::new_err(format!("UnhandledEffect: {}", e))
         }
         VMError::TypeError { .. } => PyTypeError::new_err(e.to_string()),
-        VMError::UncaughtException { exception, trace } => {
+        VMError::UncaughtException {
+            exception,
+            trace,
+            active_chain,
+        } => {
             // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
             let py = unsafe { Python::assume_attached() };
             let exc_value = exception.value_clone_ref(py);
-            if let Ok(trace_obj) = Value::Trace(trace).to_pyobject(py) {
+            let payload = PyDict::new(py);
+            let trace_obj = Value::Trace(trace).to_pyobject(py);
+            let active_chain_obj = Value::ActiveChain(active_chain).to_pyobject(py);
+            if let (Ok(trace_obj), Ok(active_chain_obj)) = (trace_obj, active_chain_obj) {
+                let _ = payload.set_item("trace", trace_obj);
+                let _ = payload.set_item("active_chain", active_chain_obj);
+
+                if let Ok(spawned_from) = exc_value.bind(py).getattr("__doeff_spawned_from__") {
+                    if !spawned_from.is_none() {
+                        let _ = payload.set_item("spawned_from", spawned_from);
+                    }
+                }
+
                 let _ = exc_value
                     .bind(py)
-                    .setattr("__doeff_traceback_data__", trace_obj);
+                    .setattr("__doeff_traceback_data__", payload);
             }
             PyErr::from_value(exc_value.bind(py).clone())
         }

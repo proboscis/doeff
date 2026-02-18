@@ -130,7 +130,9 @@ pub enum CaptureEvent {
     Delegated {
         dispatch_id: DispatchId,
         from_handler_name: String,
+        from_handler_index: usize,
         to_handler_name: String,
+        to_handler_index: usize,
         to_handler_kind: HandlerKind,
         to_handler_source_file: Option<String>,
         to_handler_source_line: Option<u32>,
@@ -138,6 +140,7 @@ pub enum CaptureEvent {
     HandlerCompleted {
         dispatch_id: DispatchId,
         handler_name: String,
+        handler_index: usize,
         action: HandlerAction,
     },
     Resumed {
