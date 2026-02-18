@@ -473,6 +473,8 @@ def test_format_default_shows_effect_yield_on_handler_throw() -> None:
     assert "crash_handler✗" in rendered
     assert "·" in rendered
     assert "✗ crash_handler raised RuntimeError('handler exploded')" in rendered
+    assert "sync_await_handler" not in rendered
+    assert "SchedulerHandler·" not in rendered
     assert "\n  crash_handler()  " not in rendered
     assert "/doeff/do.py:52" not in rendered
     assert "\n\nRuntimeError: handler exploded" in rendered
@@ -508,6 +510,7 @@ def test_format_default_shows_program_yield_chain() -> None:
     assert "yield Boom" in rendered
     assert "crash_handler✗" in rendered
     assert "handler exploded" in rendered
+    assert "sync_await_handler" not in rendered
     assert (
         f"{source_file}:{outer_line}" in rendered
         or f"{source_file}:{outer_line - 1}" in rendered
@@ -559,6 +562,7 @@ def test_format_default_shows_delegation_chain() -> None:
     assert "inner_delegate_handler↗" in rendered
     assert "outer_crash_handler✗" in rendered
     assert "StateHandler·" in rendered
+    assert "sync_await_handler" not in rendered
     assert "delegated boom" in rendered
     assert "\n  outer_crash_handler()  " not in rendered
     assert "\n\nRuntimeError: delegated boom" in rendered
@@ -587,5 +591,11 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     assert "yield Boom" in rendered
     assert "crash_handler✗" in rendered
     assert "·" in rendered
+    assert "sync_await_handler" not in rendered
     assert "child exploded" in rendered
     assert "── in task " in rendered
+    assert "yield Gather(" in rendered
+    boundary_pos = rendered.index("── in task ")
+    gather_pos = rendered.index("yield Gather(")
+    child_pos = rendered.index("  child()")
+    assert gather_pos < boundary_pos < child_pos
