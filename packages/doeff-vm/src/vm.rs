@@ -8,7 +8,9 @@ use pyo3::types::PyDict;
 
 use crate::arena::SegmentArena;
 use crate::capture::{
-    CaptureEvent, DelegationEntry, DispatchAction, FrameId, HandlerAction, HandlerKind, TraceEntry,
+    ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
+    HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus,
+    TraceEntry,
 };
 use crate::continuation::Continuation;
 use crate::do_ctrl::{CallArg, DoCtrl};
@@ -286,6 +288,19 @@ impl VM {
         Some(Self::truncate_repr(repr))
     }
 
+    fn program_call_repr(metadata: &CallMetadata) -> Option<String> {
+        let repr = metadata.program_call.as_ref().map(|program_call| {
+            Python::attach(|py| {
+                program_call
+                    .bind(py)
+                    .repr()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|_| "<sub_program>".to_string())
+            })
+        })?;
+        Some(Self::truncate_repr(repr))
+    }
+
     fn exception_repr(exception: &PyException) -> Option<String> {
         let repr = match exception {
             PyException::Materialized { exc_value, .. } => Python::attach(|py| {
@@ -418,6 +433,19 @@ impl VM {
             if gi_frame.is_none() {
                 return None;
             }
+            if let Ok(locals) = gi_frame.getattr("f_locals") {
+                if let Ok(inner_gen) = locals.get_item("gen") {
+                    if let Ok(inner_frame) = inner_gen.getattr("gi_frame") {
+                        if !inner_frame.is_none() {
+                            if let Ok(line) = inner_frame.getattr("f_lineno") {
+                                if let Ok(lineno) = line.extract::<u32>() {
+                                    return Some(lineno);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             gi_frame.getattr("f_lineno").ok()?.extract::<u32>().ok()
         })
     }
@@ -445,6 +473,26 @@ impl VM {
         Self::resume_location_from_frames(k.frames_snapshot.as_ref())
     }
 
+    fn effect_site_from_continuation(k: &Continuation) -> Option<(FrameId, String, String, u32)> {
+        for frame in k.frames_snapshot.iter().rev() {
+            if let Frame::PythonGenerator {
+                generator,
+                metadata: Some(metadata),
+                ..
+            } = frame
+            {
+                let line = Self::generator_current_line(generator).unwrap_or(metadata.source_line);
+                return Some((
+                    metadata.frame_id as FrameId,
+                    metadata.function_name.clone(),
+                    metadata.source_file.clone(),
+                    line,
+                ));
+            }
+        }
+        None
+    }
+
     fn maybe_emit_frame_entered(&mut self, metadata: &CallMetadata) {
         self.capture_log.push(CaptureEvent::FrameEntered {
             frame_id: metadata.frame_id as FrameId,
@@ -452,6 +500,7 @@ impl VM {
             source_file: metadata.source_file.clone(),
             source_line: metadata.source_line,
             args_repr: metadata.args_repr.clone(),
+            program_call_repr: Self::program_call_repr(metadata),
         });
     }
 
@@ -517,6 +566,7 @@ impl VM {
                     source_file,
                     source_line,
                     args_repr,
+                    program_call_repr: _,
                 } => {
                     trace.push(TraceEntry::Frame {
                         frame_id: *frame_id,
@@ -534,6 +584,11 @@ impl VM {
                     handler_kind,
                     handler_source_file,
                     handler_source_line,
+                    handler_chain_snapshot: _,
+                    effect_frame_id: _,
+                    effect_function_name: _,
+                    effect_source_file: _,
+                    effect_source_line: _,
                 } => {
                     let pos = trace.len();
                     dispatch_positions.insert(*dispatch_id, pos);
@@ -740,6 +795,659 @@ impl VM {
                 exception_repr: None,
             });
         }
+    }
+
+    fn exception_site(exception: &PyException) -> ActiveChainEntry {
+        match exception {
+            PyException::Materialized {
+                exc_type,
+                exc_value,
+                exc_tb,
+            } => Python::attach(|py| {
+                let exc_type_bound = exc_type.bind(py);
+                let exc_value_bound = exc_value.bind(py);
+
+                let exception_type = exc_type_bound
+                    .getattr("__name__")
+                    .ok()
+                    .and_then(|v| v.extract::<String>().ok())
+                    .unwrap_or_else(|| "Exception".to_string());
+
+                let message = exc_value_bound
+                    .str()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+
+                let mut function_name = "<unknown>".to_string();
+                let mut source_file = "<unknown>".to_string();
+                let mut source_line = 0u32;
+
+                let mut tb = exc_tb
+                    .as_ref()
+                    .map(|tb| tb.bind(py).clone().into_any())
+                    .or_else(|| exc_value_bound.getattr("__traceback__").ok());
+
+                while let Some(tb_obj) = tb {
+                    let next = tb_obj.getattr("tb_next").ok();
+                    let has_next = next.as_ref().is_some_and(|n| !n.is_none());
+                    if has_next {
+                        tb = next;
+                        continue;
+                    }
+
+                    source_line = tb_obj
+                        .getattr("tb_lineno")
+                        .ok()
+                        .and_then(|v| v.extract::<u32>().ok())
+                        .unwrap_or(0);
+
+                    if let Ok(frame) = tb_obj.getattr("tb_frame") {
+                        if let Ok(code) = frame.getattr("f_code") {
+                            function_name = code
+                                .getattr("co_name")
+                                .ok()
+                                .and_then(|v| v.extract::<String>().ok())
+                                .unwrap_or_else(|| "<unknown>".to_string());
+                            source_file = code
+                                .getattr("co_filename")
+                                .ok()
+                                .and_then(|v| v.extract::<String>().ok())
+                                .unwrap_or_else(|| "<unknown>".to_string());
+                        }
+                    }
+                    break;
+                }
+
+                ActiveChainEntry::ExceptionSite {
+                    function_name,
+                    source_file,
+                    source_line,
+                    exception_type,
+                    message,
+                }
+            }),
+            PyException::RuntimeError { message } => ActiveChainEntry::ExceptionSite {
+                function_name: "<runtime>".to_string(),
+                source_file: "<runtime>".to_string(),
+                source_line: 0,
+                exception_type: "RuntimeError".to_string(),
+                message: message.clone(),
+            },
+            PyException::TypeError { message } => ActiveChainEntry::ExceptionSite {
+                function_name: "<runtime>".to_string(),
+                source_file: "<runtime>".to_string(),
+                source_line: 0,
+                exception_type: "TypeError".to_string(),
+                message: message.clone(),
+            },
+        }
+    }
+
+    fn spawn_boundaries_from_exception(exception: &PyException) -> Vec<ActiveChainEntry> {
+        let PyException::Materialized { exc_value, .. } = exception else {
+            return Vec::new();
+        };
+
+        Python::attach(|py| {
+            let mut boundaries = Vec::new();
+            let mut current = exc_value
+                .bind(py)
+                .getattr("__doeff_spawned_from__")
+                .ok()
+                .filter(|v| !v.is_none());
+
+            while let Some(payload) = current {
+                let Ok(dict) = payload.cast::<PyDict>() else {
+                    break;
+                };
+
+                let task_id = dict
+                    .get_item("task_id")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.extract::<u64>().ok());
+                let parent_task = dict
+                    .get_item("parent_task")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| if v.is_none() { None } else { v.extract::<u64>().ok() });
+
+                let spawn_site = dict
+                    .get_item("spawn_site")
+                    .ok()
+                    .flatten()
+                    .and_then(|site| {
+                        if site.is_none() {
+                            return None;
+                        }
+                        let site_dict = site.cast::<PyDict>().ok()?;
+                        let function_name = site_dict
+                            .get_item("function_name")
+                            .ok()
+                            .flatten()
+                            .and_then(|v| v.extract::<String>().ok())?;
+                        let source_file = site_dict
+                            .get_item("source_file")
+                            .ok()
+                            .flatten()
+                            .and_then(|v| v.extract::<String>().ok())?;
+                        let source_line = site_dict
+                            .get_item("source_line")
+                            .ok()
+                            .flatten()
+                            .and_then(|v| v.extract::<u32>().ok())?;
+                        Some(crate::capture::SpawnSite {
+                            function_name,
+                            source_file,
+                            source_line,
+                        })
+                    });
+
+                if let Some(task_id) = task_id {
+                    boundaries.push(ActiveChainEntry::SpawnBoundary {
+                        task_id,
+                        parent_task,
+                        spawn_site,
+                    });
+                }
+
+                current = dict.get_item("child").ok().flatten();
+            }
+
+            boundaries
+        })
+    }
+
+    pub fn assemble_active_chain(&self, exception: &PyException) -> Vec<ActiveChainEntry> {
+        #[derive(Clone)]
+        struct FrameState {
+            frame_id: FrameId,
+            function_name: String,
+            source_file: String,
+            source_line: u32,
+            sub_program_repr: String,
+        }
+
+        #[derive(Clone)]
+        struct DispatchState {
+            function_name: Option<String>,
+            source_file: Option<String>,
+            source_line: Option<u32>,
+            effect_repr: String,
+            handler_stack: Vec<HandlerDispatchEntry>,
+            result: EffectResult,
+        }
+
+        let mut frame_stack: Vec<FrameState> = Vec::new();
+        let mut dispatches: HashMap<DispatchId, DispatchState> = HashMap::new();
+        let mut frame_dispatch: HashMap<FrameId, DispatchId> = HashMap::new();
+        let mut transfer_targets: HashMap<DispatchId, String> = HashMap::new();
+
+        for event in &self.capture_log {
+            match event {
+                CaptureEvent::FrameEntered {
+                    frame_id,
+                    function_name,
+                    source_file,
+                    source_line,
+                    args_repr: _,
+                    program_call_repr,
+                } => {
+                    frame_stack.push(FrameState {
+                        frame_id: *frame_id,
+                        function_name: function_name.clone(),
+                        source_file: source_file.clone(),
+                        source_line: *source_line,
+                        sub_program_repr: program_call_repr
+                            .clone()
+                            .unwrap_or_else(|| "<sub_program>".to_string()),
+                    });
+                }
+                CaptureEvent::FrameExited { .. } => {
+                    let _ = frame_stack.pop();
+                }
+                CaptureEvent::DispatchStarted {
+                    dispatch_id,
+                    effect_repr,
+                    handler_name,
+                    handler_kind,
+                    handler_source_file,
+                    handler_source_line,
+                    handler_chain_snapshot,
+                    effect_frame_id,
+                    effect_function_name,
+                    effect_source_file,
+                    effect_source_line,
+                } => {
+                    let mut handler_stack: Vec<HandlerDispatchEntry> = handler_chain_snapshot
+                        .iter()
+                        .enumerate()
+                        .map(|(index, snapshot)| HandlerDispatchEntry {
+                            handler_name: snapshot.handler_name.clone(),
+                            handler_kind: snapshot.handler_kind.clone(),
+                            source_file: snapshot.source_file.clone(),
+                            source_line: snapshot.source_line,
+                            status: if index == 0 {
+                                HandlerStatus::Active
+                            } else {
+                                HandlerStatus::Pending
+                            },
+                        })
+                        .collect();
+
+                    if handler_stack.is_empty() {
+                        handler_stack.push(HandlerDispatchEntry {
+                            handler_name: handler_name.clone(),
+                            handler_kind: handler_kind.clone(),
+                            source_file: handler_source_file.clone(),
+                            source_line: *handler_source_line,
+                            status: HandlerStatus::Active,
+                        });
+                    }
+
+                    if let Some(frame_id) = effect_frame_id {
+                        frame_dispatch.insert(*frame_id, *dispatch_id);
+                        if let Some(frame) = frame_stack.iter_mut().find(|f| f.frame_id == *frame_id) {
+                            if let Some(line) = effect_source_line {
+                                frame.source_line = *line;
+                            }
+                        }
+                    }
+
+                    dispatches.insert(
+                        *dispatch_id,
+                        DispatchState {
+                            function_name: effect_function_name.clone(),
+                            source_file: effect_source_file.clone(),
+                            source_line: *effect_source_line,
+                            effect_repr: effect_repr.clone(),
+                            handler_stack,
+                            result: EffectResult::Active,
+                        },
+                    );
+                }
+                CaptureEvent::Delegated {
+                    dispatch_id,
+                    from_handler_name,
+                    to_handler_name,
+                    to_handler_kind,
+                    to_handler_source_file,
+                    to_handler_source_line,
+                } => {
+                    if let Some(dispatch) = dispatches.get_mut(dispatch_id) {
+                        if let Some(from_entry) = dispatch
+                            .handler_stack
+                            .iter_mut()
+                            .find(|entry| {
+                                entry.handler_name == *from_handler_name
+                                    && entry.status == HandlerStatus::Active
+                            })
+                        {
+                            from_entry.status = HandlerStatus::Delegated;
+                        } else if let Some(last_active) = dispatch
+                            .handler_stack
+                            .iter_mut()
+                            .rev()
+                            .find(|entry| entry.status == HandlerStatus::Active)
+                        {
+                            last_active.status = HandlerStatus::Delegated;
+                        }
+
+                        if let Some(to_entry) = dispatch
+                            .handler_stack
+                            .iter_mut()
+                            .find(|entry| {
+                                entry.handler_name == *to_handler_name
+                                    && entry.status == HandlerStatus::Pending
+                            })
+                        {
+                            to_entry.status = HandlerStatus::Active;
+                        } else {
+                            dispatch.handler_stack.push(HandlerDispatchEntry {
+                                handler_name: to_handler_name.clone(),
+                                handler_kind: to_handler_kind.clone(),
+                                source_file: to_handler_source_file.clone(),
+                                source_line: *to_handler_source_line,
+                                status: HandlerStatus::Active,
+                            });
+                        }
+                    }
+                }
+                CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name,
+                    action,
+                } => {
+                    if let Some(dispatch) = dispatches.get_mut(dispatch_id) {
+                        let status = match action {
+                            HandlerAction::Resumed { .. } => HandlerStatus::Resumed,
+                            HandlerAction::Transferred { .. } => HandlerStatus::Transferred,
+                            HandlerAction::Returned { .. } => HandlerStatus::Returned,
+                            HandlerAction::Threw { .. } => HandlerStatus::Threw,
+                        };
+
+                        if let Some(last) = dispatch
+                            .handler_stack
+                            .iter_mut()
+                            .rev()
+                            .find(|entry| entry.status == HandlerStatus::Active)
+                        {
+                            last.status = status;
+                        }
+
+                        dispatch.result = match action {
+                            HandlerAction::Resumed { value_repr }
+                            | HandlerAction::Returned { value_repr } => EffectResult::Resumed {
+                                value_repr: value_repr.clone().unwrap_or_else(|| "None".to_string()),
+                            },
+                            HandlerAction::Transferred { value_repr } => EffectResult::Transferred {
+                                handler_name: handler_name.clone(),
+                                target_repr: transfer_targets
+                                    .get(dispatch_id)
+                                    .cloned()
+                                    .unwrap_or_else(|| {
+                                        value_repr
+                                            .clone()
+                                            .unwrap_or_else(|| "<target>".to_string())
+                                    }),
+                            },
+                            HandlerAction::Threw { exception_repr } => EffectResult::Threw {
+                                handler_name: handler_name.clone(),
+                                exception_repr: exception_repr
+                                    .clone()
+                                    .unwrap_or_else(|| "<exception>".to_string()),
+                            },
+                        };
+                    }
+                }
+                CaptureEvent::Resumed { .. } => {}
+                CaptureEvent::Transferred {
+                    dispatch_id,
+                    resumed_function_name,
+                    source_file,
+                    source_line,
+                    ..
+                } => {
+                    transfer_targets.insert(
+                        *dispatch_id,
+                        format!("{resumed_function_name}() {source_file}:{source_line}"),
+                    );
+                }
+            }
+        }
+
+        let is_visible_effect =
+            |result: &EffectResult| matches!(result, EffectResult::Active
+                | EffectResult::Transferred { .. }
+                | EffectResult::Threw { .. });
+
+        // Merge live frame line numbers for currently suspended generators.
+        let mut seg_chain = Vec::new();
+        let mut seg_id = self.current_segment;
+        while let Some(id) = seg_id {
+            seg_chain.push(id);
+            seg_id = self.segments.get(id).and_then(|seg| seg.caller);
+        }
+        seg_chain.reverse();
+
+        for id in seg_chain {
+            let Some(seg) = self.segments.get(id) else {
+                continue;
+            };
+            for frame in &seg.frames {
+                let Frame::PythonGenerator {
+                    generator,
+                    metadata: Some(metadata),
+                    ..
+                } = frame
+                else {
+                    continue;
+                };
+
+                let line = Self::generator_current_line(generator).unwrap_or(metadata.source_line);
+                if let Some(existing) = frame_stack
+                    .iter_mut()
+                    .find(|entry| entry.frame_id == metadata.frame_id)
+                {
+                    existing.source_line = line;
+                    if existing.sub_program_repr == "<sub_program>" {
+                        if let Some(repr) = Self::program_call_repr(metadata) {
+                            existing.sub_program_repr = repr;
+                        }
+                    }
+                } else {
+                    frame_stack.push(FrameState {
+                        frame_id: metadata.frame_id as FrameId,
+                        function_name: metadata.function_name.clone(),
+                        source_file: metadata.source_file.clone(),
+                        source_line: line,
+                        sub_program_repr: Self::program_call_repr(metadata)
+                            .unwrap_or_else(|| "<sub_program>".to_string()),
+                    });
+                }
+            }
+        }
+
+        // At uncaught error boundaries current_segment can already be gone; use the
+        // active dispatch continuation snapshot to refresh frame yield lines.
+        if self.current_segment.is_none() {
+            if let Some(dispatch_ctx) = self.dispatch_stack.iter().rev().find(|ctx| {
+                dispatches
+                    .get(&ctx.dispatch_id)
+                    .is_some_and(|dispatch| is_visible_effect(&dispatch.result))
+            }) {
+                for frame in dispatch_ctx.k_user.frames_snapshot.iter() {
+                    let Frame::PythonGenerator {
+                        generator,
+                        metadata: Some(metadata),
+                        ..
+                    } = frame
+                    else {
+                        continue;
+                    };
+
+                    let line = Self::generator_current_line(generator).unwrap_or(metadata.source_line);
+                    if let Some(existing) = frame_stack
+                        .iter_mut()
+                        .find(|entry| entry.frame_id == metadata.frame_id)
+                    {
+                        existing.source_line = line;
+                        if existing.sub_program_repr == "<sub_program>" {
+                            if let Some(repr) = Self::program_call_repr(metadata) {
+                                existing.sub_program_repr = repr;
+                            }
+                        }
+                    } else {
+                        frame_stack.push(FrameState {
+                            frame_id: metadata.frame_id as FrameId,
+                            function_name: metadata.function_name.clone(),
+                            source_file: metadata.source_file.clone(),
+                            source_line: line,
+                            sub_program_repr: Self::program_call_repr(metadata)
+                                .unwrap_or_else(|| "<sub_program>".to_string()),
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut active_chain = Vec::new();
+        for (index, frame) in frame_stack.iter().enumerate() {
+            let dispatch = frame_dispatch
+                .get(&frame.frame_id)
+                .and_then(|dispatch_id| dispatches.get(dispatch_id));
+
+            if let Some(dispatch) = dispatch {
+                if is_visible_effect(&dispatch.result) {
+                    active_chain.push(ActiveChainEntry::EffectYield {
+                        function_name: dispatch
+                            .function_name
+                            .clone()
+                            .unwrap_or_else(|| frame.function_name.clone()),
+                        source_file: dispatch
+                            .source_file
+                            .clone()
+                            .unwrap_or_else(|| frame.source_file.clone()),
+                        source_line: dispatch.source_line.unwrap_or(frame.source_line),
+                        effect_repr: dispatch.effect_repr.clone(),
+                        handler_stack: dispatch.handler_stack.clone(),
+                        result: dispatch.result.clone(),
+                    });
+                    continue;
+                }
+            }
+
+            let inferred_sub_program = frame_stack
+                .get(index + 1)
+                .map(|next| format!("{}()", next.function_name));
+            let sub_program_repr = if frame.sub_program_repr == "<sub_program>" {
+                inferred_sub_program.unwrap_or_else(|| frame.sub_program_repr.clone())
+            } else {
+                frame.sub_program_repr.clone()
+            };
+
+            active_chain.push(ActiveChainEntry::ProgramYield {
+                function_name: frame.function_name.clone(),
+                source_file: frame.source_file.clone(),
+                source_line: frame.source_line,
+                sub_program_repr,
+            });
+        }
+
+        if active_chain.is_empty() {
+            let fallback_dispatch_id = self
+                .dispatch_stack
+                .iter()
+                .rev()
+                .find_map(|ctx| {
+                    dispatches
+                        .get(&ctx.dispatch_id)
+                        .filter(|dispatch| matches!(dispatch.result, EffectResult::Threw { .. }))
+                        .map(|_| ctx.dispatch_id)
+                })
+                .or_else(|| {
+                    self.dispatch_stack.iter().rev().find_map(|ctx| {
+                        dispatches
+                            .get(&ctx.dispatch_id)
+                            .filter(|dispatch| is_visible_effect(&dispatch.result))
+                            .map(|_| ctx.dispatch_id)
+                    })
+                });
+
+            if let Some(dispatch_id) = fallback_dispatch_id {
+                if let Some(dispatch_ctx) = self
+                    .dispatch_stack
+                    .iter()
+                    .rev()
+                    .find(|ctx| ctx.dispatch_id == dispatch_id)
+                {
+                    let snapshot_frames: Vec<FrameState> = dispatch_ctx
+                        .k_user
+                        .frames_snapshot
+                        .iter()
+                        .filter_map(|frame| {
+                            let Frame::PythonGenerator {
+                                generator,
+                                metadata: Some(metadata),
+                                ..
+                            } = frame
+                            else {
+                                return None;
+                            };
+
+                            let line =
+                                Self::generator_current_line(generator).unwrap_or(metadata.source_line);
+                            Some(FrameState {
+                                frame_id: metadata.frame_id as FrameId,
+                                function_name: metadata.function_name.clone(),
+                                source_file: metadata.source_file.clone(),
+                                source_line: line,
+                                sub_program_repr: Self::program_call_repr(metadata)
+                                    .unwrap_or_else(|| "<sub_program>".to_string()),
+                            })
+                        })
+                        .collect();
+
+                    if let Some(dispatch) = dispatches.get(&dispatch_id) {
+                        if snapshot_frames.is_empty() {
+                            if is_visible_effect(&dispatch.result) {
+                                active_chain.push(ActiveChainEntry::EffectYield {
+                                    function_name: dispatch
+                                        .function_name
+                                        .clone()
+                                        .unwrap_or_else(|| "<unknown>".to_string()),
+                                    source_file: dispatch
+                                        .source_file
+                                        .clone()
+                                        .unwrap_or_else(|| "<unknown>".to_string()),
+                                    source_line: dispatch.source_line.unwrap_or(0),
+                                    effect_repr: dispatch.effect_repr.clone(),
+                                    handler_stack: dispatch.handler_stack.clone(),
+                                    result: dispatch.result.clone(),
+                                });
+                            }
+                        } else {
+                            let last_index = snapshot_frames.len() - 1;
+                            for (index, frame) in snapshot_frames.iter().enumerate() {
+                                if index == last_index && is_visible_effect(&dispatch.result) {
+                                    active_chain.push(ActiveChainEntry::EffectYield {
+                                        function_name: dispatch
+                                            .function_name
+                                            .clone()
+                                            .unwrap_or_else(|| frame.function_name.clone()),
+                                        source_file: dispatch
+                                            .source_file
+                                            .clone()
+                                            .unwrap_or_else(|| frame.source_file.clone()),
+                                        source_line: dispatch.source_line.unwrap_or(frame.source_line),
+                                        effect_repr: dispatch.effect_repr.clone(),
+                                        handler_stack: dispatch.handler_stack.clone(),
+                                        result: dispatch.result.clone(),
+                                    });
+                                    continue;
+                                }
+
+                                let inferred_sub_program = snapshot_frames
+                                    .get(index + 1)
+                                    .map(|next| format!("{}()", next.function_name));
+                                let sub_program_repr = if frame.sub_program_repr == "<sub_program>" {
+                                    inferred_sub_program
+                                        .unwrap_or_else(|| frame.sub_program_repr.clone())
+                                } else {
+                                    frame.sub_program_repr.clone()
+                                };
+
+                                active_chain.push(ActiveChainEntry::ProgramYield {
+                                    function_name: frame.function_name.clone(),
+                                    source_file: frame.source_file.clone(),
+                                    source_line: frame.source_line,
+                                    sub_program_repr,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        active_chain.extend(Self::spawn_boundaries_from_exception(exception));
+        let last_is_threw = active_chain
+            .iter()
+            .rev()
+            .find(|entry| !matches!(entry, ActiveChainEntry::SpawnBoundary { .. }))
+            .is_some_and(|entry| {
+                matches!(
+                    entry,
+                    ActiveChainEntry::EffectYield {
+                        result: EffectResult::Threw { .. },
+                        ..
+                    }
+                )
+            });
+        if !last_is_threw {
+            active_chain.push(Self::exception_site(exception));
+        }
+        active_chain
     }
 
     pub fn step(&mut self) -> StepEvent {
@@ -1006,8 +1714,13 @@ impl VM {
                         } else {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_trace();
+                            let active_chain = self.assemble_active_chain(&exc);
                             self.segments.free(seg_id);
-                            return StepEvent::Error(VMError::uncaught_exception(exc, trace));
+                            return StepEvent::Error(VMError::uncaught_exception(
+                                exc,
+                                trace,
+                                active_chain,
+                            ));
                         }
                     }
                     _ => unreachable!(),
@@ -1424,6 +2137,9 @@ impl VM {
             (PendingPython::CallFuncReturn { metadata }, PyCallOutcome::Value(value)) => {
                 match value {
                     Value::Python(obj) if Self::is_generator_object(&obj) => {
+                        if let Some(ref m) = metadata {
+                            self.maybe_emit_frame_entered(m);
+                        }
                         if let Some(seg) = self.current_segment_mut() {
                             seg.push_frame(Frame::PythonGenerator {
                                 generator: PyShared::new(obj),
@@ -1643,6 +2359,20 @@ impl VM {
         let prompt_seg_id = entry.prompt_seg_id;
         let handler = entry.handler.clone();
         let dispatch_id = DispatchId::fresh();
+        let handler_chain_snapshot: Vec<HandlerSnapshotEntry> = handler_chain
+            .iter()
+            .filter_map(|&marker| {
+                self.handlers.get(&marker).map(|entry| {
+                    let (name, kind, file, line) = Self::handler_trace_info(&entry.handler);
+                    HandlerSnapshotEntry {
+                        handler_name: name,
+                        handler_kind: kind,
+                        source_file: file,
+                        source_line: line,
+                    }
+                })
+            })
+            .collect();
 
         let seg_id = self
             .current_segment
@@ -1669,6 +2399,7 @@ impl VM {
 
         let (handler_name, handler_kind, handler_source_file, handler_source_line) =
             Self::handler_trace_info(&handler);
+        let effect_site = Self::effect_site_from_continuation(&k_user);
         self.capture_log.push(CaptureEvent::DispatchStarted {
             dispatch_id,
             effect_repr: Self::effect_repr(&effect),
@@ -1676,6 +2407,11 @@ impl VM {
             handler_kind,
             handler_source_file,
             handler_source_line,
+            handler_chain_snapshot,
+            effect_frame_id: effect_site.as_ref().map(|(frame_id, _, _, _)| *frame_id),
+            effect_function_name: effect_site.as_ref().map(|(_, function_name, _, _)| function_name.clone()),
+            effect_source_file: effect_site.as_ref().map(|(_, _, source_file, _)| source_file.clone()),
+            effect_source_line: effect_site.as_ref().map(|(_, _, _, source_line)| *source_line),
         });
 
         match handler {
