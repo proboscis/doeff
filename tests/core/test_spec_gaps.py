@@ -140,11 +140,7 @@ class TestG17SchedulerErrorPropagation:
 
     def test_error_path_returns_throw_not_none(self) -> None:
         """scheduler.rs resume() must not contain 'Return(Value::None)' in error paths."""
-        import pathlib
-
-        scheduler_src = pathlib.Path(
-            "/Users/s22625/repos/doeff/packages/doeff-vm/src/scheduler.rs"
-        ).read_text()
+        scheduler_src = (ROOT / "packages" / "doeff-vm" / "src" / "scheduler.rs").read_text()
 
         # Find the resume() function body — look for Return(Value::None) which is
         # the error-swallowing pattern. After fix, these should be Throw(...).
@@ -259,11 +255,7 @@ class TestG22FrozenBases:
 
     def test_pyclass_declarations_include_frozen(self) -> None:
         """All three base class #[pyclass] macros must include 'frozen'."""
-        import pathlib
-
-        pyvm_src = pathlib.Path(
-            "/Users/s22625/repos/doeff/packages/doeff-vm/src/pyvm.rs"
-        ).read_text()
+        pyvm_src = (ROOT / "packages" / "doeff-vm" / "src" / "pyvm.rs").read_text()
 
         bases = ["DoExprBase", "EffectBase", "DoCtrlBase"]
         for name in bases:
@@ -358,11 +350,7 @@ class TestG20StoreContextSwitch:
 
         Current impl only pops from ready queue without any store save/load.
         """
-        import pathlib
-
-        scheduler_src = pathlib.Path(
-            "/Users/s22625/repos/doeff/packages/doeff-vm/src/scheduler.rs"
-        ).read_text()
+        scheduler_src = (ROOT / "packages" / "doeff-vm" / "src" / "scheduler.rs").read_text()
 
         # Find the transfer_next_or function
         fn_match = re.search(
