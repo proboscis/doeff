@@ -309,8 +309,6 @@ else:
                 "syncawaithandler",
                 "asyncawaithandler",
                 "awaithandler",
-                "schedulerhandler",
-                "resultsafehandler",
             }
         )
         _INTERNAL_NOISE_STATUSES: ClassVar[frozenset[str]] = frozenset({"delegated", "pending"})

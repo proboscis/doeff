@@ -474,7 +474,6 @@ def test_format_default_shows_effect_yield_on_handler_throw() -> None:
     assert "·" in rendered
     assert "✗ crash_handler raised RuntimeError('handler exploded')" in rendered
     assert "sync_await_handler" not in rendered
-    assert "SchedulerHandler·" not in rendered
     assert "\n  crash_handler()  " not in rendered
     assert "/doeff/do.py:52" not in rendered
     assert "\n\nRuntimeError: handler exploded" in rendered
