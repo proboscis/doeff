@@ -120,5 +120,6 @@ dev = [
     "doeff-gemini",
     "doeff-openai",
     "doeff-openrouter",
+    "doeff-preset",
     "doeff-vm",
 ]

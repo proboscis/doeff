@@ -156,6 +156,12 @@ Complete production-style workflow combining all patterns.
 uv run python examples/07_pr_review_workflow.py https://github.com/org/repo/pull/123
 ```
 
+### 08. Testing with Mock Handlers
+Effect-based deterministic workflow using `MockAgenticHandler` + `with_handler_map`.
+```bash
+uv run python examples/08_testing_with_mocks.py
+```
+
 ## Monitoring Workflows
 
 While examples are running, you can monitor them:
@@ -218,6 +224,13 @@ This tests the JSONL event logging system - creates workflows, sessions, environ
 uv run python examples/test_mock_workflow.py
 ```
 This demonstrates workflow patterns (sequential, conditional, parallel) using mock data without any external services.
+
+### Test Effect-Based Mock Handler Wiring
+```bash
+uv run python examples/08_testing_with_mocks.py
+```
+This demonstrates `AgenticCreateSession -> AgenticSendMessage -> AgenticGetMessages` with
+`MockAgenticHandler` and no external service.
 
 ### Run Unit Tests
 ```bash
