@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from doeff import Program, do
 from doeff._types_internal import EffectBase
-from doeff.effects import ProgramCallStack, ProgramTrace, Put
+from doeff.effects import ProgramCallStack, ProgramTrace, Put, slog
 from doeff.rust_vm import Delegate, Resume, WithHandler, default_handlers, run
 from doeff.trace import TraceDispatch, TraceFrame
 from doeff.traceback import HandlerFrame, project_trace
@@ -43,6 +43,29 @@ def test_program_trace_from_do_function_and_transparency_invariant() -> None:
     dispatches = [entry for entry in trace_entries if isinstance(entry, TraceDispatch)]
     assert dispatches, "ProgramTrace should return dispatch entries"
     assert all("ProgramTrace" not in dispatch.effect_repr for dispatch in dispatches)
+
+
+def test_slog_dispatch_effect_repr_contains_payload() -> None:
+    @do
+    def body() -> Program[tuple[list[object], list[object]]]:
+        before = yield ProgramTrace()
+        yield slog(msg="validation_failed", level="warn")
+        after = yield ProgramTrace()
+        return before, after
+
+    result = run(body(), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    before_trace, after_trace = result.value
+
+    assert isinstance(before_trace, list)
+    assert isinstance(after_trace, list)
+    assert len(after_trace) > len(before_trace)
+
+    dispatches = [entry for entry in after_trace if isinstance(entry, TraceDispatch)]
+    assert any(
+        "validation_failed" in entry.effect_repr and "level" in entry.effect_repr
+        for entry in dispatches
+    ), dispatches
 
 
 def test_program_trace_from_python_handler() -> None:

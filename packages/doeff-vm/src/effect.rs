@@ -190,6 +190,16 @@ impl PyTell {
         })
         .add_subclass(PyTell { message })
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let message_repr = self
+            .message
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<message>".to_string());
+        format!("Tell({})", message_repr)
+    }
 }
 
 impl PySpawn {
