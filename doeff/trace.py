@@ -149,11 +149,15 @@ def _coerce_handler_kind(value: Any) -> TraceHandlerKind:
     text = str(value)
     if text == "python":
         return "python"
-    return "rust_builtin"
+    if text == "rust_builtin":
+        return "rust_builtin"
+    raise ValueError(f"Unknown handler kind: {text!r}")
 
 
 def _coerce_dispatch_action(value: Any) -> TraceDispatchAction:
     text = str(value)
+    if text == "active":
+        return "active"
     if text == "resumed":
         return "resumed"
     if text == "transferred":
@@ -162,12 +166,13 @@ def _coerce_dispatch_action(value: Any) -> TraceDispatchAction:
         return "returned"
     if text == "threw":
         return "threw"
-    return "active"
+    raise ValueError(f"Unknown dispatch action: {text!r}")
 
 
 def _coerce_handler_status(value: Any) -> HandlerStatusKind:
     text = str(value)
     lookup: dict[str, HandlerStatusKind] = {
+        "active": "active",
         "pending": "pending",
         "delegated": "delegated",
         "resumed": "resumed",
@@ -175,7 +180,9 @@ def _coerce_handler_status(value: Any) -> HandlerStatusKind:
         "returned": "returned",
         "threw": "threw",
     }
-    return lookup.get(text, "active")
+    if text in lookup:
+        return lookup[text]
+    raise ValueError(f"Unknown handler status: {text!r}")
 
 
 def _coerce_delegation_entry(entry: Any) -> TraceDelegationEntry:
@@ -263,9 +270,11 @@ def _coerce_effect_result(result: Any) -> EffectResult:
     ):
         return result
     if not isinstance(result, dict):
-        return EffectResultActive()
+        raise ValueError(f"Effect result payload must be dict, got {type(result).__name__}")
 
     kind = str(result.get("kind", "active"))
+    if kind == "active":
+        return EffectResultActive()
     if kind == "resumed":
         return EffectResultResumed(value_repr=str(result.get("value_repr", "None")))
     if kind == "threw":
@@ -278,7 +287,7 @@ def _coerce_effect_result(result: Any) -> EffectResult:
             handler_name=str(result.get("handler_name", "<handler>")),
             target_repr=str(result.get("target_repr", "<target>")),
         )
-    return EffectResultActive()
+    raise ValueError(f"Unknown effect result kind: {kind!r}")
 
 
 def coerce_active_chain_entry(entry: Any) -> ActiveChainEntry:

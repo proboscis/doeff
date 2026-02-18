@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::capture::SpawnSite;
+use crate::capture::{EffectCreationSite, SpawnSite};
 use crate::continuation::Continuation;
 #[cfg(test)]
 use crate::effect::Effect;
@@ -22,8 +22,7 @@ use crate::effect::{
 use crate::handler::{
     Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
 };
-use crate::ids::{ContId, PromiseId, TaskId};
-use crate::frame::Frame;
+use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
 use crate::step::{DoCtrl, PyException, Yielded};
@@ -39,6 +38,7 @@ pub enum SchedulerEffect {
         program: Py<PyAny>,
         handlers: Vec<Handler>,
         store_mode: StoreMode,
+        creation_site: Option<SpawnSite>,
     },
     Gather {
         items: Vec<Waitable>,
@@ -151,6 +151,7 @@ pub struct ExternalPromise {
 pub struct TaskMetadata {
     pub parent_task: Option<TaskId>,
     pub spawn_site: Option<SpawnSite>,
+    pub spawn_dispatch_id: Option<DispatchId>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -208,7 +209,31 @@ fn resume_to_continuation(cont: Continuation, result: Value) -> RustProgramStep 
     }))
 }
 
+fn annotate_spawn_boundary_dispatch(error: &PyException, dispatch_id: Option<DispatchId>) {
+    let Some(dispatch_id) = dispatch_id else {
+        return;
+    };
+    let PyException::Materialized { exc_value, .. } = error else {
+        return;
+    };
+
+    Python::attach(|py| {
+        let exc_obj = exc_value.bind(py);
+        let Ok(payload) = exc_obj.getattr("__doeff_spawned_from__") else {
+            return;
+        };
+        if payload.is_none() {
+            return;
+        }
+        let Ok(payload_dict) = payload.cast::<PyDict>() else {
+            return;
+        };
+        let _ = payload_dict.set_item("boundary_dispatch_id", dispatch_id.raw());
+    });
+}
+
 fn throw_to_continuation(k: Continuation, error: PyException) -> RustProgramStep {
+    annotate_spawn_boundary_dispatch(&error, k.dispatch_id);
     if k.started {
         return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
             continuation: k,
@@ -353,9 +378,36 @@ fn extract_semaphore_id(obj: &Bound<'_, PyAny>) -> Option<u64> {
     obj.getattr("id").ok()?.extract::<u64>().ok()
 }
 
+fn extract_effect_creation_site(obj: &Bound<'_, PyAny>) -> Option<SpawnSite> {
+    let created_at = obj.getattr("created_at").ok()?;
+    if created_at.is_none() {
+        return None;
+    }
+
+    let source_file = created_at
+        .getattr("filename")
+        .ok()?
+        .extract::<String>()
+        .ok()?;
+    let source_line = created_at.getattr("line").ok()?.extract::<u32>().ok()?;
+    let function_name = created_at
+        .getattr("function")
+        .ok()?
+        .extract::<String>()
+        .ok()?;
+
+    let site = EffectCreationSite {
+        function_name,
+        source_file,
+        source_line,
+    };
+    Some(site.into())
+}
+
 fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
+        let creation_site = extract_effect_creation_site(obj);
 
         if let Ok(spawn) = obj.extract::<PyRef<'_, PySpawn>>() {
             let handlers = extract_handlers_from_python(spawn.handlers.bind(py))?;
@@ -364,6 +416,7 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                 program: spawn.program.clone_ref(py),
                 handlers,
                 store_mode,
+                creation_site,
             }));
         }
 
@@ -487,6 +540,7 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                 program,
                 handlers,
                 store_mode,
+                creation_site,
             }))
         } else if is_instance_from(obj, "doeff.effects.gather", "GatherEffect") {
             let items_obj = obj.getattr("items").map_err(|e| e.to_string())?;
@@ -688,84 +742,6 @@ fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyExce
     let exc_value = error_obj.clone().unbind();
     let exc_tb = py.None();
     PyException::new(exc_type, exc_value, Some(exc_tb))
-}
-
-fn generator_current_line(generator: &PyShared) -> Option<u32> {
-    Python::attach(|py| {
-        let gi_frame = generator.bind(py).getattr("gi_frame").ok()?;
-        if gi_frame.is_none() {
-            return None;
-        }
-        if let Ok(locals) = gi_frame.getattr("f_locals") {
-            if let Ok(inner_gen) = locals.get_item("_doeff_inner") {
-                if let Ok(inner_frame) = inner_gen.getattr("gi_frame") {
-                    if !inner_frame.is_none() {
-                        if let Ok(line) = inner_frame.getattr("f_lineno") {
-                            if let Ok(lineno) = line.extract::<u32>() {
-                                return Some(lineno);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        gi_frame.getattr("f_lineno").ok()?.extract::<u32>().ok()
-    })
-}
-
-fn generator_site_from_code(generator: &PyShared) -> Option<(String, String, u32)> {
-    Python::attach(|py| {
-        let gi_frame = generator.bind(py).getattr("gi_frame").ok()?;
-        if gi_frame.is_none() {
-            return None;
-        }
-
-        let f_code = gi_frame.getattr("f_code").ok()?;
-        let function_name = f_code.getattr("co_name").ok()?.extract::<String>().ok()?;
-        let source_file = f_code
-            .getattr("co_filename")
-            .ok()?
-            .extract::<String>()
-            .ok()?;
-        let source_line = gi_frame.getattr("f_lineno").ok()?.extract::<u32>().ok()?;
-        Some((function_name, source_file, source_line))
-    })
-}
-
-pub fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
-    let mut frames_iter = k.frames_snapshot.iter().rev().filter_map(|frame| {
-        if let Frame::PythonGenerator {
-            generator,
-            metadata,
-            ..
-        } = frame
-        {
-            match metadata {
-                Some(metadata) => {
-                    let source_line = generator_current_line(generator).unwrap_or(metadata.source_line);
-                    Some(SpawnSite {
-                        function_name: metadata.function_name.clone(),
-                        source_file: metadata.source_file.clone(),
-                        source_line,
-                    })
-                }
-                None => {
-                    let (function_name, source_file, fallback_line) =
-                        generator_site_from_code(generator)?;
-                    Some(SpawnSite {
-                        function_name,
-                        source_file,
-                        source_line: generator_current_line(generator).unwrap_or(fallback_line),
-                    })
-                }
-            }
-        } else {
-            None
-        }
-    });
-
-    let first = frames_iter.next()?;
-    Some(frames_iter.next().unwrap_or(first))
 }
 
 fn task_cancelled_error() -> PyException {
@@ -1337,6 +1313,13 @@ impl SchedulerState {
             return;
         };
         let metadata = metadata.clone();
+        let boundary_dispatch_id = metadata
+            .parent_task
+            .and_then(|parent_task| self.tasks.get(&parent_task))
+            .and_then(|state| match state {
+                TaskState::Pending { cont, .. } => cont.dispatch_id,
+                TaskState::Done { .. } => None,
+            });
 
         let PyException::Materialized { exc_value, .. } = error else {
             return;
@@ -1352,6 +1335,22 @@ impl SchedulerState {
                 }
                 None => {
                     let _ = payload.set_item("parent_task", py.None());
+                }
+            }
+            match metadata.spawn_dispatch_id {
+                Some(dispatch_id) => {
+                    let _ = payload.set_item("spawn_dispatch_id", dispatch_id.raw());
+                }
+                None => {
+                    let _ = payload.set_item("spawn_dispatch_id", py.None());
+                }
+            }
+            match boundary_dispatch_id {
+                Some(dispatch_id) => {
+                    let _ = payload.set_item("boundary_dispatch_id", dispatch_id.raw());
+                }
+                None => {
+                    let _ = payload.set_item("boundary_dispatch_id", py.None());
                 }
             }
 
@@ -1725,11 +1724,13 @@ enum SchedulerPhase {
         program: Py<PyAny>,
         store_mode: StoreMode,
         store_snapshot: Option<RustStore>,
+        spawn_site: Option<SpawnSite>,
     },
     SpawnAwaitContinuation {
         k_user: Continuation,
         store_mode: StoreMode,
         store_snapshot: Option<RustStore>,
+        spawn_site: Option<SpawnSite>,
     },
     Driving {
         k_user: Continuation,
@@ -2013,6 +2014,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 program,
                 handlers,
                 store_mode,
+                creation_site,
             } => {
                 let store_snapshot = match store_mode {
                     StoreMode::Shared => None,
@@ -2024,6 +2026,7 @@ impl RustHandlerProgram for SchedulerProgram {
                         program,
                         store_mode,
                         store_snapshot,
+                        spawn_site: creation_site,
                     };
                     return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers));
                 }
@@ -2032,6 +2035,7 @@ impl RustHandlerProgram for SchedulerProgram {
                     k_user,
                     store_mode,
                     store_snapshot,
+                    spawn_site: creation_site,
                 };
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
@@ -2144,6 +2148,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 program,
                 store_mode,
                 store_snapshot,
+                spawn_site,
             } => {
                 let handlers = match value {
                     Value::Handlers(hs) => hs,
@@ -2158,6 +2163,7 @@ impl RustHandlerProgram for SchedulerProgram {
                     k_user,
                     store_mode,
                     store_snapshot,
+                    spawn_site,
                 };
 
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
@@ -2171,6 +2177,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 k_user,
                 store_mode,
                 store_snapshot,
+                spawn_site,
             } => {
                 // Value should be the continuation created by CreateContinuation
                 let cont = match value {
@@ -2201,7 +2208,6 @@ impl RustHandlerProgram for SchedulerProgram {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let task_id = state.alloc_task_id();
                 let parent_task = state.current_task;
-                let spawn_site = spawn_site_from_continuation(&k_user);
                 state.tasks.insert(
                     task_id,
                     TaskState::Pending {
@@ -2214,6 +2220,7 @@ impl RustHandlerProgram for SchedulerProgram {
                     TaskMetadata {
                         parent_task,
                         spawn_site,
+                        spawn_dispatch_id: k_user.dispatch_id,
                     },
                 );
                 state.ready.push_back(task_id);
@@ -2513,6 +2520,46 @@ mod tests {
         let w3 = Waitable::Promise(PromiseId::from_raw(1));
         assert_eq!(w1, w2);
         assert_ne!(w1, w3);
+    }
+
+    #[test]
+    fn test_parse_spawn_effect_uses_created_at_as_creation_site() {
+        Python::attach(|py| {
+            let module = pyo3::types::PyModule::from_code(
+                py,
+                c"class _Ctx:\n    def __init__(self, filename, line, function):\n        self.filename = filename\n        self.line = line\n        self.function = function\n",
+                c"_scheduler_created_at_test.py",
+                c"_scheduler_created_at_test",
+            )
+            .expect("failed to create test module");
+            let ctx = module
+                .getattr("_Ctx")
+                .expect("missing _Ctx")
+                .call1(("/tmp/user_program.py", 321_u32, "parent"))
+                .expect("failed to instantiate _Ctx")
+                .unbind();
+
+            let spawn = Py::new(py, PySpawn::create(py, py.None(), None, None, None, None))
+                .expect("failed to create SpawnEffect");
+            spawn
+                .bind(py)
+                .call_method1("with_created_at", (ctx,))
+                .expect("failed to set created_at");
+            let obj = spawn.into_any();
+
+            let parsed = parse_scheduler_python_effect(&PyShared::new(obj))
+                .expect("failed to parse effect")
+                .expect("effect should be parsed as scheduler spawn");
+            match parsed {
+                SchedulerEffect::Spawn { creation_site, .. } => {
+                    let site = creation_site.expect("spawn creation site should be captured");
+                    assert_eq!(site.function_name, "parent");
+                    assert_eq!(site.source_file, "/tmp/user_program.py");
+                    assert_eq!(site.source_line, 321);
+                }
+                _ => panic!("expected SchedulerEffect::Spawn"),
+            }
+        });
     }
 
     #[test]

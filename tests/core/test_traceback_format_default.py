@@ -752,6 +752,7 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     assert "── in task " in rendered
     assert "yield Gather(" in rendered
     assert "_program()" not in rendered
+    assert "_spawn_task()" not in rendered
     assert "doeff/effects/gather.py" not in rendered
     assert f"parent()  {source_file}:{gather_line}" in rendered
     assert f"spawned at parent() {source_file}:{spawn_line}" in rendered
