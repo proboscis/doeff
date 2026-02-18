@@ -42,6 +42,7 @@ class DoYieldFunction(KleisliProgram[P, T]):
                 return cast(T, gen_or_value)  # type: ignore[return-value]
 
             gen = gen_or_value
+            _doeff_inner = gen  # doeff: VM reads this via f_locals to get user generator line numbers
             try:
                 current = next(gen)
             except StopIteration as stop_exc:

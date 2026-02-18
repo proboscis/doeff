@@ -316,6 +316,21 @@ impl VM {
         Some(Self::truncate_repr(repr))
     }
 
+    fn exception_message(exception: &PyException) -> String {
+        match exception {
+            PyException::Materialized { exc_value, .. } => Python::attach(|py| {
+                exc_value
+                    .bind(py)
+                    .str()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|_| "<exception>".to_string())
+            }),
+            PyException::RuntimeError { message } | PyException::TypeError { message } => {
+                message.clone()
+            }
+        }
+    }
+
     fn effect_repr(effect: &DispatchEffect) -> String {
         let repr = if let Some(obj) = dispatch_ref_as_python(effect) {
             Python::attach(|py| {
@@ -434,7 +449,7 @@ impl VM {
                 return None;
             }
             if let Ok(locals) = gi_frame.getattr("f_locals") {
-                if let Ok(inner_gen) = locals.get_item("gen") {
+                if let Ok(inner_gen) = locals.get_item("_doeff_inner") {
                     if let Ok(inner_frame) = inner_gen.getattr("gi_frame") {
                         if !inner_frame.is_none() {
                             if let Ok(line) = inner_frame.getattr("f_lineno") {
@@ -958,6 +973,70 @@ impl VM {
         })
     }
 
+    fn is_spawn_boundary_insertion_point(entry: &ActiveChainEntry) -> bool {
+        match entry {
+            ActiveChainEntry::EffectYield {
+                result: EffectResult::Threw { handler_name, .. },
+                ..
+            }
+            | ActiveChainEntry::EffectYield {
+                result: EffectResult::Transferred { handler_name, .. },
+                ..
+            } => handler_name == "SchedulerHandler",
+            _ => false,
+        }
+    }
+
+    fn insert_spawn_boundaries(
+        active_chain: &mut Vec<ActiveChainEntry>,
+        boundaries: Vec<ActiveChainEntry>,
+    ) {
+        if boundaries.is_empty() {
+            return;
+        }
+
+        let insertion_points: Vec<usize> = active_chain
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                if Self::is_spawn_boundary_insertion_point(entry) {
+                    Some(index + 1)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if insertion_points.is_empty() {
+            active_chain.extend(boundaries);
+            return;
+        }
+
+        let mut inserts: HashMap<usize, Vec<ActiveChainEntry>> = HashMap::new();
+        let mut remaining_boundaries = boundaries.into_iter();
+        for point in insertion_points {
+            let Some(boundary) = remaining_boundaries.next() else {
+                break;
+            };
+            inserts.entry(point).or_default().push(boundary);
+        }
+
+        let trailing: Vec<ActiveChainEntry> = remaining_boundaries.collect();
+        let active_len = active_chain.len();
+        let mut reordered = Vec::with_capacity(active_len + inserts.len() + trailing.len());
+        for (index, entry) in active_chain.drain(..).enumerate() {
+            if let Some(mut injected) = inserts.remove(&index) {
+                reordered.append(&mut injected);
+            }
+            reordered.push(entry);
+        }
+        if let Some(mut injected) = inserts.remove(&active_len) {
+            reordered.append(&mut injected);
+        }
+        reordered.extend(trailing);
+        *active_chain = reordered;
+    }
+
     pub fn assemble_active_chain(&self, exception: &PyException) -> Vec<ActiveChainEntry> {
         #[derive(Clone)]
         struct FrameState {
@@ -1228,45 +1307,43 @@ impl VM {
             }
         }
 
-        // At uncaught error boundaries current_segment can already be gone; use the
-        // active dispatch continuation snapshot to refresh frame yield lines.
-        if self.current_segment.is_none() {
-            if let Some(dispatch_ctx) = self.dispatch_stack.iter().rev().find(|ctx| {
-                dispatches
-                    .get(&ctx.dispatch_id)
-                    .is_some_and(|dispatch| is_visible_effect(&dispatch.result))
-            }) {
-                for frame in dispatch_ctx.k_user.frames_snapshot.iter() {
-                    let Frame::PythonGenerator {
-                        generator,
-                        metadata: Some(metadata),
-                        ..
-                    } = frame
-                    else {
-                        continue;
-                    };
+        // Refresh frame lines from the latest visible user continuation snapshot.
+        // This keeps program-yield lines precise even when generators unwind on throw.
+        if let Some(dispatch_ctx) = self.dispatch_stack.iter().rev().find(|ctx| {
+            dispatches
+                .get(&ctx.dispatch_id)
+                .is_some_and(|dispatch| is_visible_effect(&dispatch.result))
+        }) {
+            for frame in dispatch_ctx.k_user.frames_snapshot.iter() {
+                let Frame::PythonGenerator {
+                    generator,
+                    metadata: Some(metadata),
+                    ..
+                } = frame
+                else {
+                    continue;
+                };
 
-                    let line = Self::generator_current_line(generator).unwrap_or(metadata.source_line);
-                    if let Some(existing) = frame_stack
-                        .iter_mut()
-                        .find(|entry| entry.frame_id == metadata.frame_id)
-                    {
-                        existing.source_line = line;
-                        if existing.sub_program_repr == "<sub_program>" {
-                            if let Some(repr) = Self::program_call_repr(metadata) {
-                                existing.sub_program_repr = repr;
-                            }
+                let line = Self::generator_current_line(generator).unwrap_or(metadata.source_line);
+                if let Some(existing) = frame_stack
+                    .iter_mut()
+                    .find(|entry| entry.frame_id == metadata.frame_id)
+                {
+                    existing.source_line = line;
+                    if existing.sub_program_repr == "<sub_program>" {
+                        if let Some(repr) = Self::program_call_repr(metadata) {
+                            existing.sub_program_repr = repr;
                         }
-                    } else {
-                        frame_stack.push(FrameState {
-                            frame_id: metadata.frame_id as FrameId,
-                            function_name: metadata.function_name.clone(),
-                            source_file: metadata.source_file.clone(),
-                            source_line: line,
-                            sub_program_repr: Self::program_call_repr(metadata)
-                                .unwrap_or_else(|| "<sub_program>".to_string()),
-                        });
                     }
+                } else {
+                    frame_stack.push(FrameState {
+                        frame_id: metadata.frame_id as FrameId,
+                        function_name: metadata.function_name.clone(),
+                        source_file: metadata.source_file.clone(),
+                        source_line: line,
+                        sub_program_repr: Self::program_call_repr(metadata)
+                            .unwrap_or_else(|| "<sub_program>".to_string()),
+                    });
                 }
             }
         }
@@ -1430,19 +1507,19 @@ impl VM {
             }
         }
 
-        active_chain.extend(Self::spawn_boundaries_from_exception(exception));
+        let spawn_boundaries = Self::spawn_boundaries_from_exception(exception);
+        Self::insert_spawn_boundaries(&mut active_chain, spawn_boundaries);
+        let exception_message = Self::exception_message(exception);
         let last_is_threw = active_chain
             .iter()
             .rev()
             .find(|entry| !matches!(entry, ActiveChainEntry::SpawnBoundary { .. }))
-            .is_some_and(|entry| {
-                matches!(
-                    entry,
-                    ActiveChainEntry::EffectYield {
-                        result: EffectResult::Threw { .. },
-                        ..
-                    }
-                )
+            .is_some_and(|entry| match entry {
+                ActiveChainEntry::EffectYield {
+                    result: EffectResult::Threw { exception_repr, .. },
+                    ..
+                } => !exception_message.is_empty() && exception_repr.contains(&exception_message),
+                _ => false,
             });
         if !last_is_threw {
             active_chain.push(Self::exception_site(exception));
@@ -2359,20 +2436,30 @@ impl VM {
         let prompt_seg_id = entry.prompt_seg_id;
         let handler = entry.handler.clone();
         let dispatch_id = DispatchId::fresh();
-        let handler_chain_snapshot: Vec<HandlerSnapshotEntry> = handler_chain
+        let mut seen_markers: HashSet<Marker> = HashSet::new();
+        let mut seen_rows: Vec<(String, HandlerKind, Option<String>, Option<u32>)> = Vec::new();
+        let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
+        for marker in handler_chain
             .iter()
-            .filter_map(|&marker| {
-                self.handlers.get(&marker).map(|entry| {
-                    let (name, kind, file, line) = Self::handler_trace_info(&entry.handler);
-                    HandlerSnapshotEntry {
-                        handler_name: name,
-                        handler_kind: kind,
-                        source_file: file,
-                        source_line: line,
-                    }
-                })
-            })
-            .collect();
+            .copied()
+            .filter(|marker| seen_markers.insert(*marker))
+        {
+            let Some(entry) = self.handlers.get(&marker) else {
+                continue;
+            };
+            let (name, kind, file, line) = Self::handler_trace_info(&entry.handler);
+            let row_key = (name.clone(), kind.clone(), file.clone(), line);
+            if seen_rows.iter().any(|existing| *existing == row_key) {
+                continue;
+            }
+            seen_rows.push(row_key);
+            handler_chain_snapshot.push(HandlerSnapshotEntry {
+                handler_name: name,
+                handler_kind: kind,
+                source_file: file,
+                source_line: line,
+            });
+        }
 
         let seg_id = self
             .current_segment

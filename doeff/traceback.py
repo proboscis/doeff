@@ -306,9 +306,9 @@ else:
 
         _INTERNAL_DELEGATE_ONLY_HANDLERS: ClassVar[frozenset[str]] = frozenset(
             {
-                "syncawaithandler",
-                "asyncawaithandler",
-                "awaithandler",
+                "sync_await_handler",
+                "async_await_handler",
+                "AwaitHandler",
             }
         )
         _INTERNAL_NOISE_STATUSES: ClassVar[frozenset[str]] = frozenset({"delegated", "pending"})
@@ -340,10 +340,6 @@ else:
                 return value
             return value[:limit] + "..."
 
-        @staticmethod
-        def _normalize_handler_name(name: str) -> str:
-            return "".join(ch for ch in name.lower() if ch.isalnum())
-
         def _render_handler_stack(
             self,
             stack: tuple[HandlerStackEntry, ...],
@@ -353,8 +349,7 @@ else:
                 entry
                 for entry in stack
                 if not (
-                    self._normalize_handler_name(entry.handler_name)
-                    in self._INTERNAL_DELEGATE_ONLY_HANDLERS
+                    entry.handler_name in self._INTERNAL_DELEGATE_ONLY_HANDLERS
                     and entry.status in self._INTERNAL_NOISE_STATUSES
                 )
             )
@@ -400,51 +395,10 @@ else:
                 site = "<unknown>"
             return f"── in task {boundary.task_id} (spawned at {site}) ──"
 
-        def _ordered_active_chain_for_render(self) -> list[ActiveChainEntry]:
-            entries = list(self.active_chain)
-            first_boundary = next(
-                (index for index, entry in enumerate(entries) if isinstance(entry, SpawnBoundary)),
-                None,
-            )
-            if first_boundary is None:
-                return entries
-
-            head = entries[:first_boundary]
-            tail = entries[first_boundary:]
-            if not all(isinstance(entry, SpawnBoundary) for entry in tail):
-                return entries
-
-            boundaries = cast(list[SpawnBoundary], tail)
-            insertion_points: list[int] = []
-            for index, entry in enumerate(head[:-1]):
-                if not isinstance(entry, EffectYield):
-                    continue
-                result = entry.result
-                if isinstance(result, (EffectResultThrew, EffectResultTransferred)) and (
-                    self._normalize_handler_name(result.handler_name) == "schedulerhandler"
-                ):
-                    insertion_points.append(index + 1)
-
-            if not insertion_points:
-                return entries
-
-            inserts: dict[int, list[SpawnBoundary]] = {}
-            for boundary, point in zip(boundaries, insertion_points, strict=False):
-                inserts.setdefault(point, []).append(boundary)
-            if len(boundaries) > len(insertion_points):
-                inserts.setdefault(len(head), []).extend(boundaries[len(insertion_points) :])
-
-            ordered: list[ActiveChainEntry] = []
-            for index, entry in enumerate(head):
-                ordered.extend(inserts.get(index, []))
-                ordered.append(entry)
-            ordered.extend(inserts.get(len(head), []))
-            return ordered
-
         def format_default(self) -> str:
             lines: list[str] = ["doeff Traceback (most recent call last):", ""]
             previous_stack: tuple[HandlerStackEntry, ...] | None = None
-            for entry in self._ordered_active_chain_for_render():
+            for entry in self.active_chain:
                 if isinstance(entry, ProgramYield):
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
