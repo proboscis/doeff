@@ -345,13 +345,18 @@ async def run_testing_example() -> None:
         handler_maps=(preset_handlers(),),
         custom_handlers=mock_agent_handlers(),
     )
+    result_value = result.value if hasattr(type(result), "value") else result
     
     # Verify behavior
     print("\nTest assertions:")
-    print(f"  Final status is DONE: {result['final_status'] == 'done'}")
     expected_statuses = ['running', 'running', 'blocked', 'done']
-    print(f"  Observed expected statuses: {result['observations'] == expected_statuses}")
-    print(f"\nResult: {result}")
+    if isinstance(result_value, dict):
+        print(f"  Final status is DONE: {result_value['final_status'] == 'done'}")
+        print(f"  Observed expected statuses: {result_value['observations'] == expected_statuses}")
+    else:
+        print("  Final status is DONE: n/a")
+        print("  Observed expected statuses: n/a")
+    print(f"\nResult: {result_value}")
 
 
 async def run_with_real_tmux() -> None:
