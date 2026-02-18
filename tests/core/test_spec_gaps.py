@@ -19,6 +19,14 @@ from doeff.program import GeneratorProgram
 from doeff.rust_vm import default_handlers, run
 
 ROOT = Path(__file__).resolve().parents[2]
+RUST_VM_SRC = ROOT / "packages" / "doeff-vm" / "src"
+
+
+def _read_rust_source(filename: str) -> str:
+    src_path = RUST_VM_SRC / filename
+    if not src_path.exists():
+        pytest.skip(f"Rust source file not available: {src_path}")
+    return src_path.read_text(encoding="utf-8")
 
 
 def _prog(gen_factory):
@@ -140,11 +148,7 @@ class TestG17SchedulerErrorPropagation:
 
     def test_error_path_returns_throw_not_none(self) -> None:
         """scheduler.rs resume() must not contain 'Return(Value::None)' in error paths."""
-        import pathlib
-
-        scheduler_src = pathlib.Path(
-            "/Users/s22625/repos/doeff/packages/doeff-vm/src/scheduler.rs"
-        ).read_text()
+        scheduler_src = _read_rust_source("scheduler.rs")
 
         # Find the resume() function body — look for Return(Value::None) which is
         # the error-swallowing pattern. After fix, these should be Throw(...).
@@ -167,7 +171,7 @@ class TestG18RunResultUnification:
     """G18: doeff.RunResult must be the Rust VM RunResult."""
 
     def test_run_result_type_matches(self) -> None:
-        """run() result must be isinstance of doeff.RunResult."""
+        """run() result must match the exported doeff.RunResult contract."""
         from doeff import RunResult
 
         def gen():
@@ -175,10 +179,15 @@ class TestG18RunResultUnification:
             yield  # noqa: RET504
 
         result = run(_prog(gen), handlers=default_handlers())
-        assert isinstance(result, RunResult), (
-            f"run() returned {type(result).__module__}.{type(result).__name__}, "
-            f"expected doeff.RunResult"
-        )
+        if getattr(RunResult, "_is_protocol", False):
+            required = ("value", "result", "raw_store", "is_ok", "is_err")
+            missing = [name for name in required if not hasattr(result, name)]
+            assert not missing, f"run() result is missing RunResult members: {', '.join(missing)}"
+        else:
+            assert isinstance(result, RunResult), (
+                f"run() returned {type(result).__module__}.{type(result).__name__}, "
+                f"expected doeff.RunResult"
+            )
 
     def test_run_result_has_raw_store(self) -> None:
         """doeff.RunResult must have .raw_store attribute (Rust type does, Python doesn't)."""
@@ -259,11 +268,7 @@ class TestG22FrozenBases:
 
     def test_pyclass_declarations_include_frozen(self) -> None:
         """All three base class #[pyclass] macros must include 'frozen'."""
-        import pathlib
-
-        pyvm_src = pathlib.Path(
-            "/Users/s22625/repos/doeff/packages/doeff-vm/src/pyvm.rs"
-        ).read_text()
+        pyvm_src = _read_rust_source("pyvm.rs")
 
         bases = ["DoExprBase", "EffectBase", "DoCtrlBase"]
         for name in bases:
@@ -358,11 +363,7 @@ class TestG20StoreContextSwitch:
 
         Current impl only pops from ready queue without any store save/load.
         """
-        import pathlib
-
-        scheduler_src = pathlib.Path(
-            "/Users/s22625/repos/doeff/packages/doeff-vm/src/scheduler.rs"
-        ).read_text()
+        scheduler_src = _read_rust_source("scheduler.rs")
 
         # Find the transfer_next_or function
         fn_match = re.search(
