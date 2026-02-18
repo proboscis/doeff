@@ -584,6 +584,9 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     assert result.is_err()
 
     rendered = result.error.__doeff_traceback__.format_default()
+    source_file = str(Path(__file__).resolve())
+    gather_line = _line_of(parent.original_generator, "return (yield Gather(task))")
+    spawn_line = _line_of(parent.original_generator, "task = yield Spawn(WithHandler(crash_handler, child()))")
     assert "yield Boom" in rendered
     assert "crash_handler✗" in rendered
     assert "·" in rendered
@@ -591,6 +594,11 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     assert "child exploded" in rendered
     assert "── in task " in rendered
     assert "yield Gather(" in rendered
+    assert "_program()" not in rendered
+    assert "doeff/effects/gather.py" not in rendered
+    assert "doeff/effects/spawn.py" not in rendered
+    assert f"parent()  {source_file}:{gather_line}" in rendered
+    assert f"spawned at parent() {source_file}:{spawn_line}" in rendered
     boundary_pos = rendered.index("── in task ")
     gather_pos = rendered.index("yield Gather(")
     child_pos = rendered.index("  child()")
