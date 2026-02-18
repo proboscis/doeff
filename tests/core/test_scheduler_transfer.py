@@ -86,6 +86,44 @@ async def test_many_task_switches_no_crash() -> None:
 
 
 @pytest.mark.asyncio
+async def test_many_concurrent_tasks_with_error_propagation() -> None:
+    """Stress test: many tasks doing many yields, one crashes mid-execution.
+    Verifies Transfer-based task switching doesn't corrupt error propagation
+    even under heavy concurrency (10 healthy × 20 yields + 1 crasher × 20 yields
+    = 220 total task switches).
+    """
+
+    @do
+    def healthy_worker(label: str):
+        for _ in range(20):
+            _ = yield Await(asyncio.sleep(0))
+        return label
+
+    @do
+    def crasher():
+        for _ in range(20):
+            _ = yield Await(asyncio.sleep(0))
+        raise RuntimeError("boom")
+
+    @do
+    def program():
+        tasks = []
+        for i in range(10):
+            tasks.append((yield Spawn(healthy_worker(f"w{i}"))))
+        tasks.append((yield Spawn(crasher())))
+        return (yield Gather(*tasks))
+
+    result = await async_run(
+        program(),
+        handlers=default_async_handlers(),
+        print_doeff_trace=False,
+    )
+    assert _result_is_err(result)
+    assert isinstance(result.error, RuntimeError)
+    assert "boom" in str(result.error)
+
+
+@pytest.mark.asyncio
 async def test_task_error_propagation() -> None:
     @do
     def ok():
