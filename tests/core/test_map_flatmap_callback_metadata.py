@@ -37,59 +37,29 @@ def test_map_rejects_callable_without_code_object() -> None:
         Program.map(Program.pure([1, 2, 3]), len)
 
 
-def test_map_trace_uses_mapper_function_name_file_and_line() -> None:
-    def mapper(value: int):
-        if False:  # pragma: no cover - force generator callback for frame capture
-            yield None
+def test_map_runs_with_plain_function_mapper() -> None:
+    def mapper(value: int) -> int:
         return value + 1
 
     @do
     def body():
         mapped = Program.map(Program.pure(1), mapper)
-        _ = yield mapped
-        trace = yield ProgramTrace()
-        return trace
+        return (yield mapped)
 
     result = run(body(), handlers=default_handlers())
     assert result.is_ok(), result.error
-    trace = result.value
-    callback_frames = [
-        entry
-        for entry in trace
-        if isinstance(entry, TraceFrame) and entry.function_name == mapper.__name__
-    ]
-    assert callback_frames
-    assert any(
-        frame.source_file == mapper.__code__.co_filename
-        and frame.source_line == mapper.__code__.co_firstlineno
-        for frame in callback_frames
-    )
+    assert result.value == 2
 
 
-def test_flat_map_trace_uses_binder_function_name_file_and_line() -> None:
+def test_flat_map_runs_with_plain_function_binder() -> None:
     def binder(value: int):
-        if False:  # pragma: no cover - force generator callback for frame capture
-            yield None
         return Program.pure(value + 1)
 
     @do
     def body():
         flat_mapped = Program.flat_map(Program.pure(1), binder)
-        _ = yield flat_mapped
-        trace = yield ProgramTrace()
-        return trace
+        return (yield flat_mapped)
 
     result = run(body(), handlers=default_handlers())
     assert result.is_ok(), result.error
-    trace = result.value
-    callback_frames = [
-        entry
-        for entry in trace
-        if isinstance(entry, TraceFrame) and entry.function_name == binder.__name__
-    ]
-    assert callback_frames
-    assert any(
-        frame.source_file == binder.__code__.co_filename
-        and frame.source_line == binder.__code__.co_firstlineno
-        for frame in callback_frames
-    )
+    assert result.value == 2

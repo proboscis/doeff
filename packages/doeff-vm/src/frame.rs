@@ -73,6 +73,7 @@ pub enum Frame {
     },
     PythonGenerator {
         generator: PyShared,
+        get_frame: PyShared,
         started: bool,
         metadata: Option<CallMetadata>,
     },
@@ -83,9 +84,10 @@ impl Frame {
         Frame::RustReturn { cb }
     }
 
-    pub fn python_generator(generator: PyShared) -> Self {
+    pub fn python_generator(generator: PyShared, get_frame: PyShared) -> Self {
         Frame::PythonGenerator {
             generator,
+            get_frame,
             started: false,
             metadata: None,
         }
@@ -136,5 +138,15 @@ mod tests {
             Frame::RustReturn { cb } => assert_eq!(cb, cb_id),
             _ => panic!("Expected RustReturn"),
         }
+    }
+
+    #[test]
+    fn test_vm_proto_python_generator_frame_has_get_frame_field() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/frame.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            runtime_src.contains("get_frame: PyShared"),
+            "VM-PROTO-001: Frame::PythonGenerator must carry get_frame callback"
+        );
     }
 }

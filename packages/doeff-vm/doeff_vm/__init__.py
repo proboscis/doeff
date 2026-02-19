@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from importlib import import_module
 
 _ext = import_module("doeff_vm.doeff_vm")
@@ -15,6 +16,54 @@ def _validate_do_handler_annotations(handlers) -> None:
             validate_do_handler_effect_annotation(handler)
 
 
+def _is_generator_like(value) -> bool:
+    return inspect.isgenerator(value) or (
+        hasattr(value, "__next__") and hasattr(value, "send") and hasattr(value, "throw")
+    )
+
+
+def _wrap_python_handler(handler):
+    if not callable(handler):
+        return handler
+    if bool(getattr(handler, "__doeff_vm_wrapped_handler__", False)):
+        return handler
+
+    def _wrapped(effect, k, _handler=handler):
+        result = _handler(effect, k)
+        if _is_generator_like(result):
+            from doeff.do import make_doeff_generator
+
+            return make_doeff_generator(result)
+        return result
+
+    if hasattr(handler, "__name__"):
+        _wrapped.__name__ = handler.__name__
+    if hasattr(handler, "__qualname__"):
+        _wrapped.__qualname__ = handler.__qualname__
+    if hasattr(handler, "__module__"):
+        _wrapped.__module__ = handler.__module__
+    if hasattr(handler, "__doc__"):
+        _wrapped.__doc__ = handler.__doc__
+    _wrapped.__wrapped__ = handler
+    setattr(_wrapped, "__doeff_original_handler__", handler)
+
+    for attr in (
+        "__doeff_do_decorated__",
+        "__signature__",
+        "__annotations__",
+        "_metadata_source",
+        "func",
+    ):
+        if hasattr(handler, attr):
+            setattr(_wrapped, attr, getattr(handler, attr))
+    setattr(_wrapped, "__doeff_vm_wrapped_handler__", True)
+    return _wrapped
+
+
+def _wrap_handlers(handlers):
+    return [_wrap_python_handler(handler) for handler in handlers]
+
+
 def _install_validated_runtime_api() -> None:
     if bool(getattr(_ext, "__doeff_handler_validation_patched__", False)):
         return
@@ -22,28 +71,47 @@ def _install_validated_runtime_api() -> None:
     raw_with_handler = _ext.WithHandler
     raw_run = _ext.run
     raw_async_run = _ext.async_run
+    raw_doexpr_to_generator = _ext.DoExpr.to_generator
+    raw_nesting_to_generator = getattr(getattr(_ext, "_NestingStep", None), "to_generator", None)
 
     def validated_with_handler(handler, expr):
         _validate_do_handler_annotations((handler,))
-        return raw_with_handler(handler, expr)
+        return raw_with_handler(_wrap_python_handler(handler), expr)
 
     def validated_run(program, handlers=(), env=None, store=None, trace=False):
         _validate_do_handler_annotations(handlers)
-        return raw_run(program, handlers=handlers, env=env, store=store, trace=trace)
+        wrapped_handlers = _wrap_handlers(handlers)
+        return raw_run(program, handlers=wrapped_handlers, env=env, store=store, trace=trace)
 
     async def validated_async_run(program, handlers=(), env=None, store=None, trace=False):
         _validate_do_handler_annotations(handlers)
+        wrapped_handlers = _wrap_handlers(handlers)
         return await raw_async_run(
             program,
-            handlers=handlers,
+            handlers=wrapped_handlers,
             env=env,
             store=store,
             trace=trace,
         )
 
+    def validated_doexpr_to_generator(self):
+        from doeff.do import make_doeff_generator
+
+        return make_doeff_generator(raw_doexpr_to_generator(self))
+
+    def validated_nesting_to_generator(self):
+        from doeff.do import make_doeff_generator
+
+        assert raw_nesting_to_generator is not None
+        return make_doeff_generator(raw_nesting_to_generator(self))
+
     setattr(_ext, "WithHandler", validated_with_handler)
     setattr(_ext, "run", validated_run)
     setattr(_ext, "async_run", validated_async_run)
+    setattr(_ext.DoExpr, "to_generator", validated_doexpr_to_generator)
+    nesting_cls = getattr(_ext, "_NestingStep", None)
+    if nesting_cls is not None and raw_nesting_to_generator is not None:
+        setattr(nesting_cls, "to_generator", validated_nesting_to_generator)
     setattr(_ext, "__doeff_handler_validation_patched__", True)
 
 
@@ -64,6 +132,7 @@ Err = getattr(_ext, "Err", None)
 ResultOk = Ok
 ResultErr = Err
 K = _ext.K
+DoeffGenerator = _ext.DoeffGenerator
 
 
 WithHandler = _ext.WithHandler
@@ -161,6 +230,7 @@ __all__ = [
     "FlatMap",
     "DoCtrlBase",
     "DoExpr",
+    "DoeffGenerator",
     "DoThunkBase",
     "EffectBase",
     "PyAsk",

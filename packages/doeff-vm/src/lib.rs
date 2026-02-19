@@ -14,6 +14,7 @@ pub mod capture;
 pub mod continuation;
 pub mod dispatch;
 pub mod do_ctrl;
+pub mod doeff_generator;
 pub mod driver;
 mod effect;
 pub mod error;
@@ -42,6 +43,7 @@ pub use capture::{
 pub use continuation::Continuation;
 pub use dispatch::DispatchContext;
 pub use do_ctrl::DoCtrl;
+pub use doeff_generator::DoeffGenerator;
 pub use driver::{Mode, StepEvent};
 pub use effect::{Effect, PyAsk, PyCancelEffect, PyGet, PyLocal, PyModify, PyPut, PyTell};
 pub use error::VMError;
