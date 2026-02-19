@@ -627,8 +627,8 @@ impl VM {
         })
     }
 
-    fn report_generator_diagnostic(context: &str, message: &str) {
-        eprintln!("[doeff-vm][diagnostic] {context}: {message}");
+    fn report_generator_diagnostic(context: &str, message: &str) -> ! {
+        panic!("[doeff-vm][diagnostic] {context}: {message}");
     }
 
     fn resume_location_from_frames(frames: &[Frame]) -> Option<(String, String, u32)> {
@@ -1034,24 +1034,6 @@ impl VM {
                     .str()
                     .map(|v| v.to_string())
                     .unwrap_or_default();
-
-                let resolved = py
-                    .import("doeff.do")
-                    .ok()
-                    .and_then(|do_mod| do_mod.getattr("resolve_exception_location").ok())
-                    .and_then(|resolver| resolver.call1((exc_value_bound.clone(),)).ok())
-                    .filter(|value| !value.is_none())
-                    .and_then(|value| value.extract::<(String, String, u32)>().ok());
-
-                if let Some((function_name, source_file, source_line)) = resolved {
-                    return ActiveChainEntry::ExceptionSite {
-                        function_name,
-                        source_file,
-                        source_line,
-                        exception_type,
-                        message,
-                    };
-                }
 
                 let mut function_name = "<unknown>".to_string();
                 let mut source_file = "<unknown>".to_string();
@@ -2505,9 +2487,22 @@ impl VM {
                         }
                     }
                     Value::Python(obj) if Self::is_generator_object(&obj) => {
-                        self.mode = Mode::Throw(PyException::type_error(
-                            "CallFuncReturn: raw generator returned; expected DoeffGenerator",
-                        ));
+                        let details = Python::attach(|py| {
+                            let bound = obj.bind(py);
+                            let ty = bound
+                                .get_type()
+                                .name()
+                                .map(|n| n.to_string())
+                                .unwrap_or_else(|_| "<unknown>".to_string());
+                            let repr = bound
+                                .repr()
+                                .map(|r| r.to_string())
+                                .unwrap_or_else(|_| "<repr failed>".to_string());
+                            format!("type={ty}, repr={repr}")
+                        });
+                        self.mode = Mode::Throw(PyException::type_error(format!(
+                            "CallFuncReturn: raw generator returned; expected DoeffGenerator ({details})"
+                        )));
                     }
                     other => {
                         self.mode = Mode::Deliver(other);
@@ -2601,14 +2596,25 @@ impl VM {
                     }
                 }
                 Value::Python(handler_gen) if Self::is_generator_object(&handler_gen) => {
-                    self.mode = Mode::Throw(PyException::type_error(
-                        "CallPythonHandler: raw generator returned; expected DoeffGenerator",
-                    ));
+                    let details = Python::attach(|py| {
+                        let bound = handler_gen.bind(py);
+                        let ty = bound
+                            .get_type()
+                            .name()
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|_| "<unknown>".to_string());
+                        let repr = bound
+                            .repr()
+                            .map(|r| r.to_string())
+                            .unwrap_or_else(|_| "<repr failed>".to_string());
+                        format!("type={ty}, repr={repr}")
+                    });
+                    self.mode = Mode::Throw(PyException::type_error(format!(
+                        "CallPythonHandler: raw generator returned; expected DoeffGenerator ({details})"
+                    )));
                 }
-                _ => {
-                    self.mode = Mode::Throw(PyException::type_error(
-                        "CallPythonHandler: handler did not return a DoeffGenerator",
-                    ));
+                other => {
+                    let _ = self.handle_handler_return(other);
                 }
             },
 
@@ -3903,15 +3909,15 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_generator_line_prefers_doeff_inner_attribute() {
+    fn test_resolve_generator_line_uses_get_frame_callback_result() {
         Python::attach(|py| {
             use pyo3::types::PyModule;
 
             let module = PyModule::from_code(
                 py,
-                c"def inner():\n    yield 'inner'\n\ndef outer():\n    inner_gen = inner()\n    yield 'outer'\n\nouter_gen = outer()\nnext(outer_gen)\ninner_gen = outer_gen.gi_frame.f_locals['inner_gen']\nnext(inner_gen)\n\ndef get_frame(gen):\n    current = gen\n    for _ in range(8):\n        inner = getattr(current, '__doeff_inner__', None)\n        if inner is None:\n            break\n        current = inner\n    return getattr(current, 'gi_frame', None)\n\nclass _Wrapper:\n    def __init__(self, outer_gen, inner_gen):\n        self.__doeff_inner__ = inner_gen\n\nwrapper = _Wrapper(outer_gen, inner_gen)\nINNER_LINE = inner_gen.gi_frame.f_lineno\nOUTER_LINE = outer_gen.gi_frame.f_lineno\n",
-                c"_vm_doeff_inner_attr_test.py",
-                c"_vm_doeff_inner_attr_test",
+                c"def target_gen():\n    yield 'value'\n\ng = target_gen()\nnext(g)\n\ndef get_frame(_obj):\n    return g.gi_frame\n\nwrapper = object()\nLINE = g.gi_frame.f_lineno\n",
+                c"_vm_get_frame_callback_test.py",
+                c"_vm_get_frame_callback_test",
             )
             .expect("failed to create test module");
             let wrapper = module.getattr("wrapper").expect("missing wrapper").unbind();
@@ -3919,23 +3925,17 @@ mod tests {
                 .getattr("get_frame")
                 .expect("missing get_frame")
                 .unbind();
-            let inner_line: u32 = module
-                .getattr("INNER_LINE")
-                .expect("missing INNER_LINE")
+            let line: u32 = module
+                .getattr("LINE")
+                .expect("missing LINE")
                 .extract()
-                .expect("INNER_LINE must be int");
-            let outer_line: u32 = module
-                .getattr("OUTER_LINE")
-                .expect("missing OUTER_LINE")
-                .extract()
-                .expect("OUTER_LINE must be int");
+                .expect("LINE must be int");
 
             let observed =
                 VM::resolve_generator_line(&PyShared::new(wrapper), &PyShared::new(get_frame))
                     .expect("expected callback resolution to succeed")
                     .expect("expected generator line");
-            assert_eq!(observed, inner_line);
-            assert_ne!(observed, outer_line);
+            assert_eq!(observed, line);
         });
     }
 
@@ -3955,6 +3955,7 @@ mod tests {
         let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
         let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
         let runtime_src = &src[..runtime_boundary];
+        let inner_attr = ["__doeff_", "inner__"].concat();
         assert!(
             runtime_src.contains(".call1(py, (generator,))") && runtime_src.contains("get_frame"),
             "VM-PROTO-001: VM must resolve frame through get_frame callback"
@@ -3962,6 +3963,14 @@ mod tests {
         assert!(
             !runtime_src.contains("getattr(\"gi_frame\")"),
             "VM-PROTO-001: direct gi_frame access in runtime vm.rs is forbidden"
+        );
+        assert!(
+            !runtime_src.contains("import(\"doeff."),
+            "VM-PROTO-001: vm core must not import doeff.* modules"
+        );
+        assert!(
+            !runtime_src.contains(&inner_attr),
+            "VM-PROTO-001: vm core must not walk inner-generator link chains"
         );
     }
 
