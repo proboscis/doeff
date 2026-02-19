@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+import doeff_vm
+
 from doeff import Program, default_handlers, do, run
 
 
@@ -75,11 +77,13 @@ def test_do_static_method_signature_and_execution() -> None:
     assert _run_program(program) == 6
 
 
-def test_do_generator_wrapper_exposes_inner_generator_attribute() -> None:
+def test_do_generator_wrapper_wraps_bridge_generator() -> None:
     @do
     def sample():
         yield Program.pure(1)
         return 2
 
     wrapper = sample.func()
-    assert hasattr(wrapper, "__doeff_inner__")
+    assert isinstance(wrapper, doeff_vm.DoeffGenerator)
+    assert inspect.isgenerator(wrapper.generator)
+    assert not hasattr(wrapper.generator, "__doeff_inner__")
