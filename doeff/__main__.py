@@ -824,15 +824,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         return args.func(args)
     except Exception as exc:
-        doeff_tb = getattr(exc, "doeff_traceback", None) or getattr(exc, "__doeff_traceback__", None)
+        doeff_tb = getattr(exc, "doeff_traceback", None)
         if doeff_tb is None:
             cause = exc.__cause__
             if cause is not None:
-                doeff_tb = getattr(cause, "doeff_traceback", None) or getattr(
-                    cause,
-                    "__doeff_traceback__",
-                    None,
-                )
+                doeff_tb = getattr(cause, "doeff_traceback", None)
         captured = capture_traceback(exc)
         if getattr(args, "format", "text") == "json":
             payload = {
