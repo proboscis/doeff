@@ -1059,104 +1059,17 @@ impl VM {
     }
 
     fn spawn_boundaries_from_exception(exception: &PyException) -> Vec<SpawnBoundaryDescriptor> {
-        let PyException::Materialized { exc_value, .. } = exception else {
-            return Vec::new();
-        };
-
-        Python::attach(|py| {
-            let mut boundaries = Vec::new();
-            let mut current = exc_value
-                .bind(py)
-                .getattr("__doeff_spawned_from__")
-                .ok()
-                .filter(|v| !v.is_none());
-
-            while let Some(payload) = current {
-                let Ok(dict) = payload.cast::<PyDict>() else {
-                    break;
-                };
-
-                let task_id = dict
-                    .get_item("task_id")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.extract::<u64>().ok());
-                let parent_task = dict.get_item("parent_task").ok().flatten().and_then(|v| {
-                    if v.is_none() {
-                        None
-                    } else {
-                        v.extract::<u64>().ok()
-                    }
-                });
-                let boundary_dispatch_id = dict
-                    .get_item("boundary_dispatch_id")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| {
-                        if v.is_none() {
-                            None
-                        } else {
-                            v.extract::<u64>().ok()
-                        }
-                    })
-                    .map(DispatchId);
-                let spawn_dispatch_id = dict
-                    .get_item("spawn_dispatch_id")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| {
-                        if v.is_none() {
-                            None
-                        } else {
-                            v.extract::<u64>().ok()
-                        }
-                    })
-                    .map(DispatchId);
-                let insertion_dispatch_id = boundary_dispatch_id.or(spawn_dispatch_id);
-
-                let spawn_site = dict.get_item("spawn_site").ok().flatten().and_then(|site| {
-                    if site.is_none() {
-                        return None;
-                    }
-                    let site_dict = site.cast::<PyDict>().ok()?;
-                    let function_name = site_dict
-                        .get_item("function_name")
-                        .ok()
-                        .flatten()
-                        .and_then(|v| v.extract::<String>().ok())?;
-                    let source_file = site_dict
-                        .get_item("source_file")
-                        .ok()
-                        .flatten()
-                        .and_then(|v| v.extract::<String>().ok())?;
-                    let source_line = site_dict
-                        .get_item("source_line")
-                        .ok()
-                        .flatten()
-                        .and_then(|v| v.extract::<u32>().ok())?;
-                    Some(crate::capture::SpawnSite {
-                        function_name,
-                        source_file,
-                        source_line,
-                    })
-                });
-
-                if let Some(task_id) = task_id {
-                    boundaries.push(SpawnBoundaryDescriptor {
-                        boundary: ActiveChainEntry::SpawnBoundary {
-                            task_id,
-                            parent_task,
-                            spawn_site,
-                        },
-                        spawn_dispatch_id: insertion_dispatch_id,
-                    });
-                }
-
-                current = dict.get_item("child").ok().flatten();
-            }
-
-            boundaries
-        })
+        crate::scheduler::take_exception_spawn_boundaries(exception)
+            .into_iter()
+            .map(|boundary| SpawnBoundaryDescriptor {
+                boundary: ActiveChainEntry::SpawnBoundary {
+                    task_id: boundary.task_id,
+                    parent_task: boundary.parent_task,
+                    spawn_site: boundary.spawn_site,
+                },
+                spawn_dispatch_id: boundary.insertion_dispatch_id,
+            })
+            .collect()
     }
 
     fn insert_spawn_boundaries(
@@ -3942,6 +3855,52 @@ mod tests {
         assert!(
             !runtime_src.contains(&inner_attr),
             "VM-PROTO-001: vm core must not walk inner-generator link chains"
+        );
+    }
+
+    #[test]
+    fn test_vm_proto_007_runtime_enforces_c1_c6_c7_constraints() {
+        let vm_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
+        let vm_runtime_boundary = vm_src
+            .find("\n#[cfg(test)]\nmod tests")
+            .unwrap_or(vm_src.len());
+        let vm_runtime_src = &vm_src[..vm_runtime_boundary];
+
+        let pyvm_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let pyvm_runtime_src = pyvm_src.split("#[cfg(test)]").next().unwrap_or(pyvm_src);
+
+        for (file_name, runtime_src) in [("vm.rs", vm_runtime_src), ("pyvm.rs", pyvm_runtime_src)] {
+            assert!(
+                !runtime_src.contains(".setattr(\"__doeff_"),
+                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not set __doeff_* attributes"
+            );
+            assert!(
+                !runtime_src.contains(".getattr(\"__doeff_"),
+                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not read __doeff_* attributes"
+            );
+            assert!(
+                !runtime_src.contains(".hasattr(\"__doeff_"),
+                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not probe __doeff_* attributes"
+            );
+            assert!(
+                !runtime_src.contains("import(\"doeff."),
+                "VM-PROTO-007 C6 FAIL: {file_name} runtime must not import doeff.* modules"
+            );
+            assert!(
+                !runtime_src.contains("CallMetadata::anonymous()")
+                    && !runtime_src.contains("crate::frame::CallMetadata::anonymous()"),
+                "VM-PROTO-007 C7 FAIL: {file_name} runtime must not use anonymous callback metadata"
+            );
+        }
+
+        assert!(
+            !vm_runtime_src.contains("getattr(\"__code__\")")
+                && !vm_runtime_src.contains("getattr(\"__name__\")"),
+            "VM-PROTO-007 C7 FAIL: vm.rs runtime must not probe __code__/__name__"
+        );
+        assert!(
+            !pyvm_runtime_src.contains("PyModule::from_code("),
+            "VM-PROTO-007 C7 FAIL: pyvm.rs runtime must not synthesize modules via PyModule::from_code"
         );
     }
 
