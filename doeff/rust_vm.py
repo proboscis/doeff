@@ -47,31 +47,34 @@ def _raise_unhandled_effect_if_present(run_result: Any, *, raise_unhandled: bool
     return run_result
 
 
-def _attach_doeff_traceback_if_present(run_result: Any) -> None:
+def _build_doeff_traceback_if_present(run_result: Any) -> Any | None:
     is_err = getattr(run_result, "is_err", None)
     if not callable(is_err) or not is_err():
-        return
+        return None
     error = getattr(run_result, "error", None)
     if not isinstance(error, BaseException):
-        return
+        return None
+    traceback_data = getattr(run_result, "traceback_data", None)
+    if traceback_data is None:
+        return None
     try:
         from doeff.traceback import attach_doeff_traceback
 
-        attach_doeff_traceback(error)
+        doeff_tb = attach_doeff_traceback(error, traceback_data=traceback_data)
+        if doeff_tb is not None:
+            try:
+                setattr(error, "doeff_traceback", doeff_tb)
+            except Exception:
+                pass
+        return doeff_tb
     except Exception:
         # Best-effort: traceback projection should not block normal execution paths.
-        return
+        return None
 
 
 def _print_doeff_trace_if_present(run_result: Any) -> None:
-    """Best-effort stderr printing for attached DoeffTraceback on error results."""
-    is_err = getattr(run_result, "is_err", None)
-    if not callable(is_err) or not is_err():
-        return
-    error = getattr(run_result, "error", None)
-    if not isinstance(error, BaseException):
-        return
-    doeff_tb = getattr(error, "__doeff_traceback__", None)
+    """Best-effort stderr printing for DoeffTraceback on error results."""
+    doeff_tb = _build_doeff_traceback_if_present(run_result)
     if doeff_tb is None:
         return
     try:
@@ -266,7 +269,6 @@ def run(
         trace=trace,
     )
     result = _call_run_fn(run_fn, program, kwargs)
-    _attach_doeff_traceback_if_present(result)
     if print_doeff_trace:
         _print_doeff_trace_if_present(result)
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
@@ -294,7 +296,6 @@ async def async_run(
         trace=trace,
     )
     result = await _call_async_run_fn(run_fn, program, kwargs)
-    _attach_doeff_traceback_if_present(result)
     if print_doeff_trace:
         _print_doeff_trace_if_present(result)
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
@@ -303,6 +304,7 @@ async def async_run(
 def __getattr__(name: str) -> Any:
     if name in {
         "RunResult",
+        "DoeffTracebackData",
         "WithHandler",
         "Pure",
         "Call",
@@ -331,6 +333,7 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "Call",
+    "DoeffTracebackData",
     "Delegate",
     "Eval",
     "GetTrace",

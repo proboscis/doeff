@@ -88,54 +88,54 @@ use crate::step::{
 use crate::value::Value;
 use crate::vm::VM;
 
-fn vmerror_to_pyerr(e: VMError) -> PyErr {
+fn build_traceback_data_pyobject(
+    py: Python<'_>,
+    trace: Vec<crate::capture::TraceEntry>,
+    active_chain: Vec<crate::capture::ActiveChainEntry>,
+) -> Option<Py<PyAny>> {
+    let entries = Value::Trace(trace).to_pyobject(py).ok()?.unbind();
+    let active_chain = Value::ActiveChain(active_chain)
+        .to_pyobject(py)
+        .ok()?
+        .unbind();
+    let data = Bound::new(
+        py,
+        PyDoeffTracebackData {
+            entries,
+            active_chain,
+        },
+    )
+    .ok()?;
+    Some(data.into_any().unbind())
+}
+
+fn vmerror_to_pyerr_with_traceback_data(py: Python<'_>, e: VMError) -> (PyErr, Option<Py<PyAny>>) {
     match e {
-        VMError::UnhandledEffect { .. } | VMError::NoMatchingHandler { .. } => {
-            PyTypeError::new_err(format!("UnhandledEffect: {}", e))
-        }
-        VMError::TypeError { .. } => PyTypeError::new_err(e.to_string()),
+        VMError::UnhandledEffect { .. } | VMError::NoMatchingHandler { .. } => (
+            PyTypeError::new_err(format!("UnhandledEffect: {}", e)),
+            None,
+        ),
+        VMError::TypeError { .. } => (PyTypeError::new_err(e.to_string()), None),
         VMError::UncaughtException {
             exception,
             trace,
             active_chain,
         } => {
-            // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
-            let py = unsafe { Python::assume_attached() };
             let exc_value = exception.value_clone_ref(py);
-            let payload = PyDict::new(py);
-            let trace_obj = Value::Trace(trace).to_pyobject(py);
-            let active_chain_obj = Value::ActiveChain(active_chain).to_pyobject(py);
-            if let (Ok(trace_obj), Ok(active_chain_obj)) = (trace_obj, active_chain_obj) {
-                let _ = payload.set_item("trace", trace_obj);
-                let _ = payload.set_item("active_chain", active_chain_obj);
-
-                if let Ok(spawned_from) = exc_value.bind(py).getattr("__doeff_spawned_from__") {
-                    if !spawned_from.is_none() {
-                        let _ = payload.set_item("spawned_from", spawned_from);
-                    }
-                }
-
-                let _ = exc_value
-                    .bind(py)
-                    .setattr("__doeff_traceback_data__", payload);
-            }
-            PyErr::from_value(exc_value.bind(py).clone())
+            let traceback_data = build_traceback_data_pyobject(py, trace, active_chain);
+            (
+                PyErr::from_value(exc_value.bind(py).clone()),
+                traceback_data,
+            )
         }
-        _ => PyRuntimeError::new_err(e.to_string()),
+        _ => (PyRuntimeError::new_err(e.to_string()), None),
     }
 }
 
-fn attach_doeff_traceback_best_effort(py: Python<'_>, exc_obj: &Bound<'_, PyAny>) {
-    if !exc_obj.hasattr("__doeff_traceback_data__").unwrap_or(false) {
-        return;
-    }
-    let Ok(module) = py.import("doeff.traceback") else {
-        return;
-    };
-    let Ok(func) = module.getattr("attach_doeff_traceback") else {
-        return;
-    };
-    let _ = func.call1((exc_obj,));
+fn vmerror_to_pyerr(e: VMError) -> PyErr {
+    // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
+    let py = unsafe { Python::assume_attached() };
+    vmerror_to_pyerr_with_traceback_data(py, e).0
 }
 
 fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -328,20 +328,20 @@ impl PyVM {
         let gen_bound = gen.bind(py).clone();
         self.start_with_generator(gen_bound)?;
 
-        let result = loop {
+        let (result, traceback_data) = loop {
             let event = py.detach(|| self.run_rust_steps());
             match event {
                 StepEvent::Done(value) => match value.to_pyobject(py) {
-                    Ok(v) => break Ok(v.unbind()),
+                    Ok(v) => break (Ok(v.unbind()), None),
                     Err(e) => {
                         let exc = pyerr_to_exception(py, e)?;
-                        break Err(exc);
+                        break (Err(exc), None);
                     }
                 },
                 StepEvent::Error(e) => {
-                    let pyerr = vmerror_to_pyerr(e);
+                    let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
                     let exc = pyerr_to_exception(py, pyerr)?;
-                    break Err(exc);
+                    break (Err(exc), traceback_data);
                 }
                 StepEvent::NeedsPython(call) => {
                     let outcome = self.execute_python_call(py, call)?;
@@ -363,6 +363,7 @@ impl PyVM {
 
         Ok(PyRunResult {
             result,
+            traceback_data,
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
@@ -500,16 +501,19 @@ impl PyVM {
         }
         Ok(PyRunResult {
             result: Ok(value.unbind()),
+            traceback_data: None,
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
         })
     }
 
+    #[pyo3(signature = (error, traceback_data=None))]
     pub fn build_run_result_error(
         &self,
         py: Python<'_>,
         error: Bound<'_, PyAny>,
+        traceback_data: Option<Bound<'_, PyAny>>,
     ) -> PyResult<PyRunResult> {
         let raw_store = pyo3::types::PyDict::new(py);
         for (k, v) in &self.vm.rust_store.state {
@@ -520,8 +524,12 @@ impl PyVM {
             log_list.append(entry.to_pyobject(py)?)?;
         }
         let exc = pyerr_to_exception(py, PyErr::from_value(error))?;
+        let traceback_data_obj = traceback_data
+            .filter(|obj| !obj.is_none())
+            .map(Bound::unbind);
         Ok(PyRunResult {
             result: Err(exc),
+            traceback_data: traceback_data_obj,
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
@@ -549,7 +557,16 @@ impl PyVM {
             }
             StepEvent::Error(e) => {
                 self.vm.end_active_run_session();
-                Err(vmerror_to_pyerr(e))
+                let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
+                let err_obj = pyerr.value(py).clone().into_any();
+                let traceback_obj = traceback_data.unwrap_or_else(|| py.None());
+                let elems: Vec<Bound<'_, pyo3::PyAny>> = vec![
+                    "error".into_pyobject(py)?.into_any(),
+                    err_obj,
+                    traceback_obj.bind(py).clone(),
+                ];
+                let tuple = PyTuple::new(py, elems)?;
+                Ok(tuple.into())
             }
             StepEvent::NeedsPython(call) => {
                 if let PythonCall::CallAsync { func, args } = call {
@@ -1365,6 +1382,26 @@ fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> CallMe
 // PyRunResult — execution output [R8-J]
 // ---------------------------------------------------------------------------
 
+#[pyclass(frozen, name = "DoeffTracebackData")]
+pub struct PyDoeffTracebackData {
+    #[pyo3(get)]
+    entries: Py<PyAny>,
+    #[pyo3(get)]
+    active_chain: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyDoeffTracebackData {
+    #[new]
+    #[pyo3(signature = (entries, active_chain=None))]
+    fn new(py: Python<'_>, entries: Py<PyAny>, active_chain: Option<Py<PyAny>>) -> Self {
+        PyDoeffTracebackData {
+            entries,
+            active_chain: active_chain.unwrap_or_else(|| py.None()),
+        }
+    }
+}
+
 // D9: Ok/Err wrapper types for RunResult.result (spec says Ok(val)/Err(exc) objects)
 #[pyclass(frozen, name = "Ok")]
 pub struct PyResultOk {
@@ -1430,9 +1467,7 @@ impl PyResultErr {
 
     #[getter]
     fn error(&self, py: Python<'_>) -> Py<PyAny> {
-        let err = self.error.clone_ref(py);
-        attach_doeff_traceback_best_effort(py, err.bind(py));
-        err
+        self.error.clone_ref(py)
     }
 
     #[getter]
@@ -1461,9 +1496,71 @@ impl PyResultErr {
 #[pyclass(frozen, name = "RunResult")]
 pub struct PyRunResult {
     result: Result<Py<PyAny>, PyException>,
+    #[pyo3(get)]
+    traceback_data: Option<Py<PyAny>>,
     raw_store: Py<pyo3::types::PyDict>,
     log: Py<PyAny>,
     trace: Py<PyAny>,
+}
+
+impl PyRunResult {
+    fn preview_sequence(seq: &Bound<'_, PyAny>, max_items: usize) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        if let Ok(iter) = seq.try_iter() {
+            for (idx, item_res) in iter.enumerate() {
+                if idx >= max_items {
+                    lines.push("  ...".to_string());
+                    break;
+                }
+                let text = match item_res {
+                    Ok(item) => item
+                        .repr()
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| "<item>".to_string()),
+                    Err(_) => "<iter-error>".to_string(),
+                };
+                lines.push(format!("  {}. {}", idx + 1, text));
+            }
+            if lines.is_empty() {
+                lines.push("  (empty)".to_string());
+            }
+            return lines.join("\n");
+        }
+        let fallback = seq
+            .repr()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| "<unavailable>".to_string());
+        format!("  {}", fallback)
+    }
+
+    fn format_traceback_data_preview(traceback_data: &Bound<'_, PyAny>, verbose: bool) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        let max_items = if verbose { 32 } else { 8 };
+
+        if let Ok(active_chain) = traceback_data.getattr("active_chain") {
+            if !active_chain.is_none() {
+                lines.push("ActiveChain:".to_string());
+                lines.push(Self::preview_sequence(&active_chain, max_items));
+            }
+        }
+
+        if let Ok(entries) = traceback_data.getattr("entries") {
+            let entry_count = entries.len().ok();
+            if verbose {
+                lines.push("TraceEntries:".to_string());
+                lines.push(Self::preview_sequence(&entries, max_items));
+            } else if let Some(count) = entry_count {
+                lines.push(format!("TraceEntries: {count}"));
+            } else {
+                lines.push("TraceEntries: <unknown>".to_string());
+            }
+        }
+
+        if lines.is_empty() {
+            return "TracebackData: <unavailable>".to_string();
+        }
+        lines.join("\n")
+    }
 }
 
 #[pymethods]
@@ -1479,11 +1576,7 @@ impl PyRunResult {
     #[getter]
     fn error(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.result {
-            Err(e) => {
-                let err = e.value_clone_ref(py);
-                attach_doeff_traceback_best_effort(py, err.bind(py));
-                Ok(err)
-            }
+            Err(e) => Ok(e.value_clone_ref(py)),
             Ok(_) => Err(pyo3::exceptions::PyValueError::new_err(
                 "RunResult is Ok, not Err",
             )),
@@ -1505,17 +1598,11 @@ impl PyRunResult {
             }
             Err(e) => {
                 let err_obj = e.value_clone_ref(py);
-                let err_bound = err_obj.bind(py);
-                attach_doeff_traceback_best_effort(py, err_bound);
-                let captured = err_bound
-                    .getattr("__doeff_traceback__")
-                    .map(|obj| obj.unbind())
-                    .unwrap_or_else(|_| py.None());
                 let err_obj = Bound::new(
                     py,
                     PyResultErr {
                         error: err_obj,
-                        captured_traceback: captured,
+                        captured_traceback: py.None(),
                     },
                 )?;
                 Ok(err_obj.into_any().unbind())
@@ -1550,23 +1637,20 @@ impl PyRunResult {
     fn display(&self, py: Python<'_>, verbose: bool) -> PyResult<String> {
         if let Err(err) = &self.result {
             let err_obj = err.value_clone_ref(py);
-            let err_bound = err_obj.bind(py);
-            attach_doeff_traceback_best_effort(py, err_bound);
-
-            if let Ok(tb_obj) = err_bound.getattr("__doeff_traceback__") {
-                let method = if verbose {
-                    "format_chained"
-                } else {
-                    "format_sectioned"
-                };
-                if let Ok(rendered) = tb_obj.call_method0(method) {
-                    if let Ok(text) = rendered.extract::<String>() {
-                        return Ok(text);
-                    }
-                }
+            let label = if verbose { "verbose" } else { "default" };
+            let mut lines = vec![
+                format!("RunResult status: err ({label})"),
+                format!("Error: {:?}", err_obj),
+            ];
+            if let Some(traceback_data) = &self.traceback_data {
+                lines.push(Self::format_traceback_data_preview(
+                    traceback_data.bind(py),
+                    verbose,
+                ));
+            } else {
+                lines.push("TracebackData: none".to_string());
             }
-
-            return Ok(format!("{:?}", err_obj));
+            return Ok(lines.join("\n"));
         }
 
         let value_text = match &self.result {
@@ -2672,6 +2756,42 @@ mod tests {
             assert_eq!(tag, DoExprTag::Unknown as u8);
         });
     }
+
+    #[test]
+    fn test_vm_proto_004_run_result_has_typed_traceback_data_contract() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            runtime_src.contains("name = \"DoeffTracebackData\""),
+            "VM-PROTO-004 FAIL: missing DoeffTracebackData pyclass"
+        );
+        assert!(
+            runtime_src.contains("traceback_data: Option<Py<PyAny>>"),
+            "VM-PROTO-004 FAIL: RunResult missing traceback_data field"
+        );
+    }
+
+    #[test]
+    fn test_vm_proto_004_traceback_dunders_and_import_removed() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            !runtime_src.contains(".setattr(\"__doeff_traceback_data__\""),
+            "VM-PROTO-004 FAIL: __doeff_traceback_data__ setattr still present"
+        );
+        assert!(
+            !runtime_src.contains(".hasattr(\"__doeff_traceback_data__\""),
+            "VM-PROTO-004 FAIL: __doeff_traceback_data__ hasattr still present"
+        );
+        assert!(
+            !runtime_src.contains(".getattr(\"__doeff_traceback__\""),
+            "VM-PROTO-004 FAIL: __doeff_traceback__ getattr still present"
+        );
+        assert!(
+            !runtime_src.contains(".import(\"doeff.traceback\")"),
+            "VM-PROTO-004 FAIL: doeff.traceback import still present"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2826,13 +2946,13 @@ fn async_run<'py>(
         pyo3::ffi::c_str!(concat!(
             "async def _async_run_impl():\n",
             "    while True:\n",
-            "        try:\n",
-            "            result = _vm.step_once()\n",
-            "        except BaseException as exc:\n",
-            "            return _vm.build_run_result_error(exc)\n",
+            "        result = _vm.step_once()\n",
             "        tag = result[0]\n",
             "        if tag == 'done':\n",
             "            return _vm.build_run_result(result[1])\n",
+            "        elif tag == 'error':\n",
+            "            exc, traceback_data = result[1], result[2]\n",
+            "            return _vm.build_run_result_error(exc, traceback_data=traceback_data)\n",
             "        elif tag == 'call_async':\n",
             "            func, args = result[1], result[2]\n",
             "            try:\n",
@@ -2865,6 +2985,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // PyDoThunkBase removed [R12-A]: DoThunk is a Python-side concept, not a VM concept.
     m.add_class::<PyStdlib>()?;
     m.add_class::<PySchedulerHandler>()?;
+    m.add_class::<PyDoeffTracebackData>()?;
     m.add_class::<PyRunResult>()?;
     m.add_class::<PyResultOk>()?;
     m.add_class::<PyResultErr>()?;

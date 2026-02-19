@@ -8,7 +8,7 @@ from doeff import Ask, Delegate, EffectBase, Program, Resume, WithHandler, defau
 from doeff.effects import Put
 from doeff.effects.gather import Gather
 from doeff.effects.spawn import Spawn
-from doeff.traceback import build_doeff_traceback
+from doeff.traceback import attach_doeff_traceback, build_doeff_traceback
 
 
 def _tb(
@@ -20,6 +20,15 @@ def _tb(
         trace or [],
         active_chain,
     )
+
+
+def _tb_from_run_result(result: object) -> object:
+    doeff_tb = attach_doeff_traceback(
+        result.error,
+        traceback_data=getattr(result, "traceback_data", None),
+    )
+    assert doeff_tb is not None
+    return doeff_tb
 
 
 def _line_of(function: object, needle: str) -> int:
@@ -246,7 +255,7 @@ def test_format_default_keeps_duplicate_handler_names_from_vm_chain() -> None:
     )
     assert result.is_err()
 
-    rendered = result.error.__doeff_traceback__.format_default()
+    rendered = _tb_from_run_result(result).format_default()
     handler_stack_line = next(
         line.strip()
         for line in rendered.splitlines()
@@ -280,7 +289,7 @@ def test_format_default_duplicate_name_throw_marks_correct_handler() -> None:
     )
     assert result.is_err()
 
-    rendered = result.error.__doeff_traceback__.format_default()
+    rendered = _tb_from_run_result(result).format_default()
     stack_line = next(
         line.strip() for line in rendered.splitlines() if line.strip().startswith("[handler")
     )
@@ -629,7 +638,7 @@ def test_format_default_shows_effect_yield_on_handler_throw() -> None:
     result = run(WithHandler(crash_handler, body()), handlers=default_handlers())
     assert result.is_err()
 
-    rendered = result.error.__doeff_traceback__.format_default()
+    rendered = _tb_from_run_result(result).format_default()
     assert "yield Boom" in rendered
     assert "crash_handler✗" in rendered
     assert "·" in rendered
@@ -659,7 +668,7 @@ def test_format_default_shows_program_yield_chain() -> None:
     result = run(WithHandler(crash_handler, outer()), handlers=default_handlers(), store={"k": 0})
     assert result.is_err()
 
-    rendered = result.error.__doeff_traceback__.format_default()
+    rendered = _tb_from_run_result(result).format_default()
     source_file = str(Path(__file__).resolve())
     outer_line = _line_of(outer.original_generator, 'yield Put("k", 0)')
     inner_line = _line_of(inner.original_generator, "yield Boom()")
@@ -685,7 +694,7 @@ def test_format_default_includes_resumed_effects() -> None:
     result = run(body(), handlers=default_handlers(), store={"k": 0})
     assert result.is_err()
 
-    rendered = result.error.__doeff_traceback__.format_default()
+    rendered = _tb_from_run_result(result).format_default()
     assert "yield Put(" in rendered
     assert "→ resumed with" in rendered
     assert "raise ValueError('boom')" in rendered
@@ -712,7 +721,7 @@ def test_format_default_shows_delegation_chain() -> None:
     )
     assert result.is_err()
 
-    rendered = result.error.__doeff_traceback__.format_default()
+    rendered = _tb_from_run_result(result).format_default()
     assert "yield Boom" in rendered
     assert "inner_delegate_handler↗" in rendered
     assert "outer_crash_handler✗" in rendered
@@ -741,7 +750,7 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     result = run(parent(), handlers=default_handlers())
     assert result.is_err()
 
-    rendered = result.error.__doeff_traceback__.format_default()
+    rendered = _tb_from_run_result(result).format_default()
     source_file = str(Path(__file__).resolve())
     gather_line = _line_of(parent.original_generator, "return (yield Gather(task))")
     spawn_line = _line_of(parent.original_generator, "task = yield Spawn(")
