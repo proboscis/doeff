@@ -1503,6 +1503,66 @@ pub struct PyRunResult {
     trace: Py<PyAny>,
 }
 
+impl PyRunResult {
+    fn preview_sequence(seq: &Bound<'_, PyAny>, max_items: usize) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        if let Ok(iter) = seq.try_iter() {
+            for (idx, item_res) in iter.enumerate() {
+                if idx >= max_items {
+                    lines.push("  ...".to_string());
+                    break;
+                }
+                let text = match item_res {
+                    Ok(item) => item
+                        .repr()
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| "<item>".to_string()),
+                    Err(_) => "<iter-error>".to_string(),
+                };
+                lines.push(format!("  {}. {}", idx + 1, text));
+            }
+            if lines.is_empty() {
+                lines.push("  (empty)".to_string());
+            }
+            return lines.join("\n");
+        }
+        let fallback = seq
+            .repr()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| "<unavailable>".to_string());
+        format!("  {}", fallback)
+    }
+
+    fn format_traceback_data_preview(traceback_data: &Bound<'_, PyAny>, verbose: bool) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        let max_items = if verbose { 32 } else { 8 };
+
+        if let Ok(active_chain) = traceback_data.getattr("active_chain") {
+            if !active_chain.is_none() {
+                lines.push("ActiveChain:".to_string());
+                lines.push(Self::preview_sequence(&active_chain, max_items));
+            }
+        }
+
+        if let Ok(entries) = traceback_data.getattr("entries") {
+            let entry_count = entries.len().ok();
+            if verbose {
+                lines.push("TraceEntries:".to_string());
+                lines.push(Self::preview_sequence(&entries, max_items));
+            } else if let Some(count) = entry_count {
+                lines.push(format!("TraceEntries: {count}"));
+            } else {
+                lines.push("TraceEntries: <unknown>".to_string());
+            }
+        }
+
+        if lines.is_empty() {
+            return "TracebackData: <unavailable>".to_string();
+        }
+        lines.join("\n")
+    }
+}
+
 #[pymethods]
 impl PyRunResult {
     #[getter]
@@ -1578,21 +1638,19 @@ impl PyRunResult {
         if let Err(err) = &self.result {
             let err_obj = err.value_clone_ref(py);
             let label = if verbose { "verbose" } else { "default" };
+            let mut lines = vec![
+                format!("RunResult status: err ({label})"),
+                format!("Error: {:?}", err_obj),
+            ];
             if let Some(traceback_data) = &self.traceback_data {
-                let entries_repr = traceback_data
-                    .bind(py)
-                    .repr()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|_| "<traceback_data>".to_string());
-                return Ok(format!(
-                    "RunResult status: err ({label})\nError: {:?}\nTracebackData: {entries_repr}",
-                    err_obj
+                lines.push(Self::format_traceback_data_preview(
+                    traceback_data.bind(py),
+                    verbose,
                 ));
+            } else {
+                lines.push("TracebackData: none".to_string());
             }
-            return Ok(format!(
-                "RunResult status: err ({label})\nError: {:?}",
-                err_obj
-            ));
+            return Ok(lines.join("\n"));
         }
 
         let value_text = match &self.result {
