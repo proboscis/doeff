@@ -1743,7 +1743,7 @@ def test_flatmap_rejects_non_doexpr_binder_return():
     plain int), the VM should raise a runtime TypeError rather than silently
     propagating the raw value.
     """
-    from doeff_vm import FlatMap, Pure, PyVM
+    from doeff_vm import PyVM
 
     vm = PyVM()
 
@@ -1751,7 +1751,7 @@ def test_flatmap_rejects_non_doexpr_binder_return():
         return x * 2  # returns 20, a plain int — NOT a DoExpr
 
     def body():
-        result = yield FlatMap(Pure(10), bad_binder)
+        result = yield Program.flat_map(Program.pure(10), bad_binder)
         return result
 
     try:
@@ -1767,6 +1767,17 @@ def test_flatmap_rejects_non_doexpr_binder_return():
         assert "flat_map" in str(e).lower() or "DoExpr" in str(e), (
             f"TypeError raised but message doesn't mention flat_map/DoExpr: {e}"
         )
+
+
+def test_flatmap_requires_explicit_binder_metadata() -> None:
+    """VM-PROTO-005: FlatMap constructor must reject missing binder_meta."""
+    from doeff_vm import FlatMap, Pure
+
+    def binder(x):
+        return Pure(x + 1)
+
+    with pytest.raises(TypeError, match="binder_meta is required"):
+        FlatMap(Pure(1), binder)
 
 
 def test_call_resolves_doexpr_args():

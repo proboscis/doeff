@@ -729,6 +729,48 @@ rules:
       category: doexpr-perform
       rationale: "Effect data and dispatch control must be explicitly separated"
 
+  - id: doeff-vm-handle-map-no-anonymous-callmetadata
+    patterns:
+      - pattern-inside: |
+          fn handle_map(...) {
+              ...
+          }
+      - pattern-either:
+          - pattern: CallMetadata::anonymous()
+          - pattern: crate::frame::CallMetadata::anonymous()
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+    message: |
+      VM-PROTO-005: Map callback calls must carry explicit callback metadata.
+      Do not use CallMetadata::anonymous() in handle_map runtime paths.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      rationale: "SPEC-VM-PROTOCOL §5.5 and §2 C7 require explicit callback metadata"
+
+  - id: doeff-vm-handle-flat-map-no-anonymous-callmetadata
+    patterns:
+      - pattern-inside: |
+          fn handle_flat_map(...) {
+              ...
+          }
+      - pattern-either:
+          - pattern: CallMetadata::anonymous()
+          - pattern: crate::frame::CallMetadata::anonymous()
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+    message: |
+      VM-PROTO-005: FlatMap callback calls must carry explicit callback metadata.
+      Do not use CallMetadata::anonymous() in handle_flat_map runtime paths.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      rationale: "SPEC-VM-PROTOCOL §5.5 and §2 C7 require explicit callback metadata"
+
   # ---------------------------------------------------------------------------
   # SPEC AUDIT SA-001: GAP ENFORCEMENT RULES
   # ---------------------------------------------------------------------------

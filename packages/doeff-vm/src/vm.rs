@@ -2092,8 +2092,16 @@ impl VM {
                         self.mode = Mode::Deliver(value);
                         StepEvent::Continue
                     }
-                    DoCtrl::Map { source, mapper } => self.handle_map(source, mapper),
-                    DoCtrl::FlatMap { source, binder } => self.handle_flat_map(source, binder),
+                    DoCtrl::Map {
+                        source,
+                        mapper,
+                        mapper_meta,
+                    } => self.handle_map(source, mapper, mapper_meta),
+                    DoCtrl::FlatMap {
+                        source,
+                        binder,
+                        binder_meta,
+                    } => self.handle_flat_map(source, binder, binder_meta),
                     DoCtrl::Perform { effect } => match self.start_dispatch(effect) {
                         Ok(event) => event,
                         Err(e) => StepEvent::Error(e),
@@ -3150,14 +3158,19 @@ impl VM {
         handlers
     }
 
-    fn handle_map(&mut self, source: PyShared, mapper: PyShared) -> StepEvent {
+    fn handle_map(
+        &mut self,
+        source: PyShared,
+        mapper: PyShared,
+        mapper_meta: CallMetadata,
+    ) -> StepEvent {
         let handlers = self.current_visible_handlers();
         let map_cb = self.register_callback(Box::new(move |value, _vm| {
             Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
                 f: CallArg::Value(Value::Python(mapper.into_inner())),
                 args: vec![CallArg::Value(value)],
                 kwargs: vec![],
-                metadata: crate::frame::CallMetadata::anonymous(),
+                metadata: mapper_meta.clone(),
             }))
         }));
 
@@ -3173,7 +3186,12 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn handle_flat_map(&mut self, source: PyShared, binder: PyShared) -> StepEvent {
+    fn handle_flat_map(
+        &mut self,
+        source: PyShared,
+        binder: PyShared,
+        binder_meta: CallMetadata,
+    ) -> StepEvent {
         let handlers = self.current_visible_handlers();
         let handlers_after_bind = handlers.clone();
 
@@ -3201,7 +3219,7 @@ impl VM {
                 f: CallArg::Value(Value::Python(binder.into_inner())),
                 args: vec![CallArg::Value(value)],
                 kwargs: vec![],
-                metadata: crate::frame::CallMetadata::anonymous(),
+                metadata: binder_meta.clone(),
             }))
         }));
 
