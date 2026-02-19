@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 import doeff_vm
 
-from .base import Effect, create_effect_with_trace
+from .base import Effect
 from .spawn import Waitable, normalize_waitable
 
 if TYPE_CHECKING:
@@ -34,15 +34,12 @@ def _validate_gather_items(items: tuple[Any, ...]) -> tuple[Any, ...]:
 
 def gather(*items: "Waitable[Any] | ProgramBase[Any]") -> GatherEffect:
     validated = _validate_gather_items(tuple(items))
-    return create_effect_with_trace(GatherEffect(items=validated))
+    return GatherEffect(items=validated)
 
 
 def Gather(*items: "Waitable[Any] | ProgramBase[Any]") -> Any:
     validated = _validate_gather_items(tuple(items))
-    return create_effect_with_trace(
-        GatherEffect(items=validated),
-        skip_frames=3,
-    )
+    return GatherEffect(items=validated)
 
 
 __all__ = [

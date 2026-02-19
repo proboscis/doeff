@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ._validators import ensure_callable, ensure_optional_callable, ensure_str
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase
 
 
 @dataclass(frozen=True)
@@ -37,9 +37,7 @@ class AtomicUpdateEffect(EffectBase):
 
 
 def atomic_get(key: str, *, default_factory: Callable[[], Any] | None = None) -> AtomicGetEffect:
-    return create_effect_with_trace(
-        AtomicGetEffect(key=key, default_factory=default_factory)
-    )
+    return AtomicGetEffect(key=key, default_factory=default_factory)
 
 
 def atomic_update(
@@ -48,15 +46,11 @@ def atomic_update(
     *,
     default_factory: Callable[[], Any] | None = None,
 ) -> AtomicUpdateEffect:
-    return create_effect_with_trace(
-        AtomicUpdateEffect(key=key, updater=updater, default_factory=default_factory)
-    )
+    return AtomicUpdateEffect(key=key, updater=updater, default_factory=default_factory)
 
 
 def AtomicGet(key: str, *, default_factory: Callable[[], Any] | None = None) -> Effect:
-    return create_effect_with_trace(
-        AtomicGetEffect(key=key, default_factory=default_factory), skip_frames=3
-    )
+    return AtomicGetEffect(key=key, default_factory=default_factory)
 
 
 def AtomicUpdate(
@@ -65,10 +59,7 @@ def AtomicUpdate(
     *,
     default_factory: Callable[[], Any] | None = None,
 ) -> Effect:
-    return create_effect_with_trace(
-        AtomicUpdateEffect(key=key, updater=updater, default_factory=default_factory),
-        skip_frames=3,
-    )
+    return AtomicUpdateEffect(key=key, updater=updater, default_factory=default_factory)
 
 
 __all__ = [

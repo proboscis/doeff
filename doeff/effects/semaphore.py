@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import doeff_vm
 
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,27 +73,27 @@ class ReleaseSemaphoreEffect(EffectBase):
 
 
 def create_semaphore(permits: int) -> CreateSemaphoreEffect:
-    return create_effect_with_trace(CreateSemaphoreEffect(permits=permits))
+    return CreateSemaphoreEffect(permits=permits)
 
 
 def acquire_semaphore(semaphore: Semaphore) -> AcquireSemaphoreEffect:
-    return create_effect_with_trace(AcquireSemaphoreEffect(semaphore=semaphore))
+    return AcquireSemaphoreEffect(semaphore=semaphore)
 
 
 def release_semaphore(semaphore: Semaphore) -> ReleaseSemaphoreEffect:
-    return create_effect_with_trace(ReleaseSemaphoreEffect(semaphore=semaphore))
+    return ReleaseSemaphoreEffect(semaphore=semaphore)
 
 
 def CreateSemaphore(permits: int) -> Effect:  # noqa: N802
-    return create_effect_with_trace(CreateSemaphoreEffect(permits=permits), skip_frames=3)
+    return CreateSemaphoreEffect(permits=permits)
 
 
 def AcquireSemaphore(semaphore: Semaphore) -> Effect:  # noqa: N802
-    return create_effect_with_trace(AcquireSemaphoreEffect(semaphore=semaphore), skip_frames=3)
+    return AcquireSemaphoreEffect(semaphore=semaphore)
 
 
 def ReleaseSemaphore(semaphore: Semaphore) -> Effect:  # noqa: N802
-    return create_effect_with_trace(ReleaseSemaphoreEffect(semaphore=semaphore), skip_frames=3)
+    return ReleaseSemaphoreEffect(semaphore=semaphore)
 
 
 __all__ = [

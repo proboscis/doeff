@@ -10,7 +10,7 @@ from doeff.utils import BoundedLog
 
 from ._program_types import ProgramLike
 from ._validators import ensure_program_like
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase
 
 
 WriterTellEffect = doeff_vm.PyTell
@@ -27,7 +27,7 @@ class WriterListenEffect(EffectBase):
 
 
 def tell(message: object) -> WriterTellEffect:
-    return create_effect_with_trace(WriterTellEffect(message))
+    return WriterTellEffect(message)
 
 
 def listen(sub_program: ProgramLike):
@@ -52,7 +52,7 @@ def listen(sub_program: ProgramLike):
 
 
 def Tell(message: object) -> Effect:
-    return create_effect_with_trace(WriterTellEffect(message), skip_frames=3)
+    return WriterTellEffect(message)
 
 
 # Log is an alias for Tell - commonly used in documentation
@@ -82,12 +82,12 @@ def Listen(sub_program: ProgramLike) -> Effect:
 
 def slog(**entries: object) -> WriterTellEffect:
     payload = dict(entries)
-    return create_effect_with_trace(WriterTellEffect(payload))
+    return WriterTellEffect(payload)
 
 
 def StructuredLog(**entries: object) -> Effect:
     payload = dict(entries)
-    return create_effect_with_trace(WriterTellEffect(payload), skip_frames=3)
+    return WriterTellEffect(payload)
 
 
 __all__ = [

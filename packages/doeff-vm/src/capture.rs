@@ -51,7 +51,7 @@ pub struct SpawnSite {
     pub source_line: u32,
 }
 
-/// Effect constructor callsite captured from Python `effect.created_at`.
+/// Effect yield callsite captured from continuation frame metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectCreationSite {
     pub function_name: String,

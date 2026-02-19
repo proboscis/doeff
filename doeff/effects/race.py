@@ -5,7 +5,7 @@ from typing import Any, Generic, TypeVar
 
 import doeff_vm
 
-from .base import Effect, create_effect_with_trace
+from .base import Effect
 from .spawn import Waitable, normalize_waitable
 
 T = TypeVar("T")
@@ -35,7 +35,7 @@ def _validate_race_items(futures: tuple[Any, ...]) -> tuple[Waitable[Any], ...]:
 
 def race(*futures: Waitable[Any]) -> RaceEffect:
     validated = _validate_race_items(tuple(futures))
-    return create_effect_with_trace(RaceEffect(validated))
+    return RaceEffect(validated)
 
 
 def Race(*futures: Waitable[Any]):
@@ -45,7 +45,7 @@ def Race(*futures: Waitable[Any]):
 
     @do
     def _program():
-        value = yield create_effect_with_trace(RaceEffect(validated), skip_frames=3)
+        value = yield RaceEffect(validated)
         return RaceResult(first=validated[0], value=value, rest=tuple(validated[1:]))
 
     return _program()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .base import EffectBase, create_effect_with_trace
+from .base import EffectBase
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class ProgramTraceEffect(EffectBase):
 def ProgramTrace() -> ProgramTraceEffect:
     """Create an effect that yields VM trace entries."""
 
-    return create_effect_with_trace(ProgramTraceEffect())
+    return ProgramTraceEffect()
 
 
 __all__ = ["ProgramTrace", "ProgramTraceEffect"]
