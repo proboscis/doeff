@@ -11,7 +11,6 @@ import inspect
 from collections.abc import Callable, Generator
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar, cast
-from weakref import WeakKeyDictionary
 
 from doeff.kleisli import KleisliProgram
 from doeff.program import Program, _build_auto_unwrap_strategy
@@ -25,41 +24,44 @@ T = TypeVar("T")
 # effects/programs and returns T.
 _GeneratorFunc = Callable[..., Generator[Effect | Program, Any, T]]
 
-_BRIDGE_INNER_BY_GENERATOR: WeakKeyDictionary[object, Generator[Effect | Program, Any, Any]] = (
-    WeakKeyDictionary()
-)
 _BRIDGE_CODE_OBJECTS: set[object] = set()
 
+def _default_get_frame(generator: object) -> object | None:
+    return getattr(generator, "gi_frame", None)
 
-def resolve_doeff_inner(generator: object) -> Generator[Effect | Program, Any, Any] | None:
-    return _BRIDGE_INNER_BY_GENERATOR.get(generator)
+
+def _do_get_frame(bridge_gen: object) -> object | None:
+    frame = getattr(bridge_gen, "gi_frame", None)
+    if frame is None:
+        return None
+
+    locals_dict = getattr(frame, "f_locals", None)
+    if locals_dict is None:
+        return None
+
+    get_value = getattr(locals_dict, "get", None)
+    if not callable(get_value):
+        return None
+
+    user_gen = get_value("gen")
+    if user_gen is None:
+        return None
+    return getattr(user_gen, "gi_frame", None)
 
 
 def resolve_generator_line(generator: object) -> int | None:
-    current = generator
-    for _ in range(8):
-        inner = _BRIDGE_INNER_BY_GENERATOR.get(current)
-        if inner is None:
-            inner = getattr(current, "__doeff_inner__", None)
-        if inner is None:
-            break
-        current = inner
-    frame = getattr(current, "gi_frame", None)
+    frame = _do_get_frame(generator)
+    if frame is None:
+        frame = _default_get_frame(generator)
     if frame is None:
         return None
     return getattr(frame, "f_lineno", None)
 
 
 def resolve_generator_location(generator: object) -> tuple[str, int] | None:
-    current = generator
-    for _ in range(8):
-        inner = _BRIDGE_INNER_BY_GENERATOR.get(current)
-        if inner is None:
-            inner = getattr(current, "__doeff_inner__", None)
-        if inner is None:
-            break
-        current = inner
-    frame = getattr(current, "gi_frame", None)
+    frame = _do_get_frame(generator)
+    if frame is None:
+        frame = _default_get_frame(generator)
     if frame is None:
         return None
     code = getattr(frame, "f_code", None)
@@ -130,21 +132,8 @@ def resolve_exception_location(exc: BaseException) -> tuple[str, str, int] | Non
     return (fn_name, filename, user_line)
 
 
-def _resolve_frame_target(generator: object) -> object:
-    current = generator
-    for _ in range(8):
-        inner = _BRIDGE_INNER_BY_GENERATOR.get(current)
-        if inner is None:
-            inner = getattr(current, "__doeff_inner__", None)
-        if inner is None:
-            break
-        current = inner
-    return current
-
-
 def default_get_frame(generator: object) -> object | None:
-    current = _resolve_frame_target(generator)
-    return getattr(current, "gi_frame", None)
+    return _default_get_frame(generator)
 
 
 def make_doeff_generator(
@@ -168,74 +157,26 @@ def make_doeff_generator(
             f"make_doeff_generator() requires a generator-like object, got {type(generator).__name__}"
         )
 
-    frame_target = _resolve_frame_target(generator)
-    code = getattr(frame_target, "gi_code", None)
+    code = getattr(generator, "gi_code", None)
 
     if function_name is None:
-        function_name = getattr(code, "co_name", None) or getattr(frame_target, "__name__", None)
+        function_name = getattr(code, "co_name", None) or getattr(generator, "__name__", None)
         if function_name is None:
             function_name = "<generator>"
     if source_file is None:
         source_file = getattr(code, "co_filename", None) or "<unknown>"
     if source_line is None:
         source_line = getattr(code, "co_firstlineno", None) or 0
+    resolved_source_line = int(source_line) if source_line is not None else 0
 
-    callback = get_frame if get_frame is not None else default_get_frame
+    callback = get_frame if get_frame is not None else _default_get_frame
     return vm.DoeffGenerator(
         generator=cast(Any, generator),
         function_name=function_name,
         source_file=source_file,
-        source_line=int(source_line),
+        source_line=resolved_source_line,
         get_frame=callback,
     )
-
-
-class _DoGeneratorProxy:
-    """Generator-like proxy that carries the user generator for traceback line mapping."""
-
-    __slots__ = ("_outer", "__doeff_inner__", "__weakref__")
-
-    def __init__(
-        self,
-        outer: Generator[Effect | Program, Any, T],
-        inner: Generator[Effect | Program, Any, T],
-    ) -> None:
-        self._outer = outer
-        self.__doeff_inner__ = inner
-
-    def __iter__(self) -> _DoGeneratorProxy:
-        return self
-
-    def __next__(self) -> Effect | Program:
-        return next(self._outer)
-
-    def send(self, value: Any) -> Effect | Program:
-        return self._outer.send(value)
-
-    def throw(self, typ: BaseException, val: Any | None = None, tb: Any | None = None) -> Any:
-        if tb is None and val is None:
-            return self._outer.throw(typ)
-        if tb is None:
-            return self._outer.throw(typ, val)
-        return self._outer.throw(typ, val, tb)
-
-    def close(self) -> Any:
-        return self._outer.close()
-
-    @property
-    def gi_frame(self) -> Any:
-        return cast(Any, self._outer).gi_frame
-
-    @property
-    def gi_code(self) -> Any:
-        return cast(Any, self._outer).gi_code
-
-    @property
-    def gi_running(self) -> Any:
-        return cast(Any, self._outer).gi_running
-
-    def __repr__(self) -> str:
-        return repr(self._outer)
 
 
 class DoYieldFunction(KleisliProgram[P, T]):
@@ -278,11 +219,18 @@ class DoYieldFunction(KleisliProgram[P, T]):
                 return cast(T, gen_or_value)
 
             gen = cast(Generator[Effect | Program, Any, T], gen_or_value)
-            outer = bridge_generator(gen)
-            proxy = _DoGeneratorProxy(outer, gen)
-            _BRIDGE_INNER_BY_GENERATOR[outer] = gen
-            _BRIDGE_INNER_BY_GENERATOR[proxy] = gen
-            return cast(Generator[Effect | Program, Any, T], make_doeff_generator(proxy))
+            bridge_gen = bridge_generator(gen)
+            code = func.__code__
+            return cast(
+                Generator[Effect | Program, Any, T],
+                make_doeff_generator(
+                    bridge_gen,
+                    function_name=func.__name__,
+                    source_file=code.co_filename,
+                    source_line=code.co_firstlineno,
+                    get_frame=_do_get_frame,
+                ),
+            )
 
         # KleisliProgram.func expects Callable[P, Program[T]], but we pass a
         # generator function. Runtime call dispatch handles both Program and
@@ -402,4 +350,4 @@ def do(
     return DoYieldFunction(func)
 
 
-__all__ = ["DoYieldFunction", "default_get_frame", "do", "make_doeff_generator"]
+__all__ = ["DoYieldFunction", "_default_get_frame", "default_get_frame", "do", "make_doeff_generator"]

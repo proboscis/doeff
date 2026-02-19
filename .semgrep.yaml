@@ -167,6 +167,45 @@ rules:
     metadata:
       category: effect-system
 
+  - id: doeff-to-generator-must-wrap-doeff-generator
+    patterns:
+      - pattern-inside: |
+          def to_generator(...):
+              ...
+      - pattern: return $RETURN_VALUE
+      - pattern-not: return make_doeff_generator(...)
+      - pattern-not: return DoeffGenerator(...)
+      - pattern-not: return vm.DoeffGenerator(...)
+      - pattern-not: return _to_doeff_generator(...)
+    paths:
+      include:
+        - "**/doeff/program.py"
+        - "**/packages/doeff-vm/doeff_vm/__init__.py"
+    message: |
+      VM-PROTO-002: to_generator() construction sites must return DoeffGenerator.
+      Wrap generator values with make_doeff_generator(...) (or construct
+      DoeffGenerator directly with all required metadata fields).
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-002
+
+  - id: doeff-no-dunder-inner-chain-walking
+    pattern-regex: "__doeff_inner__"
+    paths:
+      include:
+        - "**/doeff/do.py"
+    message: |
+      VM-PROTO-002 C1: doeff/do.py must not rely on __doeff_inner__ dunder
+      chain walking. Use explicit get_frame callbacks (plain gi_frame or
+      bridge-local traversal) for DoeffGenerator frame resolution.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-002
+
   # ---------------------------------------------------------------------------
   # LAYER BOUNDARIES
   # ---------------------------------------------------------------------------
