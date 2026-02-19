@@ -10,7 +10,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from doeff.types import Effect, EffectBase, _intercept_value
-from doeff.utils import create_effect_with_trace
 
 if TYPE_CHECKING:  # pragma: no cover - type-only import
     from doeff.program import Program
@@ -24,4 +23,4 @@ def intercept_value(
     return _intercept_value(value, transform)
 
 
-__all__ = ["Effect", "EffectBase", "create_effect_with_trace", "intercept_value"]
+__all__ = ["Effect", "EffectBase", "intercept_value"]

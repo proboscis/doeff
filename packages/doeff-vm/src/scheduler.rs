@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::capture::{EffectCreationSite, SpawnSite};
+use crate::capture::SpawnSite;
 use crate::continuation::Continuation;
 #[cfg(test)]
 use crate::effect::Effect;
@@ -19,6 +19,7 @@ use crate::effect::{
     PyCancelEffect, PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyFailPromise,
     PyGather, PyRace, PySpawn, PyTaskCompleted,
 };
+use crate::frame::Frame;
 use crate::handler::{
     Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
 };
@@ -452,36 +453,95 @@ fn extract_semaphore_id(obj: &Bound<'_, PyAny>) -> Option<u64> {
     obj.getattr("id").ok()?.extract::<u64>().ok()
 }
 
-fn extract_effect_creation_site(obj: &Bound<'_, PyAny>) -> Option<SpawnSite> {
-    let created_at = obj.getattr("created_at").ok()?;
-    if created_at.is_none() {
-        return None;
-    }
-
-    let source_file = created_at
-        .getattr("filename")
-        .ok()?
-        .extract::<String>()
-        .ok()?;
-    let source_line = created_at.getattr("line").ok()?.extract::<u32>().ok()?;
-    let function_name = created_at
-        .getattr("function")
-        .ok()?
-        .extract::<String>()
-        .ok()?;
-
-    let site = EffectCreationSite {
-        function_name,
-        source_file,
-        source_line,
-    };
-    Some(site.into())
+fn generator_frame_from_callback(
+    generator: &PyShared,
+    get_frame: &PyShared,
+) -> Result<Option<PyShared>, String> {
+    Python::attach(|py| {
+        let callback = get_frame.bind(py);
+        let frame_obj = callback
+            .call1((generator.bind(py),))
+            .map_err(|e| format!("get_frame callback failed: {e}"))?;
+        if frame_obj.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(PyShared::new(frame_obj.unbind())))
+    })
 }
 
-fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEffect>, String> {
+fn resolve_generator_location(
+    generator: &PyShared,
+    get_frame: &PyShared,
+) -> Result<Option<(String, u32)>, String> {
+    let Some(frame) = generator_frame_from_callback(generator, get_frame)? else {
+        return Ok(None);
+    };
+    Python::attach(|py| {
+        let frame_bound = frame.bind(py);
+        let code = frame_bound
+            .getattr("f_code")
+            .map_err(|e| format!("frame missing f_code: {e}"))?;
+        let file = code
+            .getattr("co_filename")
+            .and_then(|v| v.extract::<String>())
+            .map_err(|e| format!("frame code missing co_filename: {e}"))?;
+        let line = frame_bound
+            .getattr("f_lineno")
+            .and_then(|v| v.extract::<u32>())
+            .map_err(|e| format!("frame missing f_lineno: {e}"))?;
+        Ok(Some((file, line)))
+    })
+}
+
+fn is_internal_source_file(source_file: &str) -> bool {
+    let normalized = source_file.replace('\\', "/").to_lowercase();
+    normalized == "_effect_wrap" || normalized.contains("/doeff/")
+}
+
+fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
+    let mut fallback: Option<SpawnSite> = None;
+
+    for frame in k.frames_snapshot.iter().rev() {
+        if let Frame::PythonGenerator {
+            generator,
+            get_frame,
+            metadata: Some(metadata),
+            ..
+        } = frame
+        {
+            let fallback_candidate = SpawnSite {
+                function_name: metadata.function_name.clone(),
+                source_file: metadata.source_file.clone(),
+                source_line: metadata.source_line,
+            };
+            let candidate = match resolve_generator_location(generator, get_frame) {
+                Ok(Some((source_file, source_line))) => SpawnSite {
+                    function_name: metadata.function_name.clone(),
+                    source_file,
+                    source_line,
+                },
+                Ok(None) => fallback_candidate,
+                Err(_) => fallback_candidate,
+            };
+
+            if fallback.is_none() {
+                fallback = Some(candidate.clone());
+            }
+            if !is_internal_source_file(&candidate.source_file) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    fallback
+}
+
+fn parse_scheduler_python_effect(
+    effect: &PyShared,
+    creation_site: Option<SpawnSite>,
+) -> Result<Option<SchedulerEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        let creation_site = extract_effect_creation_site(obj);
 
         if let Ok(spawn) = obj.extract::<PyRef<'_, PySpawn>>() {
             let handlers = extract_handlers_from_python(spawn.handlers.bind(py))?;
@@ -2058,8 +2118,10 @@ impl RustHandlerProgram for SchedulerProgram {
             }
         }
 
+        let creation_site = spawn_site_from_continuation(&k_user);
+
         let sched_effect = if let Some(obj) = dispatch_into_python(effect.clone()) {
-            match parse_scheduler_python_effect(&obj) {
+            match parse_scheduler_python_effect(&obj, creation_site.clone()) {
                 Ok(Some(se)) => se,
                 Ok(None) => {
                     return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
@@ -2400,8 +2462,12 @@ impl SchedulerHandler {
 
 impl RustProgramHandler for SchedulerHandler {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
-        dispatch_ref_as_python(effect)
-            .is_some_and(|obj| matches!(parse_scheduler_python_effect(obj), Ok(Some(_)) | Err(_)))
+        dispatch_ref_as_python(effect).is_some_and(|obj| {
+            matches!(
+                parse_scheduler_python_effect(obj, None),
+                Ok(Some(_)) | Err(_)
+            )
+        })
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -2597,31 +2663,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_spawn_effect_uses_created_at_as_creation_site() {
+    fn test_parse_spawn_effect_uses_passed_creation_site() {
         Python::attach(|py| {
-            let module = pyo3::types::PyModule::from_code(
-                py,
-                c"class _Ctx:\n    def __init__(self, filename, line, function):\n        self.filename = filename\n        self.line = line\n        self.function = function\n",
-                c"_scheduler_created_at_test.py",
-                c"_scheduler_created_at_test",
-            )
-            .expect("failed to create test module");
-            let ctx = module
-                .getattr("_Ctx")
-                .expect("missing _Ctx")
-                .call1(("/tmp/user_program.py", 321_u32, "parent"))
-                .expect("failed to instantiate _Ctx")
-                .unbind();
-
             let spawn = Py::new(py, PySpawn::create(py, py.None(), None, None, None))
                 .expect("failed to create SpawnEffect");
-            spawn
-                .bind(py)
-                .call_method1("with_created_at", (ctx,))
-                .expect("failed to set created_at");
             let obj = spawn.into_any();
 
-            let parsed = parse_scheduler_python_effect(&PyShared::new(obj))
+            let creation_site = Some(SpawnSite {
+                function_name: "parent".to_string(),
+                source_file: "/tmp/user_program.py".to_string(),
+                source_line: 321,
+            });
+
+            let parsed = parse_scheduler_python_effect(&PyShared::new(obj), creation_site)
                 .expect("failed to parse effect")
                 .expect("effect should be parsed as scheduler spawn");
             match parsed {

@@ -10,7 +10,7 @@ import json
 import traceback
 from abc import abstractmethod
 from collections.abc import Callable, Generator, Hashable, Iterable, Iterator
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from functools import wraps
 from pprint import pformat
 from typing import (
@@ -95,108 +95,21 @@ def _truncate_repr(obj: object, limit: int | None) -> str:
 
 
 # ============================================
-# Effect Creation Context
+# Trace Location
 # ============================================
 
 
 @dataclass(frozen=True)
-class EffectCreationContext:
-    """Context information about where an effect was created."""
+class TraceLocation:
+    """Location metadata for display and diagnostics."""
 
     filename: str
     line: int
     function: str
     code: str | None = None
-    stack_trace: list[dict[str, Any]] = field(default_factory=list)
-    frame_info: Any = None  # FrameInfo from inspect module
 
     def format_location(self) -> str:
-        """Format the creation location as a string."""
         return f"{self.filename}:{self.line} in {self.function}"
-
-    def format_full(self) -> str:
-        """Format the full creation context with stack trace."""
-        lines = []
-        lines.append(f"Effect created at {self.format_location()}")
-        if self.code:
-            lines.append(f"    {self.code}")
-        if self.stack_trace:
-            lines.append("\nCreation stack trace:")
-            for frame in self.stack_trace:
-                lines.append(
-                    f'  File "{frame["filename"]}", line {frame["line"]}, in {frame["function"]}'
-                )
-                if frame.get("code"):
-                    lines.append(f"    {frame['code']}")
-        return "\n".join(lines)
-
-    def build_traceback(self) -> str:
-        """Build a detailed traceback-style output from stored frame information."""
-        lines = []
-        lines.append("Traceback (most recent call last):")
-
-        # Add frames from stack_trace in reverse order (innermost last)
-        if self.stack_trace:
-            for frame in reversed(self.stack_trace):
-                filename = frame.get("filename", "<unknown>")
-                line_no = frame.get("line", 0)
-                func_name = frame.get("function", "<unknown>")
-                code = frame.get("code", "")
-
-                lines.append(f'  File "{filename}", line {line_no}, in {func_name}')
-                if code:
-                    lines.append(f"    {code}")
-
-        # Add the immediate creation location
-        lines.append(f'  File "{self.filename}", line {self.line}, in {self.function}')
-        if self.code:
-            lines.append(f"    {self.code}")
-
-        return "\n".join(lines)
-
-    def without_frames(self) -> EffectCreationContext:
-        """Return a sanitized copy without live frame references."""
-
-        sanitized_stack: list[dict[str, Any]] = []
-        for frame in self.stack_trace:
-            if isinstance(frame, dict):
-                sanitized_frame = {key: value for key, value in frame.items() if key != "frame"}
-                sanitized_stack.append(sanitized_frame)
-
-        return EffectCreationContext(
-            filename=self.filename,
-            line=self.line,
-            function=self.function,
-            code=self.code,
-            stack_trace=sanitized_stack,
-            frame_info=None,
-        )
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Return picklable state, excluding unpicklable frame objects."""
-        sanitized_stack: list[dict[str, Any]] = []
-        for frame in self.stack_trace:
-            if isinstance(frame, dict):
-                sanitized_frame = {key: value for key, value in frame.items() if key != "frame"}
-                sanitized_stack.append(sanitized_frame)
-
-        return {
-            "filename": self.filename,
-            "line": self.line,
-            "function": self.function,
-            "code": self.code,
-            "stack_trace": sanitized_stack,
-            "frame_info": None,  # Frame objects cannot be pickled
-        }
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore state from pickle."""
-        object.__setattr__(self, "filename", state["filename"])
-        object.__setattr__(self, "line", state["line"])
-        object.__setattr__(self, "function", state["function"])
-        object.__setattr__(self, "code", state["code"])
-        object.__setattr__(self, "stack_trace", state["stack_trace"])
-        object.__setattr__(self, "frame_info", state["frame_info"])
 
 
 # ============================================
@@ -290,11 +203,13 @@ class CapturedTraceback:
         # Search from innermost frame outward for a user code frame
         for frame in reversed(frames):
             if _is_user_code_path(frame.filename):
-                return RaiseLocation(frame.filename, frame.lineno, frame.name, frame.line)
+                line_no = frame.lineno if frame.lineno is not None else 0
+                return RaiseLocation(frame.filename, line_no, frame.name, frame.line)
 
         # Fall back to innermost frame even if not user code
         frame = frames[-1]
-        return RaiseLocation(frame.filename, frame.lineno, frame.name, frame.line)
+        line_no = frame.lineno if frame.lineno is not None else 0
+        return RaiseLocation(frame.filename, line_no, frame.name, frame.line)
 
 
 @dataclass(frozen=True)
@@ -504,36 +419,26 @@ def get_captured_traceback(exc: BaseException) -> CapturedTraceback | None:
 class EffectFailureError(Exception):
     """Complete error information for a failed effect.
 
-    Combines both the runtime traceback (where error occurred) and
-    creation context (where effect was created) into a single clean structure.
+    Captures both the failing effect and runtime traceback context.
     """
 
     effect: Effect
     cause: BaseException  # The original exception that caused the failure
     runtime_traceback: CapturedTraceback | None = None
-    creation_context: EffectCreationContext | None = None
+    traceback_data: Any | None = None
     call_stack_snapshot: tuple[CallFrame, ...] = field(
         default_factory=tuple
     )  # Program call stack at failure time
 
     def __str__(self) -> str:
         """Format the error for display."""
-        lines = [f"Effect '{self.effect.__class__.__name__}' failed"]
-
-        # Add creation location if available
-        if self.creation_context:
-            lines.append(f"Created at: {self.creation_context.format_location()}")
-
-        # Add the cause
-        lines.append(f"Caused by: {self.cause.__class__.__name__}: {self.cause}")
-
-        return "\n".join(lines)
+        return (
+            f"Effect '{self.effect.__class__.__name__}' failed\n"
+            f"Caused by: {self.cause.__class__.__name__}: {self.cause}"
+        )
 
     def __post_init__(self) -> None:
         """Capture runtime traceback if not provided."""
-        if self.creation_context is None:
-            self.creation_context = getattr(self.effect, "created_at", None)
-
         if self.runtime_traceback is None and isinstance(self.cause, BaseException):
             captured = get_captured_traceback(self.cause)
             if captured is None:
@@ -549,8 +454,6 @@ EffectFailure = EffectFailureError
 # ============================================
 
 from doeff.program import DoExpr, Program, ProgramBase
-
-E = TypeVar("E", bound="EffectBase")
 
 try:
     from doeff_vm import EffectBase as _RustEffectBase
@@ -583,11 +486,6 @@ class _EffectBaseMeta(type):
 class Effect(Protocol):
     """Protocol implemented by all effect values."""
 
-    created_at: EffectCreationContext | None
-
-    def with_created_at(self: E, created_at: EffectCreationContext | None) -> E:
-        """Return a copy with updated creation context."""
-
 
 @dataclass(frozen=True, kw_only=True)
 class EffectBase(_RustEffectBase, metaclass=_EffectBaseMeta):
@@ -598,13 +496,7 @@ class EffectBase(_RustEffectBase, metaclass=_EffectBaseMeta):
     Dispatch occurs when lifted into control IR via Perform(effect).
     """
 
-    created_at: EffectCreationContext | None = field(default=None, compare=False, repr=False)
     __doeff_effect_base__: bool = field(default=True, init=False, repr=False, compare=False)
-
-    def with_created_at(self: E, created_at: EffectCreationContext | None) -> E:
-        if created_at is self.created_at:
-            return self
-        return replace(self, created_at=created_at)
 
     def map(self, f: Callable[[Any], Any]) -> Program[Any]:
         raise TypeError(
@@ -661,12 +553,14 @@ class CallFrame:
     enabling call tree reconstruction for effect tracking.
     """
 
-    kleisli: Any  # KleisliProgram (type hint avoided to prevent circular import)
-    function_name: str
-    args: tuple
-    kwargs: dict[str, Any]
-    depth: int  # Depth in the call stack (0 = top-level)
-    created_at: EffectCreationContext | None
+    kleisli: Any = None  # KleisliProgram (type hint avoided to prevent circular import)
+    function_name: str = "<unknown>"
+    args: tuple[Any, ...] = field(default_factory=tuple)
+    kwargs: dict[str, Any] = field(default_factory=dict)
+    depth: int = 0  # Depth in the call stack (0 = top-level)
+    source_file: str | None = None
+    source_line: int | None = None
+    args_repr: str | None = None
 
 
 # ============================================
@@ -738,7 +632,7 @@ class EffectObservation:
 
     effect_type: str
     key: EnvKey | None
-    context: EffectCreationContext | None = None
+    context: TraceLocation | None = None
     call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)
 
 
@@ -752,10 +646,10 @@ class EffectFailureInfo:
     """Summary of a single EffectFailure instance within an error chain."""
 
     effect: Effect
-    creation_context: EffectCreationContext | None
     cause: BaseException | None
     runtime_trace: CapturedTraceback | None
     cause_trace: CapturedTraceback | None
+    traceback_data: Any | None = None
     call_stack_snapshot: tuple[CallFrame, ...] = field(
         default_factory=tuple
     )  # Program call stack at failure
@@ -804,6 +698,7 @@ class RunFailureDetails:
             if isinstance(exc, EffectFailure):
                 runtime_trace = exc.runtime_traceback
                 cause_exc: BaseException | None = exc.cause if exc.cause else None
+                traceback_data = getattr(exc, "traceback_data", None)
                 if cause_exc is not None:
                     seen_exceptions.add(id(cause_exc))
                 # Get call stack snapshot from EffectFailure if available
@@ -811,10 +706,10 @@ class RunFailureDetails:
                 entries.append(
                     EffectFailureInfo(
                         effect=exc.effect,
-                        creation_context=exc.creation_context,
                         cause=cause_exc,
                         runtime_trace=runtime_trace,
                         cause_trace=capture(cause_exc),
+                        traceback_data=traceback_data,
                         call_stack_snapshot=call_stack,
                     )
                 )
@@ -1295,7 +1190,7 @@ class _DepAskUsageRecord:
     effect_type: str
     key: EnvKey | None
     count: int
-    first_context: EffectCreationContext | None
+    first_context: TraceLocation | None
 
 
 @dataclass(frozen=True)
@@ -1462,13 +1357,6 @@ class _StatusSection(_BaseSection):
                                 lines.append(self.indent(3, loc.code.strip()))
                 else:
                     lines.append(self.indent(1, f"Effect '{effect_name}' failed"))
-                    if head.creation_context:
-                        lines.append(
-                            self.indent(
-                                2,
-                                f"📍 Created at: {head.creation_context.format_location()}",
-                            )
-                        )
                 if head.cause:
                     if isinstance(head.cause, EffectFailure):
                         lines.append(
@@ -1593,7 +1481,7 @@ class _UserEffectStackSection(_BaseSection):
         return root_cause
 
     def _extract_user_frames(self, details: RunFailureDetails) -> list[_UserEffectFrame]:
-        """Extract user code frames from effect creation contexts and call stack."""
+        """Extract user code frames from call stacks and runtime tracebacks."""
         frames: list[_UserEffectFrame] = []
         seen_locations: set[tuple[str, int, str]] = set()
 
@@ -1601,25 +1489,35 @@ class _UserEffectStackSection(_BaseSection):
             if not isinstance(entry, EffectFailureInfo):
                 continue
 
-            # First, add frames from the program call stack (outer -> inner call chain)
-            # This shows the KleisliProgram call chain: outer_call -> middle_call -> inner_fail
+            # First, add frames from the program call stack (outer -> inner call chain).
             if entry.call_stack_snapshot:
                 for call_frame in entry.call_stack_snapshot:
-                    ctx = call_frame.created_at
-                    if ctx is None:
+                    filename = getattr(call_frame, "source_file", None)
+                    if filename is None and isinstance(call_frame, dict):
+                        filename = call_frame.get("source_file")
+                    line_no = getattr(call_frame, "source_line", None)
+                    if line_no is None and isinstance(call_frame, dict):
+                        line_no = call_frame.get("source_line")
+                    function_name = getattr(call_frame, "function_name", None)
+                    if function_name is None and isinstance(call_frame, dict):
+                        function_name = call_frame.get("function_name")
+
+                    if not isinstance(filename, str) or not isinstance(line_no, int):
                         continue
-                    if not _is_user_code_path(ctx.filename):
+                    if not isinstance(function_name, str):
+                        function_name = "<unknown>"
+                    if not _is_user_code_path(filename):
                         continue
-                    loc_key = (ctx.filename, ctx.line, ctx.function)
+                    loc_key = (filename, line_no, function_name)
                     if loc_key in seen_locations:
                         continue
                     seen_locations.add(loc_key)
                     frames.append(
                         _UserEffectFrame(
-                            filename=ctx.filename,
-                            line=ctx.line,
-                            function=call_frame.function_name,  # Use the called function name
-                            code=ctx.code,
+                            filename=filename,
+                            line=line_no,
+                            function=function_name,
+                            code=None,
                         )
                     )
 
@@ -1640,51 +1538,6 @@ class _UserEffectStackSection(_BaseSection):
                                 code=loc.code,
                             )
                         )
-
-            # Then add frames from effect creation context
-            ctx = entry.creation_context
-            if ctx is None:
-                continue
-
-            # Add frames from stack_trace (these are the call chain within the generator)
-            if ctx.stack_trace:
-                for frame_data in reversed(ctx.stack_trace):
-                    filename = frame_data.get("filename", "<unknown>")
-                    line_no = frame_data.get("line", 0)
-                    func_name = frame_data.get("function", "<unknown>")
-                    code = frame_data.get("code")
-
-                    # Only include user code frames
-                    if not _is_user_code_path(filename):
-                        continue
-
-                    loc_key = (filename, line_no, func_name)
-                    if loc_key in seen_locations:
-                        continue
-                    seen_locations.add(loc_key)
-
-                    frames.append(
-                        _UserEffectFrame(
-                            filename=filename,
-                            line=line_no,
-                            function=func_name,
-                            code=code,
-                        )
-                    )
-
-            # Add the immediate creation location (where the effect was created)
-            if _is_user_code_path(ctx.filename):
-                loc_key = (ctx.filename, ctx.line, ctx.function)
-                if loc_key not in seen_locations:
-                    seen_locations.add(loc_key)
-                    frames.append(
-                        _UserEffectFrame(
-                            filename=ctx.filename,
-                            line=ctx.line,
-                            function=ctx.function,
-                            code=ctx.code,
-                        )
-                    )
 
         return frames
 
@@ -1758,36 +1611,28 @@ class _ErrorSection(_BaseSection):
                     return lines
             return [self.indent(2, "📍 Raised at: <unknown>")]
 
-        ctx = entry.creation_context
-        if ctx is None:
-            return [self.indent(2, "📍 Created at: <unknown>")]
+        for call_frame in reversed(entry.call_stack_snapshot):
+            source_file = getattr(call_frame, "source_file", None)
+            if source_file is None and isinstance(call_frame, dict):
+                source_file = call_frame.get("source_file")
+            source_line = getattr(call_frame, "source_line", None)
+            if source_line is None and isinstance(call_frame, dict):
+                source_line = call_frame.get("source_line")
+            function_name = getattr(call_frame, "function_name", None)
+            if function_name is None and isinstance(call_frame, dict):
+                function_name = call_frame.get("function_name")
 
-        lines = [self.indent(2, f"📍 Created at: {ctx.format_location()}")]
-        if ctx.code:
-            lines.append(self.indent(3, ctx.code))
+            if not isinstance(source_file, str) or not isinstance(source_line, int):
+                continue
+            if not isinstance(function_name, str):
+                function_name = "<unknown>"
 
-        if not ctx.stack_trace:
-            return lines
+            rel_path = self._relative_path(source_file)
+            return [self.indent(2, f"📍 Yielded at: {rel_path}:{source_line} in {function_name}")]
 
-        trace_lines = ctx.build_traceback().splitlines()
-        if self.context.verbose:
-            lines.append(self.indent(2, "📍 Effect Creation Stack Trace:"))
-            lines.extend(self._indent_creation_trace(trace_lines))
-            return lines
-
-        should_show_stack = is_primary or not isinstance(entry.cause, EffectFailure)
-        if should_show_stack:
-            label = (
-                "🔥 Fail Creation Stack Trace:"
-                if effect_name == "ResultFailEffect"
-                else "🔥 Effect Creation Stack Trace:"
-            )
-            lines.append(self.indent(2, label))
-            lines.extend(self._indent_creation_trace(trace_lines))
-        return lines
-
-    def _indent_creation_trace(self, trace_lines: list[str]) -> list[str]:
-        return [self.indent(3, line) for line in trace_lines]
+        if is_primary:
+            return [self.indent(2, "📍 Yielded at: <unknown>")]
+        return []
 
     def _render_effect_cause(self, entry: EffectFailureInfo) -> list[str]:
         cause = entry.cause

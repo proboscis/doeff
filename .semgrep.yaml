@@ -13,6 +13,28 @@ rules:
   # EFFECT SYSTEM PATTERNS
   # ---------------------------------------------------------------------------
 
+  - id: doeff-no-effect-creation-context-wrapper
+    patterns:
+      - pattern-either:
+          - pattern: create_effect_with_trace(...)
+          - pattern: capture_creation_context(...)
+    paths:
+      include:
+        - "**/doeff/effects/**"
+        - "**/packages/doeff-events/src/**"
+        - "**/packages/doeff-time/src/**"
+        - "**/packages/doeff-sim/src/**"
+        - "**/doeff/utils.py"
+    message: |
+      BANNED: EffectCreationContext wrappers are removed (VM-PROTO-006).
+      Construct effects directly; source locations come from DoeffGenerator.get_frame
+      and VM traceback_data, not effect.created_at metadata.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-006
+
   - id: doeff-no-python-side-cancel-state
     patterns:
       - pattern-either:
@@ -108,7 +130,7 @@ rules:
     message: |
       BANNED: Task.cancel() must yield an effect, not return Program.pure().
       Cancel is a scheduler operation — it must go through effect dispatch.
-      Use: return create_effect_with_trace(TaskCancelEffect(task=self), ...)
+      Use: return TaskCancelEffect(task=self)
       See SPEC-SCHED-001 §PyTask, ISSUE-CORE-502.
     languages: [python]
     severity: ERROR

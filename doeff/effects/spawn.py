@@ -18,7 +18,7 @@ import doeff_vm
 
 from ._program_types import ProgramLike
 from ._validators import ensure_dict_str_any, ensure_program_like
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase
 
 T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
@@ -90,7 +90,7 @@ class Task(Generic[T]):
 
         Cancellation is a scheduler operation and must be dispatched as an effect.
         """
-        return create_effect_with_trace(TaskCancelEffect(task=self), skip_frames=3)
+        return TaskCancelEffect(task=self)
 
     def is_done(self) -> Effect:
         """Check if the task has completed (success, error, or cancelled).
@@ -100,7 +100,7 @@ class Task(Generic[T]):
         Returns:
             Effect that yields True if the task is done, False otherwise.
         """
-        return create_effect_with_trace(TaskIsDoneEffect(task=self), skip_frames=3)
+        return TaskIsDoneEffect(task=self)
 
 
 @dataclass(frozen=True)
@@ -216,12 +216,10 @@ def spawn(
     ensure_program_like(program, name="program")
     ensure_dict_str_any(options, name="options")
 
-    effect = create_effect_with_trace(
-        SpawnEffect(
-            program=program,
-            options=options,
-            store_mode="isolated",
-        )
+    effect = SpawnEffect(
+        program=program,
+        options=options,
+        store_mode="isolated",
     )
     return _spawn_program(effect)
 
@@ -242,13 +240,10 @@ def Spawn(
     ensure_program_like(program, name="program")
     ensure_dict_str_any(options, name="options")
 
-    effect = create_effect_with_trace(
-        SpawnEffect(
-            program=program,
-            options=options,
-            store_mode="isolated",
-        ),
-        skip_frames=3,
+    effect = SpawnEffect(
+        program=program,
+        options=options,
+        store_mode="isolated",
     )
     return _spawn_program(effect)
 

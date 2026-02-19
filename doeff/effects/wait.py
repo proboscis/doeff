@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase
 from .gather import gather
 from .spawn import Waitable, normalize_waitable
 
@@ -21,7 +21,7 @@ class WaitEffect(EffectBase):
 
 def wait(future: Waitable[T]) -> WaitEffect:
     normalized = normalize_waitable(future)
-    return create_effect_with_trace(WaitEffect(future=normalized))
+    return WaitEffect(future=normalized)
 
 
 def Wait(future: Waitable[T]):

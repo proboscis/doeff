@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import warnings
 
 from ._validators import ensure_non_negative_int
-from .base import EffectBase, create_effect_with_trace
+from .base import EffectBase
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ def ProgramCallFrame(depth: int = 0) -> ProgramCallFrameEffect:
             the depth exceeds the available call stack.
     """
 
-    return create_effect_with_trace(ProgramCallFrameEffect(depth=depth))
+    return ProgramCallFrameEffect(depth=depth)
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ def ProgramCallStack() -> ProgramCallStackEffect:
         stacklevel=2,
     )
 
-    return create_effect_with_trace(ProgramCallStackEffect())
+    return ProgramCallStackEffect()
 
 
 __all__ = [
