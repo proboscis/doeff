@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
 use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::doeff_generator::DoeffGenerator;
 use crate::effect::{
     dispatch_from_shared, dispatch_to_pyobject, PyAsk, PyCancelEffect, PyCompletePromise,
     PyCreateExternalPromise, PyCreatePromise, PyFailPromise, PyGather, PyGet, PyLocal, PyModify,
@@ -176,6 +177,91 @@ fn lift_effect_to_perform_expr(py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<P
             }),
     )?;
     Ok(perform.into_any().unbind())
+}
+
+fn default_get_frame_callback(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    use pyo3::types::PyModule;
+    let code = c"from doeff.do import resolve_doeff_inner\n\ndef _doeff_default_get_frame(generator):\n    current = generator\n    for _ in range(8):\n        inner = resolve_doeff_inner(current)\n        if inner is None:\n            inner = getattr(current, '__doeff_inner__', None)\n        if inner is None:\n            break\n        current = inner\n    return getattr(current, 'gi_frame', None)\n";
+    let module = PyModule::from_code(
+        py,
+        code,
+        c"_doeff_default_get_frame.py",
+        c"_doeff_default_get_frame",
+    )?;
+    Ok(module.getattr("_doeff_default_get_frame")?.unbind())
+}
+
+fn infer_generator_metadata(generator: &Bound<'_, PyAny>) -> (String, String, u32) {
+    let py = generator.py();
+    let resolve_doeff_inner = py
+        .import("doeff.do")
+        .ok()
+        .and_then(|m| m.getattr("resolve_doeff_inner").ok());
+    let mut current = generator.clone();
+    for _ in 0..8 {
+        let mapped = resolve_doeff_inner
+            .as_ref()
+            .and_then(|resolver| resolver.call1((current.clone(),)).ok())
+            .filter(|inner| !inner.is_none());
+        let next = mapped.or_else(|| {
+            current
+                .getattr("__doeff_inner__")
+                .ok()
+                .filter(|inner| !inner.is_none())
+        });
+        let Some(next_inner) = next else {
+            break;
+        };
+        current = next_inner;
+    }
+
+    let function_name = current
+        .getattr("gi_code")
+        .ok()
+        .and_then(|code| code.getattr("co_name").ok())
+        .and_then(|name| name.extract::<String>().ok())
+        .or_else(|| {
+            current
+                .getattr("__name__")
+                .ok()
+                .and_then(|name| name.extract::<String>().ok())
+        })
+        .unwrap_or_else(|| "<generator>".to_string());
+
+    let source_file = current
+        .getattr("gi_code")
+        .ok()
+        .and_then(|code| code.getattr("co_filename").ok())
+        .and_then(|file| file.extract::<String>().ok())
+        .unwrap_or_else(|| "<unknown>".to_string());
+
+    let source_line = current
+        .getattr("gi_code")
+        .ok()
+        .and_then(|code| code.getattr("co_firstlineno").ok())
+        .and_then(|line| line.extract::<u32>().ok())
+        .unwrap_or(0);
+
+    (function_name, source_file, source_line)
+}
+
+fn wrap_raw_generator_as_doeff_generator(
+    py: Python<'_>,
+    generator: Py<PyAny>,
+) -> PyResult<Py<PyAny>> {
+    let get_frame = default_get_frame_callback(py)?;
+    let (function_name, source_file, source_line) = infer_generator_metadata(generator.bind(py));
+    let wrapped = Bound::new(
+        py,
+        DoeffGenerator {
+            generator,
+            function_name,
+            source_file,
+            source_line,
+            get_frame,
+        },
+    )?;
+    Ok(wrapped.into_any().unbind())
 }
 
 #[pyclass]
@@ -680,15 +766,92 @@ impl PyVM {
 
 impl PyVM {
     fn is_python_generator_object(obj: &Bound<'_, PyAny>) -> bool {
-        obj.get_type()
+        let py = obj.py();
+        let by_inspect = py
+            .import("inspect")
+            .and_then(|m| m.getattr("isgenerator"))
+            .and_then(|f| f.call1((obj.clone(),)))
+            .ok()
+            .and_then(|v| v.extract::<bool>().ok())
+            .unwrap_or(false);
+        if by_inspect {
+            return true;
+        }
+        obj.hasattr("__doeff_inner__").unwrap_or(false)
+    }
+
+    fn is_doeff_generator_object(obj: &Bound<'_, PyAny>) -> bool {
+        obj.is_instance_of::<DoeffGenerator>()
+    }
+
+    fn require_doeff_generator(
+        &self,
+        py: Python<'_>,
+        candidate: Py<PyAny>,
+        context: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let candidate_bound = candidate.bind(py);
+        if Self::is_doeff_generator_object(candidate_bound) {
+            return Ok(candidate);
+        }
+
+        let ty = candidate_bound
+            .get_type()
             .name()
-            .map(|n| n.to_string_lossy().as_ref() == "generator")
-            .unwrap_or(false)
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string());
+        if Self::is_python_generator_object(candidate_bound) {
+            return Err(PyTypeError::new_err(format!(
+                "{context}: raw generators are not accepted; expected DoeffGenerator"
+            )));
+        }
+        Err(PyTypeError::new_err(format!(
+            "{context}: expected DoeffGenerator, got {ty}"
+        )))
+    }
+
+    fn extract_doeff_generator(
+        &self,
+        py: Python<'_>,
+        gen: Bound<'_, PyAny>,
+        context: &str,
+    ) -> PyResult<(PyShared, PyShared, CallMetadata)> {
+        let wrapped: PyRef<'_, DoeffGenerator> = gen.extract().map_err(|_| {
+            let ty = gen
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            PyTypeError::new_err(format!("{context}: expected DoeffGenerator, got {ty}"))
+        })?;
+
+        if !wrapped.get_frame.bind(py).is_callable() {
+            return Err(PyTypeError::new_err(format!(
+                "{context}: DoeffGenerator.get_frame must be callable"
+            )));
+        }
+
+        let metadata = CallMetadata::new(
+            wrapped.function_name.clone(),
+            wrapped.source_file.clone(),
+            wrapped.source_line,
+            None,
+            None,
+        );
+        Ok((
+            PyShared::new(wrapped.generator.clone_ref(py)),
+            PyShared::new(wrapped.get_frame.clone_ref(py)),
+            metadata,
+        ))
     }
 
     fn start_with_generator(&mut self, gen: Bound<'_, PyAny>) -> PyResult<()> {
         self.vm.end_active_run_session();
         self.vm.begin_run_session();
+
+        let py = gen.py();
+        let (generator, get_frame, metadata) =
+            self.extract_doeff_generator(py, gen, "start_with_generator")?;
 
         let marker = Marker::fresh();
         let installed_markers = self.vm.installed_handler_markers();
@@ -701,9 +864,10 @@ impl PyVM {
 
         if let Some(seg) = self.vm.current_segment_mut() {
             seg.push_frame(crate::frame::Frame::PythonGenerator {
-                generator: PyShared::new(gen.unbind()),
+                generator,
+                get_frame,
                 started: false,
-                metadata: None,
+                metadata: Some(metadata),
             });
         }
         self.vm.mode = Mode::Deliver(Value::Unit);
@@ -732,7 +896,15 @@ impl PyVM {
                 let py_args = self.values_to_tuple(py, &args)?;
                 if kwargs.is_empty() {
                     match func.bind(py).call1(py_args) {
-                        Ok(result) => Ok(PyCallOutcome::Value(Value::from_pyobject(&result))),
+                        Ok(result) => {
+                            if Self::is_python_generator_object(&result) {
+                                let wrapped =
+                                    wrap_raw_generator_as_doeff_generator(py, result.unbind())?;
+                                Ok(PyCallOutcome::Value(Value::Python(wrapped)))
+                            } else {
+                                Ok(PyCallOutcome::Value(Value::from_pyobject(&result)))
+                            }
+                        }
                         Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                     }
                 } else {
@@ -741,7 +913,15 @@ impl PyVM {
                         py_kwargs.set_item(key, val.to_pyobject(py)?)?;
                     }
                     match func.bind(py).call(py_args, Some(&py_kwargs)) {
-                        Ok(result) => Ok(PyCallOutcome::Value(Value::from_pyobject(&result))),
+                        Ok(result) => {
+                            if Self::is_python_generator_object(&result) {
+                                let wrapped =
+                                    wrap_raw_generator_as_doeff_generator(py, result.unbind())?;
+                                Ok(PyCallOutcome::Value(Value::Python(wrapped)))
+                            } else {
+                                Ok(PyCallOutcome::Value(Value::from_pyobject(&result)))
+                            }
+                        }
                         Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                     }
                 }
@@ -761,13 +941,15 @@ impl PyVM {
                 .into_any();
                 match handler.bind(py).call1((py_effect, py_k)) {
                     Ok(result) => {
-                        let is_generator = py
-                            .import("types")
-                            .and_then(|m| m.getattr("GeneratorType"))
-                            .and_then(|ty| result.is_instance(&ty))
-                            .unwrap_or(false);
+                        if Self::is_doeff_generator_object(&result) {
+                            return Ok(PyCallOutcome::Value(Value::Python(result.unbind())));
+                        }
+
+                        let is_generator = Self::is_python_generator_object(&result);
                         if is_generator {
-                            Ok(PyCallOutcome::Value(Value::Python(result.unbind())))
+                            let wrapped =
+                                wrap_raw_generator_as_doeff_generator(py, result.unbind())?;
+                            Ok(PyCallOutcome::Value(Value::Python(wrapped)))
                         } else {
                             if is_effect_base_like(py, &result)? {
                                 let lifted = lift_effect_to_perform_expr(py, result.unbind())?;
@@ -838,6 +1020,16 @@ impl PyVM {
         let program = lift_effect_to_perform_expr(py, program)?;
         let program_bound = program.bind(py);
 
+        if Self::is_doeff_generator_object(program_bound) {
+            return Ok(program);
+        }
+
+        if Self::is_python_generator_object(program_bound) {
+            return Err(PyTypeError::new_err(
+                "program must be DoeffGenerator; raw generator received",
+            ));
+        }
+
         let is_nesting_step = program_bound
             .get_type()
             .name()
@@ -845,11 +1037,7 @@ impl PyVM {
             .unwrap_or(false);
         if is_nesting_step || program_bound.is_instance_of::<NestingStep>() {
             let gen = program_bound.call_method0("to_generator")?;
-            return Ok(gen.unbind());
-        }
-
-        if Self::is_python_generator_object(program_bound) {
-            return Ok(program);
+            return self.require_doeff_generator(py, gen.unbind(), "NestingStep.to_generator");
         }
 
         // ProgramBase path: objects may expose `to_generator()` without being
@@ -858,12 +1046,22 @@ impl PyVM {
         if let Ok(to_generator) = program_bound.getattr("to_generator") {
             if to_generator.is_callable() {
                 let generated = to_generator.call0()?;
-                if !Self::is_python_generator_object(&generated) {
-                    return Err(pyo3::exceptions::PyTypeError::new_err(
-                        "Expected ProgramBase.to_generator() to return a generator",
-                    ));
+                if Self::is_doeff_generator_object(&generated) {
+                    return Ok(generated.unbind());
                 }
-                return Ok(generated.unbind());
+                if Self::is_python_generator_object(&generated) {
+                    // Transitional shim for Python-side migration (VM-PROTO-002):
+                    // legacy ProgramBase.to_generator() implementations still return raw generators.
+                    return wrap_raw_generator_as_doeff_generator(py, generated.unbind());
+                }
+                let ty = generated
+                    .get_type()
+                    .name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|_| "<unknown>".to_string());
+                return Err(PyTypeError::new_err(format!(
+                    "ProgramBase.to_generator() must return DoeffGenerator; got {ty}"
+                )));
             }
         }
 
@@ -887,7 +1085,7 @@ impl PyVM {
         let module = PyModule::from_code(py, code, c"_effect_wrap", c"_effect_wrap")?;
         let wrap_fn = module.getattr("_wrap")?;
         let gen = wrap_fn.call1((expr.bind(py),))?;
-        Ok(gen.unbind())
+        wrap_raw_generator_as_doeff_generator(py, gen.unbind())
     }
 
     fn wrap_return_value_as_generator(
@@ -900,7 +1098,7 @@ impl PyVM {
         let module = PyModule::from_code(py, code, c"_value_wrap", c"_value_wrap")?;
         let wrap_fn = module.getattr("_ret")?;
         let gen = wrap_fn.call1((value.bind(py),))?;
-        Ok(gen.unbind())
+        wrap_raw_generator_as_doeff_generator(py, gen.unbind())
     }
 
     fn step_generator(
@@ -2249,12 +2447,18 @@ pub struct NestingStep {
 
 #[pymethods]
 impl NestingStep {
-    fn to_generator(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<NestingGenerator> {
-        Ok(NestingGenerator {
-            handler: Some(slf.handler.clone_ref(py)),
-            inner: Some(slf.inner.clone_ref(py)),
-            done: false,
-        })
+    fn to_generator(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let gen = Bound::new(
+            py,
+            NestingGenerator {
+                handler: Some(slf.handler.clone_ref(py)),
+                inner: Some(slf.inner.clone_ref(py)),
+                done: false,
+            },
+        )?
+        .into_any()
+        .unbind();
+        wrap_raw_generator_as_doeff_generator(py, gen)
     }
 }
 
@@ -2674,6 +2878,71 @@ mod tests {
     }
 
     #[test]
+    fn test_vm_proto_doeff_generator_pyclass_construction_and_fields() {
+        Python::attach(|py| {
+            let module = pyo3::types::PyModule::new(py, "doeff_vm_test")
+                .expect("failed to allocate doeff_vm_test module");
+            doeff_vm(&module).expect("failed to init doeff_vm_test module");
+
+            let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("vm", &module)
+                .expect("failed to set module in locals");
+
+            let result = py.run(
+                c"def _gen():\n    yield 1\n\nraw = _gen()\n\ndef _get_frame(g):\n    return g.gi_frame\n\nwrapped = vm.DoeffGenerator(\n    generator=raw,\n    function_name='sample_fn',\n    source_file='/tmp/sample.py',\n    source_line=77,\n    get_frame=_get_frame,\n)\n\nassert wrapped.generator is raw\nassert wrapped.function_name == 'sample_fn'\nassert wrapped.source_file == '/tmp/sample.py'\nassert wrapped.source_line == 77\nassert wrapped.get_frame(wrapped.generator) is raw.gi_frame\n",
+                Some(&locals),
+                Some(&locals),
+            );
+
+            assert!(
+                result.is_ok(),
+                "VM-PROTO-001: DoeffGenerator must be constructible from Python with all fields, got {:?}",
+                result
+            );
+        });
+    }
+
+    #[test]
+    fn test_vm_proto_to_generator_strict_rejects_raw_generator() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"def _raw_gen():\n    yield 1\nraw = _raw_gen()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .expect("failed to create raw generator");
+            let raw = locals
+                .get_item("raw")
+                .expect("locals.get_item failed")
+                .expect("raw generator missing");
+            let result = pyvm.to_generator_strict(py, raw.unbind());
+            assert!(
+                result.is_err(),
+                "VM-PROTO-001: to_generator_strict must reject raw generators (require DoeffGenerator), got {:?}",
+                result
+            );
+            let msg = result.err().expect("expected TypeError").to_string();
+            assert!(
+                msg.contains("DoeffGenerator"),
+                "VM-PROTO-001: rejection error should mention DoeffGenerator, got {msg}"
+            );
+        });
+    }
+
+    #[test]
+    fn test_vm_proto_start_with_generator_uses_doeff_generator_extraction() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            runtime_src.contains("extract_doeff_generator("),
+            "VM-PROTO-001: pyvm start path must extract fields from DoeffGenerator"
+        );
+    }
+
+    #[test]
     fn test_spec_stdlib_effects_classify_as_opaque_python_effects() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
@@ -3055,6 +3324,7 @@ fn async_run<'py>(
 #[pymodule]
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVM>()?;
+    m.add_class::<DoeffGenerator>()?;
     m.add_class::<PyDoExprBase>()?;
     m.add_class::<PyEffectBase>()?;
     m.add_class::<PyDoCtrlBase>()?;
