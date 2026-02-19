@@ -74,64 +74,6 @@ def resolve_generator_location(generator: object) -> tuple[str, int] | None:
     return (filename, lineno)
 
 
-def resolve_exception_location(exc: BaseException) -> tuple[str, str, int] | None:
-    origin = getattr(exc, "__doeff_exception_origin__", None)
-    if origin is not None:
-        fn_name = origin.get("function_name")
-        filename = origin.get("source_file")
-        line = origin.get("source_line")
-        if fn_name is not None and filename is not None and line is not None:
-            return (fn_name, filename, line)
-
-    tb = getattr(exc, "__traceback__", None)
-    if tb is None:
-        return None
-
-    last_tb = tb
-    while True:
-        next_tb = getattr(last_tb, "tb_next", None)
-        if next_tb is None:
-            break
-        last_tb = next_tb
-
-    frame = getattr(last_tb, "tb_frame", None)
-    if frame is None:
-        return None
-    code = getattr(frame, "f_code", None)
-    if code is None:
-        return None
-
-    if code not in _BRIDGE_CODE_OBJECTS:
-        return None
-
-    locals_dict = getattr(frame, "f_locals", {})
-    gen = locals_dict.get("gen")
-    if gen is None:
-        return None
-
-    gen_code = getattr(gen, "gi_code", None)
-    if gen_code is None:
-        return None
-
-    fn_name = getattr(gen_code, "co_qualname", None) or getattr(gen_code, "co_name", "<unknown>")
-    filename = getattr(gen_code, "co_filename", "<unknown>")
-
-    user_line = 0
-    scan = tb
-    while scan is not None:
-        scan_frame = getattr(scan, "tb_frame", None)
-        if scan_frame is not None:
-            scan_code = getattr(scan_frame, "f_code", None)
-            if scan_code is gen_code:
-                user_line = getattr(scan, "tb_lineno", 0)
-        scan = getattr(scan, "tb_next", None)
-
-    if user_line == 0:
-        return None
-
-    return (fn_name, filename, user_line)
-
-
 def default_get_frame(generator: object) -> object | None:
     return _default_get_frame(generator)
 
@@ -249,8 +191,6 @@ class DoYieldFunction(KleisliProgram[P, T]):
             signature = None
         if signature is not None:
             self.__signature__ = signature
-
-        self.__doeff_do_decorated__ = True
 
         strategy = _build_auto_unwrap_strategy(self)
         object.__setattr__(self, "_auto_unwrap_strategy", strategy)

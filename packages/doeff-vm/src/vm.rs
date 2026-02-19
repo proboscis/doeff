@@ -3839,7 +3839,7 @@ mod tests {
         let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
         let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
         let runtime_src = &src[..runtime_boundary];
-        let inner_attr = ["__doeff_", "inner__"].concat();
+        let inner_attr = ["__", "doeff_", "inner__"].concat();
         assert!(
             runtime_src.contains(".call1(py, (generator,))") && runtime_src.contains("get_frame"),
             "VM-PROTO-001: VM must resolve frame through get_frame callback"
@@ -3868,19 +3868,20 @@ mod tests {
 
         let pyvm_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
         let pyvm_runtime_src = pyvm_src.split("#[cfg(test)]").next().unwrap_or(pyvm_src);
+        let dunder_prefix = ["__", "doeff_"].concat();
 
         for (file_name, runtime_src) in [("vm.rs", vm_runtime_src), ("pyvm.rs", pyvm_runtime_src)] {
             assert!(
-                !runtime_src.contains(".setattr(\"__doeff_"),
-                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not set __doeff_* attributes"
+                !runtime_src.contains(&format!(".setattr(\"{}", dunder_prefix)),
+                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not set legacy doeff dunder attrs"
             );
             assert!(
-                !runtime_src.contains(".getattr(\"__doeff_"),
-                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not read __doeff_* attributes"
+                !runtime_src.contains(&format!(".getattr(\"{}", dunder_prefix)),
+                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not read legacy doeff dunder attrs"
             );
             assert!(
-                !runtime_src.contains(".hasattr(\"__doeff_"),
-                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not probe __doeff_* attributes"
+                !runtime_src.contains(&format!(".hasattr(\"{}", dunder_prefix)),
+                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not probe legacy doeff dunder attrs"
             );
             assert!(
                 !runtime_src.contains("import(\"doeff."),

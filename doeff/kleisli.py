@@ -193,7 +193,7 @@ def _safe_signature(target: Any) -> inspect.Signature | None:
 
 
 def validate_do_handler_effect_annotation(handler: Any) -> None:
-    if not bool(getattr(handler, "__doeff_do_decorated__", False)):
+    if not isinstance(handler, KleisliProgram):
         return
 
     signature = getattr(handler, "__signature__", None)
