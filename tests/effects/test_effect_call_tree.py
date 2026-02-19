@@ -24,7 +24,6 @@ def _make_frame(kleisli, name: str, *args, depth: int = 0, **kwargs):
         args=args,
         kwargs=kwargs,
         depth=depth,
-        created_at=None,
     )
 
 

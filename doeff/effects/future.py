@@ -19,7 +19,7 @@ from .external_promise import CreateExternalPromise
 from .wait import Wait
 
 from ._validators import ensure_awaitable
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase
 
 
 @dataclass(frozen=True)
@@ -161,11 +161,11 @@ python_async_syntax_escape_handler = async_await_handler
 
 
 def await_(awaitable: Awaitable[Any]) -> PythonAsyncioAwaitEffect:
-    return create_effect_with_trace(PythonAsyncioAwaitEffect(awaitable=awaitable))
+    return PythonAsyncioAwaitEffect(awaitable=awaitable)
 
 
 def Await(awaitable: Awaitable[Any]) -> Effect:
-    return create_effect_with_trace(PythonAsyncioAwaitEffect(awaitable=awaitable), skip_frames=3)
+    return PythonAsyncioAwaitEffect(awaitable=awaitable)
 
 
 __all__ = [

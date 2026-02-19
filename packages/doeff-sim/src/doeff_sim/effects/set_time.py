@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from doeff.effects.base import Effect, EffectBase, create_effect_with_trace
+from doeff.effects.base import Effect, EffectBase
 
 
 @dataclass(frozen=True)
@@ -18,11 +18,11 @@ class SetTimeEffect(EffectBase):
 
 
 def set_time(time: float) -> SetTimeEffect:
-    return create_effect_with_trace(SetTimeEffect(time=time))
+    return SetTimeEffect(time=time)
 
 
 def SetTime(time: float) -> Effect:
-    return create_effect_with_trace(SetTimeEffect(time=time), skip_frames=3)
+    return SetTimeEffect(time=time)
 
 
 __all__ = [

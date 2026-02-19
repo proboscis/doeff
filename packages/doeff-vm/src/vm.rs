@@ -394,31 +394,12 @@ impl VM {
         Self::truncate_repr(repr)
     }
 
-    fn effect_creation_site(effect: &DispatchEffect) -> Option<EffectCreationSite> {
-        let obj = dispatch_ref_as_python(effect)?;
-        Python::attach(|py| {
-            let created_at = obj.bind(py).getattr("created_at").ok()?;
-            if created_at.is_none() {
-                return None;
-            }
-
-            let source_file = created_at
-                .getattr("filename")
-                .ok()?
-                .extract::<String>()
-                .ok()?;
-            let source_line = created_at.getattr("line").ok()?.extract::<u32>().ok()?;
-            let function_name = created_at
-                .getattr("function")
-                .ok()?
-                .extract::<String>()
-                .ok()?;
-
-            Some(EffectCreationSite {
-                function_name,
-                source_file,
-                source_line,
-            })
+    fn effect_creation_site_from_continuation(k: &Continuation) -> Option<EffectCreationSite> {
+        let (_, function_name, source_file, source_line) = Self::effect_site_from_continuation(k)?;
+        Some(EffectCreationSite {
+            function_name,
+            source_file,
+            source_line,
         })
     }
 
@@ -627,7 +608,14 @@ impl VM {
         Self::resume_location_from_frames(k.frames_snapshot.as_ref())
     }
 
+    fn is_internal_source_file(source_file: &str) -> bool {
+        let normalized = source_file.replace('\\', "/").to_lowercase();
+        normalized == "_effect_wrap" || normalized.contains("/doeff/")
+    }
+
     fn effect_site_from_continuation(k: &Continuation) -> Option<(FrameId, String, String, u32)> {
+        let mut fallback: Option<(FrameId, String, String, u32)> = None;
+
         for frame in k.frames_snapshot.iter().rev() {
             if let Frame::PythonGenerator {
                 generator,
@@ -636,29 +624,35 @@ impl VM {
                 ..
             } = frame
             {
-                match Self::resolve_generator_location(generator, get_frame) {
-                    Ok(Some((file, line))) => {
-                        return Some((
-                            metadata.frame_id as FrameId,
-                            metadata.function_name.clone(),
-                            file,
-                            line,
-                        ));
-                    }
-                    Ok(None) => {}
-                    Err(err) => {
-                        Self::report_generator_diagnostic("effect_site_from_continuation", &err);
-                    }
-                }
-                return Some((
+                let fallback_candidate = (
                     metadata.frame_id as FrameId,
                     metadata.function_name.clone(),
                     metadata.source_file.clone(),
                     metadata.source_line,
-                ));
+                );
+                let candidate = match Self::resolve_generator_location(generator, get_frame) {
+                    Ok(Some((file, line))) => (
+                        metadata.frame_id as FrameId,
+                        metadata.function_name.clone(),
+                        file,
+                        line,
+                    ),
+                    Ok(None) => fallback_candidate,
+                    Err(err) => {
+                        Self::report_generator_diagnostic("effect_site_from_continuation", &err);
+                    }
+                };
+
+                if fallback.is_none() {
+                    fallback = Some(candidate.clone());
+                }
+                if !Self::is_internal_source_file(&candidate.2) {
+                    return Some(candidate);
+                }
             }
         }
-        None
+
+        fallback
     }
 
     fn maybe_emit_frame_entered(&mut self, metadata: &CallMetadata) {
@@ -2756,7 +2750,7 @@ impl VM {
         self.capture_log.push(CaptureEvent::DispatchStarted {
             dispatch_id,
             effect_repr: Self::effect_repr(&effect),
-            creation_site: Self::effect_creation_site(&effect),
+            creation_site: Self::effect_creation_site_from_continuation(&k_user),
             handler_name,
             handler_kind,
             handler_source_file,
@@ -3809,10 +3803,11 @@ mod tests {
     }
 
     #[test]
-    fn test_start_dispatch_records_effect_creation_site_from_created_at() {
+    fn test_start_dispatch_records_effect_creation_site_from_continuation_frame() {
         Python::attach(|py| {
             use pyo3::types::PyModule;
             use std::sync::Arc;
+            use crate::frame::Frame;
 
             let mut vm = VM::new();
             let marker = Marker::fresh();
@@ -3820,7 +3815,37 @@ mod tests {
             let prompt_seg = Segment::new(marker, None, vec![]);
             let prompt_seg_id = vm.alloc_segment(prompt_seg);
 
-            let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+            let module = PyModule::from_code(
+                py,
+                c"def target_gen():\n    yield 'value'\n\ng = target_gen()\nnext(g)\n\ndef get_frame(_obj):\n    return g.gi_frame\n\nwrapper = object()\nLINE = g.gi_frame.f_lineno\n",
+                c"/tmp/user_program.py",
+                c"_vm_creation_site_test",
+            )
+            .expect("failed to create test module");
+            let wrapper = module.getattr("wrapper").expect("missing wrapper").unbind();
+            let get_frame = module
+                .getattr("get_frame")
+                .expect("missing get_frame")
+                .unbind();
+            let line: u32 = module
+                .getattr("LINE")
+                .expect("missing LINE")
+                .extract()
+                .expect("LINE must be int");
+
+            let mut body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+            body_seg.push_frame(Frame::PythonGenerator {
+                generator: PyShared::new(wrapper),
+                get_frame: PyShared::new(get_frame),
+                started: true,
+                metadata: Some(CallMetadata::new(
+                    "parent".to_string(),
+                    "/tmp/user_program.py".to_string(),
+                    777,
+                    None,
+                    None,
+                )),
+            });
             let body_seg_id = vm.alloc_segment(body_seg);
             vm.current_segment = Some(body_seg_id);
 
@@ -3832,26 +3857,8 @@ mod tests {
                 ),
             );
 
-            let module = PyModule::from_code(
-                py,
-                c"class _Ctx:\n    def __init__(self, filename, line, function):\n        self.filename = filename\n        self.line = line\n        self.function = function\n",
-                c"_vm_creation_site_test.py",
-                c"_vm_creation_site_test",
-            )
-            .expect("failed to create test module");
-            let ctx = module
-                .getattr("_Ctx")
-                .expect("missing _Ctx")
-                .call1(("/tmp/user_program.py", 777_u32, "parent"))
-                .expect("failed to instantiate _Ctx")
-                .unbind();
-
             let spawn = Py::new(py, PySpawn::create(py, py.None(), None, None, None))
                 .expect("failed to create SpawnEffect");
-            spawn
-                .bind(py)
-                .call_method1("with_created_at", (ctx,))
-                .expect("failed to set created_at");
             let effect_obj = spawn.into_any();
 
             let result = vm.start_dispatch(Effect::Python(PyShared::new(effect_obj)));
@@ -3868,7 +3875,7 @@ mod tests {
             let site = creation_site.expect("dispatch should record effect creation site");
             assert_eq!(site.function_name, "parent");
             assert_eq!(site.source_file, "/tmp/user_program.py");
-            assert_eq!(site.source_line, 777);
+            assert_eq!(site.source_line, line);
         });
     }
 
