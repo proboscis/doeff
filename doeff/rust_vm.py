@@ -16,6 +16,30 @@ def _is_generator_like(value: Any) -> bool:
     )
 
 
+def _handler_registration_metadata(
+    handler: Any,
+) -> tuple[str, str | None, int | None, str]:
+    handler_name = getattr(handler, "__qualname__", None) or getattr(handler, "__name__", None)
+    if handler_name is None:
+        handler_name = type(handler).__name__
+    if handler_name is None:
+        handler_name = "<python_handler>"
+
+    code_obj = getattr(handler, "__code__", None)
+    if code_obj is None:
+        call_method = getattr(handler, "__call__", None)
+        code_obj = getattr(call_method, "__code__", None)
+
+    source_file = getattr(code_obj, "co_filename", None)
+    source_line = getattr(code_obj, "co_firstlineno", None)
+    if not isinstance(source_line, int):
+        source_line = None
+    generator_name = getattr(code_obj, "co_name", None) or getattr(handler, "__name__", None)
+    if generator_name is None:
+        generator_name = "<handler>"
+    return handler_name, source_file, source_line, generator_name
+
+
 def _to_doeff_generator(candidate: Any, *, context: str) -> Any:
     vm = _vm()
     doeff_generator_type = getattr(vm, "DoeffGenerator", None)
@@ -45,14 +69,25 @@ def _wrap_python_handler(handler: Any) -> Any:
     if getattr(handler, "__doeff_vm_wrapped_handler__", False):
         return handler
 
+    handler_name, handler_file, handler_line, generator_name = _handler_registration_metadata(
+        handler
+    )
+
     def _wrapped(effect, k, _handler=handler):
         result = _handler(effect, k)
         if _is_generator_like(result):
-            handler_name = getattr(_handler, "__qualname__", getattr(_handler, "__name__", "handler"))
-            return _to_doeff_generator(
-                result, context=f"handler {handler_name} return value"
+            from doeff.do import make_doeff_generator
+
+            return make_doeff_generator(
+                result,
+                function_name=generator_name,
+                source_file=handler_file,
+                source_line=handler_line,
             )
-        return result
+        raise TypeError(
+            f"Handler {handler_name} must return a generator, got {type(result).__name__}. "
+            "Did you forget 'yield'?"
+        )
 
     if hasattr(handler, "__name__"):
         _wrapped.__name__ = handler.__name__
@@ -66,6 +101,9 @@ def _wrap_python_handler(handler: Any) -> Any:
     setattr(_wrapped, "__doeff_original_handler__", handler)
 
     _wrapped.__doeff_vm_wrapped_handler__ = True
+    setattr(_wrapped, "__doeff_handler_name__", handler_name)
+    setattr(_wrapped, "__doeff_handler_file__", handler_file)
+    setattr(_wrapped, "__doeff_handler_line__", handler_line)
     return _wrapped
 
 

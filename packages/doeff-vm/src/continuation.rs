@@ -172,7 +172,9 @@ impl Continuation {
                     continue;
                 }
                 match handler {
-                    Handler::Python(py_handler) => {
+                    Handler::Python {
+                        callable: py_handler, ..
+                    } => {
                         list.append(py_handler.bind(py))?;
                     }
                     Handler::RustProgram(_) => {
