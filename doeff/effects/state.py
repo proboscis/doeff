@@ -8,7 +8,7 @@ from typing import Any
 import doeff_vm
 
 from ._validators import ensure_callable, ensure_str
-from .base import Effect, create_effect_with_trace
+from .base import Effect
 
 
 StateGetEffect = doeff_vm.PyGet
@@ -18,34 +18,34 @@ StateModifyEffect = doeff_vm.PyModify
 
 def get(key: str) -> StateGetEffect:
     ensure_str(key, name="key")
-    return create_effect_with_trace(StateGetEffect(key))
+    return StateGetEffect(key)
 
 
 def put(key: str, value: Any) -> StatePutEffect:
     ensure_str(key, name="key")
-    return create_effect_with_trace(StatePutEffect(key, value))
+    return StatePutEffect(key, value)
 
 
 def modify(key: str, f: Callable[[Any], Any]) -> StateModifyEffect:
     ensure_str(key, name="key")
     ensure_callable(f, name="func")
-    return create_effect_with_trace(StateModifyEffect(key, f))
+    return StateModifyEffect(key, f)
 
 
 def Get(key: str) -> Effect:
     ensure_str(key, name="key")
-    return create_effect_with_trace(StateGetEffect(key), skip_frames=3)
+    return StateGetEffect(key)
 
 
 def Put(key: str, value: Any) -> Effect:
     ensure_str(key, name="key")
-    return create_effect_with_trace(StatePutEffect(key, value), skip_frames=3)
+    return StatePutEffect(key, value)
 
 
 def Modify(key: str, f: Callable[[Any], Any]) -> Effect:
     ensure_str(key, name="key")
     ensure_callable(f, name="func")
-    return create_effect_with_trace(StateModifyEffect(key, f), skip_frames=3)
+    return StateModifyEffect(key, f)
 
 
 __all__ = [

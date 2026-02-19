@@ -501,7 +501,6 @@ class _GenProgramThunk(ProgramBase[T]):
     """Program backed by a generator factory."""
 
     factory: Callable[[], Generator[Effect | Program, Any, T]]
-    created_at: Any | None = None
 
     def to_generator(self) -> object:
         from doeff.do import make_doeff_generator
