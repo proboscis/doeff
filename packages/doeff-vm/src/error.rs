@@ -1,21 +1,39 @@
 //! Error types for the VM.
 
+use crate::capture::{ActiveChainEntry, TraceEntry};
 use crate::effect::DispatchEffect;
 use crate::ids::{ContId, Marker};
-use crate::capture::{ActiveChainEntry, TraceEntry};
 use crate::step::PyException;
 
 #[derive(Debug, Clone)]
 pub enum VMError {
-    OneShotViolation { cont_id: ContId },
-    UnhandledEffect { effect: DispatchEffect },
-    NoMatchingHandler { effect: DispatchEffect },
-    DelegateNoOuterHandler { effect: DispatchEffect },
-    HandlerNotFound { marker: Marker },
-    InvalidSegment { message: String },
-    PythonError { message: String },
-    InternalError { message: String },
-    TypeError { message: String },
+    OneShotViolation {
+        cont_id: ContId,
+    },
+    UnhandledEffect {
+        effect: DispatchEffect,
+    },
+    NoMatchingHandler {
+        effect: DispatchEffect,
+    },
+    DelegateNoOuterHandler {
+        effect: DispatchEffect,
+    },
+    HandlerNotFound {
+        marker: Marker,
+    },
+    InvalidSegment {
+        message: String,
+    },
+    PythonError {
+        message: String,
+    },
+    InternalError {
+        message: String,
+    },
+    TypeError {
+        message: String,
+    },
     UncaughtException {
         exception: PyException,
         trace: Vec<TraceEntry>,

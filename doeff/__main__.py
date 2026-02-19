@@ -503,6 +503,18 @@ def _unwrap_run_result(result: RunResult[Any]) -> Any:
     try:
         return result.value
     except Exception as exc:
+        try:
+            from doeff.traceback import attach_doeff_traceback
+
+            doeff_tb = attach_doeff_traceback(
+                exc,
+                traceback_data=getattr(result, "traceback_data", None),
+            )
+            if doeff_tb is not None:
+                setattr(exc, "doeff_traceback", doeff_tb)
+        except Exception:
+            # Best-effort decoration for CLI rendering.
+            pass
         raise RuntimeError("Program execution failed") from exc
 
 
@@ -812,7 +824,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         return args.func(args)
     except Exception as exc:
-        doeff_tb = getattr(exc, "__doeff_traceback__", None)
+        doeff_tb = getattr(exc, "doeff_traceback", None)
+        if doeff_tb is None:
+            cause = exc.__cause__
+            if cause is not None:
+                doeff_tb = getattr(cause, "doeff_traceback", None)
         captured = capture_traceback(exc)
         if getattr(args, "format", "text") == "json":
             payload = {

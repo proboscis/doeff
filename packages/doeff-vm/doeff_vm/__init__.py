@@ -58,6 +58,7 @@ PyStdlib = _ext.PyStdlib
 PySchedulerHandler = _ext.PySchedulerHandler
 PyVM = _ext.PyVM
 RunResult = _ext.RunResult
+DoeffTracebackData = _ext.DoeffTracebackData
 Ok = getattr(_ext, "Ok", None)
 Err = getattr(_ext, "Err", None)
 ResultOk = Ok
@@ -193,6 +194,7 @@ __all__ = [
     "Resume",
     "ResumeContinuation",
     "RunResult",
+    "DoeffTracebackData",
     "RustHandler",
     "Transfer",
     "WithHandler",

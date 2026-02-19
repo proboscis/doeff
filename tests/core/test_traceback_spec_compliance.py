@@ -6,6 +6,7 @@ from doeff import Ask, Delegate, Program, Resume, WithHandler, default_handlers,
 from doeff.effects import Put
 from doeff.effects.gather import Gather
 from doeff.effects.spawn import Spawn
+from doeff.traceback import attach_doeff_traceback
 
 _DEFAULT_HANDLER_NAMES = (
     "sync_await_handler",
@@ -85,7 +86,9 @@ def _render_failure(
         print_doeff_trace=False,
     )
     assert result.is_err()
-    rendered = result.error.__doeff_traceback__.format_default()
+    doeff_tb = attach_doeff_traceback(result.error, traceback_data=result.traceback_data)
+    assert doeff_tb is not None
+    rendered = doeff_tb.format_default()
     print(rendered)
     _assert_common_trace_properties(rendered)
     return rendered
