@@ -972,7 +972,7 @@ impl PyVM {
                         f,
                         args,
                         kwargs,
-                        metadata: call_metadata_from_pycall(py, &c),
+                        metadata: call_metadata_from_pycall(py, &c)?,
                     }))
                 }
                 DoExprTag::Map => {
@@ -1320,6 +1320,21 @@ fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<PyShared> {
     })
 }
 
+fn callable_diagnostic_label(callable: &Bound<'_, PyAny>) -> String {
+    let type_name = callable
+        .get_type()
+        .name()
+        .ok()
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let repr = callable
+        .repr()
+        .ok()
+        .and_then(|r| r.to_str().ok().map(|s| s.to_string()))
+        .unwrap_or_else(|| "<unrepresentable callable>".to_string());
+    format!("{repr} [type={type_name}]")
+}
+
 fn call_metadata_from_meta_obj(meta_obj: &Bound<'_, PyAny>) -> CallMetadata {
     let function_name = metadata_attr_as_string(meta_obj, "function_name")
         .unwrap_or_else(|| "<anonymous>".to_string());
@@ -1337,7 +1352,7 @@ fn call_metadata_from_meta_obj(meta_obj: &Bound<'_, PyAny>) -> CallMetadata {
     )
 }
 
-fn call_metadata_from_callable(_py: Python<'_>, callable: &Bound<'_, PyAny>) -> CallMetadata {
+fn call_metadata_from_callable(callable: &Bound<'_, PyAny>) -> PyResult<CallMetadata> {
     if let Ok(code) = callable.getattr("__code__") {
         let function_name = callable
             .getattr("__name__")
@@ -1354,40 +1369,42 @@ fn call_metadata_from_callable(_py: Python<'_>, callable: &Bound<'_, PyAny>) -> 
             .ok()
             .and_then(|v| v.extract::<u32>().ok())
             .unwrap_or(0);
-        return CallMetadata::new(function_name, source_file, source_line, None, None);
+        return Ok(CallMetadata::new(
+            function_name,
+            source_file,
+            source_line,
+            None,
+            None,
+        ));
     }
 
-    CallMetadata::anonymous()
+    Err(PyTypeError::new_err(format!(
+        "Cannot derive call metadata: callable {} lacks __code__. \
+Provide explicit metadata with function_name/source_file/source_line.",
+        callable_diagnostic_label(callable)
+    )))
 }
 
-fn metadata_dict_from_call_metadata(
-    py: Python<'_>,
-    metadata: &CallMetadata,
-) -> PyResult<Py<PyAny>> {
-    let meta = PyDict::new(py);
-    meta.set_item("function_name", &metadata.function_name)?;
-    meta.set_item("source_file", &metadata.source_file)?;
-    meta.set_item("source_line", metadata.source_line)?;
-    if let Some(args_repr) = &metadata.args_repr {
-        meta.set_item("args_repr", args_repr)?;
-    }
-    if let Some(program_call) = &metadata.program_call {
-        meta.set_item("program_call", program_call.clone_ref(py))?;
-    }
-    Ok(meta.into_any().unbind())
-}
-
-fn metadata_dict_from_callable(py: Python<'_>, callable: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    let metadata = call_metadata_from_callable(py, callable);
-    metadata_dict_from_call_metadata(py, &metadata)
-}
-
-fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> CallMetadata {
+fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> PyResult<CallMetadata> {
     if let Some(meta) = &call.meta {
-        return call_metadata_from_meta_obj(meta.bind(py));
+        return Ok(call_metadata_from_meta_obj(meta.bind(py)));
     }
 
-    call_metadata_from_callable(py, call.f.bind(py))
+    let f_obj = call.f.bind(py);
+    if let Ok(pure) = f_obj.extract::<PyRef<'_, PyPure>>() {
+        let value = pure.value.bind(py);
+        if value.is_callable() {
+            return call_metadata_from_callable(value);
+        }
+    }
+    if f_obj.is_callable() {
+        return call_metadata_from_callable(f_obj);
+    }
+    Err(PyTypeError::new_err(format!(
+        "Cannot derive call metadata from Call.f {}. \
+Supply Call(..., meta={{function_name, source_file, source_line}}).",
+        callable_diagnostic_label(f_obj)
+    )))
 }
 
 // ---------------------------------------------------------------------------
@@ -1811,10 +1828,13 @@ impl PyMap {
         if !mapper.bind(py).is_callable() {
             return Err(PyTypeError::new_err("Map.mapper must be callable"));
         }
-        let mapper_meta = match mapper_meta {
-            Some(meta) => meta,
-            None => metadata_dict_from_callable(py, mapper.bind(py))?,
-        };
+        let mapper_meta = mapper_meta.ok_or_else(|| {
+            PyTypeError::new_err(
+                "Map.mapper_meta is required. \
+Program.map() should supply metadata from mapper.__code__. \
+Pass mapper_meta={'function_name': ..., 'source_file': ..., 'source_line': ...}.",
+            )
+        })?;
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::Map as u8,
@@ -1850,10 +1870,13 @@ impl PyFlatMap {
         if !binder.bind(py).is_callable() {
             return Err(PyTypeError::new_err("FlatMap.binder must be callable"));
         }
-        let binder_meta = match binder_meta {
-            Some(meta) => meta,
-            None => metadata_dict_from_callable(py, binder.bind(py))?,
-        };
+        let binder_meta = binder_meta.ok_or_else(|| {
+            PyTypeError::new_err(
+                "FlatMap.binder_meta is required. \
+Program.flat_map() should supply metadata from binder.__code__. \
+Pass binder_meta={'function_name': ..., 'source_file': ..., 'source_line': ...}.",
+            )
+        })?;
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::FlatMap as u8,

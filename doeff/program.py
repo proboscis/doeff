@@ -291,14 +291,15 @@ def _make_generator_program(
 
 def _callable_metadata_dict(func: Callable[..., Any]) -> dict[str, Any]:
     code = getattr(func, "__code__", None)
-    if code is not None:
-        function_name = getattr(code, "co_name", getattr(func, "__name__", "<anonymous>"))
-        source_file = getattr(code, "co_filename", "<unknown>")
-        source_line = int(getattr(code, "co_firstlineno", 0) or 0)
-    else:
-        function_name = getattr(func, "__name__", "<anonymous>")
-        source_file = "<unknown>"
-        source_line = 0
+    if code is None:
+        raise TypeError(
+            f"Cannot derive callback metadata for callable {func!r}: "
+            "__code__ is missing. Provide a Python function with __code__."
+        )
+
+    function_name = getattr(code, "co_name", getattr(func, "__name__", "<anonymous>"))
+    source_file = getattr(code, "co_filename", "<unknown>")
+    source_line = int(getattr(code, "co_firstlineno", 0) or 0)
 
     return {
         "function_name": function_name,

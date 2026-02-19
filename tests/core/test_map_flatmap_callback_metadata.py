@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from doeff import Program, do
 from doeff.effects import ProgramTrace
 from doeff.rust_vm import default_handlers, run
@@ -30,7 +32,12 @@ def test_flat_map_stores_binder_metadata_at_construction_time() -> None:
     assert binder_meta["source_line"] == binder.__code__.co_firstlineno
 
 
-def test_map_trace_uses_mapper_function_name() -> None:
+def test_map_rejects_callable_without_code_object() -> None:
+    with pytest.raises(TypeError, match="__code__ is missing"):
+        Program.map(Program.pure([1, 2, 3]), len)
+
+
+def test_map_trace_uses_mapper_function_name_file_and_line() -> None:
     def mapper(value: int):
         if False:  # pragma: no cover - force generator callback for frame capture
             yield None
@@ -46,11 +53,20 @@ def test_map_trace_uses_mapper_function_name() -> None:
     result = run(body(), handlers=default_handlers())
     assert result.is_ok(), result.error
     trace = result.value
-    frame_names = [entry.function_name for entry in trace if isinstance(entry, TraceFrame)]
-    assert mapper.__name__ in frame_names
+    callback_frames = [
+        entry
+        for entry in trace
+        if isinstance(entry, TraceFrame) and entry.function_name == mapper.__name__
+    ]
+    assert callback_frames
+    assert any(
+        frame.source_file == mapper.__code__.co_filename
+        and frame.source_line == mapper.__code__.co_firstlineno
+        for frame in callback_frames
+    )
 
 
-def test_flat_map_trace_uses_binder_function_name() -> None:
+def test_flat_map_trace_uses_binder_function_name_file_and_line() -> None:
     def binder(value: int):
         if False:  # pragma: no cover - force generator callback for frame capture
             yield None
@@ -66,5 +82,14 @@ def test_flat_map_trace_uses_binder_function_name() -> None:
     result = run(body(), handlers=default_handlers())
     assert result.is_ok(), result.error
     trace = result.value
-    frame_names = [entry.function_name for entry in trace if isinstance(entry, TraceFrame)]
-    assert binder.__name__ in frame_names
+    callback_frames = [
+        entry
+        for entry in trace
+        if isinstance(entry, TraceFrame) and entry.function_name == binder.__name__
+    ]
+    assert callback_frames
+    assert any(
+        frame.source_file == binder.__code__.co_filename
+        and frame.source_line == binder.__code__.co_firstlineno
+        for frame in callback_frames
+    )
