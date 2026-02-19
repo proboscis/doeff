@@ -121,7 +121,7 @@ class TestHP03PostProcess:
 
 
 class TestHP03BReturnEffect:
-    def test_handler_returning_effect_is_perform_lifted(self) -> None:
+    def test_handler_returning_effect_raises_typeerror(self) -> None:
         def handler(effect, _k):
             if isinstance(effect, _CustomEffect):
                 return Ask("api_key")
@@ -136,7 +136,10 @@ class TestHP03BReturnEffect:
             return result
 
         result = run(_prog(main), handlers=default_handlers(), env={"api_key": "secret"})
-        assert result.value == "secret"
+        assert result.is_err()
+        assert isinstance(result.error, TypeError)
+        assert "must return a generator" in str(result.error)
+        assert "Did you forget 'yield'?" in str(result.error)
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +163,10 @@ class TestHP04AbandonContinuation:
             return result
 
         result = run(_prog(main), handlers=default_handlers())
-        assert result.value == 70
+        assert result.is_err()
+        assert isinstance(result.error, TypeError)
+        assert "must return a generator" in str(result.error)
+        assert "Did you forget 'yield'?" in str(result.error)
 
 
 # ---------------------------------------------------------------------------
@@ -487,4 +493,7 @@ class TestHP11DoDecoratedHandler:
             return result
 
         result = run(_prog(main), handlers=default_handlers())
-        assert result.value == "wrapped:x"
+        assert result.is_err()
+        assert isinstance(result.error, TypeError)
+        assert "must return a generator" in str(result.error)
+        assert "Did you forget 'yield'?" in str(result.error)

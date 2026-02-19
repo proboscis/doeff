@@ -206,6 +206,42 @@ rules:
       category: vm-protocol
       issue: VM-PROTO-002
 
+  - id: doeff-vm-proto-003-no-pymodule-from-code-in-pyvm
+    pattern: PyModule::from_code(...)
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      VM-PROTO-003: VM runtime must not synthesize generator wrappers via
+      PyModule::from_code. Remove synthetic helpers and rely on Python-side
+      to_generator()/WithHandler wrapping that returns DoeffGenerator.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-003
+      rationale: "No synthetic generator helpers in VM core"
+
+  - id: doeff-vm-proto-003-no-runtime-handler-dunder-probing
+    patterns:
+      - pattern-either:
+          - pattern: $OBJ.getattr("__code__")
+          - pattern: $OBJ.getattr("__name__")
+          - pattern: $OBJ.getattr("__qualname__")
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+    message: |
+      VM-PROTO-003: Handler metadata must come from typed Handler::Python
+      fields captured at registration time. Runtime __code__/__name__/__qualname__
+      probing in vm.rs is forbidden.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-003
+      rationale: "Eliminate runtime handler metadata probing"
+
   # ---------------------------------------------------------------------------
   # LAYER BOUNDARIES
   # ---------------------------------------------------------------------------

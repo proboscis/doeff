@@ -789,7 +789,7 @@ fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<Handler>, 
                 .map_err(|e| format!("{e:?}"))?;
             handlers.push(Handler::RustProgram(sentinel.factory_ref()));
         } else {
-            handlers.push(Handler::Python(PyShared::new(item.unbind())));
+            handlers.push(Handler::python_from_callable(&item));
         }
     }
     Ok(handlers)
