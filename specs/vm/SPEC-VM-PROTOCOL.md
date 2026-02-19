@@ -1,6 +1,6 @@
 # SPEC-VM-PROTOCOL: VM↔Python Typed Protocol
 
-## Status: Draft
+## Status: Implemented
 
 Implementation plan: [IMPL-VM-PROTOCOL.md](IMPL-VM-PROTOCOL.md)
 
