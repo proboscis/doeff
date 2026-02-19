@@ -202,12 +202,57 @@ impl PyDoExprBase {
     }
 
     fn to_generator(slf: Py<Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        use pyo3::types::PyModule;
-        let code = c"def _wrap(e):\n    v = yield e\n    return v\n";
-        let module = PyModule::from_code(py, code, c"_effect_wrap", c"_effect_wrap")?;
-        let wrap_fn = module.getattr("_wrap")?;
-        let gen = wrap_fn.call1((slf.bind(py),))?;
-        Ok(gen.unbind())
+        let expr = slf.into_any();
+        let gen = Bound::new(
+            py,
+            DoExprOnceGenerator {
+                expr: Some(expr),
+                done: false,
+            },
+        )?
+        .into_any()
+        .unbind();
+        Ok(gen)
+    }
+}
+
+#[pyclass(name = "_DoExprOnceGenerator")]
+struct DoExprOnceGenerator {
+    expr: Option<Py<PyAny>>,
+    done: bool,
+}
+
+#[pymethods]
+impl DoExprOnceGenerator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        if self.done {
+            return Ok(None);
+        }
+        self.done = true;
+        let expr = self
+            .expr
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("DoExprOnceGenerator already consumed"))?;
+        let expr = lift_effect_to_perform_expr(py, expr)?;
+        Ok(Some(expr))
+    }
+
+    fn send(&mut self, py: Python<'_>, value: Py<PyAny>) -> PyResult<Py<PyAny>> {
+        if !self.done {
+            return match self.__next__(py)? {
+                Some(v) => Ok(v),
+                None => Err(PyStopIteration::new_err(py.None())),
+            };
+        }
+        Err(PyStopIteration::new_err((value,)))
+    }
+
+    fn throw(&mut self, _py: Python<'_>, exc: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        Err(PyErr::from_value(exc))
     }
 }
 
@@ -851,42 +896,14 @@ impl PyVM {
                 )?
                 .into_any();
                 match handler.bind(py).call1((py_effect, py_k)) {
-                    Ok(result) => {
-                        if Self::is_doeff_generator_object(&result) {
-                            return Ok(PyCallOutcome::Value(Value::Python(result.unbind())));
-                        }
-
-                        let is_generator = Self::is_python_generator_object(&result);
-                        if is_generator {
-                            Ok(PyCallOutcome::Value(Value::Python(result.unbind())))
-                        } else {
-                            if is_effect_base_like(py, &result)? {
-                                let lifted = lift_effect_to_perform_expr(py, result.unbind())?;
-                                match self.to_generator_strict(py, lifted) {
-                                    Ok(gen) => return Ok(PyCallOutcome::Value(Value::Python(gen))),
-                                    Err(e) => {
-                                        return Ok(PyCallOutcome::GenError(pyerr_to_exception(
-                                            py, e,
-                                        )?));
-                                    }
-                                }
-                            }
-
-                            let has_to_generator = result.hasattr("to_generator").unwrap_or(false);
-                            let is_doexpr_like = result.is_instance_of::<PyDoCtrlBase>()
-                                || result.is_callable()
-                                || has_to_generator;
-
-                            if !is_doexpr_like {
-                                return Ok(PyCallOutcome::Value(Value::from_pyobject(&result)));
-                            }
-
-                            match self.to_generator_strict(py, result.unbind()) {
-                                Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
-                                Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
-                            }
-                        }
-                    }
+                    Ok(result) => match self.require_doeff_generator(
+                        py,
+                        result.unbind(),
+                        "CallHandler(handler result)",
+                    ) {
+                        Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
+                        Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
+                    },
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
@@ -952,6 +969,11 @@ impl PyVM {
             ));
         }
 
+        if program_bound.is_instance_of::<PyDoExprBase>() {
+            let gen = program_bound.call_method0("to_generator")?;
+            return self.require_doeff_generator(py, gen.unbind(), "DoExpr.to_generator");
+        }
+
         let is_nesting_step = program_bound
             .get_type()
             .name()
@@ -960,31 +982,6 @@ impl PyVM {
         if is_nesting_step || program_bound.is_instance_of::<NestingStep>() {
             let gen = program_bound.call_method0("to_generator")?;
             return self.require_doeff_generator(py, gen.unbind(), "NestingStep.to_generator");
-        }
-
-        // ProgramBase path: objects may expose `to_generator()` without being
-        // direct DoCtrl expressions. We intentionally do not accept arbitrary
-        // callables here; strict mode still requires explicit program objects.
-        if let Ok(to_generator) = program_bound.getattr("to_generator") {
-            if to_generator.is_callable() {
-                let generated = to_generator.call0()?;
-                if Self::is_doeff_generator_object(&generated) {
-                    return Ok(generated.unbind());
-                }
-                if Self::is_python_generator_object(&generated) {
-                    return Err(PyTypeError::new_err(
-                        "ProgramBase.to_generator() must return DoeffGenerator; got raw generator",
-                    ));
-                }
-                let ty = generated
-                    .get_type()
-                    .name()
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|_| "<unknown>".to_string());
-                return Err(PyTypeError::new_err(format!(
-                    "ProgramBase.to_generator() must return DoeffGenerator; got {ty}"
-                )));
-            }
         }
 
         let ty = program_bound
@@ -1048,10 +1045,25 @@ impl PyVM {
                             Some(PyShared::new(wh.handler.clone_ref(py))),
                         )
                     } else {
-                        (
-                            Handler::Python(PyShared::new(wh.handler.clone_ref(py))),
-                            None,
-                        )
+                        let mut python_handler = Handler::python_from_callable(handler_bound);
+                        if let Handler::Python {
+                            handler_name,
+                            handler_file,
+                            handler_line,
+                            ..
+                        } = &mut python_handler
+                        {
+                            if let Some(name) = &wh.handler_name {
+                                *handler_name = name.clone();
+                            }
+                            if wh.handler_file.is_some() {
+                                *handler_file = wh.handler_file.clone();
+                            }
+                            if wh.handler_line.is_some() {
+                                *handler_line = wh.handler_line;
+                            }
+                        }
+                        (python_handler, None)
                     };
                     Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
                         handler,
@@ -1205,7 +1217,7 @@ impl PyVM {
                             handlers.push(Handler::RustProgram(sentinel.factory.clone()));
                             handler_identities.push(Some(PyShared::new(item.unbind())));
                         } else {
-                            handlers.push(Handler::Python(PyShared::new(item.unbind())));
+                            handlers.push(Handler::python_from_callable(&item));
                             handler_identities.push(None);
                         }
                     }
@@ -1230,7 +1242,7 @@ impl PyVM {
                             let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
                             handlers.push(Handler::RustProgram(sentinel.factory.clone()));
                         } else {
-                            handlers.push(Handler::Python(PyShared::new(item.unbind())));
+                            handlers.push(Handler::python_from_callable(&item));
                         }
                     }
                     Ok(Yielded::DoCtrl(DoCtrl::Eval {
@@ -1829,16 +1841,25 @@ pub struct PyWithHandler {
     pub handler: Py<PyAny>,
     #[pyo3(get)]
     pub expr: Py<PyAny>,
+    #[pyo3(get)]
+    pub handler_name: Option<String>,
+    #[pyo3(get)]
+    pub handler_file: Option<String>,
+    #[pyo3(get)]
+    pub handler_line: Option<u32>,
 }
 
 #[pymethods]
 impl PyWithHandler {
     #[new]
-    #[pyo3(signature = (handler, expr))]
+    #[pyo3(signature = (handler, expr, handler_name=None, handler_file=None, handler_line=None))]
     fn new(
         py: Python<'_>,
         handler: Py<PyAny>,
         expr: Py<PyAny>,
+        handler_name: Option<String>,
+        handler_file: Option<String>,
+        handler_line: Option<u32>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let handler_obj = handler.bind(py);
         if !(handler_obj.is_instance_of::<PyRustHandlerSentinel>() || handler_obj.is_callable()) {
@@ -1854,11 +1875,42 @@ impl PyWithHandler {
             return Err(PyTypeError::new_err("WithHandler.expr must be DoExpr"));
         }
 
+        let (resolved_handler_name, resolved_handler_file, resolved_handler_line) =
+            if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
+                (None, None, None)
+            } else {
+                let mut derived_name = None;
+                let mut derived_file = None;
+                let mut derived_line = None;
+                if let Handler::Python {
+                    handler_name,
+                    handler_file,
+                    handler_line,
+                    ..
+                } = Handler::python_from_callable(handler_obj)
+                {
+                    derived_name = Some(handler_name);
+                    derived_file = handler_file;
+                    derived_line = handler_line;
+                }
+                (
+                    handler_name.or(derived_name),
+                    handler_file.or(derived_file),
+                    handler_line.or(derived_line),
+                )
+            };
+
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::WithHandler as u8,
             })
-            .add_subclass(PyWithHandler { handler, expr }))
+            .add_subclass(PyWithHandler {
+                handler,
+                expr,
+                handler_name: resolved_handler_name,
+                handler_file: resolved_handler_file,
+                handler_line: resolved_handler_line,
+            }))
     }
 }
 
@@ -2388,9 +2440,28 @@ impl NestingGenerator {
             .ok_or_else(|| PyRuntimeError::new_err("NestingGenerator already consumed"))?;
         let inner = lift_effect_to_perform_expr(py, inner)?;
         self.done = true;
+        let (handler_name, handler_file, handler_line) = if handler
+            .bind(py)
+            .is_instance_of::<PyRustHandlerSentinel>()
+        {
+            (None, None, None)
+        } else {
+            match Handler::python_from_callable(handler.bind(py)) {
+                Handler::Python {
+                    handler_name,
+                    handler_file,
+                    handler_line,
+                    ..
+                } => (Some(handler_name), handler_file, handler_line),
+                Handler::RustProgram(_) => (None, None, None),
+            }
+        };
         let wh = PyWithHandler {
             handler,
             expr: inner,
+            handler_name,
+            handler_file,
+            handler_line,
         };
         let bound = Bound::new(
             py,
@@ -2457,6 +2528,9 @@ mod tests {
                     .add_subclass(PyWithHandler {
                         handler: sentinel.clone_ref(py),
                         expr: py.None().into_pyobject(py).unwrap().unbind().into_any(),
+                        handler_name: None,
+                        handler_file: None,
+                        handler_line: None,
                     }),
             )
             .unwrap()
@@ -2857,8 +2931,8 @@ mod tests {
             );
             let msg = result.err().expect("expected TypeError").to_string();
             assert!(
-                msg.contains("DoeffGenerator") && msg.contains("ProgramBase.to_generator"),
-                "VM-PROTO-001: error should mention DoeffGenerator and to_generator boundary, got {msg}"
+                msg.contains("DoeffGenerator") && msg.contains("DoExpr.to_generator"),
+                "VM-PROTO-001: error should mention DoeffGenerator and DoExpr.to_generator boundary, got {msg}"
             );
         });
     }
@@ -3164,9 +3238,27 @@ fn run(
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
             wrapped = lift_effect_to_perform_expr(py, wrapped)?;
+            let (handler_name, handler_file, handler_line) = if handler_obj
+                .is_instance_of::<PyRustHandlerSentinel>()
+            {
+                (None, None, None)
+            } else {
+                match Handler::python_from_callable(&handler_obj) {
+                    Handler::Python {
+                        handler_name,
+                        handler_file,
+                        handler_line,
+                        ..
+                    } => (Some(handler_name), handler_file, handler_line),
+                    Handler::RustProgram(_) => (None, None, None),
+                }
+            };
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
+                handler_name,
+                handler_file,
+                handler_line,
             };
             let bound = Bound::new(
                 py,
@@ -3222,9 +3314,27 @@ fn async_run<'py>(
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
             wrapped = lift_effect_to_perform_expr(py, wrapped)?;
+            let (handler_name, handler_file, handler_line) = if handler_obj
+                .is_instance_of::<PyRustHandlerSentinel>()
+            {
+                (None, None, None)
+            } else {
+                match Handler::python_from_callable(&handler_obj) {
+                    Handler::Python {
+                        handler_name,
+                        handler_file,
+                        handler_line,
+                        ..
+                    } => (Some(handler_name), handler_file, handler_line),
+                    Handler::RustProgram(_) => (None, None, None),
+                }
+            };
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
+                handler_name,
+                handler_file,
+                handler_line,
             };
             let bound = Bound::new(
                 py,

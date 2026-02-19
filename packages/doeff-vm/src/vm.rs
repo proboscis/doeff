@@ -422,55 +422,19 @@ impl VM {
         })
     }
 
-    fn python_handler_name(handler: &PyShared) -> String {
-        Python::attach(|py| {
-            let bound = handler.bind(py);
-            bound
-                .getattr("__name__")
-                .ok()
-                .and_then(|v| v.extract::<String>().ok())
-                .or_else(|| {
-                    bound
-                        .getattr("__class__")
-                        .ok()
-                        .and_then(|cls| cls.getattr("__name__").ok())
-                        .and_then(|v| v.extract::<String>().ok())
-                })
-                .unwrap_or_else(|| "<python_handler>".to_string())
-        })
-    }
-
-    fn python_handler_source(handler: &PyShared) -> (Option<String>, Option<u32>) {
-        Python::attach(|py| {
-            let bound = handler.bind(py);
-            let code = bound.getattr("__code__").ok().or_else(|| {
-                bound
-                    .getattr("__call__")
-                    .ok()
-                    .and_then(|call| call.getattr("__code__").ok())
-            });
-            let Some(code_obj) = code else {
-                return (None, None);
-            };
-            let file = code_obj
-                .getattr("co_filename")
-                .ok()
-                .and_then(|v| v.extract::<String>().ok());
-            let line = code_obj
-                .getattr("co_firstlineno")
-                .ok()
-                .and_then(|v| v.extract::<u32>().ok());
-            (file, line)
-        })
-    }
-
     fn handler_trace_info(handler: &Handler) -> (String, HandlerKind, Option<String>, Option<u32>) {
         match handler {
-            Handler::Python(py_handler) => {
-                let name = Self::python_handler_name(py_handler);
-                let (file, line) = Self::python_handler_source(py_handler);
-                (name, HandlerKind::Python, file, line)
-            }
+            Handler::Python {
+                handler_name,
+                handler_file,
+                handler_line,
+                ..
+            } => (
+                handler_name.clone(),
+                HandlerKind::Python,
+                handler_file.clone(),
+                *handler_line,
+            ),
             Handler::RustProgram(factory) => (
                 factory.handler_name().to_string(),
                 HandlerKind::RustBuiltin,
@@ -1017,17 +981,17 @@ impl VM {
     fn exception_site(exception: &PyException) -> ActiveChainEntry {
         match exception {
             PyException::Materialized {
-                exc_type,
+                exc_type: _exc_type,
                 exc_value,
                 exc_tb,
             } => Python::attach(|py| {
-                let exc_type_bound = exc_type.bind(py);
                 let exc_value_bound = exc_value.bind(py);
 
-                let exception_type = exc_type_bound
-                    .getattr("__name__")
+                let exception_type = exc_value_bound
+                    .get_type()
+                    .name()
                     .ok()
-                    .and_then(|v| v.extract::<String>().ok())
+                    .map(|name| name.to_string())
                     .unwrap_or_else(|| "Exception".to_string());
 
                 let message = exc_value_bound
@@ -2819,14 +2783,14 @@ impl VM {
                 };
                 Ok(self.apply_rust_program_step(step, program))
             }
-            Handler::Python(py_handler) => {
+            Handler::Python { callable, .. } => {
                 self.register_continuation(k_user.clone());
                 self.pending_python = Some(PendingPython::CallPythonHandler {
                     k_user: k_user.clone(),
                     effect: effect.clone(),
                 });
                 Ok(StepEvent::NeedsPython(PythonCall::CallHandler {
-                    handler: py_handler,
+                    handler: callable,
                     effect,
                     continuation: k_user,
                 }))
@@ -2850,7 +2814,7 @@ impl VM {
             .filter(|ctx| ctx.dispatch_id == dispatch_id)
             .and_then(|ctx| ctx.handler_chain.get(ctx.handler_idx))
             .and_then(|marker| self.handlers.get(marker))
-            .is_some_and(|entry| matches!(entry.handler, Handler::Python(_)))
+            .is_some_and(|entry| matches!(entry.handler, Handler::Python { .. }))
     }
 
     fn mark_dispatch_threw(&mut self, dispatch_id: DispatchId) {
@@ -3106,7 +3070,7 @@ impl VM {
         let prompt_seg_id = self.alloc_segment(prompt_seg);
 
         let py_identity = explicit_py_identity.or_else(|| match &handler {
-            Handler::Python(py_handler) => Some(py_handler.clone()),
+            Handler::Python { callable, .. } => Some(callable.clone()),
             Handler::RustProgram(_) => None,
         });
         match py_identity {
@@ -3213,14 +3177,14 @@ impl VM {
                             };
                             return self.apply_rust_program_step(step, program);
                         }
-                        Handler::Python(py_handler) => {
+                        Handler::Python { callable, .. } => {
                             self.register_continuation(k_user.clone());
                             self.pending_python = Some(PendingPython::CallPythonHandler {
                                 k_user: k_user.clone(),
                                 effect: effect.clone(),
                             });
                             return StepEvent::NeedsPython(PythonCall::CallHandler {
-                                handler: py_handler,
+                                handler: callable,
                                 effect: effect.clone(),
                                 continuation: k_user,
                             });
