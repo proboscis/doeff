@@ -239,7 +239,10 @@ impl Value {
     ) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("handler_name", entry.handler_name.as_str())?;
-        dict.set_item("handler_kind", Self::handler_kind_to_str(&entry.handler_kind))?;
+        dict.set_item(
+            "handler_kind",
+            Self::handler_kind_to_str(&entry.handler_kind),
+        )?;
         dict.set_item("source_file", entry.source_file.clone())?;
         dict.set_item("source_line", entry.source_line)?;
         dict.set_item("status", Self::handler_status_to_str(entry.status))?;
