@@ -503,8 +503,10 @@ class _GenProgramThunk(ProgramBase[T]):
     factory: Callable[[], Generator[Effect | Program, Any, T]]
     created_at: Any | None = None
 
-    def to_generator(self) -> Generator[Effect | Program, Any, T]:
-        return self.factory()
+    def to_generator(self) -> object:
+        from doeff.do import make_doeff_generator
+
+        return make_doeff_generator(self.factory())
 
 
 @runtime_checkable
