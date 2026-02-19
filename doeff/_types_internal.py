@@ -866,6 +866,9 @@ class RunResult(Protocol[T]):
     @property
     def error(self) -> BaseException: ...
 
+    @property
+    def traceback_data(self) -> Any | None: ...
+
     def is_ok(self) -> bool: ...
 
     def is_err(self) -> bool: ...
@@ -896,6 +899,11 @@ class PyRunResult(Generic[T]):
     def is_err(self) -> bool:
         """Return True when the result represents a failure."""
         return isinstance(self.result, Err)
+
+    @property
+    def traceback_data(self) -> Any | None:
+        """Python runtime does not currently attach VM traceback payloads."""
+        return None
 
     @property
     def env(self) -> dict[Any, Any]:

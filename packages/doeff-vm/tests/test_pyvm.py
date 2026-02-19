@@ -561,6 +561,8 @@ async def async_run(vm, program):
         tag = result[0]
         if tag == "done":
             return result[1]
+        elif tag == "error":
+            raise result[1]
         elif tag == "call_async":
             func, args = result[1], result[2]
             try:

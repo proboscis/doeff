@@ -768,6 +768,89 @@ rules:
       gap: G08
 
   # ---------------------------------------------------------------------------
+  # VM PROTOCOL: TRACEBACK DUNDER + IMPORT BANS (VM-PROTO-004)
+  # ---------------------------------------------------------------------------
+
+  - id: vm-no-dunder-attrs
+    patterns:
+      - pattern: $OBJ.setattr($ATTR, ...)
+      - metavariable-regex:
+          metavariable: $ATTR
+          regex: '^"__doeff_[A-Za-z0-9_]+__"$'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      VM protocol violation: writing __doeff_*__ attributes is forbidden.
+      Use typed data delivery via RunResult fields instead of exception dunders.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-004
+
+  - id: vm-no-dunder-reads
+    patterns:
+      - pattern: $OBJ.getattr($ATTR)
+      - metavariable-regex:
+          metavariable: $ATTR
+          regex: '^"__doeff_[A-Za-z0-9_]+__"$'
+      - pattern-not: $OBJ.getattr("__doeff_inner__")
+      - pattern-not: $OBJ.getattr("__doeff_spawned_from__")
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      VM protocol violation: reading __doeff_*__ attributes is forbidden.
+      Read traceback data from RunResult.traceback_data instead.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-004
+
+  - id: vm-no-hasattr-dunder
+    patterns:
+      - pattern: $OBJ.hasattr($ATTR)
+      - metavariable-regex:
+          metavariable: $ATTR
+          regex: '^"__doeff_[A-Za-z0-9_]+__"$'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      VM protocol violation: checking __doeff_*__ attributes is forbidden.
+      Use explicit typed RunResult fields to signal traceback availability.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-004
+
+  - id: vm-no-uv-run-python-imports
+    patterns:
+      - pattern: $PY.import($MODULE)
+      - metavariable-regex:
+          metavariable: $MODULE
+          regex: '^"doeff\\.[A-Za-z0-9_\\.]+"$'
+      - pattern-not: $PY.import("doeff.do")
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      VM protocol violation: VM core must not import doeff.* modules.
+      Traceback projection belongs in Python consumers, not VM core.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-004
+
+  # ---------------------------------------------------------------------------
   # PUBLIC API LOCATION GUARDS
   # ---------------------------------------------------------------------------
 

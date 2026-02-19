@@ -8,6 +8,7 @@ from doeff._types_internal import EffectBase
 from doeff.effects import ProgramCallStack, ProgramTrace, Put, slog
 from doeff.rust_vm import Delegate, Resume, WithHandler, default_handlers, run
 from doeff.trace import TraceDispatch, TraceFrame
+from doeff.traceback import attach_doeff_traceback
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -114,15 +115,15 @@ def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
     assert result.is_err()
 
     error = result.error
-    assert hasattr(error, "__doeff_traceback_data__")
-    assert hasattr(error, "__doeff_traceback__")
+    traceback_data = result.traceback_data
+    assert traceback_data is not None
+    assert type(traceback_data).__name__ == "DoeffTracebackData"
+    assert isinstance(traceback_data.entries, list)
+    assert not hasattr(error, "__doeff_traceback_data__")
+    assert not hasattr(error, "__doeff_traceback__")
 
-    payload = error.__doeff_traceback_data__
-    assert isinstance(payload, dict)
-    assert "trace" in payload
-    assert "active_chain" in payload
-
-    doeff_tb = error.__doeff_traceback__
+    doeff_tb = attach_doeff_traceback(error, traceback_data=traceback_data)
+    assert doeff_tb is not None
     default = doeff_tb.format_default()
     chained = doeff_tb.format_chained()
     sectioned = doeff_tb.format_sectioned()
@@ -133,8 +134,8 @@ def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
     assert "Program Stack:" in sectioned
     assert "ValueError: boom" in short
 
-    assert "Program Stack:" in result.display(verbose=False)
-    assert "doeff Traceback (most recent call last):" in result.display(verbose=True)
+    assert "RunResult status: err" in result.display(verbose=False)
+    assert "RunResult status: err" in result.display(verbose=True)
 
 
 def test_delegation_chain_routes_to_outer_handler() -> None:
@@ -204,9 +205,9 @@ def test_handler_sources_and_exception_repr_for_thrown_handler() -> None:
     result = run(wrapped, handlers=default_handlers(), store={"x": 0})
     assert result.is_err()
 
-    error = result.error
-    payload = error.__doeff_traceback_data__
-    trace_entries = payload["trace"] if isinstance(payload, dict) else payload
+    traceback_data = result.traceback_data
+    assert traceback_data is not None
+    trace_entries = traceback_data.entries
     dispatches = [entry for entry in trace_entries if isinstance(entry, TraceDispatch)]
     assert dispatches
 
