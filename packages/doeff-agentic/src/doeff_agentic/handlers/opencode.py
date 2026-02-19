@@ -31,7 +31,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Await, Resume, do, slog
+from doeff import Await, EffectBase, Resume, do, slog
+from doeff.program import DoExpr
 
 from ..effects import (
     AgenticAbortSession,
@@ -1012,9 +1013,7 @@ class OpenCodeHandler:
 # =============================================================================
 
 def _is_lazy_program_value(value: object) -> bool:
-    return bool(getattr(value, "__doeff_do_expr_base__", False) or getattr(
-        value, "__doeff_effect_base__", False
-    ))
+    return isinstance(value, (DoExpr, EffectBase))
 
 
 def _as_protocol_handler(

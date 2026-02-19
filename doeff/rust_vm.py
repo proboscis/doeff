@@ -66,7 +66,7 @@ def _to_doeff_generator(candidate: Any, *, context: str) -> Any:
 def _wrap_python_handler(handler: Any) -> Any:
     if not callable(handler):
         return handler
-    if getattr(handler, "__doeff_vm_wrapped_handler__", False):
+    if bool(getattr(handler, "_doeff_vm_wrapped_handler", False)):
         return handler
 
     handler_name, handler_file, handler_line, generator_name = _handler_registration_metadata(
@@ -98,12 +98,7 @@ def _wrap_python_handler(handler: Any) -> Any:
     if hasattr(handler, "__doc__"):
         _wrapped.__doc__ = handler.__doc__
     _wrapped.__wrapped__ = handler
-    setattr(_wrapped, "__doeff_original_handler__", handler)
-
-    _wrapped.__doeff_vm_wrapped_handler__ = True
-    setattr(_wrapped, "__doeff_handler_name__", handler_name)
-    setattr(_wrapped, "__doeff_handler_file__", handler_file)
-    setattr(_wrapped, "__doeff_handler_line__", handler_line)
+    _wrapped._doeff_vm_wrapped_handler = True
     return _wrapped
 
 

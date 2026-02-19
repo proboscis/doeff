@@ -86,4 +86,4 @@ def test_do_generator_wrapper_wraps_bridge_generator() -> None:
     wrapper = sample.func()
     assert isinstance(wrapper, doeff_vm.DoeffGenerator)
     assert inspect.isgenerator(wrapper.generator)
-    assert not hasattr(wrapper.generator, "__doeff_inner__")
+    assert not hasattr(wrapper, "__doeff_inner__")

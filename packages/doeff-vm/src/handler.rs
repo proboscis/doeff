@@ -140,24 +140,26 @@ impl Handler {
             })
         }
 
-        fn optional_attr_u32(callable: &Bound<'_, PyAny>, attr: &str) -> Option<u32> {
-            callable.getattr(attr).ok().and_then(|value| {
-                if value.is_none() {
-                    return None;
-                }
-                value
-                    .extract::<u32>()
-                    .ok()
-                    .or_else(|| value.extract::<i64>().ok().and_then(|line| u32::try_from(line).ok()))
-            })
-        }
-
         fn fallback_source(callable: &Bound<'_, PyAny>) -> (Option<String>, Option<u32>) {
-            let code = callable.getattr("__code__").ok().or_else(|| {
-                callable
-                    .getattr("__call__")
-                    .ok()
-                    .and_then(|call| call.getattr("__code__").ok())
+            let wrapped = callable
+                .getattr("__wrapped__")
+                .ok()
+                .filter(|value| !value.is_none());
+            let wrapped_code = wrapped.as_ref().and_then(|value| {
+                value.getattr("__code__").ok().or_else(|| {
+                    value
+                        .getattr("__call__")
+                        .ok()
+                        .and_then(|call| call.getattr("__code__").ok())
+                })
+            });
+            let code = wrapped_code.or_else(|| {
+                callable.getattr("__code__").ok().or_else(|| {
+                    callable
+                        .getattr("__call__")
+                        .ok()
+                        .and_then(|call| call.getattr("__code__").ok())
+                })
             });
             let Some(code) = code else {
                 return (None, None);
@@ -173,16 +175,20 @@ impl Handler {
             (file, line)
         }
 
-        let handler_name = optional_attr_string(callable, "__doeff_handler_name__")
-            .or_else(|| optional_attr_string(callable, "__qualname__"))
+        let wrapped = callable
+            .getattr("__wrapped__")
+            .ok()
+            .filter(|value| !value.is_none());
+        let handler_name = optional_attr_string(callable, "__qualname__")
             .or_else(|| optional_attr_string(callable, "__name__"))
+            .or_else(|| wrapped.as_ref().and_then(|value| optional_attr_string(value, "__qualname__")))
+            .or_else(|| wrapped.as_ref().and_then(|value| optional_attr_string(value, "__name__")))
             .or_else(|| callable.get_type().name().ok().map(|name| name.to_string()))
             .unwrap_or_else(|| "<python_handler>".to_string());
 
         let (fallback_file, fallback_line) = fallback_source(callable);
-        let handler_file =
-            optional_attr_string(callable, "__doeff_handler_file__").or(fallback_file);
-        let handler_line = optional_attr_u32(callable, "__doeff_handler_line__").or(fallback_line);
+        let handler_file = fallback_file;
+        let handler_line = fallback_line;
 
         Handler::Python {
             callable: PyShared::new(callable.clone().unbind()),
@@ -191,12 +197,6 @@ impl Handler {
             handler_line,
         }
     }
-}
-
-fn has_true_attr(obj: &Bound<'_, PyAny>, attr: &str) -> bool {
-    obj.getattr(attr)
-        .and_then(|v| v.extract::<bool>())
-        .unwrap_or(false)
 }
 
 fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
@@ -358,9 +358,7 @@ fn pyerr_to_exception(py: Python<'_>, err: PyErr) -> PyException {
     let exc_type = err.get_type(py).into_any().unbind();
     let exc_value = err.value(py).clone().into_any().unbind();
     let exc_tb = err.traceback(py).map(|tb| tb.into_any().unbind());
-    let exc = PyException::new(exc_type, exc_value, exc_tb);
-    crate::scheduler::preserve_exception_origin(&exc);
-    exc
+    PyException::new(exc_type, exc_value, exc_tb)
 }
 
 fn wrap_value_as_result_ok(value: Value) -> Result<Value, PyException> {
@@ -504,17 +502,7 @@ fn parse_await_python_effect(effect: &PyShared) -> Result<Option<Py<PyAny>>, Str
 fn parse_result_safe_python_effect(effect: &PyShared) -> Result<Option<PyShared>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        let is_result_safe = {
-            #[cfg(test)]
-            {
-                is_instance_from(obj, "doeff.effects.result", "ResultSafeEffect")
-                    || has_true_attr(obj, "__doeff_result_safe__")
-            }
-            #[cfg(not(test))]
-            {
-                is_instance_from(obj, "doeff.effects.result", "ResultSafeEffect")
-            }
-        };
+        let is_result_safe = is_instance_from(obj, "doeff.effects.result", "ResultSafeEffect");
 
         if is_result_safe {
             let sub_program = obj.getattr("sub_program").map_err(|e| e.to_string())?;
@@ -2421,7 +2409,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
+                c"class ResultSafeEffect(EffectBase):\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2447,7 +2435,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
+                c"class ResultSafeEffect(EffectBase):\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
                 Some(&locals),
                 Some(&locals),
             )

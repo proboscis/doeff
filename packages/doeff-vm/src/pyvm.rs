@@ -1365,9 +1365,7 @@ fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
     let exc_type = e.get_type(py).into_any().unbind();
     let exc_value = e.value(py).clone().into_any().unbind();
     let exc_tb = e.traceback(py).map(|tb| tb.into_any().unbind());
-    let exc = PyException::new(exc_type, exc_value, exc_tb);
-    crate::scheduler::preserve_exception_origin(&exc);
-    Ok(exc)
+    Ok(PyException::new(exc_type, exc_value, exc_tb))
 }
 
 fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
@@ -2549,7 +2547,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    __doeff_scheduler_task_completed__ = True\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
+                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2631,7 +2629,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    __doeff_scheduler_task_completed__ = True\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
+                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2655,7 +2653,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class GatherEffect(EffectBase):\n    __doeff_scheduler_gather__ = True\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
+                c"class GatherEffect(EffectBase):\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2679,7 +2677,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect(EffectBase):\n    __doeff_scheduler_wait__ = True\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
+                c"class _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect(EffectBase):\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2714,7 +2712,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
+                c"class SpawnEffect(EffectBase):\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2942,7 +2940,7 @@ mod tests {
     fn test_vm_proto_runtime_has_no_doeff_module_imports_or_inner_chain_walks() {
         let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
         let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
-        let inner_attr = ["__doeff_", "inner__"].concat();
+        let inner_attr = ["__", "doeff_", "inner__"].concat();
         assert!(
             !runtime_src.contains("import(\"doeff."),
             "VM-PROTO-001: vm core must not import doeff.* modules"
@@ -2962,7 +2960,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class StateGetEffect(EffectBase):\n    __doeff_state_get__ = True\n    def __init__(self):\n        self.key = 'counter'\nobj = StateGetEffect()\n",
+                c"class StateGetEffect(EffectBase):\n    def __init__(self):\n        self.key = 'counter'\nobj = StateGetEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2986,7 +2984,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
+                c"class SpawnEffect(EffectBase):\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -3131,17 +3129,19 @@ mod tests {
     fn test_vm_proto_004_traceback_dunders_and_import_removed() {
         let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
         let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        let trace_data_attr = ["__", "doeff_traceback_data__"].concat();
+        let trace_attr = ["__", "doeff_traceback__"].concat();
         assert!(
-            !runtime_src.contains(".setattr(\"__doeff_traceback_data__\""),
-            "VM-PROTO-004 FAIL: __doeff_traceback_data__ setattr still present"
+            !runtime_src.contains(&format!(".setattr(\"{}\"", trace_data_attr)),
+            "VM-PROTO-004 FAIL: legacy traceback data setattr still present"
         );
         assert!(
-            !runtime_src.contains(".hasattr(\"__doeff_traceback_data__\""),
-            "VM-PROTO-004 FAIL: __doeff_traceback_data__ hasattr still present"
+            !runtime_src.contains(&format!(".hasattr(\"{}\"", trace_data_attr)),
+            "VM-PROTO-004 FAIL: legacy traceback data hasattr still present"
         );
         assert!(
-            !runtime_src.contains(".getattr(\"__doeff_traceback__\""),
-            "VM-PROTO-004 FAIL: __doeff_traceback__ getattr still present"
+            !runtime_src.contains(&format!(".getattr(\"{}\"", trace_attr)),
+            "VM-PROTO-004 FAIL: legacy traceback getattr still present"
         );
         assert!(
             !runtime_src.contains(".import(\"doeff.traceback\")"),

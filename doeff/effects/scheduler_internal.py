@@ -126,8 +126,6 @@ class _SchedulerCreatePromise(EffectBase):
     Returns a tuple of (handle_id, Promise).
     """
 
-    __doeff_scheduler_create_promise__ = True
-
     pass
 
 

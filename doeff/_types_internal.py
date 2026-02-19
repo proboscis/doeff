@@ -496,8 +496,6 @@ class EffectBase(_RustEffectBase, metaclass=_EffectBaseMeta):
     Dispatch occurs when lifted into control IR via Perform(effect).
     """
 
-    __doeff_effect_base__: bool = field(default=True, init=False, repr=False, compare=False)
-
     def map(self, f: Callable[[Any], Any]) -> Program[Any]:
         raise TypeError(
             "Effect values do not support direct map(); lift with Perform(effect) "
