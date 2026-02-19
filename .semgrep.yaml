@@ -771,6 +771,24 @@ rules:
       category: vm-protocol
       rationale: "SPEC-VM-PROTOCOL §5.5 and §2 C7 require explicit callback metadata"
 
+  - id: doeff-no-direct-gi-frame-access
+    patterns:
+      - pattern-either:
+          - pattern: $OBJ.getattr("gi_frame")
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      Direct gi_frame access in VM Rust code is banned by SPEC-VM-PROTOCOL.
+      Use DoeffGenerator.get_frame(generator) callback and handle None/exception
+      semantics through the protocol diagnostics path.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      rationale: "SPEC-VM-PROTOCOL §3.2/§3.7 requires callback-based frame lookup"
+
   # ---------------------------------------------------------------------------
   # SPEC AUDIT SA-001: GAP ENFORCEMENT RULES
   # ---------------------------------------------------------------------------

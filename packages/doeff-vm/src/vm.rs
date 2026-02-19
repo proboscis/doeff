@@ -14,6 +14,7 @@ use crate::capture::{
 };
 use crate::continuation::Continuation;
 use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{dispatch_ref_as_python, DispatchEffect};
 #[cfg(test)]
@@ -271,6 +272,63 @@ impl VM {
         })
     }
 
+    fn is_doeff_generator_object(obj: &Py<PyAny>) -> bool {
+        Python::attach(|py| obj.bind(py).is_instance_of::<DoeffGenerator>())
+    }
+
+    fn merged_metadata_from_doeff(
+        inherited: Option<CallMetadata>,
+        function_name: String,
+        source_file: String,
+        source_line: u32,
+    ) -> Option<CallMetadata> {
+        match inherited {
+            Some(metadata) => Some(metadata),
+            None => Some(CallMetadata::new(
+                function_name,
+                source_file,
+                source_line,
+                None,
+                None,
+            )),
+        }
+    }
+
+    fn extract_doeff_generator(
+        value: Py<PyAny>,
+        inherited_metadata: Option<CallMetadata>,
+        context: &str,
+    ) -> Result<(PyShared, PyShared, Option<CallMetadata>), PyException> {
+        Python::attach(|py| {
+            let bound = value.bind(py);
+            let wrapped: PyRef<'_, DoeffGenerator> = bound.extract().map_err(|_| {
+                let ty = bound
+                    .get_type()
+                    .name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|_| "<unknown>".to_string());
+                PyException::type_error(format!("{context}: expected DoeffGenerator, got {ty}"))
+            })?;
+
+            if !wrapped.get_frame.bind(py).is_callable() {
+                return Err(PyException::type_error(format!(
+                    "{context}: DoeffGenerator.get_frame must be callable"
+                )));
+            }
+
+            Ok((
+                PyShared::new(wrapped.generator.clone_ref(py)),
+                PyShared::new(wrapped.get_frame.clone_ref(py)),
+                Self::merged_metadata_from_doeff(
+                    inherited_metadata,
+                    wrapped.function_name.clone(),
+                    wrapped.source_file.clone(),
+                    wrapped.source_line,
+                ),
+            ))
+        })
+    }
+
     fn truncate_repr(mut text: String) -> String {
         const MAX_REPR_LEN: usize = 200;
         if text.len() > MAX_REPR_LEN {
@@ -485,91 +543,111 @@ impl VM {
             })
     }
 
-    fn generator_current_line(generator: &PyShared) -> Option<u32> {
+    fn generator_is_exhausted(generator: &Bound<'_, PyAny>) -> bool {
+        let py = generator.py();
+        let Ok(inspect) = py.import("inspect") else {
+            return true;
+        };
+        let is_generator = inspect
+            .getattr("isgenerator")
+            .and_then(|f| f.call1((generator.clone(),)))
+            .ok()
+            .and_then(|v| v.extract::<bool>().ok())
+            .unwrap_or(false);
+        if !is_generator {
+            return true;
+        }
+        inspect
+            .getattr("getgeneratorstate")
+            .and_then(|f| f.call1((generator.clone(),)))
+            .ok()
+            .and_then(|v| v.extract::<String>().ok())
+            .is_some_and(|state| state == "GEN_CLOSED")
+    }
+
+    fn generator_frame_from_callback(
+        generator: &PyShared,
+        get_frame: &PyShared,
+    ) -> Result<Option<Py<PyAny>>, String> {
         Python::attach(|py| {
-            let resolve_line = py
-                .import("doeff.do")
-                .ok()
-                .and_then(|do_mod| do_mod.getattr("resolve_generator_line").ok());
-            if let Some(resolver) = resolve_line {
-                let result = resolver.call1((generator.bind(py),)).ok()?;
-                if !result.is_none() {
-                    return result.extract::<u32>().ok();
+            let generator = generator.clone_ref(py);
+            let generator_for_state = generator.clone_ref(py);
+            let get_frame = get_frame.clone_ref(py);
+            let frame = get_frame
+                .call1(py, (generator,))
+                .map_err(|e| format!("get_frame callback raised: {e}"))?;
+            if frame.bind(py).is_none() {
+                if Self::generator_is_exhausted(generator_for_state.bind(py)) {
+                    return Ok(None);
                 }
+                return Err("get_frame callback returned None for live generator".to_string());
             }
-            let mut current = generator.bind(py).clone();
-            for _ in 0..8 {
-                let next = current
-                    .getattr("__doeff_inner__")
-                    .ok()
-                    .filter(|inner| !inner.is_none());
-                let Some(next_inner) = next else {
-                    break;
-                };
-                current = next_inner;
-            }
-            let gi_frame = current.getattr("gi_frame").ok()?;
-            if gi_frame.is_none() {
-                return None;
-            }
-            gi_frame.getattr("f_lineno").ok()?.extract::<u32>().ok()
+            Ok(Some(frame))
         })
     }
 
-    fn generator_current_location(generator: &PyShared) -> Option<(String, u32)> {
+    fn resolve_generator_line(
+        generator: &PyShared,
+        get_frame: &PyShared,
+    ) -> Result<Option<u32>, String> {
+        let Some(frame) = Self::generator_frame_from_callback(generator, get_frame)? else {
+            return Ok(None);
+        };
         Python::attach(|py| {
-            let resolve_loc = py
-                .import("doeff.do")
-                .ok()
-                .and_then(|do_mod| do_mod.getattr("resolve_generator_location").ok());
-            if let Some(resolver) = resolve_loc {
-                if let Ok(result) = resolver.call1((generator.bind(py),)) {
-                    if !result.is_none() {
-                        if let Ok((file, line)) = result.extract::<(String, u32)>() {
-                            return Some((file, line));
-                        }
-                    }
-                }
-            }
-            let bound = generator.bind(py);
-            let mut current = bound.clone();
-            for _ in 0..8 {
-                let next = current
-                    .getattr("__doeff_inner__")
-                    .ok()
-                    .filter(|inner| !inner.is_none());
-                let Some(next_inner) = next else {
-                    break;
-                };
-                current = next_inner;
-            }
-            let gi_frame = current.getattr("gi_frame").ok()?;
-            if gi_frame.is_none() {
-                return None;
-            }
-            let code = gi_frame.getattr("f_code").ok()?;
+            frame
+                .bind(py)
+                .getattr("f_lineno")
+                .and_then(|v| v.extract::<u32>())
+                .map(Some)
+                .map_err(|e| format!("get_frame returned non-frame object: {e}"))
+        })
+    }
+
+    fn resolve_generator_location(
+        generator: &PyShared,
+        get_frame: &PyShared,
+    ) -> Result<Option<(String, u32)>, String> {
+        let Some(frame) = Self::generator_frame_from_callback(generator, get_frame)? else {
+            return Ok(None);
+        };
+        Python::attach(|py| {
+            let frame_bound = frame.bind(py);
+            let code = frame_bound
+                .getattr("f_code")
+                .map_err(|e| format!("frame missing f_code: {e}"))?;
             let file = code
                 .getattr("co_filename")
-                .ok()
-                .and_then(|v| v.extract::<String>().ok())?;
-            let line = gi_frame
+                .and_then(|v| v.extract::<String>())
+                .map_err(|e| format!("frame code missing co_filename: {e}"))?;
+            let line = frame_bound
                 .getattr("f_lineno")
-                .ok()
-                .and_then(|v| v.extract::<u32>().ok())?;
-            Some((file, line))
+                .and_then(|v| v.extract::<u32>())
+                .map_err(|e| format!("frame missing f_lineno: {e}"))?;
+            Ok(Some((file, line)))
         })
+    }
+
+    fn report_generator_diagnostic(context: &str, message: &str) {
+        eprintln!("[doeff-vm][diagnostic] {context}: {message}");
     }
 
     fn resume_location_from_frames(frames: &[Frame]) -> Option<(String, String, u32)> {
         for frame in frames.iter().rev() {
             if let Frame::PythonGenerator {
                 generator,
+                get_frame,
                 metadata: Some(metadata),
                 ..
             } = frame
             {
-                if let Some((file, line)) = Self::generator_current_location(generator) {
-                    return Some((metadata.function_name.clone(), file, line));
+                match Self::resolve_generator_location(generator, get_frame) {
+                    Ok(Some((file, line))) => {
+                        return Some((metadata.function_name.clone(), file, line));
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        Self::report_generator_diagnostic("resume_location_from_frames", &err);
+                    }
                 }
                 return Some((
                     metadata.function_name.clone(),
@@ -589,17 +667,24 @@ impl VM {
         for frame in k.frames_snapshot.iter().rev() {
             if let Frame::PythonGenerator {
                 generator,
+                get_frame,
                 metadata: Some(metadata),
                 ..
             } = frame
             {
-                if let Some((file, line)) = Self::generator_current_location(generator) {
-                    return Some((
-                        metadata.frame_id as FrameId,
-                        metadata.function_name.clone(),
-                        file,
-                        line,
-                    ));
+                match Self::resolve_generator_location(generator, get_frame) {
+                    Ok(Some((file, line))) => {
+                        return Some((
+                            metadata.frame_id as FrameId,
+                            metadata.function_name.clone(),
+                            file,
+                            line,
+                        ));
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        Self::report_generator_diagnostic("effect_site_from_continuation", &err);
+                    }
                 }
                 return Some((
                     metadata.frame_id as FrameId,
@@ -850,6 +935,7 @@ impl VM {
             for frame in &seg.frames {
                 let Frame::PythonGenerator {
                     generator,
+                    get_frame,
                     metadata: Some(metadata),
                     ..
                 } = frame
@@ -857,8 +943,14 @@ impl VM {
                     continue;
                 };
 
-                let current_line =
-                    Self::generator_current_line(generator).unwrap_or(metadata.source_line);
+                let current_line = match Self::resolve_generator_line(generator, get_frame) {
+                    Ok(Some(line)) => line,
+                    Ok(None) => metadata.source_line,
+                    Err(err) => {
+                        Self::report_generator_diagnostic("supplement_with_live_state", &err);
+                        metadata.source_line
+                    }
+                };
                 let last_line = trace.iter().rev().find_map(|entry| match entry {
                     TraceEntry::Frame {
                         frame_id,
@@ -1392,6 +1484,7 @@ impl VM {
             for frame in &seg.frames {
                 let Frame::PythonGenerator {
                     generator,
+                    get_frame,
                     metadata: Some(metadata),
                     ..
                 } = frame
@@ -1399,7 +1492,14 @@ impl VM {
                     continue;
                 };
 
-                let line = Self::generator_current_line(generator).unwrap_or(metadata.source_line);
+                let line = match Self::resolve_generator_line(generator, get_frame) {
+                    Ok(Some(line)) => line,
+                    Ok(None) => metadata.source_line,
+                    Err(err) => {
+                        Self::report_generator_diagnostic("active_chain/live_segments", &err);
+                        metadata.source_line
+                    }
+                };
                 if let Some(existing) = frame_stack
                     .iter_mut()
                     .find(|entry| entry.frame_id == metadata.frame_id)
@@ -1433,6 +1533,7 @@ impl VM {
             for frame in dispatch_ctx.k_user.frames_snapshot.iter() {
                 let Frame::PythonGenerator {
                     generator,
+                    get_frame,
                     metadata: Some(metadata),
                     ..
                 } = frame
@@ -1440,7 +1541,14 @@ impl VM {
                     continue;
                 };
 
-                let line = Self::generator_current_line(generator).unwrap_or(metadata.source_line);
+                let line = match Self::resolve_generator_line(generator, get_frame) {
+                    Ok(Some(line)) => line,
+                    Ok(None) => metadata.source_line,
+                    Err(err) => {
+                        Self::report_generator_diagnostic("active_chain/user_snapshot", &err);
+                        metadata.source_line
+                    }
+                };
                 if let Some(existing) = frame_stack
                     .iter_mut()
                     .find(|entry| entry.frame_id == metadata.frame_id)
@@ -1543,6 +1651,7 @@ impl VM {
                         .filter_map(|frame| {
                             let Frame::PythonGenerator {
                                 generator,
+                                get_frame,
                                 metadata: Some(metadata),
                                 ..
                             } = frame
@@ -1550,8 +1659,17 @@ impl VM {
                                 return None;
                             };
 
-                            let line = Self::generator_current_line(generator)
-                                .unwrap_or(metadata.source_line);
+                            let line = match Self::resolve_generator_line(generator, get_frame) {
+                                Ok(Some(line)) => line,
+                                Ok(None) => metadata.source_line,
+                                Err(err) => {
+                                    Self::report_generator_diagnostic(
+                                        "active_chain/fallback_snapshot",
+                                        &err,
+                                    );
+                                    metadata.source_line
+                                }
+                            };
                             Some(FrameState {
                                 frame_id: metadata.frame_id as FrameId,
                                 function_name: metadata.function_name.clone(),
@@ -1986,6 +2104,7 @@ impl VM {
 
             Frame::PythonGenerator {
                 generator,
+                get_frame,
                 started,
                 metadata,
             } => {
@@ -1994,6 +2113,7 @@ impl VM {
                 self.pending_python = Some(PendingPython::StepUserGenerator {
                     generator,
                     metadata,
+                    get_frame,
                 });
 
                 match mode {
@@ -2329,22 +2449,30 @@ impl VM {
             (PendingPython::StartProgramFrame { metadata }, PyCallOutcome::Value(gen_val)) => {
                 match gen_val {
                     Value::Python(gen) => {
-                        if let Some(ref m) = metadata {
-                            self.maybe_emit_frame_entered(m);
+                        match Self::extract_doeff_generator(gen, metadata, "StartProgram") {
+                            Ok((generator, get_frame, metadata)) => {
+                                if let Some(ref m) = metadata {
+                                    self.maybe_emit_frame_entered(m);
+                                }
+                                if let Some(seg) = self.current_segment_mut() {
+                                    seg.push_frame(Frame::PythonGenerator {
+                                        generator,
+                                        get_frame,
+                                        started: false,
+                                        metadata,
+                                    });
+                                }
+                                self.mode = Mode::Deliver(Value::Unit);
+                            }
+                            Err(e) => {
+                                self.mode = Mode::Throw(e);
+                            }
                         }
-                        if let Some(seg) = self.current_segment_mut() {
-                            seg.push_frame(Frame::PythonGenerator {
-                                generator: PyShared::new(gen),
-                                started: false,
-                                metadata,
-                            });
-                        }
-                        self.mode = Mode::Deliver(Value::Unit);
                     }
-                    _ => {
-                        self.mode = Mode::Throw(PyException::type_error(
-                            "StartProgram: program did not return a generator",
-                        ));
+                    other => {
+                        self.mode = Mode::Throw(PyException::type_error(format!(
+                            "StartProgram: expected DoeffGenerator, got {other:?}"
+                        )));
                     }
                 }
             }
@@ -2355,18 +2483,31 @@ impl VM {
 
             (PendingPython::CallFuncReturn { metadata }, PyCallOutcome::Value(value)) => {
                 match value {
+                    Value::Python(obj) if Self::is_doeff_generator_object(&obj) => {
+                        match Self::extract_doeff_generator(obj, metadata, "CallFuncReturn") {
+                            Ok((generator, get_frame, metadata)) => {
+                                if let Some(ref m) = metadata {
+                                    self.maybe_emit_frame_entered(m);
+                                }
+                                if let Some(seg) = self.current_segment_mut() {
+                                    seg.push_frame(Frame::PythonGenerator {
+                                        generator,
+                                        get_frame,
+                                        started: false,
+                                        metadata,
+                                    });
+                                }
+                                self.mode = Mode::Deliver(Value::Unit);
+                            }
+                            Err(e) => {
+                                self.mode = Mode::Throw(e);
+                            }
+                        }
+                    }
                     Value::Python(obj) if Self::is_generator_object(&obj) => {
-                        if let Some(ref m) = metadata {
-                            self.maybe_emit_frame_entered(m);
-                        }
-                        if let Some(seg) = self.current_segment_mut() {
-                            seg.push_frame(Frame::PythonGenerator {
-                                generator: PyShared::new(obj),
-                                started: false,
-                                metadata,
-                            });
-                        }
-                        self.mode = Mode::Deliver(Value::Unit);
+                        self.mode = Mode::Throw(PyException::type_error(
+                            "CallFuncReturn: raw generator returned; expected DoeffGenerator",
+                        ));
                     }
                     other => {
                         self.mode = Mode::Deliver(other);
@@ -2382,12 +2523,14 @@ impl VM {
                 PendingPython::StepUserGenerator {
                     generator,
                     metadata,
+                    get_frame,
                 },
                 PyCallOutcome::GenYield(yielded),
             ) => {
                 if let Some(seg) = self.current_segment_mut() {
                     seg.push_frame(Frame::PythonGenerator {
                         generator,
+                        get_frame,
                         started: true,
                         metadata,
                     });
@@ -2409,6 +2552,7 @@ impl VM {
                 PendingPython::StepUserGenerator {
                     generator,
                     metadata: _,
+                    ..
                 },
                 PyCallOutcome::GenError(e),
             ) => {
@@ -2430,26 +2574,40 @@ impl VM {
                 },
                 PyCallOutcome::Value(handler_gen_val),
             ) => match handler_gen_val {
-                Value::Python(handler_gen) => {
-                    let handler_return_cb = self.register_callback(Box::new(|value, vm| {
-                        let _ = vm.handle_handler_return(value);
-                        std::mem::replace(&mut vm.mode, Mode::Deliver(Value::Unit))
-                    }));
-                    if let Some(seg) = self.current_segment_mut() {
-                        seg.push_frame(Frame::RustReturn {
-                            cb: handler_return_cb,
-                        });
-                        seg.push_frame(Frame::PythonGenerator {
-                            generator: PyShared::new(handler_gen),
-                            started: false,
-                            metadata: None,
-                        });
+                Value::Python(handler_gen) if Self::is_doeff_generator_object(&handler_gen) => {
+                    match Self::extract_doeff_generator(handler_gen, None, "CallPythonHandler") {
+                        Ok((generator, get_frame, metadata)) => {
+                            let handler_return_cb =
+                                self.register_callback(Box::new(|value, vm| {
+                                    let _ = vm.handle_handler_return(value);
+                                    std::mem::replace(&mut vm.mode, Mode::Deliver(Value::Unit))
+                                }));
+                            if let Some(seg) = self.current_segment_mut() {
+                                seg.push_frame(Frame::RustReturn {
+                                    cb: handler_return_cb,
+                                });
+                                seg.push_frame(Frame::PythonGenerator {
+                                    generator,
+                                    get_frame,
+                                    started: false,
+                                    metadata,
+                                });
+                            }
+                            self.mode = Mode::Deliver(Value::Unit);
+                        }
+                        Err(e) => {
+                            self.mode = Mode::Throw(e);
+                        }
                     }
-                    self.mode = Mode::Deliver(Value::Unit);
+                }
+                Value::Python(handler_gen) if Self::is_generator_object(&handler_gen) => {
+                    self.mode = Mode::Throw(PyException::type_error(
+                        "CallPythonHandler: raw generator returned; expected DoeffGenerator",
+                    ));
                 }
                 _ => {
                     self.mode = Mode::Throw(PyException::type_error(
-                        "CallPythonHandler: handler did not return a generator",
+                        "CallPythonHandler: handler did not return a DoeffGenerator",
                     ));
                 }
             },
@@ -3745,18 +3903,22 @@ mod tests {
     }
 
     #[test]
-    fn test_generator_current_line_prefers_doeff_inner_attribute() {
+    fn test_resolve_generator_line_prefers_doeff_inner_attribute() {
         Python::attach(|py| {
             use pyo3::types::PyModule;
 
             let module = PyModule::from_code(
                 py,
-                c"def inner():\n    yield 'inner'\n\ndef outer():\n    inner_gen = inner()\n    yield 'outer'\n\nouter_gen = outer()\nnext(outer_gen)\ninner_gen = outer_gen.gi_frame.f_locals['inner_gen']\nnext(inner_gen)\n\nclass _Wrapper:\n    def __init__(self, outer_gen, inner_gen):\n        self.gi_frame = outer_gen.gi_frame\n        self.__doeff_inner__ = inner_gen\n\nwrapper = _Wrapper(outer_gen, inner_gen)\nINNER_LINE = inner_gen.gi_frame.f_lineno\nOUTER_LINE = outer_gen.gi_frame.f_lineno\n",
+                c"def inner():\n    yield 'inner'\n\ndef outer():\n    inner_gen = inner()\n    yield 'outer'\n\nouter_gen = outer()\nnext(outer_gen)\ninner_gen = outer_gen.gi_frame.f_locals['inner_gen']\nnext(inner_gen)\n\ndef get_frame(gen):\n    current = gen\n    for _ in range(8):\n        inner = getattr(current, '__doeff_inner__', None)\n        if inner is None:\n            break\n        current = inner\n    return getattr(current, 'gi_frame', None)\n\nclass _Wrapper:\n    def __init__(self, outer_gen, inner_gen):\n        self.__doeff_inner__ = inner_gen\n\nwrapper = _Wrapper(outer_gen, inner_gen)\nINNER_LINE = inner_gen.gi_frame.f_lineno\nOUTER_LINE = outer_gen.gi_frame.f_lineno\n",
                 c"_vm_doeff_inner_attr_test.py",
                 c"_vm_doeff_inner_attr_test",
             )
             .expect("failed to create test module");
             let wrapper = module.getattr("wrapper").expect("missing wrapper").unbind();
+            let get_frame = module
+                .getattr("get_frame")
+                .expect("missing get_frame")
+                .unbind();
             let inner_line: u32 = module
                 .getattr("INNER_LINE")
                 .expect("missing INNER_LINE")
@@ -3768,11 +3930,60 @@ mod tests {
                 .extract()
                 .expect("OUTER_LINE must be int");
 
-            let observed = VM::generator_current_line(&PyShared::new(wrapper))
-                .expect("expected generator line");
+            let observed =
+                VM::resolve_generator_line(&PyShared::new(wrapper), &PyShared::new(get_frame))
+                    .expect("expected callback resolution to succeed")
+                    .expect("expected generator line");
             assert_eq!(observed, inner_line);
             assert_ne!(observed, outer_line);
         });
+    }
+
+    #[test]
+    fn test_vm_proto_runtime_eliminates_generator_current_line_function() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
+        let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
+        let runtime_src = &src[..runtime_boundary];
+        assert!(
+            !runtime_src.contains("fn generator_current_line("),
+            "VM-PROTO-001: generator_current_line() must be eliminated in favor of callback path"
+        );
+    }
+
+    #[test]
+    fn test_vm_proto_runtime_uses_get_frame_callback_instead_of_gi_frame_probe() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
+        let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
+        let runtime_src = &src[..runtime_boundary];
+        assert!(
+            runtime_src.contains(".call1(py, (generator,))") && runtime_src.contains("get_frame"),
+            "VM-PROTO-001: VM must resolve frame through get_frame callback"
+        );
+        assert!(
+            !runtime_src.contains("getattr(\"gi_frame\")"),
+            "VM-PROTO-001: direct gi_frame access in runtime vm.rs is forbidden"
+        );
+    }
+
+    #[test]
+    fn test_vm_proto_frame_push_sites_extract_doeff_generator() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
+        let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
+        let runtime_src = &src[..runtime_boundary];
+        let extraction_calls = runtime_src.matches("extract_doeff_generator(").count();
+        assert!(
+            extraction_calls >= 3,
+            "VM-PROTO-001: expected at least 3 DoeffGenerator extraction sites in vm.rs, got {extraction_calls}"
+        );
+        assert!(
+            runtime_src.contains("raw generator returned; expected DoeffGenerator"),
+            "VM-PROTO-001: CallFuncReturn must reject raw Python generators explicitly"
+        );
+        assert!(
+            runtime_src.contains("PendingPython::StepUserGenerator {")
+                && runtime_src.contains("get_frame,"),
+            "VM-PROTO-001: StepUserGenerator pending state must carry get_frame callback"
+        );
     }
 
     #[test]
