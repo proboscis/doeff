@@ -980,6 +980,7 @@ impl PyVM {
                     Ok(Yielded::DoCtrl(DoCtrl::Map {
                         source: PyShared::new(m.source.clone_ref(py)),
                         mapper: PyShared::new(m.mapper.clone_ref(py)),
+                        mapper_meta: call_metadata_from_meta_obj(m.mapper_meta.bind(py)),
                     }))
                 }
                 DoExprTag::FlatMap => {
@@ -987,6 +988,7 @@ impl PyVM {
                     Ok(Yielded::DoCtrl(DoCtrl::FlatMap {
                         source: PyShared::new(fm.source.clone_ref(py)),
                         binder: PyShared::new(fm.binder.clone_ref(py)),
+                        binder_meta: call_metadata_from_meta_obj(fm.binder_meta.bind(py)),
                     }))
                 }
                 DoExprTag::Perform => {
@@ -1318,29 +1320,26 @@ fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<PyShared> {
     })
 }
 
-fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> CallMetadata {
-    if let Some(meta) = &call.meta {
-        let meta_obj = meta.bind(py);
-        let function_name = metadata_attr_as_string(meta_obj, "function_name")
-            .unwrap_or_else(|| "<anonymous>".to_string());
-        let source_file = metadata_attr_as_string(meta_obj, "source_file")
-            .unwrap_or_else(|| "<unknown>".to_string());
-        let source_line = metadata_attr_as_u32(meta_obj, "source_line").unwrap_or(0);
-        let args_repr = metadata_attr_as_string(meta_obj, "args_repr");
-        let program_call = metadata_attr_as_py(meta_obj, "program_call");
-        return CallMetadata::new(
-            function_name,
-            source_file,
-            source_line,
-            args_repr,
-            program_call,
-        );
-    }
+fn call_metadata_from_meta_obj(meta_obj: &Bound<'_, PyAny>) -> CallMetadata {
+    let function_name = metadata_attr_as_string(meta_obj, "function_name")
+        .unwrap_or_else(|| "<anonymous>".to_string());
+    let source_file =
+        metadata_attr_as_string(meta_obj, "source_file").unwrap_or_else(|| "<unknown>".to_string());
+    let source_line = metadata_attr_as_u32(meta_obj, "source_line").unwrap_or(0);
+    let args_repr = metadata_attr_as_string(meta_obj, "args_repr");
+    let program_call = metadata_attr_as_py(meta_obj, "program_call");
+    CallMetadata::new(
+        function_name,
+        source_file,
+        source_line,
+        args_repr,
+        program_call,
+    )
+}
 
-    if let Ok(code) = call.f.bind(py).getattr("__code__") {
-        let function_name = call
-            .f
-            .bind(py)
+fn call_metadata_from_callable(_py: Python<'_>, callable: &Bound<'_, PyAny>) -> CallMetadata {
+    if let Ok(code) = callable.getattr("__code__") {
+        let function_name = callable
             .getattr("__name__")
             .ok()
             .and_then(|v| v.extract::<String>().ok())
@@ -1359,6 +1358,36 @@ fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> CallMe
     }
 
     CallMetadata::anonymous()
+}
+
+fn metadata_dict_from_call_metadata(
+    py: Python<'_>,
+    metadata: &CallMetadata,
+) -> PyResult<Py<PyAny>> {
+    let meta = PyDict::new(py);
+    meta.set_item("function_name", &metadata.function_name)?;
+    meta.set_item("source_file", &metadata.source_file)?;
+    meta.set_item("source_line", metadata.source_line)?;
+    if let Some(args_repr) = &metadata.args_repr {
+        meta.set_item("args_repr", args_repr)?;
+    }
+    if let Some(program_call) = &metadata.program_call {
+        meta.set_item("program_call", program_call.clone_ref(py))?;
+    }
+    Ok(meta.into_any().unbind())
+}
+
+fn metadata_dict_from_callable(py: Python<'_>, callable: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let metadata = call_metadata_from_callable(py, callable);
+    metadata_dict_from_call_metadata(py, &metadata)
+}
+
+fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> CallMetadata {
+    if let Some(meta) = &call.meta {
+        return call_metadata_from_meta_obj(meta.bind(py));
+    }
+
+    call_metadata_from_callable(py, call.f.bind(py))
 }
 
 // ---------------------------------------------------------------------------
@@ -1644,6 +1673,8 @@ pub struct PyMap {
     pub source: Py<PyAny>,
     #[pyo3(get)]
     pub mapper: Py<PyAny>,
+    #[pyo3(get)]
+    pub mapper_meta: Py<PyAny>,
 }
 
 #[pyclass(name = "Pure", extends=PyDoCtrlBase)]
@@ -1770,19 +1801,29 @@ impl PyPerform {
 #[pymethods]
 impl PyMap {
     #[new]
+    #[pyo3(signature = (source, mapper, mapper_meta=None))]
     fn new(
         py: Python<'_>,
         source: Py<PyAny>,
         mapper: Py<PyAny>,
+        mapper_meta: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if !mapper.bind(py).is_callable() {
             return Err(PyTypeError::new_err("Map.mapper must be callable"));
         }
+        let mapper_meta = match mapper_meta {
+            Some(meta) => meta,
+            None => metadata_dict_from_callable(py, mapper.bind(py))?,
+        };
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::Map as u8,
             })
-            .add_subclass(PyMap { source, mapper }))
+            .add_subclass(PyMap {
+                source,
+                mapper,
+                mapper_meta,
+            }))
     }
 }
 
@@ -1792,24 +1833,36 @@ pub struct PyFlatMap {
     pub source: Py<PyAny>,
     #[pyo3(get)]
     pub binder: Py<PyAny>,
+    #[pyo3(get)]
+    pub binder_meta: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyFlatMap {
     #[new]
+    #[pyo3(signature = (source, binder, binder_meta=None))]
     fn new(
         py: Python<'_>,
         source: Py<PyAny>,
         binder: Py<PyAny>,
+        binder_meta: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if !binder.bind(py).is_callable() {
             return Err(PyTypeError::new_err("FlatMap.binder must be callable"));
         }
+        let binder_meta = match binder_meta {
+            Some(meta) => meta,
+            None => metadata_dict_from_callable(py, binder.bind(py))?,
+        };
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::FlatMap as u8,
             })
-            .add_subclass(PyFlatMap { source, binder }))
+            .add_subclass(PyFlatMap {
+                source,
+                binder,
+                binder_meta,
+            }))
     }
 }
 

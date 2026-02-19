@@ -45,6 +45,10 @@ impl CallMetadata {
     }
 
     pub fn anonymous() -> Self {
+        // Restriction (VM-PROTO-005 / C7):
+        // This helper is only for tests and VM-internal synthetic calls where
+        // metadata is carried through another typed channel. User-facing runtime
+        // paths must provide explicit callback metadata.
         Self::new(
             "<anonymous>".to_string(),
             "<unknown>".to_string(),

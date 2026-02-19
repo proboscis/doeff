@@ -289,6 +289,24 @@ def _make_generator_program(
     return _GenProgramThunk(factory)
 
 
+def _callable_metadata_dict(func: Callable[..., Any]) -> dict[str, Any]:
+    code = getattr(func, "__code__", None)
+    if code is not None:
+        function_name = getattr(code, "co_name", getattr(func, "__name__", "<anonymous>"))
+        source_file = getattr(code, "co_filename", "<unknown>")
+        source_line = int(getattr(code, "co_firstlineno", 0) or 0)
+    else:
+        function_name = getattr(func, "__name__", "<anonymous>")
+        source_file = "<unknown>"
+        source_line = 0
+
+    return {
+        "function_name": function_name,
+        "source_file": source_file,
+        "source_line": source_line,
+    }
+
+
 class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
     """Runtime base class for doeff programs."""
 
@@ -361,7 +379,8 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
             raise TypeError("mapper must be callable")
         from doeff_vm import Map
 
-        return Map(self, f)
+        mapper_meta = _callable_metadata_dict(f)
+        return Map(self, f, mapper_meta=mapper_meta)
 
     def flat_map(self, f: Callable[[T], Program[U]]) -> Program[U]:
         """Monadic bind operation."""
@@ -370,7 +389,8 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
             raise TypeError("binder must be callable returning a Program")
         from doeff_vm import FlatMap
 
-        return FlatMap(self, f)
+        binder_meta = _callable_metadata_dict(f)
+        return FlatMap(self, f, binder_meta=binder_meta)
 
     def and_then_k(self, binder: Callable[[T], Program[U]]) -> Program[U]:
         """Alias for flat_map for Kleisli-style composition."""
