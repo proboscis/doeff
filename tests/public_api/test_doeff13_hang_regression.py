@@ -106,8 +106,9 @@ class TestDoeff13HangRegression:
     def test_do_handler_path_completes_within_3s(self) -> None:
         """A @do-decorated handler that plain-returns should NOT hang.
 
-        Pre-fix: hangs → watchdog fires → FAIL.
-        Post-fix: returns ``"wrapped:x"`` within budget → PASS.
+        VM-PROTO-003 contract: handlers must return generators.
+        A plain return from @do handler is now a bounded TypeError
+        (instead of historical hang behavior).
         """
 
         @do
@@ -125,7 +126,10 @@ class TestDoeff13HangRegression:
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main))
-        assert run_result.value == "wrapped:x"
+        assert run_result.is_err()
+        assert isinstance(run_result.error, TypeError)
+        assert "must return a generator" in str(run_result.error)
+        assert "Did you forget 'yield'?" in str(run_result.error)
 
     def test_nested_do_handler_path_completes_within_3s(self) -> None:
         """Two nested @do-decorated handlers should NOT hang.
@@ -133,8 +137,8 @@ class TestDoeff13HangRegression:
         The outer handler delegates unknown effects; the inner handler
         intercepts ``_CustomEffect``.  Pre-fix both layers trigger re-entry.
 
-        Pre-fix: hangs → watchdog fires → FAIL.
-        Post-fix: returns ``"inner:hello"`` within budget → PASS.
+        VM-PROTO-003 contract: handlers must return generators.
+        Nested @do handlers with plain returns should fail fast with TypeError.
         """
 
         @do
@@ -161,7 +165,10 @@ class TestDoeff13HangRegression:
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main))
-        assert run_result.value == "inner:hello"
+        assert run_result.is_err()
+        assert isinstance(run_result.error, TypeError)
+        assert "must return a generator" in str(run_result.error)
+        assert "Did you forget 'yield'?" in str(run_result.error)
 
     def test_no_infinite_reentry_on_custom_handler(self) -> None:
         """A @do handler that yields an effect INSIDE the handler must not loop.
@@ -171,8 +178,8 @@ class TestDoeff13HangRegression:
         handlers.  If the KPC path re-enters the handler stack this becomes
         an infinite loop.
 
-        Pre-fix: hangs → watchdog fires → FAIL.
-        Post-fix: returns ``"got:x:fallback"`` within budget → PASS.
+        VM-PROTO-003 contract: handlers must return generators.
+        @do handlers that return Program values now fail fast with TypeError.
         """
         from doeff import Get
 
@@ -194,7 +201,10 @@ class TestDoeff13HangRegression:
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main), store={"sentinel": "fallback"})
-        assert run_result.value == "got:x:fallback"
+        assert run_result.is_err()
+        assert isinstance(run_result.error, TypeError)
+        assert "must return a generator" in str(run_result.error)
+        assert "Did you forget 'yield'?" in str(run_result.error)
 
 
 # ---------------------------------------------------------------------------

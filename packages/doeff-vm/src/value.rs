@@ -336,7 +336,10 @@ impl Value {
                 let list = PyList::empty(py);
                 for h in handlers {
                     match h {
-                        Handler::Python(py_handler) => {
+                        Handler::Python {
+                            callable: py_handler,
+                            ..
+                        } => {
                             let bound = py_handler.bind(py);
                             if let Ok(original) = bound.getattr("__doeff_original_handler__") {
                                 list.append(original)?;

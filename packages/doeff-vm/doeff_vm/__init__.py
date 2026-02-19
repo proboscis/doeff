@@ -22,19 +22,53 @@ def _is_generator_like(value) -> bool:
     )
 
 
+def _handler_registration_metadata(handler):
+    handler_qualname = getattr(handler, "__qualname__", None) or getattr(handler, "__name__", None)
+    if handler_qualname is None:
+        handler_qualname = type(handler).__name__
+    if handler_qualname is None:
+        handler_qualname = "<python_handler>"
+
+    code_obj = getattr(handler, "__code__", None)
+    if code_obj is None:
+        call_method = getattr(handler, "__call__", None)
+        code_obj = getattr(call_method, "__code__", None)
+
+    source_file = getattr(code_obj, "co_filename", None)
+    source_line = getattr(code_obj, "co_firstlineno", None)
+    if not isinstance(source_line, int):
+        source_line = None
+    generator_name = getattr(code_obj, "co_name", None) or getattr(handler, "__name__", None)
+    if generator_name is None:
+        generator_name = "<handler>"
+    return handler_qualname, source_file, source_line, generator_name
+
+
 def _wrap_python_handler(handler):
     if not callable(handler):
         return handler
     if bool(getattr(handler, "__doeff_vm_wrapped_handler__", False)):
         return handler
 
+    handler_name, handler_file, handler_line, generator_name = _handler_registration_metadata(
+        handler
+    )
+
     def _wrapped(effect, k, _handler=handler):
         result = _handler(effect, k)
         if _is_generator_like(result):
             from doeff.do import make_doeff_generator
 
-            return make_doeff_generator(result)
-        return result
+            return make_doeff_generator(
+                result,
+                function_name=generator_name,
+                source_file=handler_file,
+                source_line=handler_line,
+            )
+        raise TypeError(
+            f"Handler {handler_name} must return a generator, got {type(result).__name__}. "
+            "Did you forget 'yield'?"
+        )
 
     if hasattr(handler, "__name__"):
         _wrapped.__name__ = handler.__name__
@@ -57,6 +91,9 @@ def _wrap_python_handler(handler):
         if hasattr(handler, attr):
             setattr(_wrapped, attr, getattr(handler, attr))
     setattr(_wrapped, "__doeff_vm_wrapped_handler__", True)
+    setattr(_wrapped, "__doeff_handler_name__", handler_name)
+    setattr(_wrapped, "__doeff_handler_file__", handler_file)
+    setattr(_wrapped, "__doeff_handler_line__", handler_line)
     return _wrapped
 
 
@@ -76,7 +113,14 @@ def _install_validated_runtime_api() -> None:
 
     def validated_with_handler(handler, expr):
         _validate_do_handler_annotations((handler,))
-        return raw_with_handler(_wrap_python_handler(handler), expr)
+        wrapped_handler = _wrap_python_handler(handler)
+        return raw_with_handler(
+            wrapped_handler,
+            expr,
+            handler_name=getattr(wrapped_handler, "__doeff_handler_name__", None),
+            handler_file=getattr(wrapped_handler, "__doeff_handler_file__", None),
+            handler_line=getattr(wrapped_handler, "__doeff_handler_line__", None),
+        )
 
     def validated_run(program, handlers=(), env=None, store=None, trace=False):
         _validate_do_handler_annotations(handlers)

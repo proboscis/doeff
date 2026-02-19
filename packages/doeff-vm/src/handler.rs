@@ -28,7 +28,12 @@ use crate::vm::RustStore;
 #[derive(Debug, Clone)]
 pub enum Handler {
     RustProgram(RustProgramHandlerRef),
-    Python(PyShared),
+    Python {
+        callable: PyShared,
+        handler_name: String,
+        handler_file: Option<String>,
+        handler_line: Option<u32>,
+    },
 }
 
 /// Result of stepping a Rust handler program.
@@ -120,7 +125,70 @@ impl Handler {
     pub fn can_handle(&self, effect: &DispatchEffect) -> bool {
         match self {
             Handler::RustProgram(h) => h.can_handle(effect),
-            Handler::Python(_) => true,
+            Handler::Python { .. } => true,
+        }
+    }
+
+    pub fn python_from_callable(callable: &Bound<'_, PyAny>) -> Self {
+        fn optional_attr_string(callable: &Bound<'_, PyAny>, attr: &str) -> Option<String> {
+            callable.getattr(attr).ok().and_then(|value| {
+                if value.is_none() {
+                    None
+                } else {
+                    value.extract::<String>().ok()
+                }
+            })
+        }
+
+        fn optional_attr_u32(callable: &Bound<'_, PyAny>, attr: &str) -> Option<u32> {
+            callable.getattr(attr).ok().and_then(|value| {
+                if value.is_none() {
+                    return None;
+                }
+                value
+                    .extract::<u32>()
+                    .ok()
+                    .or_else(|| value.extract::<i64>().ok().and_then(|line| u32::try_from(line).ok()))
+            })
+        }
+
+        fn fallback_source(callable: &Bound<'_, PyAny>) -> (Option<String>, Option<u32>) {
+            let code = callable.getattr("__code__").ok().or_else(|| {
+                callable
+                    .getattr("__call__")
+                    .ok()
+                    .and_then(|call| call.getattr("__code__").ok())
+            });
+            let Some(code) = code else {
+                return (None, None);
+            };
+            let file = code
+                .getattr("co_filename")
+                .ok()
+                .and_then(|value| value.extract::<String>().ok());
+            let line = code
+                .getattr("co_firstlineno")
+                .ok()
+                .and_then(|value| value.extract::<u32>().ok());
+            (file, line)
+        }
+
+        let handler_name = optional_attr_string(callable, "__doeff_handler_name__")
+            .or_else(|| optional_attr_string(callable, "__qualname__"))
+            .or_else(|| optional_attr_string(callable, "__name__"))
+            .or_else(|| callable.get_type().name().ok().map(|name| name.to_string()))
+            .unwrap_or_else(|| "<python_handler>".to_string());
+
+        let (fallback_file, fallback_line) = fallback_source(callable);
+        let handler_file =
+            optional_attr_string(callable, "__doeff_handler_file__").or(fallback_file);
+        let handler_line = optional_attr_u32(callable, "__doeff_handler_line__").or(fallback_line);
+
+        Handler::Python {
+            callable: PyShared::new(callable.clone().unbind()),
+            handler_name,
+            handler_file,
+            handler_line,
         }
     }
 }
