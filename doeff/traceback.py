@@ -499,19 +499,23 @@ else:
     def attach_doeff_traceback(
         exception: BaseException,
         *,
+        traceback_data: Any | None = None,
         allow_active: bool = False,
     ) -> DoeffTraceback | None:
-        existing = getattr(exception, "__doeff_traceback__", None)
-        if isinstance(existing, DoeffTraceback):
-            return existing
-
-        raw_trace = getattr(exception, "__doeff_traceback_data__", None)
-        if raw_trace is None:
+        if traceback_data is None:
             return None
 
         trace_entries: list[Any] | tuple[Any, ...]
         active_chain_entries: list[Any] | tuple[Any, ...]
-        if isinstance(raw_trace, dict):
+        raw_trace = traceback_data
+        if hasattr(raw_trace, "entries"):
+            trace_entries = cast(Any, raw_trace).entries
+            active_chain_entries = getattr(raw_trace, "active_chain", ())
+            if not isinstance(trace_entries, (list, tuple)):
+                trace_entries = ()
+            if not isinstance(active_chain_entries, (list, tuple)):
+                active_chain_entries = ()
+        elif isinstance(raw_trace, dict):
             trace_entries = raw_trace.get("trace", ())
             active_chain_entries = raw_trace.get("active_chain", ())
             if not isinstance(trace_entries, (list, tuple)):
@@ -530,7 +534,6 @@ else:
             active_chain_entries,
             allow_active=allow_active,
         )
-        cast(Any, exception).__doeff_traceback__ = tb
         return tb
 
     __all__ = [
