@@ -48,6 +48,7 @@ pub enum PendingPython {
     StepUserGenerator {
         generator: PyShared,
         metadata: Option<CallMetadata>,
+        get_frame: PyShared,
     },
     CallPythonHandler {
         k_user: Continuation,
@@ -66,4 +67,18 @@ pub enum PyCallOutcome {
     GenYield(Yielded),
     GenReturn(Value),
     GenError(PyException),
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_vm_proto_pending_step_user_generator_has_get_frame_field() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/python_call.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            runtime_src.contains("StepUserGenerator {")
+                && runtime_src.contains("get_frame: PyShared"),
+            "VM-PROTO-001: PendingPython::StepUserGenerator must carry get_frame callback"
+        );
+    }
 }
