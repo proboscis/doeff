@@ -155,6 +155,14 @@ pub struct TaskMetadata {
     pub spawn_dispatch_id: Option<DispatchId>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ExceptionSpawnBoundary {
+    pub task_id: u64,
+    pub parent_task: Option<u64>,
+    pub spawn_site: Option<SpawnSite>,
+    pub insertion_dispatch_id: Option<DispatchId>,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct SemaphoreWaiter {
     promise: PromiseId,
@@ -214,23 +222,17 @@ fn annotate_spawn_boundary_dispatch(error: &PyException, dispatch_id: Option<Dis
     let Some(dispatch_id) = dispatch_id else {
         return;
     };
-    let PyException::Materialized { exc_value, .. } = error else {
+    let Some(key) = exception_key(error) else {
         return;
     };
-
-    Python::attach(|py| {
-        let exc_obj = exc_value.bind(py);
-        let Ok(payload) = exc_obj.getattr("__doeff_spawned_from__") else {
-            return;
-        };
-        if payload.is_none() {
-            return;
+    let mut boundaries = exception_spawn_boundaries()
+        .lock()
+        .expect("Scheduler lock poisoned");
+    if let Some(chain) = boundaries.get_mut(&key) {
+        if let Some(boundary) = chain.first_mut() {
+            boundary.insertion_dispatch_id = Some(dispatch_id);
         }
-        let Ok(payload_dict) = payload.cast::<PyDict>() else {
-            return;
-        };
-        let _ = payload_dict.set_item("boundary_dispatch_id", dispatch_id.raw());
-    });
+    }
 }
 
 pub(crate) fn preserve_exception_origin(error: &PyException) {
@@ -357,11 +359,34 @@ pub struct SchedulerState {
 
 static NEXT_SCHEDULER_STATE_ID: AtomicU64 = AtomicU64::new(1);
 static SEMAPHORE_DROP_NOTIFICATIONS: OnceLock<Mutex<HashMap<u64, Vec<u64>>>> = OnceLock::new();
+static EXCEPTION_SPAWN_BOUNDARIES: OnceLock<Mutex<HashMap<usize, Vec<ExceptionSpawnBoundary>>>> =
+    OnceLock::new();
 static SCHEDULER_STATE_REGISTRY: OnceLock<Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>>> =
     OnceLock::new();
 
 fn semaphore_drop_notifications() -> &'static Mutex<HashMap<u64, Vec<u64>>> {
     SEMAPHORE_DROP_NOTIFICATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn exception_spawn_boundaries() -> &'static Mutex<HashMap<usize, Vec<ExceptionSpawnBoundary>>> {
+    EXCEPTION_SPAWN_BOUNDARIES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn exception_key(error: &PyException) -> Option<usize> {
+    let PyException::Materialized { exc_value, .. } = error else {
+        return None;
+    };
+    Some(Python::attach(|py| exc_value.bind(py).as_ptr() as usize))
+}
+
+pub(crate) fn take_exception_spawn_boundaries(error: &PyException) -> Vec<ExceptionSpawnBoundary> {
+    let Some(key) = exception_key(error) else {
+        return Vec::new();
+    };
+    let mut boundaries = exception_spawn_boundaries()
+        .lock()
+        .expect("Scheduler lock poisoned");
+    boundaries.remove(&key).unwrap_or_default()
 }
 
 fn scheduler_state_registry() -> &'static Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>> {
@@ -1446,7 +1471,6 @@ impl SchedulerState {
         let Some(metadata) = self.task_metadata.get(&task_id) else {
             return;
         };
-        let metadata = metadata.clone();
         let boundary_dispatch_id = metadata
             .parent_task
             .and_then(|parent_task| self.tasks.get(&parent_task))
@@ -1454,58 +1478,22 @@ impl SchedulerState {
                 TaskState::Pending { cont, .. } => cont.dispatch_id,
                 TaskState::Done { .. } => None,
             });
-
-        let PyException::Materialized { exc_value, .. } = error else {
+        let Some(key) = exception_key(error) else {
             return;
         };
+        let boundary = ExceptionSpawnBoundary {
+            task_id: task_id.raw(),
+            parent_task: metadata.parent_task.map(|task| task.raw()),
+            spawn_site: metadata.spawn_site.clone(),
+            insertion_dispatch_id: boundary_dispatch_id.or(metadata.spawn_dispatch_id),
+        };
 
-        Python::attach(|py| {
-            let exc_obj = exc_value.bind(py);
-            let payload = PyDict::new(py);
-            let _ = payload.set_item("task_id", task_id.raw());
-            match metadata.parent_task {
-                Some(parent_task) => {
-                    let _ = payload.set_item("parent_task", parent_task.raw());
-                }
-                None => {
-                    let _ = payload.set_item("parent_task", py.None());
-                }
-            }
-            match metadata.spawn_dispatch_id {
-                Some(dispatch_id) => {
-                    let _ = payload.set_item("spawn_dispatch_id", dispatch_id.raw());
-                }
-                None => {
-                    let _ = payload.set_item("spawn_dispatch_id", py.None());
-                }
-            }
-            match boundary_dispatch_id {
-                Some(dispatch_id) => {
-                    let _ = payload.set_item("boundary_dispatch_id", dispatch_id.raw());
-                }
-                None => {
-                    let _ = payload.set_item("boundary_dispatch_id", py.None());
-                }
-            }
-
-            if let Some(site) = metadata.spawn_site {
-                let site_dict = PyDict::new(py);
-                let _ = site_dict.set_item("function_name", site.function_name);
-                let _ = site_dict.set_item("source_file", site.source_file);
-                let _ = site_dict.set_item("source_line", site.source_line);
-                let _ = payload.set_item("spawn_site", site_dict);
-            } else {
-                let _ = payload.set_item("spawn_site", py.None());
-            }
-
-            if let Ok(existing) = exc_obj.getattr("__doeff_spawned_from__") {
-                if !existing.is_none() {
-                    let _ = payload.set_item("child", existing);
-                }
-            }
-
-            let _ = exc_obj.setattr("__doeff_spawned_from__", payload);
-        });
+        let mut boundaries = exception_spawn_boundaries()
+            .lock()
+            .expect("Scheduler lock poisoned");
+        let mut chain = boundaries.remove(&key).unwrap_or_default();
+        chain.insert(0, boundary);
+        boundaries.insert(key, chain);
     }
 
     pub fn wake_waiters(&mut self, waitable: Waitable) {
