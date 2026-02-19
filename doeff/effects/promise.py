@@ -4,7 +4,7 @@ from typing import Any, TypeVar
 
 import doeff_vm
 
-from .base import Effect, create_effect_with_trace
+from .base import Effect
 from .spawn import Promise, coerce_promise_handle
 
 T = TypeVar("T")
@@ -20,7 +20,7 @@ def CreatePromise():
 
     @do
     def _program():
-        raw_promise = yield create_effect_with_trace(CreatePromiseEffect(), skip_frames=3)
+        raw_promise = yield CreatePromiseEffect()
         return coerce_promise_handle(raw_promise)
 
     return _program()
@@ -28,20 +28,14 @@ def CreatePromise():
 
 def CompletePromise(promise: Promise[T], value: T) -> Effect:
     wrapped_promise = coerce_promise_handle(promise)
-    return create_effect_with_trace(
-        CompletePromiseEffect(wrapped_promise, value),
-        skip_frames=3,
-    )
+    return CompletePromiseEffect(wrapped_promise, value)
 
 
 def FailPromise(promise: Promise[Any], error: BaseException) -> Effect:
     wrapped_promise = coerce_promise_handle(promise)
     if not isinstance(error, BaseException):
         raise TypeError(f"error must be BaseException, got {type(error).__name__}")
-    return create_effect_with_trace(
-        FailPromiseEffect(wrapped_promise, error),
-        skip_frames=3,
-    )
+    return FailPromiseEffect(wrapped_promise, error)
 
 
 __all__ = [

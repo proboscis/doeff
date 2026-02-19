@@ -7,7 +7,7 @@ from typing import Any
 
 from ._program_types import ProgramLike
 from ._validators import ensure_dict_str_any, ensure_program_like
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase
 
 
 @dataclass(frozen=True)
@@ -51,42 +51,36 @@ class graph:
 
     @staticmethod
     def step(value: Any, meta: dict[str, Any] | None = None) -> GraphStepEffect:
-        return create_effect_with_trace(
-            GraphStepEffect(value=value, meta=dict(meta or {}))
-        )
+        return GraphStepEffect(value=value, meta=dict(meta or {}))
 
     @staticmethod
     def annotate(meta: dict[str, Any]) -> GraphAnnotateEffect:
-        return create_effect_with_trace(GraphAnnotateEffect(meta=dict(meta)))
+        return GraphAnnotateEffect(meta=dict(meta))
 
     @staticmethod
     def snapshot() -> GraphSnapshotEffect:
-        return create_effect_with_trace(GraphSnapshotEffect())
+        return GraphSnapshotEffect()
 
     @staticmethod
     def capture(program: ProgramLike) -> GraphCaptureEffect:
-        return create_effect_with_trace(GraphCaptureEffect(program=program))
+        return GraphCaptureEffect(program=program)
 
 
 # Uppercase aliases
 def Step(value: Any, meta: dict[str, Any] | None = None) -> Effect:
-    return create_effect_with_trace(
-        GraphStepEffect(value=value, meta=dict(meta or {})), skip_frames=3
-    )
+    return GraphStepEffect(value=value, meta=dict(meta or {}))
 
 
 def Annotate(meta: dict[str, Any]) -> Effect:
-    return create_effect_with_trace(GraphAnnotateEffect(meta=dict(meta)), skip_frames=3)
+    return GraphAnnotateEffect(meta=dict(meta))
 
 
 def Snapshot() -> Effect:
-    return create_effect_with_trace(GraphSnapshotEffect(), skip_frames=3)
+    return GraphSnapshotEffect()
 
 
 def CaptureGraph(program: ProgramLike) -> Effect:
-    return create_effect_with_trace(
-        GraphCaptureEffect(program=program), skip_frames=3
-    )
+    return GraphCaptureEffect(program=program)
 
 
 def capture_graph(program: ProgramLike) -> Effect:
