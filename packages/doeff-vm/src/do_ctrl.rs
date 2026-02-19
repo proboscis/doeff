@@ -24,10 +24,12 @@ pub enum DoCtrl {
     Map {
         source: PyShared,
         mapper: PyShared,
+        mapper_meta: CallMetadata,
     },
     FlatMap {
         source: PyShared,
         binder: PyShared,
+        binder_meta: CallMetadata,
     },
     Perform {
         effect: DispatchEffect,
@@ -87,13 +89,23 @@ impl DoCtrl {
             DoCtrl::Pure { value } => DoCtrl::Pure {
                 value: value.clone(),
             },
-            DoCtrl::Map { source, mapper } => DoCtrl::Map {
+            DoCtrl::Map {
+                source,
+                mapper,
+                mapper_meta,
+            } => DoCtrl::Map {
                 source: source.clone(),
                 mapper: mapper.clone(),
+                mapper_meta: mapper_meta.clone(),
             },
-            DoCtrl::FlatMap { source, binder } => DoCtrl::FlatMap {
+            DoCtrl::FlatMap {
+                source,
+                binder,
+                binder_meta,
+            } => DoCtrl::FlatMap {
                 source: source.clone(),
                 binder: binder.clone(),
+                binder_meta: binder_meta.clone(),
             },
             DoCtrl::Perform { effect } => DoCtrl::Perform {
                 effect: effect.clone(),
@@ -175,5 +187,28 @@ impl DoCtrl {
             DoCtrl::GetCallStack => DoCtrl::GetCallStack,
             DoCtrl::GetTrace => DoCtrl::GetTrace,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_vm_proto_005_map_variant_includes_mapper_meta() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/do_ctrl.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            runtime_src.contains("mapper_meta: CallMetadata"),
+            "VM-PROTO-005: DoCtrl::Map must carry mapper_meta: CallMetadata"
+        );
+    }
+
+    #[test]
+    fn test_vm_proto_005_flat_map_variant_includes_binder_meta() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/do_ctrl.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            runtime_src.contains("binder_meta: CallMetadata"),
+            "VM-PROTO-005: DoCtrl::FlatMap must carry binder_meta: CallMetadata"
+        );
     }
 }
