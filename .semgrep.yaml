@@ -925,7 +925,7 @@ rules:
       gap: G08
 
   # ---------------------------------------------------------------------------
-  # VM PROTOCOL: TRACEBACK DUNDER + IMPORT BANS (VM-PROTO-004)
+  # VM PROTOCOL: FINAL C1/C6 ENFORCEMENT (VM-PROTO-007)
   # ---------------------------------------------------------------------------
 
   - id: vm-no-dunder-attrs
@@ -934,18 +934,16 @@ rules:
       - metavariable-regex:
           metavariable: $ATTR
           regex: '^"__doeff_[A-Za-z0-9_]+__"$'
+    message: "VM must not set __doeff_* attributes. Use typed PyClass fields."
+    languages: [rust]
+    severity: ERROR
     paths:
       include:
         - "**/packages/doeff-vm/src/vm.rs"
         - "**/packages/doeff-vm/src/pyvm.rs"
-    message: |
-      VM protocol violation: writing __doeff_*__ attributes is forbidden.
-      Use typed data delivery via RunResult fields instead of exception dunders.
-    languages: [rust]
-    severity: ERROR
     metadata:
       category: vm-protocol
-      issue: VM-PROTO-004
+      issue: VM-PROTO-007
 
   - id: vm-no-dunder-reads
     patterns:
@@ -953,20 +951,16 @@ rules:
       - metavariable-regex:
           metavariable: $ATTR
           regex: '^"__doeff_[A-Za-z0-9_]+__"$'
-      - pattern-not: $OBJ.getattr("__doeff_inner__")
-      - pattern-not: $OBJ.getattr("__doeff_spawned_from__")
+    message: "VM must not read __doeff_* attributes. Use typed PyClass fields."
+    languages: [rust]
+    severity: ERROR
     paths:
       include:
         - "**/packages/doeff-vm/src/vm.rs"
         - "**/packages/doeff-vm/src/pyvm.rs"
-    message: |
-      VM protocol violation: reading __doeff_*__ attributes is forbidden.
-      Read traceback data from RunResult.traceback_data instead.
-    languages: [rust]
-    severity: ERROR
     metadata:
       category: vm-protocol
-      issue: VM-PROTO-004
+      issue: VM-PROTO-007
 
   - id: vm-no-hasattr-dunder
     patterns:
@@ -974,38 +968,29 @@ rules:
       - metavariable-regex:
           metavariable: $ATTR
           regex: '^"__doeff_[A-Za-z0-9_]+__"$'
+    message: "VM must not probe __doeff_* attributes. Use isinstance on typed PyClass."
+    languages: [rust]
+    severity: ERROR
     paths:
       include:
         - "**/packages/doeff-vm/src/vm.rs"
         - "**/packages/doeff-vm/src/pyvm.rs"
-    message: |
-      VM protocol violation: checking __doeff_*__ attributes is forbidden.
-      Use explicit typed RunResult fields to signal traceback availability.
-    languages: [rust]
-    severity: ERROR
     metadata:
       category: vm-protocol
-      issue: VM-PROTO-004
+      issue: VM-PROTO-007
 
-  - id: vm-no-uv-run-python-imports
-    patterns:
-      - pattern: $PY.import($MODULE)
-      - metavariable-regex:
-          metavariable: $MODULE
-          regex: '^"doeff\\.[A-Za-z0-9_\\.]+"$'
-      - pattern-not: $PY.import("doeff.do")
+  - id: vm-no-python-imports
+    pattern-regex: '\.import\("doeff\.[A-Za-z0-9_\.]+"\)'
+    message: "VM core must not import doeff.* modules. Use typed PyClass or NeedsPython callback."
+    languages: [rust]
+    severity: ERROR
     paths:
       include:
         - "**/packages/doeff-vm/src/vm.rs"
         - "**/packages/doeff-vm/src/pyvm.rs"
-    message: |
-      VM protocol violation: VM core must not import doeff.* modules.
-      Traceback projection belongs in Python consumers, not VM core.
-    languages: [rust]
-    severity: ERROR
     metadata:
       category: vm-protocol
-      issue: VM-PROTO-004
+      issue: VM-PROTO-007
 
   # ---------------------------------------------------------------------------
   # PUBLIC API LOCATION GUARDS
