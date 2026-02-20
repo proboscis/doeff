@@ -171,7 +171,7 @@ def sync_external_wait_handler(effect: Any, k: Any):
         effect.queue.get(block=True)
         return (yield doeff_vm.Resume(k, None))
 
-    yield doeff_vm.Delegate()
+    yield doeff_vm.Pass()
 
 
 def async_external_wait_handler(effect: Any, k: Any):
@@ -188,7 +188,7 @@ def async_external_wait_handler(effect: Any, k: Any):
         _ = yield doeff_vm.PythonAsyncSyntaxEscape(action=_wait_one)
         return (yield doeff_vm.Resume(k, None))
 
-    yield doeff_vm.Delegate()
+    yield doeff_vm.Pass()
 
 
 __all__ = [

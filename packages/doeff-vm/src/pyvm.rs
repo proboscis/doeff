@@ -44,6 +44,7 @@ pub enum DoExprTag {
     Apply = 16,
     Expand = 17,
     GetTrace = 18,
+    Pass = 19,
     Effect = 128,
     Unknown = 255,
 }
@@ -70,6 +71,7 @@ impl TryFrom<u8> for DoExprTag {
             16 => Ok(DoExprTag::Apply),
             17 => Ok(DoExprTag::Expand),
             18 => Ok(DoExprTag::GetTrace),
+            19 => Ok(DoExprTag::Pass),
             128 => Ok(DoExprTag::Effect),
             255 => Ok(DoExprTag::Unknown),
             other => Err(other),
@@ -1014,6 +1016,23 @@ impl PyVM {
                             })?
                     };
                     Ok(DoCtrl::Delegate { effect })
+                }
+                DoExprTag::Pass => {
+                    let p: PyRef<'_, PyPass> = obj.extract()?;
+                    let effect = if let Some(ref eff) = p.effect {
+                        dispatch_from_shared(PyShared::new(eff.clone_ref(py)))
+                    } else {
+                        self.vm
+                            .dispatch_stack
+                            .last()
+                            .map(|ctx| ctx.effect.clone())
+                            .ok_or_else(|| {
+                                PyRuntimeError::new_err(
+                                    "Pass without effect called outside dispatch context",
+                                )
+                            })?
+                    };
+                    Ok(DoCtrl::Pass { effect })
                 }
                 DoExprTag::ResumeContinuation => {
                     let rc: PyRef<'_, PyResumeContinuation> = obj.extract()?;
@@ -1998,6 +2017,33 @@ impl PyDelegate {
     }
 }
 
+/// Dispatch primitive — handler-only.
+#[pyclass(name = "Pass", extends=PyDoCtrlBase)]
+pub struct PyPass {
+    #[pyo3(get)]
+    pub effect: Option<Py<PyAny>>,
+}
+
+#[pymethods]
+impl PyPass {
+    #[new]
+    #[pyo3(signature = (effect=None))]
+    fn new(py: Python<'_>, effect: Option<Py<PyAny>>) -> PyResult<PyClassInitializer<Self>> {
+        if let Some(ref eff) = effect {
+            if !is_effect_base_like(py, eff.bind(py))? {
+                return Err(PyTypeError::new_err(
+                    "Pass.effect must be EffectBase when provided",
+                ));
+            }
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Pass as u8,
+            })
+            .add_subclass(PyPass { effect }))
+    }
+}
+
 /// Dispatch primitive — handler-only, one-shot.
 #[pyclass(name = "Transfer", extends=PyDoCtrlBase)]
 pub struct PyTransfer {
@@ -2606,6 +2652,26 @@ mod tests {
     }
 
     #[test]
+    fn test_pass_with_explicit_effect_classifies_to_doctrl_pass() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let effect = Bound::new(py, PyEffectBase::new_base())
+                .unwrap()
+                .into_any()
+                .unbind();
+            let obj = Bound::new(py, PyPass::new(py, Some(effect)).unwrap())
+                .unwrap()
+                .into_any();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            assert!(
+                matches!(yielded, DoCtrl::Pass { .. }),
+                "Pass should classify to DoCtrl::Pass, got {:?}",
+                yielded
+            );
+        });
+    }
+
+    #[test]
     fn test_spec_plain_to_generator_without_rust_base_is_rejected() {
         // R11-C: plain Python objects without VM base classes must not classify.
         Python::attach(|py| {
@@ -3205,6 +3271,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPerform>()?;
     m.add_class::<PyResume>()?;
     m.add_class::<PyDelegate>()?;
+    m.add_class::<PyPass>()?;
     m.add_class::<PyTransfer>()?;
     m.add_class::<PyResumeContinuation>()?;
     m.add_class::<PyCreateContinuation>()?;
@@ -3293,6 +3360,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_RESUME", DoExprTag::Resume as u8)?;
     m.add("TAG_TRANSFER", DoExprTag::Transfer as u8)?;
     m.add("TAG_DELEGATE", DoExprTag::Delegate as u8)?;
+    m.add("TAG_PASS", DoExprTag::Pass as u8)?;
     m.add("TAG_GET_CONTINUATION", DoExprTag::GetContinuation as u8)?;
     m.add("TAG_GET_HANDLERS", DoExprTag::GetHandlers as u8)?;
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;

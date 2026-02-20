@@ -1574,6 +1574,7 @@ impl VM {
                 DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
                 DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
                 DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
+                DoCtrl::Pass { .. } => "HandleYield(Pass)",
                 DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
                 DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
                 DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
@@ -1662,6 +1663,7 @@ impl VM {
                 DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
                 DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
                 DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
+                DoCtrl::Pass { .. } => "HandleYield(Pass)",
                 DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
                 DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
                 DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
@@ -1839,7 +1841,8 @@ impl VM {
     ) -> StepEvent {
         match step {
             ASTStreamStep::Yield(yielded) => {
-                // Terminal DoCtrl variants (Resume, Transfer, TransferThrow, Delegate) transfer control
+                // Terminal DoCtrl variants (Resume, Transfer, TransferThrow, Delegate, Pass)
+                // transfer control
                 // elsewhere — the handler is done and no value flows back. Do NOT re-push
                 // the Program frame for these. Non-terminal variants (Eval, GetHandlers,
                 // GetCallStack) expect a result to be delivered back to this stream.
@@ -1849,6 +1852,7 @@ impl VM {
                         | DoCtrl::Transfer { .. }
                         | DoCtrl::TransferThrow { .. }
                         | DoCtrl::Delegate { .. }
+                        | DoCtrl::Pass { .. }
                 );
                 if !is_terminal {
                     if let Some(seg) = self.current_segment_mut() {
@@ -1956,6 +1960,7 @@ impl VM {
                 py_identity,
             } => self.handle_with_handler(handler, expr, py_identity),
             DoCtrl::Delegate { effect } => self.handle_delegate(effect),
+            DoCtrl::Pass { effect } => self.handle_pass(effect),
             DoCtrl::GetContinuation => self.handle_get_continuation(),
             DoCtrl::GetHandlers => self.handle_get_handlers(),
             DoCtrl::CreateContinuation {
@@ -2906,6 +2911,83 @@ impl VM {
             None => {
                 return StepEvent::Error(VMError::internal(
                     "Delegate called outside of dispatch context",
+                ))
+            }
+        };
+
+        // Capture inner handler segment so outer handler's return flows back here
+        // (result of Delegate). Per spec: caller = Some(inner_seg_id).
+        let inner_seg_id = self.current_segment;
+
+        // Clear the delegating handler's frames so return values pass through
+        // without trying to resume the handler generator (Delegate is tail).
+        if let Some(seg_id) = inner_seg_id {
+            if let Some(seg) = self.segments.get_mut(seg_id) {
+                seg.frames.clear();
+            }
+        }
+
+        for idx in start_idx..handler_chain.len() {
+            let marker = handler_chain[idx];
+            if let Some(entry) = self.handlers.get(&marker) {
+                if entry.handler.can_handle(&effect) {
+                    let handler = entry.handler.clone();
+                    let from_marker = handler_chain.get(from_idx).copied();
+                    let from_name = from_marker
+                        .and_then(|m| self.marker_handler_trace_info(m))
+                        .map(|(name, _, _, _)| name);
+                    let to_info = self.marker_handler_trace_info(marker);
+                    if let (
+                        Some(from_name),
+                        Some((to_name, to_kind, to_source_file, to_source_line)),
+                    ) = (from_name, to_info)
+                    {
+                        self.capture_log.push(CaptureEvent::Delegated {
+                            dispatch_id,
+                            from_handler_name: from_name,
+                            from_handler_index: from_idx,
+                            to_handler_name: to_name,
+                            to_handler_index: idx,
+                            to_handler_kind: to_kind,
+                            to_handler_source_file: to_source_file,
+                            to_handler_source_line: to_source_line,
+                        });
+                    }
+                    let k_user = {
+                        let top = self.dispatch_stack.last_mut().unwrap();
+                        top.handler_idx = idx;
+                        top.effect = effect.clone();
+                        top.k_user.clone()
+                    };
+
+                    let scope_chain = self.current_scope_chain();
+                    let handler_seg = Segment::new(marker, inner_seg_id, scope_chain);
+                    let handler_seg_id = self.alloc_segment(handler_seg);
+                    self.current_segment = Some(handler_seg_id);
+
+                    if handler.py_identity().is_some() {
+                        self.register_continuation(k_user.clone());
+                    }
+                    let ir_node = handler.invoke(effect.clone(), k_user);
+                    return self.evaluate(ir_node);
+                }
+            }
+        }
+
+        StepEvent::Error(VMError::delegate_no_outer_handler(effect))
+    }
+
+    fn handle_pass(&mut self, effect: DispatchEffect) -> StepEvent {
+        let (handler_chain, start_idx, from_idx, dispatch_id) = match self.dispatch_stack.last() {
+            Some(t) => (
+                t.handler_chain.clone(),
+                t.handler_idx + 1,
+                t.handler_idx,
+                t.dispatch_id,
+            ),
+            None => {
+                return StepEvent::Error(VMError::internal(
+                    "Pass called outside of dispatch context",
                 ))
             }
         };
@@ -3947,6 +4029,16 @@ mod tests {
     fn test_handle_delegate_no_dispatch() {
         let mut vm = VM::new();
         let event = vm.handle_delegate(Effect::get("dummy"));
+        assert!(matches!(
+            event,
+            StepEvent::Error(VMError::InternalError { .. })
+        ));
+    }
+
+    #[test]
+    fn test_handle_pass_no_dispatch() {
+        let mut vm = VM::new();
+        let event = vm.handle_pass(Effect::get("dummy"));
         assert!(matches!(
             event,
             StepEvent::Error(VMError::InternalError { .. })

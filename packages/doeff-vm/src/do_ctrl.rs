@@ -54,6 +54,9 @@ pub enum DoCtrl {
     Delegate {
         effect: DispatchEffect,
     },
+    Pass {
+        effect: DispatchEffect,
+    },
     GetContinuation,
     GetHandlers,
     CreateContinuation {
@@ -147,6 +150,9 @@ impl DoCtrl {
                 py_identity: py_identity.clone(),
             },
             DoCtrl::Delegate { effect } => DoCtrl::Delegate {
+                effect: effect.clone(),
+            },
+            DoCtrl::Pass { effect } => DoCtrl::Pass {
                 effect: effect.clone(),
             },
             DoCtrl::GetContinuation => DoCtrl::GetContinuation,
