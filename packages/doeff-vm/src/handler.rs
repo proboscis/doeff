@@ -140,6 +140,18 @@ impl Handler {
             })
         }
 
+        fn optional_attr_u32(callable: &Bound<'_, PyAny>, attr: &str) -> Option<u32> {
+            callable.getattr(attr).ok().and_then(|value| {
+                if value.is_none() {
+                    return None;
+                }
+                value
+                    .extract::<u32>()
+                    .ok()
+                    .or_else(|| value.extract::<i64>().ok().and_then(|line| u32::try_from(line).ok()))
+            })
+        }
+
         fn fallback_source(callable: &Bound<'_, PyAny>) -> (Option<String>, Option<u32>) {
             let wrapped = callable
                 .getattr("__wrapped__")
@@ -175,11 +187,13 @@ impl Handler {
             (file, line)
         }
 
+        // Prefer pre-computed metadata attributes set by Python-side wrapper
         let wrapped = callable
             .getattr("__wrapped__")
             .ok()
             .filter(|value| !value.is_none());
-        let handler_name = optional_attr_string(callable, "__qualname__")
+        let handler_name = optional_attr_string(callable, "_handler_name")
+            .or_else(|| optional_attr_string(callable, "__qualname__"))
             .or_else(|| optional_attr_string(callable, "__name__"))
             .or_else(|| wrapped.as_ref().and_then(|value| optional_attr_string(value, "__qualname__")))
             .or_else(|| wrapped.as_ref().and_then(|value| optional_attr_string(value, "__name__")))
@@ -187,8 +201,10 @@ impl Handler {
             .unwrap_or_else(|| "<python_handler>".to_string());
 
         let (fallback_file, fallback_line) = fallback_source(callable);
-        let handler_file = fallback_file;
-        let handler_line = fallback_line;
+        let handler_file = optional_attr_string(callable, "_handler_file")
+            .or(fallback_file);
+        let handler_line = optional_attr_u32(callable, "_handler_line")
+            .or(fallback_line);
 
         Handler::Python {
             callable: PyShared::new(callable.clone().unbind()),

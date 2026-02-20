@@ -2362,6 +2362,7 @@ impl PyRustHandlerSentinel {
 /// ADR-13: run() is defined in terms of WithHandler, not install_handler.
 #[pyclass(name = "_NestingStep")]
 pub struct NestingStep {
+    #[pyo3(get)]
     handler: Py<PyAny>,
     inner: Py<PyAny>,
 }
