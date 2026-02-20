@@ -27,7 +27,8 @@ def test_SA_008_G01_no_yielded_unknown_variant() -> None:
 
 def test_SA_008_G02_classifier_no_unknown_fallback_branch() -> None:
     src = _read(ROOT / "packages" / "doeff-vm" / "src" / "pyvm.rs")
-    assert "Yielded::Unknown" not in src
+    legacy_enum_prefix = "Yield" + "ed::"
+    assert legacy_enum_prefix not in src
 
 
 def test_SA_008_G03_no_dothunk_export_alias() -> None:
