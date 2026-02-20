@@ -48,8 +48,8 @@ def test_SA_003_G02_python_call_errors_are_normalized_to_generror() -> None:
     src = _read(RUST_SRC / "pyvm.rs")
     body = _extract_fn_body(src, "execute_python_call")
 
-    assert "PythonCall::StartProgram" in body
-    assert "to_generator_strict(py, program.clone_ref(py))?" not in body
+    assert "PythonCall::EvalExpr" in body
+    assert "PythonCall::StartProgram" not in body
     assert "PythonCall::CallHandler" not in body
     assert "PythonCall::CallFunc" in body
     assert "PythonCall::CallAsync" in body

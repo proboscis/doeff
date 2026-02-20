@@ -37,29 +37,6 @@ def _handler_registration_metadata(
     return handler_name, source_file, source_line
 
 
-def _to_doeff_generator(candidate: Any, *, context: str) -> Any:
-    vm = _vm()
-    doeff_generator_type = getattr(vm, "DoeffGenerator", None)
-    if doeff_generator_type is not None and isinstance(candidate, doeff_generator_type):
-        return candidate
-
-    if isinstance(candidate, vm.DoExpr):
-        to_generator = getattr(candidate, "to_generator", None)
-        if not callable(to_generator):
-            raise TypeError(f"{context}: program has no callable to_generator()")
-        generated = to_generator()
-        return _to_doeff_generator(generated, context=f"{context}.to_generator()")
-
-    if _is_generator_like(candidate):
-        if doeff_generator_type is None:
-            return candidate
-        from doeff.do import make_doeff_generator
-
-        return make_doeff_generator(candidate)
-
-    raise TypeError(f"{context}: expected DoeffGenerator, got {type(candidate).__name__}")
-
-
 def _coerce_handler(handler: Any) -> Any:
     vm = _vm()
     rust_handler_type = getattr(vm, "RustHandler", None)
@@ -89,33 +66,18 @@ def _coerce_handler(handler: Any) -> Any:
 
 def _coerce_program(program: Any) -> Any:
     vm = _vm()
-    doeff_generator_type = getattr(vm, "DoeffGenerator", None)
-
-    if doeff_generator_type is None:
-        if isinstance(program, vm.EffectBase):
-            return vm.Perform(program)
-        if isinstance(program, vm.DoExpr):
-            return program
-        if inspect.isgeneratorfunction(program):
-            raise TypeError("program must be DoExpr; got function. Did you mean to call it?")
-        if inspect.isgenerator(program):
-            raise TypeError(
-                "program must be DoExpr; got raw generator. Did you mean to wrap with @do?"
-            )
-        if callable(program):
-            raise TypeError(
-                "program must be DoExpr; got callable. Did you mean to call @do function?"
-            )
-        raise TypeError(f"run() requires DoExpr[T] or EffectValue[T], got {type(program).__name__}")
-
-    if isinstance(program, doeff_generator_type):
-        return program
-
     if isinstance(program, vm.EffectBase):
-        return _to_doeff_generator(vm.Perform(program), context="run(effect)")
+        return vm.Perform(program)
 
     if isinstance(program, vm.DoExpr):
-        return _to_doeff_generator(program, context="run(program)")
+        return program
+
+    doeff_generator_type = getattr(vm, "DoeffGenerator", None)
+    if doeff_generator_type is not None and isinstance(program, doeff_generator_type):
+        raise TypeError(
+            "program must be DoExpr; got DoeffGenerator. "
+            "Pass the DoExpr program object (not .to_generator())."
+        )
 
     if inspect.isgeneratorfunction(program):
         raise TypeError("program must be DoExpr; got function. Did you mean to call it?")
