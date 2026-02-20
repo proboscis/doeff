@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::PyTuple;
 
 use crate::capture::SpawnSite;
 use crate::continuation::Continuation;
@@ -233,80 +233,6 @@ fn annotate_spawn_boundary_dispatch(error: &PyException, dispatch_id: Option<Dis
             boundary.insertion_dispatch_id = Some(dispatch_id);
         }
     }
-}
-
-pub(crate) fn preserve_exception_origin(error: &PyException) {
-    let PyException::Materialized {
-        exc_value, exc_tb, ..
-    } = error
-    else {
-        return;
-    };
-
-    Python::attach(|py| {
-        let exc_obj = exc_value.bind(py);
-        if exc_obj
-            .getattr("__doeff_exception_origin__")
-            .ok()
-            .is_some_and(|v| !v.is_none())
-        {
-            return;
-        }
-
-        let tb = exc_tb
-            .as_ref()
-            .map(|tb| tb.bind(py).clone().into_any())
-            .or_else(|| {
-                exc_obj
-                    .getattr("__traceback__")
-                    .ok()
-                    .filter(|v| !v.is_none())
-            });
-        let Some(mut current_tb) = tb else {
-            return;
-        };
-
-        loop {
-            let Some(next_tb) = current_tb
-                .getattr("tb_next")
-                .ok()
-                .filter(|next| !next.is_none())
-            else {
-                break;
-            };
-            current_tb = next_tb;
-        }
-
-        let Ok(frame) = current_tb.getattr("tb_frame") else {
-            return;
-        };
-        let Ok(code) = frame.getattr("f_code") else {
-            return;
-        };
-
-        let fn_name = code
-            .getattr("co_qualname")
-            .or_else(|_| code.getattr("co_name"))
-            .ok()
-            .and_then(|v| v.extract::<String>().ok())
-            .unwrap_or_else(|| "<unknown>".to_string());
-        let file = code
-            .getattr("co_filename")
-            .ok()
-            .and_then(|v| v.extract::<String>().ok())
-            .unwrap_or_else(|| "<unknown>".to_string());
-        let line = current_tb
-            .getattr("tb_lineno")
-            .ok()
-            .and_then(|v| v.extract::<u32>().ok())
-            .unwrap_or(0);
-
-        let origin = PyDict::new(py);
-        let _ = origin.set_item("function_name", fn_name);
-        let _ = origin.set_item("source_file", file);
-        let _ = origin.set_item("source_line", line);
-        let _ = exc_obj.setattr("__doeff_exception_origin__", origin);
-    });
 }
 
 fn throw_to_continuation(k: Continuation, error: PyException) -> RustProgramStep {

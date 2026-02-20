@@ -341,7 +341,7 @@ impl Value {
                             ..
                         } => {
                             let bound = py_handler.bind(py);
-                            if let Ok(original) = bound.getattr("__doeff_original_handler__") {
+                            if let Ok(original) = bound.getattr("__wrapped__") {
                                 list.append(original)?;
                             } else {
                                 list.append(bound)?;

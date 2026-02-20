@@ -646,7 +646,6 @@ def test_format_default_shows_effect_yield_on_handler_throw() -> None:
     assert "crash_handler✗" in rendered
     assert "·" in rendered
     assert "raised RuntimeError('handler exploded')" in rendered
-    # With typed handler metadata, crash_handler now appears as a proper frame
     assert "crash_handler()" in rendered
     assert "/doeff/do.py:52" not in rendered
     assert "\n\nRuntimeError: handler exploded" in rendered

@@ -17,7 +17,6 @@ def do_wrapper(factory: F) -> F:
     tracing dependencies.
     """
 
-    factory.__doeff_do_wrapper__ = True
     return factory
 
 

@@ -26,6 +26,7 @@ _GeneratorFunc = Callable[..., Generator[Effect | Program, Any, T]]
 
 _BRIDGE_CODE_OBJECTS: set[object] = set()
 
+
 def _default_get_frame(generator: object) -> object | None:
     return getattr(generator, "gi_frame", None)
 
@@ -75,14 +76,6 @@ def resolve_generator_location(generator: object) -> tuple[str, int] | None:
 
 
 def resolve_exception_location(exc: BaseException) -> tuple[str, str, int] | None:
-    origin = getattr(exc, "__doeff_exception_origin__", None)
-    if origin is not None:
-        fn_name = origin.get("function_name")
-        filename = origin.get("source_file")
-        line = origin.get("source_line")
-        if fn_name is not None and filename is not None and line is not None:
-            return (fn_name, filename, line)
-
     tb = getattr(exc, "__traceback__", None)
     if tb is None:
         return None
@@ -150,7 +143,9 @@ def make_doeff_generator(
         return generator
 
     is_generator_like = inspect.isgenerator(generator) or (
-        hasattr(generator, "__next__") and hasattr(generator, "send") and hasattr(generator, "throw")
+        hasattr(generator, "__next__")
+        and hasattr(generator, "send")
+        and hasattr(generator, "throw")
     )
     if not is_generator_like:
         raise TypeError(
@@ -250,8 +245,6 @@ class DoYieldFunction(KleisliProgram[P, T]):
         if signature is not None:
             self.__signature__ = signature
 
-        self.__doeff_do_decorated__ = True
-
         strategy = _build_auto_unwrap_strategy(self)
         object.__setattr__(self, "_auto_unwrap_strategy", strategy)
 
@@ -350,4 +343,10 @@ def do(
     return DoYieldFunction(func)
 
 
-__all__ = ["DoYieldFunction", "_default_get_frame", "default_get_frame", "do", "make_doeff_generator"]
+__all__ = [
+    "DoYieldFunction",
+    "_default_get_frame",
+    "default_get_frame",
+    "do",
+    "make_doeff_generator",
+]

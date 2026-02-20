@@ -49,9 +49,4 @@ impl DoeffGenerator {
             self.function_name, self.source_file, self.source_line
         )
     }
-
-    #[getter]
-    fn __doeff_inner__(&self, py: Python<'_>) -> Py<PyAny> {
-        self.generator.clone_ref(py)
-    }
 }

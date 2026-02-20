@@ -256,9 +256,6 @@ impl PySpawn {
 
 #[pymethods]
 impl PySpawn {
-    #[classattr]
-    const __doeff_scheduler_spawn__: bool = true;
-
     #[new]
     #[pyo3(signature = (program, options=None, handlers=None, store_mode=None))]
     fn new(
@@ -300,9 +297,6 @@ impl PyGather {
 
 #[pymethods]
 impl PyGather {
-    #[classattr]
-    const __doeff_scheduler_gather__: bool = true;
-
     #[new]
     #[pyo3(signature = (items, _partial_results=None))]
     fn new(
@@ -321,9 +315,6 @@ impl PyGather {
 
 #[pymethods]
 impl PyRace {
-    #[classattr]
-    const __doeff_scheduler_race__: bool = true;
-
     #[new]
     fn new(futures: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -340,9 +331,6 @@ impl PyRace {
 
 #[pymethods]
 impl PyCreatePromise {
-    #[classattr]
-    const __doeff_scheduler_create_promise__: bool = true;
-
     #[new]
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -358,9 +346,6 @@ impl PyCreatePromise {
 
 #[pymethods]
 impl PyCompletePromise {
-    #[classattr]
-    const __doeff_scheduler_complete_promise__: bool = true;
-
     #[new]
     fn new(promise: Py<PyAny>, value: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -378,9 +363,6 @@ impl PyCompletePromise {
 
 #[pymethods]
 impl PyFailPromise {
-    #[classattr]
-    const __doeff_scheduler_fail_promise__: bool = true;
-
     #[new]
     fn new(promise: Py<PyAny>, error: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -398,9 +380,6 @@ impl PyFailPromise {
 
 #[pymethods]
 impl PyCreateExternalPromise {
-    #[classattr]
-    const __doeff_scheduler_create_external_promise__: bool = true;
-
     #[new]
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -416,9 +395,6 @@ impl PyCreateExternalPromise {
 
 #[pymethods]
 impl PyCancelEffect {
-    #[classattr]
-    const __doeff_scheduler_cancel__: bool = true;
-
     #[new]
     fn new(task: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -435,9 +411,6 @@ impl PyCancelEffect {
 
 #[pymethods]
 impl PyTaskCompleted {
-    #[classattr]
-    const __doeff_scheduler_task_completed__: bool = true;
-
     #[new]
     #[pyo3(signature = (*, task=None, task_id=None, handle_id=None, result=None))]
     fn new(
