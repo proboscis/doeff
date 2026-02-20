@@ -85,9 +85,7 @@ use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerHandler;
 use crate::segment::Segment;
-use crate::step::{
-    Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
-};
+use crate::step::{Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent};
 use crate::value::Value;
 use crate::vm::VM;
 
@@ -987,7 +985,7 @@ impl PyVM {
         }
     }
 
-    fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Yielded> {
+    fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<DoCtrl> {
         // R13-I: GIL-free tag dispatch.
         //
         // 1. Single isinstance check: extract PyDoCtrlBase
@@ -1032,17 +1030,17 @@ impl PyVM {
                         }
                         (python_handler, None)
                     };
-                    Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
+                    Ok(DoCtrl::WithHandler {
                         handler,
                         expr: wh.expr.clone_ref(py),
                         py_identity,
-                    }))
+                    })
                 }
                 DoExprTag::Pure => {
                     let p: PyRef<'_, PyPure> = obj.extract()?;
-                    Ok(Yielded::DoCtrl(DoCtrl::Pure {
+                    Ok(DoCtrl::Pure {
                         value: Value::from_pyobject(p.value.bind(py)),
-                    }))
+                    })
                 }
                 DoExprTag::Call => {
                     let c: PyRef<'_, PyCall> = obj.extract()?;
@@ -1058,34 +1056,34 @@ impl PyVM {
                         let key = k.str()?.to_str()?.to_string();
                         kwargs.push((key, classify_call_arg(py, v.as_any())?));
                     }
-                    Ok(Yielded::DoCtrl(DoCtrl::Call {
+                    Ok(DoCtrl::Call {
                         f,
                         args,
                         kwargs,
                         metadata: call_metadata_from_pycall(py, &c)?,
-                    }))
+                    })
                 }
                 DoExprTag::Map => {
                     let m: PyRef<'_, PyMap> = obj.extract()?;
-                    Ok(Yielded::DoCtrl(DoCtrl::Map {
+                    Ok(DoCtrl::Map {
                         source: PyShared::new(m.source.clone_ref(py)),
                         mapper: PyShared::new(m.mapper.clone_ref(py)),
                         mapper_meta: call_metadata_from_meta_obj(m.mapper_meta.bind(py)),
-                    }))
+                    })
                 }
                 DoExprTag::FlatMap => {
                     let fm: PyRef<'_, PyFlatMap> = obj.extract()?;
-                    Ok(Yielded::DoCtrl(DoCtrl::FlatMap {
+                    Ok(DoCtrl::FlatMap {
                         source: PyShared::new(fm.source.clone_ref(py)),
                         binder: PyShared::new(fm.binder.clone_ref(py)),
                         binder_meta: call_metadata_from_meta_obj(fm.binder_meta.bind(py)),
-                    }))
+                    })
                 }
                 DoExprTag::Perform => {
                     let pf: PyRef<'_, PyPerform> = obj.extract()?;
-                    Ok(Yielded::DoCtrl(DoCtrl::Perform {
+                    Ok(DoCtrl::Perform {
                         effect: dispatch_from_shared(PyShared::new(pf.effect.clone_ref(py))),
-                    }))
+                    })
                 }
                 DoExprTag::Resume => {
                     let r: PyRef<'_, PyResume> = obj.extract()?;
@@ -1105,10 +1103,10 @@ impl PyVM {
                                 cont_id.raw()
                             ))
                         })?;
-                    Ok(Yielded::DoCtrl(DoCtrl::Resume {
+                    Ok(DoCtrl::Resume {
                         continuation: k,
                         value: Value::from_pyobject(r.value.bind(py)),
-                    }))
+                    })
                 }
                 DoExprTag::Transfer => {
                     let t: PyRef<'_, PyTransfer> = obj.extract()?;
@@ -1128,10 +1126,10 @@ impl PyVM {
                                 cont_id.raw()
                             ))
                         })?;
-                    Ok(Yielded::DoCtrl(DoCtrl::Transfer {
+                    Ok(DoCtrl::Transfer {
                         continuation: k,
                         value: Value::from_pyobject(t.value.bind(py)),
-                    }))
+                    })
                 }
                 DoExprTag::Delegate => {
                     let d: PyRef<'_, PyDelegate> = obj.extract()?;
@@ -1148,7 +1146,7 @@ impl PyVM {
                                 )
                             })?
                     };
-                    Ok(Yielded::DoCtrl(DoCtrl::Delegate { effect }))
+                    Ok(DoCtrl::Delegate { effect })
                 }
                 DoExprTag::ResumeContinuation => {
                     let rc: PyRef<'_, PyResumeContinuation> = obj.extract()?;
@@ -1166,10 +1164,10 @@ impl PyVM {
                                 cont_id.raw()
                             ))
                         })?;
-                    Ok(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+                    Ok(DoCtrl::ResumeContinuation {
                         continuation: k,
                         value: Value::from_pyobject(rc.value.bind(py)),
-                    }))
+                    })
                 }
                 DoExprTag::CreateContinuation => {
                     let cc: PyRef<'_, PyCreateContinuation> = obj.extract()?;
@@ -1188,16 +1186,16 @@ impl PyVM {
                             handler_identities.push(None);
                         }
                     }
-                    Ok(Yielded::DoCtrl(DoCtrl::CreateContinuation {
+                    Ok(DoCtrl::CreateContinuation {
                         expr: PyShared::new(program),
                         handlers,
                         handler_identities,
-                    }))
+                    })
                 }
-                DoExprTag::GetContinuation => Ok(Yielded::DoCtrl(DoCtrl::GetContinuation)),
-                DoExprTag::GetHandlers => Ok(Yielded::DoCtrl(DoCtrl::GetHandlers)),
-                DoExprTag::GetCallStack => Ok(Yielded::DoCtrl(DoCtrl::GetCallStack)),
-                DoExprTag::GetTrace => Ok(Yielded::DoCtrl(DoCtrl::GetTrace)),
+                DoExprTag::GetContinuation => Ok(DoCtrl::GetContinuation),
+                DoExprTag::GetHandlers => Ok(DoCtrl::GetHandlers),
+                DoExprTag::GetCallStack => Ok(DoCtrl::GetCallStack),
+                DoExprTag::GetTrace => Ok(DoCtrl::GetTrace),
                 DoExprTag::Eval => {
                     let eval: PyRef<'_, PyEval> = obj.extract()?;
                     let expr = eval.expr.clone_ref(py);
@@ -1212,17 +1210,17 @@ impl PyVM {
                             handlers.push(Handler::python_from_callable(&item));
                         }
                     }
-                    Ok(Yielded::DoCtrl(DoCtrl::Eval {
+                    Ok(DoCtrl::Eval {
                         expr: PyShared::new(expr),
                         handlers,
                         metadata: None,
-                    }))
+                    })
                 }
                 DoExprTag::AsyncEscape => {
                     let ae: PyRef<'_, PyAsyncEscape> = obj.extract()?;
-                    Ok(Yielded::DoCtrl(DoCtrl::PythonAsyncSyntaxEscape {
+                    Ok(DoCtrl::PythonAsyncSyntaxEscape {
                         action: ae.action.clone_ref(py),
-                    }))
+                    })
                 }
                 DoExprTag::Effect | DoExprTag::Unknown => {
                     // Unknown tag on a DoCtrlBase — treat as error
@@ -1236,14 +1234,14 @@ impl PyVM {
         // Fallback: bare effect → auto-lift to Perform (R14-C)
         if is_effect_base_like(py, obj)? {
             if obj.is_instance_of::<PyProgramTrace>() {
-                return Ok(Yielded::DoCtrl(DoCtrl::GetTrace));
+                return Ok(DoCtrl::GetTrace);
             }
             if obj.is_instance_of::<PyProgramCallStack>() {
-                return Ok(Yielded::DoCtrl(DoCtrl::GetCallStack));
+                return Ok(DoCtrl::GetCallStack);
             }
-            return Ok(Yielded::DoCtrl(DoCtrl::Perform {
+            return Ok(DoCtrl::Perform {
                 effect: dispatch_from_shared(PyShared::new(obj.clone().unbind())),
-            }));
+            });
         }
 
         Err(PyTypeError::new_err(
@@ -2548,7 +2546,7 @@ mod tests {
 
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "G3 FAIL: expected opaque Python TaskCompleted effect, got {:?}",
                 yielded
             );
@@ -2598,7 +2596,7 @@ mod tests {
             .into_any();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             match yielded {
-                Yielded::DoCtrl(DoCtrl::CreateContinuation { handlers, .. }) => {
+                DoCtrl::CreateContinuation { handlers, .. } => {
                     assert!(
                         matches!(
                             handlers.first(),
@@ -2629,7 +2627,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "G4 FAIL: expected opaque Python TaskCompleted effect, got {:?}",
                 yielded
             );
@@ -2653,7 +2651,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "G6 FAIL: malformed GatherEffect should classify as opaque effect, got {:?}",
                 yielded
             );
@@ -2677,7 +2675,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "G12 FAIL: WaitEffect should classify as opaque effect, got {:?}",
                 yielded
             );
@@ -2712,7 +2710,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "G7 FAIL: expected opaque Python Spawn effect, got {:?}",
                 yielded
             );
@@ -2761,7 +2759,7 @@ mod tests {
             let obj = Bound::new(py, PyGetCallStack::new()).unwrap().into_any();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::GetCallStack)),
+                matches!(yielded, DoCtrl::GetCallStack),
                 "GetCallStack must classify to DoCtrl::GetCallStack, got {:?}",
                 yielded
             );
@@ -2960,7 +2958,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "SPEC GAP: stdlib effects should classify as opaque Python effects, got {:?}",
                 yielded
             );
@@ -2984,7 +2982,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "SPEC GAP: scheduler effects should classify as opaque Python effects, got {:?}",
                 yielded
             );
@@ -3060,7 +3058,7 @@ mod tests {
             .into_any();
             let yielded = pyvm.classify_yielded(py, &pure_obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Pure { .. })),
+                matches!(yielded, DoCtrl::Pure { .. }),
                 "Pure tag dispatch failed, got {:?}",
                 yielded
             );
@@ -3069,7 +3067,7 @@ mod tests {
             let gh_obj = Bound::new(py, PyGetHandlers::new()).unwrap().into_any();
             let yielded = pyvm.classify_yielded(py, &gh_obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::GetHandlers)),
+                matches!(yielded, DoCtrl::GetHandlers),
                 "GetHandlers tag dispatch failed, got {:?}",
                 yielded
             );
@@ -3078,7 +3076,7 @@ mod tests {
             let gcs_obj = Bound::new(py, PyGetCallStack::new()).unwrap().into_any();
             let yielded = pyvm.classify_yielded(py, &gcs_obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::GetCallStack)),
+                matches!(yielded, DoCtrl::GetCallStack),
                 "GetCallStack tag dispatch failed, got {:?}",
                 yielded
             );
