@@ -12,7 +12,7 @@ Design Decisions (from spec):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Generic, TypeVar, runtime_checkable, Protocol
+from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 import doeff_vm
 
@@ -127,9 +127,7 @@ def _is_handle_dict(value: object) -> bool:
 
 def task_id_of(value: Any) -> int | None:
     handle: Any
-    if isinstance(value, Task):
-        handle = value._handle
-    elif isinstance(value, Future):
+    if isinstance(value, (Task, Future)):
         handle = value._handle
     elif _is_handle_dict(value):
         handle = value
@@ -175,6 +173,14 @@ def coerce_promise_handle(value: Any) -> Promise[Any]:
     if _is_handle_dict(value) and value.get("type") in {"Promise", "ExternalPromise"}:
         return Promise(_promise_handle=value)
     raise TypeError(f"expected Promise handle, got {type(value).__name__}")
+
+
+def spawn_intercept_handler(effect: Any, k: Any):
+    if isinstance(effect, SpawnEffect):
+        raw_task = yield doeff_vm.Delegate()
+        coerced = coerce_task_handle(raw_task)
+        return (yield doeff_vm.Resume(k, coerced))
+    yield doeff_vm.Pass()
 
 
 def normalize_waitable(value: Any) -> Waitable[Any]:
@@ -262,5 +268,6 @@ __all__ = [
     "coerce_task_handle",
     "promise_id_of",
     "spawn",
+    "spawn_intercept_handler",
     "task_id_of",
 ]
