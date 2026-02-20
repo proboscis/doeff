@@ -113,9 +113,10 @@ def test_SA_002_G08_expected_vm_module_split_files_exist() -> None:
     assert not missing, f"missing expected modules: {missing}"
 
 
-def test_SA_002_G09_to_generator_strict_not_callable_fallback() -> None:
+def test_SA_002_G09_entry_no_generator_conversion_helpers() -> None:
     src = _read(RUST_SRC / "pyvm.rs")
-    body = _extract_fn_body(src, "to_generator_strict")
-    assert "PyFunction" not in body
-    assert "PyMethod" not in body
-    assert 'call_method0("__next__")' not in body
+    assert "fn to_generator_strict" not in src
+    assert "fn start_with_generator" not in src
+    body = _extract_fn_body(src, "start_with_expr")
+    assert "DoCtrl::Eval" in body
+    assert "program must be DoExpr" in body
