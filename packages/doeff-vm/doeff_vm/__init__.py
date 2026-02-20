@@ -143,6 +143,7 @@ Eval = _ext.Eval
 Perform = _ext.Perform
 Resume = _ext.Resume
 Delegate = _ext.Delegate
+Pass = _ext.Pass
 Transfer = _ext.Transfer
 ResumeContinuation = _ext.ResumeContinuation
 RustHandler = _ext.RustHandler
@@ -202,6 +203,7 @@ TAG_PERFORM = _ext.TAG_PERFORM
 TAG_RESUME = _ext.TAG_RESUME
 TAG_TRANSFER = _ext.TAG_TRANSFER
 TAG_DELEGATE = _ext.TAG_DELEGATE
+TAG_PASS = _ext.TAG_PASS
 TAG_GET_CONTINUATION = _ext.TAG_GET_CONTINUATION
 TAG_GET_HANDLERS = _ext.TAG_GET_HANDLERS
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
@@ -229,6 +231,7 @@ PyTaskCompleted = _SchedulerTaskCompleted
 __all__ = [
     "K",
     "Delegate",
+    "Pass",
     "Apply",
     "Expand",
     "Eval",
@@ -307,6 +310,7 @@ __all__ = [
     "TAG_RESUME",
     "TAG_TRANSFER",
     "TAG_DELEGATE",
+    "TAG_PASS",
     "TAG_GET_CONTINUATION",
     "TAG_GET_HANDLERS",
     "TAG_GET_CALL_STACK",

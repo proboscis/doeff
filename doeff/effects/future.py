@@ -115,7 +115,7 @@ def sync_await_handler(effect: Any, k: Any):
         value = yield Wait(promise.future)
         return (yield doeff_vm.Resume(k, value))
 
-    yield doeff_vm.Delegate()
+    yield doeff_vm.Pass()
 
 
 def async_await_handler(effect: Any, k: Any):
@@ -135,7 +135,7 @@ def async_await_handler(effect: Any, k: Any):
         value = yield Wait(promise.future)
         return (yield doeff_vm.Resume(k, value))
 
-    yield doeff_vm.Delegate()
+    yield doeff_vm.Pass()
 
 
 # Backward-compat alias. New code should use async_await_handler.
