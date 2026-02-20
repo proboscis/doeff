@@ -1481,7 +1481,6 @@ def test_tag_attribute_accessible():
 
     # Verify tag values
     assert doeff_vm.TAG_PURE == 0
-    assert doeff_vm.TAG_CALL == 1
     assert doeff_vm.TAG_MAP == 2
     assert doeff_vm.TAG_FLAT_MAP == 3
     assert doeff_vm.TAG_WITH_HANDLER == 4
@@ -1520,16 +1519,22 @@ def test_tag_on_concrete_instances():
         TAG_GET_TRACE,
     )
 
+    meta = {
+        "function_name": "test_fn",
+        "source_file": __file__,
+        "source_line": 1,
+    }
+
     pure = Pure(42)
     assert pure.tag == TAG_PURE
 
     gh = GetHandlers()
     assert gh.tag == TAG_GET_HANDLERS
 
-    apply = Apply(lambda x: x, [1], {})
+    apply = Apply(lambda x: x, [1], {}, meta)
     assert apply.tag == TAG_APPLY
 
-    expand = Expand(lambda x: x, [1], {})
+    expand = Expand(lambda x: x, [1], {}, meta)
     assert expand.tag == TAG_EXPAND
 
     gcs = GetCallStack()

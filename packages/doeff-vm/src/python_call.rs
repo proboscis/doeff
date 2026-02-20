@@ -45,6 +45,9 @@ pub enum PendingPython {
     CallFuncReturn {
         metadata: Option<CallMetadata>,
     },
+    ExpandReturn {
+        metadata: Option<CallMetadata>,
+    },
     StepUserGenerator {
         generator: PyShared,
         metadata: Option<CallMetadata>,

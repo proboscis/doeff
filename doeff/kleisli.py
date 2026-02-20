@@ -43,6 +43,8 @@ class KleisliProgram(Generic[P, T]):
     def __post_init__(self) -> None:
         wrapped = getattr(self.func, "__wrapped__", self.func)
         object.__setattr__(self, "_metadata_source", wrapped)
+        is_do_decorated = bool(getattr(self, "__doeff_do_decorated__", False))
+        object.__setattr__(self, "_is_do_decorated", is_do_decorated)
 
         signature = _safe_signature(wrapped) or _safe_signature(self.func)
         if signature is not None and not hasattr(self, "__signature__"):
@@ -70,7 +72,7 @@ class KleisliProgram(Generic[P, T]):
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Program[T]:
         from doeff.types import EffectBase
-        from doeff_vm import Call, DoCtrlBase, Perform, Pure
+        from doeff_vm import Apply, DoCtrlBase, Expand, Perform, Pure
 
         strategy = getattr(self, "_auto_unwrap_strategy", None)
         if strategy is None:
@@ -107,7 +109,14 @@ class KleisliProgram(Generic[P, T]):
             "program_call": None,
         }
 
-        return Call(Pure(self.func), positional_args, keyword_args, metadata)
+        if bool(getattr(self, "_is_do_decorated", False)):
+            generator_factory = getattr(self, "_doeff_generator_factory", None)
+            if generator_factory is None:
+                raise TypeError(
+                    "@do KleisliProgram is missing _doeff_generator_factory (DoeffGeneratorFn)"
+                )
+            return Expand(Pure(generator_factory), positional_args, keyword_args, metadata)
+        return Apply(Pure(self.func), positional_args, keyword_args, metadata)
 
     def partial(self, /, *args: P.args, **kwargs: P.kwargs) -> PartiallyAppliedKleisliProgram[P, T]:
         return PartiallyAppliedKleisliProgram(self, args, kwargs)
