@@ -26,6 +26,7 @@ _GeneratorFunc = Callable[..., Generator[Effect | Program, Any, T]]
 
 _BRIDGE_CODE_OBJECTS: set[object] = set()
 
+
 def _default_get_frame(generator: object) -> object | None:
     return getattr(generator, "gi_frame", None)
 
@@ -41,11 +42,11 @@ def _do_get_frame(bridge_gen: object) -> object | None:
 
     get_value = getattr(locals_dict, "get", None)
     if not callable(get_value):
-        return None
+        return _default_get_frame(bridge_gen)
 
     user_gen = get_value("gen")
     if user_gen is None:
-        return None
+        return _default_get_frame(bridge_gen)
     return getattr(user_gen, "gi_frame", None)
 
 
@@ -150,7 +151,9 @@ def make_doeff_generator(
         return generator
 
     is_generator_like = inspect.isgenerator(generator) or (
-        hasattr(generator, "__next__") and hasattr(generator, "send") and hasattr(generator, "throw")
+        hasattr(generator, "__next__")
+        and hasattr(generator, "send")
+        and hasattr(generator, "throw")
     )
     if not is_generator_like:
         raise TypeError(
@@ -208,23 +211,35 @@ class DoYieldFunction(KleisliProgram[P, T]):
                 except StopIteration as stop_exc:
                     return stop_exc.value
 
+        def value_generator(value: T) -> Generator[Effect | Program, Any, T]:
+            if False:  # pragma: no cover
+                yield cast(Any, None)
+            return value
+
         _BRIDGE_CODE_OBJECTS.add(bridge_generator.__code__)
+        _BRIDGE_CODE_OBJECTS.add(value_generator.__code__)
+
+        code = func.__code__
+
+        @wraps(func)
+        def generator_factory(
+            *args: P.args, **kwargs: P.kwargs
+        ) -> Generator[Effect | Program, Any, T]:
+            gen_or_value = func(*args, **kwargs)
+            if not inspect.isgenerator(gen_or_value):
+                return value_generator(cast(T, gen_or_value))
+
+            gen = cast(Generator[Effect | Program, Any, T], gen_or_value)
+            return bridge_generator(gen)
 
         @wraps(func)
         def generator_wrapper(
             *args: P.args, **kwargs: P.kwargs
         ) -> Generator[Effect | Program, Any, T] | T:
-            gen_or_value = func(*args, **kwargs)
-            if not inspect.isgenerator(gen_or_value):
-                return cast(T, gen_or_value)
-
-            gen = cast(Generator[Effect | Program, Any, T], gen_or_value)
-            bridge_gen = bridge_generator(gen)
-            code = func.__code__
             return cast(
                 Generator[Effect | Program, Any, T],
                 make_doeff_generator(
-                    bridge_gen,
+                    generator_factory(*args, **kwargs),
                     function_name=func.__name__,
                     source_file=code.co_filename,
                     source_line=code.co_firstlineno,
@@ -233,10 +248,24 @@ class DoYieldFunction(KleisliProgram[P, T]):
             )
 
         # KleisliProgram.func expects Callable[P, Program[T]], but we pass a
-        # generator function. Runtime call dispatch handles both Program and
-        # generator returns from the execution kernel. Cast to satisfy pyright.
+        # generator-producing callable. Cast to satisfy pyright.
         super().__init__(cast(Callable[P, Program[T]], generator_wrapper))
         self.original_func = func
+
+        import doeff_vm as vm
+
+        code = func.__code__
+        object.__setattr__(
+            self,
+            "_doeff_generator_factory",
+            vm.DoeffGeneratorFn(
+                callable=cast(Any, generator_factory),
+                function_name=func.__name__,
+                source_file=code.co_filename,
+                source_line=code.co_firstlineno,
+                get_frame=_do_get_frame,
+            ),
+        )
 
         for attr in ("__doc__", "__module__", "__name__", "__qualname__", "__annotations__"):
             value = getattr(func, attr, None)
@@ -251,6 +280,7 @@ class DoYieldFunction(KleisliProgram[P, T]):
             self.__signature__ = signature
 
         self.__doeff_do_decorated__ = True
+        object.__setattr__(self, "_is_do_decorated", True)
 
         strategy = _build_auto_unwrap_strategy(self)
         object.__setattr__(self, "_auto_unwrap_strategy", strategy)
@@ -350,4 +380,10 @@ def do(
     return DoYieldFunction(func)
 
 
-__all__ = ["DoYieldFunction", "_default_get_frame", "default_get_frame", "do", "make_doeff_generator"]
+__all__ = [
+    "DoYieldFunction",
+    "_default_get_frame",
+    "default_get_frame",
+    "do",
+    "make_doeff_generator",
+]

@@ -388,10 +388,20 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 
         if not callable(f):
             raise TypeError("binder must be callable returning a Program")
-        from doeff_vm import FlatMap
+        from doeff.types import EffectBase
+        from doeff_vm import DoExpr, FlatMap, Perform
 
         binder_meta = _callable_metadata_dict(f)
-        return FlatMap(self, f, binder_meta=binder_meta)
+
+        def binder_factory(value: T) -> Any:
+            bound = f(value)
+            if isinstance(bound, EffectBase):
+                bound = Perform(bound)
+            if isinstance(bound, DoExpr):
+                return bound.to_generator()
+            raise TypeError(f"flat_map binder must return Program/Effect/DoCtrl; got {bound!r}")
+
+        return FlatMap(self, binder_factory, binder_meta=binder_meta)
 
     def and_then_k(self, binder: Callable[[T], Program[U]]) -> Program[U]:
         """Alias for flat_map for Kleisli-style composition."""
