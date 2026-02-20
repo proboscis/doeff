@@ -15,6 +15,7 @@ from .base import Effect
 
 
 AskEffect = doeff_vm.PyAsk
+HashableAskEffect = AskEffect
 LocalEffect = doeff_vm.PyLocal
 
 
@@ -43,6 +44,7 @@ def Local(env_update: Mapping[Any, object], sub_program: ProgramLike) -> Effect:
 __all__ = [
     "Ask",
     "AskEffect",
+    "HashableAskEffect",
     "Local",
     "LocalEffect",
     "ask",

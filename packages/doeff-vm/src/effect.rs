@@ -2,6 +2,7 @@
 //!
 //! Effects are the requests that user code makes, which handlers respond to.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::py_shared::PyShared;
@@ -119,6 +120,48 @@ pub struct PyTaskCompleted {
     pub handle_id: Py<PyAny>,
     #[pyo3(get)]
     pub result: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "CreateSemaphoreEffect", extends=PyEffectBase)]
+pub struct PyCreateSemaphore {
+    #[pyo3(get)]
+    pub permits: i64,
+}
+
+#[pyclass(frozen, name = "AcquireSemaphoreEffect", extends=PyEffectBase)]
+pub struct PyAcquireSemaphore {
+    #[pyo3(get)]
+    pub semaphore: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "ReleaseSemaphoreEffect", extends=PyEffectBase)]
+pub struct PyReleaseSemaphore {
+    #[pyo3(get)]
+    pub semaphore: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "PythonAsyncioAwaitEffect", extends=PyEffectBase)]
+pub struct PyPythonAsyncioAwaitEffect {
+    #[pyo3(get)]
+    pub awaitable: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "ResultSafeEffect", extends=PyEffectBase)]
+pub struct PyResultSafeEffect {
+    #[pyo3(get)]
+    pub sub_program: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "ProgramTraceEffect", extends=PyEffectBase)]
+pub struct PyProgramTrace;
+
+#[pyclass(frozen, name = "ProgramCallStackEffect", extends=PyEffectBase)]
+pub struct PyProgramCallStack;
+
+#[pyclass(frozen, name = "ProgramCallFrameEffect", extends=PyEffectBase)]
+pub struct PyProgramCallFrame {
+    #[pyo3(get)]
+    pub depth: i64,
 }
 
 fn py_repr_or(py: Python<'_>, value: &Py<PyAny>, fallback: &str) -> String {
@@ -462,6 +505,137 @@ impl PyTaskCompleted {
         let task_repr = py_repr_or(py, &self.task, "<task>");
         let result_repr = py_repr_or(py, &self.result, "<result>");
         format!("TaskCompleted(task={}, result={})", task_repr, result_repr)
+    }
+}
+
+#[pymethods]
+impl PyCreateSemaphore {
+    #[new]
+    fn new(permits: i64) -> PyResult<PyClassInitializer<Self>> {
+        if permits < 1 {
+            return Err(PyValueError::new_err("permits must be >= 1"));
+        }
+        Ok(PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyCreateSemaphore { permits }))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("CreateSemaphore({})", self.permits)
+    }
+}
+
+#[pymethods]
+impl PyAcquireSemaphore {
+    #[new]
+    fn new(semaphore: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyAcquireSemaphore { semaphore })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let semaphore_repr = py_repr_or(py, &self.semaphore, "<semaphore>");
+        format!("AcquireSemaphore({})", semaphore_repr)
+    }
+}
+
+#[pymethods]
+impl PyReleaseSemaphore {
+    #[new]
+    fn new(semaphore: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyReleaseSemaphore { semaphore })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let semaphore_repr = py_repr_or(py, &self.semaphore, "<semaphore>");
+        format!("ReleaseSemaphore({})", semaphore_repr)
+    }
+}
+
+#[pymethods]
+impl PyPythonAsyncioAwaitEffect {
+    #[new]
+    fn new(awaitable: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyPythonAsyncioAwaitEffect { awaitable })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let awaitable_repr = py_repr_or(py, &self.awaitable, "<awaitable>");
+        format!("PythonAsyncioAwaitEffect({})", awaitable_repr)
+    }
+}
+
+#[pymethods]
+impl PyResultSafeEffect {
+    #[new]
+    fn new(sub_program: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyResultSafeEffect { sub_program })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let sub_program_repr = py_repr_or(py, &self.sub_program, "<sub_program>");
+        format!("ResultSafe({})", sub_program_repr)
+    }
+}
+
+#[pymethods]
+impl PyProgramTrace {
+    #[new]
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyProgramTrace)
+    }
+
+    fn __repr__(&self) -> String {
+        "ProgramTrace()".to_string()
+    }
+}
+
+#[pymethods]
+impl PyProgramCallStack {
+    #[new]
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyProgramCallStack)
+    }
+
+    fn __repr__(&self) -> String {
+        "ProgramCallStack()".to_string()
+    }
+}
+
+#[pymethods]
+impl PyProgramCallFrame {
+    #[new]
+    #[pyo3(signature = (depth=0))]
+    fn new(depth: i64) -> PyResult<PyClassInitializer<Self>> {
+        if depth < 0 {
+            return Err(PyValueError::new_err("depth must be >= 0"));
+        }
+        Ok(PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyProgramCallFrame { depth }))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ProgramCallFrame(depth={})", self.depth)
     }
 }
 

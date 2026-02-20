@@ -7,9 +7,11 @@ use pyo3::types::{PyDict, PyTuple};
 use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::doeff_generator::DoeffGenerator;
 use crate::effect::{
-    dispatch_from_shared, dispatch_to_pyobject, PyAsk, PyCancelEffect, PyCompletePromise,
-    PyCreateExternalPromise, PyCreatePromise, PyFailPromise, PyGather, PyGet, PyLocal, PyModify,
-    PyPut, PyRace, PySpawn, PyTaskCompleted, PyTell,
+    dispatch_from_shared, dispatch_to_pyobject, PyAcquireSemaphore, PyAsk, PyCancelEffect,
+    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
+    PyGather, PyGet, PyLocal, PyModify, PyProgramCallFrame, PyProgramCallStack, PyProgramTrace,
+    PyPut, PyPythonAsyncioAwaitEffect, PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn,
+    PyTaskCompleted, PyTell,
 };
 
 // ---------------------------------------------------------------------------
@@ -151,17 +153,6 @@ fn classify_call_arg(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<CallArg
     }
 }
 
-fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
-    let py = obj.py();
-    let Ok(mod_) = py.import(module) else {
-        return false;
-    };
-    let Ok(cls) = mod_.getattr(class_name) else {
-        return false;
-    };
-    obj.is_instance(&cls).unwrap_or(false)
-}
-
 fn lift_effect_to_perform_expr(py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<PyAny>> {
     if !is_effect_base_like(py, expr.bind(py))? {
         return Ok(expr);
@@ -264,7 +255,9 @@ pub struct PyEffectBase {
 
 impl PyEffectBase {
     fn new_base() -> Self {
-        PyEffectBase { tag: DoExprTag::Effect as u8 }
+        PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        }
     }
 }
 
@@ -702,8 +695,7 @@ impl PyVM {
 impl PyVM {
     fn is_python_generator_object(obj: &Bound<'_, PyAny>) -> bool {
         let py = obj.py();
-        py
-            .import("inspect")
+        py.import("inspect")
             .and_then(|m| m.getattr("isgenerator"))
             .and_then(|f| f.call1((obj.clone(),)))
             .ok()
@@ -1243,10 +1235,10 @@ impl PyVM {
 
         // Fallback: bare effect → auto-lift to Perform (R14-C)
         if is_effect_base_like(py, obj)? {
-            if is_instance_from(obj, "doeff.effects.trace", "ProgramTraceEffect") {
+            if obj.is_instance_of::<PyProgramTrace>() {
                 return Ok(Yielded::DoCtrl(DoCtrl::GetTrace));
             }
-            if is_instance_from(obj, "doeff.effects.callstack", "ProgramCallStackEffect") {
+            if obj.is_instance_of::<PyProgramCallStack>() {
                 return Ok(Yielded::DoCtrl(DoCtrl::GetCallStack));
             }
             return Ok(Yielded::DoCtrl(DoCtrl::Perform {
@@ -2415,22 +2407,20 @@ impl NestingGenerator {
             .ok_or_else(|| PyRuntimeError::new_err("NestingGenerator already consumed"))?;
         let inner = lift_effect_to_perform_expr(py, inner)?;
         self.done = true;
-        let (handler_name, handler_file, handler_line) = if handler
-            .bind(py)
-            .is_instance_of::<PyRustHandlerSentinel>()
-        {
-            (None, None, None)
-        } else {
-            match Handler::python_from_callable(handler.bind(py)) {
-                Handler::Python {
-                    handler_name,
-                    handler_file,
-                    handler_line,
-                    ..
-                } => (Some(handler_name), handler_file, handler_line),
-                Handler::RustProgram(_) => (None, None, None),
-            }
-        };
+        let (handler_name, handler_file, handler_line) =
+            if handler.bind(py).is_instance_of::<PyRustHandlerSentinel>() {
+                (None, None, None)
+            } else {
+                match Handler::python_from_callable(handler.bind(py)) {
+                    Handler::Python {
+                        handler_name,
+                        handler_file,
+                        handler_line,
+                        ..
+                    } => (Some(handler_name), handler_file, handler_line),
+                    Handler::RustProgram(_) => (None, None, None),
+                }
+            };
         let wh = PyWithHandler {
             handler,
             expr: inner,
@@ -3213,21 +3203,20 @@ fn run(
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
             wrapped = lift_effect_to_perform_expr(py, wrapped)?;
-            let (handler_name, handler_file, handler_line) = if handler_obj
-                .is_instance_of::<PyRustHandlerSentinel>()
-            {
-                (None, None, None)
-            } else {
-                match Handler::python_from_callable(&handler_obj) {
-                    Handler::Python {
-                        handler_name,
-                        handler_file,
-                        handler_line,
-                        ..
-                    } => (Some(handler_name), handler_file, handler_line),
-                    Handler::RustProgram(_) => (None, None, None),
-                }
-            };
+            let (handler_name, handler_file, handler_line) =
+                if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
+                    (None, None, None)
+                } else {
+                    match Handler::python_from_callable(&handler_obj) {
+                        Handler::Python {
+                            handler_name,
+                            handler_file,
+                            handler_line,
+                            ..
+                        } => (Some(handler_name), handler_file, handler_line),
+                        Handler::RustProgram(_) => (None, None, None),
+                    }
+                };
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
@@ -3289,21 +3278,20 @@ fn async_run<'py>(
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
             wrapped = lift_effect_to_perform_expr(py, wrapped)?;
-            let (handler_name, handler_file, handler_line) = if handler_obj
-                .is_instance_of::<PyRustHandlerSentinel>()
-            {
-                (None, None, None)
-            } else {
-                match Handler::python_from_callable(&handler_obj) {
-                    Handler::Python {
-                        handler_name,
-                        handler_file,
-                        handler_line,
-                        ..
-                    } => (Some(handler_name), handler_file, handler_line),
-                    Handler::RustProgram(_) => (None, None, None),
-                }
-            };
+            let (handler_name, handler_file, handler_line) =
+                if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
+                    (None, None, None)
+                } else {
+                    match Handler::python_from_callable(&handler_obj) {
+                        Handler::Python {
+                            handler_name,
+                            handler_file,
+                            handler_line,
+                            ..
+                        } => (Some(handler_name), handler_file, handler_line),
+                        Handler::RustProgram(_) => (None, None, None),
+                    }
+                };
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
@@ -3444,6 +3432,14 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCreateExternalPromise>()?;
     m.add_class::<PyCancelEffect>()?;
     m.add_class::<PyTaskCompleted>()?;
+    m.add_class::<PyCreateSemaphore>()?;
+    m.add_class::<PyAcquireSemaphore>()?;
+    m.add_class::<PyReleaseSemaphore>()?;
+    m.add_class::<PyPythonAsyncioAwaitEffect>()?;
+    m.add_class::<PyResultSafeEffect>()?;
+    m.add_class::<PyProgramTrace>()?;
+    m.add_class::<PyProgramCallStack>()?;
+    m.add_class::<PyProgramCallFrame>()?;
     // G14: scheduler sentinel
     m.add(
         "scheduler",

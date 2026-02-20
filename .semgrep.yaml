@@ -58,6 +58,106 @@ rules:
       category: architecture
       rationale: "Cancel state ownership — SPEC-SCHED-001, ISSUE-CORE-502"
 
+  - id: no-is-instance-from-in-handlers
+    pattern: is_instance_from($OBJ, $MODULE, $CLASS)
+    message: |
+      Use obj.is_instance_of::<RustPyClass>() / extract::<PyRef<RustPyClass>>() instead of
+      is_instance_from(). Built-in effects must be Rust PyClasses.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/handler.rs"
+        - "**/packages/doeff-vm/src/scheduler.rs"
+
+  - id: no-python-effect-class-shadowing
+    pattern-either:
+      - pattern: |
+          class StateGetEffect(EffectBase):
+              ...
+      - pattern: |
+          class StatePutEffect(EffectBase):
+              ...
+      - pattern: |
+          class StateModifyEffect(EffectBase):
+              ...
+      - pattern: |
+          class AskEffect(EffectBase):
+              ...
+      - pattern: |
+          class HashableAskEffect(EffectBase):
+              ...
+      - pattern: |
+          class LocalEffect(EffectBase):
+              ...
+      - pattern: |
+          class WriterTellEffect(EffectBase):
+              ...
+      - pattern: |
+          class SpawnEffect(EffectBase):
+              ...
+      - pattern: |
+          class GatherEffect(EffectBase):
+              ...
+      - pattern: |
+          class RaceEffect(EffectBase):
+              ...
+      - pattern: |
+          class CreatePromiseEffect(EffectBase):
+              ...
+      - pattern: |
+          class CompletePromiseEffect(EffectBase):
+              ...
+      - pattern: |
+          class FailPromiseEffect(EffectBase):
+              ...
+      - pattern: |
+          class CreateExternalPromiseEffect(EffectBase):
+              ...
+      - pattern: |
+          class CreateSemaphoreEffect(EffectBase):
+              ...
+      - pattern: |
+          class AcquireSemaphoreEffect(EffectBase):
+              ...
+      - pattern: |
+          class ReleaseSemaphoreEffect(EffectBase):
+              ...
+      - pattern: |
+          class PythonAsyncioAwaitEffect(EffectBase):
+              ...
+      - pattern: |
+          class ResultSafeEffect(EffectBase):
+              ...
+      - pattern: |
+          class ProgramTraceEffect(EffectBase):
+              ...
+      - pattern: |
+          class ProgramCallStackEffect(EffectBase):
+              ...
+      - pattern: |
+          class ProgramCallFrameEffect(EffectBase):
+              ...
+    message: |
+      Built-in effects must be Rust PyClasses imported from doeff_vm, not Python re-implementations.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "**/doeff/effects/state.py"
+        - "**/doeff/effects/reader.py"
+        - "**/doeff/effects/writer.py"
+        - "**/doeff/effects/spawn.py"
+        - "**/doeff/effects/gather.py"
+        - "**/doeff/effects/race.py"
+        - "**/doeff/effects/promise.py"
+        - "**/doeff/effects/external_promise.py"
+        - "**/doeff/effects/semaphore.py"
+        - "**/doeff/effects/future.py"
+        - "**/doeff/effects/result.py"
+        - "**/doeff/effects/trace.py"
+        - "**/doeff/effects/callstack.py"
+
   - id: doeff-no-python-task-id-extraction
     patterns:
       - pattern-inside: |

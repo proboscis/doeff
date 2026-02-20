@@ -227,6 +227,14 @@ CreatePromiseEffect = _ext.CreatePromiseEffect
 CompletePromiseEffect = _ext.CompletePromiseEffect
 FailPromiseEffect = _ext.FailPromiseEffect
 CreateExternalPromiseEffect = _ext.CreateExternalPromiseEffect
+CreateSemaphoreEffect = _ext.CreateSemaphoreEffect
+AcquireSemaphoreEffect = _ext.AcquireSemaphoreEffect
+ReleaseSemaphoreEffect = _ext.ReleaseSemaphoreEffect
+PythonAsyncioAwaitEffect = _ext.PythonAsyncioAwaitEffect
+ResultSafeEffect = _ext.ResultSafeEffect
+ProgramTraceEffect = _ext.ProgramTraceEffect
+ProgramCallStackEffect = _ext.ProgramCallStackEffect
+ProgramCallFrameEffect = _ext.ProgramCallFrameEffect
 PyCancelEffect = _ext.PyCancelEffect
 _SchedulerTaskCompleted = _ext._SchedulerTaskCompleted
 _notify_semaphore_handle_dropped = _ext._notify_semaphore_handle_dropped
@@ -296,6 +304,14 @@ __all__ = [
     "CompletePromiseEffect",
     "FailPromiseEffect",
     "CreateExternalPromiseEffect",
+    "CreateSemaphoreEffect",
+    "AcquireSemaphoreEffect",
+    "ReleaseSemaphoreEffect",
+    "PythonAsyncioAwaitEffect",
+    "ResultSafeEffect",
+    "ProgramTraceEffect",
+    "ProgramCallStackEffect",
+    "ProgramCallFrameEffect",
     "TaskCancelEffect",
     "_SchedulerTaskCompleted",
     "PyModify",
