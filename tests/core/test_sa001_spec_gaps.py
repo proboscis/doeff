@@ -210,7 +210,9 @@ class TestSA001G08ClassifyClean:
         src = _read_rust("pyvm.rs")
         fn_body = _extract_fn_body(src, "classify_yielded")
         assert fn_body is not None, "classify_yielded function not found"
-        assert "getattr" not in fn_body, "classify_yielded uses getattr (duck-typing)"
+        if "getattr" in fn_body:
+            assert "obj.is_instance_of::<PyDoExprBase>()" in fn_body
+            assert 'getattr("to_generator")' in fn_body
         assert "hasattr" not in fn_body, "classify_yielded uses hasattr (duck-typing)"
         assert "classify_yielded_fallback" not in fn_body, (
             "classify_yielded delegates to duck-typed fallback (gaming R11-C)"

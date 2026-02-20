@@ -305,11 +305,7 @@ impl VM {
                 )
             })
         };
-        self.apply_stream_step(
-            rust_program_step_to_ast_stream_step(step),
-            stream,
-            None,
-        )
+        self.apply_stream_step(rust_program_step_to_ast_stream_step(step), stream, None)
     }
 
     fn evaluate(&mut self, ir_node: DoCtrl) -> StepEvent {
@@ -1606,7 +1602,7 @@ impl VM {
         self.pending_python
             .as_ref()
             .map(|p| match p {
-                PendingPython::StartProgramFrame { .. } => "StartProgramFrame",
+                PendingPython::EvalExpr { .. } => "EvalExpr",
                 PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
                 PendingPython::ExpandReturn { .. } => "ExpandReturn",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
@@ -1623,7 +1619,7 @@ impl VM {
             StepEvent::Error(e) => format!("Error({e})"),
             StepEvent::NeedsPython(call) => {
                 let call_kind = match call {
-                    PythonCall::StartProgram { .. } => "StartProgram",
+                    PythonCall::EvalExpr { .. } => "EvalExpr",
                     PythonCall::CallFunc { .. } => "CallFunc",
                     PythonCall::GenNext => "GenNext",
                     PythonCall::GenSend { .. } => "GenSend",
@@ -1699,7 +1695,7 @@ impl VM {
             .pending_python
             .as_ref()
             .map(|p| match p {
-                PendingPython::StartProgramFrame { .. } => "StartProgramFrame",
+                PendingPython::EvalExpr { .. } => "EvalExpr",
                 PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
                 PendingPython::ExpandReturn { .. } => "ExpandReturn",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
@@ -1741,7 +1737,7 @@ impl VM {
             }
             StepEvent::NeedsPython(call) => {
                 let call_kind = match call {
-                    PythonCall::StartProgram { .. } => "StartProgram",
+                    PythonCall::EvalExpr { .. } => "EvalExpr",
                     PythonCall::CallFunc { .. } => "CallFunc",
                     PythonCall::GenNext => "GenNext",
                     PythonCall::GenSend { .. } => "GenSend",
@@ -2278,34 +2274,20 @@ impl VM {
         };
 
         match (pending, outcome) {
-            (PendingPython::StartProgramFrame { metadata }, PyCallOutcome::Value(gen_val)) => {
-                match gen_val {
-                    Value::Python(gen) => {
-                        match Self::extract_doeff_generator(gen, metadata, "StartProgram") {
-                            Ok((stream, metadata)) => {
-                                if let Some(ref m) = metadata {
-                                    self.maybe_emit_frame_entered(m);
-                                }
-                                if let Some(seg) = self.current_segment_mut() {
-                                    seg.push_frame(Frame::Program { stream, metadata });
-                                }
-                                self.mode = Mode::Deliver(Value::Unit);
-                            }
-                            Err(e) => {
-                                self.mode = Mode::Throw(e);
-                            }
-                        }
-                    }
-                    other => {
-                        self.mode = Mode::Throw(PyException::type_error(format!(
-                            "StartProgram: expected DoeffGenerator, got {other:?}"
-                        )));
-                    }
-                }
+            (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenYield(yielded)) => {
+                self.mode = Mode::HandleYield(yielded);
             }
 
-            (PendingPython::StartProgramFrame { .. }, PyCallOutcome::GenError(e)) => {
+            (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
+            }
+
+            (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenReturn(value)) => {
+                self.mode = Mode::Deliver(value);
+            }
+
+            (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::Value(value)) => {
+                self.mode = Mode::Deliver(value);
             }
 
             (PendingPython::CallFuncReturn { .. }, PyCallOutcome::Value(value)) => {
@@ -2384,10 +2366,7 @@ impl VM {
                 }
             }
 
-            (
-                PendingPython::ExpandReturn { handler_return, .. },
-                PyCallOutcome::GenError(e),
-            ) => {
+            (PendingPython::ExpandReturn { handler_return, .. }, PyCallOutcome::GenError(e)) => {
                 if handler_return {
                     if let Some(dispatch_id) = self
                         .dispatch_stack
@@ -2440,7 +2419,6 @@ impl VM {
                 }
                 self.mode = Mode::Throw(e);
             }
-
 
             (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::Value(result)) => {
                 self.mode = Mode::Deliver(result);
@@ -2920,10 +2898,9 @@ impl VM {
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
-
-        self.pending_python = Some(PendingPython::StartProgramFrame { metadata: None });
-        StepEvent::NeedsPython(PythonCall::StartProgram {
-            program: PyShared::new(program),
+        self.pending_python = Some(PendingPython::EvalExpr { metadata: None });
+        StepEvent::NeedsPython(PythonCall::EvalExpr {
+            expr: PyShared::new(program),
         })
     }
 
@@ -3256,10 +3233,10 @@ impl VM {
         }
 
         self.current_segment = outside_seg_id;
-        self.pending_python = Some(PendingPython::StartProgramFrame {
+        self.pending_python = Some(PendingPython::EvalExpr {
             metadata: start_metadata,
         });
-        StepEvent::NeedsPython(PythonCall::StartProgram { program })
+        StepEvent::NeedsPython(PythonCall::EvalExpr { expr: program })
     }
 }
 
@@ -3804,8 +3781,8 @@ mod tests {
         let runtime_src = &src[..runtime_boundary];
         let extraction_calls = runtime_src.matches("extract_doeff_generator(").count();
         assert!(
-            extraction_calls >= 3,
-            "VM-PROTO-001: expected at least 3 DoeffGenerator extraction sites in vm.rs, got {extraction_calls}"
+            extraction_calls >= 2,
+            "VM-PROTO-001: expected at least 2 DoeffGenerator extraction sites in vm.rs, got {extraction_calls}"
         );
         assert!(
             runtime_src.contains("PendingPython::ExpandReturn")
@@ -4324,20 +4301,20 @@ mod tests {
         assert_eq!(tell.type_name(), "Tell");
     }
 
-    /// G15: WithHandler should emit StartProgram, not CallFunc.
+    /// G15: WithHandler should emit EvalExpr, not CallFunc.
     /// We can't construct Py<PyAny> in Rust-only tests, so we verify
     /// this via the Python integration tests. This test serves as a
     /// documentation marker that handle_with_handler must use
-    /// PythonCall::StartProgram { program } per spec.
+    /// PythonCall::EvalExpr { expr } per spec.
     #[test]
-    fn test_gap15_with_handler_start_program_marker() {
+    fn test_gap15_with_handler_eval_expr_marker() {
         // Spec requires handle_with_handler to emit:
-        //   PythonCall::StartProgram { program: body }
+        //   PythonCall::EvalExpr { expr: body }
         // NOT:
         //   PythonCall::CallFunc { func: body, args: vec![] }
         //
         // Verified by code inspection + Python integration tests.
-        // The StartProgram path routes through to_generator validation.
+        // EvalExpr starts from DoExpr directly at VM entry.
         assert!(
             true,
             "See handle_with_handler implementation for spec compliance"
@@ -4587,7 +4564,7 @@ mod tests {
             let event = vm.handle_resume_continuation(k, Value::Unit);
             assert!(matches!(
                 event,
-                StepEvent::NeedsPython(PythonCall::StartProgram { .. })
+                StepEvent::NeedsPython(PythonCall::EvalExpr { .. })
             ));
 
             let seg_id = vm.current_segment.expect("missing current segment");
@@ -4631,9 +4608,7 @@ mod tests {
             vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    std::sync::Arc::new(
-                        crate::handler::DoubleCallHandlerFactory,
-                    ),
+                    std::sync::Arc::new(crate::handler::DoubleCallHandlerFactory),
                     prompt_seg_id,
                 ),
             );
@@ -5126,7 +5101,7 @@ mod tests {
 
             assert!(
                 matches!(event, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
-                "R9-A: kwargs-only call must yield CallFunc (not StartProgram), got {:?}",
+                "R9-A: kwargs-only call must yield CallFunc (not EvalExpr), got {:?}",
                 std::mem::discriminant(&event)
             );
         });
@@ -5137,8 +5112,8 @@ mod tests {
     // ==========================================================
 
     /// R9-H: Eval creates unstarted continuation and resumes it via handle_resume_continuation.
-    /// Result: NeedsPython(StartProgram { program: expr }) because unstarted continuation
-    /// has a program that needs to_generator() call.
+    /// Result: NeedsPython(EvalExpr { expr }) because unstarted continuation
+    /// now evaluates DoExpr directly.
     #[test]
     fn test_r9h_eval_creates_and_resumes_continuation() {
         Python::attach(|py| {
@@ -5159,18 +5134,15 @@ mod tests {
             let event = vm.step_handle_yield();
 
             assert!(
-                matches!(
-                    event,
-                    StepEvent::NeedsPython(PythonCall::StartProgram { .. })
-                ),
-                "R9-H: Eval must create unstarted continuation and yield StartProgram, got {:?}",
+                matches!(event, StepEvent::NeedsPython(PythonCall::EvalExpr { .. })),
+                "R9-H: Eval must create unstarted continuation and yield EvalExpr, got {:?}",
                 std::mem::discriminant(&event)
             );
 
             assert!(
                 matches!(
                     vm.pending_python,
-                    Some(PendingPython::StartProgramFrame { metadata: None })
+                    Some(PendingPython::EvalExpr { metadata: None })
                 ),
                 "R9-H: Eval continuation has no metadata (metadata comes from Call, not Eval)"
             );
@@ -5201,11 +5173,8 @@ mod tests {
             let event = vm.step_handle_yield();
 
             assert!(
-                matches!(
-                    event,
-                    StepEvent::NeedsPython(PythonCall::StartProgram { .. })
-                ),
-                "R9-H: Eval with handlers must still yield StartProgram"
+                matches!(event, StepEvent::NeedsPython(PythonCall::EvalExpr { .. })),
+                "R9-H: Eval with handlers must still yield EvalExpr"
             );
 
             assert!(
