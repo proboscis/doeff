@@ -47,7 +47,7 @@ future extensions and for custom handler implementations.
 ## Usage Example
 
 ```python
-from doeff import CachePut, CacheGet, CacheLifecycle, CacheStorage, ProgramInterpreter, do
+from doeff import CachePut, CacheGet, CacheLifecycle, CacheStorage, default_handlers, run, do
 
 @do
 def store_value():
@@ -64,10 +64,9 @@ def store_value():
 def load_value():
     return (yield CacheGet(("query", {"user": 1})))
 
-engine = ProgramInterpreter()
-await engine.run(store_value())
-await engine.run(load_value())
+run(store_value(), handlers=default_handlers())
+run(load_value(), handlers=default_handlers())
 ```
 
 The example sets every optional field to demonstrate the accepted values, even though only `ttl`
-affects the bundled interpreter today.
+affects the bundled handler set today.

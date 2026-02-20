@@ -12,6 +12,7 @@ def test_package_exports_runtime_api_symbols() -> None:
         "reader",
         "writer",
         "RunResult",
+        "DoeffTracebackData",
         "PyVM",
     )
     missing = [name for name in required if not hasattr(mod, name)]
@@ -28,6 +29,7 @@ def test_package_all_contains_runtime_contract() -> None:
         "reader",
         "writer",
         "RunResult",
+        "DoeffTracebackData",
         "PyVM",
         "RustHandler",
     }

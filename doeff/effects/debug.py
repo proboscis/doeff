@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .base import EffectBase, create_effect_with_trace
+from .base import EffectBase
 
 
 @dataclass(frozen=True)
@@ -21,7 +21,7 @@ def GetDebugContext() -> GetDebugContextEffect:
     - effect_call_tree: EffectCallNode tree showing effect origins
     - current_effect: name of the current effect being handled
     """
-    return create_effect_with_trace(GetDebugContextEffect())
+    return GetDebugContextEffect()
 
 
 __all__ = [

@@ -32,7 +32,16 @@ from pathlib import Path
 
 from doeff_flow import run_workflow
 
-from doeff import CacheGet, CachePut, do, slog
+from doeff import (
+    CacheGet,
+    CachePut,
+    Delegate,
+    Resume,
+    WithHandler,
+    do,
+    slog,
+)
+from doeff.effects import CacheGetEffect, CachePutEffect
 from doeff.storage import SQLiteStorage
 
 # =============================================================================
@@ -76,6 +85,23 @@ def expensive_aggregation(results: list[dict]) -> dict:
 # =============================================================================
 # Durable Workflow Steps (with caching)
 # =============================================================================
+
+
+def cache_handler(storage: SQLiteStorage):
+    """Handle cache effects using the provided SQLite storage backend."""
+
+    def handle(effect, k):
+        if isinstance(effect, CacheGetEffect):
+            value = storage.get(str(effect.key))
+            return (yield Resume(k, value))
+
+        if isinstance(effect, CachePutEffect):
+            storage.put(str(effect.key), effect.value)
+            return (yield Resume(k, None))
+
+        yield Delegate()
+
+    return handle
 
 
 @do
@@ -235,17 +261,15 @@ def main():
         print("[INFO] No existing database - all steps will execute")
     print()
 
-    # Create SQLite storage for durable execution
+    # Run the workflow with observability and custom cache effect handling
     storage = SQLiteStorage(str(db_path))
-
-    # Run the workflow with observability
+    program = WithHandler(cache_handler(storage), durable_pipeline())
     result = run_workflow(
-        durable_pipeline(),
+        program,
         workflow_id="durable-demo",
-        storage=storage,
     )
 
-    if result.is_ok:
+    if result.is_ok():
         print(f"Final Result: {result.value}")
         print()
         print("Try running again to see cached execution!")

@@ -1,0 +1,17 @@
+<idea-plugin>
+    <id>com.proboscis.doeff.pycharm</id>
+    <name>doeff Program Runner</name>
+    <vendor email="support@proboscis.com" url="https://github.com/proboscis/doeff">Proboscis</vendor>
+    <description>Gutter actions for running doeff Programs via interpreters, Kleisli programs, and transformers.</description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.python</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <codeInsight.lineMarkerProvider language="Python" implementationClass="com.proboscis.doeff.ide.ProgramGutterIconProvider"/>
+        <codeInsight.inlayProvider language="Python" implementationClass="com.proboscis.doeff.ide.DoeffRunLensInlayProvider" id="DoeffRunLens" enabledByDefault="true"/>
+        <toolWindow id="Doeff" anchor="right" factoryClass="com.proboscis.doeff.ide.DoeffToolWindowFactory"/>
+        <notificationGroup id="doeff.plugin" displayType="BALLOON" isLogByDefault="true"/>
+        <startupActivity implementation="com.proboscis.doeff.ide.ProgramPluginStartup"/>
+    </extensions>
+</idea-plugin>

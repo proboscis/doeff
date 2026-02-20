@@ -6,6 +6,7 @@ import inspect
 import os
 import tempfile
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -14,9 +15,19 @@ from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
 from doeff.effects.callstack import ProgramCallStack
-from doeff.effects.result import Safe
+from doeff.effects.result import Try
 from doeff.effects.writer import slog
-from doeff.types import EffectCreationContext, EffectGenerator, FrozenDict, Result
+from doeff.types import EffectGenerator, FrozenDict, Result
+
+
+@dataclass(frozen=True)
+class CacheCallSite:
+    source_file: str
+    source_line: int
+    function_name: str
+
+    def format_location(self) -> str:
+        return f"{self.source_file}:{self.source_line} in {self.function_name}"
 
 
 class CacheComputationError(RuntimeError):
@@ -27,7 +38,7 @@ class CacheComputationError(RuntimeError):
         func_name: str,
         call_args: tuple[Any, ...],
         call_kwargs: dict[str, Any],
-        call_site: EffectCreationContext | None = None,
+        call_site: CacheCallSite | None = None,
     ) -> None:
         location_suffix = f" at {call_site.format_location()}" if call_site is not None else ""
         message = (
@@ -94,6 +105,32 @@ def _is_internal_cache_filename(filename: str | None) -> bool:
     return "doeff/cache.py" in normalized
 
 
+def _call_site_from_program_frames(call_stack: list[Any] | tuple[Any, ...]) -> CacheCallSite | None:
+    fallback: CacheCallSite | None = None
+
+    for frame in reversed(call_stack):
+        source_file = frame.get("source_file") if isinstance(frame, dict) else None
+        source_line = frame.get("source_line") if isinstance(frame, dict) else None
+        function_name = frame.get("function_name") if isinstance(frame, dict) else None
+
+        if not isinstance(source_file, str) or not isinstance(source_line, int):
+            continue
+        if not isinstance(function_name, str):
+            function_name = "<unknown>"
+
+        site = CacheCallSite(
+            source_file=source_file,
+            source_line=source_line,
+            function_name=function_name,
+        )
+        if fallback is None:
+            fallback = site
+        if not _is_internal_cache_filename(source_file):
+            return site
+
+    return fallback
+
+
 def _truncate_for_log(obj: Any, max_len: int = 200) -> str:
     """Truncate object representation for logging to avoid massive log output."""
     try:
@@ -119,7 +156,7 @@ def cache(
     metadata: Mapping[str, Any] | None = None,
     policy: CachePolicy | Mapping[str, Any] | None = None,
 ):
-    """Cache decorator that uses CacheGet/CachePut effects with Safe for misses.
+    """Cache decorator that uses CacheGet/CachePut effects with Try for misses.
 
     The decorator automatically caches results produced by the wrapped function. On a cache miss
     (when ``CacheGet`` fails), it evaluates the original function, caches the ``Result`` via
@@ -274,19 +311,13 @@ def cache(
 
         @do
         def wrapper(*args, **kwargs) -> EffectGenerator[T]:
-            call_site: EffectCreationContext | None = None
-
             call_stack = yield ProgramCallStack()
-            for frame in reversed(call_stack):
-                created_at = getattr(frame, "created_at", None)
-                if created_at is None:
-                    continue
-                if not _is_internal_cache_filename(created_at.filename):
-                    call_site = created_at
-                    break
-
-            if call_site is None and call_stack:
-                call_site = getattr(call_stack[-1], "created_at", None)
+            stack_frames: list[Any]
+            if isinstance(call_stack, (list, tuple)):
+                stack_frames = list(call_stack)
+            else:
+                stack_frames = []
+            call_site = _call_site_from_program_frames(stack_frames)
 
             args_for_key, kwargs_for_key = yield build_key_inputs(tuple(args), dict(kwargs))
 
@@ -303,7 +334,7 @@ def cache(
             def compute_and_cache() -> EffectGenerator[T]:
                 yield slog(msg=f"Cache miss for {func_name}, computing...", level="DEBUG")
                 program_call = wrapped_func(*args, **kwargs)
-                result: Result = yield Safe(program_call)
+                result: Result = yield Try(program_call)
 
                 if result.is_ok():
                     yield ensure_serializable(cache_key_obj)
@@ -333,7 +364,7 @@ def cache(
                 yield ensure_serializable(cache_key_obj, log_success=False)
                 return (yield CacheGet(cache_key_obj))
 
-            cache_result = yield Safe(try_cache_get())
+            cache_result = yield Try(try_cache_get())
             if cache_result.is_ok():
                 result = cache_result.value
             else:

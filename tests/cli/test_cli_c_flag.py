@@ -65,7 +65,6 @@ class TestCFlagBasic:
         assert payload["status"] == "ok"
         assert payload["result"] == 6
 
-    @pytest.mark.skip(reason="Auto-discovery requires fixtures_discovery default interpreter markers")
     def test_auto_discovers_interpreter(self) -> None:
         result = run_cli(
             "-c",

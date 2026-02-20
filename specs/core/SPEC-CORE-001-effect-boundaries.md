@@ -620,7 +620,7 @@ Core Effects (standard handlers):
 +-- Modify(key, fn)       - modify state
 +-- Tell(message)         - append to log (Writer)
 +-- Listen(program)       - capture log output
-+-- Safe(program)         - catch errors
++-- Try(program)         - catch errors
 +-- IO(fn)                - perform IO
 +-- GetTime()             - current time
 +-- CacheGet/Put/Delete   - cache operations
@@ -993,7 +993,7 @@ Almost all monads can be implemented as **handlers** inside doeff:
 | State | Get, Put, Modify | No |
 | Reader | Ask, Local | No |
 | Writer | Tell, Log, Listen | No |
-| Error | Safe, try/catch | No |
+| Error | Try, try/catch | No |
 | IO | Handler runs IO | No |
 | Future | Spawn, Wait (task queue) | No |
 | List | Nondeterminism handler | No |

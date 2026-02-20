@@ -38,7 +38,7 @@ yield Get("x") ──────► yield Get("x") ─────► (state ha
 | SPEC-008 | Rust VM spec. §Built-in Scheduler Handler defers to this spec. |
 | SPEC-008 §Continuation | Continuation primitives (Transfer, TransferThrow, ResumeContinuation, CreateContinuation). |
 | SPEC-EFF-011 | Await effect (asyncio bridge). Orthogonal to scheduler. |
-| SPEC-EFF-012 | Safe wrapper. Uses Ok/Err from SPEC-EFF-013. |
+| SPEC-EFF-012 | Try wrapper. Uses Ok/Err from SPEC-EFF-013. |
 | SPEC-EFF-013 | Result types (Ok/Err). TaskCompleted.result is Ok or Err. |
 | ~~SPEC-EFF-005~~ | **DEPRECATED.** Superseded by this spec. |
 | ~~SPEC-EFF-007~~ | **DEPRECATED.** Superseded by §Waitable Types in this spec. |
@@ -47,8 +47,8 @@ yield Get("x") ──────► yield Get("x") ─────► (state ha
 ### Out of scope (dedicated specs exist)
 
 - **Await effect** (SPEC-EFF-011): Bridging Python asyncio coroutines into doeff programs
-- **Safe wrapper** (SPEC-EFF-012): Collecting partial results from Gather (error-tolerant aggregation)
-- **Result types** (SPEC-EFF-013): Rust Ok/Err types used by TaskCompleted and Safe
+- **Try wrapper** (SPEC-EFF-012): Collecting partial results from Gather (error-tolerant aggregation)
+- **Result types** (SPEC-EFF-013): Rust Ok/Err types used by TaskCompleted and Try
 
 ## Motivation
 
@@ -659,7 +659,7 @@ Case 5: Some waitables still PENDING
 
 **Fail-fast**: On first error/cancellation among gathered waitables, Gather
 fails immediately. Remaining waitables continue running (NOT auto-cancelled).
-Use `Safe` wrapper (SPEC-EFF-012) to collect partial results.
+Use `Try` wrapper (SPEC-EFF-012) to collect partial results.
 
 **Result ordering**: Results are in the same order as waitables were passed,
 regardless of completion order.
@@ -841,7 +841,7 @@ If the future is CANCELLED, Wait raises `TaskCancelledError`.
 On the first error from any gathered future, Gather fails immediately with
 that error.
 
-To collect all results including errors, wrap individual programs in `Safe`
+To collect all results including errors, wrap individual programs in `Try`
 before Spawn.
 
 ### Race: first error propagates
@@ -1546,4 +1546,4 @@ fn save_current_task_store(store: &RustStore) -> TaskStore {
 7. `test_interleaving_with_scheduler_yield` — Two tasks interleave
 8. `test_store_isolation` — Child and parent stores independent
 9. `test_promise_wait` — CreatePromise + CompletePromise + Wait
-10. `test_concurrent_kpc_with_scheduler` — ConcurrentKpcHandler via Spawn/Gather
+10. `[SUPERSEDED BY SPEC-KPC-001 — KPC is now a call-time macro, not a runtime effect]` `test_concurrent_kpc_with_scheduler` — ~~ConcurrentKpcHandler via Spawn/Gather~~

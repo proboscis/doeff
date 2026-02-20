@@ -13,6 +13,7 @@ Changes from Rev 13. Introduces explicit `Perform` control node and separates ef
 | **R14-C** | Lowering boundary | **Source-level `yield effect` lowers to `yield Perform(effect)`.** Python UX stays unchanged while IR remains explicit. `run(effect_value)` is normalized to `run(Perform(effect_value))` at API boundary. |
 | **R14-D** | Invocation model | **`Call` remains canonical application node; no `Apply` node is introduced.** KPC lowering and handler invocation semantics target `Call(...)` directly. |
 | **R14-E** | Dispatch contract | **Handler invocation returns DoExpr control.** If host handler returns an effect value, runtime normalization wraps it as `Perform(effect)` before continuation. |
+| **R15-A** | KPC model | **KPC is a call-time macro, not a runtime effect (doeff-13).** KPC handler removed. `KleisliProgramCall` no longer extends `PyEffectBase`. `KleisliProgram.__call__()` returns `Call` DoCtrl directly. See SPEC-KPC-001. |
 
 ### Revision 13 Changelog
 
@@ -47,7 +48,7 @@ Changes from Rev 10. Effects are data — the VM is a dumb pipe.
 
 | Tag | Section | Change |
 |-----|---------|--------|
-| **R11-A** | Effect types | **All Rust-handled effects are `#[pyclass]` structs.** `Get`, `Put`, `Ask`, `Tell`, `Modify` defined in Rust, exposed to Python. Scheduler effect pyclasses defined in SPEC-SCHED-001. **`KleisliProgramCall` (KPC) is also a `#[pyclass(frozen, extends=PyEffectBase)]` struct** — it carries `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at`. Auto-unwrap strategy is NOT stored on KPC — it is the handler's responsibility to compute from `kleisli_source` annotations at dispatch time (see SPEC-TYPES-001 §3). Python imports these types from the Rust crate. |
+| **R11-A** | Effect types | **All Rust-handled effects are `#[pyclass]` structs.** `Get`, `Put`, `Ask`, `Tell`, `Modify` defined in Rust, exposed to Python. Scheduler effect pyclasses defined in SPEC-SCHED-001. **[SUPERSEDED BY R15-A / SPEC-KPC-001]** ~~`KleisliProgramCall` (KPC) is also a `#[pyclass(frozen, extends=PyEffectBase)]` struct — it carries `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at`. Auto-unwrap strategy is NOT stored on KPC — it is the handler's responsibility to compute from `kleisli_source` annotations at dispatch time (see SPEC-TYPES-001 §3).~~ [R15-A: KPC is no longer an effect or `#[pyclass(extends=PyEffectBase)]`. `KleisliProgram.__call__()` returns `Call` DoCtrl directly. See SPEC-KPC-001.] Python imports these types from the Rust crate. |
 | **R11-B** | Effect enum | **`Effect` typed enum REMOVED.** No `Effect::Get { key }`, `Effect::Put { .. }`, etc. Effects flow through dispatch as opaque `Py<PyAny>`. The VM does not know effect internals. Handlers downcast to concrete `#[pyclass]` types themselves. |
 | **R11-C** | classify_yielded | **Effect classification is a single isinstance check.** `classify_yielded` checks `isinstance(obj, EffectBase)` → `Yielded::Effect(obj)`. No field extraction. No per-effect-type arms. No string matching. The classifier does not touch effect data. |
 | **R11-D** | Handler traits | **Handler receives opaque effect.** `RustHandlerProgram::start()` takes `Py<PyAny>` (not `Effect` enum). `RustProgramHandler::can_handle()` takes `&Bound<'_, PyAny>`. Handlers downcast via `obj.downcast::<Get>()` etc. using `Python::with_gil()`. |
@@ -55,7 +56,7 @@ Changes from Rev 10. Effects are data — the VM is a dumb pipe.
 | **R11-F** | Dispatch bases | **All type-dispatch bases are Rust `#[pyclass(subclass)]`.** `EffectBase`, `DoCtrlBase` defined in Rust. [R13-D: DoThunkBase deleted — binary hierarchy only.] [R13-I: GIL-free tag-based dispatch replaces `is_instance_of`. Each base carries an immutable `tag: u8` discriminant. VM reads the tag without GIL for classification and variant dispatch.] Concrete types extend their base via `#[pyclass(extends=...)]`. Python user types subclass normally. |
 
 **CODE-ATTENTION items** (implementation work needed — R11):
-- `effect.rs`: Delete `Effect` enum entirely. Add `#[pyclass(frozen)]` structs: `PyGet`, `PyPut`, `PyAsk`, `PyTell`, `PyModify`. Scheduler effect pyclasses are defined in SPEC-SCHED-001 (implemented in `scheduler.rs`). Add `PyKPC` (`#[pyclass(frozen, extends=PyEffectBase)]`) with fields: `kleisli_source: Py<PyAny>`, `args: Py<PyTuple>`, `kwargs: Py<PyDict>`, `function_name: String`, `execution_kernel: Py<PyAny>`, `created_at: Py<PyAny>`. KPC does NOT carry `auto_unwrap_strategy` — the handler computes it from `kleisli_source` annotations.
+- `effect.rs`: Delete `Effect` enum entirely. Add `#[pyclass(frozen)]` structs: `PyGet`, `PyPut`, `PyAsk`, `PyTell`, `PyModify`. Scheduler effect pyclasses are defined in SPEC-SCHED-001 (implemented in `scheduler.rs`). [SUPERSEDED BY R15-A / SPEC-KPC-001] ~~Add `PyKPC` (`#[pyclass(frozen, extends=PyEffectBase)]`) with fields: `kleisli_source: Py<PyAny>`, `args: Py<PyTuple>`, `kwargs: Py<PyDict>`, `function_name: String`, `execution_kernel: Py<PyAny>`, `created_at: Py<PyAny>`. KPC does NOT carry `auto_unwrap_strategy` — the handler computes it from `kleisli_source` annotations.~~
 - `effect.rs` (or new `bases.rs`): Add `#[pyclass(subclass, frozen)]` base classes: `PyEffectBase { tag: u8 }`, `PyDoCtrlBase { tag: u8 }`. [R13-D: DoThunkBase deleted — binary hierarchy.] [R13-I: tag field enables GIL-free classification.] Add `DoExprTag` enum (`#[repr(u8)]`). All concrete types extend their base via `#[pyclass(extends=...)]` and set tag at construction. [R11-F]
 - `handler.rs`: Change `RustProgramHandler::can_handle(&self, effect: &Effect)` → `can_handle(&self, py: Python<'_>, effect: &Bound<'_, PyAny>)`. Change `RustHandlerProgram::start(&mut self, effect: Effect, ...)` → `start(&mut self, py: Python<'_>, effect: Py<PyAny>, ...)`.
 - `vm.rs`: Change `start_dispatch(effect: Effect)` → `start_dispatch(py: Python<'_>, effect: Py<PyAny>)`. Change `DispatchContext.effect: Effect` → `effect: Py<PyAny>` (or `PyShared<PyAny>`). Change `find_matching_handler` to pass `py` + `&Bound`. Delete `Yielded::Effect(Effect)` → `Yielded::Effect(Py<PyAny>)`.
@@ -65,8 +66,8 @@ Changes from Rev 10. Effects are data — the VM is a dumb pipe.
 - `step.rs`: Change `Yielded::Effect(Effect)` → `Yielded::Effect(Py<PyAny>)`. Delete `Yielded::Program` variant.
 - State/Reader/Writer handler impls: Rewrite `start()` to downcast `Py<PyAny>` → `PyRef<PyGet>` etc.
 - Scheduler handler impl: See SPEC-SCHED-001 for effect pyclasses and handler implementation.
-- KPC handler impl: Rewrite `start()` to downcast `Py<PyAny>` → `PyRef<PyKPC>`. Handler reads `kleisli_source` to compute auto-unwrap strategy from annotations at dispatch time. Strategy computation is handler-internal — different KPC handlers may use different strategies.
-- Python side: `doeff/types.py` or wherever `EffectBase` is defined — delete Python class, import from `doeff_vm` instead. Same for any Python-side DoCtrl bases. [R13-D: DoThunkBase deleted — no third base.] Delete Python `KleisliProgramCall` class — replace with `PyKPC` imported from `doeff_vm`. Delete `_AutoUnwrapStrategy` from `KleisliProgramCall` — it moves into the KPC handler.
+- [SUPERSEDED BY R15-A / SPEC-KPC-001] ~~KPC handler impl: Rewrite `start()` to downcast `Py<PyAny>` → `PyRef<PyKPC>`. Handler reads `kleisli_source` to compute auto-unwrap strategy from annotations at dispatch time. Strategy computation is handler-internal — different KPC handlers may use different strategies.~~
+- Python side: `doeff/types.py` or wherever `EffectBase` is defined — delete Python class, import from `doeff_vm` instead. Same for any Python-side DoCtrl bases. [R13-D: DoThunkBase deleted — no third base.] [SUPERSEDED BY R15-A / SPEC-KPC-001] ~~Delete Python `KleisliProgramCall` class — replace with `PyKPC` imported from `doeff_vm`. Delete `_AutoUnwrapStrategy` from `KleisliProgramCall` — it moves into the KPC handler.~~
 
 **CODE-ATTENTION items** (carried from R10):
 - `frame.rs`: Add `CallMetadata::anonymous()` constructor
@@ -552,6 +553,8 @@ pub struct CallMetadata {
     /// Optional: reference to the full KleisliProgramCall Python object.
     /// Enables rich introspection (args, kwargs, kleisli_source) via GIL.
     /// None for non-KPC programs or when metadata is extracted from Rust-side only.
+    /// [R15-A] Under the macro model, CallMetadata is populated at
+    /// `KleisliProgram.__call__()` time (not by a KPC handler). See SPEC-KPC-001.
     pub program_call: Option<PyShared>,
 }
 
@@ -1309,6 +1312,10 @@ impl Handler {
     }
 }
 
+/// [SUPERSEDED BY R15-A / SPEC-KPC-001 — KPC is now a call-time macro, not a runtime effect.
+/// KPC handler is removed. `KleisliProgram.__call__()` returns `Call` DoCtrl directly.
+/// The following pseudo-code is retained for historical reference only.]
+///
 /// [Q2] KPC Handler: dispatches KleisliProgramCall effects.
 ///
 /// Installed as the innermost handler by run(). When a KPC effect is yielded,
@@ -1317,24 +1324,24 @@ impl Handler {
 ///
 /// This handler is required for @do-decorated programs to function, since
 /// @do produces KleisliProgramCall effects that must be caught and executed.
-pub struct KpcHandlerFactory;
+pub struct KpcHandlerFactory; // [SUPERSEDED BY R15-A / SPEC-KPC-001]
 
-impl RustProgramHandler for KpcHandlerFactory {
+impl RustProgramHandler for KpcHandlerFactory { // [SUPERSEDED BY R15-A / SPEC-KPC-001]
     fn can_handle(&self, py: Python<'_>, effect: &Bound<'_, PyAny>) -> bool {
         // Handles KPC effects (PyKPC or objects with __doeff_kpc__ marker)
         effect.is_instance_of::<PyKPC>()
     }
-    fn create_program(&self) -> RustProgramRef { /* KpcHandlerProgram */ }
+    fn create_program(&self) -> RustProgramRef { /* KpcHandlerProgram */ } // [SUPERSEDED]
 }
 
-/// KpcHandlerProgram resolves KPC arg values (some may be lazy DoExprs),
+/// [SUPERSEDED] KpcHandlerProgram resolves KPC arg values (some may be lazy DoExprs),
 /// then calls the execution_kernel with resolved args. Multi-phase:
 /// 1. start(): yield GetHandlers to capture current handler stack
 /// 2. If lazy args (KpcArg::Expr): yield DoCtrl::Eval for each, resume() collects
 /// 3. All args resolved: yield DoCtrl::Call { f: kernel, args, kwargs }
 ///    VM calls kernel(*args, **kwargs) → generator → pushed as frame [R12-A]
 /// 4. When kernel generator completes: yield DoCtrl::Resume { k_user, value }
-pub struct KpcHandlerProgram {
+pub struct KpcHandlerProgram { // [SUPERSEDED BY R15-A / SPEC-KPC-001]
     // Internal state machine for arg resolution phases
 }
 ```
@@ -2761,34 +2768,39 @@ impl VM {
   `started=false`, installs handlers (outermost first) and starts the program, returning
   to the current handler when it finishes; `value` is ignored.
 - **Implicit Handler Return**: if a handler program (Python/Rust) returns, the VM
-  treats it as handler return. The returned value becomes the result of
-  `yield Delegate(effect)` for inner handlers; for the root handler it abandons the
-  callsite (marks dispatch completed) and returns to the prompt boundary.
+  treats it as handler return. For the root handler it abandons the callsite
+  (marks dispatch completed) and returns to the prompt boundary. For inner
+  handlers, return flows to the handler's caller segment; it does not flow back
+  to a handler that already executed terminal `Delegate(effect)`.
 - **Single Resume per Dispatch**: The callsite continuation (`k_user`) is one-shot.
-  Exactly one of Resume/Transfer/Return may consume it in a dispatch. After
-  `yield Delegate(effect)` returns, the handler must return (not Resume). Any
-  double-resume or resume-after-delegate is a runtime error.
+  Exactly one of Resume/Transfer/TransferThrow/Return may consume it in a
+  dispatch. `yield Delegate(effect)` does not return; Delegate is terminal and
+  transfers control to the outer handler. Any double-resume or
+  resume-after-delegate is a runtime error.
 - **No Multi-shot**: Multi-shot continuations are not supported. All continuations
   are one-shot and cannot be resumed more than once.
 
-**Delegate Data Flow (Koka/OCaml semantics)**:
+**Delegate Data Flow (Tail-Call Passthrough)**:
 
 ```
-User --perform E--> H1
-H1: z = yield Delegate(E)
+Delegate is tail-call. The delegating handler gives up control entirely.
+k_user passes to the outer handler. The delegating handler does NOT
+receive a value back and cannot Resume.
+
+User --perform E--> H1 (inner)
+H1: yield Delegate(E)           <- H1 is done, frames cleared
       |
       v
-     H2 handles E
-     H2: u = yield Resume(k_user, v)
-     User: r = ...; return r
-     H2: u == r; return h2
-H1: z == h2; return h1
+     H2 (outer) handles E
+     H2: yield Resume(k_user, v)  <- resumes original callsite
+     User: continues with v
+     H2: return h2                <- flows to H2 caller (not back to H1)
 ```
 
 Notes:
 - Only one handler in the chain resumes the callsite (`k_user`).
-- `yield Delegate(E)` returns the outer handler's return value (`h2`).
-- After Delegate returns, the handler must return (no Resume).
+- `yield Delegate(E)` is terminal and does not return to the delegating handler.
+- If no outer handler matches, dispatch fails with a runtime error.
 
 **Delegate/Resume Pseudocode**:
 
@@ -2803,19 +2815,50 @@ def outer_handler(effect, k_user):
     if isinstance(effect, SomeEffect):
         user_ret = yield Resume(k_user, 10)
         return user_ret + 5
-    return (yield Delegate(effect))
+    yield Delegate(effect)
 
 @do
 def inner_handler(effect, k_user):
-    outer_ret = yield Delegate(effect)
-    return outer_ret + 1
+    yield Delegate(effect)
+    # UNREACHABLE: Delegate is terminal.
 
-# INVALID: Resume after Delegate (double-resume)
+# Delegate is terminal — code after yield Delegate() never executes.
+# In Python handlers, yield Delegate() is always the last statement.
 @do
-def bad_handler(effect, k_user):
-    outer_ret = yield Delegate(effect)
-    return (yield Resume(k_user, outer_ret))  # runtime error
+def passthrough_handler(effect, k_user):
+    yield Delegate(effect)
+    # This line is UNREACHABLE — Delegate does not return.
 ```
+
+## Perform from Handler Programs
+
+When a Rust handler program yields `Perform(effect)`, the VM creates a new
+dispatch. The handler's continuation becomes `k_user` in the new dispatch.
+The handler retains the original callsite continuation and must eventually
+resume it (or transfer-throw).
+
+Flow:
+
+```
+User -> effect -> dispatch1 (k_user1 = user continuation)
+  -> HandlerA.start(effect, k_user1)
+    -> saves k_user1
+    -> Perform(effect) -> dispatch2 (k_user2 = HandlerA continuation)
+      -> HandlerB.start(effect, k_user2)
+        -> Resume(k_user2, value)        <- resumes back to HandlerA
+    -> HandlerA.resume(value)
+      -> Resume(k_user1, processed_value) <- resumes back to user
+```
+
+Key properties:
+- `Perform` is non-terminal: the handler frame is re-pushed and `resume()` is called.
+- The handler must eventually `Resume(k_user1, value)` or `TransferThrow(k_user1, exc)`.
+- If a handler performs but never resumes/transfers `k_user1`, the callsite is stuck.
+- This is the canonical mechanism for handler-to-handler consultation.
+
+Equivalent patterns:
+- Koka: `val x = outer/op(); resume(f(x))`
+- OCaml 5: `let x = perform Op in continue k (f x)`
 
 ---
 
@@ -3096,7 +3139,7 @@ treats it as `Effect::Python` and dispatches to user handlers.
 Two reference handlers are provided:
 - `sync_await_handler`: runs the awaitable in a background thread/executor and
   resumes the continuation with the result.
-- `python_async_syntax_escape_handler`: yields `PythonAsyncSyntaxEscape` so
+- `async_await_handler`: yields `PythonAsyncSyntaxEscape` so
   `async_run` can await in the event loop.
 
 ```python
@@ -3106,12 +3149,12 @@ def sync_await_handler(effect, k):
         promise = yield CreateExternalPromise()
         thread_pool.submit(run_and_complete, effect.awaitable, promise)
         return (yield Wait(promise.future))
-    return (yield Delegate(effect))
+    yield Delegate(effect)
 ```
 
 ```python
 @do
-def python_async_syntax_escape_handler(effect, k):
+def async_await_handler(effect, k):
     if isinstance(effect, Await):
         promise = yield CreateExternalPromise()
         async def fire_task():
@@ -3124,15 +3167,19 @@ def python_async_syntax_escape_handler(effect, k):
             action=lambda: asyncio.create_task(fire_task())
         )
         return (yield Wait(promise.future))
-    return (yield Delegate(effect))
+    yield Delegate(effect)
 ```
 
-`python_async_syntax_escape_handler` must only be used with `async_run`;
+`async_await_handler` must only be used with `async_run`;
 the sync driver raises `TypeError` if it sees `CallAsync`.
+
+`run()` and `async_run()` must pass handler lists through unchanged. Handler
+selection is user responsibility; no handler swapping or thread-offload
+detection is allowed in VM wrappers.
 
 **Usage**:
 - Sync: `vm.run(with_handler(sync_await_handler, program))`
-- Async: `await vm.run_async(with_handler(python_async_syntax_escape_handler, program))`
+- Async: `await vm.run_async(with_handler(async_await_handler, program))`
 
 ---
 
@@ -3376,10 +3423,12 @@ Perform(effect)                  → dispatches effect through handler stack
 
 No `to_generator()` at VM level — that's a Python API detail for backward compatibility.
 
-KPC (`PyKPC`) is an Effect dispatched to the KPC handler. The handler
+[SUPERSEDED BY R15-A / SPEC-KPC-001 — KPC is now a call-time macro, not a runtime effect.]
+~~KPC (`PyKPC`) was an Effect dispatched to the KPC handler [SUPERSEDED]. The handler
 extracts `execution_kernel` and resolved args, then emits
 `DoCtrl::Call { f: kernel, args, kwargs }`. The VM calls the kernel,
-gets a generator, and pushes it as a frame — same as any other `Call`.
+gets a generator, and pushes it as a frame — same as any other `Call`.~~
+[R15-A: `KleisliProgram.__call__()` now returns a `Call` DoCtrl directly via macro expansion. No KPC handler is involved.]
 
 ### Store and Env Lifecycle [R8-J]
 
@@ -3521,8 +3570,8 @@ pub enum DoCtrl {
         exception: PyException,
     },
     
-    /// Delegate(effect) - Delegate to outer handler.
-    /// Yield result is the outer handler's return value.
+    /// Delegate(effect) - Tail-call delegate to outer handler.
+    /// Terminal: current handler frames are cleared; no value returns here.
     Delegate {
         effect: Effect,
     },
@@ -3574,7 +3623,8 @@ pub enum DoCtrl {
     /// The result is a generator pushed as a PythonGenerator frame.
     ///
     /// No distinction between "DoThunk path" and "kernel path" — both are Call with DoExpr args.
-    /// KPC handler emits Call(f: Pure(kernel), args: [Pure(arg1), Pure(arg2), ...], kwargs, meta).
+    /// [SUPERSEDED BY R15-A / SPEC-KPC-001] ~~KPC handler emits Call(f: Pure(kernel), args: [Pure(arg1), Pure(arg2), ...], kwargs, meta).~~
+    /// [R15-A: `KleisliProgram.__call__()` emits `Call(Pure(kernel), args, kwargs, meta)` directly via macro expansion.]
     /// VM evaluates each Pure(arg) → arg, then calls kernel(*args, **kwargs).
     ///
     /// Metadata is extracted by the driver (with GIL) or constructed by RustHandlerPrograms.
@@ -3624,8 +3674,9 @@ pub enum DoCtrl {
     /// - FlatMap(source, binder): evaluates source, applies binder, evaluates result
     /// - Effect: dispatches through continuation's handler stack
     ///
-    /// Primary use: KPC handler resolving args with the full callsite handler
-    /// chain (captured via GetHandlers), avoiding busy boundary issues.
+    /// [SUPERSEDED BY R15-A / SPEC-KPC-001] ~~Primary use: KPC handler resolving args with the full callsite handler
+    /// chain (captured via GetHandlers), avoiding busy boundary issues.~~
+    /// [R15-A: KPC handler removed. Eval remains available for general DoExpr evaluation in scoped contexts.]
     Eval {
         /// The DoExpr to evaluate (Pure, Call, Map, FlatMap, or Effect) [R13-F]
         expr: Py<PyAny>,
@@ -4495,8 +4546,8 @@ ContId is checked in consumed_cont_ids before resume.
 Double-resume returns Error, not panic.
 
 Within a single dispatch, the callsite continuation (k_user) must be consumed
-exactly once (Resume/Transfer/Return). Any attempt to resume again (including
-after Delegate returns) is a runtime error.
+exactly once (Resume/Transfer/TransferThrow/Return). Any attempt to resume again (including
+after yielding terminal Delegate) is a runtime error.
 
 Multi-shot continuations are not supported. All continuations are one-shot only.
 ```
@@ -4706,8 +4757,8 @@ Key differences and decisions in 008:
   busy handlers; nested dispatch does not consider older frames.
 - `Delegate` is the only forwarding primitive; yielding a raw effect starts a new
   dispatch (does not forward).
-- `yield Delegate(effect)` returns the **outer handler's return value**; after
-  Delegate returns, the handler must return (no Resume).
+- `yield Delegate(effect)` is terminal tail-call forwarding; it does not return
+  to the delegating handler.
 - Handler return is implicit; there is no `Return` DoCtrl.
 - Program input is **ProgramBase only** (KleisliProgramCall or EffectBase); raw
   generators are rejected except via `start_with_generator()`.

@@ -5,9 +5,14 @@ All tests exercise the public handler-authoring API end-to-end through run().
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from doeff import (
     Ask,
     Delegate,
+    Effect,
     EffectBase,
     Get,
     Program,
@@ -24,7 +29,8 @@ from doeff import (
 class _CustomEffect(EffectBase):
     """Test effect for handler protocol verification."""
 
-    def __init__(self, value: object) -> None:
+    def __init__(self, value: Any) -> None:
+        super().__init__()
         self.value = value
 
 
@@ -115,11 +121,11 @@ class TestHP03PostProcess:
 
 
 class TestHP03BReturnEffect:
-    def test_handler_returning_effect_is_perform_lifted(self) -> None:
+    def test_handler_returning_effect_raises_typeerror(self) -> None:
         def handler(effect, _k):
             if isinstance(effect, _CustomEffect):
                 return Ask("api_key")
-            return effect
+            return Delegate()
 
         def body():
             result = yield _CustomEffect("unused")
@@ -130,7 +136,10 @@ class TestHP03BReturnEffect:
             return result
 
         result = run(_prog(main), handlers=default_handlers(), env={"api_key": "secret"})
-        assert result.value == "secret"
+        assert result.is_err()
+        assert isinstance(result.error, TypeError)
+        assert "must return a generator" in str(result.error)
+        assert "Did you forget 'yield'?" in str(result.error)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +163,10 @@ class TestHP04AbandonContinuation:
             return result
 
         result = run(_prog(main), handlers=default_handlers())
-        assert result.value == 70
+        assert result.is_err()
+        assert isinstance(result.error, TypeError)
+        assert "must return a generator" in str(result.error)
+        assert "Did you forget 'yield'?" in str(result.error)
 
 
 # ---------------------------------------------------------------------------
@@ -384,9 +396,90 @@ class TestHP10CoexistWithBuiltins:
 
 
 class TestHP11DoDecoratedHandler:
+    def test_do_decorated_handler_without_effect_annotation_is_rejected(self) -> None:
+        @do
+        def bad_handler(effect, _k):
+            if isinstance(effect, _CustomEffect):
+                return f"wrapped:{effect.value}"
+            yield Delegate()
+
+        def body():
+            result = yield _CustomEffect("x")
+            return result
+
+        with pytest.raises(
+            TypeError, match=r"@do handler first parameter must be annotated as Effect"
+        ):
+            WithHandler(handler=bad_handler, expr=_prog(body))
+
+    def test_doeff_vm_withhandler_applies_python_side_validation(self) -> None:
+        import doeff_vm
+
+        @do
+        def bad_handler(effect, _k):
+            if isinstance(effect, _CustomEffect):
+                return f"wrapped:{effect.value}"
+            yield Delegate()
+
+        def body():
+            result = yield _CustomEffect("x")
+            return result
+
+        with pytest.raises(
+            TypeError, match=r"@do handler first parameter must be annotated as Effect"
+        ):
+            doeff_vm.WithHandler(bad_handler, _prog(body))
+
+    def test_run_rejects_unannotated_do_handler_in_handlers_list(self) -> None:
+        @do
+        def bad_handler(effect, _k):
+            if isinstance(effect, _CustomEffect):
+                return f"wrapped:{effect.value}"
+            yield Delegate()
+
+        def body():
+            result = yield _CustomEffect("x")
+            return result
+
+        with pytest.raises(
+            TypeError, match=r"@do handler first parameter must be annotated as Effect"
+        ):
+            run(_prog(body), handlers=[bad_handler])
+
+    def test_direct_extension_submodule_also_rejects_unannotated_do_handler(self) -> None:
+        import asyncio
+        import importlib
+
+        sub = importlib.import_module("doeff_vm.doeff_vm")
+
+        @do
+        def bad_handler(effect, _k):
+            if isinstance(effect, _CustomEffect):
+                return f"wrapped:{effect.value}"
+            yield Delegate()
+
+        def body():
+            result = yield _CustomEffect("x")
+            return result
+
+        with pytest.raises(
+            TypeError, match=r"@do handler first parameter must be annotated as Effect"
+        ):
+            sub.WithHandler(bad_handler, _prog(body))
+
+        with pytest.raises(
+            TypeError, match=r"@do handler first parameter must be annotated as Effect"
+        ):
+            sub.run(_prog(body), handlers=[bad_handler])
+
+        with pytest.raises(
+            TypeError, match=r"@do handler first parameter must be annotated as Effect"
+        ):
+            asyncio.run(sub.async_run(_prog(body), handlers=[bad_handler]))
+
     def test_do_decorated_handler_plain_return(self) -> None:
         @do
-        def handler(effect, _k):
+        def handler(effect: Effect, _k):
             if isinstance(effect, _CustomEffect):
                 return f"wrapped:{effect.value}"
             yield Delegate()
@@ -400,4 +493,7 @@ class TestHP11DoDecoratedHandler:
             return result
 
         result = run(_prog(main), handlers=default_handlers())
-        assert result.value == "wrapped:x"
+        assert result.is_err()
+        assert isinstance(result.error, TypeError)
+        assert "must return a generator" in str(result.error)
+        assert "Did you forget 'yield'?" in str(result.error)

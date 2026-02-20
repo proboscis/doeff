@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase
 from .gather import gather
-from .spawn import TaskCancelledError, Waitable, is_task_cancelled, normalize_waitable
+from .spawn import Waitable, normalize_waitable
 
 T = TypeVar("T")
 
@@ -21,7 +21,7 @@ class WaitEffect(EffectBase):
 
 def wait(future: Waitable[T]) -> WaitEffect:
     normalized = normalize_waitable(future)
-    return create_effect_with_trace(WaitEffect(future=normalized))
+    return WaitEffect(future=normalized)
 
 
 def Wait(future: Waitable[T]):
@@ -31,9 +31,6 @@ def Wait(future: Waitable[T]):
 
     @do
     def _program():
-        if is_task_cancelled(normalized):
-            raise TaskCancelledError("Task was cancelled")
-
         values = yield gather(normalized)
         return values[0]
 

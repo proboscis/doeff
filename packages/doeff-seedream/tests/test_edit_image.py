@@ -24,7 +24,7 @@ from doeff import (
     Delegate,
     Get,
     Resume,
-    Safe,
+    Try,
     WithHandler,
     async_run,
     default_handlers,
@@ -80,9 +80,9 @@ def _cost_tracking_program():
         generation_config_overrides={"response_format": "b64_json"},
         max_retries=1,
     )
-    total_cost_result = yield Safe(Get("seedream_total_cost_usd"))
-    model_cost_result = yield Safe(Get("seedream_cost_dummy-model"))
-    calls_result = yield Safe(Get("seedream_api_calls"))
+    total_cost_result = yield Try(Get("seedream_total_cost_usd"))
+    model_cost_result = yield Try(Get("seedream_cost_dummy-model"))
+    calls_result = yield Try(Get("seedream_api_calls"))
     return {
         "result": result,
         "seedream_total_cost_usd": total_cost_result.value if total_cost_result.is_ok() else None,
@@ -197,7 +197,7 @@ async def test_get_seedream_client_initializes_and_caches_via_with_handler():
     def program():
         first = yield get_seedream_client()
         second = yield get_seedream_client()
-        cached_result = yield Safe(Get("seedream_client"))
+        cached_result = yield Try(Get("seedream_client"))
         return {
             "first": first,
             "second": second,
@@ -231,7 +231,7 @@ async def test_get_seedream_client_prefers_injected_client_with_handler():
     @do
     def program():
         resolved = yield get_seedream_client()
-        cached_result = yield Safe(Get("seedream_client"))
+        cached_result = yield Try(Get("seedream_client"))
         return {
             "resolved": resolved,
             "cached": cached_result.value if cached_result.is_ok() else None,

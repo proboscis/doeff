@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from doeff.effects.base import Effect, EffectBase, create_effect_with_trace
+from doeff.effects.base import Effect, EffectBase
 
 
 def _coerce_finite_float(value: float, *, name: str) -> float:
@@ -58,35 +58,35 @@ class ScheduleAtEffect(EffectBase):
 
 
 def delay(seconds: float) -> DelayEffect:
-    return create_effect_with_trace(DelayEffect(seconds=seconds))
+    return DelayEffect(seconds=seconds)
 
 
 def wait_until(target: float) -> WaitUntilEffect:
-    return create_effect_with_trace(WaitUntilEffect(target=target))
+    return WaitUntilEffect(target=target)
 
 
 def get_time() -> GetTimeEffect:
-    return create_effect_with_trace(GetTimeEffect())
+    return GetTimeEffect()
 
 
 def schedule_at(time: float, program: Any) -> ScheduleAtEffect:
-    return create_effect_with_trace(ScheduleAtEffect(time=time, program=program))
+    return ScheduleAtEffect(time=time, program=program)
 
 
 def Delay(seconds: float) -> Effect:  # noqa: N802
-    return create_effect_with_trace(DelayEffect(seconds=seconds), skip_frames=3)
+    return DelayEffect(seconds=seconds)
 
 
 def WaitUntil(target: float) -> Effect:  # noqa: N802
-    return create_effect_with_trace(WaitUntilEffect(target=target), skip_frames=3)
+    return WaitUntilEffect(target=target)
 
 
 def GetTime() -> Effect:  # noqa: N802
-    return create_effect_with_trace(GetTimeEffect(), skip_frames=3)
+    return GetTimeEffect()
 
 
 def ScheduleAt(time: float, program: Any) -> Effect:  # noqa: N802
-    return create_effect_with_trace(ScheduleAtEffect(time=time, program=program), skip_frames=3)
+    return ScheduleAtEffect(time=time, program=program)
 
 
 __all__ = [

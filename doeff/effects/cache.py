@@ -12,7 +12,7 @@ from ..cache_policy import (
     CacheStorage,
     ensure_cache_policy,
 )
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase
 
 
 @dataclass(frozen=True)
@@ -56,7 +56,7 @@ class CacheExistsEffect(EffectBase):
 
 
 def cache_get(key: Any) -> CacheGetEffect:
-    return create_effect_with_trace(CacheGetEffect(key=key))
+    return CacheGetEffect(key=key)
 
 
 def cache_put(
@@ -76,13 +76,11 @@ def cache_put(
         metadata=metadata,
         policy=policy,
     )
-    return create_effect_with_trace(
-        CachePutEffect(key=key, value=value, policy=cache_policy)
-    )
+    return CachePutEffect(key=key, value=value, policy=cache_policy)
 
 
 def CacheGet(key: Any) -> Effect:
-    return create_effect_with_trace(CacheGetEffect(key=key), skip_frames=3)
+    return CacheGetEffect(key=key)
 
 
 def CachePut(
@@ -102,25 +100,23 @@ def CachePut(
         metadata=metadata,
         policy=policy,
     )
-    return create_effect_with_trace(
-        CachePutEffect(key=key, value=value, policy=cache_policy), skip_frames=3
-    )
+    return CachePutEffect(key=key, value=value, policy=cache_policy)
 
 
 def cache_delete(key: Any) -> CacheDeleteEffect:
-    return create_effect_with_trace(CacheDeleteEffect(key=key))
+    return CacheDeleteEffect(key=key)
 
 
 def cache_exists(key: Any) -> CacheExistsEffect:
-    return create_effect_with_trace(CacheExistsEffect(key=key))
+    return CacheExistsEffect(key=key)
 
 
 def CacheDelete(key: Any) -> Effect:
-    return create_effect_with_trace(CacheDeleteEffect(key=key), skip_frames=3)
+    return CacheDeleteEffect(key=key)
 
 
 def CacheExists(key: Any) -> Effect:
-    return create_effect_with_trace(CacheExistsEffect(key=key), skip_frames=3)
+    return CacheExistsEffect(key=key)
 
 
 __all__ = [

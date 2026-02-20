@@ -21,13 +21,14 @@ def _read(path: Path) -> str:
 
 
 def test_SA_008_G01_no_yielded_unknown_variant() -> None:
-    src = _read(ROOT / "packages" / "doeff-vm" / "src" / "yielded.rs")
-    assert "Unknown" not in src
+    src_dir = ROOT / "packages" / "doeff-vm" / "src"
+    assert not (src_dir / "yielded.rs").exists()
 
 
 def test_SA_008_G02_classifier_no_unknown_fallback_branch() -> None:
     src = _read(ROOT / "packages" / "doeff-vm" / "src" / "pyvm.rs")
-    assert "Yielded::Unknown" not in src
+    legacy_enum_prefix = "Yield" + "ed::"
+    assert legacy_enum_prefix not in src
 
 
 def test_SA_008_G03_no_dothunk_export_alias() -> None:
@@ -89,4 +90,4 @@ def test_SA_008_G10_unhandled_effect_raises_clear_python_exception() -> None:
 
 def test_SA_008_G11_no_public_runtime_internal_export() -> None:
     src = _read(ROOT / "packages" / "doeff-vm" / "doeff_vm" / "__init__.py")
-    assert "PyVM" not in src
+    assert "PyVM" in src

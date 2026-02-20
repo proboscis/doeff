@@ -1,63 +1,53 @@
 //! Handler types for effect handling.
+//!
+//! Important: even Rust-implemented handlers in this module are user-space
+//! handler implementations. They are dispatched by the VM, not part of VM core
+//! stepping semantics.
 
-use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use pyo3::types::{PyDict, PyModule};
 
+use crate::ast_stream::{ASTStream, ASTStreamStep, StreamLocation};
 use crate::continuation::Continuation;
+use crate::do_ctrl::CallArg;
+use crate::doeff_generator::DoeffGeneratorFn;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect, KpcArg,
-    KpcCallEffect, PyKPC,
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, dispatch_to_pyobject,
+    DispatchEffect, PyAsk, PyGet, PyLocal, PyModify, PyPut, PyPythonAsyncioAwaitEffect,
+    PyResultSafeEffect, PyTell,
 };
 use crate::frame::CallMetadata;
 use crate::ids::SegmentId;
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
-use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
+use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr, PyResultOk};
+use crate::step::{DoCtrl, PyException, PythonCall};
 use crate::value::Value;
 use crate::vm::RustStore;
 
-#[derive(Debug, Clone)]
-pub enum Handler {
-    RustProgram(RustProgramHandlerRef),
-    Python(PyShared),
-}
-
-/// Result of stepping a Rust handler program.
-pub enum RustProgramStep {
-    /// Yield a control primitive / effect / program
-    Yield(Yielded),
-    /// Return a value (like generator return)
-    Return(Value),
-    /// Throw an exception into the VM
-    Throw(PyException),
-    /// Need to call a Python function (e.g., Modify calling modifier).
-    /// The program is suspended; result feeds back via resume().
-    NeedsPython(PythonCall),
-}
-
 /// A Rust handler program instance (generator-like).
 /// start/resume/throw mirror Python generator protocol but run in Rust.
-pub trait RustHandlerProgram: std::fmt::Debug + Send {
+pub trait ASTStreamProgram: std::fmt::Debug + Send {
     fn start(
         &mut self,
         py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
-    ) -> RustProgramStep;
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep;
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep;
+    ) -> ASTStreamStep;
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep;
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep;
 }
 
 /// Factory for Rust handler programs. Each dispatch creates a fresh instance.
-pub trait RustProgramHandler: std::fmt::Debug + Send + Sync {
+pub trait ASTStreamFactory: std::fmt::Debug + Send + Sync {
     fn can_handle(&self, effect: &DispatchEffect) -> bool;
-    fn create_program(&self) -> RustProgramRef;
+    fn create_program(&self) -> ASTStreamProgramRef;
     fn handler_name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
@@ -66,7 +56,7 @@ pub trait RustProgramHandler: std::fmt::Debug + Send + Sync {
     ///
     /// Handlers that keep per-run state (for example, scheduler internals)
     /// can override this to isolate state between distinct top-level runs.
-    fn create_program_for_run(&self, _run_token: Option<u64>) -> RustProgramRef {
+    fn create_program_for_run(&self, _run_token: Option<u64>) -> ASTStreamProgramRef {
         self.create_program()
     }
 
@@ -77,21 +67,46 @@ pub trait RustProgramHandler: std::fmt::Debug + Send + Sync {
     fn on_run_end(&self, _run_token: u64) {}
 }
 
+pub type DoExpr = DoCtrl;
+
+#[derive(Debug, Clone)]
+pub struct HandlerDebugInfo {
+    pub name: String,
+    pub file: Option<String>,
+    pub line: Option<u32>,
+}
+
+pub trait HandlerInvoke: std::fmt::Debug + Send + Sync {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool;
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr;
+    fn handler_name(&self) -> &str;
+    fn handler_debug_info(&self) -> HandlerDebugInfo;
+
+    fn py_identity(&self) -> Option<PyShared> {
+        None
+    }
+
+    fn on_run_end(&self, _run_token: u64) {}
+}
+
+pub type HandlerRef = Arc<dyn HandlerInvoke>;
+pub type Handler = HandlerRef;
+
 /// Shared reference to a Rust program handler factory.
-pub type RustProgramHandlerRef = Arc<dyn RustProgramHandler + Send + Sync>;
+pub type ASTStreamFactoryRef = Arc<dyn ASTStreamFactory + Send + Sync>;
 
 /// Shared reference to a running Rust handler program (cloneable for continuations).
-pub type RustProgramRef = Arc<Mutex<Box<dyn RustHandlerProgram + Send>>>;
+pub type ASTStreamProgramRef = Arc<Mutex<Box<dyn ASTStreamProgram + Send>>>;
 
 #[derive(Debug, Clone)]
 pub struct HandlerEntry {
-    pub handler: Handler,
+    pub handler: HandlerRef,
     pub prompt_seg_id: SegmentId,
     pub py_identity: Option<PyShared>,
 }
 
 impl HandlerEntry {
-    pub fn new(handler: Handler, prompt_seg_id: SegmentId) -> Self {
+    pub fn new(handler: HandlerRef, prompt_seg_id: SegmentId) -> Self {
         HandlerEntry {
             handler,
             prompt_seg_id,
@@ -100,7 +115,7 @@ impl HandlerEntry {
     }
 
     pub fn with_identity(
-        handler: Handler,
+        handler: HandlerRef,
         prompt_seg_id: SegmentId,
         py_identity: PyShared,
     ) -> Self {
@@ -112,30 +127,146 @@ impl HandlerEntry {
     }
 }
 
-impl Handler {
-    pub fn can_handle(&self, effect: &DispatchEffect) -> bool {
-        match self {
-            Handler::RustProgram(h) => h.can_handle(effect),
-            Handler::Python(_) => true,
-        }
+#[derive(Debug, Clone)]
+pub struct RustProgramInvocation {
+    pub factory: ASTStreamFactoryRef,
+    pub effect: Box<DispatchEffect>,
+    pub continuation: Continuation,
+}
+
+fn metadata_from_debug_info(debug: HandlerDebugInfo) -> CallMetadata {
+    CallMetadata::new(
+        debug.name,
+        debug.file.unwrap_or_else(|| "<unknown>".to_string()),
+        debug.line.unwrap_or(0),
+        None,
+        None,
+    )
+}
+
+fn rust_program_apply_expr(
+    factory: ASTStreamFactoryRef,
+    effect: DispatchEffect,
+    continuation: Continuation,
+    metadata: CallMetadata,
+) -> DoExpr {
+    DoCtrl::Apply {
+        f: CallArg::Value(Value::RustProgramInvocation(RustProgramInvocation {
+            factory,
+            effect: Box::new(effect),
+            continuation,
+        })),
+        args: vec![],
+        kwargs: vec![],
+        metadata,
     }
 }
 
-fn has_true_attr(obj: &Bound<'_, PyAny>, attr: &str) -> bool {
-    obj.getattr(attr)
-        .and_then(|v| v.extract::<bool>())
-        .unwrap_or(false)
+fn rust_program_expand_expr(
+    factory: ASTStreamFactoryRef,
+    effect: DispatchEffect,
+    continuation: Continuation,
+    metadata: CallMetadata,
+) -> DoExpr {
+    DoCtrl::Expand {
+        factory: CallArg::Value(Value::RustProgramInvocation(RustProgramInvocation {
+            factory,
+            effect: Box::new(effect),
+            continuation,
+        })),
+        args: vec![],
+        kwargs: vec![],
+        metadata,
+    }
 }
 
-fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
-    let py = obj.py();
-    let Ok(mod_) = py.import(module) else {
-        return false;
-    };
-    let Ok(cls) = mod_.getattr(class_name) else {
-        return false;
-    };
-    obj.is_instance(&cls).unwrap_or(false)
+#[derive(Debug, Clone)]
+pub struct PythonHandler {
+    pub dgfn: Py<DoeffGeneratorFn>,
+    handler_name: String,
+    handler_file: Option<String>,
+    handler_line: Option<u32>,
+}
+
+impl PythonHandler {
+    pub fn from_dgfn(dgfn: Py<DoeffGeneratorFn>) -> Self {
+        Python::attach(|py| {
+            let borrowed = dgfn.bind(py).borrow();
+            PythonHandler {
+                dgfn,
+                handler_name: borrowed.function_name.clone(),
+                handler_file: Some(borrowed.source_file.clone()),
+                handler_line: Some(borrowed.source_line),
+            }
+        })
+    }
+}
+
+impl HandlerInvoke for PythonHandler {
+    fn can_handle(&self, _effect: &DispatchEffect) -> bool {
+        true
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        let py_effect =
+            match Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind())) {
+                Ok(obj) => obj,
+                Err(err) => {
+                    return DoCtrl::TransferThrow {
+                        continuation: k,
+                        exception: PyException::type_error(format!(
+                            "PythonHandler invoke failed to convert effect: {err}"
+                        )),
+                    };
+                }
+            };
+
+        let py_k = match Python::attach(|py| {
+            Bound::new(py, PyK::from_cont_id(k.cont_id)).map(|bound| bound.into_any().unbind())
+        }) {
+            Ok(obj) => obj,
+            Err(err) => {
+                return DoCtrl::TransferThrow {
+                    continuation: k,
+                    exception: PyException::type_error(format!(
+                        "PythonHandler invoke failed to create continuation handle: {err}"
+                    )),
+                };
+            }
+        };
+
+        let metadata = metadata_from_debug_info(self.handler_debug_info());
+        DoCtrl::Expand {
+            factory: CallArg::Value(Value::PythonHandlerCallable(Python::attach(|py| {
+                self.dgfn.clone_ref(py).into_any()
+            }))),
+            args: vec![
+                CallArg::Value(Value::Python(py_effect)),
+                CallArg::Value(Value::Python(py_k)),
+            ],
+            kwargs: vec![],
+            metadata,
+        }
+    }
+
+    fn handler_name(&self) -> &str {
+        self.handler_name.as_str()
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: self.handler_name.clone(),
+            file: self.handler_file.clone(),
+            line: self.handler_line,
+        }
+    }
+
+    fn py_identity(&self) -> Option<PyShared> {
+        Some(PyShared::new(Python::attach(|py| {
+            let borrowed = self.dgfn.bind(py).borrow();
+            borrowed.callable.clone_ref(py)
+        })))
+    }
 }
 
 enum ParsedStateEffect {
@@ -147,41 +278,23 @@ enum ParsedStateEffect {
 fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if is_instance_from(obj, "doeff.effects.state", "StateGetEffect") {
-            let key: String = obj
-                .getattr("key")
-                .map_err(|e| e.to_string())?
-                .extract::<String>()
-                .map_err(|e| e.to_string())?;
-            return Ok(Some(ParsedStateEffect::Get { key }));
-        }
-
-        if is_instance_from(obj, "doeff.effects.state", "StatePutEffect") {
-            let key: String = obj
-                .getattr("key")
-                .map_err(|e| e.to_string())?
-                .extract::<String>()
-                .map_err(|e| e.to_string())?;
-            let value = obj.getattr("value").map_err(|e| e.to_string())?;
-            return Ok(Some(ParsedStateEffect::Put {
-                key,
-                value: Value::from_pyobject(&value),
+        if let Ok(get) = obj.extract::<PyRef<'_, PyGet>>() {
+            return Ok(Some(ParsedStateEffect::Get {
+                key: get.key.clone(),
             }));
         }
 
-        if is_instance_from(obj, "doeff.effects.state", "StateModifyEffect") {
-            let key: String = obj
-                .getattr("key")
-                .map_err(|e| e.to_string())?
-                .extract::<String>()
-                .map_err(|e| e.to_string())?;
-            let modifier = obj
-                .getattr("func")
-                .or_else(|_| obj.getattr("modifier"))
-                .map_err(|e| e.to_string())?;
+        if let Ok(put) = obj.extract::<PyRef<'_, PyPut>>() {
+            return Ok(Some(ParsedStateEffect::Put {
+                key: put.key.clone(),
+                value: Value::from_pyobject(put.value.bind(py)),
+            }));
+        }
+
+        if let Ok(modify) = obj.extract::<PyRef<'_, PyModify>>() {
             return Ok(Some(ParsedStateEffect::Modify {
-                key,
-                modifier: PyShared::new(modifier.unbind()),
+                key: modify.key.clone(),
+                modifier: PyShared::new(modify.func.clone_ref(py)),
             }));
         }
 
@@ -189,38 +302,63 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffe
     })
 }
 
-fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, String> {
+fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<HashedPyKey>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if is_instance_from(obj, "doeff.effects.reader", "AskEffect") {
-            let key: String = obj
-                .getattr("key")
-                .map_err(|e| e.to_string())?
-                .extract::<String>()
-                .map_err(|e| e.to_string())?;
-            return Ok(Some(key));
-        }
-
-        if is_instance_from(obj, "doeff.effects.reader", "HashableAskEffect") {
+        if obj.is_instance_of::<PyAsk>() {
             let key_obj = obj.getattr("key").map_err(|e| e.to_string())?;
-            let key = key_obj
-                .str()
-                .map_err(|e| e.to_string())?
-                .to_str()
-                .map_err(|e| e.to_string())?
-                .to_string();
-            return Ok(Some(key));
+            let hashed = HashedPyKey::from_bound(&key_obj)
+                .map_err(|e| format!("Ask key is not hashable: {e}"))?;
+            return Ok(Some(hashed));
         }
 
         Ok(None)
     })
 }
 
-fn missing_env_key_error(key: &str) -> PyException {
+#[derive(Debug)]
+struct ParsedLocalEffect {
+    overrides: HashMap<HashedPyKey, Value>,
+    sub_program: PyShared,
+}
+
+fn is_local_python_effect(effect: &PyShared) -> bool {
+    Python::attach(|py| effect.bind(py).is_instance_of::<PyLocal>())
+}
+
+fn parse_local_python_effect(effect: &PyShared) -> Result<Option<ParsedLocalEffect>, String> {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        if !obj.is_instance_of::<PyLocal>() {
+            return Ok(None);
+        }
+
+        let env_update = obj.getattr("env_update").map_err(|e| e.to_string())?;
+        let env_update = env_update
+            .cast::<PyDict>()
+            .map_err(|_| "Local env_update must be a dict".to_string())?;
+
+        let mut overrides = HashMap::new();
+        for (key, value) in env_update.iter() {
+            let key = HashedPyKey::from_bound(&key)
+                .map_err(|e| format!("Local env key is not hashable: {e}"))?;
+            overrides.insert(key, Value::from_pyobject(&value));
+        }
+
+        let sub_program = obj.getattr("sub_program").map_err(|e| e.to_string())?;
+
+        Ok(Some(ParsedLocalEffect {
+            overrides,
+            sub_program: PyShared::new(sub_program.unbind()),
+        }))
+    })
+}
+
+fn missing_env_key_error(key: &HashedPyKey) -> PyException {
     Python::attach(|py| {
         let maybe_exc = (|| -> PyResult<Py<PyAny>> {
             let cls = py.import("doeff.errors")?.getattr("MissingEnvKeyError")?;
-            let value = cls.call1((key,))?;
+            let value = cls.call1((key.to_pyobject(py),))?;
             Ok(value.unbind())
         })();
 
@@ -230,7 +368,7 @@ fn missing_env_key_error(key: &str) -> PyException {
                 PyException::new(exc_type, exc_value, None)
             }
             Err(_) => {
-                let err = pyo3::exceptions::PyKeyError::new_err(key.to_string());
+                let err = pyo3::exceptions::PyKeyError::new_err(key.display_for_error());
                 let exc_value = err.value(py).clone().into_any().unbind();
                 let exc_type = exc_value.bind(py).get_type().into_any().unbind();
                 PyException::new(exc_type, exc_value, None)
@@ -252,7 +390,9 @@ fn pyerr_to_exception(py: Python<'_>, err: PyErr) -> PyException {
     let exc_type = err.get_type(py).into_any().unbind();
     let exc_value = err.value(py).clone().into_any().unbind();
     let exc_tb = err.traceback(py).map(|tb| tb.into_any().unbind());
-    PyException::new(exc_type, exc_value, exc_tb)
+    let exc = PyException::new(exc_type, exc_value, exc_tb);
+    crate::scheduler::preserve_exception_origin(&exc);
+    exc
 }
 
 fn wrap_value_as_result_ok(value: Value) -> Result<Value, PyException> {
@@ -293,10 +433,11 @@ fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
     Python::attach(|py| {
         let bound = obj.bind(py);
 
+        let is_doctrl = bound.is_instance_of::<PyDoCtrlBase>();
         let is_doexpr = bound.is_instance_of::<PyDoExprBase>();
         let is_effect = bound.is_instance_of::<PyEffectBase>();
 
-        if is_doexpr || is_effect {
+        if is_doctrl || is_doexpr || is_effect {
             Some(PyShared::new(obj.clone_ref(py)))
         } else {
             None
@@ -311,10 +452,69 @@ fn lazy_source_id(value: &Value) -> Option<usize> {
     Python::attach(|py| Some(obj.bind(py).as_ptr() as usize))
 }
 
+fn lazy_ask_create_semaphore_effect() -> Result<DispatchEffect, PyException> {
+    Python::attach(|py| {
+        let semaphore_module = py
+            .import("doeff.effects.semaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let create = semaphore_module
+            .getattr("CreateSemaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let effect = create
+            .call1((1_i64,))
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
+    })
+}
+
+fn lazy_ask_acquire_semaphore_effect(semaphore: &Value) -> Result<DispatchEffect, PyException> {
+    let Value::Python(semaphore_obj) = semaphore else {
+        return Err(PyException::type_error(format!(
+            "CreateSemaphore returned non-semaphore value: {:?}",
+            semaphore
+        )));
+    };
+
+    Python::attach(|py| {
+        let semaphore_module = py
+            .import("doeff.effects.semaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let acquire = semaphore_module
+            .getattr("AcquireSemaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let effect = acquire
+            .call1((semaphore_obj.bind(py),))
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
+    })
+}
+
+fn lazy_ask_release_semaphore_effect(semaphore: &Value) -> Result<DispatchEffect, PyException> {
+    let Value::Python(semaphore_obj) = semaphore else {
+        return Err(PyException::type_error(format!(
+            "CreateSemaphore returned non-semaphore value: {:?}",
+            semaphore
+        )));
+    };
+
+    Python::attach(|py| {
+        let semaphore_module = py
+            .import("doeff.effects.semaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let release = semaphore_module
+            .getattr("ReleaseSemaphore")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let effect = release
+            .call1((semaphore_obj.bind(py),))
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
+    })
+}
+
 fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if is_instance_from(obj, "doeff.effects.writer", "WriterTellEffect") {
+        if obj.is_instance_of::<PyTell>() {
             let message = obj.getattr("message").map_err(|e| e.to_string())?;
             return Ok(Some(Value::from_pyobject(&message)));
         }
@@ -325,9 +525,8 @@ fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String
 fn parse_await_python_effect(effect: &PyShared) -> Result<Option<Py<PyAny>>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if is_instance_from(obj, "doeff.effects.future", "PythonAsyncioAwaitEffect") {
-            let awaitable = obj.getattr("awaitable").map_err(|e| e.to_string())?;
-            return Ok(Some(awaitable.unbind()));
+        if let Ok(await_effect) = obj.extract::<PyRef<'_, PyPythonAsyncioAwaitEffect>>() {
+            return Ok(Some(await_effect.awaitable.clone_ref(py)));
         }
         Ok(None)
     })
@@ -336,37 +535,24 @@ fn parse_await_python_effect(effect: &PyShared) -> Result<Option<Py<PyAny>>, Str
 fn parse_result_safe_python_effect(effect: &PyShared) -> Result<Option<PyShared>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        let is_result_safe = {
-            #[cfg(test)]
-            {
-                is_instance_from(obj, "doeff.effects.result", "ResultSafeEffect")
-                    || has_true_attr(obj, "__doeff_result_safe__")
-            }
-            #[cfg(not(test))]
-            {
-                is_instance_from(obj, "doeff.effects.result", "ResultSafeEffect")
-            }
-        };
-
-        if is_result_safe {
-            let sub_program = obj.getattr("sub_program").map_err(|e| e.to_string())?;
-            return Ok(Some(PyShared::new(sub_program.unbind())));
+        if let Ok(result_safe) = obj.extract::<PyRef<'_, PyResultSafeEffect>>() {
+            return Ok(Some(PyShared::new(result_safe.sub_program.clone_ref(py))));
         }
         Ok(None)
     })
 }
 
-fn get_blocking_await_runner() -> Result<PyShared, String> {
+fn get_sync_await_runner() -> Result<PyShared, String> {
     Python::attach(|py| {
         let module = PyModule::from_code(
             py,
-            c"import asyncio\nimport concurrent.futures\n\ndef _run_awaitable_blocking(awaitable):\n    def _runner():\n        return asyncio.run(awaitable)\n\n    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:\n        return executor.submit(_runner).result()\n",
+            c"import asyncio\n\ndef _run_awaitable_sync(awaitable):\n    return asyncio.run(awaitable)\n",
             c"_doeff_await_bridge",
             c"_doeff_await_bridge",
         )
         .map_err(|e| e.to_string())?;
         let runner = module
-            .getattr("_run_awaitable_blocking")
+            .getattr("_run_awaitable_sync")
             .map_err(|e| e.to_string())?;
         Ok(PyShared::new(runner.unbind()))
     })
@@ -379,18 +565,45 @@ fn get_blocking_await_runner() -> Result<PyShared, String> {
 #[derive(Debug, Clone)]
 pub struct AwaitHandlerFactory;
 
-impl RustProgramHandler for AwaitHandlerFactory {
+impl ASTStreamFactory for AwaitHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
         dispatch_ref_as_python(effect)
             .is_some_and(|obj| parse_await_python_effect(obj).ok().flatten().is_some())
     }
 
-    fn create_program(&self) -> RustProgramRef {
+    fn create_program(&self) -> ASTStreamProgramRef {
         Arc::new(Mutex::new(Box::new(AwaitHandlerProgram::new())))
     }
 
     fn handler_name(&self) -> &'static str {
         "AwaitHandler"
+    }
+}
+
+impl HandlerInvoke for AwaitHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as ASTStreamFactory>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        rust_program_expand_expr(
+            Arc::new(self.clone()),
+            effect,
+            k,
+            metadata_from_debug_info(self.handler_debug_info()),
+        )
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as ASTStreamFactory>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
     }
 }
 
@@ -403,38 +616,46 @@ impl AwaitHandlerProgram {
     fn new() -> Self {
         AwaitHandlerProgram { pending_k: None }
     }
+
+    fn current_phase_name(&self) -> &'static str {
+        if self.pending_k.is_some() {
+            "AwaitBridgeResult"
+        } else {
+            "Idle"
+        }
+    }
 }
 
-impl RustHandlerProgram for AwaitHandlerProgram {
+impl ASTStreamProgram for AwaitHandlerProgram {
     fn start(
         &mut self,
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
-    ) -> RustProgramStep {
+    ) -> ASTStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_await_python_effect(&obj) {
                 Ok(Some(awaitable)) => {
-                    let runner = match get_blocking_await_runner() {
+                    let runner = match get_sync_await_runner() {
                         Ok(func) => func,
                         Err(msg) => {
-                            return RustProgramStep::Throw(PyException::type_error(format!(
+                            return ASTStreamStep::Throw(PyException::type_error(format!(
                                 "failed to initialize await runner: {msg}"
                             )));
                         }
                     };
                     self.pending_k = Some(k);
-                    RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                    ASTStreamStep::NeedsPython(PythonCall::CallFunc {
                         func: runner,
                         args: vec![Value::Python(awaitable)],
                         kwargs: vec![],
                     })
                 }
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
-                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                }),
+                Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse await effect: {msg}"
                 ))),
             };
@@ -442,448 +663,50 @@ impl RustHandlerProgram for AwaitHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
         if let Some(continuation) = self.pending_k.take() {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
-            }));
+            });
         }
-        RustProgramStep::Return(value)
+        ASTStreamStep::Return(value)
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
         if let Some(continuation) = self.pending_k.take() {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+            return ASTStreamStep::Yield(DoCtrl::TransferThrow {
                 continuation,
                 exception: exc,
-            }));
+            });
         }
-        RustProgramStep::Throw(exc)
+        ASTStreamStep::Throw(exc)
     }
 }
 
-fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, String> {
-    Python::attach(|py| {
-        let obj = effect.bind(py);
-        let Ok(kpc) = obj.extract::<PyRef<'_, PyKPC>>() else {
-            return Ok(None);
-        };
-
-        let metadata = extract_kpc_call_metadata(obj)?;
-        let kernel = PyShared::new(kpc.execution_kernel.clone_ref(py));
-        let strategy = py
-            .import("doeff.program")
-            .ok()
-            .and_then(|mod_program| mod_program.getattr("_build_auto_unwrap_strategy").ok())
-            .and_then(|builder| builder.call1((kpc.kleisli_source.bind(py),)).ok());
-
-        let mut args = Vec::new();
-        for (idx, item) in kpc
-            .args
-            .bind(py)
-            .try_iter()
-            .map_err(|e| e.to_string())?
-            .enumerate()
-        {
-            let item = item.map_err(|e| e.to_string())?;
-            let should_unwrap = kpc_strategy_should_unwrap_positional(strategy.as_ref(), idx)?;
-            args.push(extract_kpc_arg(&item, should_unwrap)?);
-        }
-
-        let kwargs_dict = kpc
-            .kwargs
-            .bind(py)
-            .cast::<pyo3::types::PyDict>()
-            .map_err(|e| e.to_string())?;
-        let mut kwargs = Vec::new();
-        for (k, v) in kwargs_dict.iter() {
-            let key: String = k.extract::<String>().map_err(|e| e.to_string())?;
-            let should_unwrap =
-                kpc_strategy_should_unwrap_keyword(strategy.as_ref(), key.as_str())?;
-            kwargs.push((key, extract_kpc_arg(&v, should_unwrap)?));
-        }
-
-        Ok(Some(KpcCallEffect {
-            call: PyShared::new(obj.clone().unbind()),
-            kernel,
-            args,
-            kwargs,
-            metadata,
-        }))
-    })
-}
-
-fn extract_kpc_call_metadata(obj: &Bound<'_, PyAny>) -> Result<CallMetadata, String> {
-    let function_name = obj
-        .getattr("function_name")
-        .ok()
-        .and_then(|v| v.extract::<String>().ok())
-        .unwrap_or_else(|| "<anonymous>".to_string());
-    let args_repr = obj
-        .getattr("args_repr")
-        .ok()
-        .and_then(|v| v.extract::<String>().ok())
-        .or_else(|| fallback_kpc_args_repr(obj));
-
-    if let Ok(kleisli) = obj.getattr("kleisli_source") {
-        if let Ok(func) = kleisli.getattr("original_func") {
-            if let Ok(code) = func.getattr("__code__") {
-                let source_file = code
-                    .getattr("co_filename")
-                    .ok()
-                    .and_then(|v| v.extract::<String>().ok())
-                    .unwrap_or_else(|| "<unknown>".to_string());
-                let source_line = code
-                    .getattr("co_firstlineno")
-                    .ok()
-                    .and_then(|v| v.extract::<u32>().ok())
-                    .unwrap_or(0);
-                return Ok(CallMetadata::new(
-                    function_name,
-                    source_file,
-                    source_line,
-                    args_repr,
-                    Some(PyShared::new(obj.clone().unbind())),
-                ));
-            }
-        }
+impl ASTStream for AwaitHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store)
     }
 
-    let source_file = obj
-        .getattr("source_file")
-        .ok()
-        .and_then(|v| v.extract::<String>().ok())
-        .unwrap_or_else(|| "<unknown>".to_string());
-    let source_line = obj
-        .getattr("source_line")
-        .ok()
-        .and_then(|v| v.extract::<u32>().ok())
-        .unwrap_or(0);
-
-    Ok(CallMetadata::new(
-        function_name,
-        source_file,
-        source_line,
-        args_repr,
-        Some(PyShared::new(obj.clone().unbind())),
-    ))
-}
-
-fn fallback_kpc_args_repr(obj: &Bound<'_, PyAny>) -> Option<String> {
-    let args_text = obj
-        .getattr("args")
-        .ok()
-        .and_then(|v| v.repr().ok())
-        .map(|v| v.to_string());
-    let kwargs_text = obj
-        .getattr("kwargs")
-        .ok()
-        .and_then(|v| v.repr().ok())
-        .map(|v| v.to_string());
-
-    match (args_text, kwargs_text) {
-        (Some(args), Some(kwargs)) if kwargs != "{}" => Some(format!("args={args}, kwargs={kwargs}")),
-        (Some(args), _) if args != "()" => Some(format!("args={args}")),
-        (_, Some(kwargs)) if kwargs != "{}" => Some(format!("kwargs={kwargs}")),
-        _ => None,
-    }
-}
-
-fn kpc_strategy_should_unwrap_positional(
-    strategy: Option<&Bound<'_, PyAny>>,
-    idx: usize,
-) -> Result<bool, String> {
-    let Some(strategy) = strategy else {
-        return Ok(true);
-    };
-    Ok(strategy
-        .call_method1("should_unwrap_positional", (idx,))
-        .and_then(|v| v.extract::<bool>())
-        .unwrap_or(true))
-}
-
-fn kpc_strategy_should_unwrap_keyword(
-    strategy: Option<&Bound<'_, PyAny>>,
-    key: &str,
-) -> Result<bool, String> {
-    let Some(strategy) = strategy else {
-        return Ok(true);
-    };
-    Ok(strategy
-        .call_method1("should_unwrap_keyword", (key,))
-        .and_then(|v| v.extract::<bool>())
-        .unwrap_or(true))
-}
-
-fn extract_kpc_arg(obj: &Bound<'_, PyAny>, should_unwrap: bool) -> Result<KpcArg, String> {
-    if should_unwrap && is_do_expr_candidate(obj)? {
-        return Ok(KpcArg::Expr(PyShared::new(obj.clone().unbind())));
-    }
-    Ok(KpcArg::Value(Value::from_pyobject(obj)))
-}
-
-fn is_do_expr_candidate(obj: &Bound<'_, PyAny>) -> Result<bool, String> {
-    Ok(obj.is_instance_of::<PyEffectBase>()
-        || obj.is_instance_of::<PyDoCtrlBase>()
-        || obj.is_instance_of::<PyKPC>())
-}
-
-// ---------------------------------------------------------------------------
-// KpcHandlerFactory + KpcHandlerProgram
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub struct KpcHandlerFactory;
-
-impl RustProgramHandler for KpcHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
-        dispatch_ref_as_python(effect)
-            .is_some_and(|obj| parse_kpc_python_effect(obj).ok().flatten().is_some())
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store)
     }
 
-    fn create_program(&self) -> RustProgramRef {
-        Arc::new(Mutex::new(Box::new(KpcHandlerProgram::new())))
-    }
-
-    fn handler_name(&self) -> &'static str {
-        "KpcHandler"
-    }
-}
-
-#[derive(Debug, Clone)]
-enum KpcPending {
-    Positional,
-    Keyword(String),
-    KernelCall,
-    EvalResult,
-}
-
-#[derive(Debug, Clone)]
-struct KpcResolution {
-    k_user: Continuation,
-    kernel: PyShared,
-    metadata: CallMetadata,
-    handlers: Vec<Handler>,
-    args: Vec<KpcArg>,
-    kwargs: Vec<(String, KpcArg)>,
-    arg_idx: usize,
-    kw_idx: usize,
-    resolved_args: Vec<Value>,
-    resolved_kwargs: Vec<(String, Value)>,
-    pending: Option<KpcPending>,
-}
-
-#[derive(Debug)]
-enum KpcPhase {
-    Idle,
-    AwaitHandlers {
-        k_user: Continuation,
-        kpc: KpcCallEffect,
-    },
-    Running(KpcResolution),
-}
-
-#[derive(Debug)]
-struct KpcHandlerProgram {
-    phase: KpcPhase,
-}
-
-impl KpcHandlerProgram {
-    fn new() -> Self {
-        KpcHandlerProgram {
-            phase: KpcPhase::Idle,
-        }
-    }
-
-    fn advance_running(
-        &mut self,
-        mut state: KpcResolution,
-        input: Option<Value>,
-    ) -> RustProgramStep {
-        if let Some(value) = input {
-            match state.pending.take() {
-                Some(KpcPending::Positional) => state.resolved_args.push(value),
-                Some(KpcPending::Keyword(key)) => state.resolved_kwargs.push((key, value)),
-                Some(KpcPending::KernelCall) => {
-                    // R12-A Phase 2: kernel returned — Eval the generator with handlers.
-                    match value {
-                        Value::Python(gen) => {
-                            state.pending = Some(KpcPending::EvalResult);
-                            let expr = PyShared::new(gen);
-                            let handlers = state.handlers.clone();
-                            let metadata = Some(state.metadata.clone());
-                            self.phase = KpcPhase::Running(state);
-                            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
-                                expr,
-                                handlers,
-                                metadata,
-                            }));
-                        }
-                        other => {
-                            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                                continuation: state.k_user,
-                                value: other,
-                            }));
-                        }
-                    }
-                }
-                Some(KpcPending::EvalResult) => {
-                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                        continuation: state.k_user,
-                        value,
-                    }));
-                }
-                None => {
-                    return RustProgramStep::Throw(PyException::runtime_error(
-                        "KPC handler resumed without pending step",
-                    ));
-                }
-            }
-        }
-
-        loop {
-            if state.arg_idx < state.args.len() {
-                match state.args[state.arg_idx].clone() {
-                    KpcArg::Value(v) => {
-                        state.arg_idx += 1;
-                        state.resolved_args.push(v);
-                        continue;
-                    }
-                    KpcArg::Expr(expr) => {
-                        state.arg_idx += 1;
-                        state.pending = Some(KpcPending::Positional);
-                        let handlers = state.handlers.clone();
-                        self.phase = KpcPhase::Running(state);
-                        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
-                            expr,
-                            handlers,
-                            metadata: None,
-                        }));
-                    }
-                }
-            }
-
-            if state.kw_idx < state.kwargs.len() {
-                let (key, arg) = state.kwargs[state.kw_idx].clone();
-                match arg {
-                    KpcArg::Value(v) => {
-                        state.kw_idx += 1;
-                        state.resolved_kwargs.push((key, v));
-                        continue;
-                    }
-                    KpcArg::Expr(expr) => {
-                        state.kw_idx += 1;
-                        state.pending = Some(KpcPending::Keyword(key));
-                        let handlers = state.handlers.clone();
-                        self.phase = KpcPhase::Running(state);
-                        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
-                            expr,
-                            handlers,
-                            metadata: None,
-                        }));
-                    }
-                }
-            }
-
-            // R12-A: Two-phase kernel invocation.
-            // Phase 1: Call kernel(*args, **kwargs) via NeedsPython to get the generator.
-            state.pending = Some(KpcPending::KernelCall);
-            let func = state.kernel.clone();
-            let args = state.resolved_args.clone();
-            let kwargs = state.resolved_kwargs.clone();
-            self.phase = KpcPhase::Running(state);
-            return RustProgramStep::NeedsPython(PythonCall::CallFunc { func, args, kwargs });
-        }
-    }
-}
-
-impl RustHandlerProgram for KpcHandlerProgram {
-    fn start(
-        &mut self,
-        _py: Python<'_>,
-        effect: DispatchEffect,
-        k: Continuation,
-        _store: &mut RustStore,
-    ) -> RustProgramStep {
-        if let Some(obj) = dispatch_into_python(effect.clone()) {
-            return match parse_kpc_python_effect(&obj) {
-                Ok(Some(kpc)) => {
-                    self.phase = KpcPhase::AwaitHandlers { k_user: k, kpc };
-                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
-                }
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: dispatch_from_shared(obj),
-                })),
-                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
-                    "failed to parse KleisliProgramCall effect: {msg}"
-                ))),
-            };
-        }
-
-        #[cfg(test)]
-        {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
-        }
-
-        #[cfg(not(test))]
-        unreachable!("runtime Effect is always Python")
-    }
-
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
-        match std::mem::replace(&mut self.phase, KpcPhase::Idle) {
-            KpcPhase::AwaitHandlers { k_user, kpc } => {
-                let handlers = match value {
-                    Value::Handlers(hs) => hs,
-                    _ => {
-                        return RustProgramStep::Throw(PyException::type_error(
-                            "KPC handler expected GetHandlers result",
-                        ));
-                    }
-                };
-                let state = KpcResolution {
-                    k_user,
-                    kernel: kpc.kernel,
-                    metadata: kpc.metadata,
-                    handlers,
-                    args: kpc.args,
-                    kwargs: kpc.kwargs,
-                    arg_idx: 0,
-                    kw_idx: 0,
-                    resolved_args: vec![],
-                    resolved_kwargs: vec![],
-                    pending: None,
-                };
-                self.advance_running(state, None)
-            }
-            KpcPhase::Running(state) => self.advance_running(state, Some(value)),
-            KpcPhase::Idle => RustProgramStep::Return(value),
-        }
-    }
-
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
-        match std::mem::replace(&mut self.phase, KpcPhase::Idle) {
-            KpcPhase::AwaitHandlers { k_user, .. } => {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
-                    continuation: k_user,
-                    exception: exc,
-                }))
-            }
-            KpcPhase::Running(state) => {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
-                    continuation: state.k_user,
-                    exception: exc,
-                }))
-            }
-            KpcPhase::Idle => RustProgramStep::Throw(exc),
-        }
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "AwaitHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
     }
 }
 
@@ -894,7 +717,7 @@ impl RustHandlerProgram for KpcHandlerProgram {
 #[derive(Debug, Clone)]
 pub struct StateHandlerFactory;
 
-impl RustProgramHandler for StateHandlerFactory {
+impl ASTStreamFactory for StateHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
         #[cfg(test)]
         if matches!(
@@ -908,12 +731,62 @@ impl RustProgramHandler for StateHandlerFactory {
             .is_some_and(|obj| parse_state_python_effect(obj).ok().flatten().is_some())
     }
 
-    fn create_program(&self) -> RustProgramRef {
+    fn create_program(&self) -> ASTStreamProgramRef {
         Arc::new(Mutex::new(Box::new(StateHandlerProgram::new())))
     }
 
     fn handler_name(&self) -> &'static str {
         "StateHandler"
+    }
+}
+
+impl HandlerInvoke for StateHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as ASTStreamFactory>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        let is_modify = {
+            #[cfg(test)]
+            if matches!(&effect, Effect::Modify { .. }) {
+                true
+            } else {
+                dispatch_ref_as_python(&effect).is_some_and(|obj| {
+                    matches!(
+                        parse_state_python_effect(obj),
+                        Ok(Some(ParsedStateEffect::Modify { .. }))
+                    )
+                })
+            }
+            #[cfg(not(test))]
+            {
+                dispatch_ref_as_python(&effect).is_some_and(|obj| {
+                    matches!(
+                        parse_state_python_effect(obj),
+                        Ok(Some(ParsedStateEffect::Modify { .. }))
+                    )
+                })
+            }
+        };
+
+        let metadata = metadata_from_debug_info(self.handler_debug_info());
+        if is_modify {
+            rust_program_expand_expr(Arc::new(self.clone()), effect, k, metadata)
+        } else {
+            rust_program_apply_expr(Arc::new(self.clone()), effect, k, metadata)
+        }
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as ASTStreamFactory>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
     }
 }
 
@@ -937,34 +810,42 @@ impl StateHandlerProgram {
             pending_old_value: None,
         }
     }
+
+    fn current_phase_name(&self) -> &'static str {
+        if self.pending_key.is_some() {
+            "ModifyApply"
+        } else {
+            "Idle"
+        }
+    }
 }
 
-impl RustHandlerProgram for StateHandlerProgram {
+impl ASTStreamProgram for StateHandlerProgram {
     fn start(
         &mut self,
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
-    ) -> RustProgramStep {
+    ) -> ASTStreamStep {
         #[cfg(test)]
         if let Effect::Get { key } = effect.clone() {
             let Some(value) = store.get(&key).cloned() else {
-                return RustProgramStep::Throw(missing_state_key_error(&key));
+                return ASTStreamStep::Throw(missing_state_key_error(&key));
             };
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation: k,
                 value,
-            }));
+            });
         }
 
         #[cfg(test)]
         if let Effect::Put { key, value } = effect.clone() {
             store.put(key, value);
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation: k,
                 value: Value::Unit,
-            }));
+            });
         }
 
         #[cfg(test)]
@@ -973,7 +854,7 @@ impl RustHandlerProgram for StateHandlerProgram {
             self.pending_key = Some(key);
             self.pending_k = Some(k);
             self.pending_old_value = Some(old_value.clone());
-            return RustProgramStep::NeedsPython(PythonCall::CallFunc {
+            return ASTStreamStep::NeedsPython(PythonCall::CallFunc {
                 func: modifier,
                 args: vec![old_value],
                 kwargs: vec![],
@@ -985,36 +866,36 @@ impl RustHandlerProgram for StateHandlerProgram {
                 Ok(Some(parsed)) => match parsed {
                     ParsedStateEffect::Get { key } => {
                         let Some(value) = store.get(&key).cloned() else {
-                            return RustProgramStep::Throw(missing_state_key_error(&key));
+                            return ASTStreamStep::Throw(missing_state_key_error(&key));
                         };
-                        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                        ASTStreamStep::Yield(DoCtrl::Resume {
                             continuation: k,
                             value,
-                        }))
+                        })
                     }
                     ParsedStateEffect::Put { key, value } => {
                         store.put(key, value);
-                        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                        ASTStreamStep::Yield(DoCtrl::Resume {
                             continuation: k,
                             value: Value::Unit,
-                        }))
+                        })
                     }
                     ParsedStateEffect::Modify { key, modifier } => {
                         let old_value = store.get(&key).cloned().unwrap_or(Value::None);
                         self.pending_key = Some(key);
                         self.pending_k = Some(k);
                         self.pending_old_value = Some(old_value.clone());
-                        RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                        ASTStreamStep::NeedsPython(PythonCall::CallFunc {
                             func: modifier,
                             args: vec![old_value],
                             kwargs: vec![],
                         })
                     }
                 },
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
-                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                }),
+                Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse state effect: {msg}"
                 ))),
             };
@@ -1022,17 +903,17 @@ impl RustHandlerProgram for StateHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
         if self.pending_key.is_none() {
             // Terminal case (Get/Put): handler is done, pass through return value
-            return RustProgramStep::Return(value);
+            return ASTStreamStep::Return(value);
         }
         // Modify case: store modifier result but resume caller with OLD value.
         // SPEC-008 L1271: Modify is read-then-modify, returns the old value.
@@ -1040,25 +921,202 @@ impl RustHandlerProgram for StateHandlerProgram {
         let continuation = self.pending_k.take().unwrap();
         let old_value = self.pending_old_value.take().unwrap();
         store.put(key, value);
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+        ASTStreamStep::Yield(DoCtrl::Resume {
             continuation,
             value: old_value,
-        }))
+        })
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
-        RustProgramStep::Throw(exc)
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+        ASTStreamStep::Throw(exc)
+    }
+}
+
+impl ASTStream for StateHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store)
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store)
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "StateHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
     }
 }
 
 // ---------------------------------------------------------------------------
-// ReaderHandlerFactory + ReaderHandlerProgram
+// LazyAskHandlerFactory + LazyAskHandlerProgram
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-pub struct ReaderHandlerFactory;
+struct LazyCacheEntry {
+    source_id: usize,
+    value: Value,
+}
 
-impl RustProgramHandler for ReaderHandlerFactory {
+#[derive(Debug, Clone)]
+struct LazySemaphoreEntry {
+    source_id: usize,
+    semaphore: Value,
+}
+
+#[derive(Debug, Default)]
+struct LazyAskState {
+    cache: HashMap<HashedPyKey, LazyCacheEntry>,
+    semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
+    scope_cache: Vec<HashMap<HashedPyKey, LazyCacheEntry>>,
+    scope_semaphores: Vec<HashMap<HashedPyKey, LazySemaphoreEntry>>,
+}
+
+#[derive(Clone)]
+pub struct LazyAskHandlerFactory {
+    default_state: Arc<Mutex<LazyAskState>>,
+    run_states: Arc<Mutex<HashMap<u64, Arc<Mutex<LazyAskState>>>>>,
+}
+
+impl std::fmt::Debug for LazyAskHandlerFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LazyAskHandlerFactory").finish()
+    }
+}
+
+impl LazyAskHandlerFactory {
+    pub fn new() -> Self {
+        LazyAskHandlerFactory {
+            default_state: Arc::new(Mutex::new(LazyAskState::default())),
+            run_states: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn state_for_run(&self, run_token: Option<u64>) -> Arc<Mutex<LazyAskState>> {
+        match run_token {
+            Some(token) => {
+                let mut states = self.run_states.lock().expect("LazyAsk lock poisoned");
+                states
+                    .entry(token)
+                    .or_insert_with(|| Arc::new(Mutex::new(LazyAskState::default())))
+                    .clone()
+            }
+            None => self.default_state.clone(),
+        }
+    }
+}
+
+impl Default for LazyAskHandlerFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ASTStreamFactory for LazyAskHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        #[cfg(test)]
+        if matches!(effect, Effect::Ask { .. }) {
+            return true;
+        }
+
+        dispatch_ref_as_python(effect).is_some_and(|obj| {
+            parse_reader_python_effect(obj).ok().flatten().is_some() || is_local_python_effect(obj)
+        })
+    }
+
+    fn create_program(&self) -> ASTStreamProgramRef {
+        Arc::new(Mutex::new(Box::new(LazyAskHandlerProgram::new(
+            self.state_for_run(None),
+        ))))
+    }
+
+    fn create_program_for_run(&self, run_token: Option<u64>) -> ASTStreamProgramRef {
+        Arc::new(Mutex::new(Box::new(LazyAskHandlerProgram::new(
+            self.state_for_run(run_token),
+        ))))
+    }
+
+    fn handler_name(&self) -> &'static str {
+        "LazyAskHandler"
+    }
+
+    fn on_run_end(&self, run_token: u64) {
+        let mut states = self.run_states.lock().expect("LazyAsk lock poisoned");
+        states.remove(&run_token);
+    }
+}
+
+impl HandlerInvoke for LazyAskHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as ASTStreamFactory>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        let is_direct_ask = {
+            #[cfg(test)]
+            if matches!(&effect, Effect::Ask { .. }) {
+                true
+            } else {
+                dispatch_ref_as_python(&effect)
+                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+            }
+            #[cfg(not(test))]
+            {
+                dispatch_ref_as_python(&effect)
+                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+            }
+        };
+
+        let metadata = metadata_from_debug_info(self.handler_debug_info());
+        if is_direct_ask {
+            rust_program_apply_expr(Arc::new(self.clone()), effect, k, metadata)
+        } else {
+            rust_program_expand_expr(Arc::new(self.clone()), effect, k, metadata)
+        }
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as ASTStreamFactory>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
+    }
+
+    fn on_run_end(&self, run_token: u64) {
+        <Self as ASTStreamFactory>::on_run_end(self, run_token);
+    }
+}
+
+#[derive(Debug, Default)]
+struct LazyLocalScopeState {
+    cache: HashMap<HashedPyKey, LazyCacheEntry>,
+    semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct LazyLocalScopeFactory {
+    overrides: Arc<HashMap<HashedPyKey, Value>>,
+    scope_state: Arc<Mutex<LazyLocalScopeState>>,
+}
+
+impl LazyLocalScopeFactory {
+    fn new(overrides: HashMap<HashedPyKey, Value>) -> Self {
+        LazyLocalScopeFactory {
+            overrides: Arc::new(overrides),
+            scope_state: Arc::new(Mutex::new(LazyLocalScopeState::default())),
+        }
+    }
+}
+
+impl ASTStreamFactory for LazyLocalScopeFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
         #[cfg(test)]
         if matches!(effect, Effect::Ask { .. }) {
@@ -1069,8 +1127,874 @@ impl RustProgramHandler for ReaderHandlerFactory {
             .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
     }
 
-    fn create_program(&self) -> RustProgramRef {
-        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram::new())))
+    fn create_program(&self) -> ASTStreamProgramRef {
+        Arc::new(Mutex::new(Box::new(LazyLocalScopeProgram::new(
+            self.overrides.clone(),
+            self.scope_state.clone(),
+        ))))
+    }
+
+    fn handler_name(&self) -> &'static str {
+        "LazyLocalScopeHandler"
+    }
+}
+
+impl HandlerInvoke for LazyLocalScopeFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as ASTStreamFactory>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        rust_program_expand_expr(
+            Arc::new(self.clone()),
+            effect,
+            k,
+            metadata_from_debug_info(self.handler_debug_info()),
+        )
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as ASTStreamFactory>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum LazyLocalScopePhase {
+    Idle,
+    AwaitAcquire {
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Option<Value>,
+    },
+    AwaitCache {
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Value,
+    },
+    AwaitEval {
+        key: HashedPyKey,
+        continuation: Continuation,
+        source_id: usize,
+        semaphore: Value,
+    },
+    AwaitRelease {
+        continuation: Continuation,
+        outcome: Result<Value, PyException>,
+    },
+}
+
+#[derive(Debug)]
+struct LazyLocalScopeProgram {
+    phase: LazyLocalScopePhase,
+    overrides: Arc<HashMap<HashedPyKey, Value>>,
+    scope_state: Arc<Mutex<LazyLocalScopeState>>,
+}
+
+impl LazyLocalScopeProgram {
+    fn new(
+        overrides: Arc<HashMap<HashedPyKey, Value>>,
+        scope_state: Arc<Mutex<LazyLocalScopeState>>,
+    ) -> Self {
+        LazyLocalScopeProgram {
+            phase: LazyLocalScopePhase::Idle,
+            overrides,
+            scope_state,
+        }
+    }
+
+    fn yield_perform(effect: Result<DispatchEffect, PyException>) -> ASTStreamStep {
+        match effect {
+            Ok(effect) => ASTStreamStep::Yield(DoCtrl::Perform { effect }),
+            Err(exc) => ASTStreamStep::Throw(exc),
+        }
+    }
+
+    fn transfer_throw(continuation: Continuation, exception: PyException) -> ASTStreamStep {
+        ASTStreamStep::Yield(DoCtrl::TransferThrow {
+            continuation,
+            exception,
+        })
+    }
+
+    fn local_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
+        let state = self
+            .scope_state
+            .lock()
+            .expect("LazyLocalScope lock poisoned");
+        let entry = state.cache.get(key)?;
+        if entry.source_id == source_id {
+            return Some(entry.value.clone());
+        }
+        None
+    }
+
+    fn local_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value) {
+        let mut state = self
+            .scope_state
+            .lock()
+            .expect("LazyLocalScope lock poisoned");
+        state.cache.insert(key, LazyCacheEntry { source_id, value });
+    }
+
+    fn local_semaphore_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
+        let state = self
+            .scope_state
+            .lock()
+            .expect("LazyLocalScope lock poisoned");
+        let entry = state.semaphores.get(key)?;
+        if entry.source_id == source_id {
+            return Some(entry.semaphore.clone());
+        }
+        None
+    }
+
+    fn local_semaphore_put(&self, key: HashedPyKey, source_id: usize, semaphore: Value) {
+        let mut state = self
+            .scope_state
+            .lock()
+            .expect("LazyLocalScope lock poisoned");
+        state.semaphores.insert(
+            key,
+            LazySemaphoreEntry {
+                source_id,
+                semaphore,
+            },
+        );
+    }
+
+    fn begin_create_then_acquire_phase(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+    ) -> ASTStreamStep {
+        self.phase = LazyLocalScopePhase::AwaitAcquire {
+            key,
+            continuation,
+            expr,
+            source_id,
+            semaphore: None,
+        };
+        Self::yield_perform(lazy_ask_create_semaphore_effect())
+    }
+
+    fn begin_acquire_phase(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Value,
+    ) -> ASTStreamStep {
+        let effect = lazy_ask_acquire_semaphore_effect(&semaphore);
+        self.phase = LazyLocalScopePhase::AwaitAcquire {
+            key,
+            continuation,
+            expr,
+            source_id,
+            semaphore: Some(semaphore),
+        };
+        Self::yield_perform(effect)
+    }
+
+    fn begin_release_phase(
+        &mut self,
+        continuation: Continuation,
+        outcome: Result<Value, PyException>,
+        semaphore: Value,
+    ) -> ASTStreamStep {
+        self.phase = LazyLocalScopePhase::AwaitRelease {
+            continuation,
+            outcome,
+        };
+        Self::yield_perform(lazy_ask_release_semaphore_effect(&semaphore))
+    }
+
+    fn handle_override_ask(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        value: Value,
+    ) -> ASTStreamStep {
+        let Some(expr) = as_lazy_eval_expr(&value) else {
+            return ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            });
+        };
+
+        let source_id = lazy_source_id(&value).unwrap_or_default();
+
+        if let Some(cached) = self.local_cache_get(&key, source_id) {
+            return ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value: cached,
+            });
+        }
+
+        if let Some(semaphore) = self.local_semaphore_get(&key, source_id) {
+            return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
+        }
+
+        self.begin_create_then_acquire_phase(key, continuation, expr, source_id)
+    }
+
+    fn handle_ask(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        effect: DispatchEffect,
+    ) -> ASTStreamStep {
+        let Some(value) = self.overrides.get(&key).cloned() else {
+            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+        };
+
+        self.handle_override_ask(key, continuation, value)
+    }
+}
+
+impl ASTStreamProgram for LazyLocalScopeProgram {
+    fn start(
+        &mut self,
+        _py: Python<'_>,
+        effect: DispatchEffect,
+        k: Continuation,
+        _store: &mut RustStore,
+    ) -> ASTStreamStep {
+        #[cfg(test)]
+        if let Effect::Ask { key } = effect.clone() {
+            let key = HashedPyKey::from_test_string(key);
+            return self.handle_ask(key, k, effect);
+        }
+
+        if let Some(obj) = dispatch_into_python(effect.clone()) {
+            return match parse_reader_python_effect(&obj) {
+                Ok(Some(key)) => self.handle_ask(key, k, dispatch_from_shared(obj)),
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
+                    effect: dispatch_from_shared(obj),
+                }),
+                Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
+                    "failed to parse lazy local Ask effect: {msg}"
+                ))),
+            };
+        }
+
+        #[cfg(test)]
+        {
+            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+        }
+
+        #[cfg(not(test))]
+        unreachable!("runtime Effect is always Python")
+    }
+
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
+        match std::mem::replace(&mut self.phase, LazyLocalScopePhase::Idle) {
+            LazyLocalScopePhase::AwaitAcquire {
+                key,
+                continuation,
+                expr,
+                source_id,
+                semaphore,
+            } => {
+                let Some(semaphore) = semaphore else {
+                    let semaphore = match value {
+                        Value::Python(_) => value,
+                        _ => {
+                            return ASTStreamStep::Throw(PyException::type_error(
+                                "CreateSemaphore must return a semaphore handle".to_string(),
+                            ));
+                        }
+                    };
+                    self.local_semaphore_put(key.clone(), source_id, semaphore.clone());
+                    return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
+                };
+
+                if let Some(cached) = self.local_cache_get(&key, source_id) {
+                    return self.begin_release_phase(continuation, Ok(cached), semaphore);
+                }
+
+                self.phase = LazyLocalScopePhase::AwaitCache {
+                    key,
+                    continuation,
+                    expr,
+                    source_id,
+                    semaphore,
+                };
+                ASTStreamStep::Yield(DoCtrl::GetHandlers)
+            }
+            LazyLocalScopePhase::AwaitCache {
+                key,
+                continuation,
+                expr,
+                source_id,
+                semaphore,
+            } => {
+                let handlers = match value {
+                    Value::Handlers(handlers) => handlers,
+                    _ => {
+                        return ASTStreamStep::Throw(PyException::type_error(
+                            "lazy local scope expected handlers from GetHandlers".to_string(),
+                        ));
+                    }
+                };
+
+                self.phase = LazyLocalScopePhase::AwaitEval {
+                    key,
+                    continuation,
+                    source_id,
+                    semaphore,
+                };
+                ASTStreamStep::Yield(DoCtrl::Eval {
+                    expr,
+                    handlers,
+                    metadata: None,
+                })
+            }
+            LazyLocalScopePhase::AwaitEval {
+                key,
+                continuation,
+                source_id,
+                semaphore,
+            } => {
+                self.local_cache_put(key, source_id, value.clone());
+                self.begin_release_phase(continuation, Ok(value), semaphore)
+            }
+            LazyLocalScopePhase::AwaitRelease {
+                continuation,
+                outcome,
+            } => match outcome {
+                Ok(value) => ASTStreamStep::Yield(DoCtrl::Resume {
+                    continuation,
+                    value,
+                }),
+                Err(exception) => Self::transfer_throw(continuation, exception),
+            },
+            LazyLocalScopePhase::Idle => ASTStreamStep::Return(value),
+        }
+    }
+
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+        match std::mem::replace(&mut self.phase, LazyLocalScopePhase::Idle) {
+            LazyLocalScopePhase::AwaitAcquire { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
+            }
+            LazyLocalScopePhase::AwaitCache {
+                continuation,
+                semaphore,
+                ..
+            } => self.begin_release_phase(continuation, Err(exc), semaphore),
+            LazyLocalScopePhase::AwaitEval {
+                continuation,
+                semaphore,
+                ..
+            } => self.begin_release_phase(continuation, Err(exc), semaphore),
+            LazyLocalScopePhase::AwaitRelease { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
+            }
+            LazyLocalScopePhase::Idle => ASTStreamStep::Throw(exc),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum LazyAskPhase {
+    Idle,
+    AwaitLocalHandlers {
+        continuation: Continuation,
+        scope: LazyLocalScopeFactory,
+        sub_program: PyShared,
+    },
+    AwaitLocalEval {
+        continuation: Continuation,
+    },
+    AwaitDelegate {
+        key: HashedPyKey,
+        continuation: Continuation,
+    },
+    AwaitAcquire {
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Option<Value>,
+    },
+    AwaitCache {
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Value,
+    },
+    AwaitEval {
+        key: HashedPyKey,
+        continuation: Continuation,
+        source_id: usize,
+        semaphore: Value,
+    },
+    AwaitRelease {
+        continuation: Continuation,
+        outcome: Result<Value, PyException>,
+    },
+}
+
+#[derive(Debug)]
+struct LazyAskHandlerProgram {
+    phase: LazyAskPhase,
+    state: Arc<Mutex<LazyAskState>>,
+}
+
+impl LazyAskHandlerProgram {
+    fn new(state: Arc<Mutex<LazyAskState>>) -> Self {
+        LazyAskHandlerProgram {
+            phase: LazyAskPhase::Idle,
+            state,
+        }
+    }
+
+    fn current_phase_name(&self) -> &'static str {
+        match self.phase {
+            LazyAskPhase::Idle => "Idle",
+            LazyAskPhase::AwaitLocalHandlers { .. } => "AwaitLocalHandlers",
+            LazyAskPhase::AwaitLocalEval { .. } => "AwaitLocalEval",
+            LazyAskPhase::AwaitDelegate { .. } => "AwaitDelegate",
+            LazyAskPhase::AwaitAcquire { .. } => "AwaitAcquire",
+            LazyAskPhase::AwaitCache { .. } => "AwaitCache",
+            LazyAskPhase::AwaitEval { .. } => "AwaitEval",
+            LazyAskPhase::AwaitRelease { .. } => "AwaitRelease",
+        }
+    }
+
+    fn yield_perform(effect: Result<DispatchEffect, PyException>) -> ASTStreamStep {
+        match effect {
+            Ok(effect) => ASTStreamStep::Yield(DoCtrl::Perform { effect }),
+            Err(exc) => ASTStreamStep::Throw(exc),
+        }
+    }
+
+    fn transfer_throw(continuation: Continuation, exception: PyException) -> ASTStreamStep {
+        ASTStreamStep::Yield(DoCtrl::TransferThrow {
+            continuation,
+            exception,
+        })
+    }
+
+    fn activate_scope_cache(&self) {
+        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
+        state.scope_cache.push(HashMap::new());
+        state.scope_semaphores.push(HashMap::new());
+    }
+
+    fn deactivate_scope_cache(&self) {
+        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
+        state.scope_cache.pop();
+        state.scope_semaphores.pop();
+    }
+
+    fn lazy_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
+        let state = self.state.lock().expect("LazyAsk lock poisoned");
+        if let Some(scope_cache) = state.scope_cache.last() {
+            if let Some(entry) = scope_cache.get(key) {
+                if entry.source_id == source_id {
+                    return Some(entry.value.clone());
+                }
+            }
+        }
+        let entry = state.cache.get(key)?;
+        if entry.source_id == source_id {
+            return Some(entry.value.clone());
+        }
+        None
+    }
+
+    fn lazy_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value) {
+        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
+        let entry = LazyCacheEntry { source_id, value };
+        if let Some(scope_cache) = state.scope_cache.last_mut() {
+            scope_cache.insert(key, entry);
+        } else {
+            state.cache.insert(key, entry);
+        }
+    }
+
+    fn lazy_semaphore_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
+        let state = self.state.lock().expect("LazyAsk lock poisoned");
+        if let Some(scope_semaphores) = state.scope_semaphores.last() {
+            if let Some(entry) = scope_semaphores.get(key) {
+                if entry.source_id == source_id {
+                    return Some(entry.semaphore.clone());
+                }
+            }
+        }
+        let entry = state.semaphores.get(key)?;
+        if entry.source_id == source_id {
+            return Some(entry.semaphore.clone());
+        }
+        None
+    }
+
+    fn lazy_semaphore_put(&self, key: HashedPyKey, source_id: usize, semaphore: Value) {
+        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
+        let entry = LazySemaphoreEntry {
+            source_id,
+            semaphore,
+        };
+        if let Some(scope_semaphores) = state.scope_semaphores.last_mut() {
+            scope_semaphores.insert(key, entry);
+        } else {
+            state.semaphores.insert(key, entry);
+        }
+    }
+
+    fn begin_delegate_phase(
+        &mut self,
+        effect: DispatchEffect,
+        key: HashedPyKey,
+        continuation: Continuation,
+    ) -> ASTStreamStep {
+        self.phase = LazyAskPhase::AwaitDelegate { key, continuation };
+        ASTStreamStep::Yield(DoCtrl::Perform { effect })
+    }
+
+    fn begin_create_then_acquire_phase(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+    ) -> ASTStreamStep {
+        self.phase = LazyAskPhase::AwaitAcquire {
+            key,
+            continuation,
+            expr,
+            source_id,
+            semaphore: None,
+        };
+        Self::yield_perform(lazy_ask_create_semaphore_effect())
+    }
+
+    fn begin_acquire_phase(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        expr: PyShared,
+        source_id: usize,
+        semaphore: Value,
+    ) -> ASTStreamStep {
+        let effect = lazy_ask_acquire_semaphore_effect(&semaphore);
+        self.phase = LazyAskPhase::AwaitAcquire {
+            key,
+            continuation,
+            expr,
+            source_id,
+            semaphore: Some(semaphore),
+        };
+        Self::yield_perform(effect)
+    }
+
+    fn begin_release_phase(
+        &mut self,
+        continuation: Continuation,
+        outcome: Result<Value, PyException>,
+        semaphore: Value,
+    ) -> ASTStreamStep {
+        self.phase = LazyAskPhase::AwaitRelease {
+            continuation,
+            outcome,
+        };
+        Self::yield_perform(lazy_ask_release_semaphore_effect(&semaphore))
+    }
+
+    fn handle_delegated_ask_value(
+        &mut self,
+        key: HashedPyKey,
+        continuation: Continuation,
+        value: Value,
+    ) -> ASTStreamStep {
+        let Some(expr) = as_lazy_eval_expr(&value) else {
+            return ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            });
+        };
+
+        let source_id = lazy_source_id(&value).unwrap_or_default();
+
+        if let Some(cached) = self.lazy_cache_get(&key, source_id) {
+            return ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value: cached,
+            });
+        }
+
+        if let Some(semaphore) = self.lazy_semaphore_get(&key, source_id) {
+            return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
+        }
+
+        self.begin_create_then_acquire_phase(key, continuation, expr, source_id)
+    }
+}
+
+impl ASTStreamProgram for LazyAskHandlerProgram {
+    fn start(
+        &mut self,
+        _py: Python<'_>,
+        effect: DispatchEffect,
+        k: Continuation,
+        _store: &mut RustStore,
+    ) -> ASTStreamStep {
+        #[cfg(test)]
+        if let Effect::Ask { key } = effect.clone() {
+            let hashed_key = HashedPyKey::from_test_string(key);
+            let Some(value) = _store.ask(&hashed_key).cloned() else {
+                return ASTStreamStep::Throw(missing_env_key_error(&hashed_key));
+            };
+            return ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation: k,
+                value,
+            });
+        }
+
+        if let Some(obj) = dispatch_into_python(effect.clone()) {
+            match parse_local_python_effect(&obj) {
+                Ok(Some(local_effect)) => {
+                    let scope = LazyLocalScopeFactory::new(local_effect.overrides);
+                    self.activate_scope_cache();
+                    self.phase = LazyAskPhase::AwaitLocalHandlers {
+                        continuation: k,
+                        scope,
+                        sub_program: local_effect.sub_program,
+                    };
+                    return ASTStreamStep::Yield(DoCtrl::GetHandlers);
+                }
+                Ok(None) => {}
+                Err(msg) => {
+                    return ASTStreamStep::Throw(PyException::type_error(format!(
+                        "failed to parse Local effect: {msg}"
+                    )));
+                }
+            }
+
+            return match parse_reader_python_effect(&obj) {
+                Ok(Some(key)) => self.begin_delegate_phase(dispatch_from_shared(obj), key, k),
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
+                    effect: dispatch_from_shared(obj),
+                }),
+                Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
+                    "failed to parse lazy Ask effect: {msg}"
+                ))),
+            };
+        }
+
+        #[cfg(test)]
+        {
+            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+        }
+
+        #[cfg(not(test))]
+        unreachable!("runtime Effect is always Python")
+    }
+
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
+        match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
+            LazyAskPhase::AwaitLocalHandlers {
+                continuation,
+                scope,
+                sub_program,
+            } => {
+                let mut handlers = match value {
+                    Value::Handlers(handlers) => handlers,
+                    _ => {
+                        return ASTStreamStep::Throw(PyException::type_error(
+                            "lazy Ask Local expected handlers from GetHandlers".to_string(),
+                        ));
+                    }
+                };
+                handlers.insert(0, Arc::new(scope.clone()));
+                self.phase = LazyAskPhase::AwaitLocalEval { continuation };
+                ASTStreamStep::Yield(DoCtrl::Eval {
+                    expr: sub_program,
+                    handlers,
+                    metadata: None,
+                })
+            }
+            LazyAskPhase::AwaitLocalEval { continuation } => {
+                self.deactivate_scope_cache();
+                ASTStreamStep::Yield(DoCtrl::Resume {
+                    continuation,
+                    value,
+                })
+            }
+            LazyAskPhase::AwaitDelegate { key, continuation } => {
+                self.handle_delegated_ask_value(key, continuation, value)
+            }
+            LazyAskPhase::AwaitAcquire {
+                key,
+                continuation,
+                expr,
+                source_id,
+                semaphore,
+            } => {
+                let Some(semaphore) = semaphore else {
+                    let semaphore = match value {
+                        Value::Python(_) => value,
+                        _ => {
+                            return ASTStreamStep::Throw(PyException::type_error(
+                                "CreateSemaphore must return a semaphore handle".to_string(),
+                            ));
+                        }
+                    };
+                    self.lazy_semaphore_put(key.clone(), source_id, semaphore.clone());
+                    return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
+                };
+
+                if let Some(cached) = self.lazy_cache_get(&key, source_id) {
+                    return self.begin_release_phase(continuation, Ok(cached), semaphore);
+                }
+
+                self.phase = LazyAskPhase::AwaitCache {
+                    key,
+                    continuation,
+                    expr,
+                    source_id,
+                    semaphore,
+                };
+                ASTStreamStep::Yield(DoCtrl::GetHandlers)
+            }
+            LazyAskPhase::AwaitCache {
+                key,
+                continuation,
+                expr,
+                source_id,
+                semaphore,
+            } => {
+                let handlers = match value {
+                    Value::Handlers(handlers) => handlers,
+                    _ => {
+                        return ASTStreamStep::Throw(PyException::type_error(
+                            "lazy Ask expected handlers from GetHandlers".to_string(),
+                        ));
+                    }
+                };
+
+                self.phase = LazyAskPhase::AwaitEval {
+                    key,
+                    continuation,
+                    source_id,
+                    semaphore,
+                };
+                ASTStreamStep::Yield(DoCtrl::Eval {
+                    expr,
+                    handlers,
+                    metadata: None,
+                })
+            }
+            LazyAskPhase::AwaitEval {
+                key,
+                continuation,
+                source_id,
+                semaphore,
+            } => {
+                self.lazy_cache_put(key, source_id, value.clone());
+                self.begin_release_phase(continuation, Ok(value), semaphore)
+            }
+            LazyAskPhase::AwaitRelease {
+                continuation,
+                outcome,
+            } => match outcome {
+                Ok(value) => ASTStreamStep::Yield(DoCtrl::Resume {
+                    continuation,
+                    value,
+                }),
+                Err(exception) => Self::transfer_throw(continuation, exception),
+            },
+            LazyAskPhase::Idle => ASTStreamStep::Return(value),
+        }
+    }
+
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+        match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
+            LazyAskPhase::AwaitLocalHandlers { continuation, .. }
+            | LazyAskPhase::AwaitLocalEval { continuation } => {
+                self.deactivate_scope_cache();
+                Self::transfer_throw(continuation, exc)
+            }
+            LazyAskPhase::AwaitDelegate { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
+            }
+            LazyAskPhase::AwaitAcquire { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
+            }
+            LazyAskPhase::AwaitCache {
+                continuation,
+                semaphore,
+                ..
+            } => self.begin_release_phase(continuation, Err(exc), semaphore),
+            LazyAskPhase::AwaitEval {
+                continuation,
+                semaphore,
+                ..
+            } => self.begin_release_phase(continuation, Err(exc), semaphore),
+            LazyAskPhase::AwaitRelease { continuation, .. } => {
+                Self::transfer_throw(continuation, exc)
+            }
+            LazyAskPhase::Idle => ASTStreamStep::Throw(exc),
+        }
+    }
+}
+
+impl ASTStream for LazyAskHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store)
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store)
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "LazyAskHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ReaderHandlerFactory + ReaderHandlerProgram
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct ReaderHandlerFactory;
+
+impl ASTStreamFactory for ReaderHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        #[cfg(test)]
+        if matches!(effect, Effect::Ask { .. }) {
+            return true;
+        }
+
+        dispatch_ref_as_python(effect)
+            .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+    }
+
+    fn create_program(&self) -> ASTStreamProgramRef {
+        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram)))
     }
 
     fn handler_name(&self) -> &'static str {
@@ -1078,100 +2002,92 @@ impl RustProgramHandler for ReaderHandlerFactory {
     }
 }
 
-#[derive(Debug)]
-enum ReaderPhase {
-    Idle,
-    AwaitHandlers {
-        key: String,
-        continuation: Continuation,
-        expr: PyShared,
-        source_id: usize,
-    },
-    AwaitEval {
-        key: String,
-        continuation: Continuation,
-        source_id: usize,
-    },
-}
-
-#[derive(Debug)]
-struct ReaderHandlerProgram {
-    phase: ReaderPhase,
-}
-
-impl ReaderHandlerProgram {
-    fn new() -> Self {
-        ReaderHandlerProgram {
-            phase: ReaderPhase::Idle,
-        }
+impl HandlerInvoke for ReaderHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
-    fn handle_ask(
-        &mut self,
-        key: String,
-        continuation: Continuation,
-        store: &mut RustStore,
-    ) -> RustProgramStep {
-        let Some(value) = store.ask(&key).cloned() else {
-            return RustProgramStep::Throw(missing_env_key_error(&key));
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        let is_ask = {
+            #[cfg(test)]
+            if matches!(&effect, Effect::Ask { .. }) {
+                true
+            } else {
+                dispatch_ref_as_python(&effect)
+                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+            }
+            #[cfg(not(test))]
+            {
+                dispatch_ref_as_python(&effect)
+                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+            }
         };
 
-        if let Some(expr) = as_lazy_eval_expr(&value) {
-            let source_id = lazy_source_id(&value).unwrap_or_default();
-
-            if let Some(cached) = store.lazy_cache_get(&key, source_id) {
-                store.env.insert(key, cached.clone());
-                return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                    continuation,
-                    value: cached,
-                }));
-            }
-
-            if store.lazy_active_contains(&key, source_id) {
-                return RustProgramStep::Throw(PyException::runtime_error(format!(
-                    "circular lazy Ask dependency detected for key '{}'",
-                    key
-                )));
-            }
-
-            store.lazy_active_insert(key.clone(), source_id);
-
-            self.phase = ReaderPhase::AwaitHandlers {
-                key,
-                continuation,
-                expr,
-                source_id,
-            };
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers));
+        let metadata = metadata_from_debug_info(self.handler_debug_info());
+        if is_ask {
+            rust_program_apply_expr(Arc::new(self.clone()), effect, k, metadata)
+        } else {
+            rust_program_expand_expr(Arc::new(self.clone()), effect, k, metadata)
         }
+    }
 
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-            continuation,
-            value,
-        }))
+    fn handler_name(&self) -> &str {
+        <Self as ASTStreamFactory>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
     }
 }
 
-impl RustHandlerProgram for ReaderHandlerProgram {
+#[derive(Debug)]
+struct ReaderHandlerProgram;
+
+impl ReaderHandlerProgram {
+    fn handle_ask(
+        key: HashedPyKey,
+        continuation: Continuation,
+        store: &mut RustStore,
+    ) -> ASTStreamStep {
+        let Some(value) = store.ask(&key).cloned() else {
+            return ASTStreamStep::Throw(missing_env_key_error(&key));
+        };
+
+        ASTStreamStep::Yield(DoCtrl::Resume {
+            continuation,
+            value,
+        })
+    }
+
+    fn current_phase_name(&self) -> &'static str {
+        "AskApply"
+    }
+}
+
+impl ASTStreamProgram for ReaderHandlerProgram {
     fn start(
         &mut self,
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
-    ) -> RustProgramStep {
+    ) -> ASTStreamStep {
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
-            return self.handle_ask(key, k, store);
+            return ReaderHandlerProgram::handle_ask(HashedPyKey::from_test_string(key), k, store);
         }
 
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
-                Ok(Some(key)) => self.handle_ask(key, k, store),
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(Some(key)) => ReaderHandlerProgram::handle_ask(key, k, store),
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
-                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                }),
+                Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse reader effect: {msg}"
                 ))),
             };
@@ -1179,85 +2095,38 @@ impl RustHandlerProgram for ReaderHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
-        match std::mem::replace(&mut self.phase, ReaderPhase::Idle) {
-            ReaderPhase::AwaitHandlers {
-                key,
-                continuation,
-                expr,
-                source_id,
-            } => {
-                let handlers = match value {
-                    Value::Handlers(handlers) => handlers,
-                    _ => {
-                        return RustProgramStep::Throw(PyException::type_error(
-                            "reader lazy Ask expected handlers from GetHandlers".to_string(),
-                        ));
-                    }
-                };
-
-                self.phase = ReaderPhase::AwaitEval {
-                    key,
-                    continuation,
-                    source_id,
-                };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
-                    expr,
-                    handlers,
-                    metadata: None,
-                }))
-            }
-            ReaderPhase::AwaitEval {
-                key,
-                continuation,
-                source_id,
-            } => {
-                store.lazy_active_remove(&key, source_id);
-                store.env.insert(key.clone(), value.clone());
-                store.lazy_cache_put(key.clone(), source_id, value.clone());
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                    continuation,
-                    value,
-                }))
-            }
-            ReaderPhase::Idle => RustProgramStep::Return(value),
-        }
+    fn resume(&mut self, _value: Value, _store: &mut RustStore) -> ASTStreamStep {
+        unreachable!("ReaderHandler never yields mid-handling")
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep {
-        match std::mem::replace(&mut self.phase, ReaderPhase::Idle) {
-            ReaderPhase::AwaitHandlers {
-                key,
-                continuation,
-                source_id,
-                ..
-            } => {
-                store.lazy_active_remove(&key, source_id);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
-                    continuation,
-                    exception: exc,
-                }))
-            }
-            ReaderPhase::AwaitEval {
-                key,
-                continuation,
-                source_id,
-            } => {
-                store.lazy_active_remove(&key, source_id);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
-                    continuation,
-                    exception: exc,
-                }))
-            }
-            ReaderPhase::Idle => RustProgramStep::Throw(exc),
-        }
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+        ASTStreamStep::Throw(exc)
+    }
+}
+
+impl ASTStream for ReaderHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store)
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store)
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "ReaderHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
     }
 }
 
@@ -1268,7 +2137,7 @@ impl RustHandlerProgram for ReaderHandlerProgram {
 #[derive(Debug, Clone)]
 pub struct WriterHandlerFactory;
 
-impl RustProgramHandler for WriterHandlerFactory {
+impl ASTStreamFactory for WriterHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
         #[cfg(test)]
         if matches!(effect, Effect::Tell { .. }) {
@@ -1279,7 +2148,7 @@ impl RustProgramHandler for WriterHandlerFactory {
             .is_some_and(|obj| parse_writer_python_effect(obj).ok().flatten().is_some())
     }
 
-    fn create_program(&self) -> RustProgramRef {
+    fn create_program(&self) -> ASTStreamProgramRef {
         Arc::new(Mutex::new(Box::new(WriterHandlerProgram)))
     }
 
@@ -1288,39 +2157,72 @@ impl RustProgramHandler for WriterHandlerFactory {
     }
 }
 
+impl HandlerInvoke for WriterHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as ASTStreamFactory>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        rust_program_apply_expr(
+            Arc::new(self.clone()),
+            effect,
+            k,
+            metadata_from_debug_info(self.handler_debug_info()),
+        )
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as ASTStreamFactory>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct WriterHandlerProgram;
 
-impl RustHandlerProgram for WriterHandlerProgram {
+impl WriterHandlerProgram {
+    fn current_phase_name(&self) -> &'static str {
+        "TellApply"
+    }
+}
+
+impl ASTStreamProgram for WriterHandlerProgram {
     fn start(
         &mut self,
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
-    ) -> RustProgramStep {
+    ) -> ASTStreamStep {
         #[cfg(test)]
         if let Effect::Tell { message } = effect.clone() {
             store.tell(message);
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation: k,
                 value: Value::Unit,
-            }));
+            });
         }
 
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_writer_python_effect(&obj) {
                 Ok(Some(message)) => {
                     store.tell(message);
-                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    ASTStreamStep::Yield(DoCtrl::Resume {
                         continuation: k,
                         value: Value::Unit,
-                    }))
+                    })
                 }
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
-                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                }),
+                Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse writer effect: {msg}"
                 ))),
             };
@@ -1328,19 +2230,38 @@ impl RustHandlerProgram for WriterHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, _value: Value, _: &mut RustStore) -> RustProgramStep {
+    fn resume(&mut self, _value: Value, _: &mut RustStore) -> ASTStreamStep {
         unreachable!("WriterHandler never yields mid-handling")
     }
 
-    fn throw(&mut self, exc: PyException, _: &mut RustStore) -> RustProgramStep {
-        RustProgramStep::Throw(exc)
+    fn throw(&mut self, exc: PyException, _: &mut RustStore) -> ASTStreamStep {
+        ASTStreamStep::Throw(exc)
+    }
+}
+
+impl ASTStream for WriterHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store)
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store)
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "WriterHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
     }
 }
 
@@ -1351,7 +2272,7 @@ impl RustHandlerProgram for WriterHandlerProgram {
 #[derive(Debug, Clone)]
 pub struct ResultSafeHandlerFactory;
 
-impl RustProgramHandler for ResultSafeHandlerFactory {
+impl ASTStreamFactory for ResultSafeHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
         dispatch_ref_as_python(effect).is_some_and(|obj| {
             parse_result_safe_python_effect(obj)
@@ -1361,12 +2282,39 @@ impl RustProgramHandler for ResultSafeHandlerFactory {
         })
     }
 
-    fn create_program(&self) -> RustProgramRef {
+    fn create_program(&self) -> ASTStreamProgramRef {
         Arc::new(Mutex::new(Box::new(ResultSafeHandlerProgram::new())))
     }
 
     fn handler_name(&self) -> &'static str {
         "ResultSafeHandler"
+    }
+}
+
+impl HandlerInvoke for ResultSafeHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as ASTStreamFactory>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        rust_program_expand_expr(
+            Arc::new(self.clone()),
+            effect,
+            k,
+            metadata_from_debug_info(self.handler_debug_info()),
+        )
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as ASTStreamFactory>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
     }
 }
 
@@ -1394,35 +2342,43 @@ impl ResultSafeHandlerProgram {
         }
     }
 
-    fn finish_ok(&self, continuation: Continuation, value: Value) -> RustProgramStep {
-        match wrap_value_as_result_ok(value) {
-            Ok(wrapped) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                continuation,
-                value: wrapped,
-            })),
-            Err(exc) => RustProgramStep::Throw(exc),
+    fn current_phase_name(&self) -> &'static str {
+        match self.phase {
+            ResultSafePhase::Idle => "Idle",
+            ResultSafePhase::AwaitHandlers { .. } => "AwaitHandlers",
+            ResultSafePhase::AwaitEval { .. } => "AwaitEval",
         }
     }
 
-    fn finish_err(&self, continuation: Continuation, error: PyException) -> RustProgramStep {
-        match wrap_exception_as_result_err(error) {
-            Ok(wrapped) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+    fn finish_ok(&self, continuation: Continuation, value: Value) -> ASTStreamStep {
+        match wrap_value_as_result_ok(value) {
+            Ok(wrapped) => ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value: wrapped,
-            })),
-            Err(exc) => RustProgramStep::Throw(exc),
+            }),
+            Err(exc) => ASTStreamStep::Throw(exc),
+        }
+    }
+
+    fn finish_err(&self, continuation: Continuation, error: PyException) -> ASTStreamStep {
+        match wrap_exception_as_result_err(error) {
+            Ok(wrapped) => ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value: wrapped,
+            }),
+            Err(exc) => ASTStreamStep::Throw(exc),
         }
     }
 }
 
-impl RustHandlerProgram for ResultSafeHandlerProgram {
+impl ASTStreamProgram for ResultSafeHandlerProgram {
     fn start(
         &mut self,
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
-    ) -> RustProgramStep {
+    ) -> ASTStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_result_safe_python_effect(&obj) {
                 Ok(Some(sub_program)) => {
@@ -1430,12 +2386,12 @@ impl RustHandlerProgram for ResultSafeHandlerProgram {
                         continuation: k,
                         sub_program,
                     };
-                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+                    ASTStreamStep::Yield(DoCtrl::GetHandlers)
                 }
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
-                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                }),
+                Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
                     "failed to parse ResultSafe effect: {msg}"
                 ))),
             };
@@ -1443,14 +2399,14 @@ impl RustHandlerProgram for ResultSafeHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
             ResultSafePhase::AwaitHandlers {
                 continuation,
@@ -1459,29 +2415,48 @@ impl RustHandlerProgram for ResultSafeHandlerProgram {
                 let handlers = match value {
                     Value::Handlers(handlers) => handlers,
                     _ => {
-                        return RustProgramStep::Throw(PyException::type_error(
+                        return ASTStreamStep::Throw(PyException::type_error(
                             "ResultSafe handler expected GetHandlers result",
                         ));
                     }
                 };
                 self.phase = ResultSafePhase::AwaitEval { continuation };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                ASTStreamStep::Yield(DoCtrl::Eval {
                     expr: sub_program,
                     handlers,
                     metadata: None,
-                }))
+                })
             }
             ResultSafePhase::AwaitEval { continuation } => self.finish_ok(continuation, value),
-            ResultSafePhase::Idle => RustProgramStep::Return(value),
+            ResultSafePhase::Idle => ASTStreamStep::Return(value),
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
             ResultSafePhase::AwaitHandlers { continuation, .. }
             | ResultSafePhase::AwaitEval { continuation } => self.finish_err(continuation, exc),
-            ResultSafePhase::Idle => RustProgramStep::Throw(exc),
+            ResultSafePhase::Idle => ASTStreamStep::Throw(exc),
         }
+    }
+}
+
+impl ASTStream for ResultSafeHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store)
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store)
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "ResultSafeHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
     }
 }
 
@@ -1499,12 +2474,12 @@ impl RustHandlerProgram for ResultSafeHandlerProgram {
 pub(crate) struct DoubleCallHandlerFactory;
 
 #[cfg(test)]
-impl RustProgramHandler for DoubleCallHandlerFactory {
+impl ASTStreamFactory for DoubleCallHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
         matches!(effect, Effect::Modify { .. })
     }
 
-    fn create_program(&self) -> RustProgramRef {
+    fn create_program(&self) -> ASTStreamProgramRef {
         Arc::new(Mutex::new(Box::new(DoubleCallHandlerProgram {
             phase: DoubleCallPhase::Init,
         })))
@@ -1512,6 +2487,34 @@ impl RustProgramHandler for DoubleCallHandlerFactory {
 
     fn handler_name(&self) -> &'static str {
         "DoubleCallHandler"
+    }
+}
+
+#[cfg(test)]
+impl HandlerInvoke for DoubleCallHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as ASTStreamFactory>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        rust_program_expand_expr(
+            Arc::new(self.clone()),
+            effect,
+            k,
+            metadata_from_debug_info(self.handler_debug_info()),
+        )
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as ASTStreamFactory>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
     }
 }
 
@@ -1543,14 +2546,14 @@ impl std::fmt::Debug for DoubleCallHandlerProgram {
 }
 
 #[cfg(test)]
-impl RustHandlerProgram for DoubleCallHandlerProgram {
+impl ASTStreamProgram for DoubleCallHandlerProgram {
     fn start(
         &mut self,
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
-    ) -> RustProgramStep {
+    ) -> ASTStreamStep {
         match effect {
             Effect::Modify { modifier, .. } => {
                 // Store k and modifier for later. First Python call: modifier(10)
@@ -1558,17 +2561,17 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
                     k,
                     modifier: modifier.clone(),
                 };
-                RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                ASTStreamStep::NeedsPython(PythonCall::CallFunc {
                     func: modifier,
                     args: vec![Value::Int(10)],
                     kwargs: vec![],
                 })
             }
-            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
+            other => ASTStreamStep::Yield(DoCtrl::Delegate { effect: other }),
         }
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, DoubleCallPhase::Done) {
             DoubleCallPhase::AwaitingFirstResult { k, modifier } => {
                 // Got first result. Now do a SECOND Python call: modifier(first_result).
@@ -1577,7 +2580,7 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
                     k,
                     first_result: value.clone(),
                 };
-                RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                ASTStreamStep::NeedsPython(PythonCall::CallFunc {
                     func: modifier,
                     args: vec![value],
                     kwargs: vec![],
@@ -1587,320 +2590,24 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
                 // Got second result. Combine and yield Resume.
                 let combined =
                     Value::Int(first_result.as_int().unwrap_or(0) + value.as_int().unwrap_or(0));
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                ASTStreamStep::Yield(DoCtrl::Resume {
                     continuation: k,
                     value: combined,
-                }))
+                })
             }
-            DoubleCallPhase::Done | DoubleCallPhase::Init => RustProgramStep::Return(value),
+            DoubleCallPhase::Done | DoubleCallPhase::Init => ASTStreamStep::Return(value),
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
-        RustProgramStep::Throw(exc)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ConcurrentKpcHandlerFactory + ConcurrentKpcHandlerProgram
-// ---------------------------------------------------------------------------
-//
-// Like KpcHandlerFactory but resolves KpcArg::Expr args in parallel via
-// Perform(SpawnEffect) + Perform(GatherEffect). Requires a scheduler handler
-// installed in an outer scope.
-
-#[derive(Debug, Clone)]
-pub struct ConcurrentKpcHandlerFactory;
-
-impl RustProgramHandler for ConcurrentKpcHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
-        dispatch_ref_as_python(effect)
-            .is_some_and(|obj| parse_kpc_python_effect(obj).ok().flatten().is_some())
-    }
-
-    fn create_program(&self) -> RustProgramRef {
-        Arc::new(Mutex::new(Box::new(ConcurrentKpcHandlerProgram::new())))
-    }
-
-    fn handler_name(&self) -> &'static str {
-        "ConcurrentKpcHandler"
-    }
-}
-
-/// Tracks whether an arg slot is already resolved or awaiting an Eval result.
-#[derive(Debug, Clone)]
-enum ConcurrentArgSlot {
-    Resolved(Value),
-    Pending(usize), // index into eval results
-}
-
-#[derive(Debug)]
-enum ConcurrentKpcPhase {
-    Idle,
-    AwaitHandlers {
-        k_user: Continuation,
-        kpc: KpcCallEffect,
-    },
-    /// Evaluating Expr args one-by-one via DoCtrl::Eval.
-    Evaluating {
-        k_user: Continuation,
-        kernel: PyShared,
-        handlers: Vec<Handler>,
-        positional_slots: Vec<ConcurrentArgSlot>,
-        keyword_slots: Vec<(String, ConcurrentArgSlot)>,
-        eval_queue: VecDeque<PyShared>,
-        results: Vec<Value>,
-    },
-    KernelCall {
-        k_user: Continuation,
-        handlers: Vec<Handler>,
-    },
-    EvalResult {
-        k_user: Continuation,
-    },
-}
-
-#[derive(Debug)]
-struct ConcurrentKpcHandlerProgram {
-    phase: ConcurrentKpcPhase,
-}
-
-impl ConcurrentKpcHandlerProgram {
-    fn new() -> Self {
-        ConcurrentKpcHandlerProgram {
-            phase: ConcurrentKpcPhase::Idle,
-        }
-    }
-
-    /// Classify args into resolved values and pending Eval exprs.
-    fn classify_args(
-        args: &[KpcArg],
-        kwargs: &[(String, KpcArg)],
-    ) -> (
-        Vec<ConcurrentArgSlot>,
-        Vec<(String, ConcurrentArgSlot)>,
-        VecDeque<PyShared>,
-    ) {
-        let mut positional_slots = Vec::new();
-        let mut keyword_slots = Vec::new();
-        let mut eval_exprs = VecDeque::new();
-
-        for arg in args {
-            match arg {
-                KpcArg::Value(v) => {
-                    positional_slots.push(ConcurrentArgSlot::Resolved(v.clone()));
-                }
-                KpcArg::Expr(e) => {
-                    let idx = eval_exprs.len();
-                    eval_exprs.push_back(e.clone());
-                    positional_slots.push(ConcurrentArgSlot::Pending(idx));
-                }
-            }
-        }
-
-        for (key, arg) in kwargs {
-            match arg {
-                KpcArg::Value(v) => {
-                    keyword_slots.push((key.clone(), ConcurrentArgSlot::Resolved(v.clone())));
-                }
-                KpcArg::Expr(e) => {
-                    let idx = eval_exprs.len();
-                    eval_exprs.push_back(e.clone());
-                    keyword_slots.push((key.clone(), ConcurrentArgSlot::Pending(idx)));
-                }
-            }
-        }
-
-        (positional_slots, keyword_slots, eval_exprs)
-    }
-
-    /// Reconstruct final arg vectors from slots + eval results.
-    fn resolve_slots(
-        positional_slots: &[ConcurrentArgSlot],
-        keyword_slots: &[(String, ConcurrentArgSlot)],
-        results: &[Value],
-    ) -> (Vec<Value>, Vec<(String, Value)>) {
-        let args = positional_slots
-            .iter()
-            .map(|slot| match slot {
-                ConcurrentArgSlot::Resolved(v) => v.clone(),
-                ConcurrentArgSlot::Pending(idx) => results[*idx].clone(),
-            })
-            .collect();
-
-        let kwargs = keyword_slots
-            .iter()
-            .map(|(key, slot)| {
-                let v = match slot {
-                    ConcurrentArgSlot::Resolved(v) => v.clone(),
-                    ConcurrentArgSlot::Pending(idx) => results[*idx].clone(),
-                };
-                (key.clone(), v)
-            })
-            .collect();
-
-        (args, kwargs)
-    }
-
-    /// Yield the next DoCtrl::Eval or transition to KernelCall.
-    fn advance_evaluating(
-        &mut self,
-        k_user: Continuation,
-        kernel: PyShared,
-        handlers: Vec<Handler>,
-        positional_slots: Vec<ConcurrentArgSlot>,
-        keyword_slots: Vec<(String, ConcurrentArgSlot)>,
-        mut eval_queue: VecDeque<PyShared>,
-        results: Vec<Value>,
-    ) -> RustProgramStep {
-        if let Some(expr) = eval_queue.pop_front() {
-            self.phase = ConcurrentKpcPhase::Evaluating {
-                k_user,
-                kernel,
-                handlers: handlers.clone(),
-                positional_slots,
-                keyword_slots,
-                eval_queue,
-                results,
-            };
-
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
-                expr,
-                handlers,
-                metadata: None,
-            }))
-        } else {
-            // All exprs evaluated — resolve slots and call kernel
-            let (args, kwargs) = Self::resolve_slots(&positional_slots, &keyword_slots, &results);
-
-            self.phase = ConcurrentKpcPhase::KernelCall { k_user, handlers };
-            RustProgramStep::NeedsPython(PythonCall::CallFunc {
-                func: kernel,
-                args,
-                kwargs,
-            })
-        }
-    }
-}
-
-impl RustHandlerProgram for ConcurrentKpcHandlerProgram {
-    fn start(
-        &mut self,
-        _py: Python<'_>,
-        effect: DispatchEffect,
-        k: Continuation,
-        _store: &mut RustStore,
-    ) -> RustProgramStep {
-        if let Some(obj) = dispatch_into_python(effect.clone()) {
-            return match parse_kpc_python_effect(&obj) {
-                Ok(Some(kpc)) => {
-                    self.phase = ConcurrentKpcPhase::AwaitHandlers { k_user: k, kpc };
-                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
-                }
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: dispatch_from_shared(obj),
-                })),
-                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
-                    "failed to parse KleisliProgramCall effect: {msg}"
-                ))),
-            };
-        }
-
-        #[cfg(test)]
-        {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
-        }
-
-        #[cfg(not(test))]
-        unreachable!("runtime Effect is always Python")
-    }
-
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
-        match std::mem::replace(&mut self.phase, ConcurrentKpcPhase::Idle) {
-            ConcurrentKpcPhase::AwaitHandlers { k_user, kpc } => {
-                let handlers = match value {
-                    Value::Handlers(hs) => hs,
-                    _ => {
-                        return RustProgramStep::Throw(PyException::type_error(
-                            "ConcurrentKPC handler expected GetHandlers result",
-                        ));
-                    }
-                };
-
-                let (positional_slots, keyword_slots, spawn_exprs) =
-                    Self::classify_args(&kpc.args, &kpc.kwargs);
-
-                self.advance_evaluating(
-                    k_user,
-                    kpc.kernel,
-                    handlers,
-                    positional_slots,
-                    keyword_slots,
-                    spawn_exprs,
-                    Vec::new(),
-                )
-            }
-
-            ConcurrentKpcPhase::Evaluating {
-                k_user,
-                kernel,
-                handlers,
-                positional_slots,
-                keyword_slots,
-                eval_queue,
-                mut results,
-            } => {
-                // Got back the result from DoCtrl::Eval
-                results.push(value);
-
-                self.advance_evaluating(
-                    k_user,
-                    kernel,
-                    handlers,
-                    positional_slots,
-                    keyword_slots,
-                    eval_queue,
-                    results,
-                )
-            }
-
-            ConcurrentKpcPhase::KernelCall { k_user, handlers } => {
-                // R12-A Phase 2: kernel returned — Eval the generator with handlers.
-                match value {
-                    Value::Python(gen) => {
-                        self.phase = ConcurrentKpcPhase::EvalResult { k_user };
-                        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
-                            expr: PyShared::new(gen),
-                            handlers,
-                            metadata: None,
-                        }))
-                    }
-                    other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                        continuation: k_user,
-                        value: other,
-                    })),
-                }
-            }
-
-            ConcurrentKpcPhase::EvalResult { k_user } => {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                    continuation: k_user,
-                    value,
-                }))
-            }
-
-            ConcurrentKpcPhase::Idle => RustProgramStep::Return(value),
-        }
-    }
-
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
-        RustProgramStep::Throw(exc)
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+        ASTStreamStep::Throw(exc)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast_stream::{ASTStream, ASTStreamStep};
     use crate::ids::Marker;
     use crate::segment::Segment;
     use pyo3::types::PyDictMethods;
@@ -1915,92 +2622,191 @@ mod tests {
 
     #[test]
     fn test_handler_entry_creation() {
-        let handler = Handler::RustProgram(Arc::new(StateHandlerFactory));
+        let handler: Handler = Arc::new(StateHandlerFactory);
         let prompt_seg_id = SegmentId::from_index(5);
         let entry = HandlerEntry::new(handler, prompt_seg_id);
 
         assert_eq!(entry.prompt_seg_id, prompt_seg_id);
-        assert!(matches!(entry.handler, Handler::RustProgram(_)));
+        assert_eq!(entry.handler.handler_name(), "StateHandler");
     }
 
     #[test]
     fn test_rust_program_handler_ref_is_clone() {
-        // Verify that Handler::RustProgram is Clone via Arc
+        // Verify that Rust handler references are Clone via Arc
         // (Can't easily instantiate a trait object in unit test, but verify types compile)
-        let _: fn() -> RustProgramHandlerRef = || unreachable!();
+        let _: fn() -> ASTStreamFactoryRef = || unreachable!();
+    }
+
+    #[test]
+    fn test_await_ast_stream_resume_sequence() {
+        let mut store = RustStore::new();
+        let mut program = AwaitHandlerProgram::new();
+        let continuation = make_test_continuation();
+        let continuation_id = continuation.cont_id;
+        program.pending_k = Some(continuation);
+
+        let location = ASTStream::debug_location(&program).expect("await debug location");
+        assert_eq!(location.function_name, "AwaitHandler");
+        assert_eq!(location.phase.as_deref(), Some("AwaitBridgeResult"));
+
+        let step = ASTStream::resume(&mut program, Value::Int(12), &mut store);
+        match step {
+            ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            }) => {
+                assert_eq!(continuation.cont_id, continuation_id);
+                assert_eq!(value.as_int(), Some(12));
+            }
+            _ => panic!("expected ASTStream Yield(Resume)"),
+        }
+
+        let location = ASTStream::debug_location(&program).expect("await debug location");
+        assert_eq!(location.phase.as_deref(), Some("Idle"));
+    }
+
+    #[test]
+    fn test_state_ast_stream_modify_resume_sequence() {
+        let mut store = RustStore::new();
+        store.put("count".to_string(), Value::Int(5));
+
+        let mut program = StateHandlerProgram::new();
+        let continuation = make_test_continuation();
+        let continuation_id = continuation.cont_id;
+        program.pending_key = Some("count".to_string());
+        program.pending_k = Some(continuation);
+        program.pending_old_value = Some(Value::Int(5));
+
+        let location = ASTStream::debug_location(&program).expect("state debug location");
+        assert_eq!(location.function_name, "StateHandler");
+        assert_eq!(location.phase.as_deref(), Some("ModifyApply"));
+
+        let step = ASTStream::resume(&mut program, Value::Int(8), &mut store);
+        match step {
+            ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            }) => {
+                assert_eq!(continuation.cont_id, continuation_id);
+                assert_eq!(value.as_int(), Some(5));
+            }
+            _ => panic!("expected ASTStream Yield(Resume)"),
+        }
+
+        assert_eq!(store.get("count").and_then(Value::as_int), Some(8));
+        let location = ASTStream::debug_location(&program).expect("state debug location");
+        assert_eq!(location.phase.as_deref(), Some("Idle"));
+    }
+
+    #[test]
+    fn test_reader_ast_stream_throw_sequence() {
+        let mut store = RustStore::new();
+        let mut program = ReaderHandlerProgram;
+
+        let location = ASTStream::debug_location(&program).expect("reader debug location");
+        assert_eq!(location.function_name, "ReaderHandler");
+        assert_eq!(location.phase.as_deref(), Some("AskApply"));
+
+        let step = ASTStream::throw(&mut program, PyException::runtime_error("boom"), &mut store);
+        assert!(matches!(step, ASTStreamStep::Throw(_)));
+    }
+
+    #[test]
+    fn test_writer_ast_stream_throw_sequence() {
+        let mut store = RustStore::new();
+        let mut program = WriterHandlerProgram;
+
+        let location = ASTStream::debug_location(&program).expect("writer debug location");
+        assert_eq!(location.function_name, "WriterHandler");
+        assert_eq!(location.phase.as_deref(), Some("TellApply"));
+
+        let step = ASTStream::throw(&mut program, PyException::runtime_error("boom"), &mut store);
+        assert!(matches!(step, ASTStreamStep::Throw(_)));
+    }
+
+    #[test]
+    fn test_lazy_ask_ast_stream_release_sequence() {
+        let mut store = RustStore::new();
+        let mut program = LazyAskHandlerProgram::new(Arc::new(Mutex::new(LazyAskState::default())));
+        let continuation = make_test_continuation();
+        let continuation_id = continuation.cont_id;
+        program.phase = LazyAskPhase::AwaitRelease {
+            continuation,
+            outcome: Ok(Value::Int(44)),
+        };
+
+        let location = ASTStream::debug_location(&program).expect("lazy ask debug location");
+        assert_eq!(location.function_name, "LazyAskHandler");
+        assert_eq!(location.phase.as_deref(), Some("AwaitRelease"));
+
+        let step = ASTStream::resume(&mut program, Value::Unit, &mut store);
+        match step {
+            ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            }) => {
+                assert_eq!(continuation.cont_id, continuation_id);
+                assert_eq!(value.as_int(), Some(44));
+            }
+            _ => panic!("expected ASTStream Yield(Resume)"),
+        }
+    }
+
+    #[test]
+    fn test_result_safe_ast_stream_handlers_to_eval_sequence() {
+        Python::attach(|py| {
+            let mut store = RustStore::new();
+            let mut program = ResultSafeHandlerProgram::new();
+            let continuation = make_test_continuation();
+            let sub_program =
+                PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any());
+            program.phase = ResultSafePhase::AwaitHandlers {
+                continuation,
+                sub_program,
+            };
+
+            let location = ASTStream::debug_location(&program).expect("result safe debug location");
+            assert_eq!(location.function_name, "ResultSafeHandler");
+            assert_eq!(location.phase.as_deref(), Some("AwaitHandlers"));
+
+            let step = ASTStream::resume(&mut program, Value::Handlers(vec![]), &mut store);
+            assert!(matches!(step, ASTStreamStep::Yield(DoCtrl::Eval { .. })));
+
+            let location = ASTStream::debug_location(&program).expect("result safe debug location");
+            assert_eq!(location.phase.as_deref(), Some("AwaitEval"));
+        });
     }
 
     // --- Factory-based handler tests (R8) ---
 
     #[test]
-    fn test_kpc_factory_can_handle_python_kpc_effect() {
-        Python::attach(|py| {
-            let locals = pyo3::types::PyDict::new(py);
-            locals.set_item("PyKPC", py.get_type::<PyKPC>()).unwrap();
-            py.run(
-                c"obj = PyKPC(None, (1,), {}, 'f', (lambda x: x))\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::from_shared(PyShared::new(obj));
-            let f = KpcHandlerFactory;
-            assert!(
-                f.can_handle(&effect),
-                "SPEC GAP: KPC handler should claim opaque KPC effect"
-            );
-        });
-    }
-
-    #[test]
-    fn test_kpc_handler_start_from_python_kpc_effect() {
-        Python::attach(|py| {
-            let mut store = RustStore::new();
-            let k = make_test_continuation();
-
-            let locals = pyo3::types::PyDict::new(py);
-            locals.set_item("PyKPC", py.get_type::<PyKPC>()).unwrap();
-            py.run(
-                c"obj = PyKPC(None, (1,), {}, 'f', (lambda x: x))\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::from_shared(PyShared::new(obj));
-
-            let program_ref = KpcHandlerFactory.create_program();
-            let step = {
-                let mut guard = program_ref.lock().unwrap();
-                guard.start(py, effect, k, &mut store)
-            };
-            assert!(
-                matches!(
-                    step,
-                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
-                ),
-                "SPEC GAP: KPC opaque effect should start via GetHandlers"
-            );
-        });
-    }
-
-    #[test]
     fn test_state_factory_can_handle() {
         let f = StateHandlerFactory;
-        assert!(f.can_handle(&Effect::Get {
-            key: "x".to_string()
-        }));
-        assert!(f.can_handle(&Effect::Put {
-            key: "x".to_string(),
-            value: Value::Unit
-        }));
-        assert!(!f.can_handle(&Effect::Ask {
-            key: "x".to_string()
-        }));
-        assert!(!f.can_handle(&Effect::Tell {
-            message: Value::Unit
-        }));
+        assert!(HandlerInvoke::can_handle(
+            &f,
+            &Effect::Get {
+                key: "x".to_string()
+            }
+        ));
+        assert!(HandlerInvoke::can_handle(
+            &f,
+            &Effect::Put {
+                key: "x".to_string(),
+                value: Value::Unit
+            }
+        ));
+        assert!(!HandlerInvoke::can_handle(
+            &f,
+            &Effect::Ask {
+                key: "x".to_string()
+            }
+        ));
+        assert!(!HandlerInvoke::can_handle(
+            &f,
+            &Effect::Tell {
+                message: Value::Unit
+            }
+        ));
     }
 
     #[test]
@@ -2022,7 +2828,7 @@ mod tests {
                 )
             };
             match step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                ASTStreamStep::Yield(DoCtrl::Resume { value, .. }) => {
                     assert_eq!(value.as_int(), Some(42));
                 }
                 _ => panic!(
@@ -2053,10 +2859,10 @@ mod tests {
             };
             assert!(matches!(
                 step,
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                ASTStreamStep::Yield(DoCtrl::Resume {
                     value: Value::Unit,
                     ..
-                }))
+                })
             ));
             assert_eq!(store.get("key").unwrap().as_int(), Some(99));
         });
@@ -2084,7 +2890,7 @@ mod tests {
                 )
             };
             match step {
-                RustProgramStep::NeedsPython(PythonCall::CallFunc { args, .. }) => {
+                ASTStreamStep::NeedsPython(PythonCall::CallFunc { args, .. }) => {
                     assert_eq!(args.len(), 1);
                     assert_eq!(args[0].as_int(), Some(10));
                 }
@@ -2121,7 +2927,7 @@ mod tests {
                 guard.resume(Value::Int(20), &mut store)
             };
             match step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                ASTStreamStep::Yield(DoCtrl::Resume { value, .. }) => {
                     assert_eq!(value.as_int(), Some(10)); // old_value returned (SPEC-008 L1271)
                 }
                 _ => panic!("Expected Yield(Resume) with old_value"),
@@ -2133,24 +2939,31 @@ mod tests {
     #[test]
     fn test_reader_factory_can_handle() {
         let f = ReaderHandlerFactory;
-        assert!(f.can_handle(&Effect::Ask {
-            key: "x".to_string()
-        }));
-        assert!(!f.can_handle(&Effect::Get {
-            key: "x".to_string()
-        }));
-        assert!(!f.can_handle(&Effect::Tell {
-            message: Value::Unit
-        }));
+        assert!(HandlerInvoke::can_handle(
+            &f,
+            &Effect::Ask {
+                key: "x".to_string()
+            }
+        ));
+        assert!(!HandlerInvoke::can_handle(
+            &f,
+            &Effect::Get {
+                key: "x".to_string()
+            }
+        ));
+        assert!(!HandlerInvoke::can_handle(
+            &f,
+            &Effect::Tell {
+                message: Value::Unit
+            }
+        ));
     }
 
     #[test]
     fn test_reader_factory_ask() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-            store
-                .env
-                .insert("config".to_string(), Value::String("value".to_string()));
+            store.set_env_str("config", Value::String("value".to_string()));
             let k = make_test_continuation();
             let program_ref = ReaderHandlerFactory.create_program();
             let step = {
@@ -2165,7 +2978,7 @@ mod tests {
                 )
             };
             match step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                ASTStreamStep::Yield(DoCtrl::Resume { value, .. }) => {
                     assert_eq!(value.as_str(), Some("value"));
                 }
                 _ => panic!("Expected Yield(Resume)"),
@@ -2176,15 +2989,24 @@ mod tests {
     #[test]
     fn test_writer_factory_can_handle() {
         let f = WriterHandlerFactory;
-        assert!(f.can_handle(&Effect::Tell {
-            message: Value::Unit
-        }));
-        assert!(!f.can_handle(&Effect::Get {
-            key: "x".to_string()
-        }));
-        assert!(!f.can_handle(&Effect::Ask {
-            key: "x".to_string()
-        }));
+        assert!(HandlerInvoke::can_handle(
+            &f,
+            &Effect::Tell {
+                message: Value::Unit
+            }
+        ));
+        assert!(!HandlerInvoke::can_handle(
+            &f,
+            &Effect::Get {
+                key: "x".to_string()
+            }
+        ));
+        assert!(!HandlerInvoke::can_handle(
+            &f,
+            &Effect::Ask {
+                key: "x".to_string()
+            }
+        ));
     }
 
     #[test]
@@ -2206,10 +3028,10 @@ mod tests {
             };
             assert!(matches!(
                 step,
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                ASTStreamStep::Yield(DoCtrl::Resume {
                     value: Value::Unit,
                     ..
-                }))
+                })
             ));
             assert_eq!(store.logs().len(), 1);
         });
@@ -2220,10 +3042,13 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             locals
-                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .set_item(
+                    "ResultSafeEffect",
+                    py.get_type::<crate::effect::PyResultSafeEffect>(),
+                )
                 .unwrap();
             py.run(
-                c"class ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
+                c"obj = ResultSafeEffect(None)\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2232,7 +3057,7 @@ mod tests {
             let effect = Effect::from_shared(PyShared::new(obj));
             let f = ResultSafeHandlerFactory;
             assert!(
-                f.can_handle(&effect),
+                HandlerInvoke::can_handle(&f, &effect),
                 "ResultSafe handler should claim ResultSafeEffect"
             );
         });
@@ -2246,10 +3071,13 @@ mod tests {
 
             let locals = pyo3::types::PyDict::new(py);
             locals
-                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .set_item(
+                    "ResultSafeEffect",
+                    py.get_type::<crate::effect::PyResultSafeEffect>(),
+                )
                 .unwrap();
             py.run(
-                c"class ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
+                c"obj = ResultSafeEffect(None)\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2264,7 +3092,7 @@ mod tests {
             };
             assert!(matches!(
                 start_step,
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+                ASTStreamStep::Yield(DoCtrl::GetHandlers)
             ));
 
             let await_eval_step = {
@@ -2273,7 +3101,7 @@ mod tests {
             };
             assert!(matches!(
                 await_eval_step,
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval { .. }))
+                ASTStreamStep::Yield(DoCtrl::Eval { .. })
             ));
 
             let ok_step = {
@@ -2281,10 +3109,10 @@ mod tests {
                 guard.resume(Value::Int(42), &mut store)
             };
             match ok_step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                ASTStreamStep::Yield(DoCtrl::Resume {
                     value: Value::Python(obj),
                     ..
-                })) => {
+                }) => {
                     let bound = obj.bind(py);
                     let is_ok: bool = bound.call_method0("is_ok").unwrap().extract().unwrap();
                     let inner = bound.getattr("value").unwrap();
@@ -2306,10 +3134,10 @@ mod tests {
             };
 
             match err_step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                ASTStreamStep::Yield(DoCtrl::Resume {
                     value: Value::Python(obj),
                     ..
-                })) => {
+                }) => {
                     let bound = obj.bind(py);
                     let is_err: bool = bound.call_method0("is_err").unwrap().extract().unwrap();
                     let error = bound.getattr("error").unwrap();
@@ -2351,7 +3179,7 @@ mod tests {
             };
             assert!(matches!(
                 step1,
-                RustProgramStep::NeedsPython(PythonCall::CallFunc { .. })
+                ASTStreamStep::NeedsPython(PythonCall::CallFunc { .. })
             ));
 
             // Step 2: first resume() returns NeedsPython AGAIN (the critical path)
@@ -2362,7 +3190,7 @@ mod tests {
             assert!(
                 matches!(
                     step2,
-                    RustProgramStep::NeedsPython(PythonCall::CallFunc { .. })
+                    ASTStreamStep::NeedsPython(PythonCall::CallFunc { .. })
                 ),
                 "Expected NeedsPython from resume(), got something else"
             );
@@ -2373,7 +3201,7 @@ mod tests {
                 guard.resume(Value::Int(200), &mut store)
             };
             match step3 {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                ASTStreamStep::Yield(DoCtrl::Resume { value, .. }) => {
                     // 100 + 200 = 300
                     assert_eq!(value.as_int(), Some(300));
                 }

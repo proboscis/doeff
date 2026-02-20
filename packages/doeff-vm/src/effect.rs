@@ -2,11 +2,12 @@
 //!
 //! Effects are the requests that user code makes, which handlers respond to.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::frame::CallMetadata;
 use crate::py_shared::PyShared;
 use crate::pyvm::{DoExprTag, PyEffectBase};
+#[cfg(test)]
 use crate::value::Value;
 
 // ---------------------------------------------------------------------------
@@ -38,7 +39,15 @@ pub struct PyModify {
 #[pyclass(frozen, name = "PyAsk", extends=PyEffectBase)]
 pub struct PyAsk {
     #[pyo3(get)]
-    pub key: String,
+    pub key: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "PyLocal", extends=PyEffectBase)]
+pub struct PyLocal {
+    #[pyo3(get)]
+    pub env_update: Py<PyAny>,
+    #[pyo3(get)]
+    pub sub_program: Py<PyAny>,
 }
 
 #[pyclass(frozen, name = "PyTell", extends=PyEffectBase)]
@@ -47,30 +56,10 @@ pub struct PyTell {
     pub message: Py<PyAny>,
 }
 
-#[pyclass(frozen, name = "PyKPC", extends=PyEffectBase)]
-pub struct PyKPC {
-    #[pyo3(get)]
-    pub kleisli_source: Py<PyAny>,
-    #[pyo3(get)]
-    pub args: Py<PyAny>,
-    #[pyo3(get)]
-    pub kwargs: Py<PyAny>,
-    #[pyo3(get)]
-    pub function_name: String,
-    #[pyo3(get)]
-    pub args_repr: Option<String>,
-    #[pyo3(get)]
-    pub execution_kernel: Py<PyAny>,
-    #[pyo3(get)]
-    pub created_at: Py<PyAny>,
-}
-
 #[pyclass(frozen, name = "SpawnEffect", extends=PyEffectBase)]
 pub struct PySpawn {
     #[pyo3(get)]
     pub program: Py<PyAny>,
-    #[pyo3(get)]
-    pub preferred_backend: Option<String>,
     #[pyo3(get)]
     pub options: Py<PyAny>,
     #[pyo3(get)]
@@ -115,6 +104,12 @@ pub struct PyFailPromise {
 #[pyclass(frozen, name = "CreateExternalPromiseEffect", extends=PyEffectBase)]
 pub struct PyCreateExternalPromise;
 
+#[pyclass(frozen, name = "PyCancelEffect", extends=PyEffectBase)]
+pub struct PyCancelEffect {
+    #[pyo3(get)]
+    pub task: Py<PyAny>,
+}
+
 #[pyclass(frozen, name = "_SchedulerTaskCompleted", extends=PyEffectBase)]
 pub struct PyTaskCompleted {
     #[pyo3(get)]
@@ -127,6 +122,56 @@ pub struct PyTaskCompleted {
     pub result: Py<PyAny>,
 }
 
+#[pyclass(frozen, name = "CreateSemaphoreEffect", extends=PyEffectBase)]
+pub struct PyCreateSemaphore {
+    #[pyo3(get)]
+    pub permits: i64,
+}
+
+#[pyclass(frozen, name = "AcquireSemaphoreEffect", extends=PyEffectBase)]
+pub struct PyAcquireSemaphore {
+    #[pyo3(get)]
+    pub semaphore: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "ReleaseSemaphoreEffect", extends=PyEffectBase)]
+pub struct PyReleaseSemaphore {
+    #[pyo3(get)]
+    pub semaphore: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "PythonAsyncioAwaitEffect", extends=PyEffectBase)]
+pub struct PyPythonAsyncioAwaitEffect {
+    #[pyo3(get)]
+    pub awaitable: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "ResultSafeEffect", extends=PyEffectBase)]
+pub struct PyResultSafeEffect {
+    #[pyo3(get)]
+    pub sub_program: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "ProgramTraceEffect", extends=PyEffectBase)]
+pub struct PyProgramTrace;
+
+#[pyclass(frozen, name = "ProgramCallStackEffect", extends=PyEffectBase)]
+pub struct PyProgramCallStack;
+
+#[pyclass(frozen, name = "ProgramCallFrameEffect", extends=PyEffectBase)]
+pub struct PyProgramCallFrame {
+    #[pyo3(get)]
+    pub depth: i64,
+}
+
+fn py_repr_or(py: Python<'_>, value: &Py<PyAny>, fallback: &str) -> String {
+    value
+        .bind(py)
+        .repr()
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| fallback.to_string())
+}
+
 #[pymethods]
 impl PyGet {
     #[new]
@@ -135,6 +180,10 @@ impl PyGet {
             tag: DoExprTag::Effect as u8,
         })
         .add_subclass(PyGet { key })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Get({:?})", self.key)
     }
 }
 
@@ -147,6 +196,11 @@ impl PyPut {
         })
         .add_subclass(PyPut { key, value })
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let value_repr = py_repr_or(py, &self.value, "<value>");
+        format!("Put({:?}, {})", self.key, value_repr)
+    }
 }
 
 #[pymethods]
@@ -158,16 +212,46 @@ impl PyModify {
         })
         .add_subclass(PyModify { key, func })
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let func_repr = py_repr_or(py, &self.func, "<modifier>");
+        format!("Modify({:?}, {})", self.key, func_repr)
+    }
 }
 
 #[pymethods]
 impl PyAsk {
     #[new]
-    fn new(key: String) -> PyClassInitializer<Self> {
+    fn new(key: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
         })
         .add_subclass(PyAsk { key })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let key_repr = py_repr_or(py, &self.key, "<key>");
+        format!("Ask({})", key_repr)
+    }
+}
+
+#[pymethods]
+impl PyLocal {
+    #[new]
+    fn new(env_update: Py<PyAny>, sub_program: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyLocal {
+            env_update,
+            sub_program,
+        })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let env_repr = py_repr_or(py, &self.env_update, "<env_update>");
+        let sub_program_repr = py_repr_or(py, &self.sub_program, "<sub_program>");
+        format!("Local({}, {})", env_repr, sub_program_repr)
     }
 }
 
@@ -180,34 +264,15 @@ impl PyTell {
         })
         .add_subclass(PyTell { message })
     }
-}
 
-#[pymethods]
-impl PyKPC {
-    #[new]
-    #[pyo3(signature = (kleisli_source, args, kwargs, function_name, execution_kernel, created_at=None, args_repr=None))]
-    fn new(
-        kleisli_source: Py<PyAny>,
-        args: Py<PyAny>,
-        kwargs: Py<PyAny>,
-        function_name: String,
-        execution_kernel: Py<PyAny>,
-        created_at: Option<Py<PyAny>>,
-        args_repr: Option<String>,
-        py: Python<'_>,
-    ) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase {
-            tag: DoExprTag::Effect as u8,
-        })
-        .add_subclass(PyKPC {
-            kleisli_source,
-            args,
-            kwargs,
-            function_name,
-            args_repr,
-            execution_kernel,
-            created_at: created_at.unwrap_or_else(|| py.None()),
-        })
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let message_repr = self
+            .message
+            .bind(py)
+            .repr()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| "<message>".to_string());
+        format!("Tell({})", message_repr)
     }
 }
 
@@ -215,7 +280,6 @@ impl PySpawn {
     pub(crate) fn create(
         py: Python<'_>,
         program: Py<PyAny>,
-        preferred_backend: Option<String>,
         options: Option<Py<PyAny>>,
         handlers: Option<Py<PyAny>>,
         store_mode: Option<Py<PyAny>>,
@@ -225,7 +289,6 @@ impl PySpawn {
         })
         .add_subclass(PySpawn {
             program,
-            preferred_backend,
             options: options.unwrap_or_else(|| pyo3::types::PyDict::new(py).into_any().unbind()),
             handlers: handlers
                 .unwrap_or_else(|| pyo3::types::PyList::empty(py).into_any().unbind()),
@@ -236,26 +299,25 @@ impl PySpawn {
 
 #[pymethods]
 impl PySpawn {
-    #[classattr]
-    const __doeff_scheduler_spawn__: bool = true;
-
     #[new]
-    #[pyo3(signature = (program, preferred_backend=None, options=None, handlers=None, store_mode=None))]
+    #[pyo3(signature = (program, options=None, handlers=None, store_mode=None))]
     fn new(
         py: Python<'_>,
         program: Py<PyAny>,
-        preferred_backend: Option<String>,
         options: Option<Py<PyAny>>,
         handlers: Option<Py<PyAny>>,
         store_mode: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
-        Self::create(
-            py,
-            program,
-            preferred_backend,
-            options,
-            handlers,
-            store_mode,
+        Self::create(py, program, options, handlers, store_mode)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let program_repr = py_repr_or(py, &self.program, "<program>");
+        let handlers_repr = py_repr_or(py, &self.handlers, "<handlers>");
+        let store_mode_repr = py_repr_or(py, &self.store_mode, "<store_mode>");
+        format!(
+            "Spawn(program={}, handlers={}, store_mode={})",
+            program_repr, handlers_repr, store_mode_repr
         )
     }
 }
@@ -278,9 +340,6 @@ impl PyGather {
 
 #[pymethods]
 impl PyGather {
-    #[classattr]
-    const __doeff_scheduler_gather__: bool = true;
-
     #[new]
     #[pyo3(signature = (items, _partial_results=None))]
     fn new(
@@ -290,13 +349,15 @@ impl PyGather {
     ) -> PyClassInitializer<Self> {
         Self::create(py, items, _partial_results)
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let items_repr = py_repr_or(py, &self.items, "<items>");
+        format!("Gather({})", items_repr)
+    }
 }
 
 #[pymethods]
 impl PyRace {
-    #[classattr]
-    const __doeff_scheduler_race__: bool = true;
-
     #[new]
     fn new(futures: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -304,13 +365,15 @@ impl PyRace {
         })
         .add_subclass(PyRace { futures })
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let futures_repr = py_repr_or(py, &self.futures, "<futures>");
+        format!("Race({})", futures_repr)
+    }
 }
 
 #[pymethods]
 impl PyCreatePromise {
-    #[classattr]
-    const __doeff_scheduler_create_promise__: bool = true;
-
     #[new]
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -318,13 +381,14 @@ impl PyCreatePromise {
         })
         .add_subclass(PyCreatePromise)
     }
+
+    fn __repr__(&self) -> String {
+        "CreatePromise()".to_string()
+    }
 }
 
 #[pymethods]
 impl PyCompletePromise {
-    #[classattr]
-    const __doeff_scheduler_complete_promise__: bool = true;
-
     #[new]
     fn new(promise: Py<PyAny>, value: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -332,13 +396,16 @@ impl PyCompletePromise {
         })
         .add_subclass(PyCompletePromise { promise, value })
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let promise_repr = py_repr_or(py, &self.promise, "<promise>");
+        let value_repr = py_repr_or(py, &self.value, "<value>");
+        format!("CompletePromise({}, {})", promise_repr, value_repr)
+    }
 }
 
 #[pymethods]
 impl PyFailPromise {
-    #[classattr]
-    const __doeff_scheduler_fail_promise__: bool = true;
-
     #[new]
     fn new(promise: Py<PyAny>, error: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -346,13 +413,16 @@ impl PyFailPromise {
         })
         .add_subclass(PyFailPromise { promise, error })
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let promise_repr = py_repr_or(py, &self.promise, "<promise>");
+        let error_repr = py_repr_or(py, &self.error, "<error>");
+        format!("FailPromise({}, {})", promise_repr, error_repr)
+    }
 }
 
 #[pymethods]
 impl PyCreateExternalPromise {
-    #[classattr]
-    const __doeff_scheduler_create_external_promise__: bool = true;
-
     #[new]
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -360,13 +430,30 @@ impl PyCreateExternalPromise {
         })
         .add_subclass(PyCreateExternalPromise)
     }
+
+    fn __repr__(&self) -> String {
+        "CreateExternalPromise()".to_string()
+    }
+}
+
+#[pymethods]
+impl PyCancelEffect {
+    #[new]
+    fn new(task: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyCancelEffect { task })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let task_repr = py_repr_or(py, &self.task, "<task>");
+        format!("CancelTask({})", task_repr)
+    }
 }
 
 #[pymethods]
 impl PyTaskCompleted {
-    #[classattr]
-    const __doeff_scheduler_task_completed__: bool = true;
-
     #[new]
     #[pyo3(signature = (*, task=None, task_id=None, handle_id=None, result=None))]
     fn new(
@@ -386,21 +473,143 @@ impl PyTaskCompleted {
             result: result.unwrap_or_else(|| py.None()),
         })
     }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let task_repr = py_repr_or(py, &self.task, "<task>");
+        let result_repr = py_repr_or(py, &self.result, "<result>");
+        format!("TaskCompleted(task={}, result={})", task_repr, result_repr)
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum KpcArg {
-    Value(Value),
-    Expr(PyShared),
+#[pymethods]
+impl PyCreateSemaphore {
+    #[new]
+    fn new(permits: i64) -> PyResult<PyClassInitializer<Self>> {
+        if permits < 1 {
+            return Err(PyValueError::new_err("permits must be >= 1"));
+        }
+        Ok(PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyCreateSemaphore { permits }))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("CreateSemaphore({})", self.permits)
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct KpcCallEffect {
-    pub call: PyShared,
-    pub kernel: PyShared,
-    pub args: Vec<KpcArg>,
-    pub kwargs: Vec<(String, KpcArg)>,
-    pub metadata: CallMetadata,
+#[pymethods]
+impl PyAcquireSemaphore {
+    #[new]
+    fn new(semaphore: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyAcquireSemaphore { semaphore })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let semaphore_repr = py_repr_or(py, &self.semaphore, "<semaphore>");
+        format!("AcquireSemaphore({})", semaphore_repr)
+    }
+}
+
+#[pymethods]
+impl PyReleaseSemaphore {
+    #[new]
+    fn new(semaphore: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyReleaseSemaphore { semaphore })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let semaphore_repr = py_repr_or(py, &self.semaphore, "<semaphore>");
+        format!("ReleaseSemaphore({})", semaphore_repr)
+    }
+}
+
+#[pymethods]
+impl PyPythonAsyncioAwaitEffect {
+    #[new]
+    fn new(awaitable: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyPythonAsyncioAwaitEffect { awaitable })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let awaitable_repr = py_repr_or(py, &self.awaitable, "<awaitable>");
+        format!("PythonAsyncioAwaitEffect({})", awaitable_repr)
+    }
+}
+
+#[pymethods]
+impl PyResultSafeEffect {
+    #[new]
+    fn new(sub_program: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyResultSafeEffect { sub_program })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let sub_program_repr = py_repr_or(py, &self.sub_program, "<sub_program>");
+        format!("ResultSafe({})", sub_program_repr)
+    }
+}
+
+#[pymethods]
+impl PyProgramTrace {
+    #[new]
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyProgramTrace)
+    }
+
+    fn __repr__(&self) -> String {
+        "ProgramTrace()".to_string()
+    }
+}
+
+#[pymethods]
+impl PyProgramCallStack {
+    #[new]
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyProgramCallStack)
+    }
+
+    fn __repr__(&self) -> String {
+        "ProgramCallStack()".to_string()
+    }
+}
+
+#[pymethods]
+impl PyProgramCallFrame {
+    #[new]
+    #[pyo3(signature = (depth=0))]
+    fn new(depth: i64) -> PyResult<PyClassInitializer<Self>> {
+        if depth < 0 {
+            return Err(PyValueError::new_err("depth must be >= 0"));
+        }
+        Ok(PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyProgramCallFrame { depth }))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ProgramCallFrame(depth={})", self.depth)
+    }
 }
 
 #[cfg(not(test))]
@@ -458,28 +667,6 @@ pub fn dispatch_into_python(effect: DispatchEffect) -> Option<PyShared> {
     #[cfg(not(test))]
     {
         Some(effect)
-    }
-}
-
-pub fn dispatch_clone_as_effect(effect: &DispatchEffect) -> Effect {
-    #[cfg(test)]
-    {
-        effect.clone()
-    }
-    #[cfg(not(test))]
-    {
-        Effect(effect.clone())
-    }
-}
-
-pub fn dispatch_into_effect(effect: DispatchEffect) -> Effect {
-    #[cfg(test)]
-    {
-        effect
-    }
-    #[cfg(not(test))]
-    {
-        Effect(effect)
     }
 }
 

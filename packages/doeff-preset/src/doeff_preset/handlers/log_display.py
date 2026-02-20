@@ -106,7 +106,7 @@ def log_display_handlers() -> dict[type, Any]:
         Handler dict with WriterTellEffect -> handle_tell_with_display.
 
     Example:
-        >>> from doeff import run_with_handler_map
+        >>> from doeff.rust_vm import run_with_handler_map
         >>> from doeff_preset import log_display_handlers
         >>>
         >>> result = run_with_handler_map(workflow(), log_display_handlers())

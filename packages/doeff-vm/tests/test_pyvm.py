@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 import doeff_vm
-from doeff import do, Program
+from doeff import Effect, Program, do
 from doeff.effects import Get, Put, Modify, Ask, Tell, Pure
 
 
@@ -561,6 +561,8 @@ async def async_run(vm, program):
         tag = result[0]
         if tag == "done":
             return result[1]
+        elif tag == "error":
+            raise result[1]
         elif tag == "call_async":
             func, args = result[1], result[2]
             try:
@@ -801,7 +803,7 @@ def test_run_scoped_successive_independent_runs():
 def test_yielded_raw_generator_rejected_as_program():
     """Yielding a raw generator inside a program body should raise TypeError.
 
-    The VM requires Yielded::Program entries to be ProgramBase objects (with
+    The VM requires program-classification entries to be ProgramBase objects (with
     a ``to_generator`` method). Raw generators must go through ``vm.run()``
     or ``vm.start_program()`` instead.
     """
@@ -814,7 +816,7 @@ def test_yielded_raw_generator_rejected_as_program():
         yield Pure(42)
 
     def main():
-        # Yielding a raw generator triggers classify_yielded -> Yielded::Program
+        # Yielding a raw generator triggers classify_yielded -> program-classification
         # -> StartProgram -> to_generator_strict -> TypeError
         result = yield sub_generator()
         return result
@@ -874,7 +876,7 @@ class UnknownThing:
     """Not an effect, not a primitive, not a program.
 
     Used by G4 test to verify that truly unrecognized yielded objects
-    produce a TypeError (Yielded::Unknown) rather than being silently
+    produce a TypeError (legacy unknown-yield classification) rather than being silently
     dispatched as Effect::Python.
     """
 
@@ -1280,7 +1282,7 @@ class TestR9HandlerNesting:
         from doeff_vm import run, state, Resume
 
         @do
-        def my_handler(effect, k):
+        def my_handler(effect: Effect, k):
             if hasattr(effect, "message"):
                 # Custom Tell handler that does nothing
                 result = yield Resume(k, None)
@@ -1357,7 +1359,7 @@ class TestR9ClassifyYieldedCompleteness:
         GatherEffect extends EffectBase extends ProgramBase, so it has
         `to_generator`. classify_yielded must check for effect type names
         BEFORE the to_generator fallback, otherwise scheduler effects get
-        misclassified as Yielded::Program and the VM tries to start them.
+        misclassified as program-classification and the VM tries to start them.
         """
         import subprocess
         import sys
@@ -1479,7 +1481,6 @@ def test_tag_attribute_accessible():
 
     # Verify tag values
     assert doeff_vm.TAG_PURE == 0
-    assert doeff_vm.TAG_CALL == 1
     assert doeff_vm.TAG_MAP == 2
     assert doeff_vm.TAG_FLAT_MAP == 3
     assert doeff_vm.TAG_WITH_HANDLER == 4
@@ -1490,11 +1491,13 @@ def test_tag_attribute_accessible():
     assert doeff_vm.TAG_GET_CONTINUATION == 9
     assert doeff_vm.TAG_GET_HANDLERS == 10
     assert doeff_vm.TAG_GET_CALL_STACK == 11
-    assert doeff_vm.TAG_GET_TRACE == 18
     assert doeff_vm.TAG_EVAL == 12
     assert doeff_vm.TAG_CREATE_CONTINUATION == 13
     assert doeff_vm.TAG_RESUME_CONTINUATION == 14
     assert doeff_vm.TAG_ASYNC_ESCAPE == 15
+    assert doeff_vm.TAG_APPLY == 16
+    assert doeff_vm.TAG_EXPAND == 17
+    assert doeff_vm.TAG_GET_TRACE == 18
     assert doeff_vm.TAG_EFFECT == 128
     assert doeff_vm.TAG_UNKNOWN == 255
 
@@ -1503,20 +1506,36 @@ def test_tag_on_concrete_instances():
     """R13-I: Concrete DoCtrl instances have correct tag values."""
     from doeff_vm import (
         Pure,
+        Apply,
+        Expand,
         GetHandlers,
         GetCallStack,
         GetTrace,
         TAG_PURE,
+        TAG_APPLY,
+        TAG_EXPAND,
         TAG_GET_HANDLERS,
         TAG_GET_CALL_STACK,
         TAG_GET_TRACE,
     )
+
+    meta = {
+        "function_name": "test_fn",
+        "source_file": __file__,
+        "source_line": 1,
+    }
 
     pure = Pure(42)
     assert pure.tag == TAG_PURE
 
     gh = GetHandlers()
     assert gh.tag == TAG_GET_HANDLERS
+
+    apply = Apply(lambda x: x, [1], {}, meta)
+    assert apply.tag == TAG_APPLY
+
+    expand = Expand(lambda x: x, [1], {}, meta)
+    assert expand.tag == TAG_EXPAND
 
     gcs = GetCallStack()
     assert gcs.tag == TAG_GET_CALL_STACK
@@ -1535,6 +1554,29 @@ def test_tag_on_effect_base():
 
     put = Put("key", 42)
     assert put.tag == TAG_EFFECT
+
+
+def test_doeff_generator_fn_call_wraps_generator_with_factory() -> None:
+    import doeff_vm
+
+    def make_gen():
+        yield 1
+
+    def get_frame(g):
+        return g.gi_frame
+
+    factory = doeff_vm.DoeffGeneratorFn(
+        callable=make_gen,
+        function_name="make_gen",
+        source_file=__file__,
+        source_line=1,
+        get_frame=get_frame,
+    )
+    wrapped = factory()
+
+    assert isinstance(wrapped, doeff_vm.DoeffGenerator)
+    assert wrapped.factory is factory
+    assert wrapped.function_name == "make_gen"
 
 
 def test_tag_dispatch_does_not_break_existing_programs():
@@ -1741,7 +1783,7 @@ def test_flatmap_rejects_non_doexpr_binder_return():
     plain int), the VM should raise a runtime TypeError rather than silently
     propagating the raw value.
     """
-    from doeff_vm import FlatMap, Pure, PyVM
+    from doeff_vm import PyVM
 
     vm = PyVM()
 
@@ -1749,7 +1791,7 @@ def test_flatmap_rejects_non_doexpr_binder_return():
         return x * 2  # returns 20, a plain int — NOT a DoExpr
 
     def body():
-        result = yield FlatMap(Pure(10), bad_binder)
+        result = yield Program.flat_map(Program.pure(10), bad_binder)
         return result
 
     try:
@@ -1767,128 +1809,91 @@ def test_flatmap_rejects_non_doexpr_binder_return():
         )
 
 
-def test_kpc_resolves_doexpr_args():
-    """ISSUE-VM-004: KPC handler resolves DoExpr args via Eval.
+def test_flatmap_requires_explicit_binder_metadata() -> None:
+    """VM-PROTO-005: FlatMap constructor must reject missing binder_meta."""
+    from doeff_vm import FlatMap, Pure
 
-    Verifies the KPC handler correctly resolves DoExpr positional args
-    before calling the kernel function.
+    def binder(x):
+        return Pure(x + 1)
 
-    SPEC-TYPES-001 §3.5 also specifies a concurrent variant (Gather-based
-    parallel resolution) — NOT yet implemented.
-    """
-    from doeff_vm import PyKPC, Pure, kpc
+    with pytest.raises(TypeError, match="binder_meta is required"):
+        FlatMap(Pure(1), binder)
+
+
+def test_call_resolves_doexpr_args():
+    """Call DoCtrl resolves DoExpr positional args before invoking the callable."""
     from doeff_vm import run as vm_run
 
+    @do
     def adder(a, b):
         return a + b
-        yield  # make generator
 
-    # Wrap args as DoExpr objects (Pure) so KPC recognizes them as Expr
-    kpc_effect = PyKPC(
-        kleisli_source=adder,
-        args=(Pure(10), Pure(20)),
-        kwargs={},
-        function_name="adder",
-        execution_kernel=adder,
-    )
-
+    @do
     def body():
-        result = yield kpc_effect
+        result = yield adder(Pure(10), Pure(20))
         return result
 
-    result = vm_run(body(), handlers=[kpc])
-    assert result.is_ok(), f"KPC resolution failed: {result.result}"
-    assert result.value == 30, f"KPC should resolve DoExpr args and call kernel, got {result.value}"
+    result = vm_run(body(), handlers=[])
+    assert result.is_ok(), f"Call arg resolution failed: {result.result}"
+    assert result.value == 30
 
 
-## -- ISSUE-VM-004: Concurrent KPC (Spawn+Gather) -----------------------------
-
-
-def test_concurrent_kpc_resolves_doexpr_args_in_parallel():
-    """ISSUE-VM-004: Concurrent KPC handler evaluates Expr args via
-    DoCtrl::Eval before calling the kernel.
-
-    No scheduler needed — Eval runs programs inline.
-    """
-    from doeff_vm import PyKPC, Pure, concurrent_kpc
+def test_call_with_mixed_value_and_expr_args():
+    """Call DoCtrl handles mixed literal and DoExpr arguments."""
     from doeff_vm import run as vm_run
 
-    def adder(a, b):
-        return a + b
-        yield  # make generator
-
-    kpc_effect = PyKPC(
-        kleisli_source=adder,
-        args=(Pure(10), Pure(20)),
-        kwargs={},
-        function_name="adder",
-        execution_kernel=adder,
-    )
-
-    def body():
-        result = yield kpc_effect
-        return result
-
-    result = vm_run(body(), handlers=[concurrent_kpc])
-    assert result.is_ok(), f"Concurrent KPC failed: {result.result}"
-    assert result.value == 30, (
-        f"Concurrent KPC should resolve DoExpr args via Eval, got {result.value}"
-    )
-
-
-def test_concurrent_kpc_with_mixed_value_and_expr_args():
-    """ISSUE-VM-004: Concurrent KPC handles mix of Value and Expr args.
-
-    Value args are passed through directly; only Expr args are Eval'd.
-    """
-    from doeff_vm import PyKPC, Pure, concurrent_kpc
-    from doeff_vm import run as vm_run
-
+    @do
     def mixer(a, b, c):
         return a + b + c
-        yield
 
-    kpc_effect = PyKPC(
-        kleisli_source=mixer,
-        args=(42, Pure(10), Pure(20)),  # 42 is Value, Pure(10/20) are Expr
-        kwargs={},
-        function_name="mixer",
-        execution_kernel=mixer,
-    )
-
+    @do
     def body():
-        result = yield kpc_effect
+        result = yield mixer(42, Pure(10), Pure(20))
         return result
 
-    result = vm_run(body(), handlers=[concurrent_kpc])
-    assert result.is_ok(), f"Mixed concurrent KPC failed: {result.result}"
-    assert result.value == 72, f"Expected 42+10+20=72, got {result.value}"
+    result = vm_run(body(), handlers=[])
+    assert result.is_ok(), f"Mixed Call argument resolution failed: {result.result}"
+    assert result.value == 72
 
 
-def test_concurrent_kpc_with_all_value_args():
-    """ISSUE-VM-004: Concurrent KPC with no Expr args skips eval phase."""
-    from doeff_vm import PyKPC, concurrent_kpc
+def test_call_with_all_value_args():
+    """Call DoCtrl still works when all args are already plain values."""
     from doeff_vm import run as vm_run
 
+    @do
     def adder(a, b):
         return a + b
-        yield
 
-    kpc_effect = PyKPC(
-        kleisli_source=adder,
-        args=(10, 20),  # both are plain values
-        kwargs={},
-        function_name="adder",
-        execution_kernel=adder,
-    )
-
+    @do
     def body():
-        result = yield kpc_effect
+        result = yield adder(10, 20)
         return result
 
-    result = vm_run(body(), handlers=[concurrent_kpc])
-    assert result.is_ok(), f"All-value concurrent KPC failed: {result.result}"
+    result = vm_run(body(), handlers=[])
+    assert result.is_ok(), f"All-value Call invocation failed: {result.result}"
     assert result.value == 30
+
+
+def test_call_resolves_nested_effectful_args_left_to_right():
+    """Nested Call DoCtrl args resolve effectful expressions in deterministic order."""
+    from doeff_vm import run as vm_run
+
+    @do
+    def inner(v):
+        return v + 1
+
+    @do
+    def outer(v):
+        return v * 3
+
+    @do
+    def body():
+        value = yield outer(inner(Ask("key")))
+        return value
+
+    result = vm_run(body(), handlers=[doeff_vm.reader], env={"key": 4})
+    assert result.is_ok(), f"Nested Call DoCtrl resolution failed: {result.result}"
+    assert result.value == 15
 
 
 if __name__ == "__main__":

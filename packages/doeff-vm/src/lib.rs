@@ -10,18 +10,21 @@
 //! - **All effects dispatch**: No bypass for stdlib effects
 
 pub mod arena;
+pub mod ast_stream;
 pub mod capture;
 pub mod continuation;
-mod effect;
 pub mod dispatch;
 pub mod do_ctrl;
+pub mod doeff_generator;
 pub mod driver;
+mod effect;
 pub mod error;
 pub mod frame;
 mod handler;
 pub mod ids;
-pub mod python_call;
+pub mod py_key;
 pub mod py_shared;
+pub mod python_call;
 pub mod pyvm;
 pub mod rust_store;
 pub mod scheduler;
@@ -29,30 +32,35 @@ pub mod segment;
 mod step;
 pub mod value;
 mod vm;
-pub mod yielded;
 
 // Re-exports for convenience
 pub use arena::SegmentArena;
+pub use ast_stream::{
+    ASTStream, ASTStreamRef, ASTStreamStep, PythonGeneratorStream, StreamLocation,
+};
 pub use capture::{
-    CaptureEvent, DelegationEntry, DispatchAction, FrameId, HandlerAction, HandlerKind,
-    TraceEntry,
+    ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
+    HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus,
+    SpawnSite, TraceEntry,
 };
 pub use continuation::Continuation;
 pub use dispatch::DispatchContext;
 pub use do_ctrl::DoCtrl;
+pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 pub use driver::{Mode, StepEvent};
-pub use effect::{Effect, PyGet, PyPut, PyModify, PyAsk, PyTell, PyKPC};
+pub use effect::{Effect, PyAsk, PyCancelEffect, PyGet, PyLocal, PyModify, PyPut, PyTell};
 pub use error::VMError;
 pub use frame::Frame;
 pub use handler::{
-    Handler, HandlerEntry, ReaderHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
+    Handler, HandlerDebugInfo, HandlerEntry, HandlerInvoke, HandlerRef, LazyAskHandlerFactory,
+    ReaderHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
 pub use ids::{CallbackId, ContId, DispatchId, Marker, RunnableId, SegmentId};
-pub use pyvm::{DoExprTag, PyStdlib, PyVM};
+pub use py_key::HashedPyKey;
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
+pub use pyvm::{DoExprTag, PyStdlib, PyVM};
 pub use rust_store::RustStore;
 pub use segment::{Segment, SegmentKind};
 pub use step::PyException;
-pub use yielded::Yielded;
 pub use value::Value;
 pub use vm::{Callback, VM};

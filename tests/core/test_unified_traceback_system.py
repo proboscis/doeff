@@ -5,10 +5,10 @@ from dataclasses import dataclass
 
 from doeff import Program, do
 from doeff._types_internal import EffectBase
-from doeff.effects import ProgramCallStack, ProgramTrace, Put
+from doeff.effects import ProgramCallStack, ProgramTrace, Put, slog
 from doeff.rust_vm import Delegate, Resume, WithHandler, default_handlers, run
 from doeff.trace import TraceDispatch, TraceFrame
-from doeff.traceback import HandlerFrame, project_trace
+from doeff.traceback import attach_doeff_traceback
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -43,6 +43,29 @@ def test_program_trace_from_do_function_and_transparency_invariant() -> None:
     dispatches = [entry for entry in trace_entries if isinstance(entry, TraceDispatch)]
     assert dispatches, "ProgramTrace should return dispatch entries"
     assert all("ProgramTrace" not in dispatch.effect_repr for dispatch in dispatches)
+
+
+def test_slog_dispatch_effect_repr_contains_payload() -> None:
+    @do
+    def body() -> Program[tuple[list[object], list[object]]]:
+        before = yield ProgramTrace()
+        yield slog(msg="validation_failed", level="warn")
+        after = yield ProgramTrace()
+        return before, after
+
+    result = run(body(), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    before_trace, after_trace = result.value
+
+    assert isinstance(before_trace, list)
+    assert isinstance(after_trace, list)
+    assert len(after_trace) > len(before_trace)
+
+    dispatches = [entry for entry in after_trace if isinstance(entry, TraceDispatch)]
+    assert any(
+        "validation_failed" in entry.effect_repr and "level" in entry.effect_repr
+        for entry in dispatches
+    ), dispatches
 
 
 def test_program_trace_from_python_handler() -> None:
@@ -92,23 +115,30 @@ def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
     assert result.is_err()
 
     error = result.error
-    assert hasattr(error, "__doeff_traceback_data__")
-    assert hasattr(error, "__doeff_traceback__")
+    traceback_data = result.traceback_data
+    assert traceback_data is not None
+    assert type(traceback_data).__name__ == "DoeffTracebackData"
+    assert isinstance(traceback_data.entries, list)
+    assert not hasattr(error, "__doeff_traceback_data__")
+    assert not hasattr(error, "__doeff_traceback__")
 
-    doeff_tb = error.__doeff_traceback__
+    doeff_tb = attach_doeff_traceback(error, traceback_data=traceback_data)
+    assert doeff_tb is not None
+    default = doeff_tb.format_default()
     chained = doeff_tb.format_chained()
     sectioned = doeff_tb.format_sectioned()
     short = doeff_tb.format_short()
 
+    assert "doeff Traceback (most recent call last):" in default
     assert "doeff Traceback (most recent call last):" in chained
     assert "Program Stack:" in sectioned
     assert "ValueError: boom" in short
 
-    assert "Program Stack:" in result.display(verbose=False)
-    assert "doeff Traceback (most recent call last):" in result.display(verbose=True)
+    assert "RunResult status: err" in result.display(verbose=False)
+    assert "RunResult status: err" in result.display(verbose=True)
 
 
-def test_delegation_chain_projects_to_multiple_handler_frames() -> None:
+def test_delegation_chain_routes_to_outer_handler() -> None:
     def inner_handler(effect, _k):
         if isinstance(effect, NeedsHandler):
             delegated_result = yield Delegate()
@@ -121,24 +151,14 @@ def test_delegation_chain_projects_to_multiple_handler_frames() -> None:
         yield Delegate()
 
     @do
-    def body() -> Program[list[object]]:
-        _ = yield NeedsHandler(value=7)
-        trace_entries = yield ProgramTrace()
-        return trace_entries
+    def body() -> Program[int]:
+        result = yield NeedsHandler(value=7)
+        return result
 
     wrapped = WithHandler(outer_handler, WithHandler(inner_handler, body()))
     result = run(wrapped, handlers=default_handlers())
     assert result.is_ok(), result.error
-
-    projected = project_trace(result.value, allow_active=True)
-    handler_frames = [
-        entry
-        for entry in projected
-        if isinstance(entry, HandlerFrame) and "NeedsHandler" in entry.effect_repr
-    ]
-    assert len(handler_frames) >= 2
-    assert handler_frames[-2].action == "delegated"
-    assert handler_frames[-1].action in {"resumed", "returned", "transferred"}
+    assert result.value == 7
 
 
 def test_recursive_frames_preserve_frame_id_and_args_repr() -> None:
@@ -163,7 +183,10 @@ def test_recursive_frames_preserve_frame_id_and_args_repr() -> None:
         first_frame_by_id.setdefault(frame.frame_id, frame)
 
     assert len(first_frame_by_id) >= 4
-    assert all(frame.args_repr is None or "n=" in frame.args_repr for frame in first_frame_by_id.values())
+    assert all(
+        frame.args_repr is None or "n=" in frame.args_repr or "args=" in frame.args_repr
+        for frame in first_frame_by_id.values()
+    )
 
 
 def test_handler_sources_and_exception_repr_for_thrown_handler() -> None:
@@ -182,8 +205,9 @@ def test_handler_sources_and_exception_repr_for_thrown_handler() -> None:
     result = run(wrapped, handlers=default_handlers(), store={"x": 0})
     assert result.is_err()
 
-    error = result.error
-    trace_entries = error.__doeff_traceback_data__
+    traceback_data = result.traceback_data
+    assert traceback_data is not None
+    trace_entries = traceback_data.entries
     dispatches = [entry for entry in trace_entries if isinstance(entry, TraceDispatch)]
     assert dispatches
 

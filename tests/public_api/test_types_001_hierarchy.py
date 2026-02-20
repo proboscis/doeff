@@ -1,15 +1,15 @@
-"""SPEC-TYPES-001 hierarchy tests (post-DoThunk removal)."""
+"""SPEC-TYPES-001 hierarchy tests (macro model).
+
+MACRO MODEL: @do call values are DoCtrl/ProgramBase, NOT EffectBase values.
+The @do call path produces Call DoCtrl semantics resolved by the VM trampoline.
+"""
 
 from __future__ import annotations
 
 from doeff import (
     Ask,
-    DoCtrl,
-    DoExpr,
     EffectBase,
-    GeneratorProgram,
     Get,
-    KleisliProgramCall,
     Perform,
     Program,
     ProgramBase,
@@ -17,6 +17,7 @@ from doeff import (
     Tell,
     do,
 )
+from doeff.program import DoCtrl, DoExpr, GeneratorProgram
 
 
 class TestTH01DistinctTypes:
@@ -42,29 +43,69 @@ class TestTH03ProgramBaseChain:
         assert issubclass(ProgramBase, DoExpr)
 
 
-class TestTH04KPCIsEffect:
-    def test_kpc_isinstance_effectbase(self) -> None:
+class TestTH04KPCIsProgramShape:
+    """KPC is program-shaped and composes via ProgramBase/DoCtrl APIs."""
+
+    def test_kpc_isinstance_programbase_or_doctrl(self) -> None:
+        """@do call result should satisfy ProgramBase/DoCtrl relationship."""
+
         @do
         def add_one(x: int):
             if False:
                 yield Ask("unused")
             return x + 1
 
-        assert isinstance(add_one(1), EffectBase)
+        kpc = add_one(1)
+        assert isinstance(kpc, (DoCtrl, ProgramBase)), (
+            f"KPC should be DoCtrl/ProgramBase-compatible, got {type(kpc).__name__}"
+        )
 
-    def test_kpc_issubclass_effectbase(self) -> None:
-        assert issubclass(KleisliProgramCall, EffectBase)
+    def test_call_result_not_effect_value(self) -> None:
+        """@do call result should be control/program, not a bare effect value."""
 
-
-class TestTH05KPCNotThunk:
-    def test_no_to_generator(self) -> None:
         @do
         def identity(x: int):
             if False:
                 yield Ask("unused")
             return x
 
-        assert not hasattr(identity(42), "to_generator")
+        assert not isinstance(identity(42), EffectBase)
+
+    def test_kpc_is_doctrl_or_programbase(self) -> None:
+        """Macro model: KPC should be a DoCtrl or ProgramBase."""
+
+        @do
+        def identity(x: int):
+            if False:
+                yield Ask("unused")
+            return x
+
+        kpc = identity(42)
+        assert isinstance(kpc, (DoCtrl, ProgramBase)), (
+            f"Macro model: KPC should be DoCtrl or ProgramBase, got {type(kpc).__name__}"
+        )
+
+    def test_call_class_is_doctrl_type(self) -> None:
+        """Macro model: @do call values are ProgramBase/DoCtrl values."""
+
+        @do
+        def identity(x: int):
+            if False:
+                yield Ask("unused")
+            return x
+
+        assert isinstance(identity(1), (DoCtrl, ProgramBase))
+
+
+class TestTH05KPCNotThunk:
+    def test_call_exposes_to_generator_bridge(self) -> None:
+        @do
+        def identity(x: int):
+            if False:
+                yield Ask("unused")
+            return x
+
+        assert hasattr(identity(42), "to_generator")
 
 
 class TestTH06GeneratorProgramShape:

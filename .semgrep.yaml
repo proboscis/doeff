@@ -13,6 +13,231 @@ rules:
   # EFFECT SYSTEM PATTERNS
   # ---------------------------------------------------------------------------
 
+  - id: doeff-no-effect-creation-context-wrapper
+    patterns:
+      - pattern-either:
+          - pattern: create_effect_with_trace(...)
+          - pattern: capture_creation_context(...)
+    paths:
+      include:
+        - "**/doeff/effects/**"
+        - "**/packages/doeff-events/src/**"
+        - "**/packages/doeff-time/src/**"
+        - "**/packages/doeff-sim/src/**"
+        - "**/doeff/utils.py"
+    message: |
+      BANNED: EffectCreationContext wrappers are removed (VM-PROTO-006).
+      Construct effects directly; source locations come from DoeffGenerator.get_frame
+      and VM traceback_data, not effect.created_at metadata.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-006
+
+  - id: doeff-no-python-side-cancel-state
+    patterns:
+      - pattern-either:
+          - pattern: _cancelled_task_ids
+          - pattern: _cancelled_task_ids.add(...)
+          - pattern: _cancelled_task_ids.discard(...)
+          - pattern: $X in _cancelled_task_ids
+    paths:
+      include:
+        - "**/doeff/**"
+      exclude:
+        - "**/tests/**"
+    message: |
+      BANNED: Python-side cancel state management.
+      Cancellation state belongs in the Rust scheduler (`cancel_requested: HashSet<TaskId>`).
+      Task.cancel() must yield a PyCancelEffect, not mutate Python globals.
+      See SPEC-SCHED-001 §Cancel, ISSUE-CORE-502.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Cancel state ownership — SPEC-SCHED-001, ISSUE-CORE-502"
+
+  - id: no-is-instance-from-in-handlers
+    pattern: is_instance_from($OBJ, $MODULE, $CLASS)
+    message: |
+      Use obj.is_instance_of::<RustPyClass>() / extract::<PyRef<RustPyClass>>() instead of
+      is_instance_from(). Built-in effects must be Rust PyClasses.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/handler.rs"
+        - "**/packages/doeff-vm/src/scheduler.rs"
+
+  - id: no-python-effect-class-shadowing
+    pattern-either:
+      - pattern: |
+          class StateGetEffect(EffectBase):
+              ...
+      - pattern: |
+          class StatePutEffect(EffectBase):
+              ...
+      - pattern: |
+          class StateModifyEffect(EffectBase):
+              ...
+      - pattern: |
+          class AskEffect(EffectBase):
+              ...
+      - pattern: |
+          class HashableAskEffect(EffectBase):
+              ...
+      - pattern: |
+          class LocalEffect(EffectBase):
+              ...
+      - pattern: |
+          class WriterTellEffect(EffectBase):
+              ...
+      - pattern: |
+          class SpawnEffect(EffectBase):
+              ...
+      - pattern: |
+          class GatherEffect(EffectBase):
+              ...
+      - pattern: |
+          class RaceEffect(EffectBase):
+              ...
+      - pattern: |
+          class CreatePromiseEffect(EffectBase):
+              ...
+      - pattern: |
+          class CompletePromiseEffect(EffectBase):
+              ...
+      - pattern: |
+          class FailPromiseEffect(EffectBase):
+              ...
+      - pattern: |
+          class CreateExternalPromiseEffect(EffectBase):
+              ...
+      - pattern: |
+          class CreateSemaphoreEffect(EffectBase):
+              ...
+      - pattern: |
+          class AcquireSemaphoreEffect(EffectBase):
+              ...
+      - pattern: |
+          class ReleaseSemaphoreEffect(EffectBase):
+              ...
+      - pattern: |
+          class PythonAsyncioAwaitEffect(EffectBase):
+              ...
+      - pattern: |
+          class ResultSafeEffect(EffectBase):
+              ...
+      - pattern: |
+          class ProgramTraceEffect(EffectBase):
+              ...
+      - pattern: |
+          class ProgramCallStackEffect(EffectBase):
+              ...
+      - pattern: |
+          class ProgramCallFrameEffect(EffectBase):
+              ...
+    message: |
+      Built-in effects must be Rust PyClasses imported from doeff_vm, not Python re-implementations.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "**/doeff/effects/state.py"
+        - "**/doeff/effects/reader.py"
+        - "**/doeff/effects/writer.py"
+        - "**/doeff/effects/spawn.py"
+        - "**/doeff/effects/gather.py"
+        - "**/doeff/effects/race.py"
+        - "**/doeff/effects/promise.py"
+        - "**/doeff/effects/external_promise.py"
+        - "**/doeff/effects/semaphore.py"
+        - "**/doeff/effects/future.py"
+        - "**/doeff/effects/result.py"
+        - "**/doeff/effects/trace.py"
+        - "**/doeff/effects/callstack.py"
+
+  - id: doeff-no-python-task-id-extraction
+    patterns:
+      - pattern-inside: |
+          class Task:
+              ...
+      - pattern: task_id_of(...)
+    paths:
+      include:
+        - "**/doeff/effects/spawn.py"
+    message: |
+      BANNED: Python code must not extract task_id from Rust handles for scheduler operations.
+      Task operations (cancel, is_done) should yield effects handled by the Rust scheduler.
+      The Python layer should not inspect or decode Rust-internal handle structures.
+      See SPEC-SCHED-001 §PyTask, ISSUE-CORE-502.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Layer boundary — Python must not inspect Rust handle internals"
+
+  - id: doeff-no-rust-poll-python-cancel-state
+    pattern-regex: 'getattr\("_cancelled_task_ids"\)'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+    message: |
+      BANNED: Rust scheduler must not poll Python for cancellation state.
+      The scheduler owns cancel_requested via PyCancelEffect handler.
+      Remove GIL round-trip polling of _cancelled_task_ids.
+      See SPEC-SCHED-001, ISSUE-CORE-502.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Scheduler state ownership — cancel state lives in Rust"
+
+  - id: scheduler-must-use-transfer-not-resume
+    patterns:
+      - pattern: 'DoCtrl::Resume { continuation: $K, value: $V }'
+      - pattern-not-inside: |
+          fn resume_to_continuation(...) {
+            ...
+          }
+    paths:
+      include:
+        - "/packages/doeff-vm/src/scheduler.rs"
+    message: |
+      SPEC-SCHED-001 violation: scheduler must not use DoCtrl::Resume directly.
+      Use resume_to_continuation() which emits Resume, or transfer_to_continuation()
+      which emits Transfer. Direct DoCtrl::Resume in scheduler.rs bypasses the
+      Transfer/Resume split and risks unbounded segment chain growth.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      spec: SPEC-SCHED-001
+      section: "§resume_task, Invariant S1"
+
+  - id: doeff-cancel-must-be-effectful
+    patterns:
+      - pattern-inside: |
+          class Task:
+              ...
+      - pattern: |
+          def cancel(self):
+              ...
+              return Program.pure(...)
+    paths:
+      include:
+        - "**/doeff/effects/spawn.py"
+    message: |
+      BANNED: Task.cancel() must yield an effect, not return Program.pure().
+      Cancel is a scheduler operation — it must go through effect dispatch.
+      Use: return TaskCancelEffect(task=self)
+      See SPEC-SCHED-001 §PyTask, ISSUE-CORE-502.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Cancel must be effectful per SPEC-SCHED-001"
+
   - id: doeff-no-direct-generator-in-do
     patterns:
       - pattern: |
@@ -64,6 +289,81 @@ rules:
     metadata:
       category: effect-system
 
+  - id: doeff-to-generator-must-wrap-doeff-generator
+    patterns:
+      - pattern-inside: |
+          def to_generator(...):
+              ...
+      - pattern: return $RETURN_VALUE
+      - pattern-not: return make_doeff_generator(...)
+      - pattern-not: return DoeffGenerator(...)
+      - pattern-not: return vm.DoeffGenerator(...)
+      - pattern-not: return _to_doeff_generator(...)
+    paths:
+      include:
+        - "**/doeff/program.py"
+        - "**/packages/doeff-vm/doeff_vm/__init__.py"
+    message: |
+      VM-PROTO-002: to_generator() construction sites must return DoeffGenerator.
+      Wrap generator values with make_doeff_generator(...) (or construct
+      DoeffGenerator directly with all required metadata fields).
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-002
+
+  - id: doeff-no-dunder-inner-chain-walking
+    pattern-regex: "__doeff_inner__"
+    paths:
+      include:
+        - "**/doeff/do.py"
+    message: |
+      VM-PROTO-002 C1: doeff/do.py must not rely on __doeff_inner__ dunder
+      chain walking. Use explicit get_frame callbacks (plain gi_frame or
+      bridge-local traversal) for DoeffGenerator frame resolution.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-002
+
+  - id: doeff-vm-proto-003-no-pymodule-from-code-in-pyvm
+    pattern: PyModule::from_code(...)
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      VM-PROTO-003: VM runtime must not synthesize generator wrappers via
+      PyModule::from_code. Remove synthetic helpers and rely on Python-side
+      to_generator()/WithHandler wrapping that returns DoeffGenerator.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-003
+      rationale: "No synthetic generator helpers in VM core"
+
+  - id: doeff-vm-proto-003-no-runtime-handler-dunder-probing
+    patterns:
+      - pattern-either:
+          - pattern: $OBJ.getattr("__code__")
+          - pattern: $OBJ.getattr("__name__")
+          - pattern: $OBJ.getattr("__qualname__")
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+    message: |
+      VM-PROTO-003: Handler metadata must come from typed Handler::Python
+      fields captured at registration time. Runtime __code__/__name__/__qualname__
+      probing in vm.rs is forbidden.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-003
+      rationale: "Eliminate runtime handler metadata probing"
+
   # ---------------------------------------------------------------------------
   # LAYER BOUNDARIES
   # ---------------------------------------------------------------------------
@@ -105,6 +405,39 @@ rules:
     severity: ERROR
     metadata:
       category: architecture
+
+  - id: doeff-no-handler-modification-in-run
+    patterns:
+      - pattern-either:
+          - pattern: _normalize_async_handlers(...)
+          - pattern: _needs_threaded_async_driver(...)
+    paths:
+      include:
+        - "**/doeff/"
+    message: |
+      Handler lists must never be modified by run() or async_run().
+      Handler selection is the user's responsibility. Remove handler
+      normalization/detection functions.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Handler immutability invariant — SPEC-EFF-011, ISSUE-CORE-495"
+
+  - id: doeff-no-thread-offload-in-async-run
+    patterns:
+      - pattern: asyncio.to_thread(...)
+    paths:
+      include:
+        - "**/doeff/rust_vm.py"
+    message: |
+      async_run must not offload VM stepping to a background thread.
+      The VM step loop should run on the caller's event loop.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "VM boundary invariant — SPEC-EFF-011, ISSUE-CORE-495"
 
   # ---------------------------------------------------------------------------
   # PURITY PATTERNS
@@ -370,7 +703,7 @@ rules:
       category: docs-deprecation
 
   - id: docs-no-runtime-import
-    pattern-regex: 'from doeff\.(cesk\.runtime|cesk\.runner|runtimes) import'
+    pattern-regex: 'from doeff\.(runtime|runner|runtimes) import'
     paths:
       include:
         - "/docs/**/*.md"
@@ -451,6 +784,29 @@ rules:
     metadata:
       category: deprecated-runtime
       rationale: "Monkey-patching masks incomplete migrations"
+
+  # ---------------------------------------------------------------------------
+  # TRACEBACK DEFAULT FORMAT
+  # ---------------------------------------------------------------------------
+
+  - id: traceback-must-use-format-default
+    patterns:
+      - pattern-inside: |
+          def _print_doeff_trace_if_present(...):
+              ...
+      - pattern: print($TB.format_chained(), file=sys.stderr)
+    paths:
+      include:
+        - "**/doeff/rust_vm.py"
+    message: |
+      Default stderr traceback output must use format_default().
+      format_chained() remains available for explicit debug views, but the
+      default print path must render the active-chain format.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: traceback
+      rationale: "SPEC-TRACE-001 default format requirement"
 
   # ---------------------------------------------------------------------------
   # DOEFF DOEXPR HIERARCHY ENFORCEMENT
@@ -570,6 +926,115 @@ rules:
       category: doexpr-perform
       rationale: "Effect data and dispatch control must be explicitly separated"
 
+  - id: doeff-vm-handle-map-no-anonymous-callmetadata
+    patterns:
+      - pattern-inside: |
+          fn handle_map(...) {
+              ...
+          }
+      - pattern-either:
+          - pattern: CallMetadata::anonymous()
+          - pattern: crate::frame::CallMetadata::anonymous()
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+    message: |
+      VM-PROTO-005: Map callback calls must carry explicit callback metadata.
+      Do not use CallMetadata::anonymous() in handle_map runtime paths.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      rationale: "SPEC-VM-PROTOCOL §5.5 and §2 C7 require explicit callback metadata"
+
+  - id: doeff-vm-handle-flat-map-no-anonymous-callmetadata
+    patterns:
+      - pattern-inside: |
+          fn handle_flat_map(...) {
+              ...
+          }
+      - pattern-either:
+          - pattern: CallMetadata::anonymous()
+          - pattern: crate::frame::CallMetadata::anonymous()
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+    message: |
+      VM-PROTO-005: FlatMap callback calls must carry explicit callback metadata.
+      Do not use CallMetadata::anonymous() in handle_flat_map runtime paths.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      rationale: "SPEC-VM-PROTOCOL §5.5 and §2 C7 require explicit callback metadata"
+
+  - id: doeff-no-direct-gi-frame-access
+    patterns:
+      - pattern-either:
+          - pattern: $OBJ.getattr("gi_frame")
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      Direct gi_frame access in VM Rust code is banned by SPEC-VM-PROTOCOL.
+      Use DoeffGenerator.get_frame(generator) callback and handle None/exception
+      semantics through the protocol diagnostics path.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      rationale: "SPEC-VM-PROTOCOL §3.2/§3.7 requires callback-based frame lookup"
+
+  # ---------------------------------------------------------------------------
+  # C9 CLEANUP ENFORCEMENT
+  # ---------------------------------------------------------------------------
+
+  - id: vm-no-runtime-type-branching
+    pattern-either:
+      - pattern: is_doeff_generator_object(...)
+      - pattern: is_generator_object(...)
+    message: |
+      C9: Runtime type branching helpers are removed.
+      Use the unified DoExpr/ASTStream protocol path instead.
+    languages: [rust]
+    severity: ERROR
+
+  - id: vm-no-handler-type-dispatch
+    pattern-regex: 'Handler::Python\\s*\\{'
+    message: |
+      C9: Handler enum type switching is removed.
+      Dispatch must flow through HandlerInvoke trait objects.
+    languages: [rust]
+    severity: ERROR
+
+  - id: no-getattr-in-classify-yielded
+    patterns:
+      - pattern-inside: |
+          fn classify_yielded($...ARGS) -> $RET {
+              ...
+          }
+      - pattern: $OBJ.getattr($ATTR)
+    message: |
+      classify_yielded must avoid getattr-based branching.
+      Use tag-based or typed extraction paths only.
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/pyvm.rs"
+
+  - id: no-is-instance-from-in-pyvm
+    pattern: is_instance_from(...)
+    message: |
+      is_instance_from is forbidden in pyvm.rs.
+      Use typed extraction / instance checks against Rust pyclasses.
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/pyvm.rs"
+
   # ---------------------------------------------------------------------------
   # SPEC AUDIT SA-001: GAP ENFORCEMENT RULES
   # ---------------------------------------------------------------------------
@@ -609,8 +1074,102 @@ rules:
       gap: G08
 
   # ---------------------------------------------------------------------------
+  # VM PROTOCOL: FINAL C1/C6 ENFORCEMENT (VM-PROTO-007)
+  # ---------------------------------------------------------------------------
+
+  - id: vm-no-dunder-attrs
+    patterns:
+      - pattern: $OBJ.setattr($ATTR, ...)
+      - metavariable-regex:
+          metavariable: $ATTR
+          regex: '^"__doeff_[A-Za-z0-9_]+__"$'
+    message: "VM must not set __doeff_* attributes. Use typed PyClass fields."
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-007
+
+  - id: vm-no-dunder-reads
+    patterns:
+      - pattern: $OBJ.getattr($ATTR)
+      - metavariable-regex:
+          metavariable: $ATTR
+          regex: '^"__doeff_[A-Za-z0-9_]+__"$'
+    message: "VM must not read __doeff_* attributes. Use typed PyClass fields."
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-007
+
+  - id: vm-no-hasattr-dunder
+    patterns:
+      - pattern: $OBJ.hasattr($ATTR)
+      - metavariable-regex:
+          metavariable: $ATTR
+          regex: '^"__doeff_[A-Za-z0-9_]+__"$'
+    message: "VM must not probe __doeff_* attributes. Use isinstance on typed PyClass."
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-007
+
+  - id: vm-no-python-imports
+    pattern-regex: '\.import\("doeff\.[A-Za-z0-9_\.]+"\)'
+    message: "VM core must not import doeff.* modules. Use typed PyClass or NeedsPython callback."
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: vm-protocol
+      issue: VM-PROTO-007
+
+  # ---------------------------------------------------------------------------
   # PUBLIC API LOCATION GUARDS
   # ---------------------------------------------------------------------------
+
+  - id: doeff-no-removed-api
+    pattern-regex: 'from\s+doeff\s+import\s+[^#\n]*(wrap_with_handler_map|run_with_handler_map|async_run_with_handler_map|run_program|ProgramRunResult)\b'
+    message: |
+      This symbol has been removed from the public API.
+      - wrap_with_handler_map: internal helper
+      - run_with_handler_map / async_run_with_handler_map: use run() + WithHandler
+      - run_program / ProgramRunResult: use run()
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: public-api-removed
+
+  - id: doeff-no-safe-use-try
+    pattern-regex: '(from\s+doeff[.\w]*\s+import\s+[^#\n]*\bSafe\b|yield\s+Safe\()'
+    paths:
+      exclude:
+        - "**/doeff/effects/result.py"
+    message: |
+      Safe is renamed to Try. Use:
+        from doeff import Try
+        result = yield Try(sub_program())
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: public-api-renamed
 
   - id: doeff-public-api-no-subpackage-imports
     patterns:
@@ -622,13 +1181,14 @@ rules:
         - "**/tests/public_api/**/*.py"
         - "**/examples/**/*.py"
     message: |
-      Public-facing migration policy: import from top-level `doeff` only.
-      Replace `from doeff.<subpackage> import ...` with `from doeff import ...`.
+      Subpackage imports are allowed, but top-level imports are preferred.
+      Prefer `from doeff import X` when X is available at the top level.
+      Use subpackage imports when you need module-specific internals.
     languages: [python]
-    severity: ERROR
+    severity: WARNING
     metadata:
       category: public-api-location
-      rationale: "Public API location is fixed at top-level doeff"
+      rationale: "Top-level import is preferred, but subpackage imports are permitted"
 
   - id: doeff-public-docs-no-subpackage-imports
     patterns:

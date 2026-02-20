@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::handler::RustProgramRef;
+use crate::ast_stream::ASTStreamRef;
 use crate::ids::CallbackId;
 use crate::py_shared::PyShared;
 
@@ -15,7 +15,7 @@ pub fn fresh_frame_id() -> u64 {
 /// Metadata about a program call for call stack reconstruction. [SPEC-008 R9-D]
 ///
 /// Extracted by the driver (with GIL) during classify_yielded or by
-/// RustHandlerPrograms that emit Call primitives. Stored on PythonGenerator frames.
+/// Rust handler streams that emit call primitives. Stored on Program frames.
 #[derive(Debug, Clone)]
 pub struct CallMetadata {
     pub frame_id: u64,
@@ -45,6 +45,10 @@ impl CallMetadata {
     }
 
     pub fn anonymous() -> Self {
+        // Restriction (VM-PROTO-005 / C7):
+        // This helper is only for tests and VM-internal synthetic calls where
+        // metadata is carried through another typed channel. User-facing runtime
+        // paths must provide explicit callback metadata.
         Self::new(
             "<anonymous>".to_string(),
             "<unknown>".to_string(),
@@ -64,12 +68,8 @@ pub enum Frame {
     RustReturn {
         cb: CallbackId,
     },
-    RustProgram {
-        program: RustProgramRef,
-    },
-    PythonGenerator {
-        generator: PyShared,
-        started: bool,
+    Program {
+        stream: ASTStreamRef,
         metadata: Option<CallMetadata>,
     },
 }
@@ -79,28 +79,26 @@ impl Frame {
         Frame::RustReturn { cb }
     }
 
-    pub fn python_generator(generator: PyShared) -> Self {
-        Frame::PythonGenerator {
-            generator,
-            started: false,
-            metadata: None,
-        }
-    }
-
-    pub fn rust_program(program: RustProgramRef) -> Self {
-        Frame::RustProgram { program }
+    pub fn program(stream: ASTStreamRef, metadata: Option<CallMetadata>) -> Self {
+        Frame::Program { stream, metadata }
     }
 
     pub fn is_rust(&self) -> bool {
-        matches!(self, Frame::RustReturn { .. } | Frame::RustProgram { .. })
+        matches!(self, Frame::RustReturn { .. })
     }
 
-    pub fn is_rust_program(&self) -> bool {
-        matches!(self, Frame::RustProgram { .. })
+    pub fn is_program(&self) -> bool {
+        matches!(self, Frame::Program { .. })
     }
 
-    pub fn is_python(&self) -> bool {
-        matches!(self, Frame::PythonGenerator { .. })
+    pub fn has_metadata(&self) -> bool {
+        matches!(
+            self,
+            Frame::Program {
+                metadata: Some(_),
+                ..
+            }
+        )
     }
 }
 
@@ -113,7 +111,7 @@ mod tests {
         let cb_id = CallbackId::fresh();
         let frame = Frame::rust_return(cb_id);
         assert!(frame.is_rust());
-        assert!(!frame.is_python());
+        assert!(!frame.is_program());
     }
 
     #[test]
@@ -132,5 +130,17 @@ mod tests {
             Frame::RustReturn { cb } => assert_eq!(cb, cb_id),
             _ => panic!("Expected RustReturn"),
         }
+    }
+
+    #[test]
+    fn test_vm_proto_program_frame_uses_ast_stream_ref() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/frame.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            runtime_src.contains("Program {")
+                && runtime_src.contains("stream: ASTStreamRef")
+                && !runtime_src.contains("PythonGenerator"),
+            "VM-PROTO-001: Frame::Program must carry ASTStreamRef and replace PythonGenerator"
+        );
     }
 }

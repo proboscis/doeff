@@ -37,10 +37,10 @@ from doeff import (
     Resume,
     WithHandler,
     async_run,
-    async_run_with_handler_map,
     default_handlers,
     do,
 )
+from doeff.rust_vm import async_run_with_handler_map
 
 
 class StructuredAnswer(BaseModel):

@@ -16,11 +16,11 @@ Batch jobs processing millions of records face:
 ```python
 @do
 def process_batch(items: list[str]) -> Program[BatchResult]:
-    yield Log(f"Starting batch of {len(items)} items")
+    yield Tell(f"Starting batch of {len(items)} items")
     results = []
     for i, item in enumerate(items):
         yield Put("progress", i)
-        result = yield Safe(process_single_item(item))
+        result = yield Try(process_single_item(item))
         if result.is_ok():
             results.append(result.value)
             yield Tell({"processed": item, "status": "ok"})

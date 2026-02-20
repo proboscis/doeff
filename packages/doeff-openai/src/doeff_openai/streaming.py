@@ -11,8 +11,8 @@ from doeff import (
     EffectGenerator,
     Get,
     Put,
-    Safe,
     Tell,
+    Try,
     do,
 )
 from doeff_openai.costs import (
@@ -33,12 +33,12 @@ def process_stream(
 ) -> EffectGenerator[tuple[str, TokenUsage, float]]:
     """
     Process a streaming response with full tracking.
-    
+
     Args:
         stream: The async iterator of chunks from OpenAI
         model: The model being used
         callback: Optional callback for each chunk (e.g., for UI updates)
-    
+
     Returns:
         Tuple of (full_content, token_usage, total_cost)
     """
@@ -99,7 +99,7 @@ def process_stream(
     def _read_input_tokens():
         return (yield Get(f"stream_input_tokens_{model}"))
 
-    safe_input_tokens = yield Safe(_read_input_tokens())
+    safe_input_tokens = yield Try(_read_input_tokens())
     input_tokens = safe_input_tokens.value if safe_input_tokens.is_ok() else 0
 
     token_usage = TokenUsage(
@@ -121,7 +121,7 @@ def process_stream(
     def _read_total_cost():
         return (yield Get("total_openai_cost"))
 
-    safe_total_cost = yield Safe(_read_total_cost())
+    safe_total_cost = yield Try(_read_total_cost())
     current_total = safe_total_cost.value if safe_total_cost.is_ok() else 0.0
     yield Put("total_openai_cost", (current_total or 0.0) + cost_info.total_cost)
 
@@ -178,7 +178,7 @@ def stream_with_accumulator(
 ) -> EffectGenerator[AsyncIterator[tuple[str, str]]]:
     """
     Create a stream that yields (chunk_content, accumulated_content) pairs.
-    
+
     Useful for UIs that want to show both the new chunk and the full text so far.
     """
     yield Tell(f"Creating accumulator stream for model={model}")
@@ -203,7 +203,7 @@ def stream_with_metadata(
 ) -> EffectGenerator[AsyncIterator[dict[str, Any]]]:
     """
     Create a stream that yields chunks with full metadata.
-    
+
     Each yielded item includes:
     - content: The new content
     - accumulated: The full content so far
@@ -218,7 +218,7 @@ def stream_with_metadata(
     def _read_input_tokens():
         return (yield Get(f"stream_input_tokens_{model}"))
 
-    safe_input_tokens = yield Safe(_read_input_tokens())
+    safe_input_tokens = yield Try(_read_input_tokens())
     input_tokens = safe_input_tokens.value if safe_input_tokens.is_ok() else 0
 
     async def with_metadata():
@@ -265,11 +265,12 @@ def buffered_stream(
 ) -> EffectGenerator[AsyncIterator[str]]:
     """
     Create a buffered stream that batches chunks for efficiency.
-    
+
     Yields concatenated content from multiple chunks to reduce UI updates.
     """
-    yield Tell(f"Creating buffered stream: buffer_size={buffer_size}, buffer_time_ms={buffer_time_ms}ms")
-
+    yield Tell(
+        f"Creating buffered stream: buffer_size={buffer_size}, buffer_time_ms={buffer_time_ms}ms"
+    )
 
     async def buffered():
         buffer = []

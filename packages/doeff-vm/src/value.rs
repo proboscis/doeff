@@ -5,9 +5,12 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString};
 
-use crate::capture::{DispatchAction, HandlerKind, TraceEntry};
+use crate::capture::{
+    ActiveChainEntry, DispatchAction, EffectResult, HandlerDispatchEntry, HandlerKind,
+    HandlerStatus, TraceEntry,
+};
 use crate::frame::CallMetadata;
-use crate::handler::Handler;
+use crate::handler::{Handler, RustProgramInvocation};
 use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 
 /// A value that can flow through the VM.
@@ -24,11 +27,14 @@ pub enum Value {
     None,
     Continuation(crate::continuation::Continuation),
     Handlers(Vec<Handler>),
+    RustProgramInvocation(RustProgramInvocation),
+    PythonHandlerCallable(Py<PyAny>),
     Task(TaskHandle),
     Promise(PromiseHandle),
     ExternalPromise(ExternalPromise),
     CallStack(Vec<CallMetadata>),
     Trace(Vec<TraceEntry>),
+    ActiveChain(Vec<ActiveChainEntry>),
     List(Vec<Value>),
 }
 
@@ -47,6 +53,18 @@ impl Value {
             DispatchAction::Transferred => "transferred",
             DispatchAction::Returned => "returned",
             DispatchAction::Threw => "threw",
+        }
+    }
+
+    fn handler_status_to_str(status: HandlerStatus) -> &'static str {
+        match status {
+            HandlerStatus::Active => "active",
+            HandlerStatus::Pending => "pending",
+            HandlerStatus::Delegated => "delegated",
+            HandlerStatus::Resumed => "resumed",
+            HandlerStatus::Transferred => "transferred",
+            HandlerStatus::Returned => "returned",
+            HandlerStatus::Threw => "threw",
         }
     }
 
@@ -184,6 +202,129 @@ impl Value {
         }
     }
 
+    fn effect_result_to_pyobject<'py>(
+        py: Python<'py>,
+        result: &EffectResult,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let dict = PyDict::new(py);
+        match result {
+            EffectResult::Resumed { value_repr } => {
+                dict.set_item("kind", "resumed")?;
+                dict.set_item("value_repr", value_repr)?;
+            }
+            EffectResult::Threw {
+                handler_name,
+                exception_repr,
+            } => {
+                dict.set_item("kind", "threw")?;
+                dict.set_item("handler_name", handler_name)?;
+                dict.set_item("exception_repr", exception_repr)?;
+            }
+            EffectResult::Transferred {
+                handler_name,
+                target_repr,
+            } => {
+                dict.set_item("kind", "transferred")?;
+                dict.set_item("handler_name", handler_name)?;
+                dict.set_item("target_repr", target_repr)?;
+            }
+            EffectResult::Active => {
+                dict.set_item("kind", "active")?;
+            }
+        }
+        Ok(dict.into_any())
+    }
+
+    fn handler_dispatch_to_pyobject<'py>(
+        py: Python<'py>,
+        entry: &HandlerDispatchEntry,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let dict = PyDict::new(py);
+        dict.set_item("handler_name", entry.handler_name.as_str())?;
+        dict.set_item(
+            "handler_kind",
+            Self::handler_kind_to_str(&entry.handler_kind),
+        )?;
+        dict.set_item("source_file", entry.source_file.clone())?;
+        dict.set_item("source_line", entry.source_line)?;
+        dict.set_item("status", Self::handler_status_to_str(entry.status))?;
+        Ok(dict.into_any())
+    }
+
+    fn active_chain_entry_to_pyobject<'py>(
+        py: Python<'py>,
+        entry: &ActiveChainEntry,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let dict = PyDict::new(py);
+        match entry {
+            ActiveChainEntry::ProgramYield {
+                function_name,
+                source_file,
+                source_line,
+                sub_program_repr,
+            } => {
+                dict.set_item("kind", "program_yield")?;
+                dict.set_item("function_name", function_name)?;
+                dict.set_item("source_file", source_file)?;
+                dict.set_item("source_line", *source_line)?;
+                dict.set_item("sub_program_repr", sub_program_repr)?;
+            }
+            ActiveChainEntry::EffectYield {
+                function_name,
+                source_file,
+                source_line,
+                effect_repr,
+                handler_stack,
+                result,
+            } => {
+                dict.set_item("kind", "effect_yield")?;
+                dict.set_item("function_name", function_name)?;
+                dict.set_item("source_file", source_file)?;
+                dict.set_item("source_line", *source_line)?;
+                dict.set_item("effect_repr", effect_repr)?;
+                let stack = PyList::empty(py);
+                for item in handler_stack {
+                    stack.append(Self::handler_dispatch_to_pyobject(py, item)?)?;
+                }
+                dict.set_item("handler_stack", stack)?;
+                dict.set_item("result", Self::effect_result_to_pyobject(py, result)?)?;
+            }
+            ActiveChainEntry::SpawnBoundary {
+                task_id,
+                parent_task,
+                spawn_site,
+            } => {
+                dict.set_item("kind", "spawn_boundary")?;
+                dict.set_item("task_id", *task_id)?;
+                dict.set_item("parent_task", *parent_task)?;
+                if let Some(site) = spawn_site {
+                    let site_dict = PyDict::new(py);
+                    site_dict.set_item("function_name", site.function_name.as_str())?;
+                    site_dict.set_item("source_file", site.source_file.as_str())?;
+                    site_dict.set_item("source_line", site.source_line)?;
+                    dict.set_item("spawn_site", site_dict)?;
+                } else {
+                    dict.set_item("spawn_site", py.None())?;
+                }
+            }
+            ActiveChainEntry::ExceptionSite {
+                function_name,
+                source_file,
+                source_line,
+                exception_type,
+                message,
+            } => {
+                dict.set_item("kind", "exception_site")?;
+                dict.set_item("function_name", function_name)?;
+                dict.set_item("source_file", source_file)?;
+                dict.set_item("source_line", *source_line)?;
+                dict.set_item("exception_type", exception_type)?;
+                dict.set_item("message", message)?;
+            }
+        }
+        Ok(dict.into_any())
+    }
+
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         match self {
             Value::Python(obj) => Ok(obj.bind(py).clone()),
@@ -196,17 +337,16 @@ impl Value {
             Value::Handlers(handlers) => {
                 let list = PyList::empty(py);
                 for h in handlers {
-                    match h {
-                        Handler::Python(py_handler) => {
-                            list.append(py_handler.bind(py))?;
-                        }
-                        Handler::RustProgram(_) => {
-                            list.append(py.None().into_bound(py))?;
-                        }
+                    if let Some(identity) = h.py_identity() {
+                        list.append(identity.bind(py))?;
+                    } else {
+                        list.append(py.None().into_bound(py))?;
                     }
                 }
                 Ok(list.into_any())
             }
+            Value::RustProgramInvocation(_) => Ok(py.None().into_bound(py)),
+            Value::PythonHandlerCallable(callable) => Ok(callable.bind(py).clone()),
             Value::Task(handle) => {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("type", "Task")?;
@@ -257,6 +397,13 @@ impl Value {
                 let list = PyList::empty(py);
                 for entry in trace_entries {
                     list.append(Self::trace_entry_to_pyobject(py, entry)?)?;
+                }
+                Ok(list.into_any())
+            }
+            Value::ActiveChain(entries) => {
+                let list = PyList::empty(py);
+                for entry in entries {
+                    list.append(Self::active_chain_entry_to_pyobject(py, entry)?)?;
                 }
                 Ok(list.into_any())
             }
@@ -344,11 +491,18 @@ impl Value {
             Value::None => Value::None,
             Value::Continuation(k) => Value::Continuation(k.clone()),
             Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
+            Value::RustProgramInvocation(invocation) => {
+                Value::RustProgramInvocation(invocation.clone())
+            }
+            Value::PythonHandlerCallable(callable) => {
+                Value::PythonHandlerCallable(callable.clone_ref(py))
+            }
             Value::Task(h) => Value::Task(*h),
             Value::Promise(h) => Value::Promise(*h),
             Value::ExternalPromise(h) => Value::ExternalPromise(h.clone()),
             Value::CallStack(stack) => Value::CallStack(stack.clone()),
             Value::Trace(entries) => Value::Trace(entries.clone()),
+            Value::ActiveChain(entries) => Value::ActiveChain(entries.clone()),
             Value::List(items) => Value::List(items.iter().map(|v| v.clone_ref(py)).collect()),
         }
     }
@@ -417,9 +571,7 @@ mod tests {
 
     #[test]
     fn test_value_handlers() {
-        let handlers = vec![Handler::RustProgram(std::sync::Arc::new(
-            crate::handler::StateHandlerFactory,
-        ))];
+        let handlers = vec![std::sync::Arc::new(crate::handler::StateHandlerFactory) as Handler];
         let val = Value::Handlers(handlers);
         assert!(val.as_handlers().is_some());
         assert_eq!(val.as_handlers().unwrap().len(), 1);

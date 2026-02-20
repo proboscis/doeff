@@ -16,7 +16,7 @@ The key insight from [docs/20-why-effects-over-di.md](../20-why-effects-over-di.
 ## The Strategy: Pure Effects
 
 ```python
-from doeff import do, Program, Get, Put, Log, Tell, Safe
+from doeff import do, Program, Get, Put, Tell, Try
 from doeff.effects import Await, Spawn, Gather
 
 @dataclass(frozen=True)
@@ -65,11 +65,11 @@ def mean_reversion_strategy(symbol: str, window: int = 20) -> Program[None]:
             position = portfolio.get(symbol, 0)
 
             if price < sma * 0.98 and position == 0:
-                yield Log(f"BUY signal: {price:.2f} < SMA {sma:.2f}")
+                yield Tell(f"BUY signal: {price:.2f} < SMA {sma:.2f}")
                 yield PlaceOrder(symbol, "buy", quantity=100, order_type="market")
 
             elif price > sma * 1.02 and position > 0:
-                yield Log(f"SELL signal: {price:.2f} > SMA {sma:.2f}")
+                yield Tell(f"SELL signal: {price:.2f} > SMA {sma:.2f}")
                 yield PlaceOrder(symbol, "sell", quantity=position, order_type="market")
 
         yield Delay(60.0)  # wait 1 minute between checks
@@ -151,7 +151,7 @@ def live_market_handler():
 
         elif isinstance(effect, PlaceOrder):
             # Log the order but don't execute
-            yield Log(f"[PAPER] Would {effect.side} {effect.quantity} {effect.symbol}")
+            yield Tell(f"[PAPER] Would {effect.side} {effect.quantity} {effect.symbol}")
             # Simulate fill at current price
             price = yield GetPrice(effect.symbol)
             return OrderResult(filled=True, price=price, paper=True)
@@ -193,7 +193,7 @@ def live_execution_handler(broker_client):
             return broker_client.get_quote(effect.symbol)
 
         elif isinstance(effect, PlaceOrder):
-            yield Log(f"[LIVE] {effect.side} {effect.quantity} {effect.symbol}")
+            yield Tell(f"[LIVE] {effect.side} {effect.quantity} {effect.symbol}")
             order = broker_client.place_order(
                 symbol=effect.symbol,
                 side=effect.side,

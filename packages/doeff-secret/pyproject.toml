@@ -35,9 +35,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/CyberAgentAILab/doeff"
-Repository = "https://github.com/CyberAgentAILab/doeff"
-Issues = "https://github.com/CyberAgentAILab/doeff/issues"
+Homepage = "https://github.com/proboscis/doeff"
+Repository = "https://github.com/proboscis/doeff"
+Issues = "https://github.com/proboscis/doeff/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/doeff_secret"]

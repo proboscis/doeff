@@ -1,7 +1,6 @@
 """
-Vendored minimal types from sge_hub.monads.state_graph_future_result
+Vendored minimal result/maybe primitives used internally.
 These types are ported to avoid circular dependencies.
-Original source: sge-hub/src/sge_hub/monads/state_graph_future_result/
 
 This module is INTERNAL.
 Public Result/Ok/Err imports should come from `doeff` / `doeff.types`.
