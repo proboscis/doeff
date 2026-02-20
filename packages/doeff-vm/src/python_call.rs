@@ -11,8 +11,8 @@ use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub enum PythonCall {
-    StartProgram {
-        program: PyShared,
+    EvalExpr {
+        expr: PyShared,
     },
     CallFunc {
         func: PyShared,
@@ -34,7 +34,7 @@ pub enum PythonCall {
 
 #[derive(Debug, Clone)]
 pub enum PendingPython {
-    StartProgramFrame {
+    EvalExpr {
         metadata: Option<CallMetadata>,
     },
     CallFuncReturn {
