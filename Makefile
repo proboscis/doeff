@@ -2,7 +2,7 @@
 # ===========================
 # Centralized commands for development, testing, and linting.
 
-.PHONY: help install lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
+.PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
         test test-unit test-e2e test-packages test-all test-spec-audit-sa002 format check pre-commit-install clean \
         install-opencode-spec-gap-tdd
 
@@ -13,6 +13,7 @@ help:
 	@echo ""
 	@echo "Setup:"
 	@echo "  make install           Install all dependencies (including dev)"
+	@echo "  make sync              Install deps + rebuild Rust VM extension"
 	@echo "  make pre-commit-install Install pre-commit hooks"
 	@echo ""
 	@echo "Linting (make lint runs all):"
@@ -46,6 +47,12 @@ help:
 
 install:
 	uv sync --group dev
+
+# Sync dependencies AND rebuild the Rust VM extension.
+# ALWAYS use this instead of bare `uv sync` when Rust sources changed.
+sync:
+	uv sync --group dev
+	cd packages/doeff-vm && maturin develop --release
 
 pre-commit-install:
 	uv run pre-commit install
