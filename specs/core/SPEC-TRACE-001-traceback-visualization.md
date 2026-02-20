@@ -63,7 +63,8 @@ Each handler in the stack is annotated with what it did for that effect:
 | Marker | Meaning | Description |
 |--------|---------|-------------|
 | `✓` | Resumed | `yield Resume(k, value)` — handler resumed the continuation |
-| `↗` | Delegated | `yield Delegate()` — handler passed the effect to the next handler |
+| `↗` | Passed | `yield Pass()` — handler passed the effect to the next handler (terminal) |
+| `⇆` | Delegated | `yield Delegate()` — handler re-performed effect, received result back (non-terminal) |
 | `✗` | Threw | `raise Exception` — handler raised an exception |
 | `⇢` | Transferred | `yield Transfer(other_k, value)` — handler sent value to a different continuation (tail-call, severs caller chain) |
 | `⚡` | Active | handler yielded its own effect (suspended mid-execution) |
@@ -197,12 +198,12 @@ Notes:
 def auth_handler(effect, k):
     if isinstance(effect, AskEffect) and effect.key == "token":
         return (yield Resume(k, "Bearer sk-1234"))
-    yield Delegate()
+    yield Pass()
 
 def rate_limiter(effect, k):
     if isinstance(effect, AskEffect) and effect.key == "rate_limit":
         return (yield Resume(k, 100))
-    yield Delegate()
+    yield Pass()
 
 @do
 def call_api():
@@ -242,7 +243,7 @@ Notes:
 def strict_handler(effect, k):
     if isinstance(effect, PutEffect) and not isinstance(effect.value, int):
         raise TypeError(f"expected int, got {type(effect.value).__name__}")
-    yield Delegate()
+    yield Pass()
 
 @do
 def main():
@@ -352,7 +353,7 @@ When a handler does `return value` instead of `yield Resume(k, value)`, the cont
 def short_circuit_handler(effect, k):
     if isinstance(effect, AskEffect) and effect.key == "mode":
         return "fallback"   # abandon continuation, WithHandler returns "fallback"
-    yield Delegate()
+    yield Pass()
 
 @do
 def inner():
@@ -410,7 +411,7 @@ def redirect_handler(effect, k):
     if isinstance(effect, AskEffect) and effect.key == "redirect":
         saved_k = yield Get("saved_continuation")
         yield Transfer(saved_k, "redirected_value")
-    yield Delegate()
+    yield Pass()
 
 @do
 def program_a():
@@ -581,8 +582,8 @@ def caching_handler(effect, k):
         if cached is not None:
             yield Resume(k, cached)
         else:
-            yield Delegate()
-    yield Delegate()
+            yield Pass()
+    yield Pass()
 ```
 
 ### Example 11: Handler catches and re-raises
@@ -632,7 +633,7 @@ For the most recent effect yielded by each active generator:
 - `effect_repr` — human-readable repr of the effect
 - `effect_creation_site` — where the effect was constructed (from `created_at`)
 - `handler_stack` — ordered list of handler names from innermost to outermost
-- `handler_status` — per-handler: delegated / resumed / threw / transferred / pending
+- `handler_status` — per-handler: passed / delegated / resumed / threw / transferred / pending
 - `resume_value_repr` — value returned to the generator (if resumed)
 
 ### Transfer chain (from capture log)

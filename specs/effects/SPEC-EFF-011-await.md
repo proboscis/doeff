@@ -118,7 +118,7 @@ def sync_await_handler(effect, k):
         _submit_awaitable(effect.awaitable, promise)  # background loop
         values = yield gather(promise.future)
         return (yield Resume(k, values[0]))
-    yield Delegate()
+    yield Pass()
 ```
 
 | Property | Value |
@@ -177,7 +177,7 @@ def async_await_handler(effect, k):
         )
         values = yield gather(promise.future)
         return (yield Resume(k, values[0]))
-    yield Delegate()
+    yield Pass()
 ```
 
 | Property | Value |

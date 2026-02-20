@@ -406,14 +406,15 @@ class Frame(Protocol):
 | Primitive | When to use |
 |------|-------------|
 | `yield Resume(k, value)` | Resume continuation with a value |
-| `yield Delegate()` | Delegate effect handling to the outer handler |
+| `yield Pass()` | Pass effect to outer handler (terminal — handler is done) |
+| `raw = yield Delegate()` | Re-perform effect to outer handler (non-terminal — handler gets result back) |
 | `yield <Program>` | Execute a nested program in handler logic |
 
 ### Example: Custom Timeout Effect
 
 ```python
 from dataclasses import dataclass
-from doeff import Delegate, EffectBase, Resume, do
+from doeff import Pass, EffectBase, Resume, do
 
 # 1. Define the Effect
 @dataclass(frozen=True)
@@ -429,7 +430,7 @@ def handle_timeout(effect, k):
         # (details omitted for brevity)
         result = yield effect.program
         return (yield Resume(k, result))
-    yield Delegate()
+    yield Pass()
 
 # 4. Register with Runtime
 runtime = AsyncRuntime(handlers={
