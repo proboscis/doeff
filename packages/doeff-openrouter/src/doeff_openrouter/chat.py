@@ -10,8 +10,8 @@ from typing import Any
 from doeff import (
     Await,
     EffectGenerator,
-    Safe,
     Tell,
+    Try,
     do,
 )
 
@@ -134,7 +134,7 @@ def chat_completion(
             )
             return response_data
 
-        safe_result = yield Safe(perform())
+        safe_result = yield Try(perform())
         if safe_result.is_ok():
             return safe_result.value
 

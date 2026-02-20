@@ -146,4 +146,4 @@ This rule has no configuration options.
 ## See Also
 
 - [Error Handling Documentation](../../docs/05-error-handling.md)
-- [GitHub Issue #2](https://github.com/CyberAgentAILab/doeff/issues/2) - Native try-except support
+- [GitHub Issue #2](https://github.com/proboscis/doeff/issues/2) - Native try-except support

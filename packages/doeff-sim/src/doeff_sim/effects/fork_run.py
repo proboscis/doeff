@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from doeff.effects.base import Effect, EffectBase, create_effect_with_trace
+from doeff.effects.base import Effect, EffectBase
 from doeff.program import ProgramBase
 
 
@@ -24,14 +24,11 @@ class ForkRunEffect(EffectBase):
 
 
 def fork_run(program: Any, *, start_time: float | None = None) -> ForkRunEffect:
-    return create_effect_with_trace(ForkRunEffect(program=program, start_time=start_time))
+    return ForkRunEffect(program=program, start_time=start_time)
 
 
 def ForkRun(program: Any, *, start_time: float | None = None) -> Effect:
-    return create_effect_with_trace(
-        ForkRunEffect(program=program, start_time=start_time),
-        skip_frames=3,
-    )
+    return ForkRunEffect(program=program, start_time=start_time)
 
 
 __all__ = [

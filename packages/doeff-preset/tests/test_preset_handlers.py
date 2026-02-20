@@ -39,12 +39,11 @@ from doeff import (
     Resume,
     WithHandler,
     WriterTellEffect,
-    async_run_with_handler_map,
     do,
-    run_with_handler_map,
     slog,
     tell,
 )
+from doeff.rust_vm import async_run_with_handler_map, run_with_handler_map
 
 HandlerFn = Callable[[Any, Any], Any]
 

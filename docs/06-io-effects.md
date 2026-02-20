@@ -35,13 +35,13 @@ def compute_something():
 @do
 def read_file(filename):
     content = yield IO(lambda: open(filename).read())
-    yield Log(f"Read {len(content)} bytes")
+    yield Tell(f"Read {len(content)} bytes")
     return content
 
 @do
 def write_file(filename, content):
     yield IO(lambda: open(filename, 'w').write(content))
-    yield Log(f"Wrote {len(content)} bytes to {filename}")
+    yield Tell(f"Wrote {len(content)} bytes to {filename}")
 ```
 
 ### Current Time
@@ -52,7 +52,7 @@ import time
 @do
 def get_timestamp():
     timestamp = yield IO(lambda: time.time())
-    yield Log(f"Timestamp: {timestamp}")
+    yield Tell(f"Timestamp: {timestamp}")
     return timestamp
 ```
 
@@ -64,7 +64,7 @@ import random
 @do
 def roll_dice():
     value = yield IO(lambda: random.randint(1, 6))
-    yield Log(f"Rolled: {value}")
+    yield Tell(f"Rolled: {value}")
     return value
 ```
 
@@ -96,7 +96,7 @@ def run_command(cmd):
     ))
 
     if result.returncode != 0:
-        yield Log(f"Command failed: {result.stderr}")
+        yield Tell(f"Command failed: {result.stderr}")
         raise Exception(f"Command failed with code {result.returncode}")
 
     return result.stdout
@@ -118,14 +118,14 @@ def with_console_output():
     return result
 ```
 
-For internal logging, prefer the `Log` effect which captures logs in the execution context:
+For internal logging, prefer the `Tell` effect which captures logs in the execution context:
 
 ```python
 @do
 def with_logging():
-    yield Log("Starting operation...")  # Captured in logs
+    yield Tell("Starting operation...")  # Captured in logs
     result = yield process_data()
-    yield Log(f"Completed with: {result}")  # Captured in logs
+    yield Tell(f"Completed with: {result}")  # Captured in logs
     return result
 ```
 
@@ -244,7 +244,7 @@ handlers = [mock_io_handler, *default_handlers()]
 result = run(my_program(), handlers)
 ```
 
-### Console Output vs Log
+### Console Output vs Writer Log
 
 **Use `IO(print)` for:**
 - User-facing output
@@ -252,7 +252,7 @@ result = run(my_program(), handlers)
 - Interactive prompts
 - Actual terminal output
 
-**Use `Log` for:**
+**Use `Tell` for:**
 - Debugging information
 - Audit trails
 - Internal program state
@@ -261,16 +261,16 @@ result = run(my_program(), handlers)
 ```python
 @do
 def good_separation():
-    # Log for internal tracking (captured in context)
-    yield Log("Starting operation...")
+    # Tell for internal tracking (captured in context)
+    yield Tell("Starting operation...")
 
     # print via IO for user visibility (goes to stdout)
     yield IO(lambda: print("Processing your request..."))
 
     result = yield do_work()
 
-    # Log the details (captured in context)
-    yield Log(f"Operation completed with result: {result}")
+    # Tell the details (captured in context)
+    yield Tell(f"Operation completed with result: {result}")
 
     # print the summary (goes to stdout)
     yield IO(lambda: print("Done!"))
@@ -283,13 +283,13 @@ def good_separation():
 | Effect | Purpose | Example |
 |--------|---------|---------|
 | `IO(action)` | Execute side-effectful callable | File I/O, system calls, time, console output |
-| `Log(msg)` | Internal logging (captured) | Debugging, audit trails |
+| `Tell(msg)` | Internal logging (captured) | Debugging, audit trails |
 
 **Key Points:**
 - IO isolates side effects for testability
 - Use IO for non-async side effects including console output
 - Use `IO(lambda: print(...))` for user-facing output
-- Use `Log` for internal tracking captured in execution context
+- Use `Tell` for internal tracking captured in execution context
 - Keep IO actions small and focused
 
 ## Next Steps

@@ -71,15 +71,14 @@ The CLI automatically:
 
 ```python
 # myapp/interpreter.py
-from doeff import Program, ProgramInterpreter
+from doeff import Program, default_handlers, run
 
 def my_interpreter(prog: Program) -> any:
     """
     Execute programs for myapp.
     # doeff: interpreter, default
     """
-    engine = ProgramInterpreter()
-    return engine.run(prog).value
+    return run(prog, handlers=default_handlers()).value
 ```
 
 **Step 2**: Mark your environment (optional)
@@ -197,7 +196,7 @@ The CLI searches for functions marked with `# doeff: interpreter, default`:
 # myapp/__init__.py
 def base_interpreter(prog: Program):
     """# doeff: interpreter, default"""
-    return ProgramInterpreter().run(prog).value
+    return run(prog, handlers=default_handlers()).value
 
 # myapp/features/__init__.py
 # (no interpreter)
@@ -211,7 +210,7 @@ def auth_interpreter(prog: Program):
 # myapp/features/auth/login.py
 @do
 def login_program():
-    yield Log("Logging in...")
+    yield Tell("Logging in...")
     return "success"
 ```
 
@@ -244,7 +243,7 @@ Interpreters must:
 ```python
 def my_interpreter(prog: Program):
     """# doeff: interpreter, default"""
-    return ProgramInterpreter().run(prog).value
+    return run(prog, handlers=default_handlers()).value
 ```
 
 **Invalid** (async not allowed):
@@ -296,7 +295,7 @@ auth_env: Program[dict] = Program.pure({
 @do
 def login_program():
     config = yield Ask('timeout')
-    yield Log(f"Timeout: {config}")  # Will be 30!
+    yield Tell(f"Timeout: {config}")  # Will be 30!
     return "success"
 ```
 
@@ -353,13 +352,13 @@ def my_interpreter(prog: Program):
     Execute programs with custom settings.
     # doeff: interpreter, default
     """
-    return ProgramInterpreter().run(prog).value
+    return run(prog, handlers=default_handlers()).value
 ```
 
 2. **Inline comment**:
 ```python
 def my_interpreter(prog: Program):  # doeff: interpreter, default
-    return ProgramInterpreter().run(prog).value
+    return run(prog, handlers=default_handlers()).value
 ```
 
 3. **Multi-line signature**:
@@ -498,7 +497,7 @@ myapp/
 # myapp/__init__.py
 def base_interpreter(prog):
     """# doeff: interpreter, default"""
-    return ProgramInterpreter().run(prog).value
+    return run(prog, handlers=default_handlers()).value
 
 # doeff: default
 base_env = Program.pure({'debug': True})
@@ -507,7 +506,7 @@ base_env = Program.pure({'debug': True})
 @do
 def my_program():
     debug = yield Ask('debug')
-    yield Log(f"Debug mode: {debug}")
+    yield Tell(f"Debug mode: {debug}")
     return "done"
 ```
 
@@ -539,7 +538,7 @@ myapp/
 # myapp/__init__.py
 def base_interpreter(prog):
     """# doeff: interpreter, default"""
-    return ProgramInterpreter().run(prog).value
+    return run(prog, handlers=default_handlers()).value
 
 # doeff: default
 base_env = Program.pure({
@@ -715,7 +714,7 @@ graph TD
 # myapp/__init__.py
 def base_interpreter(prog):
     """# doeff: interpreter, default"""
-    return ProgramInterpreter().run(prog).value
+    return run(prog, handlers=default_handlers()).value
 ```
 
 2. **Or specify manually:**
@@ -930,7 +929,7 @@ def my_interpreter(prog: Program):
 
     # doeff: interpreter, default
     """
-    return ProgramInterpreter().run(prog).value
+    return run(prog, handlers=default_handlers()).value
 ```
 
 **Recommended: Preceding comment for envs**
@@ -1043,12 +1042,12 @@ grep -r "def.*interpreter" --include="*.py"
 ```python
 # Before
 def my_interpreter(prog: Program):
-    return ProgramInterpreter().run(prog).value
+    return run(prog, handlers=default_handlers()).value
 
 # After
 def my_interpreter(prog: Program):
     """# doeff: interpreter, default"""
-    return ProgramInterpreter().run(prog).value
+    return run(prog, handlers=default_handlers()).value
 ```
 
 **Step 3: Test discovery**

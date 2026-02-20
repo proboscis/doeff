@@ -2,7 +2,7 @@ from typing import Any, Literal, Protocol, TypeVar
 
 import pytest
 
-from doeff import Program, async_run, default_handlers, run
+from doeff import Program, async_run, default_async_handlers, default_handlers, run
 
 T = TypeVar("T")
 
@@ -47,7 +47,7 @@ class RuntimeAdapter:
         """
         if self.mode == "sync":
             return run(program, handlers=default_handlers(), env=env, store=state)
-        return await async_run(program, handlers=default_handlers(), env=env, store=state)
+        return await async_run(program, handlers=default_async_handlers(), env=env, store=state)
 
 
 @pytest.fixture

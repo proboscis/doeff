@@ -18,14 +18,14 @@ def test_probe_withhandler_accepts_rust_handler_sentinel() -> None:
     assert type(control).__name__ == "WithHandler"
 
 
-def test_probe_kpc_is_runtime_effectbase_instance() -> None:
+def test_probe_do_call_is_runtime_doctrl_instance() -> None:
     @do
     def program():
         return 1
 
-    kpc = program()
-    assert isinstance(kpc, doeff_vm.EffectBase)
-    assert isinstance(kpc, doeff_vm.KleisliProgramCall)
+    call = program()
+    assert isinstance(call, doeff_vm.DoCtrlBase)
+    assert isinstance(call, doeff_vm.DoExpr)
 
 
 def test_probe_run_simple_program_returns_scalar() -> None:

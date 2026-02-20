@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Ask, EffectGenerator, Get, Put, Safe, Tell, do
+from doeff import Ask, EffectGenerator, Get, Put, Tell, Try, do
 
-DEFAULT_SECRET_MANAGER_SCOPES: tuple[str, ...] = (
-    "https://www.googleapis.com/auth/cloud-platform",
-)
+DEFAULT_SECRET_MANAGER_SCOPES: tuple[str, ...] = ("https://www.googleapis.com/auth/cloud-platform",)
 
 
 class SecretManagerClient:
@@ -75,7 +73,7 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
 
     @do
     def ask_optional(name: str) -> EffectGenerator[Any]:
-        safe_result = yield Safe(ask(name))
+        safe_result = yield Try(ask(name))
         return safe_result.value if safe_result.is_ok() else None
 
     @do
@@ -85,10 +83,10 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
     @do
     def get_optional(name: str) -> EffectGenerator[Any]:
         """Get state value, returning None if key doesn't exist."""
-        safe_result = yield Safe(get_state(name))
+        safe_result = yield Try(get_state(name))
         return safe_result.value if safe_result.is_ok() else None
 
-    safe_existing_client = yield Safe(ask("secret_manager_client"))
+    safe_existing_client = yield Try(ask("secret_manager_client"))
     existing_client = safe_existing_client.value if safe_existing_client.is_ok() else None
     if existing_client:
         return existing_client

@@ -15,7 +15,9 @@ In another terminal, watch the execution:
 Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 """
 
+import argparse
 import random
+import sys
 import time
 
 from doeff_flow import run_workflow
@@ -145,7 +147,20 @@ def etl_pipeline(source: str, destination: str):
 # =============================================================================
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Run the data pipeline example.")
+    parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Start immediately without waiting for interactive confirmation.",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     print("=" * 60)
     print("Data Pipeline Example with Live Observability")
     print("=" * 60)
@@ -153,7 +168,10 @@ def main():
     print("Run this command in another terminal to watch:")
     print("  doeff-flow watch data-pipeline --exit-on-complete")
     print()
-    input("Press Enter to start the pipeline...")
+    if not args.no_wait and sys.stdin.isatty():
+        input("Press Enter to start the pipeline...")
+    else:
+        print("Skipping wait prompt (--no-wait or non-interactive stdin detected).")
 
     result = run_workflow(
         etl_pipeline(
@@ -163,7 +181,7 @@ def main():
         workflow_id="data-pipeline",
     )
 
-    if result.is_ok:
+    if result.is_ok():
         print(f"\nFinal Result: {result.value}")
     else:
         print(f"\nPipeline failed: {result.error}")

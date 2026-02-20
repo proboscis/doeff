@@ -19,7 +19,7 @@ from doeff_llm.effects import (
 )
 from PIL import Image
 
-from doeff import Await, Delegate, EffectGenerator, Resume, Safe, do
+from doeff import Await, Delegate, EffectGenerator, Resume, Try, do
 from doeff_gemini.client import get_gemini_client, track_api_call
 from doeff_gemini.effects import (
     GeminiChat,
@@ -299,7 +299,7 @@ def _embedding_impl(effect: LLMEmbedding) -> EffectGenerator[list[float] | list[
         )
         return response
 
-    safe_result = yield Safe(api_call_with_tracking())
+    safe_result = yield Try(api_call_with_tracking())
     if safe_result.is_err():
         exc = safe_result.error
         yield track_api_call(

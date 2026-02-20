@@ -1,31 +1,62 @@
 //! Store model shared by handlers and VM.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 
-use crate::ids::PromiseId;
+#[cfg(not(test))]
+use pyo3::types::PyString;
+#[cfg(not(test))]
+use pyo3::Python;
+
+use crate::py_key::HashedPyKey;
 use crate::value::Value;
-
-#[derive(Debug, Clone)]
-struct LazyCacheEntry {
-    source_id: usize,
-    value: Value,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct LazyInflightEntry {
-    source_id: usize,
-    promise_id: PromiseId,
-}
 
 #[derive(Debug, Clone)]
 pub struct RustStore {
     pub state: HashMap<String, Value>,
-    pub env: HashMap<String, Value>,
+    pub env: HashMap<HashedPyKey, Value>,
     pub log: Vec<Value>,
-    lazy_cache: Arc<Mutex<HashMap<String, LazyCacheEntry>>>,
-    lazy_inflight: Arc<Mutex<HashMap<String, LazyInflightEntry>>>,
-    lazy_active: Arc<Mutex<HashSet<(String, usize)>>>,
+}
+
+impl From<&HashedPyKey> for HashedPyKey {
+    fn from(value: &HashedPyKey) -> Self {
+        value.clone()
+    }
+}
+
+#[cfg(test)]
+impl From<&str> for HashedPyKey {
+    fn from(value: &str) -> Self {
+        HashedPyKey::from_test_string(value)
+    }
+}
+
+#[cfg(test)]
+impl From<&String> for HashedPyKey {
+    fn from(value: &String) -> Self {
+        HashedPyKey::from_test_string(value)
+    }
+}
+
+#[cfg(test)]
+impl From<String> for HashedPyKey {
+    fn from(value: String) -> Self {
+        HashedPyKey::from_test_string(value)
+    }
+}
+
+fn string_key_to_hashed(key: &str) -> HashedPyKey {
+    #[cfg(test)]
+    {
+        return HashedPyKey::from_test_string(key);
+    }
+
+    #[cfg(not(test))]
+    {
+        Python::attach(|py| {
+            let py_key = PyString::new(py, key).into_any();
+            HashedPyKey::from_bound(&py_key).expect("Python string keys must be hashable")
+        })
+    }
 }
 
 impl RustStore {
@@ -34,9 +65,6 @@ impl RustStore {
             state: HashMap::new(),
             env: HashMap::new(),
             log: Vec::new(),
-            lazy_cache: Arc::new(Mutex::new(HashMap::new())),
-            lazy_inflight: Arc::new(Mutex::new(HashMap::new())),
-            lazy_active: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -48,8 +76,19 @@ impl RustStore {
         self.state.insert(key, value);
     }
 
-    pub fn ask(&self, key: &str) -> Option<&Value> {
-        self.env.get(key)
+    pub fn ask(&self, key: impl Into<HashedPyKey>) -> Option<&Value> {
+        let key = key.into();
+        self.env.get(&key)
+    }
+
+    #[cfg(test)]
+    pub fn ask_str(&self, key: &str) -> Option<&Value> {
+        self.env.get(&HashedPyKey::from_test_string(key))
+    }
+
+    #[cfg(test)]
+    pub fn set_env_str(&mut self, key: impl Into<String>, value: Value) {
+        self.env.insert(HashedPyKey::from_test_string(key), value);
     }
 
     pub fn tell(&mut self, message: Value) {
@@ -72,17 +111,22 @@ impl RustStore {
     where
         F: FnOnce(&mut Self) -> R,
     {
-        let old: HashMap<String, Value> = bindings
+        let hashed_bindings: HashMap<HashedPyKey, Value> = bindings
+            .into_iter()
+            .map(|(k, v)| (string_key_to_hashed(&k), v))
+            .collect();
+
+        let old: HashMap<HashedPyKey, Value> = hashed_bindings
             .keys()
             .filter_map(|k| self.env.get(k).map(|v| (k.clone(), v.clone())))
             .collect();
-        let new_keys: Vec<String> = bindings
+        let new_keys: Vec<HashedPyKey> = hashed_bindings
             .keys()
             .filter(|k| !old.contains_key(*k))
             .cloned()
             .collect();
 
-        for (k, v) in bindings {
+        for (k, v) in hashed_bindings {
             self.env.insert(k, v);
         }
 
@@ -100,74 +144,6 @@ impl RustStore {
 
     pub fn clear_logs(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.log)
-    }
-
-    pub fn lazy_cache_get(&self, key: &str, source_id: usize) -> Option<Value> {
-        let cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
-        let entry = cache.get(key)?;
-        if entry.source_id == source_id {
-            return Some(entry.value.clone());
-        }
-        None
-    }
-
-    pub fn lazy_cache_put(&self, key: String, source_id: usize, value: Value) {
-        let mut cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
-        cache.insert(key, LazyCacheEntry { source_id, value });
-    }
-
-    pub fn lazy_inflight_get(&self, key: &str, source_id: usize) -> Option<PromiseId> {
-        let inflight = self
-            .lazy_inflight
-            .lock()
-            .expect("lazy_inflight lock poisoned");
-        let entry = inflight.get(key)?;
-        if entry.source_id == source_id {
-            return Some(entry.promise_id);
-        }
-        None
-    }
-
-    pub fn lazy_inflight_put(&self, key: String, source_id: usize, promise_id: PromiseId) {
-        let mut inflight = self
-            .lazy_inflight
-            .lock()
-            .expect("lazy_inflight lock poisoned");
-        inflight.insert(
-            key,
-            LazyInflightEntry {
-                source_id,
-                promise_id,
-            },
-        );
-    }
-
-    pub fn lazy_inflight_remove(&self, key: &str, source_id: usize, promise_id: PromiseId) {
-        let mut inflight = self
-            .lazy_inflight
-            .lock()
-            .expect("lazy_inflight lock poisoned");
-        let should_remove = inflight
-            .get(key)
-            .is_some_and(|entry| entry.source_id == source_id && entry.promise_id == promise_id);
-        if should_remove {
-            inflight.remove(key);
-        }
-    }
-
-    pub fn lazy_active_contains(&self, key: &str, source_id: usize) -> bool {
-        let active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.contains(&(key.to_string(), source_id))
-    }
-
-    pub fn lazy_active_insert(&self, key: String, source_id: usize) {
-        let mut active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.insert((key, source_id));
-    }
-
-    pub fn lazy_active_remove(&self, key: &str, source_id: usize) {
-        let mut active = self.lazy_active.lock().expect("lazy_active lock poisoned");
-        active.remove(&(key.to_string(), source_id));
     }
 }
 

@@ -41,4 +41,17 @@ def do(func: Callable[P, EffectGenerator[T]]) -> KleisliProgram[P, T]:
     """
     ...
 
+def _default_get_frame(generator: object) -> object | None: ...
+
+def default_get_frame(generator: object) -> object | None: ...
+
+def make_doeff_generator(
+    generator: object,
+    *,
+    function_name: str | None = ...,
+    source_file: str | None = ...,
+    source_line: int | None = ...,
+    get_frame: Callable[[object], object | None] | None = ...,
+) -> object: ...
+
 __all__: list[str]

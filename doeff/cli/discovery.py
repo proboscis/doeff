@@ -136,6 +136,7 @@ class IndexerBasedDiscovery:
         with profile("Import doeff_indexer", indent=1):
             try:
                 from doeff_indexer import Indexer
+
                 self.indexer_class = Indexer
             except ImportError as e:
                 raise ImportError(
@@ -168,8 +169,7 @@ class IndexerBasedDiscovery:
             # Find all interpreters with default marker
             with profile("Find interpreter symbols", indent=2):
                 symbols = indexer.find_symbols(
-                    tags=["interpreter", "default"],
-                    symbol_type="function"
+                    tags=["interpreter", "default"], symbol_type="function"
                 )
 
             if not symbols:
@@ -179,10 +179,7 @@ class IndexerBasedDiscovery:
             hierarchy = self._get_module_hierarchy(module_path)
 
             # Filter symbols to only those in hierarchy
-            candidates = [
-                s for s in symbols
-                if s.module_path in hierarchy
-            ]
+            candidates = [s for s in symbols if s.module_path in hierarchy]
 
             if not candidates:
                 return None
@@ -216,18 +213,12 @@ class IndexerBasedDiscovery:
 
             # Find all env symbols
             with profile("Find env symbols", indent=2):
-                all_symbols = indexer.find_symbols(
-                    tags=["default"],
-                    symbol_type="variable"
-                )
+                all_symbols = indexer.find_symbols(tags=["default"], symbol_type="variable")
 
             # Filter and order by hierarchy
             env_paths = []
             for module in hierarchy:
-                module_envs = [
-                    s.full_path for s in all_symbols
-                    if s.module_path == module
-                ]
+                module_envs = [s.full_path for s in all_symbols if s.module_path == module]
                 env_paths.extend(module_envs)
 
             return env_paths
@@ -245,11 +236,10 @@ class IndexerBasedDiscovery:
 
             # Should have exactly 1 positional parameter
             positional = [
-                p for p in params
-                if p.kind in (
-                    inspect.Parameter.POSITIONAL_ONLY,
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD
-                )
+                p
+                for p in params
+                if p.kind
+                in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
             ]
 
             if len(positional) != 1:
@@ -316,20 +306,19 @@ class StandardEnvMerger:
             def merge() -> dict:
                 """Merge all envs using Program composition."""
                 from doeff.effects import Local
-                from doeff.program import KleisliProgramCall
                 from doeff.types import EffectBase
 
                 merged: dict[str, Any] = {}
 
                 for env_source in loaded_envs:
                     env_dict: Any
-                    program_like: Program | KleisliProgramCall | EffectBase | None = None
+                    program_like: Program | EffectBase | None = None
 
-                    if isinstance(env_source, (Program, KleisliProgramCall, EffectBase)):
+                    if isinstance(env_source, (Program, EffectBase)):
                         program_like = env_source
                     elif callable(env_source):
                         result = env_source()
-                        if isinstance(result, (Program, KleisliProgramCall, EffectBase)):
+                        if isinstance(result, (Program, EffectBase)):
                             program_like = result
                         else:
                             env_dict = result

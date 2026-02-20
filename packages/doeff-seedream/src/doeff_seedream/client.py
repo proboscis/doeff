@@ -14,8 +14,8 @@ from doeff import (
     EffectGenerator,
     Get,
     Put,
-    Safe,
     Tell,
+    Try,
     do,
 )
 
@@ -107,7 +107,9 @@ class SeedreamClient:
         request_timeout = timeout if timeout is not None else self.timeout
         request_headers = self.build_headers(headers)
         if "Authorization" not in request_headers:
-            raise ValueError("Seedream API key missing; provide seedream_api_key or an Authorization header")
+            raise ValueError(
+                "Seedream API key missing; provide seedream_api_key or an Authorization header"
+            )
         async with httpx.AsyncClient(
             base_url=self.base_url,
             timeout=request_timeout,
@@ -138,15 +140,15 @@ def get_seedream_client() -> EffectGenerator[SeedreamClient]:
 
     @do
     def ask_optional(name: str) -> EffectGenerator[Any]:
-        safe_result = yield Safe(Ask(name))
+        safe_result = yield Try(Ask(name))
         return safe_result.value if safe_result.is_ok() else None
 
-    safe_candidate = yield Safe(Ask("seedream_client"))
+    safe_candidate = yield Try(Ask("seedream_client"))
     candidate = safe_candidate.value if safe_candidate.is_ok() else None
     if isinstance(candidate, SeedreamClient):
         return candidate
 
-    safe_state_client = yield Safe(Get("seedream_client"))
+    safe_state_client = yield Try(Get("seedream_client"))
     state_client = safe_state_client.value if safe_state_client.is_ok() else None
     if isinstance(state_client, SeedreamClient):
         return state_client
@@ -236,7 +238,8 @@ def track_api_call(
         meta["error"] = repr(error)
 
     yield Tell(
-        "Seedream %s %s in %.0f ms" % (
+        "Seedream %s %s in %.0f ms"
+        % (
             operation,
             "failed" if error else "succeeded",
             latency_ms,
@@ -245,4 +248,10 @@ def track_api_call(
     yield Tell({"seedream_api_call": value, "meta": meta})
 
 
-__all__ = ["DEFAULT_BASE_URL", "DEFAULT_TIMEOUT", "SeedreamClient", "get_seedream_client", "track_api_call"]
+__all__ = [
+    "DEFAULT_BASE_URL",
+    "DEFAULT_TIMEOUT",
+    "SeedreamClient",
+    "get_seedream_client",
+    "track_api_call",
+]

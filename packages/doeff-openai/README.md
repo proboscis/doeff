@@ -1,6 +1,6 @@
 # doeff-openai
 
-OpenAI integration for [doeff](https://github.com/CyberAgentAILab/doeff) with comprehensive observability through Graph and Log effects.
+OpenAI integration for [doeff](https://github.com/proboscis/doeff) with comprehensive observability through Graph and Log effects.
 
 ## Features
 

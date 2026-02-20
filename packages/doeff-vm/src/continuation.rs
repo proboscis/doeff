@@ -124,7 +124,12 @@ impl Continuation {
         handlers: Vec<Handler>,
         handler_identities: Vec<Option<PyShared>>,
     ) -> Self {
-        Self::create_unstarted_with_identities_and_metadata(expr, handlers, handler_identities, None)
+        Self::create_unstarted_with_identities_and_metadata(
+            expr,
+            handlers,
+            handler_identities,
+            None,
+        )
     }
 
     pub fn create_unstarted_with_identities_and_metadata(
@@ -166,13 +171,10 @@ impl Continuation {
                     list.append(identity.bind(py))?;
                     continue;
                 }
-                match handler {
-                    Handler::Python(py_handler) => {
-                        list.append(py_handler.bind(py))?;
-                    }
-                    Handler::RustProgram(_) => {
-                        list.append(py.None().into_bound(py))?;
-                    }
+                if let Some(identity) = handler.py_identity() {
+                    list.append(identity.bind(py))?;
+                } else {
+                    list.append(py.None().into_bound(py))?;
                 }
             }
             dict.set_item("handlers", list)?;

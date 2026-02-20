@@ -12,6 +12,111 @@ pub enum HandlerKind {
     RustBuiltin,
 }
 
+/// Per-handler status marker for active-chain rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandlerStatus {
+    Active,
+    Pending,
+    Delegated,
+    Resumed,
+    Transferred,
+    Returned,
+    Threw,
+}
+
+/// Snapshot row for a handler in the chain at dispatch start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandlerSnapshotEntry {
+    pub handler_name: String,
+    pub handler_kind: HandlerKind,
+    pub source_file: Option<String>,
+    pub source_line: Option<u32>,
+}
+
+/// Handler row emitted in active-chain effect entries with status markers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandlerDispatchEntry {
+    pub handler_name: String,
+    pub handler_kind: HandlerKind,
+    pub source_file: Option<String>,
+    pub source_line: Option<u32>,
+    pub status: HandlerStatus,
+}
+
+/// Spawn site metadata used for spawned-task traceback separators.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnSite {
+    pub function_name: String,
+    pub source_file: String,
+    pub source_line: u32,
+}
+
+/// Effect yield callsite captured from continuation frame metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectCreationSite {
+    pub function_name: String,
+    pub source_file: String,
+    pub source_line: u32,
+}
+
+impl From<EffectCreationSite> for SpawnSite {
+    fn from(value: EffectCreationSite) -> Self {
+        SpawnSite {
+            function_name: value.function_name,
+            source_file: value.source_file,
+            source_line: value.source_line,
+        }
+    }
+}
+
+/// Result status for an effect yield in the active chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EffectResult {
+    Resumed {
+        value_repr: String,
+    },
+    Threw {
+        handler_name: String,
+        exception_repr: String,
+    },
+    Transferred {
+        handler_name: String,
+        target_repr: String,
+    },
+    Active,
+}
+
+/// Active chain row assembled by Rust for default traceback rendering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActiveChainEntry {
+    ProgramYield {
+        function_name: String,
+        source_file: String,
+        source_line: u32,
+        sub_program_repr: String,
+    },
+    EffectYield {
+        function_name: String,
+        source_file: String,
+        source_line: u32,
+        effect_repr: String,
+        handler_stack: Vec<HandlerDispatchEntry>,
+        result: EffectResult,
+    },
+    SpawnBoundary {
+        task_id: u64,
+        parent_task: Option<u64>,
+        spawn_site: Option<SpawnSite>,
+    },
+    ExceptionSite {
+        function_name: String,
+        source_file: String,
+        source_line: u32,
+        exception_type: String,
+        message: String,
+    },
+}
+
 /// Final action produced by a handler for a dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandlerAction {
@@ -30,6 +135,7 @@ pub enum CaptureEvent {
         source_file: String,
         source_line: u32,
         args_repr: Option<String>,
+        program_call_repr: Option<String>,
     },
     FrameExited {
         function_name: String,
@@ -37,15 +143,23 @@ pub enum CaptureEvent {
     DispatchStarted {
         dispatch_id: DispatchId,
         effect_repr: String,
+        creation_site: Option<EffectCreationSite>,
         handler_name: String,
         handler_kind: HandlerKind,
         handler_source_file: Option<String>,
         handler_source_line: Option<u32>,
+        handler_chain_snapshot: Vec<HandlerSnapshotEntry>,
+        effect_frame_id: Option<FrameId>,
+        effect_function_name: Option<String>,
+        effect_source_file: Option<String>,
+        effect_source_line: Option<u32>,
     },
     Delegated {
         dispatch_id: DispatchId,
         from_handler_name: String,
+        from_handler_index: usize,
         to_handler_name: String,
+        to_handler_index: usize,
         to_handler_kind: HandlerKind,
         to_handler_source_file: Option<String>,
         to_handler_source_line: Option<u32>,
@@ -53,6 +167,7 @@ pub enum CaptureEvent {
     HandlerCompleted {
         dispatch_id: DispatchId,
         handler_name: String,
+        handler_index: usize,
         action: HandlerAction,
     },
     Resumed {

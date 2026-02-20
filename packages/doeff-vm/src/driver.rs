@@ -2,11 +2,11 @@
 
 use pyo3::prelude::*;
 
+use crate::do_ctrl::DoCtrl;
 use crate::error::VMError;
 use crate::py_shared::PyShared;
 use crate::python_call::PythonCall;
 use crate::value::Value;
-use crate::yielded::Yielded;
 
 #[derive(Debug, Clone)]
 pub enum PyException {
@@ -27,7 +27,7 @@ pub enum PyException {
 pub enum Mode {
     Deliver(Value),
     Throw(PyException),
-    HandleYield(Yielded),
+    HandleYield(DoCtrl),
     Return(Value),
 }
 

@@ -127,7 +127,7 @@ pub fn build_index(root: impl AsRef<Path>) -> Result<Index> {
     let stats = compute_stats(&entries);
 
     Ok(Index {
-        version: "0.1.2".to_string(),
+        version: "0.1.3".to_string(),
         root: canonical_root.to_string_lossy().to_string(),
         generated_at: Utc::now(),
         entries,
@@ -161,11 +161,7 @@ fn scan_root(root: &Path) -> Result<Vec<IndexEntry>> {
                     entries.append(&mut file_entries);
                 }
                 Err(e) => {
-                    log::warn!(
-                        "Skipping file {}: {}",
-                        entry.path().display(),
-                        e
-                    );
+                    log::warn!("Skipping file {}: {}", entry.path().display(), e);
                 }
             }
         }
@@ -436,9 +432,7 @@ pub(crate) fn extract_markers_from_source(
             let trimmed = line.trim();
 
             // Stop if we hit another function definition (after the first line)
-            if i > line_idx
-                && (trimmed.starts_with("def ") || trimmed.starts_with("async def "))
-            {
+            if i > line_idx && (trimmed.starts_with("def ") || trimmed.starts_with("async def ")) {
                 break;
             }
 
@@ -1247,7 +1241,11 @@ pub(crate) fn find_python_package_root(
 /// Handles formats like:
 /// - packages = ["src/wille"]
 /// - packages = ["src/wille", "src/other"]
-fn parse_hatch_packages_config(content: &str, root: &Path, file_path: &Path) -> Option<std::path::PathBuf> {
+fn parse_hatch_packages_config(
+    content: &str,
+    root: &Path,
+    file_path: &Path,
+) -> Option<std::path::PathBuf> {
     let mut in_hatch_wheel_section = false;
     let mut collecting_packages = false;
     let mut packages_line = String::new();
@@ -1300,11 +1298,7 @@ fn parse_hatch_packages_config(content: &str, root: &Path, file_path: &Path) -> 
 
                 // Parse individual package paths
                 for item in array_content.split(',') {
-                    let package_path = item
-                        .trim()
-                        .trim_matches('"')
-                        .trim_matches('\'')
-                        .trim();
+                    let package_path = item.trim().trim_matches('"').trim_matches('\'').trim();
 
                     if package_path.is_empty() {
                         continue;
@@ -1322,7 +1316,11 @@ fn parse_hatch_packages_config(content: &str, root: &Path, file_path: &Path) -> 
                             // Return the parent of the package path as source root
                             // e.g., for "src/wille", return "src"
                             if let Some(parent) = full_package_path.parent() {
-                                return Some(parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf()));
+                                return Some(
+                                    parent
+                                        .canonicalize()
+                                        .unwrap_or_else(|_| parent.to_path_buf()),
+                                );
                             }
                         }
                     }
@@ -1877,12 +1875,17 @@ pub fn find_default_envs(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
     entries
         .iter()
         .filter(|entry| entry.item_kind == ItemKind::Assignment)
-        .filter(|entry| entry.markers.iter().any(|m| m.eq_ignore_ascii_case("default")))
+        .filter(|entry| {
+            entry
+                .markers
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("default"))
+        })
         .collect()
 }
 
 /// Find the environment chain for a given program entrypoint.
-/// 
+///
 /// This identifies which implicit environments would be loaded when running
 /// the specified program, based on module hierarchy.
 pub fn find_env_chain(
@@ -1982,7 +1985,7 @@ fn create_env_chain_entry(entry: &IndexEntry) -> EnvChainEntry {
         qualified_name: entry.qualified_name.clone(),
         file_path: entry.file_path.clone(),
         line: entry.line,
-        keys: Vec::new(), // TODO: Extract keys from static analysis
+        keys: Vec::new(),    // TODO: Extract keys from static analysis
         static_values: None, // TODO: Extract from Program.pure({...})
         is_user_config: false,
     }
@@ -2017,7 +2020,7 @@ fn find_user_config_env() -> Option<EnvChainEntry> {
         qualified_name: "~/.doeff".to_string(),
         file_path: doeff_config_path,
         line: line_number,
-        keys: Vec::new(), // TODO: Extract keys
+        keys: Vec::new(),    // TODO: Extract keys
         static_values: None, // TODO: Extract values
         is_user_config: true,
     })

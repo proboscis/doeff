@@ -18,11 +18,11 @@ differences exist, they are explicitly noted.
 
 This matrix describes how effects behave when nested or composed:
 
-| Outer / Inner | Ask | Get | Put | Log | Safe | Local | Listen | Intercept | Gather |
+| Outer / Inner | Ask | Get | Put | Log | Try | Local | Listen | Intercept | Gather |
 |---------------|-----|-----|-----|-----|------|-------|--------|-----------|--------|
 | **Local**     | Scoped | Propagates | Propagates | Propagates | Propagates | Scoped | Propagates | Propagates | Propagates |
 | **Listen**    | - | - | - | Captured* | - | - | Nested | - | All captured* |
-| **Safe**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
+| **Try**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
 | **Intercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
 | **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
 
@@ -92,35 +92,35 @@ def test_law_success():
 
 @do
 def test_law_error():
-    result = yield Safe(Listen(failing_with_logs()))
+    result = yield Try(Listen(failing_with_logs()))
     # result is Err(...), logs are NOT captured in ListenResult
     # (error propagated through ListenFrame without capture)
 ```
 
-### Law 4: Safe Non-Rollback Law
+### Law 4: Try Non-Rollback Law
 
-> Safe does NOT rollback state on error. State changes persist.
+> Try does NOT rollback state on error. State changes persist.
 
 ```python
 @do
 def test_law():
     yield Put("counter", 0)
-    result = yield Safe(do_modify_then_fail())
-    # counter is still modified, even though Safe caught error
+    result = yield Try(do_modify_then_fail())
+    # counter is still modified, even though Try caught error
     counter = yield Get("counter")
     assert counter > 0  # State persisted
 ```
 
-### Law 5: Safe Environment Restoration Law
+### Law 5: Try Environment Restoration Law
 
-> Safe restores environment context (but not state) to pre-Safe value.
+> Try restores environment context (but not state) to pre-Try value.
 
 ```python
 @do
 def test_law():
-    # If Local is inside Safe and fails, env still restored
-    yield Safe(Local({"x": 1}, failing_program()))
-    # Environment is restored to pre-Safe state
+    # If Local is inside Try and fails, env still restored
+    yield Try(Local({"x": 1}, failing_program()))
+    # Environment is restored to pre-Try state
 ```
 
 ### Law 6: Intercept Transformation Law
@@ -230,7 +230,7 @@ All children are spawned concurrently. On first child failure:
 ```python
 @do
 def test_law():
-    result = yield Safe(Gather(
+    result = yield Try(Gather(
         succeeds_with_side_effect(),
         fails_immediately(),
         succeeds_with_side_effect(),
@@ -287,9 +287,9 @@ that don't share the parent continuation stack.
 **Rationale**: Parallel execution is inherently non-deterministic. Logs are merged
 in execution order, which may vary.
 
-### D3: Safe Rollback
+### D3: Try Rollback
 
-**Decision**: No transactional rollback for Safe. Only environment is restored.
+**Decision**: No transactional rollback for Try. Only environment is restored.
 
 **Rationale**: Rolling back state would require transaction semantics that add
 significant complexity. Users requiring transactions should use explicit
@@ -312,7 +312,7 @@ isolated Gather variants (see gh#157).
 
 **Rationale**: `ListenFrame.on_error` propagates the error without wrapping.
 This avoids complexity of combining error and log capture. Users needing
-logs from failing computations should use `Safe(Listen(...))` pattern and
+logs from failing computations should use `Try(Listen(...))` pattern and
 handle the error case explicitly.
 
 ---

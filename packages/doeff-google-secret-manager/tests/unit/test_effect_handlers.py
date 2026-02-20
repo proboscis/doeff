@@ -20,7 +20,8 @@ from doeff_google_secret_manager.client import SecretManagerClient  # noqa: E402
 from doeff_google_secret_manager.handlers import mock_handlers, production_handlers  # noqa: E402
 from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret  # noqa: E402
 
-from doeff import do, run_with_handler_map  # noqa: E402
+from doeff import do  # noqa: E402
+from doeff.rust_vm import run_with_handler_map
 
 
 class AlreadyExistsError(Exception):

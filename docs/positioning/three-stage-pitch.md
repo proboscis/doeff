@@ -60,8 +60,8 @@ def process_order(order_id):
 ```python
 @do
 def process_order(order_id) -> Program[float]:
-    yield Log(f"Processing {order_id}")
-    cached = yield Safe(CacheGet(f"order:{order_id}"))
+    yield Tell(f"Processing {order_id}")
+    cached = yield Try(CacheGet(f"order:{order_id}"))
     if cached.is_ok():
         return cached.value
 
@@ -72,8 +72,8 @@ def process_order(order_id) -> Program[float]:
     )
 
     total = order.qty * price
-    yield Safe(CachePut(f"order:{order_id}", total, ttl=300))
-    yield Log(f"Done: {total}")
+    yield Try(CachePut(f"order:{order_id}", total, ttl=300))
+    yield Tell(f"Done: {total}")
     return total
 ```
 

@@ -13,13 +13,19 @@
 | **R8-E** | §12 Type validation | Validation table updated to distinguish DoExpr control from effect values and to codify Perform-lifting behavior. |
 | **R8-F** | §3 @do | `@do` MUST NOT be applied to `async def`. There is no "async kleisli" concept. Coroutines silently bypass the generator protocol. Use `yield Await(coro)` for async I/O. |
 
+### Revision 9 Changelog
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R9-A** | KPC model | **KPC is a call-time macro, not a runtime effect (doeff-13).** KPC handler removed from handlers, presets, imports. `KleisliProgram.__call__()` returns a `Call` DoCtrl directly. See SPEC-KPC-001. |
+
 ### Revision 7 Changelog
 
 | Tag | Section | Change |
 |-----|---------|--------|
 | **R7-A** | §1 Entrypoints | `run()` / `async_run()` accept `DoExpr[T]` (not just `Program[T]`). Any non-DoExpr input MUST raise `TypeError` with informative message. |
 | **R7-B** | §1 Entrypoints | Input normalization is the Rust VM's responsibility. Python `run()` is a thin passthrough — no `_normalize_program`, no `_TopLevelDoExpr`. |
-| **R7-C** | §7 Standard Handlers | `default_handlers()` MUST include `kpc` handler. `sync_preset` and `async_preset` MUST include `kpc`. |
+| **R7-C** | §7 Standard Handlers | [SUPERSEDED BY R9-A — kpc handler removed from default_handlers and presets; see SPEC-KPC-001] ~~`default_handlers()` MUST include `kpc` handler. `sync_preset` and `async_preset` MUST include `kpc`.~~ |
 | **R7-D** | §12 Type Validation (new) | Every public API typed parameter MUST validate at the boundary with `isinstance`. No duck-typing, no `hasattr`/`getattr` fallbacks, no silent coercion. |
 | **R7-E** | §11 Invariants | Added API-13 through API-17. |
 
@@ -29,8 +35,8 @@
 |-----|---------|--------|
 | **R6-A** | §1 Entrypoints, §9 Migration | Clarified rust-vm-only public path: `doeff.run` / `doeff.async_run` are the supported entrypoints; legacy Python `sync_run` presets are retired from top-level exports. |
 | **R6-B** | §7 Scheduler | Removed compatibility coercion note for `WaitEffect`; typed scheduler classification is strict (malformed/unsupported scheduler forms are errors). |
-| **R6-C** | §3 Program, §5 Handlers | Clarified KPC dispatch expectation: KleisliProgramCall must route through effect-handler pipeline, not direct call rewrite bypass. |
-| **R6-D** | §3, §4 | `KleisliProgramCall` is a `#[pyclass(frozen, extends=PyEffectBase)]` struct in Rust (`PyKPC`). Auto-unwrap strategy NOT stored on KPC — handler computes from `kleisli_source` annotations at dispatch time. See SPEC-008 R11-A and SPEC-TYPES-001 Rev 9. |
+| **R6-C** | §3 Program, §5 Handlers | [REVERSED BY R9-A — KPC is no longer routed through the handler pipeline; `__call__()` returns `Call` DoCtrl directly. See SPEC-KPC-001.] ~~Clarified KPC dispatch expectation: KleisliProgramCall must route through effect-handler pipeline, not direct call rewrite bypass.~~ |
+| **R6-D** | §3, §4 | [SUPERSEDED BY R9-A — KPC no longer extends PyEffectBase; `__call__()` returns `Call` DoCtrl directly. See SPEC-KPC-001.] ~~`KleisliProgramCall` is a `#[pyclass(frozen, extends=PyEffectBase)]` struct in Rust (`PyKPC`). Auto-unwrap strategy NOT stored on KPC — handler computes from `kleisli_source` annotations at dispatch time. See SPEC-008 R11-A and SPEC-TYPES-001 Rev 9.~~ |
 
 ### Revision 5 Changelog
 
@@ -235,7 +241,7 @@ Input type        Example                  VM behavior
 DoExpr (control)  Pure(v), Call(...),       VM evaluates directly
                   WithHandler(h, expr),
                   Map(expr, f), Perform(e)
-EffectValue       Ask("k"), Get("x"), KPC   normalized to Perform(effect),
+EffectValue       Ask("k"), Get("x")          normalized to Perform(effect),
                                              then dispatched via handler stack
 ```
 
@@ -247,7 +253,7 @@ an informative message that includes:
 
 ```python
 # GOOD — accepted inputs:
-run(my_do_func(1))                  # EffectValue (KPC), boundary-normalized to Perform
+run(my_do_func(1))                  # Call DoCtrl [R9-A: __call__() returns Call directly]
 run(Ask("key"))                      # EffectValue, boundary-normalized to Perform
 run(Pure(1).map(str))                # DoCtrl (Map node)
 run(WithHandler(h, prog))           # DoCtrl (Handle node)
@@ -383,7 +389,7 @@ factory does NOT execute the body — it creates a deferred program descriptor:
 def my_func(a: int, b: str):
     ...
 
-# Calling the factory creates a Program[T] (a KleisliProgramCall)
+# Calling the factory returns a Call DoCtrl (a Program[T]) via macro expansion [R9-A]
 program = my_func(42, "hello")
 
 # The body has NOT run yet. It runs when passed to run() or yielded.
@@ -396,20 +402,19 @@ result = run(program, handlers=[state], store={})
 @do def f(x):         ← generator function (not a Program)
     ...
 
-f(42)                 ← KleisliProgramCall (this IS a Program[T])
+f(42)                 ← Call DoCtrl (this IS a Program[T]) via macro expansion [R9-A]
                          body has NOT executed
 
-run(f(42), ...)       ← VM dispatches KPC to kpc handler, which calls kernel(42)
+run(f(42), ...)       ← VM evaluates Call DoCtrl directly [R9-A]
                          kernel returns generator, pushed as frame
                          body starts executing, yields/returns flow through VM
 ```
 
-`Program[T]` is not the generator itself — it is a `KleisliProgramCall` (`PyKPC`,
-a `#[pyclass(frozen, extends=PyEffectBase)]` struct [R6-D]) that wraps the
-generator function and its arguments. KPC is an effect — it is dispatched to the
-KPC handler, which resolves args and calls the kernel. This deferred execution is
-what makes programs composable — they can be passed to `WithHandler`, `Resume`,
-etc. without starting execution.
+`Program[T]` is not the generator itself — calling a `KleisliProgram` factory
+returns a `Call` DoCtrl via macro expansion [R9-A]. The `Call` wraps the generator
+function (kernel) and its arguments. This deferred execution is what makes programs
+composable — they can be passed to `WithHandler`, `Resume`, etc. without starting
+execution. See SPEC-KPC-001.
 
 ### @do MUST NOT be used with async def [R8-F]
 
@@ -456,15 +461,16 @@ lowered to `yield Perform(effect)`:
 Category             Examples                       What the VM does
 ─────────────────────────────────────────────────────────────────────
 Effect dispatch      Perform(Get("x")),             Dispatched through handler stack
-                     Perform(KPC(...))
+                     Perform(Ask("k"))
+Program call         Call(Pure(kernel), args, ...)   VM evaluates Call DoCtrl directly [R9-A]
 Composition          WithHandler                    Creates new handler scope
 Dispatch primitive   Resume, Delegate, Transfer     Controls dispatch (handler-only)
 ```
 
-`KleisliProgramCall` (KPC) is an effect [R6-D] — it is a `#[pyclass(frozen,
-extends=PyEffectBase)]` struct dispatched to the KPC handler. The handler
-computes auto-unwrap strategy from `kleisli_source` annotations and resolves
-args via `Eval`. See SPEC-TYPES-001 §3.
+[SUPERSEDED BY R9-A / SPEC-KPC-001] ~~KPC is an effect dispatched to the KPC handler.~~
+Under the macro model (doeff-13), `KleisliProgram.__call__()` returns a `Call` DoCtrl
+directly — no KPC perform-lowering path, no handler dispatch. The VM evaluates the `Call` DoCtrl
+as a control node. See SPEC-KPC-001.
 
 Effect values are never executed directly; only `Perform(effect)` triggers
 handler dispatch. Composition and dispatch primitives are processed directly by
@@ -811,19 +817,14 @@ from doeff.handlers import scheduler
 
 ### kpc [R7-C]
 
-Handles: `KleisliProgramCall`
+[SUPERSEDED BY R9-A / SPEC-KPC-001 — KPC is now a call-time macro, not a runtime effect]
 
-Provides `@do` function dispatch. When a program yields a KPC, the kpc handler
-resolves arguments (computing auto-unwrap strategy from `kleisli_source`
-annotations), calls the execution kernel, and runs the resulting generator.
-
-```python
-from doeff.handlers import kpc
-```
-
-The `kpc` handler is **required** for any program that uses `@do` functions.
-Without it, yielding a KPC results in `UnhandledEffect`. It is included in
-`default_handlers()` and both presets.
+~~This section previously described the `kpc` handler which dispatched KPC effects
+through the handler stack.~~ Under the macro model (Rev 9, doeff-13), KPC resolution
+happens at `KleisliProgram.__call__()` time via macro expansion to a `Call` DoCtrl.
+The `kpc` handler (`KpcHandlerFactory`, `KpcHandlerProgram`, `ConcurrentKpcHandlerProgram`) [SUPERSEDED BY R9-A / SPEC-KPC-001]
+is removed. Programs using `@do` no longer require a KPC handler — the VM evaluates
+`Call` DoCtrl directly. See SPEC-KPC-001.
 
 ### Presets
 
@@ -832,16 +833,17 @@ Convenience bundles for common configurations:
 ```python
 from doeff.presets import sync_preset, async_preset
 
-# sync_preset = [state, reader, writer, kpc]
-# async_preset = [state, reader, writer, kpc, scheduler]
+# sync_preset = [state, reader, writer]  [R9-A: kpc removed]
+# async_preset = [state, reader, writer, scheduler]  [R9-A: kpc removed]
 
 result = run(my_program(), handlers=sync_preset, store={"x": 0})
 ```
 
-### default_handlers() [Q9, R7-C]
+### default_handlers() [Q9, R7-C, R9-A]
 
 Public convenience function returning the standard handler bundle
-`[state, reader, writer, kpc]`. Available as `from doeff import default_handlers`.
+`[state, reader, writer]`. Available as `from doeff import default_handlers`.
+[R9-A: `kpc` removed — KPC is a call-time macro, no handler needed.]
 
 ```python
 from doeff import run, default_handlers
@@ -852,10 +854,6 @@ result = run(my_program(), handlers=default_handlers(), store={"x": 0})
 
 **Note**: `run()` defaults to `handlers=[]` (API-1). Users must explicitly
 pass `default_handlers()` or construct their own handler list.
-
-**Note**: `kpc` is included because `@do` is the primary programming model.
-Programs that don't use `@do` (e.g., bare `GeneratorProgram`) don't need it,
-but it is harmless — a handler that never matches has zero overhead.
 
 ---
 
@@ -879,11 +877,10 @@ from doeff.effects import Get, Put, Modify, Ask, Tell
 # Composition
 from doeff import WithHandler
 
-# Standard handlers
-from doeff.handlers import state, reader, writer, kpc, scheduler
+# Standard handlers [R9-A: kpc removed — KPC is a call-time macro, no handler needed]
+from doeff.handlers import state, reader, writer, scheduler
 
-# Canonical location for KPC handler export is doeff.handlers.
-# `kpc` is not required to be re-exported from the top-level doeff namespace.
+# [SUPERSEDED BY R9-A / SPEC-KPC-001] KPC handler export note removed — kpc handler eliminated.
 
 # Presets
 from doeff.presets import sync_preset, async_preset
@@ -1025,7 +1022,7 @@ Key differences:
 | API-12 | `async_run()` must be a true `async def` — it must yield control to the event loop, not block the thread [R3-D] |
 | API-13 | `run()` / `async_run()` MUST raise `TypeError` for non-`DoExpr` program argument (§1 Input Contract) [R7-A] |
 | API-14 | Python `run()` is a thin passthrough — no `_normalize_program`, no `_TopLevelDoExpr`, no duck-typing via `getattr`/`hasattr` [R7-B] |
-| API-15 | `default_handlers()` MUST include `kpc` handler. Both presets MUST include `kpc` [R7-C] |
+| API-15 | [SUPERSEDED BY R9-A / SPEC-KPC-001] ~~`default_handlers()` MUST include `kpc` handler. Both presets MUST include `kpc` [R7-C]~~ — kpc handler removed; presets and default_handlers no longer include kpc. |
 | API-16 | Every public API typed parameter MUST validate via `isinstance` at the boundary — no duck-typing, no silent coercion, no deferred validation (§12) [R7-D] |
 | API-17 | Validation errors MUST be `TypeError` with message including: actual type received, expected type, and contextual hint [R7-D] |
 

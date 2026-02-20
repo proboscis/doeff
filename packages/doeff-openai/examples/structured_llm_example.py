@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from doeff import (
     Ask,
     EffectGenerator,
-    Safe,
+    Try,
     do,
     run,
     slog,
@@ -37,6 +37,7 @@ from doeff import (
 # Define structured output models
 class CityInfo(BaseModel):
     """Information about a city."""
+
     name: str = Field(description="The city name")
     country: str = Field(description="The country where the city is located")
     population: int = Field(description="The population of the city")
@@ -46,6 +47,7 @@ class CityInfo(BaseModel):
 
 class MathProblem(BaseModel):
     """Solution to a math problem."""
+
     problem: str = Field(description="The original problem statement")
     steps: list[str] = Field(description="Step-by-step solution")
     answer: float = Field(description="The final numerical answer")
@@ -54,6 +56,7 @@ class MathProblem(BaseModel):
 
 class CodeAnalysis(BaseModel):
     """Analysis of code snippet."""
+
     language: str = Field(description="Programming language")
     complexity: str = Field(description="Complexity level: simple, moderate, complex")
     issues: list[str] = Field(description="List of potential issues")
@@ -164,7 +167,7 @@ def example_code_analysis() -> EffectGenerator[CodeAnalysis | None]:
         return total / len(numbers)
     """
 
-    # Using Safe effect for error handling
+    # Using Try effect for error handling
     @do
     def analyze_code():
         result = yield structured_llm__openai(
@@ -176,7 +179,7 @@ def example_code_analysis() -> EffectGenerator[CodeAnalysis | None]:
         )
         return result
 
-    safe_result = yield Safe(analyze_code())
+    safe_result = yield Try(analyze_code())
 
     if safe_result.is_err():
         yield slog(step="example4", status="error", error=str(safe_result.error))
@@ -269,6 +272,7 @@ def _run_all_examples_impl() -> EffectGenerator[None]:
 # Protocol for the run_all_examples function
 class RunAllExamplesProtocol(Protocol):
     """Protocol for run_all_examples function."""
+
     async def __call__(self, openai_api_key: str, gpt5_available: bool, /) -> None: ...
 
 
@@ -297,17 +301,14 @@ async def a_run_all_examples(
         env={
             "openai_api_key": openai_api_key,
             "gpt5_available": gpt5_available,
-        }
+        },
     )
 
     if result.is_err():
         print(f"Error: {result.error}")
         import traceback
-        traceback.print_exception(
-            type(result.error),
-            result.error,
-            result.error.__traceback__
-        )
+
+        traceback.print_exception(type(result.error), result.error, result.error.__traceback__)
 
     # Print execution logs
     print("\nExecution Log:")
