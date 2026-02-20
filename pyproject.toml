@@ -124,4 +124,5 @@ dev = [
     "doeff-openrouter",
     "doeff-preset",
     "doeff-vm",
+    "pytest-xdist>=3.8.0",
 ]

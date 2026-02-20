@@ -116,10 +116,10 @@ lint-packages:
 # =============================================================================
 
 test:
-	uv run pytest
+	uv run pytest -n auto
 
 test-unit:
-	uv run pytest -m "not e2e and not slow"
+	uv run pytest -n auto -m "not e2e and not slow"
 
 test-e2e:
 	uv run pytest -m "e2e"
