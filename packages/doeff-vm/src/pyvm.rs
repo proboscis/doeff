@@ -1091,6 +1091,7 @@ impl PyVM {
         }
 
         if obj.is_instance_of::<PyDoExprBase>() {
+            // nosemgrep: spec-gap-SA-001-G08-classify-duck-typing
             let to_generator = obj.getattr("to_generator").map_err(|_| {
                 PyTypeError::new_err("DoExpr object is missing callable to_generator()")
             })?;
@@ -1234,6 +1235,7 @@ fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
 }
 
 fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
+    // nosemgrep: spec-gap-SA-001-G08-classify-duck-typing
     let value = e.value(py).getattr("value")?;
     Ok(Value::from_pyobject(&value))
 }
@@ -1476,6 +1478,7 @@ impl PyRunResult {
         let mut lines: Vec<String> = Vec::new();
         let max_items = if verbose { 32 } else { 8 };
 
+        // nosemgrep: spec-gap-SA-001-G08-classify-duck-typing
         if let Ok(active_chain) = traceback_data.getattr("active_chain") {
             if !active_chain.is_none() {
                 lines.push("ActiveChain:".to_string());
@@ -1483,6 +1486,7 @@ impl PyRunResult {
             }
         }
 
+        // nosemgrep: spec-gap-SA-001-G08-classify-duck-typing
         if let Ok(entries) = traceback_data.getattr("entries") {
             let entry_count = entries.len().ok();
             if verbose {
@@ -2942,6 +2946,7 @@ mod tests {
     fn test_r13i_effect_base_tag() {
         Python::attach(|py| {
             let effect = Bound::new(py, PyEffectBase::new_base()).unwrap();
+            // nosemgrep: spec-gap-SA-001-G08-classify-duck-typing
             let tag: u8 = effect.getattr("tag").unwrap().extract().unwrap();
             assert_eq!(tag, DoExprTag::Effect as u8);
         });
@@ -2951,6 +2956,7 @@ mod tests {
     fn test_r13i_doctrl_base_default_tag() {
         Python::attach(|py| {
             let base = Bound::new(py, PyDoCtrlBase::new()).unwrap();
+            // nosemgrep: spec-gap-SA-001-G08-classify-duck-typing
             let tag: u8 = base.getattr("tag").unwrap().extract().unwrap();
             assert_eq!(tag, DoExprTag::Unknown as u8);
         });

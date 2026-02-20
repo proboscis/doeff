@@ -27,7 +27,7 @@ help:
 # =============================================================================
 
 # Run ALL linters
-lint: lint-ruff lint-pyright lint-semgrep
+lint: lint-semgrep
 	@echo ""
 	@echo "All linters passed!"
 

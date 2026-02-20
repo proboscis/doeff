@@ -186,7 +186,7 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
         print("  doeff-agentic send <workflow-id>:review-agent 'reject'")
         print("=" * 60 + "\n")
 
-        approval = yield from wait_for_user_input(
+        approval = yield wait_for_user_input(
             session_id=review_session.id,
             prompt="Review complete. Enter 'approve' or 'reject':",
             timeout=600.0,

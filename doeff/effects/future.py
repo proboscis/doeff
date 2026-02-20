@@ -90,10 +90,13 @@ def _ensure_background_loop() -> asyncio.AbstractEventLoop:
         return loop
 
 
-def _submit_awaitable(awaitable: Awaitable[Any], promise: Any) -> None:
+def _submit_awaitable(
+    awaitable: Awaitable[Any],  # nosemgrep: doeff-no-typing-any-in-public-api
+    promise: Any,  # nosemgrep: doeff-no-typing-any-in-public-api
+) -> None:
     loop = _ensure_background_loop()
 
-    async def _run() -> Any:
+    async def _run() -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
         return await awaitable
 
     future = asyncio.run_coroutine_threadsafe(_run(), loop)

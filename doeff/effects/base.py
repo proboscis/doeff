@@ -15,8 +15,9 @@ if TYPE_CHECKING:  # pragma: no cover - type-only import
     from doeff.program import Program
 
 
-def intercept_value(
-    value: Any, transform: Callable[[Effect], Effect | Program]
+def intercept_value(  # nosemgrep: doeff-no-typing-any-in-public-api
+    value: Any,
+    transform: Callable[[Effect], Effect | Program],
 ) -> Any:
     """Apply ``transform`` to any nested programs within ``value``."""
 

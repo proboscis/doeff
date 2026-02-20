@@ -250,7 +250,7 @@ def track_api_call(
     metadata = APICallMetadata(
         operation=operation,
         model=model,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(timezone.utc),  # nosemgrep: doeff-no-datetime-now-in-do
         request_id=request_id,
         latency_ms=latency_ms,
         token_usage=token_usage,

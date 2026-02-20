@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import logging
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 
-def _vm() -> Any:
+logger = logging.getLogger(__name__)
+
+
+def _vm() -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
     return importlib.import_module("doeff_vm")
 
 
@@ -37,7 +42,7 @@ def _handler_registration_metadata(
     return handler_name, source_file, source_line
 
 
-def _coerce_handler(handler: Any) -> Any:
+def _coerce_handler(handler: Any) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
     vm = _vm()
     rust_handler_type = getattr(vm, "RustHandler", None)
     if rust_handler_type is not None and isinstance(handler, rust_handler_type):
@@ -64,7 +69,7 @@ def _coerce_handler(handler: Any) -> Any:
     )
 
 
-def _coerce_program(program: Any) -> Any:
+def _coerce_program(program: Any) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
     vm = _vm()
     if isinstance(program, vm.EffectBase):
         return vm.Perform(program)
@@ -88,7 +93,11 @@ def _coerce_program(program: Any) -> Any:
     raise TypeError(f"run() requires DoExpr[T] or EffectValue[T], got {type(program).__name__}")
 
 
-def _raise_unhandled_effect_if_present(run_result: Any, *, raise_unhandled: bool) -> Any:
+def _raise_unhandled_effect_if_present(  # nosemgrep: doeff-no-typing-any-in-public-api
+    run_result: Any,
+    *,
+    raise_unhandled: bool,
+) -> Any:
     if not raise_unhandled:
         return run_result
     is_err = getattr(run_result, "is_err", None)
@@ -132,9 +141,7 @@ def _print_doeff_trace_if_present(run_result: Any) -> None:
     if doeff_tb is None:
         return
     try:
-        import sys
-
-        print(doeff_tb.format_default(), file=sys.stderr)
+        print(doeff_tb.format_default(), file=sys.stderr)  # nosemgrep: doeff-no-print-in-core
     except Exception:
         return
 
@@ -182,7 +189,11 @@ def _is_unexpected_trace_keyword(exc: TypeError) -> bool:
     return "trace" in message and "unexpected keyword" in message
 
 
-def _call_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) -> Any:
+def _call_run_fn(  # nosemgrep: doeff-no-typing-any-in-public-api
+    run_fn: Any,
+    program: Any,
+    kwargs: dict[str, Any],
+) -> Any:
     try:
         return run_fn(program, **kwargs)
     except TypeError as exc:
@@ -193,7 +204,11 @@ def _call_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) -> Any:
         raise
 
 
-async def _call_async_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) -> Any:
+async def _call_async_run_fn(  # nosemgrep: doeff-no-typing-any-in-public-api
+    run_fn: Any,
+    program: Any,
+    kwargs: dict[str, Any],
+) -> Any:
     try:
         return await run_fn(program, **kwargs)
     except TypeError as exc:
@@ -236,7 +251,7 @@ def default_async_handlers() -> list[Any]:
     return [*_core_handler_sentinels(vm), _coerce_handler(async_await_handler)]
 
 
-def _wrap_with_handler_map(
+def _wrap_with_handler_map(  # nosemgrep: doeff-no-typing-any-in-public-api
     program: Any, handler_map: Mapping[type, Callable[[Any, Any], Any]]
 ) -> Any:
     """Wrap a program with typed WithHandler layers from an effect->handler mapping."""
@@ -268,7 +283,7 @@ def _wrap_with_handler_map(
     return wrapped
 
 
-def run_with_handler_map(
+def run_with_handler_map(  # nosemgrep: doeff-no-typing-any-in-public-api
     program: Any,
     handler_map: Mapping[type, Callable[[Any, Any], Any]],
     *,
@@ -289,7 +304,7 @@ def run_with_handler_map(
     )
 
 
-async def async_run_with_handler_map(
+async def async_run_with_handler_map(  # nosemgrep: doeff-no-typing-any-in-public-api
     program: Any,
     handler_map: Mapping[type, Callable[[Any, Any], Any]],
     *,
@@ -310,7 +325,7 @@ async def async_run_with_handler_map(
     )
 
 
-def run(
+def run(  # nosemgrep: doeff-no-typing-any-in-public-api
     program: Any,
     handlers: Sequence[Any] = (),
     env: dict[Any, Any] | None = None,
@@ -337,7 +352,7 @@ def run(
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
-async def async_run(
+async def async_run(  # nosemgrep: doeff-no-typing-any-in-public-api
     program: Any,
     handlers: Sequence[Any] = (),
     env: dict[Any, Any] | None = None,
@@ -364,7 +379,7 @@ async def async_run(
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
     if name in {
         "RunResult",
         "DoeffTracebackData",

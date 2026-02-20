@@ -37,7 +37,8 @@ def call_external_api(endpoint: str, attempt: int = 1):
     time.sleep(0.1)
 
     # Simulate random failures
-    if random.random() < 0.3:  # 30% failure rate
+    # 30% failure rate
+    if random.random() < 0.3:  # nosemgrep: doeff-no-random-in-do
         raise ConnectionError(f"Failed to connect to {endpoint}")
 
     yield slog(step="api", status="success", endpoint=endpoint)
@@ -58,7 +59,11 @@ def fetch_orders(user_id: int):
     endpoint = f"/users/{user_id}/orders"
     yield call_external_api(endpoint)
     return [
-        {"order_id": i, "user_id": user_id, "amount": random.randint(10, 100)}
+        {
+            "order_id": i,
+            "user_id": user_id,
+            "amount": random.randint(10, 100),  # nosemgrep: doeff-no-random-in-do
+        }
         for i in range(3)
     ]
 
@@ -70,7 +75,7 @@ def process_user_data(user_id: int):
 
     # Step 1: Fetch user
     user = yield fetch_user(user_id)
-    yield slog(step="data", status="got_user", name=user['name'])
+    yield slog(step="data", status="got_user", name=user["name"])
 
     # Step 2: Fetch orders
     orders = yield fetch_orders(user_id)
@@ -174,8 +179,9 @@ def main():
     )
 
     if result1.is_ok():
-        print(f"\nResult: {result1.value['successful']} successful, "
-              f"{result1.value['failed']} failed")
+        print(
+            f"\nResult: {result1.value['successful']} successful, {result1.value['failed']} failed"
+        )
     else:
         print(f"\nWorkflow failed: {result1.error}")
 

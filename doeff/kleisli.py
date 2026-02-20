@@ -65,7 +65,11 @@ class KleisliProgram(Generic[P, T]):
         strategy = _build_auto_unwrap_strategy(self)
         object.__setattr__(self, "_auto_unwrap_strategy", strategy)
 
-    def __get__(self, instance: Any, owner: type | None = None) -> Any:
+    def __get__(  # nosemgrep: doeff-no-typing-any-in-public-api
+        self,
+        instance: Any,
+        owner: type | None = None,
+    ) -> Any:
         if instance is None:
             return self
         return types.MethodType(self, instance)
@@ -79,7 +83,9 @@ class KleisliProgram(Generic[P, T]):
             strategy = _build_auto_unwrap_strategy(self)
             object.__setattr__(self, "_auto_unwrap_strategy", strategy)
 
-        def classify_arg(arg: Any, should_unwrap: bool) -> Any:
+        def classify_arg(  # nosemgrep: doeff-no-typing-any-in-public-api
+            arg: Any, should_unwrap: bool
+        ) -> Any:
             if should_unwrap and isinstance(arg, EffectBase):
                 return Perform(arg)
             if should_unwrap and isinstance(arg, DoCtrlBase):

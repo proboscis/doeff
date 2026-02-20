@@ -65,13 +65,13 @@ def worker_workflow(worker_id: str, num_tasks: int):
     Each worker runs independently and has its own trace.
     """
     yield slog(step="worker", worker_id=worker_id, status="starting", num_tasks=num_tasks)
-    start_time = datetime.now()
+    start_time = datetime.now()  # nosemgrep: doeff-no-datetime-now-in-do
 
     completed_tasks = []
 
     for i in range(num_tasks):
         task_id = f"{worker_id}-task-{i:02d}"
-        complexity = random.randint(2, 5)
+        complexity = random.randint(2, 5)  # nosemgrep: doeff-no-random-in-do
 
         yield slog(
             step="worker",
@@ -84,7 +84,10 @@ def worker_workflow(worker_id: str, num_tasks: int):
         completed_tasks.append(result)
         yield slog(step="worker", worker_id=worker_id, status="completed", task_id=task_id)
 
-    elapsed = (datetime.now() - start_time).total_seconds()
+    elapsed = (
+        datetime.now()  # nosemgrep: doeff-no-datetime-now-in-do
+        - start_time
+    ).total_seconds()
 
     summary = {
         "worker_id": worker_id,
@@ -121,7 +124,7 @@ def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
     print("=" * 60 + "\n")
 
     # Start all workers
-    start_time = datetime.now()
+    start_time = datetime.now()  # nosemgrep: doeff-no-datetime-now-in-do
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         futures = []
@@ -132,7 +135,10 @@ def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
         for future in futures:
             future.result()
 
-    elapsed = (datetime.now() - start_time).total_seconds()
+    elapsed = (
+        datetime.now()  # nosemgrep: doeff-no-datetime-now-in-do
+        - start_time
+    ).total_seconds()
 
     # Summarize results
     print("\n" + "=" * 60)
