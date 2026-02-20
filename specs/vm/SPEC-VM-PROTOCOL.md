@@ -38,7 +38,7 @@ These are the exhaustive list of things the VM makes decisions on:
 
 | What | How it arrives | VM decision |
 |------|---------------|-------------|
-| **DoCtrl variant** | `classify_yielded()` reads tag from `PyDoCtrlBase` | Branch on variant (Pure, Call, Perform, Resume, Transfer, WithHandler, Delegate, etc.) |
+| **DoCtrl variant** | `classify_yielded()` reads tag from `PyDoCtrlBase` | Branch on variant (Pure, Call, Perform, Resume, Transfer, WithHandler, Delegate, Pass, etc.) |
 | **Generator stepping** | `step_generator()` calls `send()`/`__next__()` on the generator object | Branch on outcome (yield / return / error) |
 | **Generator location** | `DoeffGenerator.get_frame` callback (see §3.4) | Used in trace assembly to supplement frame line numbers |
 | **Call metadata** | `CallMetadata` on `DoCtrl::Call` (already typed) | Stored on `Frame::PythonGenerator`, emitted in trace events |
@@ -340,7 +340,7 @@ The VM never knows about this wrapping. It just receives `DoeffGenerator` from e
 
 Python handlers **must** return generators. The `WithHandler` wrapper (§3.8) enforces this at the Python level: it raises `TypeError` with a diagnostic message (including the handler function name) before the VM ever sees the return value.
 
-**Why handlers must return generators**: Handlers interact with the VM through `yield Resume(k, value)`, `yield Delegate()`, `yield Transfer(k, program)`. These are DoCtrl instructions yielded from a generator. A non-generator return has no way to issue these instructions. A handler that wants to immediately resume with a value still needs `yield Resume(k, value)` — there's no shorthand.
+**Why handlers must return generators**: Handlers interact with the VM through `yield Resume(k, value)`, `yield Pass()`, `yield Delegate()`, `yield Transfer(k, program)`. These are DoCtrl instructions yielded from a generator. A non-generator return has no way to issue these instructions. A handler that wants to immediately resume with a value still needs `yield Resume(k, value)` — there's no shorthand.
 
 **Note on `DoExpr` returns**: If a handler returns a `DoExpr` (e.g., `Resume(k, value)` without `yield`), this is a user error — they forgot `yield`. The wrapper's `TypeError` catches this because a `DoExpr` is not a generator. The error message should hint at the likely cause: "did you forget `yield`?"
 
