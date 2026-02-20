@@ -7,7 +7,6 @@ use pyo3::prelude::*;
 #[cfg(test)]
 use pyo3::types::PyString;
 
-#[derive(Clone)]
 enum HashedPyKeyInner {
     Python(Py<PyAny>),
     #[cfg(test)]
@@ -15,10 +14,30 @@ enum HashedPyKeyInner {
 }
 
 /// Wrapper that preserves Python hash/equality behavior for dictionary keys.
-#[derive(Clone)]
 pub struct HashedPyKey {
     hash: isize,
     inner: HashedPyKeyInner,
+}
+
+impl Clone for HashedPyKeyInner {
+    fn clone(&self) -> Self {
+        match self {
+            HashedPyKeyInner::Python(obj) => {
+                HashedPyKeyInner::Python(Python::attach(|py| obj.clone_ref(py)))
+            }
+            #[cfg(test)]
+            HashedPyKeyInner::TestString(value) => HashedPyKeyInner::TestString(value.clone()),
+        }
+    }
+}
+
+impl Clone for HashedPyKey {
+    fn clone(&self) -> Self {
+        Self {
+            hash: self.hash,
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl HashedPyKey {
