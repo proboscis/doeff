@@ -171,16 +171,10 @@ impl Continuation {
                     list.append(identity.bind(py))?;
                     continue;
                 }
-                match handler {
-                    Handler::Python {
-                        callable: py_handler,
-                        ..
-                    } => {
-                        list.append(py_handler.bind(py))?;
-                    }
-                    Handler::RustProgram(_) => {
-                        list.append(py.None().into_bound(py))?;
-                    }
+                if let Some(identity) = handler.py_identity() {
+                    list.append(identity.bind(py))?;
+                } else {
+                    list.append(py.None().into_bound(py))?;
                 }
             }
             dict.set_item("handlers", list)?;

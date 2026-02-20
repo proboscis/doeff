@@ -76,4 +76,4 @@ def test_with_handler_wraps_generator_handler_returns_as_doeff_generator() -> No
     assert isinstance(wrapped, doeff_vm.DoeffGenerator)
     assert inspect.isgenerator(wrapped.generator)
     assert wrapped.get_frame is _default_get_frame
-    assert wrapped.function_name == "handler"
+    assert wrapped.function_name == handler.__qualname__

@@ -8,7 +8,7 @@ use crate::ast_stream::PythonGeneratorStream;
 use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
-    dispatch_from_shared, dispatch_to_pyobject, PyAcquireSemaphore, PyAsk, PyCancelEffect,
+    dispatch_from_shared, PyAcquireSemaphore, PyAsk, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
     PyGather, PyGet, PyLocal, PyModify, PyProgramCallFrame, PyProgramCallStack, PyProgramTrace,
     PyPut, PyPythonAsyncioAwaitEffect, PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn,
@@ -80,8 +80,8 @@ impl TryFrom<u8> for DoExprTag {
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    AwaitHandlerFactory, Handler, HandlerEntry, LazyAskHandlerFactory, ReaderHandlerFactory,
-    ResultSafeHandlerFactory, RustProgramHandlerRef, StateHandlerFactory, WriterHandlerFactory,
+    AwaitHandlerFactory, Handler, HandlerEntry, HandlerRef, LazyAskHandlerFactory, PythonHandler,
+    ReaderHandlerFactory, ResultSafeHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
 use crate::py_key::HashedPyKey;
@@ -646,7 +646,7 @@ impl PyVM {
             self.vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(StateHandlerFactory)),
+                    Arc::new(StateHandlerFactory),
                     prompt_seg_id,
                 ),
             );
@@ -660,7 +660,7 @@ impl PyVM {
             self.vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(ReaderHandlerFactory)),
+                    Arc::new(ReaderHandlerFactory),
                     prompt_seg_id,
                 ),
             );
@@ -674,7 +674,7 @@ impl PyVM {
             self.vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(WriterHandlerFactory)),
+                    Arc::new(WriterHandlerFactory),
                     prompt_seg_id,
                 ),
             );
@@ -694,6 +694,39 @@ impl PyVM {
 }
 
 impl PyVM {
+    fn classify_handler_object(
+        _py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+        context: &str,
+    ) -> PyResult<(Handler, Option<PyShared>)> {
+        if obj.is_instance_of::<PyRustHandlerSentinel>() {
+            let sentinel: PyRef<'_, PyRustHandlerSentinel> = obj.extract()?;
+            return Ok((sentinel.factory.clone(), Some(PyShared::new(obj.clone().unbind()))));
+        }
+
+        if obj.is_instance_of::<DoeffGeneratorFn>() {
+            let dgfn = obj.extract::<Py<DoeffGeneratorFn>>()?;
+            let callable_identity = {
+                let dgfn_ref = dgfn.bind(_py).borrow();
+                dgfn_ref.callable.clone_ref(_py)
+            };
+            let handler: Handler = Arc::new(PythonHandler::from_dgfn(dgfn));
+            return Ok((handler, Some(PyShared::new(callable_identity))));
+        }
+
+        let base_message = format!("{context} handler must be DoeffGeneratorFn or RustHandler");
+        if obj.is_callable() {
+            return Err(PyTypeError::new_err(base_message));
+        }
+
+        let ty = obj
+            .get_type()
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string());
+        Err(PyTypeError::new_err(format!("{base_message}, got {ty}")))
+    }
+
     fn is_python_generator_object(obj: &Bound<'_, PyAny>) -> bool {
         let py = obj.py();
         py.import("inspect")
@@ -836,31 +869,6 @@ impl PyVM {
                     }
                 }
             }
-            PythonCall::CallHandler {
-                handler,
-                effect,
-                continuation,
-            } => {
-                let py_effect = dispatch_to_pyobject(py, &effect)?;
-                let py_k = Bound::new(
-                    py,
-                    PyK {
-                        cont_id: continuation.cont_id,
-                    },
-                )?
-                .into_any();
-                match handler.bind(py).call1((py_effect, py_k)) {
-                    Ok(result) => match self.require_doeff_generator(
-                        py,
-                        result.unbind(),
-                        "CallHandler(handler result)",
-                    ) {
-                        Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
-                        Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
-                    },
-                    Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
-                }
-            }
             PythonCall::GenNext => {
                 let gen = self.pending_generator(py)?;
                 self.step_generator(py, gen, None)
@@ -1000,35 +1008,8 @@ impl PyVM {
                 DoExprTag::WithHandler => {
                     let wh: PyRef<'_, PyWithHandler> = obj.extract()?;
                     let handler_bound = wh.handler.bind(py);
-                    let (handler, py_identity) = if handler_bound
-                        .is_instance_of::<PyRustHandlerSentinel>()
-                    {
-                        let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_bound.extract()?;
-                        (
-                            Handler::RustProgram(sentinel.factory.clone()),
-                            Some(PyShared::new(wh.handler.clone_ref(py))),
-                        )
-                    } else {
-                        let mut python_handler = Handler::python_from_callable(handler_bound);
-                        if let Handler::Python {
-                            handler_name,
-                            handler_file,
-                            handler_line,
-                            ..
-                        } = &mut python_handler
-                        {
-                            if let Some(name) = &wh.handler_name {
-                                *handler_name = name.clone();
-                            }
-                            if wh.handler_file.is_some() {
-                                *handler_file = wh.handler_file.clone();
-                            }
-                            if wh.handler_line.is_some() {
-                                *handler_line = wh.handler_line;
-                            }
-                        }
-                        (python_handler, None)
-                    };
+                    let (handler, py_identity) =
+                        Self::classify_handler_object(py, handler_bound, "WithHandler")?;
                     Ok(DoCtrl::WithHandler {
                         handler,
                         expr: wh.expr.clone_ref(py),
@@ -1197,14 +1178,10 @@ impl PyVM {
                     let mut handler_identities = Vec::new();
                     for item in handlers_list.try_iter()? {
                         let item = item?;
-                        if item.is_instance_of::<PyRustHandlerSentinel>() {
-                            let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
-                            handlers.push(Handler::RustProgram(sentinel.factory.clone()));
-                            handler_identities.push(Some(PyShared::new(item.unbind())));
-                        } else {
-                            handlers.push(Handler::python_from_callable(&item));
-                            handler_identities.push(None);
-                        }
+                        let (handler, identity) =
+                            Self::classify_handler_object(py, &item, "CreateContinuation")?;
+                        handlers.push(handler);
+                        handler_identities.push(identity);
                     }
                     Ok(DoCtrl::CreateContinuation {
                         expr: PyShared::new(program),
@@ -1223,12 +1200,8 @@ impl PyVM {
                     let mut handlers = Vec::new();
                     for item in handlers_list.try_iter()? {
                         let item = item?;
-                        if item.is_instance_of::<PyRustHandlerSentinel>() {
-                            let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
-                            handlers.push(Handler::RustProgram(sentinel.factory.clone()));
-                        } else {
-                            handlers.push(Handler::python_from_callable(&item));
-                        }
+                        let (handler, _) = Self::classify_handler_object(py, &item, "Eval")?;
+                        handlers.push(handler);
                     }
                     Ok(DoCtrl::Eval {
                         expr: PyShared::new(expr),
@@ -1315,7 +1288,7 @@ impl PyStdlib {
             vm.vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(StateHandlerFactory)),
+                    Arc::new(StateHandlerFactory),
                     prompt_seg_id,
                 ),
             );
@@ -1329,7 +1302,7 @@ impl PyStdlib {
             vm.vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(ReaderHandlerFactory)),
+                    Arc::new(ReaderHandlerFactory),
                     prompt_seg_id,
                 ),
             );
@@ -1343,7 +1316,7 @@ impl PyStdlib {
             vm.vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(WriterHandlerFactory)),
+                    Arc::new(WriterHandlerFactory),
                     prompt_seg_id,
                 ),
             );
@@ -1363,7 +1336,7 @@ impl PySchedulerHandler {
             vm.vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(self.handler.clone())),
+                    Arc::new(self.handler.clone()),
                     prompt_seg_id,
                 ),
             );
@@ -1761,6 +1734,12 @@ pub struct PyK {
     cont_id: crate::ids::ContId,
 }
 
+impl PyK {
+    pub(crate) fn from_cont_id(cont_id: crate::ids::ContId) -> Self {
+        PyK { cont_id }
+    }
+}
+
 #[pymethods]
 impl PyK {
     fn __repr__(&self) -> String {
@@ -1796,10 +1775,22 @@ impl PyWithHandler {
         handler_line: Option<u32>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let handler_obj = handler.bind(py);
-        if !(handler_obj.is_instance_of::<PyRustHandlerSentinel>() || handler_obj.is_callable()) {
-            return Err(PyTypeError::new_err(
-                "WithHandler.handler must be callable or built-in handler sentinel",
-            ));
+        let is_rust_handler = handler_obj.is_instance_of::<PyRustHandlerSentinel>();
+        let is_dgfn = handler_obj.is_instance_of::<DoeffGeneratorFn>();
+        if !is_rust_handler && !is_dgfn {
+            if handler_obj.is_callable() {
+                return Err(PyTypeError::new_err(
+                    "WithHandler handler must be DoeffGeneratorFn or RustHandler",
+                ));
+            }
+            let ty = handler_obj
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            return Err(PyTypeError::new_err(format!(
+                "WithHandler handler must be DoeffGeneratorFn or RustHandler, got {ty}"
+            )));
         }
 
         let expr = lift_effect_to_perform_expr(py, expr)?;
@@ -1809,31 +1800,6 @@ impl PyWithHandler {
             return Err(PyTypeError::new_err("WithHandler.expr must be DoExpr"));
         }
 
-        let (resolved_handler_name, resolved_handler_file, resolved_handler_line) =
-            if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
-                (None, None, None)
-            } else {
-                let mut derived_name = None;
-                let mut derived_file = None;
-                let mut derived_line = None;
-                if let Handler::Python {
-                    handler_name,
-                    handler_file,
-                    handler_line,
-                    ..
-                } = Handler::python_from_callable(handler_obj)
-                {
-                    derived_name = Some(handler_name);
-                    derived_file = handler_file;
-                    derived_line = handler_line;
-                }
-                (
-                    handler_name.or(derived_name),
-                    handler_file.or(derived_file),
-                    handler_line.or(derived_line),
-                )
-            };
-
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::WithHandler as u8,
@@ -1841,9 +1807,9 @@ impl PyWithHandler {
             .add_subclass(PyWithHandler {
                 handler,
                 expr,
-                handler_name: resolved_handler_name,
-                handler_file: resolved_handler_file,
-                handler_line: resolved_handler_line,
+                handler_name,
+                handler_file,
+                handler_line,
             }))
     }
 }
@@ -2337,11 +2303,11 @@ impl PyAsyncEscape {
 /// WithHandler arms. ADR-14: no string-based shortcuts.
 #[pyclass(frozen, name = "RustHandler")]
 pub struct PyRustHandlerSentinel {
-    pub(crate) factory: RustProgramHandlerRef,
+    pub(crate) factory: HandlerRef,
 }
 
 impl PyRustHandlerSentinel {
-    pub(crate) fn factory_ref(&self) -> RustProgramHandlerRef {
+    pub(crate) fn factory_ref(&self) -> HandlerRef {
         self.factory.clone()
     }
 }
@@ -2413,26 +2379,12 @@ impl NestingGenerator {
             .ok_or_else(|| PyRuntimeError::new_err("NestingGenerator already consumed"))?;
         let inner = lift_effect_to_perform_expr(py, inner)?;
         self.done = true;
-        let (handler_name, handler_file, handler_line) =
-            if handler.bind(py).is_instance_of::<PyRustHandlerSentinel>() {
-                (None, None, None)
-            } else {
-                match Handler::python_from_callable(handler.bind(py)) {
-                    Handler::Python {
-                        handler_name,
-                        handler_file,
-                        handler_line,
-                        ..
-                    } => (Some(handler_name), handler_file, handler_line),
-                    Handler::RustProgram(_) => (None, None, None),
-                }
-            };
         let wh = PyWithHandler {
             handler,
             expr: inner,
-            handler_name,
-            handler_file,
-            handler_line,
+            handler_name: None,
+            handler_file: None,
+            handler_line: None,
         };
         let bound = Bound::new(
             py,
@@ -2606,10 +2558,9 @@ mod tests {
             match yielded {
                 DoCtrl::CreateContinuation { handlers, .. } => {
                     assert!(
-                        matches!(
-                            handlers.first(),
-                            Some(crate::handler::Handler::RustProgram(_))
-                        ),
+                        handlers
+                            .first()
+                            .is_some_and(|handler| handler.handler_name() == "StateHandler"),
                         "G3 FAIL: CreateContinuation converted rust sentinel into Python handler"
                     );
                 }
@@ -3282,26 +3233,12 @@ fn run(
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
             wrapped = lift_effect_to_perform_expr(py, wrapped)?;
-            let (handler_name, handler_file, handler_line) =
-                if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
-                    (None, None, None)
-                } else {
-                    match Handler::python_from_callable(&handler_obj) {
-                        Handler::Python {
-                            handler_name,
-                            handler_file,
-                            handler_line,
-                            ..
-                        } => (Some(handler_name), handler_file, handler_line),
-                        Handler::RustProgram(_) => (None, None, None),
-                    }
-                };
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
-                handler_name,
-                handler_file,
-                handler_line,
+                handler_name: None,
+                handler_file: None,
+                handler_line: None,
             };
             let bound = Bound::new(
                 py,
@@ -3357,26 +3294,12 @@ fn async_run<'py>(
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
             wrapped = lift_effect_to_perform_expr(py, wrapped)?;
-            let (handler_name, handler_file, handler_line) =
-                if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
-                    (None, None, None)
-                } else {
-                    match Handler::python_from_callable(&handler_obj) {
-                        Handler::Python {
-                            handler_name,
-                            handler_file,
-                            handler_line,
-                            ..
-                        } => (Some(handler_name), handler_file, handler_line),
-                        Handler::RustProgram(_) => (None, None, None),
-                    }
-                };
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
-                handler_name,
-                handler_file,
-                handler_line,
+                handler_name: None,
+                handler_file: None,
+                handler_line: None,
             };
             let bound = Bound::new(
                 py,

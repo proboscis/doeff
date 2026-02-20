@@ -62,11 +62,15 @@ def test_handler_trace_metadata_uses_registration_values_not_runtime_dunder_read
         yield Delegate()
 
     control = WithHandler(crash_handler, _probe_program())
+    original_qualname = crash_handler.__qualname__
+    original_source_file = crash_handler.__code__.co_filename
+    original_source_line = crash_handler.__code__.co_firstlineno
 
-    # Mutate the wrapped callable after registration.
+    # Mutate the underlying callable after registration.
     # VM-PROTO-003 requires trace metadata to come from registration-time fields,
     # not runtime getattr("__name__") / getattr("__code__") probing.
-    control.handler.__name__ = "mutated_handler_name"
+    control.handler.callable.__name__ = "mutated_handler_name"
+    control.handler.callable.__qualname__ = "mutated_handler_qualname"
 
     result = run(control, handlers=default_handlers(), print_doeff_trace=False)
     assert result.is_err()
@@ -84,6 +88,6 @@ def test_handler_trace_metadata_uses_registration_values_not_runtime_dunder_read
         handler_source_file = dispatch.handler_source_file
         handler_source_line = dispatch.handler_source_line
 
-    assert handler_name == crash_handler.__qualname__
-    assert handler_source_file == crash_handler.__code__.co_filename
-    assert handler_source_line == crash_handler.__code__.co_firstlineno
+    assert handler_name == original_qualname
+    assert handler_source_file == original_source_file
+    assert handler_source_line == original_source_line

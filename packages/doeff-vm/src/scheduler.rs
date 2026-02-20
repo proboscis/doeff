@@ -13,6 +13,8 @@ use pyo3::types::{PyDict, PyTuple};
 use crate::ast_stream::{ASTStream, ASTStreamRef, ASTStreamStep, StreamLocation};
 use crate::capture::SpawnSite;
 use crate::continuation::Continuation;
+use crate::do_ctrl::CallArg;
+use crate::doeff_generator::DoeffGeneratorFn;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::effect::{
@@ -21,9 +23,10 @@ use crate::effect::{
     PyCreatePromise, PyCreateSemaphore, PyFailPromise, PyGather, PyRace, PyReleaseSemaphore,
     PySpawn, PyTaskCompleted,
 };
-use crate::frame::Frame;
+use crate::frame::{CallMetadata, Frame};
 use crate::handler::{
-    Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
+    Handler, HandlerInvoke, PythonHandler, RustHandlerProgram, RustProgramHandler,
+    RustProgramInvocation, RustProgramRef, RustProgramStep,
 };
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
 use crate::py_shared::PyShared;
@@ -725,10 +728,32 @@ fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<Handler>, 
             let sentinel: PyRef<'_, PyRustHandlerSentinel> = item
                 .extract::<PyRef<'_, PyRustHandlerSentinel>>()
                 .map_err(|e| format!("{e:?}"))?;
-            handlers.push(Handler::RustProgram(sentinel.factory_ref()));
-        } else {
-            handlers.push(Handler::python_from_callable(&item));
+            handlers.push(sentinel.factory_ref());
+            continue;
         }
+
+        if item.is_instance_of::<DoeffGeneratorFn>() {
+            let dgfn = item
+                .extract::<Py<DoeffGeneratorFn>>()
+                .map_err(|e| format!("{e:?}"))?;
+            handlers.push(Arc::new(PythonHandler::from_dgfn(dgfn)));
+            continue;
+        }
+
+        if item.is_callable() {
+            return Err(
+                "Spawn handlers must be DoeffGeneratorFn or RustHandler sentinel".to_string(),
+            );
+        }
+
+        let ty = item
+            .get_type()
+            .name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string());
+        return Err(format!(
+            "Spawn handlers must be DoeffGeneratorFn or RustHandler sentinel, got {ty}"
+        ));
     }
     Ok(handlers)
 }
@@ -2363,6 +2388,47 @@ impl RustProgramHandler for SchedulerHandler {
     }
 }
 
+impl HandlerInvoke for SchedulerHandler {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as RustProgramHandler>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoCtrl {
+        DoCtrl::Expand {
+            factory: CallArg::Value(Value::RustProgramInvocation(RustProgramInvocation {
+                factory: Arc::new(self.clone()),
+                effect: Box::new(effect),
+                continuation: k,
+            })),
+            args: vec![],
+            kwargs: vec![],
+            metadata: CallMetadata::new(
+                <Self as RustProgramHandler>::handler_name(self).to_string(),
+                "<rust>".to_string(),
+                0,
+                None,
+                None,
+            ),
+        }
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as RustProgramHandler>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> crate::handler::HandlerDebugInfo {
+        crate::handler::HandlerDebugInfo {
+            name: <Self as RustProgramHandler>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
+    }
+
+    fn on_run_end(&self, run_token: u64) {
+        <Self as RustProgramHandler>::on_run_end(self, run_token);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2697,9 +2763,12 @@ mod tests {
     #[test]
     fn test_scheduler_handler_can_handle() {
         let handler = SchedulerHandler::new();
-        assert!(!handler.can_handle(&Effect::Get {
-            key: "x".to_string()
-        }));
+        assert!(!HandlerInvoke::can_handle(
+            &handler,
+            &Effect::Get {
+                key: "x".to_string()
+            }
+        ));
     }
 
     #[test]
