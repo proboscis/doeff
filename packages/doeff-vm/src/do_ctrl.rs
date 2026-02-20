@@ -68,12 +68,6 @@ pub enum DoCtrl {
     PythonAsyncSyntaxEscape {
         action: Py<PyAny>,
     },
-    Call {
-        f: CallArg,
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
-        metadata: CallMetadata,
-    },
     Apply {
         f: CallArg,
         args: Vec<CallArg>,
@@ -175,17 +169,6 @@ impl DoCtrl {
             },
             DoCtrl::PythonAsyncSyntaxEscape { action } => DoCtrl::PythonAsyncSyntaxEscape {
                 action: action.clone_ref(py),
-            },
-            DoCtrl::Call {
-                f,
-                args,
-                kwargs,
-                metadata,
-            } => DoCtrl::Call {
-                f: f.clone(),
-                args: args.clone(),
-                kwargs: kwargs.clone(),
-                metadata: metadata.clone(),
             },
             DoCtrl::Apply {
                 f,

@@ -184,7 +184,6 @@ WithHandler = _ext.WithHandler
 
 
 Pure = _ext.Pure
-Call = _ext.Call
 Apply = _ext.Apply
 Expand = _ext.Expand
 Map = _ext.Map
@@ -245,7 +244,6 @@ _debug_scheduler_semaphore_count = _ext._debug_scheduler_semaphore_count
 
 # R13-I: DoExprTag constants
 TAG_PURE = _ext.TAG_PURE
-TAG_CALL = _ext.TAG_CALL
 TAG_MAP = _ext.TAG_MAP
 TAG_FLAT_MAP = _ext.TAG_FLAT_MAP
 TAG_WITH_HANDLER = _ext.TAG_WITH_HANDLER
@@ -280,7 +278,6 @@ PyTaskCompleted = _SchedulerTaskCompleted
 __all__ = [
     "K",
     "Delegate",
-    "Call",
     "Apply",
     "Expand",
     "Eval",
@@ -352,7 +349,6 @@ __all__ = [
     "await_handler",
     "writer",
     "TAG_PURE",
-    "TAG_CALL",
     "TAG_MAP",
     "TAG_FLAT_MAP",
     "TAG_WITH_HANDLER",

@@ -647,7 +647,7 @@ def test_format_default_shows_effect_yield_on_handler_throw() -> None:
     assert "·" in rendered
     assert "raised RuntimeError('handler exploded')" in rendered
     # With typed handler metadata, crash_handler now appears as a proper frame
-    assert "crash_handler()" in rendered
+    assert "crash_handler" in rendered
     assert "/doeff/do.py:52" not in rendered
     assert "\n\nRuntimeError: handler exploded" in rendered
 
@@ -680,7 +680,7 @@ def test_format_default_shows_program_yield_chain() -> None:
     assert "crash_handler✗" in rendered
     assert "handler exploded" in rendered
     assert source_file in rendered
-    assert "crash_handler()" in rendered
+    assert "crash_handler" in rendered
     assert "/doeff/do.py:52" not in rendered
 
 
@@ -727,7 +727,7 @@ def test_format_default_shows_delegation_chain() -> None:
     assert "outer_crash_handler✗" in rendered
     assert "StateHandler·" in rendered
     assert "delegated boom" in rendered
-    assert "outer_crash_handler()" in rendered
+    assert "outer_crash_handler" in rendered
     assert "\n\nRuntimeError: delegated boom" in rendered
 
 

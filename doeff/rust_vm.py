@@ -119,9 +119,13 @@ def _coerce_program(program: Any) -> Any:
         if inspect.isgeneratorfunction(program):
             raise TypeError("program must be DoExpr; got function. Did you mean to call it?")
         if inspect.isgenerator(program):
-            raise TypeError("program must be DoExpr; got raw generator. Did you mean to wrap with @do?")
+            raise TypeError(
+                "program must be DoExpr; got raw generator. Did you mean to wrap with @do?"
+            )
         if callable(program):
-            raise TypeError("program must be DoExpr; got callable. Did you mean to call @do function?")
+            raise TypeError(
+                "program must be DoExpr; got callable. Did you mean to call @do function?"
+            )
         raise TypeError(f"run() requires DoExpr[T] or EffectValue[T], got {type(program).__name__}")
 
     if isinstance(program, doeff_generator_type):
@@ -424,7 +428,8 @@ def __getattr__(name: str) -> Any:
         "DoeffTracebackData",
         "WithHandler",
         "Pure",
-        "Call",
+        "Apply",
+        "Expand",
         "Eval",
         "Perform",
         "Resume",
@@ -449,7 +454,8 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "Call",
+    "Apply",
+    "Expand",
     "DoeffTracebackData",
     "Delegate",
     "Eval",
