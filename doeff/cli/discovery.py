@@ -104,7 +104,7 @@ class EnvMerger(Protocol):
 class SymbolLoader(Protocol):
     """Protocol for loading Python symbols dynamically."""
 
-    def load_symbol(self, full_path: str) -> Any:
+    def load_symbol(self, full_path: str) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
         """Load a Python symbol by its full path.
 
         Args:
@@ -348,7 +348,7 @@ class StandardEnvMerger:
 class StandardSymbolLoader:
     """Standard Python symbol loader using importlib."""
 
-    def load_symbol(self, full_path: str) -> Any:
+    def load_symbol(self, full_path: str) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
         """Load symbol by importing module and getting attribute.
 
         Args:

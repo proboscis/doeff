@@ -121,7 +121,7 @@ def _nonblocking_await_handler(effect: PythonAsyncioAwaitEffect, k: Any):
 
     awaitable = effect.awaitable
 
-    async def _run() -> Any:
+    async def _run() -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
         return await awaitable
 
     loop = _ensure_loop()
@@ -141,7 +141,7 @@ def _nonblocking_await_handler(effect: PythonAsyncioAwaitEffect, k: Any):
     return (yield doeff_vm.Resume(k, value))
 
 
-def with_nonblocking_await(program: Any) -> Any:
+def with_nonblocking_await(program: Any) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
     """Wrap a program to use non-blocking await handling.
 
     Installs a handler that intercepts ``PythonAsyncioAwaitEffect`` and runs

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,19 @@ from click.testing import CliRunner
 from doeff_flow import run_workflow
 from doeff_flow.cli import cli
 
-from doeff import Ask, Delegate, Get, Pure, Put, WithHandler, async_run, default_handlers, do
+from doeff import (
+    Ask,
+    Delegate,
+    Get,
+    Pure,
+    Put,
+    Spawn,
+    Wait,
+    WithHandler,
+    async_run,
+    default_handlers,
+    do,
+)
 from doeff import run as run_sync
 
 
@@ -78,12 +89,12 @@ class TestWorkflowAndCli:
             ],
         )
         assert limited_result.exit_code == 0
-        completed_rows = [line for line in limited_result.output.splitlines() if "completed" in line]
+        completed_rows = [
+            line for line in limited_result.output.splitlines() if "completed" in line
+        ]
         assert len(completed_rows) == 3
 
     def test_concurrent_workflows_write_separate_trace_files(self, tmp_path):
-        results = {}
-
         @do
         def workflow_a():
             return (yield Pure("A-done"))
@@ -92,18 +103,27 @@ class TestWorkflowAndCli:
         def workflow_b():
             return (yield Pure("B-done"))
 
-        def run_wf(wf, wf_id):
-            results[wf_id] = run_workflow(wf(), workflow_id=wf_id, trace_dir=tmp_path)
+        @do
+        def run_workflow_a():
+            return run_workflow(workflow_a(), workflow_id="concurrent-a", trace_dir=tmp_path)
 
-        t1 = threading.Thread(target=run_wf, args=(workflow_a, "concurrent-a"))
-        t2 = threading.Thread(target=run_wf, args=(workflow_b, "concurrent-b"))
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
+        @do
+        def run_workflow_b():
+            return run_workflow(workflow_b(), workflow_id="concurrent-b", trace_dir=tmp_path)
 
-        assert results["concurrent-a"].is_ok()
-        assert results["concurrent-b"].is_ok()
+        @do
+        def run_all():
+            t1 = yield Spawn(run_workflow_a())
+            t2 = yield Spawn(run_workflow_b())
+            result_a = yield Wait(t1)
+            result_b = yield Wait(t2)
+            return result_a, result_b
+
+        result = run_sync(run_all(), handlers=default_handlers())
+
+        assert result.is_ok()
+        assert result.value[0].is_ok()
+        assert result.value[1].is_ok()
 
         entries_a = _read_trace_entries(tmp_path, "concurrent-a")
         entries_b = _read_trace_entries(tmp_path, "concurrent-b")

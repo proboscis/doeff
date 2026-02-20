@@ -573,7 +573,7 @@ async def async_run(vm, program):
                 vm.feed_async_error(e)
         elif tag == "continue":
             # yield to the event loop briefly so other tasks can run
-            await asyncio.sleep(0)
+            await asyncio.sleep(0)  # nosemgrep: doeff-no-sleep-in-tests
         else:
             raise RuntimeError(f"Unexpected step result tag: {tag}")
 
@@ -591,7 +591,7 @@ async def test_async_run_basic():
     vm = PyVM()
 
     async def my_async_action():
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.01)  # nosemgrep: doeff-no-sleep-in-tests
         return 42
 
     def body():
@@ -610,7 +610,7 @@ async def test_async_run_multiple_awaits():
     vm = PyVM()
 
     async def async_add(a, b):
-        await asyncio.sleep(0)
+        await asyncio.sleep(0)  # nosemgrep: doeff-no-sleep-in-tests
         return a + b
 
     def body():
@@ -666,7 +666,7 @@ async def test_async_run_with_state_effects():
     stdlib.install_state(vm)
 
     async def fetch_value():
-        await asyncio.sleep(0)
+        await asyncio.sleep(0)  # nosemgrep: doeff-no-sleep-in-tests
         return 100
 
     def body():
@@ -1438,7 +1438,7 @@ class TestR9AsyncRunSemantics:
 
         async def background_task():
             execution_order.append("background_start")
-            await asyncio.sleep(0)
+            await asyncio.sleep(0)  # nosemgrep: doeff-no-sleep-in-tests
             execution_order.append("background_end")
 
         async def main():

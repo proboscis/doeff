@@ -28,8 +28,9 @@ _WAITABLE_TYPES: tuple[str, ...] = ("Task", "Promise", "ExternalPromise")
 
 @runtime_checkable
 class Waitable(Protocol[T_co]):
-    @property
-    def _handle(self) -> Any: ...
+    @property  # nosemgrep: doeff-no-typing-any-in-public-api
+    def _handle(self) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
+        ...
 
 
 @dataclass(frozen=True)
@@ -200,7 +201,7 @@ def _spawn_program(effect: SpawnEffect):
     return _spawn_task()
 
 
-def spawn(
+def spawn(  # nosemgrep: doeff-no-typing-any-in-public-api
     program: ProgramLike,
     **options: Any,
 ) -> Any:
@@ -224,7 +225,7 @@ def spawn(
     return _spawn_program(effect)
 
 
-def Spawn(
+def Spawn(  # nosemgrep: doeff-no-typing-any-in-public-api
     program: ProgramLike,
     **options: Any,
 ) -> Any:

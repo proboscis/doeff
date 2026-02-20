@@ -36,7 +36,7 @@ def test_schedule_at_sync_executes_program_without_blocking_caller() -> None:
     assert result.is_ok()
     assert elapsed < 0.03
 
-    time.sleep(0.08)
+    time.sleep(0.08)  # nosemgrep: doeff-no-sleep-in-tests
     assert marker["done"] is True
 
 
@@ -53,5 +53,5 @@ async def test_schedule_at_async_executes_program_without_blocking_caller() -> N
     assert result.is_ok()
     assert elapsed < 0.03
 
-    await asyncio.sleep(0.08)
+    await asyncio.sleep(0.08)  # nosemgrep: doeff-no-sleep-in-tests
     assert marker["done"] is True

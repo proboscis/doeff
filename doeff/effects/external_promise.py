@@ -101,7 +101,7 @@ class ExternalPromise(Generic[T]):
 CreateExternalPromiseEffect = doeff_vm.CreateExternalPromiseEffect
 
 
-def CreateExternalPromise() -> Any:
+def CreateExternalPromise() -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
     """Create a promise that can be completed from outside doeff.
 
     Returns an ExternalPromise with complete()/fail() methods that can be

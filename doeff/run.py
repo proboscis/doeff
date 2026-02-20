@@ -19,6 +19,7 @@ Example:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, TypeVar
@@ -28,6 +29,7 @@ from doeff.program import Program
 from doeff.types import RunResult
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 # Type aliases for flexible input types
 ProgramLike = str | Program[Any]
@@ -409,13 +411,13 @@ def _load_default_env(quiet: bool) -> str | None:
     doeff_config_file = Path.home() / ".doeff.py"
     if not doeff_config_file.exists():
         if not quiet:
-            print("[DOEFF][DISCOVERY] Warning: ~/.doeff.py not found", file=sys.stderr)
+            logger.warning("[DOEFF][DISCOVERY] Warning: ~/.doeff.py not found")
         return None
 
     spec = importlib.util.spec_from_file_location("_doeff_config", doeff_config_file)
     if not spec or not spec.loader:
         if not quiet:
-            print("[DOEFF][DISCOVERY] Warning: Unable to load ~/.doeff.py", file=sys.stderr)
+            logger.warning("[DOEFF][DISCOVERY] Warning: Unable to load ~/.doeff.py")
         return None
 
     config_module = importlib.util.module_from_spec(spec)
@@ -425,26 +427,24 @@ def _load_default_env(quiet: bool) -> str | None:
         spec.loader.exec_module(config_module)
     except Exception as exc:
         if not quiet:
-            print(f"[DOEFF][DISCOVERY] Error executing ~/.doeff.py: {exc}", file=sys.stderr)
+            logger.error(f"[DOEFF][DISCOVERY] Error executing ~/.doeff.py: {exc}")
         raise
 
     if hasattr(config_module, "__default_env__"):
         if not quiet:
-            print(
-                "[DOEFF][DISCOVERY] Successfully resolved __default_env__ from ~/.doeff.py",
-                file=sys.stderr,
+            logger.debug(
+                "[DOEFF][DISCOVERY] Successfully resolved __default_env__ from ~/.doeff.py"
             )
         return "_doeff_config.__default_env__"
 
     if not quiet:
-        print(
-            "[DOEFF][DISCOVERY] Warning: ~/.doeff.py exists but __default_env__ not found",
-            file=sys.stderr,
+        logger.warning(
+            "[DOEFF][DISCOVERY] Warning: ~/.doeff.py exists but __default_env__ not found"
         )
     return None
 
 
-def _execute_program(
+def _execute_program(  # nosemgrep: doeff-no-typing-any-in-public-api
     program: Program[Any],
     interpreter_obj: Any,
 ) -> Any:
@@ -471,7 +471,7 @@ class _QuietRunCommand:
 
         self._inner = RunCommand(context)
 
-    def execute(self) -> Any:
+    def execute(self) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
         import io
         from contextlib import redirect_stderr
 
