@@ -227,7 +227,8 @@ DoCtrl[T] ::=
     -- continuations
     | Resume(k, value)
     | Transfer(k, value)                            -- DoCtrl[Never]
-    | Delegate(effect?)
+    | Delegate(effect?)                             -- non-terminal re-perform [R15-A]
+    | Pass(effect?)                                 -- terminal pass-through [R15-A]
 
     -- introspection
     | GetHandlers
@@ -414,7 +415,7 @@ DoExpr[T] (= Program[T])       ← control expressions evaluated by VM
       ├── FlatMap[T]
       ├── WithHandler[T]
       ├── Perform[T]                 ← explicit effect dispatch
-      ├── Resume[T], Transfer[Never], Delegate
+      ├── Resume[T], Transfer[Never], Delegate, Pass
       ├── GetHandlers/GetCallStack/GetContinuation
       ├── CreateContinuation/ResumeContinuation
       └── PythonAsyncSyntaxEscape
@@ -1214,7 +1215,7 @@ Tests MUST verify end-to-end through `run()`:
 | HP-02 | Handler receives the original effect object (can read attributes) | §1.1 |
 | HP-03 | Handler post-processes: `resume_value = yield Resume(k, value)` captures body result | §1.1 |
 | HP-04 | Handler abandons continuation: returning without `Resume` short-circuits | §1.1 |
-| HP-05 | Handler delegates: `yield Delegate()` forwards effect to outer handler | §1.1 |
+| HP-05 | Handler pass-through: `yield Pass()` forwards effect to outer handler (terminal). Handler re-perform: `raw = yield Delegate()` forwards and receives result (non-terminal). | §1.1 |
 | HP-06 | Nested `WithHandler`: inner handler intercepts before outer | §1.1 |
 | HP-07 | Stateful handler: closure state accumulates across multiple effect dispatches | §1.1 |
 | HP-08 | `WithHandler(handler=h, expr=body)` installs handler for scope of `body` | §1.1 |
@@ -1272,7 +1273,7 @@ Tests MUST verify:
 | RC-06 | `RunResult.value` extracts the success value | SPEC-009 §2 |
 | RC-07 | `RunResult.raw_store` reflects final state | SPEC-009 §2 |
 | RC-08 | `RunResult.error` returns the exception for failures | SPEC-009 §2 |
-| RC-09 | Import paths: `from doeff import run, async_run, WithHandler, Resume, Delegate, Transfer, K` | SPEC-009 §8 |
+| RC-09 | Import paths: `from doeff import run, async_run, WithHandler, Resume, Delegate, Pass, Transfer, K` | SPEC-009 §8 |
 | RC-10 | Import paths: `from doeff.handlers import state, reader, writer, scheduler` | SPEC-009 §8 |
 | RC-11 | Import paths: `from doeff.presets import sync_preset, async_preset` | SPEC-009 §7 |
 
