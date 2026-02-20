@@ -365,6 +365,11 @@ async def async_run(
 
 
 def __getattr__(name: str) -> Any:
+    if name == "pass_":
+        vm = _vm()
+        if not hasattr(vm, "Pass"):
+            raise AttributeError("doeff_vm has no attribute 'Pass'")
+        return vm.Pass
     if name in {
         "RunResult",
         "DoeffTracebackData",
@@ -374,6 +379,7 @@ def __getattr__(name: str) -> Any:
         "Expand",
         "Eval",
         "Perform",
+        "Pass",
         "Resume",
         "Delegate",
         "Transfer",
@@ -403,6 +409,7 @@ __all__ = [
     "Eval",
     "GetTrace",
     "K",
+    "Pass",
     "Perform",
     "Pure",
     "PythonAsyncSyntaxEscape",
@@ -419,6 +426,7 @@ __all__ = [
     "reader",
     "result_safe",
     "run",
+    "pass_",
     "state",
     "writer",
 ]
