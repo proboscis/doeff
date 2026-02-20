@@ -1,13 +1,13 @@
 //! Python bridge call protocol.
 
 use crate::continuation::Continuation;
+use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
 use crate::ids::Marker;
 use crate::py_shared::PyShared;
 use crate::value::Value;
-use crate::yielded::Yielded;
 
 #[derive(Debug, Clone)]
 pub enum PythonCall {
@@ -64,7 +64,7 @@ pub enum PendingPython {
 #[derive(Debug, Clone)]
 pub enum PyCallOutcome {
     Value(Value),
-    GenYield(Yielded),
+    GenYield(DoCtrl),
     GenReturn(Value),
     GenError(PyException),
 }

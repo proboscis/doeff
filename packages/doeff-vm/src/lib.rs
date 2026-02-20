@@ -31,7 +31,6 @@ pub mod segment;
 mod step;
 pub mod value;
 mod vm;
-pub mod yielded;
 
 // Re-exports for convenience
 pub use arena::SegmentArena;
@@ -61,4 +60,3 @@ pub use segment::{Segment, SegmentKind};
 pub use step::PyException;
 pub use value::Value;
 pub use vm::{Callback, VM};
-pub use yielded::Yielded;
