@@ -1,6 +1,16 @@
 # SPEC-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 14)
+## Status: Draft (Revision 15)
+
+### Revision 15 Changelog
+
+Changes from Rev 14. Split `Delegate` into two operations per SPEC-VM-010 (non-terminal delegate / re-perform semantics). See SPEC-VM-010 for full design rationale.
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R15-A** | DoCtrl variants | **Added `Pass(effect?)` as terminal pass-through.** Old `Delegate` terminal semantics renamed to `Pass`. `Delegate` is now non-terminal (re-perform): handler receives result back via K_new continuation swap. |
+| **R15-B** | Dispatch flow | **`Delegate` is non-terminal.** Handler yields `Delegate()`, VM captures K_new from handler state, outer handler receives K_new. Outer Resume sends value to delegating handler, which transforms and resumes original k_user. |
+| **R15-C** | Terminal classification | **`Pass` is terminal, `Delegate` is not.** `is_terminal` updated accordingly. |
 
 ### Revision 14 Changelog
 
@@ -9,7 +19,7 @@ Changes from Rev 13. Introduces explicit `Perform` control node and separates ef
 | Tag | Section | Change |
 |-----|---------|--------|
 | **R14-A** | Core hierarchy | **DoExpr is control IR only.** Effects are user-space data (`EffectValue`), not DoExpr nodes. The VM evaluates DoCtrl; effect resolution is represented explicitly with `Perform(effect)`. This supersedes Rev 13 binary statement `DoExpr = DoCtrl \| Effect`. |
-| **R14-B** | DoCtrl variants | **Added `Perform(effect)` as a first-class DoCtrl variant.** `Perform` is the only control instruction that requests handler dispatch. `Delegate(effect?)` passes effect data outward; outer scope performs it. |
+| **R14-B** | DoCtrl variants | **Added `Perform(effect)` as a first-class DoCtrl variant.** `Perform` is the only control instruction that requests handler dispatch. [R15-A] `Delegate` is now non-terminal re-perform; `Pass(effect?)` is the terminal pass-through. |
 | **R14-C** | Lowering boundary | **Source-level `yield effect` lowers to `yield Perform(effect)`.** Python UX stays unchanged while IR remains explicit. `run(effect_value)` is normalized to `run(Perform(effect_value))` at API boundary. |
 | **R14-D** | Invocation model | **`Call` remains canonical application node; no `Apply` node is introduced.** KPC lowering and handler invocation semantics target `Call(...)` directly. |
 | **R14-E** | Dispatch contract | **Handler invocation returns DoExpr control.** If host handler returns an effect value, runtime normalization wraps it as `Perform(effect)` before continuation. |
@@ -321,7 +331,8 @@ types exposed to Python, not Python dataclasses parsed by `classify_yielded`.
 **Types exposed**:
 - `WithHandler(handler, expr)` — composition primitive (usable anywhere)
 - `Resume(k, value)` — dispatch primitive (handler-only)
-- `Delegate(effect?)` — dispatch primitive (handler-only)
+- `Delegate(effect?)` — dispatch primitive, non-terminal re-perform (handler-only) [R15-A]
+- `Pass(effect?)` — dispatch primitive, terminal pass-through (handler-only) [R15-A]
 - `Transfer(k, value)` — dispatch primitive (handler-only)
 - `K` — opaque continuation handle (no Python-visible fields)
 
@@ -945,7 +956,7 @@ def db_handler(effect, k):
         result = execute_sql(effect.sql)
         yield Resume(k, result)
     else:
-        yield Delegate()
+        yield Pass()
 ```
 
 ### Dispatch Base Classes — Rust `#[pyclass(subclass)]` [R11-F] [R13-D]
@@ -980,6 +991,8 @@ pub enum DoExprTag {
     Transfer    = 6,
     Delegate    = 7,
     Eval        = 8,
+    // ...
+    Pass        = 19,   // [R15-A] terminal pass-through (old Delegate semantics)
     GetHandlers = 9,
     GetCallStack = 10,
     GetContinuation = 11,
@@ -1193,9 +1206,17 @@ pub struct Resume {
     #[pyo3(get)] pub value: PyObject,
 }
 
-/// Dispatch primitive — handler-only. [R8-C]
+/// Dispatch primitive — handler-only, non-terminal re-perform. [R8-C, R15-A]
+/// Handler receives the result back via K_new continuation swap.
 #[pyclass]
 pub struct Delegate {
+    #[pyo3(get)] pub effect: Option<PyObject>,  // None = use current dispatch effect
+}
+
+/// Dispatch primitive — handler-only, terminal pass-through. [R15-A]
+/// Handler gives up control entirely — identical to pre-R15 Delegate semantics.
+#[pyclass]
+pub struct Pass {
     #[pyo3(get)] pub effect: Option<PyObject>,  // None = use current dispatch effect
 }
 
@@ -1305,7 +1326,7 @@ impl Handler {
             Handler::RustProgram(handler) => handler.can_handle(py, effect),
             Handler::Python(_) => {
                 // Python handlers are considered capable of handling any effect.
-                // They yield Delegate() for effects they don't handle.
+                // They yield Pass() for effects they don't handle.
                 true
             }
         }
@@ -1583,7 +1604,7 @@ def my_persistent_state(effect, k):
         result = yield Resume(k, None)
         return result
     else:
-        yield Delegate()
+        yield Pass()
 
 # Custom handler intercepts state effects instead of standard state handler
 result = run(
@@ -2771,24 +2792,23 @@ impl VM {
   treats it as handler return. For the root handler it abandons the callsite
   (marks dispatch completed) and returns to the prompt boundary. For inner
   handlers, return flows to the handler's caller segment; it does not flow back
-  to a handler that already executed terminal `Delegate(effect)`.
+  to a handler that already executed terminal `Pass(effect)`.
 - **Single Resume per Dispatch**: The callsite continuation (`k_user`) is one-shot.
   Exactly one of Resume/Transfer/TransferThrow/Return may consume it in a
-  dispatch. `yield Delegate(effect)` does not return; Delegate is terminal and
-  transfers control to the outer handler. Any double-resume or
-  resume-after-delegate is a runtime error.
+  dispatch. `yield Pass(effect)` is terminal — it does not return. Any
+  double-resume is a runtime error.
 - **No Multi-shot**: Multi-shot continuations are not supported. All continuations
   are one-shot and cannot be resumed more than once.
 
-**Delegate Data Flow (Tail-Call Passthrough)**:
+**Pass Data Flow (Terminal Pass-Through)** [R15-A]:
 
 ```
-Delegate is tail-call. The delegating handler gives up control entirely.
-k_user passes to the outer handler. The delegating handler does NOT
+Pass is tail-call. The passing handler gives up control entirely.
+k_user passes to the outer handler. The passing handler does NOT
 receive a value back and cannot Resume.
 
 User --perform E--> H1 (inner)
-H1: yield Delegate(E)           <- H1 is done, frames cleared
+H1: yield Pass(E)               <- H1 is done, frames cleared
       |
       v
      H2 (outer) handles E
@@ -2797,12 +2817,29 @@ H1: yield Delegate(E)           <- H1 is done, frames cleared
      H2: return h2                <- flows to H2 caller (not back to H1)
 ```
 
-Notes:
-- Only one handler in the chain resumes the callsite (`k_user`).
-- `yield Delegate(E)` is terminal and does not return to the delegating handler.
-- If no outer handler matches, dispatch fails with a runtime error.
+**Delegate Data Flow (Non-Terminal Re-Perform)** [R15-B]:
 
-**Delegate/Resume Pseudocode**:
+```
+Delegate is non-terminal. The delegating handler receives the result back
+via K_new continuation swap. See SPEC-VM-010 for full mechanism.
+
+User --perform E--> H1 (inner)
+H1: raw = yield Delegate(E)     <- H1 suspends, VM captures K_new
+      |
+      v  (VM swaps DispatchContext.k_user = K_new)
+     H2 (outer) handles E
+     H2: yield Resume(K_new, v)   <- resumes K_new → sends v to H1
+     H1: raw = v                  <- H1 receives v, transforms it
+     H1: yield Resume(k_user, transform(v))  <- resumes original callsite
+     User: continues with transform(v)
+```
+
+Notes:
+- `yield Pass(E)` is terminal — code after it never executes.
+- `yield Delegate(E)` is non-terminal — code after it receives the outer handler's result.
+- If no outer handler matches, dispatch fails with a runtime error (both Pass and Delegate).
+
+**Pass/Delegate/Resume Pseudocode** [R15-A]:
 
 ```python
 @do
@@ -2815,19 +2852,23 @@ def outer_handler(effect, k_user):
     if isinstance(effect, SomeEffect):
         user_ret = yield Resume(k_user, 10)
         return user_ret + 5
-    yield Delegate(effect)
+    yield Pass(effect)
 
-@do
-def inner_handler(effect, k_user):
-    yield Delegate(effect)
-    # UNREACHABLE: Delegate is terminal.
-
-# Delegate is terminal — code after yield Delegate() never executes.
-# In Python handlers, yield Delegate() is always the last statement.
+# Pass is terminal — code after yield Pass() never executes.
 @do
 def passthrough_handler(effect, k_user):
-    yield Delegate(effect)
-    # This line is UNREACHABLE — Delegate does not return.
+    yield Pass(effect)
+    # This line is UNREACHABLE — Pass does not return.
+
+# Delegate is non-terminal — handler receives result back.
+@do
+def transforming_handler(effect, k_user):
+    if isinstance(effect, SomeEffect):
+        raw = yield Delegate()          # re-perform to outer handler
+        # raw = value from outer handler's Resume
+        transformed = raw * 2
+        return (yield Resume(k_user, transformed))
+    yield Pass()
 ```
 
 ## Perform from Handler Programs
@@ -3149,7 +3190,7 @@ def sync_await_handler(effect, k):
         promise = yield CreateExternalPromise()
         thread_pool.submit(run_and_complete, effect.awaitable, promise)
         return (yield Wait(promise.future))
-    yield Delegate(effect)
+    yield Pass(effect)
 ```
 
 ```python
@@ -3167,7 +3208,7 @@ def async_await_handler(effect, k):
             action=lambda: asyncio.create_task(fire_task())
         )
         return (yield Wait(promise.future))
-    yield Delegate(effect)
+    yield Pass(effect)
 ```
 
 `async_await_handler` must only be used with `async_run`;
@@ -3570,9 +3611,15 @@ pub enum DoCtrl {
         exception: PyException,
     },
     
-    /// Delegate(effect) - Tail-call delegate to outer handler.
-    /// Terminal: current handler frames are cleared; no value returns here.
+    /// Delegate(effect) - Non-terminal re-perform to outer handler. [R15-A]
+    /// Handler receives result back via K_new continuation swap.
     Delegate {
+        effect: Effect,
+    },
+    
+    /// Pass(effect) - Terminal pass-through to outer handler. [R15-A]
+    /// Current handler frames are cleared; no value returns here.
+    Pass {
         effect: Effect,
     },
     
@@ -4199,8 +4246,12 @@ impl VM {
                 StepEvent::Continue
             }
             DoCtrl::Delegate { effect } => {
-                // Delegate to OUTER handler (advance in SAME dispatch, not new dispatch)
+                // Non-terminal re-perform: K_new swap, handler receives result [R15-B]
                 self.handle_delegate(effect)
+            }
+            DoCtrl::Pass { effect } => {
+                // Terminal pass-through: handler done, advance to outer [R15-A]
+                self.handle_pass(effect)
             }
             DoCtrl::WithHandler { handler, expr } => {
                 // WithHandler needs PythonCall to evaluate body DoExpr (no call metadata) [R13-E]
@@ -4388,48 +4439,44 @@ impl VM {
         }))
     }
 
-    /// Handle Delegate: advance to outer handler in SAME DispatchContext.
+    /// Handle Delegate (non-terminal re-perform): K_new swap. [R15-B]
     /// 
-    /// Unlike start_dispatch (which creates NEW dispatch for perform-site effects),
-    /// Delegate advances handler_idx within the current dispatch.
+    /// Unlike Pass (terminal), Delegate captures K_new from the handler's state
+    /// so the outer handler's Resume sends the value BACK to the delegating handler.
+    /// See SPEC-VM-010 for the full K_new continuation swap mechanism.
     /// 
     /// INVARIANT: Delegate can only be called from a handler execution context.
-    /// The top of dispatch_stack is the current dispatch.
     fn handle_delegate(&mut self, effect: Effect) -> StepEvent {
-        // Get current dispatch context
         let top = self.dispatch_stack.last_mut()
             .expect("Delegate called outside of dispatch context");
         
-        // Capture the inner handler segment so Delegate can return to it.
         let inner_seg_id = self.current_segment;
         
-        // [D3] Clear the delegating handler's frames so return values pass through
-        // without trying to resume the handler generator (Delegate is tail-position).
+        // [R15-B] Capture K_new from delegating handler's state BEFORE clearing frames.
+        // K_new is a continuation that, when resumed, sends the value back to this handler.
+        let k_new = self.capture_continuation(inner_seg_id);
+        
+        // Clear the delegating handler's frames (handler is suspended, not terminated).
         if let Some(seg) = self.segments.get_mut(inner_seg_id) {
             seg.frames.clear();
         }
         
-        // Advance handler_idx to find next handler that can handle this effect
-        let handler_chain = &top.handler_chain;
-        let start_idx = top.handler_idx + 1;  // Start from next handler (outer)
+        // [R15-B] Swap k_user → K_new so outer handler resumes the delegating handler.
+        let original_k_user = top.k_user.clone();
+        top.k_user = k_new;  // Outer handler sees K_new, not original k_user
         
-        // Find matching handler in remaining chain
+        // Advance handler_idx to find next handler
+        let handler_chain = &top.handler_chain;
+        let start_idx = top.handler_idx + 1;
+        
         for idx in start_idx..handler_chain.len() {
             let marker = handler_chain[idx];
             if let Some(entry) = self.handlers.get(&marker) {
                 if entry.handler.can_handle(&effect) {
-                    // Found matching outer handler
-                    // Update handler_idx (SAME dispatch, not new)
                     top.handler_idx = idx;
-                    top.effect = effect.clone();  // May be a different effect than original
+                    top.effect = effect.clone();
                     
                     let handler = entry.handler.clone();
-                    
-                    // Use original callsite continuation (k_user) for outer handler
-                    
-                    // Create new handler execution segment for outer handler.
-                    // NOTE: caller is the inner handler segment so outer return
-                    // flows back to inner (result of Delegate).
                     let scope_chain = self.current_scope_chain();
                     let handler_seg = Segment::new(
                         marker,
@@ -4439,15 +4486,61 @@ impl VM {
                     let handler_seg_id = self.alloc_segment(handler_seg);
                     self.current_segment = handler_seg_id;
                     
-                    // Invoke outer handler
+                    // Outer handler receives K_new (already swapped above)
                     return self.invoke_handler(handler, &effect, top.k_user.clone());
                 }
             }
         }
         
-        // No outer handler found
         self.mode = Mode::Throw(PyException::runtime_error(
             format!("Delegate: no outer handler for effect {:?}", effect)
+        ));
+        StepEvent::Continue
+    }
+    
+    /// Handle Pass (terminal pass-through): old Delegate semantics. [R15-A]
+    /// 
+    /// Handler gives up control entirely. k_user passes unchanged to outer handler.
+    /// Identical to pre-R15 handle_delegate.
+    fn handle_pass(&mut self, effect: Effect) -> StepEvent {
+        let top = self.dispatch_stack.last_mut()
+            .expect("Pass called outside of dispatch context");
+        
+        let inner_seg_id = self.current_segment;
+        
+        // Clear frames — Pass is terminal, handler is done.
+        if let Some(seg) = self.segments.get_mut(inner_seg_id) {
+            seg.frames.clear();
+        }
+        
+        let handler_chain = &top.handler_chain;
+        let start_idx = top.handler_idx + 1;
+        
+        for idx in start_idx..handler_chain.len() {
+            let marker = handler_chain[idx];
+            if let Some(entry) = self.handlers.get(&marker) {
+                if entry.handler.can_handle(&effect) {
+                    top.handler_idx = idx;
+                    top.effect = effect.clone();
+                    
+                    let handler = entry.handler.clone();
+                    let scope_chain = self.current_scope_chain();
+                    let handler_seg = Segment::new(
+                        marker,
+                        Some(inner_seg_id),
+                        scope_chain,
+                    );
+                    let handler_seg_id = self.alloc_segment(handler_seg);
+                    self.current_segment = handler_seg_id;
+                    
+                    // k_user unchanged — outer handler resumes original callsite
+                    return self.invoke_handler(handler, &effect, top.k_user.clone());
+                }
+            }
+        }
+        
+        self.mode = Mode::Throw(PyException::runtime_error(
+            format!("Pass: no outer handler for effect {:?}", effect)
         ));
         StepEvent::Continue
     }
@@ -4755,10 +4848,10 @@ Key differences and decisions in 008:
 
 - Busy boundary is **top-only**: only the topmost non-completed dispatch excludes
   busy handlers; nested dispatch does not consider older frames.
-- `Delegate` is the only forwarding primitive; yielding a raw effect starts a new
-  dispatch (does not forward).
-- `yield Delegate(effect)` is terminal tail-call forwarding; it does not return
-  to the delegating handler.
+- `Delegate` and `Pass` are the two forwarding primitives; yielding a raw effect starts a new
+  dispatch (does not forward). [R15-A]
+- `yield Pass(effect)` is terminal pass-through; it does not return to the handler.
+- `yield Delegate(effect)` is non-terminal re-perform; the handler receives the result back. [R15-B]
 - Handler return is implicit; there is no `Return` DoCtrl.
 - Program input is **ProgramBase only** (KleisliProgramCall or EffectBase); raw
   generators are rejected except via `start_with_generator()`.

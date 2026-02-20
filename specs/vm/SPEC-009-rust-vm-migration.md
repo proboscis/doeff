@@ -103,7 +103,8 @@ This spec defines **what users import and call** — not VM internals.
 │  Standard effects         Get, Put, Ask, Tell, Modify │
 │  Standard handlers        state, reader, writer, ...  │
 │  Composition              WithHandler                 │
-│  Dispatch primitives      Resume, Delegate, Transfer  │
+│  Dispatch primitives      Resume, Delegate, Pass,     │
+│                           Transfer                    │
 └───────────────────┬───────────────────────────────────┘
                     │  implementation detail
                     ▼
@@ -464,7 +465,8 @@ Effect dispatch      Perform(Get("x")),             Dispatched through handler s
                      Perform(Ask("k"))
 Program call         Call(Pure(kernel), args, ...)   VM evaluates Call DoCtrl directly [R9-A]
 Composition          WithHandler                    Creates new handler scope
-Dispatch primitive   Resume, Delegate, Transfer     Controls dispatch (handler-only)
+Dispatch primitive   Resume, Delegate, Pass,        Controls dispatch (handler-only)
+                     Transfer
 ```
 
 [SUPERSEDED BY R9-A / SPEC-KPC-001] ~~KPC is an effect dispatched to the KPC handler.~~
@@ -557,11 +559,18 @@ Resume(k, value)       Resume caller with value.      YES — handler gets
                        Call-resume semantics.          continuation's return
                                                       value back.
 
-Delegate()             Pass effect to outer handler.  NO — handler is done.
-                       "I don't handle this."
+Pass()                 Pass effect to outer handler.  NO — handler is done.
+                       "I don't handle this."         (terminal pass-through)
 
-Delegate(effect)       Pass different effect to        NO — handler is done.
-                       outer handler. Substitution.
+Pass(effect)           Pass different effect to        NO — handler is done.
+                       outer handler. Substitution.   (terminal pass-through)
+
+Delegate()             Re-perform effect to outer      YES — handler gets
+                       handler. "Give me the result." outer result back.
+                                                      (non-terminal re-perform)
+
+Delegate(effect)       Re-perform different effect     YES — handler gets
+                       to outer handler.              outer result back.
 
 Transfer(k, value)     Resume caller with value.      NO — handler is done.
                        Tail-resume semantics.          (abandoned)
@@ -591,13 +600,21 @@ def my_handler(effect, k):
 Use `Resume` when the handler needs the continuation's result (most common).
 Use `Transfer` for tail-position optimization or when the handler is done.
 
-#### Delegate [R4-D]
+#### Pass [R4-D, R15-A]
 
-`yield Delegate()` terminates the current handler and re-dispatches the
-effect to the next outer handler. The handler does NOT continue after Delegate.
+`yield Pass()` terminates the current handler and re-dispatches the
+effect to the next outer handler. The handler does NOT continue after Pass.
 
-`yield Delegate(other_effect)` does the same but substitutes a different
+`yield Pass(other_effect)` does the same but substitutes a different
 effect. The outer handler sees `other_effect`, not the original.
+
+#### Delegate [R4-D, R15-A]
+
+`yield Delegate()` re-performs the effect to the next outer handler.
+The handler **receives the result back** (non-terminal) via K_new continuation
+swap. See SPEC-VM-010 for the full mechanism.
+
+`yield Delegate(other_effect)` does the same but substitutes a different effect.
 
 ### Example: Custom Handler
 
@@ -613,7 +630,7 @@ def cache_handler(effect, k):
         result = yield Resume(k, None)
         return result
     else:
-        yield Delegate()
+        yield Pass()
 ```
 
 ### Handler Lifecycle
@@ -632,7 +649,9 @@ def cache_handler(effect, k):
        │     result = yield Resume(...)   ← handler gets result back
        │     handler continues
        │
-       ├─ yield Delegate()               ← handler done, try outer handler
+       ├─ yield Pass()                   ← handler done, try outer handler (terminal)
+       │
+       ├─ raw = yield Delegate()         ← re-perform, handler gets result back (non-terminal)
        │
        └─ yield Transfer(k, value)       ← handler done, caller resumes
 ```
@@ -662,7 +681,7 @@ def logging_handler(effect, k):
         result = yield Resume(k, effect.payload)
         return result
     else:
-        yield Delegate()
+        yield Pass()
 ```
 
 ### Handlers Can Compose with WithHandler
@@ -681,7 +700,7 @@ def outer_handler(effect, k):
         result = yield Resume(k, inner_result)
         return result
     else:
-        yield Delegate()
+        yield Pass()
 ```
 
 ---
@@ -893,7 +912,7 @@ from doeff import RunResult
 
 ```python
 # Everything above, plus dispatch primitives:
-from doeff import Resume, Delegate, Transfer
+from doeff import Resume, Delegate, Pass, Transfer
 ```
 
 ---
@@ -977,13 +996,14 @@ def my_handler(effect, k):
         result = yield Resume(k, effect.value)
         return result
     else:
-        yield Delegate()
+        yield Pass()
 ```
 
 Key differences:
 - `ctx: HandlerContext` → `k: K` (opaque continuation handle)
 - `LegacyState.resume_value(v, ctx)` → `yield Resume(k, v)`
-- re-yielding the effect → `yield Delegate()`
+- re-yielding the effect → `yield Pass()` (terminal pass-through)
+- re-performing with result capture → `raw = yield Delegate()` (non-terminal)
 - `ResumeK(k=..., value=...)` → `yield Transfer(k, value)`
 - No `LegacyState`, no `HandlerContext`, no `Store` / `Environment` access
 
@@ -1108,7 +1128,7 @@ Already validated (confirmed):
 | `Listen(prog)` | `prog` | program-like | ✅ `ensure_program_like` |
 | `Tell(msg)` | `msg` | `Any` | ✅ No validation needed (`Any` is the contract) |
 
-#### §5 Dispatch Primitives: `Resume`, `Transfer`, `Delegate`
+#### §5 Dispatch Primitives: `Resume`, `Transfer`, `Delegate`, `Pass`
 
 These are Rust `#[pyclass]` constructors. Validation MUST happen at
 **construction time**, not deferred to dispatch.
@@ -1121,6 +1141,8 @@ These are Rust `#[pyclass]` constructors. Validation MUST happen at
 | `Transfer(k, value)` | `value` | `Any` | None needed | — |
 | `Delegate()` | (none) | — | — | — |
 | `Delegate(effect)` | `effect` | `EffectValue` | `isinstance(effect, EffectBase)` (runtime base for EffectValue) | `TypeError: Delegate(effect) requires EffectValue, got {type}` |
+| `Pass()` | (none) | — | — | — |
+| `Pass(effect)` | `effect` | `EffectValue` | `isinstance(effect, EffectBase)` (runtime base for EffectValue) | `TypeError: Pass(effect) requires EffectValue, got {type}` |
 
 #### §6 Composition: `WithHandler`
 
