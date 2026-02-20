@@ -1,5 +1,6 @@
 //! Python bridge call protocol.
 
+use crate::ast_stream::ASTStreamRef;
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
@@ -49,9 +50,8 @@ pub enum PendingPython {
         metadata: Option<CallMetadata>,
     },
     StepUserGenerator {
-        generator: PyShared,
+        stream: ASTStreamRef,
         metadata: Option<CallMetadata>,
-        get_frame: PyShared,
     },
     CallPythonHandler {
         k_user: Continuation,
@@ -75,13 +75,13 @@ pub enum PyCallOutcome {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn test_vm_proto_pending_step_user_generator_has_get_frame_field() {
+    fn test_vm_proto_pending_step_user_generator_has_stream_field() {
         let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/python_call.rs"));
         let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
         assert!(
             runtime_src.contains("StepUserGenerator {")
-                && runtime_src.contains("get_frame: PyShared"),
-            "VM-PROTO-001: PendingPython::StepUserGenerator must carry get_frame callback"
+                && runtime_src.contains("stream: ASTStreamRef"),
+            "VM-PROTO-001: PendingPython::StepUserGenerator must carry ASTStreamRef"
         );
     }
 }
