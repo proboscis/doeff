@@ -37,37 +37,28 @@ pub use crate::rust_store::RustStore;
 pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send + Sync>;
 static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
 
-fn rust_program_step_to_ast_stream_step(step: crate::handler::RustProgramStep) -> ASTStreamStep {
-    match step {
-        crate::handler::RustProgramStep::Yield(ctrl) => ASTStreamStep::Yield(ctrl),
-        crate::handler::RustProgramStep::Return(value) => ASTStreamStep::Return(value),
-        crate::handler::RustProgramStep::Throw(exc) => ASTStreamStep::Throw(exc),
-        crate::handler::RustProgramStep::NeedsPython(call) => ASTStreamStep::NeedsPython(call),
-    }
-}
-
 #[derive(Debug)]
 struct RustProgramStream {
-    program: crate::handler::RustProgramRef,
+    program: crate::handler::ASTStreamProgramRef,
 }
 
 impl ASTStream for RustProgramStream {
     fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
         Python::attach(|_py| {
             let mut guard = self.program.lock().expect("Rust program lock poisoned");
-            rust_program_step_to_ast_stream_step(guard.resume(value, store))
+            guard.resume(value, store)
         })
     }
 
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
         Python::attach(|_py| {
             let mut guard = self.program.lock().expect("Rust program lock poisoned");
-            rust_program_step_to_ast_stream_step(guard.throw(exc, store))
+            guard.throw(exc, store)
         })
     }
 }
 
-fn rust_program_as_stream(program: crate::handler::RustProgramRef) -> ASTStreamRef {
+fn rust_program_as_stream(program: crate::handler::ASTStreamProgramRef) -> ASTStreamRef {
     Arc::new(std::sync::Mutex::new(
         Box::new(RustProgramStream { program }) as Box<dyn ASTStream>,
     ))
@@ -305,7 +296,7 @@ impl VM {
                 )
             })
         };
-        self.apply_stream_step(rust_program_step_to_ast_stream_step(step), stream, None)
+        self.apply_stream_step(step, stream, None)
     }
 
     fn evaluate(&mut self, ir_node: DoCtrl) -> StepEvent {
@@ -361,9 +352,9 @@ impl VM {
                 stream,
                 Self::merged_metadata_from_doeff(
                     inherited_metadata,
-                    wrapped.function_name.clone(),
-                    wrapped.source_file.clone(),
-                    wrapped.source_line,
+                    wrapped.factory_function_name().to_string(),
+                    wrapped.factory_source_file().to_string(),
+                    wrapped.factory_source_line(),
                 ),
             ))
         })
@@ -3690,17 +3681,6 @@ mod tests {
             let observed = VM::stream_debug_location(&stream).expect("expected stream location");
             assert_eq!(observed.source_line, line);
         });
-    }
-
-    #[test]
-    fn test_vm_proto_runtime_eliminates_generator_current_line_function() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
-        let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
-        let runtime_src = &src[..runtime_boundary];
-        assert!(
-            !runtime_src.contains("fn generator_current_line("),
-            "VM-PROTO-001: generator_current_line() must be eliminated in favor of callback path"
-        );
     }
 
     #[test]

@@ -92,12 +92,9 @@ impl DoeffGeneratorFn {
 pub struct DoeffGenerator {
     #[pyo3(get)]
     pub generator: Py<PyAny>,
-    #[pyo3(get)]
-    pub function_name: String,
-    #[pyo3(get)]
-    pub source_file: String,
-    #[pyo3(get)]
-    pub source_line: u32,
+    factory_function_name: String,
+    factory_source_file: String,
+    factory_source_line: u32,
     #[pyo3(get)]
     pub get_frame: Py<PyAny>,
     #[pyo3(get)]
@@ -150,9 +147,9 @@ impl DoeffGenerator {
         }
         Ok(Self {
             generator,
-            function_name,
-            source_file,
-            source_line,
+            factory_function_name: function_name,
+            factory_source_file: source_file,
+            factory_source_line: source_line,
             get_frame,
             factory,
         })
@@ -161,13 +158,28 @@ impl DoeffGenerator {
     fn __repr__(&self) -> String {
         format!(
             "DoeffGenerator(function_name={:?}, source_file={:?}, source_line={})",
-            self.function_name, self.source_file, self.source_line
+            self.factory_function_name, self.factory_source_file, self.factory_source_line
         )
     }
 
     #[getter]
     fn __doeff_inner__(&self, py: Python<'_>) -> Py<PyAny> {
         self.generator.clone_ref(py)
+    }
+
+    #[getter]
+    fn function_name(&self) -> &str {
+        &self.factory_function_name
+    }
+
+    #[getter]
+    fn source_file(&self) -> &str {
+        &self.factory_source_file
+    }
+
+    #[getter]
+    fn source_line(&self) -> u32 {
+        self.factory_source_line
     }
 }
 
@@ -186,12 +198,24 @@ impl DoeffGenerator {
         }
         Ok(Self {
             generator,
-            function_name: factory_borrow.function_name.clone(),
-            source_file: factory_borrow.source_file.clone(),
-            source_line: factory_borrow.source_line,
+            factory_function_name: factory_borrow.function_name.clone(),
+            factory_source_file: factory_borrow.source_file.clone(),
+            factory_source_line: factory_borrow.source_line,
             get_frame,
             factory: Some(factory.clone_ref(py)),
         })
+    }
+
+    pub fn factory_function_name(&self) -> &str {
+        &self.factory_function_name
+    }
+
+    pub fn factory_source_file(&self) -> &str {
+        &self.factory_source_file
+    }
+
+    pub fn factory_source_line(&self) -> u32 {
+        self.factory_source_line
     }
 }
 
@@ -243,9 +267,9 @@ mod tests {
                 .extract()
                 .expect("expected DoeffGenerator result");
 
-            assert_eq!(wrapped.function_name, "build_gen");
-            assert_eq!(wrapped.source_file, "/tmp/sample.py");
-            assert_eq!(wrapped.source_line, 12);
+            assert_eq!(wrapped.factory_function_name(), "build_gen");
+            assert_eq!(wrapped.factory_source_file(), "/tmp/sample.py");
+            assert_eq!(wrapped.factory_source_line(), 12);
             let factory_back = wrapped
                 .factory
                 .as_ref()

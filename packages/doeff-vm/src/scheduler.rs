@@ -1,6 +1,6 @@
 //! Scheduler types for cooperative multitasking.
 //!
-//! The scheduler is a RustProgramHandler that manages tasks, promises,
+//! The scheduler is a ASTStreamFactory that manages tasks, promises,
 //! and cooperative scheduling via Transfer-only semantics.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -25,8 +25,8 @@ use crate::effect::{
 };
 use crate::frame::{CallMetadata, Frame};
 use crate::handler::{
-    Handler, HandlerInvoke, PythonHandler, RustHandlerProgram, RustProgramHandler,
-    RustProgramInvocation, RustProgramRef, RustProgramStep,
+    ASTStreamFactory, ASTStreamProgram, ASTStreamProgramRef, Handler, HandlerInvoke, PythonHandler,
+    RustProgramInvocation,
 };
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
 use crate::py_shared::PyShared;
@@ -197,39 +197,30 @@ struct WaitRequest {
     waiting_store: RustStore,
 }
 
-fn transfer_to_continuation(k: Continuation, value: Value) -> RustProgramStep {
+fn transfer_to_continuation(k: Continuation, value: Value) -> ASTStreamStep {
     if k.started {
-        return RustProgramStep::Yield(DoCtrl::Transfer {
+        return ASTStreamStep::Yield(DoCtrl::Transfer {
             continuation: k,
             value,
         });
     }
-    RustProgramStep::Yield(DoCtrl::ResumeContinuation {
+    ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
         continuation: k,
         value,
     })
 }
 
-fn resume_to_continuation(cont: Continuation, result: Value) -> RustProgramStep {
+fn resume_to_continuation(cont: Continuation, result: Value) -> ASTStreamStep {
     if cont.started {
-        return RustProgramStep::Yield(DoCtrl::Resume {
+        return ASTStreamStep::Yield(DoCtrl::Resume {
             continuation: cont,
             value: result,
         });
     }
-    RustProgramStep::Yield(DoCtrl::ResumeContinuation {
+    ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
         continuation: cont,
         value: result,
     })
-}
-
-fn rust_program_step_to_ast_stream_step(step: RustProgramStep) -> ASTStreamStep {
-    match step {
-        RustProgramStep::Yield(ctrl) => ASTStreamStep::Yield(ctrl),
-        RustProgramStep::Return(value) => ASTStreamStep::Return(value),
-        RustProgramStep::Throw(exc) => ASTStreamStep::Throw(exc),
-        RustProgramStep::NeedsPython(call) => ASTStreamStep::NeedsPython(call),
-    }
 }
 
 fn annotate_spawn_boundary_dispatch(error: &PyException, dispatch_id: Option<DispatchId>) {
@@ -323,29 +314,29 @@ pub(crate) fn preserve_exception_origin(error: &PyException) {
     });
 }
 
-fn throw_to_continuation(k: Continuation, error: PyException) -> RustProgramStep {
+fn throw_to_continuation(k: Continuation, error: PyException) -> ASTStreamStep {
     annotate_spawn_boundary_dispatch(&error, k.dispatch_id);
     if k.started {
-        return RustProgramStep::Yield(DoCtrl::TransferThrow {
+        return ASTStreamStep::Yield(DoCtrl::TransferThrow {
             continuation: k,
             exception: error,
         });
     }
-    RustProgramStep::Throw(error)
+    ASTStreamStep::Throw(error)
 }
 
-fn step_targets_continuation(step: &RustProgramStep, target: &Continuation) -> bool {
+fn step_targets_continuation(step: &ASTStreamStep, target: &Continuation) -> bool {
     match step {
-        RustProgramStep::Yield(DoCtrl::Resume { continuation, .. }) => {
+        ASTStreamStep::Yield(DoCtrl::Resume { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
-        RustProgramStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
+        ASTStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
-        RustProgramStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
+        ASTStreamStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
-        RustProgramStep::Yield(DoCtrl::TransferThrow { continuation, .. }) => {
+        ASTStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
         _ => false,
@@ -1252,43 +1243,41 @@ impl SchedulerState {
             ));
         }
 
-        loop {
-            let next_waiter = if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
-                semaphore.waiters.pop_front()
+        let next_waiter = if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
+            semaphore.waiters.pop_front()
+        } else {
+            return Err(unknown_semaphore_error(semaphore_id));
+        };
+
+        if let Some(waiter) = next_waiter {
+            if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
+                let held = semaphore.holders.entry(waiter.waiting_task).or_insert(0);
+                *held += 1;
             } else {
                 return Err(unknown_semaphore_error(semaphore_id));
-            };
-
-            if let Some(waiter) = next_waiter {
-                if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
-                    let held = semaphore.holders.entry(waiter.waiting_task).or_insert(0);
-                    *held += 1;
-                } else {
-                    return Err(unknown_semaphore_error(semaphore_id));
-                }
-                self.mark_promise_done(waiter.promise, Ok(Value::Unit));
-                return Ok(());
             }
-
-            let over_release = {
-                let semaphore = self
-                    .semaphores
-                    .get(&semaphore_id)
-                    .ok_or_else(|| unknown_semaphore_error(semaphore_id))?;
-                semaphore.available_permits >= semaphore.max_permits
-            };
-            if over_release {
-                return Err(PyException::runtime_error(
-                    "semaphore released too many times".to_string(),
-                ));
-            }
-
-            if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
-                semaphore.available_permits += 1;
-                return Ok(());
-            }
-            return Err(unknown_semaphore_error(semaphore_id));
+            self.mark_promise_done(waiter.promise, Ok(Value::Unit));
+            return Ok(());
         }
+
+        let over_release = {
+            let semaphore = self
+                .semaphores
+                .get(&semaphore_id)
+                .ok_or_else(|| unknown_semaphore_error(semaphore_id))?;
+            semaphore.available_permits >= semaphore.max_permits
+        };
+        if over_release {
+            return Err(PyException::runtime_error(
+                "semaphore released too many times".to_string(),
+            ));
+        }
+
+        if let Some(semaphore) = self.semaphores.get_mut(&semaphore_id) {
+            semaphore.available_permits += 1;
+            return Ok(());
+        }
+        Err(unknown_semaphore_error(semaphore_id))
     }
 
     pub fn save_task_store(&mut self, task_id: TaskId, store: &RustStore) {
@@ -1573,12 +1562,12 @@ impl SchedulerState {
     ///
     /// Per spec (SPEC-008 L1434-1447): saves the current task's store before
     /// switching and loads the new task's store after switching.
-    pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> RustProgramStep {
+    pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> ASTStreamStep {
         loop {
             self.process_semaphore_drop_notifications();
 
             if let Err(error) = self.drain_external_completions_nonblocking() {
-                return RustProgramStep::Throw(error);
+                return ASTStreamStep::Throw(error);
             }
 
             if let Some(task_id) = self.ready.pop_front() {
@@ -1690,7 +1679,7 @@ impl SchedulerState {
 
             if self.has_external_waiters() {
                 if let Err(error) = self.block_until_external_completion() {
-                    return RustProgramStep::Throw(error);
+                    return ASTStreamStep::Throw(error);
                 }
                 continue;
             }
@@ -1743,7 +1732,7 @@ enum SchedulerPhase {
 }
 
 // ---------------------------------------------------------------------------
-// SchedulerProgram + RustHandlerProgram impl
+// SchedulerProgram + ASTStreamProgram impl
 // ---------------------------------------------------------------------------
 
 pub struct SchedulerProgram {
@@ -1781,7 +1770,7 @@ impl SchedulerProgram {
         k_user: Continuation,
         items: Vec<Waitable>,
         store: &mut RustStore,
-    ) -> RustProgramStep {
+    ) -> ASTStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
         let waiting_store = store.clone();
@@ -1821,7 +1810,7 @@ impl SchedulerProgram {
         k_user: Continuation,
         items: Vec<Waitable>,
         store: &mut RustStore,
-    ) -> RustProgramStep {
+    ) -> ASTStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
         let waiting_store = store.clone();
@@ -1861,11 +1850,11 @@ impl SchedulerProgram {
         waiting_task: Option<TaskId>,
         waiting_store: RustStore,
         store: &mut RustStore,
-    ) -> RustProgramStep {
+    ) -> ASTStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
 
         let Some(task_id) = running_task else {
-            return RustProgramStep::Throw(PyException::runtime_error(
+            return ASTStreamStep::Throw(PyException::runtime_error(
                 "scheduler resumed/thrown without current running task",
             ));
         };
@@ -1977,14 +1966,14 @@ impl SchedulerProgram {
     }
 }
 
-impl RustHandlerProgram for SchedulerProgram {
+impl ASTStreamProgram for SchedulerProgram {
     fn start(
         &mut self,
         _py: Python<'_>,
         effect: DispatchEffect,
         k_user: Continuation,
         store: &mut RustStore,
-    ) -> RustProgramStep {
+    ) -> ASTStreamStep {
         {
             let mut state = self.state.lock().expect("Scheduler lock poisoned");
             state.process_semaphore_drop_notifications();
@@ -1999,12 +1988,12 @@ impl RustHandlerProgram for SchedulerProgram {
             match parse_scheduler_python_effect(&obj, creation_site.clone()) {
                 Ok(Some(se)) => se,
                 Ok(None) => {
-                    return RustProgramStep::Yield(DoCtrl::Delegate {
+                    return ASTStreamStep::Yield(DoCtrl::Delegate {
                         effect: dispatch_from_shared(obj),
                     })
                 }
                 Err(msg) => {
-                    return RustProgramStep::Throw(PyException::type_error(format!(
+                    return ASTStreamStep::Throw(PyException::type_error(format!(
                         "failed to parse scheduler effect: {msg}"
                     )))
                 }
@@ -2012,7 +2001,7 @@ impl RustHandlerProgram for SchedulerProgram {
         } else {
             #[cfg(test)]
             {
-                return RustProgramStep::Yield(DoCtrl::Delegate { effect });
+                return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
             }
             #[cfg(not(test))]
             {
@@ -2039,7 +2028,7 @@ impl RustHandlerProgram for SchedulerProgram {
                         store_snapshot,
                         spawn_site: creation_site,
                     };
-                    return RustProgramStep::Yield(DoCtrl::GetHandlers);
+                    return ASTStreamStep::Yield(DoCtrl::GetHandlers);
                 }
 
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
@@ -2048,7 +2037,7 @@ impl RustHandlerProgram for SchedulerProgram {
                     store_snapshot,
                     spawn_site: creation_site,
                 };
-                RustProgramStep::Yield(DoCtrl::CreateContinuation {
+                ASTStreamStep::Yield(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities: vec![],
@@ -2098,7 +2087,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 state.promises.insert(pid, PromiseState::Pending);
                 let completion_queue = match state.ensure_external_completion_queue() {
                     Ok(queue) => queue,
-                    Err(error) => return RustProgramStep::Throw(error),
+                    Err(error) => return ASTStreamStep::Throw(error),
                 };
                 resume_to_continuation(
                     k_user,
@@ -2118,7 +2107,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let semaphore_value =
                     match make_python_semaphore_value(semaphore_id, scheduler_state_id) {
                         Ok(value) => value,
-                        Err(error) => return RustProgramStep::Throw(error),
+                        Err(error) => return ASTStreamStep::Throw(error),
                     };
                 resume_to_continuation(k_user, semaphore_value)
             }
@@ -2128,7 +2117,7 @@ impl RustHandlerProgram for SchedulerProgram {
                     let mut state = self.state.lock().expect("Scheduler lock poisoned");
                     match state.acquire_semaphore(semaphore_id) {
                         Ok(result) => result,
-                        Err(error) => return RustProgramStep::Throw(error),
+                        Err(error) => return ASTStreamStep::Throw(error),
                     }
                 };
                 match waiter_promise {
@@ -2145,14 +2134,14 @@ impl RustHandlerProgram for SchedulerProgram {
             SchedulerEffect::ReleaseSemaphore { semaphore_id } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 if let Err(error) = state.release_semaphore(semaphore_id) {
-                    return RustProgramStep::Throw(error);
+                    return ASTStreamStep::Throw(error);
                 }
                 resume_to_continuation(k_user, Value::Unit)
             }
         }
     }
 
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
             SchedulerPhase::SpawnAwaitHandlers {
                 k_user,
@@ -2164,7 +2153,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let handlers = match value {
                     Value::Handlers(hs) => hs,
                     _ => {
-                        return RustProgramStep::Throw(PyException::type_error(
+                        return ASTStreamStep::Throw(PyException::type_error(
                             "scheduler Spawn expected GetHandlers result".to_string(),
                         ));
                     }
@@ -2177,7 +2166,7 @@ impl RustHandlerProgram for SchedulerProgram {
                     spawn_site,
                 };
 
-                RustProgramStep::Yield(DoCtrl::CreateContinuation {
+                ASTStreamStep::Yield(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities: vec![],
@@ -2194,7 +2183,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let cont = match value {
                     Value::Continuation(c) => c,
                     _ => {
-                        return RustProgramStep::Throw(PyException::type_error(
+                        return ASTStreamStep::Throw(PyException::type_error(
                             "expected continuation from CreateContinuation, got unexpected type"
                                 .to_string(),
                         ));
@@ -2209,7 +2198,7 @@ impl RustHandlerProgram for SchedulerProgram {
                             merge,
                         },
                         None => {
-                            return RustProgramStep::Throw(PyException::runtime_error(
+                            return ASTStreamStep::Throw(PyException::runtime_error(
                                 "isolated spawn missing store snapshot".to_string(),
                             ))
                         }
@@ -2260,14 +2249,14 @@ impl RustHandlerProgram for SchedulerProgram {
 
             SchedulerPhase::Idle => {
                 // Unexpected resume
-                RustProgramStep::Throw(PyException::runtime_error(
+                ASTStreamStep::Throw(PyException::runtime_error(
                     "Unexpected resume in scheduler: no pending operation".to_string(),
                 ))
             }
         }
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep {
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
             SchedulerPhase::Driving {
                 k_user,
@@ -2286,20 +2275,18 @@ impl RustHandlerProgram for SchedulerProgram {
                 waiting_store,
                 store,
             ),
-            _ => RustProgramStep::Throw(exc),
+            _ => ASTStreamStep::Throw(exc),
         }
     }
 }
 
 impl ASTStream for SchedulerProgram {
     fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
-        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::resume(
-            self, value, store,
-        ))
+        <Self as ASTStreamProgram>::resume(self, value, store)
     }
 
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
-        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::throw(self, exc, store))
+        <Self as ASTStreamProgram>::throw(self, exc, store)
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -2313,7 +2300,7 @@ impl ASTStream for SchedulerProgram {
 }
 
 // ---------------------------------------------------------------------------
-// SchedulerHandler + RustProgramHandler impl
+// SchedulerHandler + ASTStreamFactory impl
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -2356,7 +2343,7 @@ impl SchedulerHandler {
     }
 }
 
-impl RustProgramHandler for SchedulerHandler {
+impl ASTStreamFactory for SchedulerHandler {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
         dispatch_ref_as_python(effect).is_some_and(|obj| {
             matches!(
@@ -2366,13 +2353,13 @@ impl RustProgramHandler for SchedulerHandler {
         })
     }
 
-    fn create_program(&self) -> RustProgramRef {
+    fn create_program(&self) -> ASTStreamProgramRef {
         Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
             self.state_for_run(None),
         ))))
     }
 
-    fn create_program_for_run(&self, run_token: Option<u64>) -> RustProgramRef {
+    fn create_program_for_run(&self, run_token: Option<u64>) -> ASTStreamProgramRef {
         Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
             self.state_for_run(run_token),
         ))))
@@ -2390,7 +2377,7 @@ impl RustProgramHandler for SchedulerHandler {
 
 impl HandlerInvoke for SchedulerHandler {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
-        <Self as RustProgramHandler>::can_handle(self, effect)
+        <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
     fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoCtrl {
@@ -2403,7 +2390,7 @@ impl HandlerInvoke for SchedulerHandler {
             args: vec![],
             kwargs: vec![],
             metadata: CallMetadata::new(
-                <Self as RustProgramHandler>::handler_name(self).to_string(),
+                <Self as ASTStreamFactory>::handler_name(self).to_string(),
                 "<rust>".to_string(),
                 0,
                 None,
@@ -2413,19 +2400,19 @@ impl HandlerInvoke for SchedulerHandler {
     }
 
     fn handler_name(&self) -> &str {
-        <Self as RustProgramHandler>::handler_name(self)
+        <Self as ASTStreamFactory>::handler_name(self)
     }
 
     fn handler_debug_info(&self) -> crate::handler::HandlerDebugInfo {
         crate::handler::HandlerDebugInfo {
-            name: <Self as RustProgramHandler>::handler_name(self).to_string(),
+            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
             file: None,
             line: None,
         }
     }
 
     fn on_run_end(&self, run_token: u64) {
-        <Self as RustProgramHandler>::on_run_end(self, run_token);
+        <Self as ASTStreamFactory>::on_run_end(self, run_token);
     }
 }
 
@@ -2458,7 +2445,7 @@ mod tests {
         let step = transfer_to_continuation(cont, Value::Int(123));
 
         match step {
-            RustProgramStep::Yield(DoCtrl::Transfer {
+            ASTStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             }) => {
@@ -2476,7 +2463,7 @@ mod tests {
         let step = transfer_to_continuation(cont, Value::Int(456));
 
         match step {
-            RustProgramStep::Yield(DoCtrl::ResumeContinuation {
+            ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
                 continuation,
                 value,
             }) => {
@@ -2585,10 +2572,10 @@ mod tests {
 
             let step = state.transfer_next_or(scheduler_k.clone(), &mut store);
             match step {
-                RustProgramStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
+                ASTStreamStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
                     assert_eq!(continuation.cont_id, expected_cont);
                 }
-                RustProgramStep::Yield(DoCtrl::Resume { .. }) => {
+                ASTStreamStep::Yield(DoCtrl::Resume { .. }) => {
                     panic!("task switches must not emit DoCtrl::Resume")
                 }
                 _ => panic!("task switches must emit DoCtrl::Transfer"),
@@ -2621,7 +2608,7 @@ mod tests {
         // transfer_next_or only resumes waiters that belong to the same owner continuation.
         let step = state.transfer_next_or(waiter.clone(), &mut store);
         match step {
-            RustProgramStep::Yield(DoCtrl::Resume {
+            ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
             }) => {

@@ -803,7 +803,7 @@ def test_run_scoped_successive_independent_runs():
 def test_yielded_raw_generator_rejected_as_program():
     """Yielding a raw generator inside a program body should raise TypeError.
 
-    The VM requires Yielded::Program entries to be ProgramBase objects (with
+    The VM requires program-classification entries to be ProgramBase objects (with
     a ``to_generator`` method). Raw generators must go through ``vm.run()``
     or ``vm.start_program()`` instead.
     """
@@ -816,7 +816,7 @@ def test_yielded_raw_generator_rejected_as_program():
         yield Pure(42)
 
     def main():
-        # Yielding a raw generator triggers classify_yielded -> Yielded::Program
+        # Yielding a raw generator triggers classify_yielded -> program-classification
         # -> StartProgram -> to_generator_strict -> TypeError
         result = yield sub_generator()
         return result
@@ -876,7 +876,7 @@ class UnknownThing:
     """Not an effect, not a primitive, not a program.
 
     Used by G4 test to verify that truly unrecognized yielded objects
-    produce a TypeError (Yielded::Unknown) rather than being silently
+    produce a TypeError (legacy unknown-yield classification) rather than being silently
     dispatched as Effect::Python.
     """
 
@@ -1359,7 +1359,7 @@ class TestR9ClassifyYieldedCompleteness:
         GatherEffect extends EffectBase extends ProgramBase, so it has
         `to_generator`. classify_yielded must check for effect type names
         BEFORE the to_generator fallback, otherwise scheduler effects get
-        misclassified as Yielded::Program and the VM tries to start them.
+        misclassified as program-classification and the VM tries to start them.
         """
         import subprocess
         import sys
