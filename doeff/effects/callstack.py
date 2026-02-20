@@ -2,21 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import warnings
 
+import doeff_vm
+
 from ._validators import ensure_non_negative_int
-from .base import EffectBase
 
-
-@dataclass(frozen=True)
-class ProgramCallFrameEffect(EffectBase):
-    """Return a snapshot of the program call stack frame at the given depth."""
-
-    depth: int = 0
-
-    def __post_init__(self) -> None:
-        ensure_non_negative_int(self.depth, name="depth")
+ProgramCallFrameEffect = doeff_vm.ProgramCallFrameEffect
+ProgramCallStackEffect = doeff_vm.ProgramCallStackEffect
 
 
 def ProgramCallFrame(depth: int = 0) -> ProgramCallFrameEffect:
@@ -28,12 +21,8 @@ def ProgramCallFrame(depth: int = 0) -> ProgramCallFrameEffect:
             the depth exceeds the available call stack.
     """
 
+    ensure_non_negative_int(depth, name="depth")
     return ProgramCallFrameEffect(depth=depth)
-
-
-@dataclass(frozen=True)
-class ProgramCallStackEffect(EffectBase):
-    """Return a snapshot of the entire program call stack."""
 
 
 def ProgramCallStack() -> ProgramCallStackEffect:

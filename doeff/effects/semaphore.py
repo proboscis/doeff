@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import doeff_vm
 
-from .base import Effect, EffectBase
+from .base import Effect
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,9 +16,7 @@ class Semaphore:
     def __post_init__(self) -> None:
         if not isinstance(self.id, int):
             raise TypeError(f"id must be int, got {type(self.id).__name__}")
-        if self._scheduler_state_id is not None and not isinstance(
-            self._scheduler_state_id, int
-        ):
+        if self._scheduler_state_id is not None and not isinstance(self._scheduler_state_id, int):
             raise TypeError(
                 "_scheduler_state_id must be int | None, "
                 f"got {type(self._scheduler_state_id).__name__}"
@@ -43,56 +41,50 @@ class Semaphore:
             return
 
 
-@dataclass(frozen=True)
-class CreateSemaphoreEffect(EffectBase):
-    permits: int
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.permits, int):
-            raise TypeError(f"permits must be int, got {type(self.permits).__name__}")
-        if self.permits < 1:
-            raise ValueError("permits must be >= 1")
+CreateSemaphoreEffect = doeff_vm.CreateSemaphoreEffect
+AcquireSemaphoreEffect = doeff_vm.AcquireSemaphoreEffect
+ReleaseSemaphoreEffect = doeff_vm.ReleaseSemaphoreEffect
 
 
-@dataclass(frozen=True)
-class AcquireSemaphoreEffect(EffectBase):
-    semaphore: Semaphore
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.semaphore, Semaphore):
-            raise TypeError(f"semaphore must be Semaphore, got {type(self.semaphore).__name__}")
+def _ensure_permits(permits: int) -> None:
+    if not isinstance(permits, int):
+        raise TypeError(f"permits must be int, got {type(permits).__name__}")
+    if permits < 1:
+        raise ValueError("permits must be >= 1")
 
 
-@dataclass(frozen=True)
-class ReleaseSemaphoreEffect(EffectBase):
-    semaphore: Semaphore
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.semaphore, Semaphore):
-            raise TypeError(f"semaphore must be Semaphore, got {type(self.semaphore).__name__}")
+def _ensure_semaphore(semaphore: Semaphore) -> None:
+    if not isinstance(semaphore, Semaphore):
+        raise TypeError(f"semaphore must be Semaphore, got {type(semaphore).__name__}")
 
 
 def create_semaphore(permits: int) -> CreateSemaphoreEffect:
+    _ensure_permits(permits)
     return CreateSemaphoreEffect(permits=permits)
 
 
 def acquire_semaphore(semaphore: Semaphore) -> AcquireSemaphoreEffect:
+    _ensure_semaphore(semaphore)
     return AcquireSemaphoreEffect(semaphore=semaphore)
 
 
 def release_semaphore(semaphore: Semaphore) -> ReleaseSemaphoreEffect:
+    _ensure_semaphore(semaphore)
     return ReleaseSemaphoreEffect(semaphore=semaphore)
 
 
 def CreateSemaphore(permits: int) -> Effect:  # noqa: N802
+    _ensure_permits(permits)
     return CreateSemaphoreEffect(permits=permits)
 
 
 def AcquireSemaphore(semaphore: Semaphore) -> Effect:  # noqa: N802
+    _ensure_semaphore(semaphore)
     return AcquireSemaphoreEffect(semaphore=semaphore)
 
 
 def ReleaseSemaphore(semaphore: Semaphore) -> Effect:  # noqa: N802
+    _ensure_semaphore(semaphore)
     return ReleaseSemaphoreEffect(semaphore=semaphore)
 
 

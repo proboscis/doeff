@@ -16,8 +16,9 @@ use crate::continuation::Continuation;
 use crate::effect::Effect;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
-    PyCancelEffect, PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyFailPromise,
-    PyGather, PyRace, PySpawn, PyTaskCompleted,
+    PyAcquireSemaphore, PyCancelEffect, PyCompletePromise, PyCreateExternalPromise,
+    PyCreatePromise, PyCreateSemaphore, PyFailPromise, PyGather, PyRace, PyReleaseSemaphore,
+    PySpawn, PyTaskCompleted,
 };
 use crate::frame::Frame;
 use crate::handler::{
@@ -440,17 +441,6 @@ pub fn debug_semaphore_count_for_state(state_id: u64) -> Option<usize> {
     Some(state.semaphores.len())
 }
 
-fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
-    let py = obj.py();
-    let Ok(mod_) = py.import(module) else {
-        return false;
-    };
-    let Ok(cls) = mod_.getattr(class_name) else {
-        return false;
-    };
-    obj.is_instance(&cls).unwrap_or(false)
-}
-
 fn parse_task_completed_result(
     py: Python<'_>,
     result_obj: &Bound<'_, PyAny>,
@@ -656,6 +646,31 @@ fn parse_scheduler_python_effect(
             return Ok(Some(SchedulerEffect::FailPromise { promise, error }));
         }
 
+        if let Ok(create) = obj.extract::<PyRef<'_, PyCreateSemaphore>>() {
+            if create.permits < 1 {
+                return Err("CreateSemaphoreEffect.permits must be >= 1".to_string());
+            }
+            return Ok(Some(SchedulerEffect::CreateSemaphore {
+                permits: create.permits as u64,
+            }));
+        }
+
+        if let Ok(acquire) = obj.extract::<PyRef<'_, PyAcquireSemaphore>>() {
+            let semaphore_obj = acquire.semaphore.bind(py);
+            let Some(semaphore_id) = extract_semaphore_id(semaphore_obj) else {
+                return Err("AcquireSemaphoreEffect.semaphore must carry a numeric id".to_string());
+            };
+            return Ok(Some(SchedulerEffect::AcquireSemaphore { semaphore_id }));
+        }
+
+        if let Ok(release) = obj.extract::<PyRef<'_, PyReleaseSemaphore>>() {
+            let semaphore_obj = release.semaphore.bind(py);
+            let Some(semaphore_id) = extract_semaphore_id(semaphore_obj) else {
+                return Err("ReleaseSemaphoreEffect.semaphore must carry a numeric id".to_string());
+            };
+            return Ok(Some(SchedulerEffect::ReleaseSemaphore { semaphore_id }));
+        }
+
         if let Ok(done) = obj.extract::<PyRef<'_, PyTaskCompleted>>() {
             let task = {
                 let task_obj = done.task.bind(py);
@@ -683,145 +698,7 @@ fn parse_scheduler_python_effect(
             return Ok(Some(SchedulerEffect::TaskCompleted { task, result }));
         }
 
-        if is_instance_from(obj, "doeff.effects.spawn", "SpawnEffect") {
-            let program = obj.getattr("program").map_err(|e| e.to_string())?.unbind();
-            let handlers = if let Ok(handlers_obj) = obj.getattr("handlers") {
-                extract_handlers_from_python(&handlers_obj)?
-            } else {
-                vec![]
-            };
-            let store_mode = if let Ok(mode_obj) = obj.getattr("store_mode") {
-                parse_store_mode(&mode_obj)?
-            } else {
-                StoreMode::Shared
-            };
-            Ok(Some(SchedulerEffect::Spawn {
-                program,
-                handlers,
-                store_mode,
-                creation_site,
-            }))
-        } else if is_instance_from(obj, "doeff.effects.gather", "GatherEffect") {
-            let items_obj = obj.getattr("items").map_err(|e| e.to_string())?;
-            let mut waitables = Vec::new();
-            for item in items_obj.try_iter().map_err(|e| e.to_string())? {
-                let item = item.map_err(|e| e.to_string())?;
-                match extract_waitable(&item) {
-                    Some(w) => waitables.push(w),
-                    None => {
-                        return Err("GatherEffect.items must be waitable handles".to_string());
-                    }
-                }
-            }
-            Ok(Some(SchedulerEffect::Gather { items: waitables }))
-        } else if is_instance_from(obj, "doeff.effects.race", "RaceEffect") {
-            let items_obj = obj.getattr("futures").map_err(|e| e.to_string())?;
-            let mut waitables = Vec::new();
-            for item in items_obj.try_iter().map_err(|e| e.to_string())? {
-                let item = item.map_err(|e| e.to_string())?;
-                match extract_waitable(&item) {
-                    Some(w) => waitables.push(w),
-                    None => {
-                        return Err("RaceEffect.futures/items must be waitable handles".to_string());
-                    }
-                }
-            }
-            Ok(Some(SchedulerEffect::Race { items: waitables }))
-        } else if is_instance_from(obj, "doeff.effects.promise", "CreatePromiseEffect") {
-            Ok(Some(SchedulerEffect::CreatePromise))
-        } else if is_instance_from(
-            obj,
-            "doeff.effects.external_promise",
-            "CreateExternalPromiseEffect",
-        ) {
-            Ok(Some(SchedulerEffect::CreateExternalPromise))
-        } else if is_instance_from(obj, "doeff.effects.spawn", "TaskCancelEffect") {
-            let task_obj = obj.getattr("task").map_err(|e| e.to_string())?;
-            let Some(task) = extract_task_id(&task_obj) else {
-                return Err("TaskCancelEffect.task must carry _handle.task_id".to_string());
-            };
-            Ok(Some(SchedulerEffect::CancelTask { task }))
-        } else if is_instance_from(obj, "doeff.effects.semaphore", "CreateSemaphoreEffect") {
-            let permits = obj
-                .getattr("permits")
-                .map_err(|e| e.to_string())?
-                .extract::<i64>()
-                .map_err(|e| e.to_string())?;
-            if permits < 1 {
-                return Err("CreateSemaphoreEffect.permits must be >= 1".to_string());
-            }
-            Ok(Some(SchedulerEffect::CreateSemaphore {
-                permits: permits as u64,
-            }))
-        } else if is_instance_from(obj, "doeff.effects.semaphore", "AcquireSemaphoreEffect") {
-            let semaphore_obj = obj.getattr("semaphore").map_err(|e| e.to_string())?;
-            let Some(semaphore_id) = extract_semaphore_id(&semaphore_obj) else {
-                return Err("AcquireSemaphoreEffect.semaphore must carry a numeric id".to_string());
-            };
-            Ok(Some(SchedulerEffect::AcquireSemaphore { semaphore_id }))
-        } else if is_instance_from(obj, "doeff.effects.semaphore", "ReleaseSemaphoreEffect") {
-            let semaphore_obj = obj.getattr("semaphore").map_err(|e| e.to_string())?;
-            let Some(semaphore_id) = extract_semaphore_id(&semaphore_obj) else {
-                return Err("ReleaseSemaphoreEffect.semaphore must carry a numeric id".to_string());
-            };
-            Ok(Some(SchedulerEffect::ReleaseSemaphore { semaphore_id }))
-        } else if is_instance_from(obj, "doeff.effects.promise", "CompletePromiseEffect") {
-            let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
-            let Some(promise) = extract_promise_id(&promise_obj) else {
-                return Err(
-                    "CompletePromiseEffect.promise must carry _promise_handle.promise_id"
-                        .to_string(),
-                );
-            };
-            let value = obj.getattr("value").map_err(|e| e.to_string())?;
-            Ok(Some(SchedulerEffect::CompletePromise {
-                promise,
-                value: Value::from_pyobject(&value),
-            }))
-        } else if is_instance_from(obj, "doeff.effects.promise", "FailPromiseEffect") {
-            let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
-            let Some(promise) = extract_promise_id(&promise_obj) else {
-                return Err(
-                    "FailPromiseEffect.promise must carry _promise_handle.promise_id".to_string(),
-                );
-            };
-            let error_obj = obj.getattr("error").map_err(|e| e.to_string())?;
-            let error = pyobject_to_exception(py, &error_obj);
-            Ok(Some(SchedulerEffect::FailPromise { promise, error }))
-        } else if is_instance_from(
-            obj,
-            "doeff.effects.scheduler_internal",
-            "_SchedulerTaskCompleted",
-        ) {
-            let task = if let Ok(task_obj) = obj.getattr("task") {
-                extract_task_id(&task_obj)
-            } else {
-                None
-            }
-            .or_else(|| {
-                if let Ok(task_id_obj) = obj.getattr("task_id") {
-                    if task_id_obj.is_none() {
-                        None
-                    } else {
-                        task_id_obj.extract::<u64>().ok().map(TaskId::from_raw)
-                    }
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                "TaskCompletedEffect/SchedulerTaskCompleted requires task.task_id or task_id"
-                    .to_string()
-            })?;
-
-            let result_obj = obj.getattr("result").map_err(|_| {
-                "TaskCompletedEffect/SchedulerTaskCompleted requires task + result".to_string()
-            })?;
-            let result = parse_task_completed_result(py, &result_obj)?;
-            Ok(Some(SchedulerEffect::TaskCompleted { task, result }))
-        } else {
-            Ok(None)
-        }
+        Ok(None)
     })
 }
 

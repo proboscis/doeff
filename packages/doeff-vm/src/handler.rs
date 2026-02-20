@@ -15,7 +15,7 @@ use crate::continuation::Continuation;
 use crate::effect::Effect;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect, PyAsk,
-    PyLocal,
+    PyGet, PyLocal, PyModify, PyPut, PyPythonAsyncioAwaitEffect, PyResultSafeEffect, PyTell,
 };
 use crate::ids::SegmentId;
 use crate::py_key::HashedPyKey;
@@ -145,10 +145,12 @@ impl Handler {
                 if value.is_none() {
                     return None;
                 }
-                value
-                    .extract::<u32>()
-                    .ok()
-                    .or_else(|| value.extract::<i64>().ok().and_then(|line| u32::try_from(line).ok()))
+                value.extract::<u32>().ok().or_else(|| {
+                    value
+                        .extract::<i64>()
+                        .ok()
+                        .and_then(|line| u32::try_from(line).ok())
+                })
             })
         }
 
@@ -193,23 +195,6 @@ impl Handler {
     }
 }
 
-fn has_true_attr(obj: &Bound<'_, PyAny>, attr: &str) -> bool {
-    obj.getattr(attr)
-        .and_then(|v| v.extract::<bool>())
-        .unwrap_or(false)
-}
-
-fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
-    let py = obj.py();
-    let Ok(mod_) = py.import(module) else {
-        return false;
-    };
-    let Ok(cls) = mod_.getattr(class_name) else {
-        return false;
-    };
-    obj.is_instance(&cls).unwrap_or(false)
-}
-
 enum ParsedStateEffect {
     Get { key: String },
     Put { key: String, value: Value },
@@ -219,41 +204,23 @@ enum ParsedStateEffect {
 fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if is_instance_from(obj, "doeff.effects.state", "StateGetEffect") {
-            let key: String = obj
-                .getattr("key")
-                .map_err(|e| e.to_string())?
-                .extract::<String>()
-                .map_err(|e| e.to_string())?;
-            return Ok(Some(ParsedStateEffect::Get { key }));
-        }
-
-        if is_instance_from(obj, "doeff.effects.state", "StatePutEffect") {
-            let key: String = obj
-                .getattr("key")
-                .map_err(|e| e.to_string())?
-                .extract::<String>()
-                .map_err(|e| e.to_string())?;
-            let value = obj.getattr("value").map_err(|e| e.to_string())?;
-            return Ok(Some(ParsedStateEffect::Put {
-                key,
-                value: Value::from_pyobject(&value),
+        if let Ok(get) = obj.extract::<PyRef<'_, PyGet>>() {
+            return Ok(Some(ParsedStateEffect::Get {
+                key: get.key.clone(),
             }));
         }
 
-        if is_instance_from(obj, "doeff.effects.state", "StateModifyEffect") {
-            let key: String = obj
-                .getattr("key")
-                .map_err(|e| e.to_string())?
-                .extract::<String>()
-                .map_err(|e| e.to_string())?;
-            let modifier = obj
-                .getattr("func")
-                .or_else(|_| obj.getattr("modifier"))
-                .map_err(|e| e.to_string())?;
+        if let Ok(put) = obj.extract::<PyRef<'_, PyPut>>() {
+            return Ok(Some(ParsedStateEffect::Put {
+                key: put.key.clone(),
+                value: Value::from_pyobject(put.value.bind(py)),
+            }));
+        }
+
+        if let Ok(modify) = obj.extract::<PyRef<'_, PyModify>>() {
             return Ok(Some(ParsedStateEffect::Modify {
-                key,
-                modifier: PyShared::new(modifier.unbind()),
+                key: modify.key.clone(),
+                modifier: PyShared::new(modify.func.clone_ref(py)),
             }));
         }
 
@@ -264,10 +231,7 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffe
 fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<HashedPyKey>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if obj.is_instance_of::<PyAsk>()
-            || is_instance_from(obj, "doeff.effects.reader", "AskEffect")
-            || is_instance_from(obj, "doeff.effects.reader", "HashableAskEffect")
-        {
+        if obj.is_instance_of::<PyAsk>() {
             let key_obj = obj.getattr("key").map_err(|e| e.to_string())?;
             let hashed = HashedPyKey::from_bound(&key_obj)
                 .map_err(|e| format!("Ask key is not hashable: {e}"))?;
@@ -285,19 +249,13 @@ struct ParsedLocalEffect {
 }
 
 fn is_local_python_effect(effect: &PyShared) -> bool {
-    Python::attach(|py| {
-        let obj = effect.bind(py);
-        obj.is_instance_of::<PyLocal>()
-            || is_instance_from(obj, "doeff.effects.reader", "LocalEffect")
-    })
+    Python::attach(|py| effect.bind(py).is_instance_of::<PyLocal>())
 }
 
 fn parse_local_python_effect(effect: &PyShared) -> Result<Option<ParsedLocalEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if !(obj.is_instance_of::<PyLocal>()
-            || is_instance_from(obj, "doeff.effects.reader", "LocalEffect"))
-        {
+        if !obj.is_instance_of::<PyLocal>() {
             return Ok(None);
         }
 
@@ -482,7 +440,7 @@ fn lazy_ask_release_semaphore_effect(semaphore: &Value) -> Result<DispatchEffect
 fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if is_instance_from(obj, "doeff.effects.writer", "WriterTellEffect") {
+        if obj.is_instance_of::<PyTell>() {
             let message = obj.getattr("message").map_err(|e| e.to_string())?;
             return Ok(Some(Value::from_pyobject(&message)));
         }
@@ -493,9 +451,8 @@ fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String
 fn parse_await_python_effect(effect: &PyShared) -> Result<Option<Py<PyAny>>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if is_instance_from(obj, "doeff.effects.future", "PythonAsyncioAwaitEffect") {
-            let awaitable = obj.getattr("awaitable").map_err(|e| e.to_string())?;
-            return Ok(Some(awaitable.unbind()));
+        if let Ok(await_effect) = obj.extract::<PyRef<'_, PyPythonAsyncioAwaitEffect>>() {
+            return Ok(Some(await_effect.awaitable.clone_ref(py)));
         }
         Ok(None)
     })
@@ -504,21 +461,8 @@ fn parse_await_python_effect(effect: &PyShared) -> Result<Option<Py<PyAny>>, Str
 fn parse_result_safe_python_effect(effect: &PyShared) -> Result<Option<PyShared>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        let is_result_safe = {
-            #[cfg(test)]
-            {
-                is_instance_from(obj, "doeff.effects.result", "ResultSafeEffect")
-                    || has_true_attr(obj, "__doeff_result_safe__")
-            }
-            #[cfg(not(test))]
-            {
-                is_instance_from(obj, "doeff.effects.result", "ResultSafeEffect")
-            }
-        };
-
-        if is_result_safe {
-            let sub_program = obj.getattr("sub_program").map_err(|e| e.to_string())?;
-            return Ok(Some(PyShared::new(sub_program.unbind())));
+        if let Ok(result_safe) = obj.extract::<PyRef<'_, PyResultSafeEffect>>() {
+            return Ok(Some(PyShared::new(result_safe.sub_program.clone_ref(py))));
         }
         Ok(None)
     })
@@ -2418,10 +2362,13 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             locals
-                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .set_item(
+                    "ResultSafeEffect",
+                    py.get_type::<crate::effect::PyResultSafeEffect>(),
+                )
                 .unwrap();
             py.run(
-                c"class ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
+                c"obj = ResultSafeEffect(None)\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2444,10 +2391,13 @@ mod tests {
 
             let locals = pyo3::types::PyDict::new(py);
             locals
-                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .set_item(
+                    "ResultSafeEffect",
+                    py.get_type::<crate::effect::PyResultSafeEffect>(),
+                )
                 .unwrap();
             py.run(
-                c"class ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
+                c"obj = ResultSafeEffect(None)\n",
                 Some(&locals),
                 Some(&locals),
             )
