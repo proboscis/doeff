@@ -1095,9 +1095,7 @@ impl PyVM {
                 PyTypeError::new_err("DoExpr object is missing callable to_generator()")
             })?;
             if !to_generator.is_callable() {
-                return Err(PyTypeError::new_err(
-                    "DoExpr.to_generator must be callable",
-                ));
+                return Err(PyTypeError::new_err("DoExpr.to_generator must be callable"));
             }
             let ty_name = obj
                 .get_type()
@@ -2379,7 +2377,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    __doeff_scheduler_task_completed__ = True\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
+                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2460,7 +2458,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    __doeff_scheduler_task_completed__ = True\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
+                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2484,7 +2482,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class GatherEffect(EffectBase):\n    __doeff_scheduler_gather__ = True\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
+                c"class GatherEffect(EffectBase):\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2508,7 +2506,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect(EffectBase):\n    __doeff_scheduler_wait__ = True\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
+                c"class _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect(EffectBase):\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2543,7 +2541,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
+                c"class SpawnEffect(EffectBase):\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2758,7 +2756,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
+                c"class SpawnEffect(EffectBase):\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )

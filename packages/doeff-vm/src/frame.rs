@@ -15,7 +15,7 @@ pub fn fresh_frame_id() -> u64 {
 /// Metadata about a program call for call stack reconstruction. [SPEC-008 R9-D]
 ///
 /// Extracted by the driver (with GIL) during classify_yielded or by
-/// RustHandlerPrograms that emit Call primitives. Stored on Program frames.
+/// Rust handler streams that emit call primitives. Stored on Program frames.
 #[derive(Debug, Clone)]
 pub struct CallMetadata {
     pub frame_id: u64,
