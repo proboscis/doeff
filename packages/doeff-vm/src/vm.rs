@@ -28,7 +28,6 @@ use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::pyvm::{PyDoExprBase, PyEffectBase};
 use crate::segment::Segment;
 use crate::value::Value;
-use crate::yielded::Yielded;
 
 pub use crate::dispatch::DispatchContext;
 pub use crate::rust_store::RustStore;
@@ -246,11 +245,11 @@ impl VM {
             return StepEvent::Error(VMError::internal("Call evaluation outside current segment"));
         };
         seg.push_frame(Frame::RustReturn { cb: cb_id });
-        self.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+        self.mode = Mode::HandleYield(DoCtrl::Eval {
             expr,
             handlers,
             metadata: None,
-        }));
+        });
         StepEvent::Continue
     }
 
@@ -1673,26 +1672,24 @@ impl VM {
             Mode::Deliver(_) => "Deliver",
             Mode::Throw(_) => "Throw",
             Mode::HandleYield(y) => match y {
-                Yielded::DoCtrl(p) => match p {
-                    DoCtrl::Pure { .. } => "HandleYield(Pure)",
-                    DoCtrl::Map { .. } => "HandleYield(Map)",
-                    DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
-                    DoCtrl::Perform { .. } => "HandleYield(Perform)",
-                    DoCtrl::Resume { .. } => "HandleYield(Resume)",
-                    DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
-                    DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
-                    DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
-                    DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
-                    DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
-                    DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
-                    DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
-                    DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
-                    DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-                    DoCtrl::Call { .. } => "HandleYield(Call)",
-                    DoCtrl::Eval { .. } => "HandleYield(Eval)",
-                    DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
-                    DoCtrl::GetTrace => "HandleYield(GetTrace)",
-                },
+                DoCtrl::Pure { .. } => "HandleYield(Pure)",
+                DoCtrl::Map { .. } => "HandleYield(Map)",
+                DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
+                DoCtrl::Perform { .. } => "HandleYield(Perform)",
+                DoCtrl::Resume { .. } => "HandleYield(Resume)",
+                DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
+                DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
+                DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
+                DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
+                DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
+                DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+                DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
+                DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
+                DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
+                DoCtrl::Call { .. } => "HandleYield(Call)",
+                DoCtrl::Eval { .. } => "HandleYield(Eval)",
+                DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
+                DoCtrl::GetTrace => "HandleYield(GetTrace)",
             },
             Mode::Return(_) => "Return",
         }
@@ -1763,26 +1760,24 @@ impl VM {
             Mode::Deliver(_) => "Deliver",
             Mode::Throw(_) => "Throw",
             Mode::HandleYield(y) => match y {
-                Yielded::DoCtrl(p) => match p {
-                    DoCtrl::Pure { .. } => "HandleYield(Pure)",
-                    DoCtrl::Map { .. } => "HandleYield(Map)",
-                    DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
-                    DoCtrl::Perform { .. } => "HandleYield(Perform)",
-                    DoCtrl::Resume { .. } => "HandleYield(Resume)",
-                    DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
-                    DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
-                    DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
-                    DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
-                    DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
-                    DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
-                    DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
-                    DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
-                    DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-                    DoCtrl::Call { .. } => "HandleYield(Call)",
-                    DoCtrl::Eval { .. } => "HandleYield(Eval)",
-                    DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
-                    DoCtrl::GetTrace => "HandleYield(GetTrace)",
-                },
+                DoCtrl::Pure { .. } => "HandleYield(Pure)",
+                DoCtrl::Map { .. } => "HandleYield(Map)",
+                DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
+                DoCtrl::Perform { .. } => "HandleYield(Perform)",
+                DoCtrl::Resume { .. } => "HandleYield(Resume)",
+                DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
+                DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
+                DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
+                DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
+                DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
+                DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+                DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
+                DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
+                DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
+                DoCtrl::Call { .. } => "HandleYield(Call)",
+                DoCtrl::Eval { .. } => "HandleYield(Eval)",
+                DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
+                DoCtrl::GetTrace => "HandleYield(GetTrace)",
             },
             Mode::Return(_) => "Return",
         };
@@ -1998,10 +1993,10 @@ impl VM {
                 // GetCallStack) expect a result to be delivered back to this handler.
                 let is_terminal = matches!(
                     &yielded,
-                    Yielded::DoCtrl(DoCtrl::Resume { .. })
-                        | Yielded::DoCtrl(DoCtrl::Transfer { .. })
-                        | Yielded::DoCtrl(DoCtrl::TransferThrow { .. })
-                        | Yielded::DoCtrl(DoCtrl::Delegate { .. })
+                    DoCtrl::Resume { .. }
+                        | DoCtrl::Transfer { .. }
+                        | DoCtrl::TransferThrow { .. }
+                        | DoCtrl::Delegate { .. }
                 );
                 if !is_terminal {
                     if let Some(seg) = self.current_segment_mut() {
@@ -2046,7 +2041,7 @@ impl VM {
     }
 
     fn step_handle_yield(&mut self) -> StepEvent {
-        // Take mode by move — eliminates Yielded clone containing Py<PyAny> values (D1 Phase 1).
+        // Take mode by move — eliminates DoCtrl clone containing Py<PyAny> values (D1 Phase 1).
         let yielded = match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
             Mode::HandleYield(y) => y,
             other => {
@@ -2055,204 +2050,197 @@ impl VM {
             }
         };
 
+        // Spec: Drop completed dispatches before inspecting handler context.
+        self.lazy_pop_completed();
+        use crate::step::DoCtrl;
         match yielded {
-            Yielded::DoCtrl(prim) => {
-                // Spec: Drop completed dispatches before inspecting handler context.
-                self.lazy_pop_completed();
-                use crate::step::DoCtrl;
-                match prim {
-                    DoCtrl::Pure { value } => {
-                        self.mode = Mode::Deliver(value);
-                        StepEvent::Continue
-                    }
-                    DoCtrl::Map {
-                        source,
-                        mapper,
-                        mapper_meta,
-                    } => self.handle_map(source, mapper, mapper_meta),
-                    DoCtrl::FlatMap {
-                        source,
-                        binder,
-                        binder_meta,
-                    } => self.handle_flat_map(source, binder, binder_meta),
-                    DoCtrl::Perform { effect } => match self.start_dispatch(effect) {
-                        Ok(event) => event,
-                        Err(e) => StepEvent::Error(e),
-                    },
-                    DoCtrl::Resume {
-                        continuation,
-                        value,
-                    } => self.handle_resume(continuation, value),
-                    DoCtrl::Transfer {
-                        continuation,
-                        value,
-                    } => self.handle_transfer(continuation, value),
-                    DoCtrl::TransferThrow {
-                        continuation,
-                        exception,
-                    } => self.handle_transfer_throw(continuation, exception),
-                    DoCtrl::WithHandler {
-                        handler,
+            DoCtrl::Pure { value } => {
+                self.mode = Mode::Deliver(value);
+                StepEvent::Continue
+            }
+            DoCtrl::Map {
+                source,
+                mapper,
+                mapper_meta,
+            } => self.handle_map(source, mapper, mapper_meta),
+            DoCtrl::FlatMap {
+                source,
+                binder,
+                binder_meta,
+            } => self.handle_flat_map(source, binder, binder_meta),
+            DoCtrl::Perform { effect } => match self.start_dispatch(effect) {
+                Ok(event) => event,
+                Err(e) => StepEvent::Error(e),
+            },
+            DoCtrl::Resume {
+                continuation,
+                value,
+            } => self.handle_resume(continuation, value),
+            DoCtrl::Transfer {
+                continuation,
+                value,
+            } => self.handle_transfer(continuation, value),
+            DoCtrl::TransferThrow {
+                continuation,
+                exception,
+            } => self.handle_transfer_throw(continuation, exception),
+            DoCtrl::WithHandler {
+                handler,
+                expr,
+                py_identity,
+            } => self.handle_with_handler(handler, expr, py_identity),
+            DoCtrl::Delegate { effect } => self.handle_delegate(effect),
+            DoCtrl::GetContinuation => self.handle_get_continuation(),
+            DoCtrl::GetHandlers => self.handle_get_handlers(),
+            DoCtrl::CreateContinuation {
+                expr,
+                handlers,
+                handler_identities,
+            } => self.handle_create_continuation(expr, handlers, handler_identities),
+            DoCtrl::ResumeContinuation {
+                continuation,
+                value,
+            } => self.handle_resume_continuation(continuation, value),
+            DoCtrl::PythonAsyncSyntaxEscape { action } => {
+                self.pending_python = Some(PendingPython::AsyncEscape);
+                StepEvent::NeedsPython(PythonCall::CallAsync {
+                    func: PyShared::new(action),
+                    args: vec![],
+                })
+            }
+            DoCtrl::Call {
+                f,
+                args,
+                kwargs,
+                metadata,
+            } => {
+                if let CallArg::Expr(expr) = &f {
+                    let expr = expr.clone();
+                    return self.eval_then_reenter_call(
                         expr,
-                        py_identity,
-                    } => self.handle_with_handler(handler, expr, py_identity),
-                    DoCtrl::Delegate { effect } => self.handle_delegate(effect),
-                    DoCtrl::GetContinuation => self.handle_get_continuation(),
-                    DoCtrl::GetHandlers => self.handle_get_handlers(),
-                    DoCtrl::CreateContinuation {
+                        Box::new(move |resolved_f, _vm| {
+                            Mode::HandleYield(DoCtrl::Call {
+                                f: CallArg::Value(resolved_f),
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
+
+                if let Some(arg_idx) = args.iter().position(|arg| matches!(arg, CallArg::Expr(_))) {
+                    let expr = match &args[arg_idx] {
+                        CallArg::Expr(expr) => expr.clone(),
+                        CallArg::Value(_) => unreachable!(),
+                    };
+                    return self.eval_then_reenter_call(
                         expr,
-                        handlers,
-                        handler_identities,
-                    } => self.handle_create_continuation(expr, handlers, handler_identities),
-                    DoCtrl::ResumeContinuation {
-                        continuation,
-                        value,
-                    } => self.handle_resume_continuation(continuation, value),
-                    DoCtrl::PythonAsyncSyntaxEscape { action } => {
-                        self.pending_python = Some(PendingPython::AsyncEscape);
-                        StepEvent::NeedsPython(PythonCall::CallAsync {
-                            func: PyShared::new(action),
-                            args: vec![],
-                        })
-                    }
-                    DoCtrl::Call {
-                        f,
-                        args,
-                        kwargs,
-                        metadata,
-                    } => {
-                        if let CallArg::Expr(expr) = &f {
-                            let expr = expr.clone();
-                            return self.eval_then_reenter_call(
-                                expr,
-                                Box::new(move |resolved_f, _vm| {
-                                    Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                                        f: CallArg::Value(resolved_f),
-                                        args,
-                                        kwargs,
-                                        metadata,
-                                    }))
-                                }),
-                            );
-                        }
+                        Box::new(move |resolved_arg, _vm| {
+                            let mut args = args;
+                            args[arg_idx] = CallArg::Value(resolved_arg);
+                            Mode::HandleYield(DoCtrl::Call {
+                                f,
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
 
-                        if let Some(arg_idx) =
-                            args.iter().position(|arg| matches!(arg, CallArg::Expr(_)))
-                        {
-                            let expr = match &args[arg_idx] {
-                                CallArg::Expr(expr) => expr.clone(),
-                                CallArg::Value(_) => unreachable!(),
-                            };
-                            return self.eval_then_reenter_call(
-                                expr,
-                                Box::new(move |resolved_arg, _vm| {
-                                    let mut args = args;
-                                    args[arg_idx] = CallArg::Value(resolved_arg);
-                                    Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                                        f,
-                                        args,
-                                        kwargs,
-                                        metadata,
-                                    }))
-                                }),
-                            );
-                        }
-
-                        if let Some(kwargs_idx) = kwargs
-                            .iter()
-                            .position(|(_, value)| matches!(value, CallArg::Expr(_)))
-                        {
-                            let expr = match &kwargs[kwargs_idx].1 {
-                                CallArg::Expr(expr) => expr.clone(),
-                                CallArg::Value(_) => unreachable!(),
-                            };
-                            return self.eval_then_reenter_call(
-                                expr,
-                                Box::new(move |resolved_kwarg, _vm| {
-                                    let mut kwargs = kwargs;
-                                    kwargs[kwargs_idx].1 = CallArg::Value(resolved_kwarg);
-                                    Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                                        f,
-                                        args,
-                                        kwargs,
-                                        metadata,
-                                    }))
-                                }),
-                            );
-                        }
-
-                        let func = match f {
-                            CallArg::Value(Value::Python(func)) => PyShared::new(func),
-                            CallArg::Value(other) => {
-                                self.mode = Mode::Throw(PyException::type_error(format!(
-                                    "DoCtrl::Call f must be Python callable value, got {:?}",
-                                    other
-                                )));
-                                return StepEvent::Continue;
-                            }
-                            CallArg::Expr(_) => unreachable!(),
-                        };
-
-                        let mut value_args = Vec::with_capacity(args.len());
-                        for arg in args {
-                            match arg {
-                                CallArg::Value(value) => value_args.push(value),
-                                CallArg::Expr(_) => unreachable!(),
-                            }
-                        }
-
-                        let mut value_kwargs = Vec::with_capacity(kwargs.len());
-                        for (key, value) in kwargs {
-                            match value {
-                                CallArg::Value(inner) => value_kwargs.push((key, inner)),
-                                CallArg::Expr(_) => unreachable!(),
-                            }
-                        }
-
-                        self.pending_python = Some(PendingPython::CallFuncReturn {
-                            metadata: Some(metadata),
-                        });
-                        StepEvent::NeedsPython(PythonCall::CallFunc {
-                            func,
-                            args: value_args,
-                            kwargs: value_kwargs,
-                        })
-                    }
-                    DoCtrl::Eval {
+                if let Some(kwargs_idx) = kwargs
+                    .iter()
+                    .position(|(_, value)| matches!(value, CallArg::Expr(_)))
+                {
+                    let expr = match &kwargs[kwargs_idx].1 {
+                        CallArg::Expr(expr) => expr.clone(),
+                        CallArg::Value(_) => unreachable!(),
+                    };
+                    return self.eval_then_reenter_call(
                         expr,
-                        handlers,
-                        metadata,
-                    } => {
-                        let cont =
-                            Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
-                        self.handle_resume_continuation(cont, Value::None)
+                        Box::new(move |resolved_kwarg, _vm| {
+                            let mut kwargs = kwargs;
+                            kwargs[kwargs_idx].1 = CallArg::Value(resolved_kwarg);
+                            Mode::HandleYield(DoCtrl::Call {
+                                f,
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
+
+                let func = match f {
+                    CallArg::Value(Value::Python(func)) => PyShared::new(func),
+                    CallArg::Value(other) => {
+                        self.mode = Mode::Throw(PyException::type_error(format!(
+                            "DoCtrl::Call f must be Python callable value, got {:?}",
+                            other
+                        )));
+                        return StepEvent::Continue;
                     }
-                    DoCtrl::GetCallStack => {
-                        let mut stack = Vec::new();
-                        let mut seg_id = self.current_segment;
-                        while let Some(id) = seg_id {
-                            if let Some(seg) = self.segments.get(id) {
-                                for frame in seg.frames.iter().rev() {
-                                    if let Frame::PythonGenerator {
-                                        metadata: Some(m), ..
-                                    } = frame
-                                    {
-                                        stack.push(m.clone());
-                                    }
-                                }
-                                seg_id = seg.caller;
-                            } else {
-                                break;
-                            }
-                        }
-                        self.mode = Mode::Deliver(Value::CallStack(stack));
-                        StepEvent::Continue
-                    }
-                    DoCtrl::GetTrace => {
-                        self.mode = Mode::Deliver(Value::Trace(self.assemble_trace()));
-                        StepEvent::Continue
+                    CallArg::Expr(_) => unreachable!(),
+                };
+
+                let mut value_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    match arg {
+                        CallArg::Value(value) => value_args.push(value),
+                        CallArg::Expr(_) => unreachable!(),
                     }
                 }
+
+                let mut value_kwargs = Vec::with_capacity(kwargs.len());
+                for (key, value) in kwargs {
+                    match value {
+                        CallArg::Value(inner) => value_kwargs.push((key, inner)),
+                        CallArg::Expr(_) => unreachable!(),
+                    }
+                }
+
+                self.pending_python = Some(PendingPython::CallFuncReturn {
+                    metadata: Some(metadata),
+                });
+                StepEvent::NeedsPython(PythonCall::CallFunc {
+                    func,
+                    args: value_args,
+                    kwargs: value_kwargs,
+                })
+            }
+            DoCtrl::Eval {
+                expr,
+                handlers,
+                metadata,
+            } => {
+                let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
+                self.handle_resume_continuation(cont, Value::None)
+            }
+            DoCtrl::GetCallStack => {
+                let mut stack = Vec::new();
+                let mut seg_id = self.current_segment;
+                while let Some(id) = seg_id {
+                    if let Some(seg) = self.segments.get(id) {
+                        for frame in seg.frames.iter().rev() {
+                            if let Frame::PythonGenerator {
+                                metadata: Some(m), ..
+                            } = frame
+                            {
+                                stack.push(m.clone());
+                            }
+                        }
+                        seg_id = seg.caller;
+                    } else {
+                        break;
+                    }
+                }
+                self.mode = Mode::Deliver(Value::CallStack(stack));
+                StepEvent::Continue
+            }
+            DoCtrl::GetTrace => {
+                self.mode = Mode::Deliver(Value::Trace(self.assemble_trace()));
+                StepEvent::Continue
             }
         }
     }
@@ -3126,11 +3114,11 @@ impl VM {
                 if let Some(seg) = self.current_segment_mut() {
                     seg.push_frame(Frame::RustReturn { cb });
                 }
-                self.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+                self.mode = Mode::HandleYield(DoCtrl::Eval {
                     expr,
                     handlers,
                     metadata: None,
-                }));
+                });
                 return StepEvent::Continue;
             }
         }
@@ -3201,23 +3189,23 @@ impl VM {
     ) -> StepEvent {
         let handlers = self.current_visible_handlers();
         let map_cb = self.register_callback(Box::new(move |value, _vm| {
-            Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+            Mode::HandleYield(DoCtrl::Call {
                 f: CallArg::Value(Value::Python(mapper.into_inner())),
                 args: vec![CallArg::Value(value)],
                 kwargs: vec![],
                 metadata: mapper_meta.clone(),
-            }))
+            })
         }));
 
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal("Map outside current segment"));
         };
         seg.push_frame(Frame::RustReturn { cb: map_cb });
-        self.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+        self.mode = Mode::HandleYield(DoCtrl::Eval {
             expr: source,
             handlers,
             metadata: None,
-        }));
+        });
         StepEvent::Continue
     }
 
@@ -3232,11 +3220,11 @@ impl VM {
 
         let bind_result_cb =
             self.register_callback(Box::new(move |bound_value, _vm| match bound_value {
-                Value::Python(obj) => Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+                Value::Python(obj) => Mode::HandleYield(DoCtrl::Eval {
                     expr: PyShared::new(obj),
                     handlers: handlers_after_bind,
                     metadata: None,
-                })),
+                }),
                 other => Mode::Throw(PyException::type_error(format!(
                     "flat_map binder must return Program/Effect/DoCtrl; got {:?}",
                     other
@@ -3250,23 +3238,23 @@ impl VM {
                 ));
             };
             seg.push_frame(Frame::RustReturn { cb: bind_result_cb });
-            Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+            Mode::HandleYield(DoCtrl::Call {
                 f: CallArg::Value(Value::Python(binder.into_inner())),
                 args: vec![CallArg::Value(value)],
                 kwargs: vec![],
                 metadata: binder_meta.clone(),
-            }))
+            })
         }));
 
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal("FlatMap outside current segment"));
         };
         seg.push_frame(Frame::RustReturn { cb: bind_source_cb });
-        self.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+        self.mode = Mode::HandleYield(DoCtrl::Eval {
             expr: source,
             handlers,
             metadata: None,
-        }));
+        });
         StepEvent::Continue
     }
 
@@ -3718,9 +3706,9 @@ mod tests {
     #[test]
     fn test_start_dispatch_records_effect_creation_site_from_continuation_frame() {
         Python::attach(|py| {
+            use crate::frame::Frame;
             use pyo3::types::PyModule;
             use std::sync::Arc;
-            use crate::frame::Frame;
 
             let mut vm = VM::new();
             let marker = Marker::fresh();
@@ -4482,7 +4470,7 @@ mod tests {
             completed: true,
         });
 
-        vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::GetHandlers));
+        vm.mode = Mode::HandleYield(DoCtrl::GetHandlers);
         let event = vm.step_handle_yield();
 
         assert!(
@@ -4859,7 +4847,7 @@ mod tests {
             // SPEC-008 L1271: Modify returns OLD value (read-then-modify).
             // The resume value should be 5 (old_value), NOT 50 (new_value).
             match &vm.mode {
-                Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                Mode::HandleYield(DoCtrl::Resume { value, .. }) => {
                     assert_eq!(
                         value.as_int(),
                         Some(5),
@@ -4966,12 +4954,12 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+            vm.mode = Mode::HandleYield(DoCtrl::Call {
                 f: CallArg::Value(Value::Python(dummy_f)),
                 args: vec![],
                 kwargs: vec![],
                 metadata: metadata.clone(),
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
@@ -5014,7 +5002,7 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+            vm.mode = Mode::HandleYield(DoCtrl::Call {
                 f: CallArg::Value(Value::Python(dummy_f)),
                 args: vec![
                     CallArg::Value(Value::Int(42)),
@@ -5022,7 +5010,7 @@ mod tests {
                 ],
                 kwargs: vec![],
                 metadata,
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
@@ -5063,7 +5051,7 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+            vm.mode = Mode::HandleYield(DoCtrl::Call {
                 f: CallArg::Value(Value::Python(dummy_f)),
                 args: vec![CallArg::Value(Value::Int(1))],
                 kwargs: vec![
@@ -5074,7 +5062,7 @@ mod tests {
                     ),
                 ],
                 metadata,
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
@@ -5120,7 +5108,7 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+            vm.mode = Mode::HandleYield(DoCtrl::Call {
                 f: CallArg::Value(Value::Python(dummy_f)),
                 args: vec![],
                 kwargs: vec![(
@@ -5128,7 +5116,7 @@ mod tests {
                     CallArg::Value(Value::String("test".to_string())),
                 )],
                 metadata,
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
@@ -5158,11 +5146,11 @@ mod tests {
 
             let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+            vm.mode = Mode::HandleYield(DoCtrl::Eval {
                 expr: PyShared::new(dummy_expr),
                 handlers: vec![],
                 metadata: None,
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
@@ -5201,11 +5189,11 @@ mod tests {
             let handler =
                 Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory));
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+            vm.mode = Mode::HandleYield(DoCtrl::Eval {
                 expr: PyShared::new(dummy_expr),
                 handlers: vec![handler],
                 metadata: None,
-            }));
+            });
 
             let event = vm.step_handle_yield();
 

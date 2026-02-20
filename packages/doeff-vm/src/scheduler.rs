@@ -27,7 +27,7 @@ use crate::handler::{
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
-use crate::step::{DoCtrl, PyException, Yielded};
+use crate::step::{DoCtrl, PyException};
 use crate::value::Value;
 use crate::vm::RustStore;
 
@@ -195,28 +195,28 @@ struct WaitRequest {
 
 fn transfer_to_continuation(k: Continuation, value: Value) -> RustProgramStep {
     if k.started {
-        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
+        return RustProgramStep::Yield(DoCtrl::Transfer {
             continuation: k,
             value,
-        }));
+        });
     }
-    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+    RustProgramStep::Yield(DoCtrl::ResumeContinuation {
         continuation: k,
         value,
-    }))
+    })
 }
 
 fn resume_to_continuation(cont: Continuation, result: Value) -> RustProgramStep {
     if cont.started {
-        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+        return RustProgramStep::Yield(DoCtrl::Resume {
             continuation: cont,
             value: result,
-        }));
+        });
     }
-    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+    RustProgramStep::Yield(DoCtrl::ResumeContinuation {
         continuation: cont,
         value: result,
-    }))
+    })
 }
 
 fn annotate_spawn_boundary_dispatch(error: &PyException, dispatch_id: Option<DispatchId>) {
@@ -313,27 +313,26 @@ pub(crate) fn preserve_exception_origin(error: &PyException) {
 fn throw_to_continuation(k: Continuation, error: PyException) -> RustProgramStep {
     annotate_spawn_boundary_dispatch(&error, k.dispatch_id);
     if k.started {
-        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+        return RustProgramStep::Yield(DoCtrl::TransferThrow {
             continuation: k,
             exception: error,
-        }));
+        });
     }
     RustProgramStep::Throw(error)
 }
 
 fn step_targets_continuation(step: &RustProgramStep, target: &Continuation) -> bool {
     match step {
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { continuation, .. })) => {
+        RustProgramStep::Yield(DoCtrl::Resume { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
-            continuation,
-            ..
-        })) => continuation.cont_id == target.cont_id,
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer { continuation, .. })) => {
+        RustProgramStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow { continuation, .. })) => {
+        RustProgramStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
+            continuation.cont_id == target.cont_id
+        }
+        RustProgramStep::Yield(DoCtrl::TransferThrow { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
         _ => false,
@@ -1989,9 +1988,9 @@ impl RustHandlerProgram for SchedulerProgram {
             match parse_scheduler_python_effect(&obj, creation_site.clone()) {
                 Ok(Some(se)) => se,
                 Ok(None) => {
-                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                    return RustProgramStep::Yield(DoCtrl::Delegate {
                         effect: dispatch_from_shared(obj),
-                    }))
+                    })
                 }
                 Err(msg) => {
                     return RustProgramStep::Throw(PyException::type_error(format!(
@@ -2002,7 +2001,7 @@ impl RustHandlerProgram for SchedulerProgram {
         } else {
             #[cfg(test)]
             {
-                return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+                return RustProgramStep::Yield(DoCtrl::Delegate { effect });
             }
             #[cfg(not(test))]
             {
@@ -2029,7 +2028,7 @@ impl RustHandlerProgram for SchedulerProgram {
                         store_snapshot,
                         spawn_site: creation_site,
                     };
-                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers));
+                    return RustProgramStep::Yield(DoCtrl::GetHandlers);
                 }
 
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
@@ -2038,11 +2037,11 @@ impl RustHandlerProgram for SchedulerProgram {
                     store_snapshot,
                     spawn_site: creation_site,
                 };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
+                RustProgramStep::Yield(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities: vec![],
-                }))
+                })
             }
 
             SchedulerEffect::CancelTask { task } => {
@@ -2167,11 +2166,11 @@ impl RustHandlerProgram for SchedulerProgram {
                     spawn_site,
                 };
 
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
+                RustProgramStep::Yield(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities: vec![],
-                }))
+                })
             }
 
             SchedulerPhase::SpawnAwaitContinuation {
@@ -2384,10 +2383,10 @@ mod tests {
         let step = transfer_to_continuation(cont, Value::Int(123));
 
         match step {
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
+            RustProgramStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
-            })) => {
+            }) => {
                 assert_eq!(continuation.cont_id, cont_id);
                 assert_eq!(value.as_int(), Some(123));
             }
@@ -2402,10 +2401,10 @@ mod tests {
         let step = transfer_to_continuation(cont, Value::Int(456));
 
         match step {
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+            RustProgramStep::Yield(DoCtrl::ResumeContinuation {
                 continuation,
                 value,
-            })) => {
+            }) => {
                 assert_eq!(continuation.cont_id, cont_id);
                 assert_eq!(value.as_int(), Some(456));
             }
@@ -2449,12 +2448,10 @@ mod tests {
 
             let step = state.transfer_next_or(scheduler_k.clone(), &mut store);
             match step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                    continuation, ..
-                })) => {
+                RustProgramStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
                     assert_eq!(continuation.cont_id, expected_cont);
                 }
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { .. })) => {
+                RustProgramStep::Yield(DoCtrl::Resume { .. }) => {
                     panic!("task switches must not emit DoCtrl::Resume")
                 }
                 _ => panic!("task switches must emit DoCtrl::Transfer"),
@@ -2487,10 +2484,10 @@ mod tests {
         // transfer_next_or only resumes waiters that belong to the same owner continuation.
         let step = state.transfer_next_or(waiter.clone(), &mut store);
         match step {
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            RustProgramStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
-            })) => {
+            }) => {
                 assert_eq!(continuation.cont_id, waiter.cont_id);
                 match value {
                     Value::List(values) => {

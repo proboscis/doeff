@@ -21,7 +21,7 @@ use crate::ids::SegmentId;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
-use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
+use crate::step::{DoCtrl, PyException, PythonCall};
 use crate::value::Value;
 use crate::vm::RustStore;
 
@@ -39,7 +39,7 @@ pub enum Handler {
 /// Result of stepping a Rust handler program.
 pub enum RustProgramStep {
     /// Yield a control primitive / effect / program
-    Yield(Yielded),
+    Yield(DoCtrl),
     /// Return a value (like generator return)
     Return(Value),
     /// Throw an exception into the VM
@@ -543,9 +543,9 @@ impl RustHandlerProgram for AwaitHandlerProgram {
                         kwargs: vec![],
                     })
                 }
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => RustProgramStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
+                }),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse await effect: {msg}"
                 ))),
@@ -554,7 +554,7 @@ impl RustHandlerProgram for AwaitHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return RustProgramStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
@@ -563,20 +563,20 @@ impl RustHandlerProgram for AwaitHandlerProgram {
 
     fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
         if let Some(continuation) = self.pending_k.take() {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return RustProgramStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
-            }));
+            });
         }
         RustProgramStep::Return(value)
     }
 
     fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
         if let Some(continuation) = self.pending_k.take() {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+            return RustProgramStep::Yield(DoCtrl::TransferThrow {
                 continuation,
                 exception: exc,
-            }));
+            });
         }
         RustProgramStep::Throw(exc)
     }
@@ -647,19 +647,19 @@ impl RustHandlerProgram for StateHandlerProgram {
             let Some(value) = store.get(&key).cloned() else {
                 return RustProgramStep::Throw(missing_state_key_error(&key));
             };
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return RustProgramStep::Yield(DoCtrl::Resume {
                 continuation: k,
                 value,
-            }));
+            });
         }
 
         #[cfg(test)]
         if let Effect::Put { key, value } = effect.clone() {
             store.put(key, value);
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return RustProgramStep::Yield(DoCtrl::Resume {
                 continuation: k,
                 value: Value::Unit,
-            }));
+            });
         }
 
         #[cfg(test)]
@@ -682,17 +682,17 @@ impl RustHandlerProgram for StateHandlerProgram {
                         let Some(value) = store.get(&key).cloned() else {
                             return RustProgramStep::Throw(missing_state_key_error(&key));
                         };
-                        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                        RustProgramStep::Yield(DoCtrl::Resume {
                             continuation: k,
                             value,
-                        }))
+                        })
                     }
                     ParsedStateEffect::Put { key, value } => {
                         store.put(key, value);
-                        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                        RustProgramStep::Yield(DoCtrl::Resume {
                             continuation: k,
                             value: Value::Unit,
-                        }))
+                        })
                     }
                     ParsedStateEffect::Modify { key, modifier } => {
                         let old_value = store.get(&key).cloned().unwrap_or(Value::None);
@@ -706,9 +706,9 @@ impl RustHandlerProgram for StateHandlerProgram {
                         })
                     }
                 },
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => RustProgramStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
+                }),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse state effect: {msg}"
                 ))),
@@ -717,7 +717,7 @@ impl RustHandlerProgram for StateHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return RustProgramStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
@@ -735,10 +735,10 @@ impl RustHandlerProgram for StateHandlerProgram {
         let continuation = self.pending_k.take().unwrap();
         let old_value = self.pending_old_value.take().unwrap();
         store.put(key, value);
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+        RustProgramStep::Yield(DoCtrl::Resume {
             continuation,
             value: old_value,
-        }))
+        })
     }
 
     fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
@@ -938,16 +938,16 @@ impl LazyLocalScopeProgram {
 
     fn yield_perform(effect: Result<DispatchEffect, PyException>) -> RustProgramStep {
         match effect {
-            Ok(effect) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Perform { effect })),
+            Ok(effect) => RustProgramStep::Yield(DoCtrl::Perform { effect }),
             Err(exc) => RustProgramStep::Throw(exc),
         }
     }
 
     fn transfer_throw(continuation: Continuation, exception: PyException) -> RustProgramStep {
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+        RustProgramStep::Yield(DoCtrl::TransferThrow {
             continuation,
             exception,
-        }))
+        })
     }
 
     fn local_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
@@ -1052,19 +1052,19 @@ impl LazyLocalScopeProgram {
         value: Value,
     ) -> RustProgramStep {
         let Some(expr) = as_lazy_eval_expr(&value) else {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return RustProgramStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
-            }));
+            });
         };
 
         let source_id = lazy_source_id(&value).unwrap_or_default();
 
         if let Some(cached) = self.local_cache_get(&key, source_id) {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return RustProgramStep::Yield(DoCtrl::Resume {
                 continuation,
                 value: cached,
-            }));
+            });
         }
 
         if let Some(semaphore) = self.local_semaphore_get(&key, source_id) {
@@ -1081,7 +1081,7 @@ impl LazyLocalScopeProgram {
         effect: DispatchEffect,
     ) -> RustProgramStep {
         let Some(value) = self.overrides.get(&key).cloned() else {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return RustProgramStep::Yield(DoCtrl::Delegate { effect });
         };
 
         self.handle_override_ask(key, continuation, value)
@@ -1105,9 +1105,9 @@ impl RustHandlerProgram for LazyLocalScopeProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => self.handle_ask(key, k, dispatch_from_shared(obj)),
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => RustProgramStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
+                }),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse lazy local Ask effect: {msg}"
                 ))),
@@ -1116,7 +1116,7 @@ impl RustHandlerProgram for LazyLocalScopeProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return RustProgramStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
@@ -1156,7 +1156,7 @@ impl RustHandlerProgram for LazyLocalScopeProgram {
                     source_id,
                     semaphore,
                 };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+                RustProgramStep::Yield(DoCtrl::GetHandlers)
             }
             LazyLocalScopePhase::AwaitCache {
                 key,
@@ -1180,11 +1180,11 @@ impl RustHandlerProgram for LazyLocalScopeProgram {
                     source_id,
                     semaphore,
                 };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                RustProgramStep::Yield(DoCtrl::Eval {
                     expr,
                     handlers,
                     metadata: None,
-                }))
+                })
             }
             LazyLocalScopePhase::AwaitEval {
                 key,
@@ -1199,10 +1199,10 @@ impl RustHandlerProgram for LazyLocalScopeProgram {
                 continuation,
                 outcome,
             } => match outcome {
-                Ok(value) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                Ok(value) => RustProgramStep::Yield(DoCtrl::Resume {
                     continuation,
                     value,
-                })),
+                }),
                 Err(exception) => Self::transfer_throw(continuation, exception),
             },
             LazyLocalScopePhase::Idle => RustProgramStep::Return(value),
@@ -1289,16 +1289,16 @@ impl LazyAskHandlerProgram {
 
     fn yield_perform(effect: Result<DispatchEffect, PyException>) -> RustProgramStep {
         match effect {
-            Ok(effect) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Perform { effect })),
+            Ok(effect) => RustProgramStep::Yield(DoCtrl::Perform { effect }),
             Err(exc) => RustProgramStep::Throw(exc),
         }
     }
 
     fn transfer_throw(continuation: Continuation, exception: PyException) -> RustProgramStep {
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+        RustProgramStep::Yield(DoCtrl::TransferThrow {
             continuation,
             exception,
-        }))
+        })
     }
 
     fn activate_scope_cache(&self) {
@@ -1375,7 +1375,7 @@ impl LazyAskHandlerProgram {
         continuation: Continuation,
     ) -> RustProgramStep {
         self.phase = LazyAskPhase::AwaitDelegate { key, continuation };
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Perform { effect }))
+        RustProgramStep::Yield(DoCtrl::Perform { effect })
     }
 
     fn begin_create_then_acquire_phase(
@@ -1434,19 +1434,19 @@ impl LazyAskHandlerProgram {
         value: Value,
     ) -> RustProgramStep {
         let Some(expr) = as_lazy_eval_expr(&value) else {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return RustProgramStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
-            }));
+            });
         };
 
         let source_id = lazy_source_id(&value).unwrap_or_default();
 
         if let Some(cached) = self.lazy_cache_get(&key, source_id) {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return RustProgramStep::Yield(DoCtrl::Resume {
                 continuation,
                 value: cached,
-            }));
+            });
         }
 
         if let Some(semaphore) = self.lazy_semaphore_get(&key, source_id) {
@@ -1471,10 +1471,10 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
             let Some(value) = _store.ask(&hashed_key).cloned() else {
                 return RustProgramStep::Throw(missing_env_key_error(&hashed_key));
             };
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return RustProgramStep::Yield(DoCtrl::Resume {
                 continuation: k,
                 value,
-            }));
+            });
         }
 
         if let Some(obj) = dispatch_into_python(effect.clone()) {
@@ -1487,7 +1487,7 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
                         scope,
                         sub_program: local_effect.sub_program,
                     };
-                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers));
+                    return RustProgramStep::Yield(DoCtrl::GetHandlers);
                 }
                 Ok(None) => {}
                 Err(msg) => {
@@ -1499,9 +1499,9 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
 
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => self.begin_delegate_phase(dispatch_from_shared(obj), key, k),
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => RustProgramStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
+                }),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse lazy Ask effect: {msg}"
                 ))),
@@ -1510,7 +1510,7 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return RustProgramStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
@@ -1534,18 +1534,18 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
                 };
                 handlers.insert(0, Handler::RustProgram(Arc::new(scope.clone())));
                 self.phase = LazyAskPhase::AwaitLocalEval { continuation };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                RustProgramStep::Yield(DoCtrl::Eval {
                     expr: sub_program,
                     handlers,
                     metadata: None,
-                }))
+                })
             }
             LazyAskPhase::AwaitLocalEval { continuation } => {
                 self.deactivate_scope_cache();
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                RustProgramStep::Yield(DoCtrl::Resume {
                     continuation,
                     value,
-                }))
+                })
             }
             LazyAskPhase::AwaitDelegate { key, continuation } => {
                 self.handle_delegated_ask_value(key, continuation, value)
@@ -1581,7 +1581,7 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
                     source_id,
                     semaphore,
                 };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+                RustProgramStep::Yield(DoCtrl::GetHandlers)
             }
             LazyAskPhase::AwaitCache {
                 key,
@@ -1605,11 +1605,11 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
                     source_id,
                     semaphore,
                 };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                RustProgramStep::Yield(DoCtrl::Eval {
                     expr,
                     handlers,
                     metadata: None,
-                }))
+                })
             }
             LazyAskPhase::AwaitEval {
                 key,
@@ -1624,10 +1624,10 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
                 continuation,
                 outcome,
             } => match outcome {
-                Ok(value) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                Ok(value) => RustProgramStep::Yield(DoCtrl::Resume {
                     continuation,
                     value,
-                })),
+                }),
                 Err(exception) => Self::transfer_throw(continuation, exception),
             },
             LazyAskPhase::Idle => RustProgramStep::Return(value),
@@ -1705,10 +1705,10 @@ impl ReaderHandlerProgram {
             return RustProgramStep::Throw(missing_env_key_error(&key));
         };
 
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+        RustProgramStep::Yield(DoCtrl::Resume {
             continuation,
             value,
-        }))
+        })
     }
 }
 
@@ -1728,9 +1728,9 @@ impl RustHandlerProgram for ReaderHandlerProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => ReaderHandlerProgram::handle_ask(key, k, store),
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => RustProgramStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
+                }),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse reader effect: {msg}"
                 ))),
@@ -1739,7 +1739,7 @@ impl RustHandlerProgram for ReaderHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return RustProgramStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
@@ -1796,24 +1796,24 @@ impl RustHandlerProgram for WriterHandlerProgram {
         #[cfg(test)]
         if let Effect::Tell { message } = effect.clone() {
             store.tell(message);
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            return RustProgramStep::Yield(DoCtrl::Resume {
                 continuation: k,
                 value: Value::Unit,
-            }));
+            });
         }
 
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_writer_python_effect(&obj) {
                 Ok(Some(message)) => {
                     store.tell(message);
-                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    RustProgramStep::Yield(DoCtrl::Resume {
                         continuation: k,
                         value: Value::Unit,
-                    }))
+                    })
                 }
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => RustProgramStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
+                }),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse writer effect: {msg}"
                 ))),
@@ -1822,7 +1822,7 @@ impl RustHandlerProgram for WriterHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return RustProgramStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
@@ -1890,20 +1890,20 @@ impl ResultSafeHandlerProgram {
 
     fn finish_ok(&self, continuation: Continuation, value: Value) -> RustProgramStep {
         match wrap_value_as_result_ok(value) {
-            Ok(wrapped) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            Ok(wrapped) => RustProgramStep::Yield(DoCtrl::Resume {
                 continuation,
                 value: wrapped,
-            })),
+            }),
             Err(exc) => RustProgramStep::Throw(exc),
         }
     }
 
     fn finish_err(&self, continuation: Continuation, error: PyException) -> RustProgramStep {
         match wrap_exception_as_result_err(error) {
-            Ok(wrapped) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            Ok(wrapped) => RustProgramStep::Yield(DoCtrl::Resume {
                 continuation,
                 value: wrapped,
-            })),
+            }),
             Err(exc) => RustProgramStep::Throw(exc),
         }
     }
@@ -1924,11 +1924,11 @@ impl RustHandlerProgram for ResultSafeHandlerProgram {
                         continuation: k,
                         sub_program,
                     };
-                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+                    RustProgramStep::Yield(DoCtrl::GetHandlers)
                 }
-                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                Ok(None) => RustProgramStep::Yield(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
-                })),
+                }),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse ResultSafe effect: {msg}"
                 ))),
@@ -1937,7 +1937,7 @@ impl RustHandlerProgram for ResultSafeHandlerProgram {
 
         #[cfg(test)]
         {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            return RustProgramStep::Yield(DoCtrl::Delegate { effect });
         }
 
         #[cfg(not(test))]
@@ -1959,11 +1959,11 @@ impl RustHandlerProgram for ResultSafeHandlerProgram {
                     }
                 };
                 self.phase = ResultSafePhase::AwaitEval { continuation };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                RustProgramStep::Yield(DoCtrl::Eval {
                     expr: sub_program,
                     handlers,
                     metadata: None,
-                }))
+                })
             }
             ResultSafePhase::AwaitEval { continuation } => self.finish_ok(continuation, value),
             ResultSafePhase::Idle => RustProgramStep::Return(value),
@@ -2058,7 +2058,7 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
                     kwargs: vec![],
                 })
             }
-            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
+            other => RustProgramStep::Yield(DoCtrl::Delegate { effect: other }),
         }
     }
 
@@ -2081,10 +2081,10 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
                 // Got second result. Combine and yield Resume.
                 let combined =
                     Value::Int(first_result.as_int().unwrap_or(0) + value.as_int().unwrap_or(0));
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                RustProgramStep::Yield(DoCtrl::Resume {
                     continuation: k,
                     value: combined,
-                }))
+                })
             }
             DoubleCallPhase::Done | DoubleCallPhase::Init => RustProgramStep::Return(value),
         }
@@ -2166,7 +2166,7 @@ mod tests {
                 )
             };
             match step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                RustProgramStep::Yield(DoCtrl::Resume { value, .. }) => {
                     assert_eq!(value.as_int(), Some(42));
                 }
                 _ => panic!(
@@ -2197,10 +2197,10 @@ mod tests {
             };
             assert!(matches!(
                 step,
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                RustProgramStep::Yield(DoCtrl::Resume {
                     value: Value::Unit,
                     ..
-                }))
+                })
             ));
             assert_eq!(store.get("key").unwrap().as_int(), Some(99));
         });
@@ -2265,7 +2265,7 @@ mod tests {
                 guard.resume(Value::Int(20), &mut store)
             };
             match step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                RustProgramStep::Yield(DoCtrl::Resume { value, .. }) => {
                     assert_eq!(value.as_int(), Some(10)); // old_value returned (SPEC-008 L1271)
                 }
                 _ => panic!("Expected Yield(Resume) with old_value"),
@@ -2307,7 +2307,7 @@ mod tests {
                 )
             };
             match step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                RustProgramStep::Yield(DoCtrl::Resume { value, .. }) => {
                     assert_eq!(value.as_str(), Some("value"));
                 }
                 _ => panic!("Expected Yield(Resume)"),
@@ -2348,10 +2348,10 @@ mod tests {
             };
             assert!(matches!(
                 step,
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                RustProgramStep::Yield(DoCtrl::Resume {
                     value: Value::Unit,
                     ..
-                }))
+                })
             ));
             assert_eq!(store.logs().len(), 1);
         });
@@ -2412,7 +2412,7 @@ mod tests {
             };
             assert!(matches!(
                 start_step,
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+                RustProgramStep::Yield(DoCtrl::GetHandlers)
             ));
 
             let await_eval_step = {
@@ -2421,7 +2421,7 @@ mod tests {
             };
             assert!(matches!(
                 await_eval_step,
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval { .. }))
+                RustProgramStep::Yield(DoCtrl::Eval { .. })
             ));
 
             let ok_step = {
@@ -2429,10 +2429,10 @@ mod tests {
                 guard.resume(Value::Int(42), &mut store)
             };
             match ok_step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                RustProgramStep::Yield(DoCtrl::Resume {
                     value: Value::Python(obj),
                     ..
-                })) => {
+                }) => {
                     let bound = obj.bind(py);
                     let is_ok: bool = bound.call_method0("is_ok").unwrap().extract().unwrap();
                     let inner = bound.getattr("value").unwrap();
@@ -2454,10 +2454,10 @@ mod tests {
             };
 
             match err_step {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                RustProgramStep::Yield(DoCtrl::Resume {
                     value: Value::Python(obj),
                     ..
-                })) => {
+                }) => {
                     let bound = obj.bind(py);
                     let is_err: bool = bound.call_method0("is_err").unwrap().extract().unwrap();
                     let error = bound.getattr("error").unwrap();
@@ -2521,7 +2521,7 @@ mod tests {
                 guard.resume(Value::Int(200), &mut store)
             };
             match step3 {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                RustProgramStep::Yield(DoCtrl::Resume { value, .. }) => {
                     // 100 + 200 = 300
                     assert_eq!(value.as_int(), Some(300));
                 }
