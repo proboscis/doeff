@@ -104,7 +104,7 @@ def transform_doeff_code(
     return TransformResult(code=code, original_source=source)
 
 
-def execute_doeff_code(
+def execute_doeff_code(  # nosemgrep: doeff-no-typing-any-in-public-api
     source: str,
     filename: str = "<doeff-code>",
     extra_globals: dict[str, Any] | None = None,

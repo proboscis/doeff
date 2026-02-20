@@ -37,7 +37,9 @@ def gather(*items: "Waitable[Any] | ProgramBase[Any]") -> GatherEffect:
     return GatherEffect(items=validated)
 
 
-def Gather(*items: "Waitable[Any] | ProgramBase[Any]") -> Any:
+def Gather(  # nosemgrep: doeff-no-typing-any-in-public-api
+    *items: "Waitable[Any] | ProgramBase[Any]",
+) -> Any:
     validated = _validate_gather_items(tuple(items))
     return GatherEffect(items=validated)
 

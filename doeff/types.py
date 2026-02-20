@@ -10,6 +10,7 @@ types from ``_types_internal``.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 
@@ -52,11 +53,10 @@ if __name__ != "types":
             trace_err,
         )
 
+logger = logging.getLogger(__name__)
+
 if os.environ.get("DOEFF_DEBUG_TYPES"):
-    print(
-        f"[doeff.types] __name__={__name__} sys.path0={sys.path[0]}",
-        file=sys.stderr,
-    )
+    logger.debug(f"[doeff.types] __name__={__name__} sys.path0={sys.path[0]}")
 
 
 def _load_stdlib_types() -> None:
@@ -97,7 +97,4 @@ else:
     _internal = _importlib.import_module("doeff._types_internal")
     globals().update(_internal.__dict__)
     if os.environ.get("DOEFF_DEBUG_TYPES"):
-        print(
-            f"[doeff.types] loaded internal EffectBase={'EffectBase' in globals()}",
-            file=sys.stderr,
-        )
+        logger.debug(f"[doeff.types] loaded internal EffectBase={'EffectBase' in globals()}")

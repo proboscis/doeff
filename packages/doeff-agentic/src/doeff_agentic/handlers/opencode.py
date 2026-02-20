@@ -88,6 +88,7 @@ class AsyncHttpClient:
     def __init__(self, base_url: str, timeout: float = 30.0) -> None:
         import httpx
 
+        # nosemgrep: agentic-no-async-http-client-in-handler
         self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
         self.base_url = base_url
 
@@ -1011,10 +1012,12 @@ class OpenCodeHandler:
 # Handler Factory
 # =============================================================================
 
+
 def _is_lazy_program_value(value: object) -> bool:
-    return bool(getattr(value, "__doeff_do_expr_base__", False) or getattr(
-        value, "__doeff_effect_base__", False
-    ))
+    return bool(
+        getattr(value, "__doeff_do_expr_base__", False)
+        or getattr(value, "__doeff_effect_base__", False)
+    )
 
 
 def _as_protocol_handler(

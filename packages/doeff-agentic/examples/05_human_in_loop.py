@@ -124,7 +124,7 @@ def draft_with_approval(task: str):
     print("=" * 50 + "\n")
 
     # Wait for user input
-    approval = yield from wait_for_user_input(
+    approval = yield wait_for_user_input(
         session_id=drafter.id,
         prompt="Review the draft. Reply: approve / revise <feedback> / reject",
         timeout=300.0,

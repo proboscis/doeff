@@ -37,7 +37,11 @@ def extract_data(source: str):
 
     # Simulate extracted records
     records = [
-        {"id": i, "value": random.randint(1, 100), "source": source}
+        {
+            "id": i,
+            "value": random.randint(1, 100),  # nosemgrep: doeff-no-random-in-do
+            "source": source,
+        }
         for i in range(5)
     ]
 

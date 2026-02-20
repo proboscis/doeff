@@ -192,7 +192,9 @@ def _safe_signature(target: Any) -> inspect.Signature | None:
         return None
 
 
-def _build_auto_unwrap_strategy(kleisli: Any) -> Any:
+def _build_auto_unwrap_strategy(  # nosemgrep: doeff-no-typing-any-in-public-api
+    kleisli: Any,
+) -> Any:
     class _Strategy:
         __slots__ = ("keyword", "positional", "var_keyword", "var_positional")
 
@@ -325,7 +327,7 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
             # to_generator method must not fabricate one via projection.
             raise AttributeError(name)
 
-        def mapper(value: Any) -> Any:
+        def mapper(value: Any) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
             try:
                 return getattr(value, name)
             except AttributeError as exc:  # pragma: no cover - re-raise with context
@@ -393,7 +395,7 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 
         binder_meta = _callable_metadata_dict(f)
 
-        def binder_factory(value: T) -> Any:
+        def binder_factory(value: T) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
             bound = f(value)
             if isinstance(bound, EffectBase):
                 bound = Perform(bound)

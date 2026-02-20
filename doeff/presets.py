@@ -26,7 +26,7 @@ def _get_async_preset() -> list[Any]:
     return list(_cache["async"])
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> Any:  # nosemgrep: doeff-no-typing-any-in-public-api
     if name == "sync_preset":
         return _get_sync_preset()
     if name == "async_preset":
