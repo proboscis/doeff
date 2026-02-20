@@ -22,25 +22,7 @@ from ._validators import ensure_awaitable
 from .base import Effect, EffectBase
 
 
-@dataclass(frozen=True)
-class PythonAsyncioAwaitEffect(EffectBase):
-    """Await a Python asyncio awaitable.
-
-    This effect is specifically for Python's asyncio awaitables (coroutines,
-    Tasks, Futures). It is NOT a generic "future" abstraction.
-
-    Handled by:
-    - sync_await_handler (run): bridges via background loop thread
-    - async_await_handler (async_run): uses PythonAsyncSyntaxEscape + create_task
-
-    Usage:
-        result = yield Await(some_coroutine())
-    """
-
-    awaitable: Awaitable[Any]
-
-    def __post_init__(self) -> None:
-        ensure_awaitable(self.awaitable, name="awaitable")
+PythonAsyncioAwaitEffect = doeff_vm.PythonAsyncioAwaitEffect
 
 
 @dataclass(frozen=True)
@@ -161,10 +143,12 @@ python_async_syntax_escape_handler = async_await_handler
 
 
 def await_(awaitable: Awaitable[Any]) -> PythonAsyncioAwaitEffect:
+    ensure_awaitable(awaitable, name="awaitable")
     return PythonAsyncioAwaitEffect(awaitable=awaitable)
 
 
 def Await(awaitable: Awaitable[Any]) -> Effect:
+    ensure_awaitable(awaitable, name="awaitable")
     return PythonAsyncioAwaitEffect(awaitable=awaitable)
 
 
