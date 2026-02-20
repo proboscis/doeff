@@ -1,4 +1,4 @@
-# ruff: noqa: E402, I001
+# ruff: noqa: E402
 """Tests for doeff-git effects and handlers."""
 
 from __future__ import annotations
@@ -9,14 +9,21 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from doeff import do, run_with_handler_map
+from doeff import do
+from doeff.rust_vm import run_with_handler_map
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
-from doeff_git.handlers import GitHubHandler, GitLocalHandler, MockGitRuntime, mock_handlers, production_handlers
+from doeff_git.handlers import (
+    GitHubHandler,
+    GitLocalHandler,
+    MockGitRuntime,
+    mock_handlers,
+    production_handlers,
+)
 from doeff_git.types import MergeStrategy, PRHandle
 
 
@@ -75,7 +82,9 @@ def _init_test_repo(repo_path: Path) -> None:
     )
     (repo_path / "README.md").write_text("# Repo\n")
     subprocess.run(["git", "add", "README.md"], cwd=repo_path, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"], cwd=repo_path, check=True, capture_output=True
+    )
 
 
 def test_local_handler_commit_and_diff(tmp_path: Path) -> None:
@@ -86,7 +95,9 @@ def test_local_handler_commit_and_diff(tmp_path: Path) -> None:
     handler = GitLocalHandler()
 
     (repo_path / "feature.txt").write_text("line1\n")
-    sha = handler.handle_commit(GitCommit(work_dir=repo_path, message="feat: add feature", all=True))
+    sha = handler.handle_commit(
+        GitCommit(work_dir=repo_path, message="feat: add feature", all=True)
+    )
 
     assert len(sha) == 40
 

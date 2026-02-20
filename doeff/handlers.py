@@ -1,6 +1,11 @@
 """doeff.handlers - Handler sentinels re-exported from doeff_vm.
 
-Provides: state, reader, writer, result_safe, scheduler, kpc, await_handler.
+These are user-space handler sentinels. The VM only dispatches to handlers and
+does not own handler semantics.
+
+Provides: state, reader, writer, result_safe, scheduler, lazy_ask, await_handler.
+Default Await behavior for run()/async_run() comes from Python handlers in
+doeff.effects.future via default handler presets.
 """
 
 from __future__ import annotations
@@ -11,7 +16,7 @@ _HANDLER_SENTINELS = {
     "writer",
     "result_safe",
     "scheduler",
-    "kpc",
+    "lazy_ask",
     "await_handler",
 }
 
@@ -28,4 +33,4 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["state", "reader", "writer", "result_safe", "scheduler", "kpc", "await_handler"]
+__all__ = ["state", "reader", "writer", "result_safe", "scheduler", "lazy_ask", "await_handler"]

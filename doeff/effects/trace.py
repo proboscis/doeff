@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import doeff_vm
 
-from .base import EffectBase, create_effect_with_trace
-
-
-@dataclass(frozen=True)
-class ProgramTraceEffect(EffectBase):
-    """Return a snapshot of the current unified execution trace."""
+ProgramTraceEffect = doeff_vm.ProgramTraceEffect
 
 
 def ProgramTrace() -> ProgramTraceEffect:
     """Create an effect that yields VM trace entries."""
 
-    return create_effect_with_trace(ProgramTraceEffect())
+    return ProgramTraceEffect()
 
 
 __all__ = ["ProgramTrace", "ProgramTraceEffect"]

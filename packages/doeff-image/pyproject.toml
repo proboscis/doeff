@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "CyberAgent AI Lab"},
+    {name = "proboscis"},
 ]
 keywords = ["image", "effects", "generation", "editing", "doeff"]
 classifiers = [
@@ -37,9 +37,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/CyberAgentAILab/doeff"
-Repository = "https://github.com/CyberAgentAILab/doeff"
-Issues = "https://github.com/CyberAgentAILab/doeff/issues"
+Homepage = "https://github.com/proboscis/doeff"
+Repository = "https://github.com/proboscis/doeff"
+Issues = "https://github.com/proboscis/doeff/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/doeff_image"]

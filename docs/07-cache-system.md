@@ -19,7 +19,7 @@ from doeff import cache, do
 @cache(ttl=60, lifecycle=CacheLifecycle.SESSION)
 @do
 def expensive_computation(x: int):
-    yield Log("Computing (this should only happen once)...")
+    yield Tell("Computing (this should only happen once)...")
     # Expensive work here
     return x * 2
 
@@ -38,10 +38,10 @@ def with_manual_cache():
     try:
         # Try to get from cache
         value = yield CacheGet("my_key")
-        yield Log("Cache hit!")
+        yield Tell("Cache hit!")
     except KeyError:
         # Cache miss - compute and store
-        yield Log("Cache miss, computing...")
+        yield Tell("Cache miss, computing...")
         value = yield expensive_operation()
         
         yield CachePut(
@@ -87,7 +87,7 @@ def smart_cache(key, fresh=False):
         # Bypass cache
         value = yield compute_value()
     else:
-        safe_result = yield Safe(CacheGet(key))
+        safe_result = yield Try(CacheGet(key))
         if safe_result.is_ok():
             value = safe_result.value
         else:

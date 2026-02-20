@@ -15,7 +15,15 @@ import sysconfig
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    TypeAlias,
+    cast,
+    runtime_checkable,
+)
 
 if __name__ == "traceback":
     # Some entrypoints can shadow stdlib ``traceback`` with ``doeff/traceback.py``.
@@ -47,9 +55,20 @@ else:
     import traceback as _py_traceback
 
     from doeff.trace import (
+        ActiveChainEntry,
+        EffectResultActive,
+        EffectResultResumed,
+        EffectResultThrew,
+        EffectResultTransferred,
+        EffectYield,
+        ExceptionSite,
+        HandlerStackEntry,
+        ProgramYield,
+        SpawnBoundary,
         TraceDispatch,
         TraceFrame,
         TraceResumePoint,
+        coerce_active_chain_entries,
         coerce_trace_entries,
     )
 
@@ -59,6 +78,8 @@ else:
     @runtime_checkable
     class EffectTraceback(Protocol):
         def format(self) -> str: ...
+
+        def format_default(self) -> str: ...
 
         def format_short(self) -> str: ...
 
@@ -278,8 +299,12 @@ else:
     @dataclass(frozen=True)
     class DoeffTraceback:
         chain: tuple[DoeffTraceEntry, ...]
+        active_chain: tuple[ActiveChainEntry, ...]
         python_traceback: Any | None
         exception: BaseException
+
+        def format(self) -> str:
+            return self.format_default()
 
         def _format_program_entry(self, entry: ProgramFrame | ResumeMarker) -> tuple[str, str | None]:
             location = f"{entry.source_file}:{entry.source_line}"
@@ -298,6 +323,91 @@ else:
                 f"  -> handling {entry.effect_repr}"
             )
             return head, entry.action_detail
+
+        @staticmethod
+        def _truncate_result_repr(value: str, *, limit: int = 80) -> str:
+            if len(value) <= limit:
+                return value
+            return value[:limit] + "..."
+
+        def _render_handler_stack(
+            self,
+            stack: tuple[HandlerStackEntry, ...],
+        ) -> str:
+            marker = {
+                "active": "⚡",
+                "pending": "·",
+                "delegated": "↗",
+                "resumed": "✓",
+                "transferred": "⇢",
+                "returned": "✓",
+                "threw": "✗",
+            }
+            parts = [f"{entry.handler_name}{marker.get(entry.status, '?')}" for entry in stack]
+            return f"[{' > '.join(parts)}]" if parts else "[]"
+
+        def _render_effect_result(
+            self,
+            result: EffectResultActive
+            | EffectResultResumed
+            | EffectResultThrew
+            | EffectResultTransferred,
+        ) -> str:
+            if isinstance(result, EffectResultResumed):
+                return f"→ resumed with {self._truncate_result_repr(result.value_repr)}"
+            if isinstance(result, EffectResultThrew):
+                return f"✗ {result.handler_name} raised {result.exception_repr}"
+            if isinstance(result, EffectResultTransferred):
+                return f"⇢ {result.handler_name} transferred to {result.target_repr}"
+            return "… active"
+
+        @staticmethod
+        def _format_spawn_boundary(boundary: SpawnBoundary) -> str:
+            if boundary.spawn_site is not None:
+                site = (
+                    f"{boundary.spawn_site.function_name}() "
+                    f"{boundary.spawn_site.source_file}:{boundary.spawn_site.source_line}"
+                )
+            else:
+                site = "<unknown>"
+            return f"── in task {boundary.task_id} (spawned at {site}) ──"
+
+        def format_default(self) -> str:
+            lines: list[str] = ["doeff Traceback (most recent call last):", ""]
+            for entry in self.active_chain:
+                if isinstance(entry, ProgramYield):
+                    lines.append(
+                        f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
+                    )
+                    lines.append(f"    yield {entry.sub_program_repr}")
+                    lines.append("")
+                    continue
+
+                if isinstance(entry, EffectYield):
+                    stack_line = self._render_handler_stack(entry.handler_stack)
+                    lines.append(
+                        f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
+                    )
+                    lines.append(f"    yield {entry.effect_repr}")
+                    lines.append(f"    {stack_line}")
+                    lines.append(f"    {self._render_effect_result(entry.result)}")
+                    lines.append("")
+                    continue
+
+                if isinstance(entry, SpawnBoundary):
+                    lines.append(self._format_spawn_boundary(entry))
+                    lines.append("")
+                    continue
+
+                if isinstance(entry, ExceptionSite):
+                    lines.append(
+                        f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
+                    )
+                    lines.append(f"    raise {entry.exception_type}({entry.message!r})")
+                    lines.append("")
+
+            lines.append(f"{type(self.exception).__name__}: {self.exception}")
+            return "\n".join(lines)
 
         def format_chained(self) -> str:
             lines: list[str] = ["doeff Traceback (most recent call last):", ""]
@@ -368,34 +478,62 @@ else:
     def build_doeff_traceback(
         exception: BaseException,
         trace_entries: list[Any] | tuple[Any, ...],
+        active_chain_entries: list[Any] | tuple[Any, ...] = (),
         *,
         allow_active: bool = False,
     ) -> DoeffTraceback:
         from doeff.types import capture_traceback, get_captured_traceback
 
         projected = project_trace(trace_entries, allow_active=allow_active)
+        active_chain = coerce_active_chain_entries(list(active_chain_entries))
         captured = get_captured_traceback(exception)
         if captured is None:
             captured = capture_traceback(exception)
-        return DoeffTraceback(chain=tuple(projected), python_traceback=captured, exception=exception)
+        return DoeffTraceback(
+            chain=tuple(projected),
+            active_chain=tuple(active_chain),
+            python_traceback=captured,
+            exception=exception,
+        )
 
     def attach_doeff_traceback(
         exception: BaseException,
         *,
+        traceback_data: Any | None = None,
         allow_active: bool = False,
     ) -> DoeffTraceback | None:
-        existing = getattr(exception, "__doeff_traceback__", None)
-        if isinstance(existing, DoeffTraceback):
-            return existing
-
-        raw_trace = getattr(exception, "__doeff_traceback_data__", None)
-        if raw_trace is None:
-            return None
-        if not isinstance(raw_trace, (list, tuple)):
+        if traceback_data is None:
             return None
 
-        tb = build_doeff_traceback(exception, raw_trace, allow_active=allow_active)
-        exception.__doeff_traceback__ = tb
+        trace_entries: list[Any] | tuple[Any, ...]
+        active_chain_entries: list[Any] | tuple[Any, ...]
+        raw_trace = traceback_data
+        if hasattr(raw_trace, "entries"):
+            trace_entries = cast(Any, raw_trace).entries
+            active_chain_entries = getattr(raw_trace, "active_chain", ())
+            if not isinstance(trace_entries, (list, tuple)):
+                trace_entries = ()
+            if not isinstance(active_chain_entries, (list, tuple)):
+                active_chain_entries = ()
+        elif isinstance(raw_trace, dict):
+            trace_entries = raw_trace.get("trace", ())
+            active_chain_entries = raw_trace.get("active_chain", ())
+            if not isinstance(trace_entries, (list, tuple)):
+                trace_entries = ()
+            if not isinstance(active_chain_entries, (list, tuple)):
+                active_chain_entries = ()
+        elif isinstance(raw_trace, (list, tuple)):
+            trace_entries = raw_trace
+            active_chain_entries = ()
+        else:
+            return None
+
+        tb = build_doeff_traceback(
+            exception,
+            trace_entries,
+            active_chain_entries,
+            allow_active=allow_active,
+        )
         return tb
 
     __all__ = [

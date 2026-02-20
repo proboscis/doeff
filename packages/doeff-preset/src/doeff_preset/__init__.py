@@ -5,7 +5,8 @@ keeping doeff core minimal while offering a convenient "just works"
 experience for examples, demos, and rapid development.
 
 Example:
-    >>> from doeff import do, run_with_handler_map, slog
+    >>> from doeff import do, slog
+    >>> from doeff.rust_vm import run_with_handler_map
     >>> from doeff_preset import preset_handlers
     >>>
     >>> @do
@@ -44,7 +45,7 @@ def preset_handlers(
         Handler dict combining log display and config handlers.
 
     Example:
-        >>> from doeff import run_with_handler_map
+        >>> from doeff.rust_vm import run_with_handler_map
         >>> from doeff_preset import preset_handlers
         >>>
         >>> result = run_with_handler_map(my_workflow(), preset_handlers())

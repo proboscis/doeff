@@ -19,13 +19,13 @@ Reader effects provide read-only access to an environment/configuration that flo
 `Ask(key)` retrieves a value from the environment:
 
 ```python
-from doeff import do, Ask, Log, run, default_handlers
+from doeff import do, Ask, Tell, run, default_handlers
 
 @do
 def connect_to_database():
     db_url = yield Ask("database_url")
     timeout = yield Ask("timeout")
-    yield Log(f"Connecting to {db_url} with timeout {timeout}")
+    yield Tell(f"Connecting to {db_url} with timeout {timeout}")
     return f"Connected to {db_url}"
 
 # Run with environment
@@ -71,7 +71,7 @@ When an environment value is a `Program`, it is evaluated lazily on first access
 ```python
 @do
 def expensive_computation():
-    yield Log("Computing config...")
+    yield Tell("Computing config...")
     yield Delay(1.0)  # Simulate expensive work
     return {"setting": "computed_value"}
 
@@ -94,6 +94,12 @@ This is useful for:
 - Deferred initialization of complex configurations
 - Lazy loading of resources
 
+**Concurrency note for lazy `Ask`:**
+- Concurrent `Ask(key)` calls for the same lazy key are coordinated with a per-key semaphore.
+- At most one task evaluates the lazy program; other tasks wait cooperatively and reuse the cached result.
+- Waiting on the same key is not treated as a circular dependency.
+- Lazy program results are cached per `run()` invocation.
+
 See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
 ### Local - Temporary Environment Override
@@ -105,7 +111,7 @@ See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 def with_custom_config():
     # Normal environment
     url1 = yield Ask("api_url")
-    yield Log(f"Default URL: {url1}")
+    yield Tell(f"Default URL: {url1}")
 
     # Override for sub-program
     result = yield Local(
@@ -115,13 +121,13 @@ def with_custom_config():
 
     # Back to normal
     url2 = yield Ask("api_url")
-    yield Log(f"Back to: {url2}")
+    yield Tell(f"Back to: {url2}")
     return result
 
 @do
 def fetch_data():
     url = yield Ask("api_url")
-    yield Log(f"Fetching from {url}")
+    yield Tell(f"Fetching from {url}")
     return f"data from {url}"
 ```
 
@@ -130,6 +136,14 @@ def fetch_data():
 - Different settings for sub-operations
 - Scoped feature flags
 - Temporary overrides
+
+#### Local Composition Rules
+
+- `Local + Local`: nested scopes are LIFO. Inner overrides win inside the inner scope, then each scope restores independently.
+- `Local + Try`: environment restoration still happens if the inner program raises and the error is caught by `Try`.
+- `Local + Gather`: gathered child programs inherit the enclosing Local environment snapshot. A child's own `Local` stays isolated to that child scope.
+- `Local + Ask` (lazy `Program` values): overriding a key with a different `Program` object invalidates that key's lazy cache entry.
+- `Local + State`: State changes (`Get`/`Put`) persist outside the Local scope. Local only restores the environment, not state. This is intentional.
 
 ### Reader Pattern Example
 
@@ -171,18 +185,18 @@ State effects manage mutable state that persists across operations.
 @do
 def read_counter():
     count = yield Get("counter")
-    yield Log(f"Current count: {count}")
+    yield Tell(f"Current count: {count}")
     return count
 ```
 
 **Returns:** The value if key exists.
 
-**Raises:** `KeyError` if key doesn't exist. Use `Safe` to handle missing keys:
+**Raises:** `KeyError` if key doesn't exist. Use `Try` to handle missing keys:
 
 ```python
 @do
 def safe_read():
-    result = yield Safe(Get("maybe_missing"))
+    result = yield Try(Get("maybe_missing"))
     return result.ok() if result.is_ok() else "default"
 ```
 
@@ -196,7 +210,7 @@ def initialize_state():
     yield Put("counter", 0)
     yield Put("status", "ready")
     yield Put("items", [])
-    yield Log("State initialized")
+    yield Tell("State initialized")
 ```
 
 **Behavior:**
@@ -213,15 +227,17 @@ def initialize_state():
 def increment_counter():
     # Get, transform, and set in one operation
     new_value = yield Modify("counter", lambda x: x + 1)
-    yield Log(f"Counter now: {new_value}")
+    yield Tell(f"Counter now: {new_value}")
     return new_value
 ```
 
 **Returns:** The new (transformed) value after applying the function.
 
-**Note:** If the key doesn't exist, `Modify` passes `None` to the function (unlike `Get` which raises `KeyError`).
+**Missing-key behavior:** If the key doesn't exist, `Modify` passes `None` to the function (unlike `Get` which raises `KeyError`).
 
-**Equivalent to:**
+**Atomicity:** If the transform function raises, the store is unchanged.
+
+**Equivalent when the key already exists:**
 ```python
 @do
 def increment_counter_manual():
@@ -230,6 +246,15 @@ def increment_counter_manual():
     yield Put("counter", new_value)
     return new_value
 ```
+
+For missing keys, `Modify` and `Get` + `Put` are not equivalent because `Get` raises `KeyError` while `Modify` passes `None`.
+
+### State Composition Rules
+
+- `Put + Get` (immediate visibility): State changes are immediately visible within the same execution context - a `Put` followed by `Get` on the same key always returns the updated value.
+- `State + Try`: state changes made before an error persist even when `Try` catches that error. There is no automatic rollback.
+- `State + Gather` in `SyncRuntime`: gathered branches run sequentially in input order and share one store.
+- `State + Gather` in `AsyncRuntime`: branches share one store but execution can interleave, so read-modify-write patterns can race without explicit coordination.
 
 ### State Pattern Examples
 
@@ -276,53 +301,62 @@ def state_machine():
     state = yield Get("state")
     if state == "idle":
         yield Put("state", "processing")
-        yield Log("Started processing")
+        yield Tell("Started processing")
 
     # Do work
     yield process_work()
 
     # Transition: processing -> complete
     yield Put("state", "complete")
-    yield Log("Processing complete")
+    yield Tell("Processing complete")
 ```
 
 ## Writer Effects
 
-Writer effects accumulate output (logs, messages, events) throughout program execution.
+Writer effects accumulate output (messages, events, structured entries) throughout execution.
 
-### Log / Tell - Append to Log
+### Tell - Append to Writer Log
 
-`Log(message)` appends a message to the log:
+`Tell(message)` appends any Python object to the shared writer log:
 
 ```python
-from doeff import run, default_handlers
+from doeff import do, Get, Tell, default_handlers, run
 
 @do
 def with_logging():
-    yield Log("Starting operation")
-    yield Log("Processing data")
+    yield Tell("Starting operation")
+    yield Tell("Processing data")
 
     count = yield Get("count")
-    yield Log(f"Count: {count}")
+    yield Tell(f"Count: {count}")
 
-    yield Log("Operation complete")
+    yield Tell("Operation complete")
     return "done"
 
 def main():
     result = run(with_logging(), default_handlers(), store={"count": 0})
-    # Logs are in result.raw_store.get("__log__", [])
+    # All entries are in result.raw_store.get("__log__", [])
 
 main()
 ```
 
-**Note:** `Log` and `Tell` are aliases for the same effect.
+`Tell` is not string-only. It accepts and stores any Python object unchanged, including dictionaries, numbers, and custom objects.
 
-### StructuredLog - Structured Logging
+### StructuredLog / slog - Structured Entries
 
-`StructuredLog(**kwargs)` logs structured data:
+`StructuredLog(**entries)` logs a dictionary payload.
+`slog(**entries)` is the lowercase alias.
 
 ```python
-from doeff import run, default_handlers
+def StructuredLog(**entries: object) -> Effect:
+    """Log a dictionary of key-value pairs."""
+
+def slog(**entries: object) -> WriterTellEffect:
+    """Lowercase alias for StructuredLog."""
+```
+
+```python
+from doeff import StructuredLog, do, slog
 
 @do
 def structured_logging():
@@ -330,65 +364,66 @@ def structured_logging():
         level="info",
         message="User logged in",
         user_id=12345,
-        ip="192.168.1.1"
+        ip="192.168.1.1",
     )
-
-    yield StructuredLog(
+    yield slog(
         level="warn",
         message="High memory usage",
         memory_mb=512,
-        threshold_mb=400
+        threshold_mb=400,
     )
-
-    return "logged"
-
-def main():
-    result = run(structured_logging(), default_handlers())
-    # Structured logs in result.raw_store.get("__log__", [])
-
-main()
 ```
 
-### Listen - Capture Sub-Program Log
+### Listen - Capture Sub-Program Logs
 
-`Listen(sub_program)` runs a sub-program and captures its log output. Per [SPEC-EFF-003](../specs/effects/SPEC-EFF-003-writer.md), logs from the inner program are **propagated to the outer scope** in addition to being captured:
+`Listen(sub_program)` runs a sub-program and returns `ListenResult(value, log)`.
+
+Mechanism (SPEC-EFF-003):
+- Record the current log start index before running the sub-program.
+- Push an internal listen frame using that start index.
+- Execute the sub-program.
+- Capture entries from that start index onward into the returned `ListenResult`.
+- Keep those captured entries in the shared log store (they are not removed).
 
 ```python
-from doeff import run, default_handlers
+from doeff import Listen, Tell, do
 
 @do
 def inner_operation():
-    yield Log("Inner step 1")
-    yield Log("Inner step 2")
+    yield Tell("inner step 1")
+    yield Tell("inner step 2")
     return 42
 
 @do
 def outer_operation():
-    yield Log("Before inner")
-
-    # Capture inner logs (they're also propagated to outer)
+    yield Tell("before inner")
     listen_result = yield Listen(inner_operation())
-
-    yield Log("After inner")
-    yield Log(f"Inner returned: {listen_result.value}")
-    yield Log(f"Inner logs: {listen_result.log}")
-
-    return listen_result.value
-
-def main():
-    result = run(outer_operation(), default_handlers())
-    # All logs (outer AND inner) are in result.raw_store.get("__log__", [])
-
-main()
+    yield Tell("after inner")
+    return listen_result
 ```
 
-**ListenResult structure:**
+`ListenResult.log` is a `BoundedLog` (see `doeff.utils.BoundedLog`), not a plain `list`:
+
 ```python
 @dataclass
 class ListenResult(Generic[T]):
-    value: T           # Return value of sub-program
-    log: list[Any]     # Log entries from sub-program
+    value: T
+    log: BoundedLog
 ```
+
+`BoundedLog` keeps bounded retention semantics: when capacity is exceeded, oldest entries are evicted.
+
+### Listen Composition Rules
+
+- `Listen + Tell`: entries told in the Listen scope appear in `ListenResult.log`.
+- `Listen + Local`: entries from inside `Local(...)` are captured normally by Listen.
+- `Listen + Try`:
+  - `Listen(Try(sub_program))` returns `ListenResult` whose `.value` is a `Result`; entries before the caught error remain in `.log`.
+  - `Try(Listen(sub_program))` returns `Err(...)` if `sub_program` fails before Listen completes; no `ListenResult` is produced on that path.
+- `Listen + Gather`: gathered programs share the same log store.
+- `Listen + Gather` in `SyncRuntime`: ordering is sequential in program order.
+- `Listen + Gather` in `AsyncRuntime`: ordering is non-deterministic and may interleave.
+- `Listen + Listen` (nested): the inner Listen captures only its own scope; the outer Listen captures the full outer scope, including entries produced by the inner scope.
 
 ### Writer Pattern Examples
 
@@ -396,16 +431,16 @@ class ListenResult(Generic[T]):
 ```python
 @do
 def process_transaction(transaction_id):
-    yield Log(f"[AUDIT] Starting transaction {transaction_id}")
+    yield Tell(f"[AUDIT] Starting transaction {transaction_id}")
 
     yield Put("balance", 1000)
-    yield Log(f"[AUDIT] Initial balance: 1000")
+    yield Tell(f"[AUDIT] Initial balance: 1000")
 
     yield Modify("balance", lambda x: x - 100)
     new_balance = yield Get("balance")
-    yield Log(f"[AUDIT] Debited 100, new balance: {new_balance}")
+    yield Tell(f"[AUDIT] Debited 100, new balance: {new_balance}")
 
-    yield Log(f"[AUDIT] Transaction {transaction_id} complete")
+    yield Tell(f"[AUDIT] Transaction {transaction_id} complete")
     return new_balance
 ```
 
@@ -413,16 +448,16 @@ def process_transaction(transaction_id):
 ```python
 @do
 def debug_computation():
-    yield Log("[DEBUG] Computation start")
+    yield Tell("[DEBUG] Computation start")
 
     x = yield Get("x")
-    yield Log(f"[DEBUG] x = {x}")
+    yield Tell(f"[DEBUG] x = {x}")
 
     y = x * 2
-    yield Log(f"[DEBUG] y = x * 2 = {y}")
+    yield Tell(f"[DEBUG] y = x * 2 = {y}")
 
     yield Put("result", y)
-    yield Log(f"[DEBUG] Stored result = {y}")
+    yield Tell(f"[DEBUG] Stored result = {y}")
 
     return y
 ```
@@ -438,7 +473,7 @@ The real power comes from combining these effects:
 def application_workflow():
     # Read config
     max_retries = yield Ask("max_retries")
-    yield Log(f"Config: max_retries = {max_retries}")
+    yield Tell(f"Config: max_retries = {max_retries}")
 
     # Initialize state
     yield Put("attempt", 0)
@@ -448,20 +483,20 @@ def application_workflow():
     for i in range(max_retries):
         attempt = yield Get("attempt")
         yield Modify("attempt", lambda x: x + 1)
-        yield Log(f"Attempt {attempt + 1}/{max_retries}")
+        yield Tell(f"Attempt {attempt + 1}/{max_retries}")
 
         # Simulate work
         success = yield try_operation()
 
         if success:
             yield Put("status", "success")
-            yield Log("Operation succeeded")
+            yield Tell("Operation succeeded")
             return "success"
         else:
-            yield Log(f"Attempt {attempt + 1} failed")
+            yield Tell(f"Attempt {attempt + 1} failed")
 
     yield Put("status", "failed")
-    yield Log("All attempts failed")
+    yield Tell("All attempts failed")
     return "failed"
 ```
 
@@ -488,11 +523,11 @@ def with_feature_flag():
 def process_with_feature():
     mode = yield Ask("feature_mode")
     yield Put("mode_used", mode)
-    yield Log(f"Using feature mode: {mode}")
+    yield Tell(f"Using feature mode: {mode}")
     return f"processed with {mode}"
 ```
 
-### Scoped State with Listen
+### State Propagation with Listen
 
 ```python
 @do
@@ -500,22 +535,25 @@ def isolated_operation():
     # Main state
     yield Put("main_counter", 0)
 
-    # Run isolated sub-operation
+    # Run sub-operation under Listen (captures logs, not state)
     listen_result = yield Listen(isolated_sub_operation())
 
-    # Sub-operation's state changes don't affect main state
+    # State changes inside Listen persist in the shared store
     main_count = yield Get("main_counter")
-    yield Log(f"Main counter unchanged: {main_count}")
+    yield Tell(f"Main counter after Listen: {main_count}")  # 10
 
     return listen_result.value
 
 @do
 def isolated_sub_operation():
-    # This operates on the same state
+    # This mutates the same state store as the caller
     yield Modify("main_counter", lambda x: x + 10)
-    yield Log("Modified counter in sub-operation")
+    yield Tell("Modified counter in sub-operation")
     return "sub-done"
 ```
+
+`Listen` captures writer output (`Tell`) from the sub-program. It does not isolate state:
+`Get`/`Put`/`Modify` effects inside `Listen(...)` remain visible after `Listen` completes.
 
 ## Best Practices
 
@@ -588,7 +626,7 @@ def well_logged_operation():
 **DON'T:**
 - Log excessively in tight loops
 - Log sensitive information (passwords, tokens)
-- Use Log for control flow
+- Use writer output for control flow
 
 ### Combining Effects
 
@@ -610,12 +648,12 @@ def well_logged_operation():
 | `Get(key)` | Read state | Counters, flags |
 | `Put(key, val)` | Write state | Initialize, update |
 | `Modify(key, f)` | Transform state | Increment, append |
-| `Log(msg)` | Append to log | Debugging, audit |
-| `StructuredLog(**kw)` | Structured logging | Machine-readable logs |
+| `Tell(msg)` | Append to log | Debugging, audit |
+| `StructuredLog(**kw)` / `slog(**kw)` | Structured logging | Machine-readable logs |
 | `Listen(prog)` | Capture sub-logs | Nested operations |
 
 ## Next Steps
 
 - **[Async Effects](04-async-effects.md)** - Gather, Spawn, Time effects for async operations
-- **[Error Handling](05-error-handling.md)** - Safe effect for robust programs
+- **[Error Handling](05-error-handling.md)** - Try effect for robust programs
 - **[Patterns](12-patterns.md)** - Common patterns combining multiple effects

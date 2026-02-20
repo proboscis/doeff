@@ -2,36 +2,73 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::arena::SegmentArena;
+use crate::ast_stream::{ASTStream, ASTStreamRef, ASTStreamStep, PythonGeneratorStream};
 use crate::capture::{
-    CaptureEvent, DelegationEntry, DispatchAction, FrameId, HandlerAction, HandlerKind, TraceEntry,
+    ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectCreationSite,
+    EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry,
+    HandlerStatus, TraceEntry,
 };
 use crate::continuation::Continuation;
-use crate::do_ctrl::DoCtrl;
+use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{dispatch_ref_as_python, DispatchEffect};
 #[cfg(test)]
-use crate::effect::Effect;
+use crate::effect::{Effect, PySpawn};
 use crate::error::VMError;
 use crate::frame::{CallMetadata, Frame};
-use crate::handler::{Handler, HandlerEntry};
+use crate::handler::{Handler, HandlerEntry, RustProgramInvocation};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
-use crate::pyvm::{PyDoExprBase, PyEffectBase};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
+use crate::pyvm::{PyDoExprBase, PyEffectBase};
 use crate::segment::Segment;
 use crate::value::Value;
-use crate::yielded::Yielded;
 
 pub use crate::dispatch::DispatchContext;
 pub use crate::rust_store::RustStore;
 
 pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send + Sync>;
 static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug)]
+struct RustProgramStream {
+    program: crate::handler::ASTStreamProgramRef,
+}
+
+impl ASTStream for RustProgramStream {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        Python::attach(|_py| {
+            let mut guard = self.program.lock().expect("Rust program lock poisoned");
+            guard.resume(value, store)
+        })
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        Python::attach(|_py| {
+            let mut guard = self.program.lock().expect("Rust program lock poisoned");
+            guard.throw(exc, store)
+        })
+    }
+}
+
+fn rust_program_as_stream(program: crate::handler::ASTStreamProgramRef) -> ASTStreamRef {
+    Arc::new(std::sync::Mutex::new(
+        Box::new(RustProgramStream { program }) as Box<dyn ASTStream>,
+    ))
+}
+
+#[derive(Clone)]
+struct SpawnBoundaryDescriptor {
+    boundary: ActiveChainEntry,
+    spawn_dispatch_id: Option<DispatchId>,
+}
 
 /// Optional Python dict for user-defined handler state (Layer 3).
 /// VM doesn't read it; users can store arbitrary data.
@@ -176,9 +213,7 @@ impl VM {
         };
 
         for entry in self.handlers.values() {
-            if let Handler::RustProgram(factory) = &entry.handler {
-                factory.on_run_end(run_token);
-            }
+            entry.handler.on_run_end(run_token);
         }
     }
 
@@ -230,6 +265,101 @@ impl VM {
         StepEvent::Continue
     }
 
+    fn eval_then_reenter_call(&mut self, expr: PyShared, cb: Callback) -> StepEvent {
+        let handlers = self.current_visible_handlers();
+        let cb_id = self.register_callback(cb);
+        let Some(seg) = self.current_segment_mut() else {
+            return StepEvent::Error(VMError::internal("Call evaluation outside current segment"));
+        };
+        seg.push_frame(Frame::RustReturn { cb: cb_id });
+        self.mode = Mode::HandleYield(DoCtrl::Eval {
+            expr,
+            handlers,
+            metadata: None,
+        });
+        StepEvent::Continue
+    }
+
+    fn invoke_rust_program(&mut self, invocation: RustProgramInvocation) -> StepEvent {
+        let program = invocation
+            .factory
+            .create_program_for_run(self.current_run_token());
+        let stream = rust_program_as_stream(program.clone());
+        let step = {
+            let mut guard = program.lock().expect("Rust program lock poisoned");
+            Python::attach(|py| {
+                guard.start(
+                    py,
+                    *invocation.effect,
+                    invocation.continuation,
+                    &mut self.rust_store,
+                )
+            })
+        };
+        self.apply_stream_step(step, stream, None)
+    }
+
+    fn evaluate(&mut self, ir_node: DoCtrl) -> StepEvent {
+        self.mode = Mode::HandleYield(ir_node);
+        self.step_handle_yield()
+    }
+
+    fn merged_metadata_from_doeff(
+        inherited: Option<CallMetadata>,
+        function_name: String,
+        source_file: String,
+        source_line: u32,
+    ) -> Option<CallMetadata> {
+        match inherited {
+            Some(metadata) => Some(metadata),
+            None => Some(CallMetadata::new(
+                function_name,
+                source_file,
+                source_line,
+                None,
+                None,
+            )),
+        }
+    }
+
+    fn extract_doeff_generator(
+        value: Py<PyAny>,
+        inherited_metadata: Option<CallMetadata>,
+        context: &str,
+    ) -> Result<(ASTStreamRef, Option<CallMetadata>), PyException> {
+        Python::attach(|py| {
+            let bound = value.bind(py);
+            let wrapped: PyRef<'_, DoeffGenerator> = bound.extract().map_err(|_| {
+                let ty = bound
+                    .get_type()
+                    .name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|_| "<unknown>".to_string());
+                PyException::type_error(format!("{context}: expected DoeffGenerator, got {ty}"))
+            })?;
+
+            if !wrapped.get_frame.bind(py).is_callable() {
+                return Err(PyException::type_error(format!(
+                    "{context}: DoeffGenerator.get_frame must be callable"
+                )));
+            }
+
+            let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
+                PyShared::new(wrapped.generator.clone_ref(py)),
+                PyShared::new(wrapped.get_frame.clone_ref(py)),
+            )) as Box<dyn ASTStream>));
+            Ok((
+                stream,
+                Self::merged_metadata_from_doeff(
+                    inherited_metadata,
+                    wrapped.factory_function_name().to_string(),
+                    wrapped.factory_source_file().to_string(),
+                    wrapped.factory_source_line(),
+                ),
+            ))
+        })
+    }
+
     fn truncate_repr(mut text: String) -> String {
         const MAX_REPR_LEN: usize = 200;
         if text.len() > MAX_REPR_LEN {
@@ -250,6 +380,19 @@ impl VM {
             }),
             other => format!("{other:?}"),
         };
+        Some(Self::truncate_repr(repr))
+    }
+
+    fn program_call_repr(metadata: &CallMetadata) -> Option<String> {
+        let repr = metadata.program_call.as_ref().map(|program_call| {
+            Python::attach(|py| {
+                program_call
+                    .bind(py)
+                    .repr()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|_| "<sub_program>".to_string())
+            })
+        })?;
         Some(Self::truncate_repr(repr))
     }
 
@@ -282,62 +425,23 @@ impl VM {
         Self::truncate_repr(repr)
     }
 
-    fn python_handler_name(handler: &PyShared) -> String {
-        Python::attach(|py| {
-            let bound = handler.bind(py);
-            bound
-                .getattr("__name__")
-                .ok()
-                .and_then(|v| v.extract::<String>().ok())
-                .or_else(|| {
-                    bound
-                        .getattr("__class__")
-                        .ok()
-                        .and_then(|cls| cls.getattr("__name__").ok())
-                        .and_then(|v| v.extract::<String>().ok())
-                })
-                .unwrap_or_else(|| "<python_handler>".to_string())
-        })
-    }
-
-    fn python_handler_source(handler: &PyShared) -> (Option<String>, Option<u32>) {
-        Python::attach(|py| {
-            let bound = handler.bind(py);
-            let code = bound.getattr("__code__").ok().or_else(|| {
-                bound
-                    .getattr("__call__")
-                    .ok()
-                    .and_then(|call| call.getattr("__code__").ok())
-            });
-            let Some(code_obj) = code else {
-                return (None, None);
-            };
-            let file = code_obj
-                .getattr("co_filename")
-                .ok()
-                .and_then(|v| v.extract::<String>().ok());
-            let line = code_obj
-                .getattr("co_firstlineno")
-                .ok()
-                .and_then(|v| v.extract::<u32>().ok());
-            (file, line)
+    fn effect_creation_site_from_continuation(k: &Continuation) -> Option<EffectCreationSite> {
+        let (_, function_name, source_file, source_line) = Self::effect_site_from_continuation(k)?;
+        Some(EffectCreationSite {
+            function_name,
+            source_file,
+            source_line,
         })
     }
 
     fn handler_trace_info(handler: &Handler) -> (String, HandlerKind, Option<String>, Option<u32>) {
-        match handler {
-            Handler::Python(py_handler) => {
-                let name = Self::python_handler_name(py_handler);
-                let (file, line) = Self::python_handler_source(py_handler);
-                (name, HandlerKind::Python, file, line)
-            }
-            Handler::RustProgram(factory) => (
-                factory.handler_name().to_string(),
-                HandlerKind::RustBuiltin,
-                None,
-                None,
-            ),
-        }
+        let info = handler.handler_debug_info();
+        let kind = if handler.py_identity().is_some() {
+            HandlerKind::Python
+        } else {
+            HandlerKind::RustBuiltin
+        };
+        (info.name, kind, info.file, info.line)
     }
 
     fn marker_handler_trace_info(
@@ -349,19 +453,19 @@ impl VM {
             .map(|entry| Self::handler_trace_info(&entry.handler))
     }
 
-    fn current_handler_name_for_dispatch(&self, dispatch_id: DispatchId) -> String {
-        let info = self
+    fn current_handler_identity_for_dispatch(
+        &self,
+        dispatch_id: DispatchId,
+    ) -> Option<(usize, String)> {
+        let ctx = self
             .dispatch_stack
             .iter()
             .rev()
             .find(|ctx| ctx.dispatch_id == dispatch_id)
-            .and_then(|ctx| {
-                ctx.handler_chain
-                    .get(ctx.handler_idx)
-                    .and_then(|marker| self.marker_handler_trace_info(*marker))
-            });
-        info.map(|(name, _, _, _)| name)
-            .unwrap_or_else(|| "<handler>".to_string())
+            .cloned()?;
+        let marker = *ctx.handler_chain.get(ctx.handler_idx)?;
+        let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
+        Some((ctx.handler_idx, name))
     }
 
     fn current_active_handler_dispatch_id(&self) -> Option<DispatchId> {
@@ -379,29 +483,49 @@ impl VM {
         }
     }
 
-    fn generator_current_line(generator: &PyShared) -> Option<u32> {
-        Python::attach(|py| {
-            let gi_frame = generator.bind(py).getattr("gi_frame").ok()?;
-            if gi_frame.is_none() {
-                return None;
-            }
-            gi_frame.getattr("f_lineno").ok()?.extract::<u32>().ok()
-        })
+    fn dispatch_uses_user_continuation_stream(
+        &self,
+        dispatch_id: DispatchId,
+        stream: &ASTStreamRef,
+    ) -> bool {
+        self.dispatch_stack
+            .iter()
+            .rev()
+            .find(|ctx| ctx.dispatch_id == dispatch_id)
+            .is_some_and(|ctx| {
+                ctx.k_user.frames_snapshot.iter().any(|frame| match frame {
+                    Frame::Program {
+                        stream: snapshot_stream,
+                        ..
+                    } => Arc::ptr_eq(snapshot_stream, stream),
+                    _ => false,
+                })
+            })
+    }
+
+    fn stream_debug_location(stream: &ASTStreamRef) -> Option<crate::ast_stream::StreamLocation> {
+        let guard = stream.lock().expect("ASTStream lock poisoned");
+        guard.debug_location()
     }
 
     fn resume_location_from_frames(frames: &[Frame]) -> Option<(String, String, u32)> {
         for frame in frames.iter().rev() {
-            if let Frame::PythonGenerator {
-                generator,
+            if let Frame::Program {
+                stream,
                 metadata: Some(metadata),
-                ..
             } = frame
             {
-                let line = Self::generator_current_line(generator).unwrap_or(metadata.source_line);
+                if let Some(location) = Self::stream_debug_location(stream) {
+                    return Some((
+                        metadata.function_name.clone(),
+                        location.source_file,
+                        location.source_line,
+                    ));
+                }
                 return Some((
                     metadata.function_name.clone(),
                     metadata.source_file.clone(),
-                    line,
+                    metadata.source_line,
                 ));
             }
         }
@@ -412,6 +536,48 @@ impl VM {
         Self::resume_location_from_frames(k.frames_snapshot.as_ref())
     }
 
+    fn is_internal_source_file(source_file: &str) -> bool {
+        let normalized = source_file.replace('\\', "/").to_lowercase();
+        normalized == "_effect_wrap" || normalized.contains("/doeff/")
+    }
+
+    fn effect_site_from_continuation(k: &Continuation) -> Option<(FrameId, String, String, u32)> {
+        let mut fallback: Option<(FrameId, String, String, u32)> = None;
+
+        for frame in k.frames_snapshot.iter().rev() {
+            if let Frame::Program {
+                stream,
+                metadata: Some(metadata),
+            } = frame
+            {
+                let fallback_candidate = (
+                    metadata.frame_id as FrameId,
+                    metadata.function_name.clone(),
+                    metadata.source_file.clone(),
+                    metadata.source_line,
+                );
+                let candidate = match Self::stream_debug_location(stream) {
+                    Some(location) => (
+                        metadata.frame_id as FrameId,
+                        metadata.function_name.clone(),
+                        location.source_file,
+                        location.source_line,
+                    ),
+                    None => fallback_candidate,
+                };
+
+                if fallback.is_none() {
+                    fallback = Some(candidate.clone());
+                }
+                if !Self::is_internal_source_file(&candidate.2) {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        fallback
+    }
+
     fn maybe_emit_frame_entered(&mut self, metadata: &CallMetadata) {
         self.capture_log.push(CaptureEvent::FrameEntered {
             frame_id: metadata.frame_id as FrameId,
@@ -419,6 +585,7 @@ impl VM {
             source_file: metadata.source_file.clone(),
             source_line: metadata.source_line,
             args_repr: metadata.args_repr.clone(),
+            program_call_repr: Self::program_call_repr(metadata),
         });
     }
 
@@ -428,11 +595,20 @@ impl VM {
         });
     }
 
-    fn maybe_emit_handler_threw_for_dispatch(&mut self, dispatch_id: DispatchId, exc: &PyException) {
-        let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
+    fn maybe_emit_handler_threw_for_dispatch(
+        &mut self,
+        dispatch_id: DispatchId,
+        exc: &PyException,
+    ) {
+        let Some((handler_index, handler_name)) =
+            self.current_handler_identity_for_dispatch(dispatch_id)
+        else {
+            return;
+        };
         self.capture_log.push(CaptureEvent::HandlerCompleted {
             dispatch_id,
             handler_name,
+            handler_index,
             action: HandlerAction::Threw {
                 exception_repr: Self::exception_repr(exc),
             },
@@ -484,6 +660,7 @@ impl VM {
                     source_file,
                     source_line,
                     args_repr,
+                    program_call_repr: _,
                 } => {
                     trace.push(TraceEntry::Frame {
                         frame_id: *frame_id,
@@ -497,10 +674,16 @@ impl VM {
                 CaptureEvent::DispatchStarted {
                     dispatch_id,
                     effect_repr,
+                    creation_site: _,
                     handler_name,
                     handler_kind,
                     handler_source_file,
                     handler_source_line,
+                    handler_chain_snapshot: _,
+                    effect_frame_id: _,
+                    effect_function_name: _,
+                    effect_source_file: _,
+                    effect_source_line: _,
                 } => {
                     let pos = trace.len();
                     dispatch_positions.insert(*dispatch_id, pos);
@@ -525,7 +708,9 @@ impl VM {
                 CaptureEvent::Delegated {
                     dispatch_id,
                     from_handler_name: _,
+                    from_handler_index: _,
                     to_handler_name,
+                    to_handler_index: _,
                     to_handler_kind,
                     to_handler_source_file,
                     to_handler_source_line,
@@ -556,6 +741,7 @@ impl VM {
                 CaptureEvent::HandlerCompleted {
                     dispatch_id,
                     handler_name: _,
+                    handler_index: _,
                     action,
                 } => {
                     if let Some(&pos) = dispatch_positions.get(dispatch_id) {
@@ -628,17 +814,17 @@ impl VM {
                 break;
             };
             for frame in &seg.frames {
-                let Frame::PythonGenerator {
-                    generator,
+                let Frame::Program {
+                    stream,
                     metadata: Some(metadata),
-                    ..
                 } = frame
                 else {
                     continue;
                 };
 
-                let current_line =
-                    Self::generator_current_line(generator).unwrap_or(metadata.source_line);
+                let current_line = Self::stream_debug_location(stream)
+                    .map(|location| location.source_line)
+                    .unwrap_or(metadata.source_line);
                 let last_line = trace.iter().rev().find_map(|entry| match entry {
                     TraceEntry::Frame {
                         frame_id,
@@ -674,20 +860,13 @@ impl VM {
                 continue;
             }
 
-            let handler_info = ctx
+            let Some((handler_name, handler_kind, handler_source_file, handler_source_line)) = ctx
                 .handler_chain
                 .get(ctx.handler_idx)
                 .and_then(|marker| self.marker_handler_trace_info(*marker))
-                .unwrap_or_else(|| {
-                    (
-                        "<handler>".to_string(),
-                        HandlerKind::RustBuiltin,
-                        None,
-                        None,
-                    )
-                });
-            let (handler_name, handler_kind, handler_source_file, handler_source_line) =
-                handler_info;
+            else {
+                continue;
+            };
 
             trace.push(TraceEntry::Dispatch {
                 dispatch_id: ctx.dispatch_id,
@@ -707,6 +886,650 @@ impl VM {
                 exception_repr: None,
             });
         }
+    }
+
+    fn exception_site(exception: &PyException) -> ActiveChainEntry {
+        match exception {
+            PyException::Materialized {
+                exc_type: _exc_type,
+                exc_value,
+                exc_tb,
+            } => Python::attach(|py| {
+                let exc_value_bound = exc_value.bind(py);
+
+                let exception_type = exc_value_bound
+                    .get_type()
+                    .name()
+                    .ok()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| "Exception".to_string());
+
+                let message = exc_value_bound
+                    .str()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+
+                let mut function_name = "<unknown>".to_string();
+                let mut source_file = "<unknown>".to_string();
+                let mut source_line = 0u32;
+
+                let mut tb = exc_tb
+                    .as_ref()
+                    .map(|tb| tb.bind(py).clone().into_any())
+                    .or_else(|| exc_value_bound.getattr("__traceback__").ok());
+
+                while let Some(tb_obj) = tb {
+                    let next = tb_obj.getattr("tb_next").ok();
+                    let has_next = next.as_ref().is_some_and(|n| !n.is_none());
+                    if has_next {
+                        tb = next;
+                        continue;
+                    }
+
+                    source_line = tb_obj
+                        .getattr("tb_lineno")
+                        .ok()
+                        .and_then(|v| v.extract::<u32>().ok())
+                        .unwrap_or(0);
+
+                    if let Ok(frame) = tb_obj.getattr("tb_frame") {
+                        if let Ok(code) = frame.getattr("f_code") {
+                            function_name = code
+                                .getattr("co_name")
+                                .ok()
+                                .and_then(|v| v.extract::<String>().ok())
+                                .unwrap_or_else(|| "<unknown>".to_string());
+                            source_file = code
+                                .getattr("co_filename")
+                                .ok()
+                                .and_then(|v| v.extract::<String>().ok())
+                                .unwrap_or_else(|| "<unknown>".to_string());
+                        }
+                    }
+                    break;
+                }
+
+                ActiveChainEntry::ExceptionSite {
+                    function_name,
+                    source_file,
+                    source_line,
+                    exception_type,
+                    message,
+                }
+            }),
+            PyException::RuntimeError { message } => ActiveChainEntry::ExceptionSite {
+                function_name: "<runtime>".to_string(),
+                source_file: "<runtime>".to_string(),
+                source_line: 0,
+                exception_type: "RuntimeError".to_string(),
+                message: message.clone(),
+            },
+            PyException::TypeError { message } => ActiveChainEntry::ExceptionSite {
+                function_name: "<runtime>".to_string(),
+                source_file: "<runtime>".to_string(),
+                source_line: 0,
+                exception_type: "TypeError".to_string(),
+                message: message.clone(),
+            },
+        }
+    }
+
+    fn spawn_boundaries_from_exception(exception: &PyException) -> Vec<SpawnBoundaryDescriptor> {
+        crate::scheduler::take_exception_spawn_boundaries(exception)
+            .into_iter()
+            .map(|boundary| SpawnBoundaryDescriptor {
+                boundary: ActiveChainEntry::SpawnBoundary {
+                    task_id: boundary.task_id,
+                    parent_task: boundary.parent_task,
+                    spawn_site: boundary.spawn_site,
+                },
+                spawn_dispatch_id: boundary.insertion_dispatch_id,
+            })
+            .collect()
+    }
+
+    fn insert_spawn_boundaries(
+        active_chain: &mut Vec<ActiveChainEntry>,
+        entry_dispatch_ids: &mut Vec<Option<DispatchId>>,
+        boundaries: Vec<SpawnBoundaryDescriptor>,
+    ) {
+        if boundaries.is_empty() {
+            return;
+        }
+
+        let mut inserts: HashMap<usize, Vec<ActiveChainEntry>> = HashMap::new();
+        let mut unresolved = Vec::new();
+
+        for boundary in boundaries {
+            if let Some(dispatch_id) = boundary.spawn_dispatch_id {
+                if let Some(index) = entry_dispatch_ids
+                    .iter()
+                    .position(|entry_dispatch_id| *entry_dispatch_id == Some(dispatch_id))
+                {
+                    inserts
+                        .entry(index + 1)
+                        .or_default()
+                        .push(boundary.boundary);
+                    continue;
+                }
+            }
+            unresolved.push(boundary.boundary);
+        }
+
+        if !unresolved.is_empty() {
+            inserts
+                .entry(active_chain.len())
+                .or_default()
+                .extend(unresolved);
+        }
+
+        let active_len = active_chain.len();
+        let inserted_count: usize = inserts.values().map(Vec::len).sum();
+        let mut reordered = Vec::with_capacity(active_len + inserted_count);
+        let mut reordered_dispatch_ids = Vec::with_capacity(active_len + inserted_count);
+        let original_dispatch_ids = std::mem::take(entry_dispatch_ids);
+        for (index, entry) in active_chain.drain(..).enumerate() {
+            if let Some(mut injected) = inserts.remove(&index) {
+                let injected_len = injected.len();
+                reordered.append(&mut injected);
+                reordered_dispatch_ids.extend(std::iter::repeat(None).take(injected_len));
+            }
+            let dispatch_id = original_dispatch_ids.get(index).copied().flatten();
+            reordered.push(entry);
+            reordered_dispatch_ids.push(dispatch_id);
+        }
+        if let Some(mut injected) = inserts.remove(&active_len) {
+            let injected_len = injected.len();
+            reordered.append(&mut injected);
+            reordered_dispatch_ids.extend(std::iter::repeat(None).take(injected_len));
+        }
+        *active_chain = reordered;
+        *entry_dispatch_ids = reordered_dispatch_ids;
+    }
+
+    pub fn assemble_active_chain(&self, exception: &PyException) -> Vec<ActiveChainEntry> {
+        #[derive(Clone)]
+        struct FrameState {
+            frame_id: FrameId,
+            function_name: String,
+            source_file: String,
+            source_line: u32,
+            sub_program_repr: String,
+        }
+
+        #[derive(Clone)]
+        struct DispatchState {
+            function_name: Option<String>,
+            source_file: Option<String>,
+            source_line: Option<u32>,
+            effect_repr: String,
+            handler_stack: Vec<HandlerDispatchEntry>,
+            result: EffectResult,
+        }
+
+        let mut frame_stack: Vec<FrameState> = Vec::new();
+        let mut dispatches: HashMap<DispatchId, DispatchState> = HashMap::new();
+        let mut frame_dispatch: HashMap<FrameId, DispatchId> = HashMap::new();
+        let mut transfer_targets: HashMap<DispatchId, String> = HashMap::new();
+
+        for event in &self.capture_log {
+            match event {
+                CaptureEvent::FrameEntered {
+                    frame_id,
+                    function_name,
+                    source_file,
+                    source_line,
+                    args_repr: _,
+                    program_call_repr,
+                } => {
+                    frame_stack.push(FrameState {
+                        frame_id: *frame_id,
+                        function_name: function_name.clone(),
+                        source_file: source_file.clone(),
+                        source_line: *source_line,
+                        sub_program_repr: program_call_repr
+                            .clone()
+                            .unwrap_or_else(|| "<sub_program>".to_string()),
+                    });
+                }
+                CaptureEvent::FrameExited { .. } => {
+                    let _ = frame_stack.pop();
+                }
+                CaptureEvent::DispatchStarted {
+                    dispatch_id,
+                    effect_repr,
+                    creation_site: _,
+                    handler_name: _,
+                    handler_kind: _,
+                    handler_source_file: _,
+                    handler_source_line: _,
+                    handler_chain_snapshot,
+                    effect_frame_id,
+                    effect_function_name,
+                    effect_source_file,
+                    effect_source_line,
+                } => {
+                    let handler_stack: Vec<HandlerDispatchEntry> = handler_chain_snapshot
+                        .iter()
+                        .enumerate()
+                        .map(|(index, snapshot)| HandlerDispatchEntry {
+                            handler_name: snapshot.handler_name.clone(),
+                            handler_kind: snapshot.handler_kind.clone(),
+                            source_file: snapshot.source_file.clone(),
+                            source_line: snapshot.source_line,
+                            status: if index == 0 {
+                                HandlerStatus::Active
+                            } else {
+                                HandlerStatus::Pending
+                            },
+                        })
+                        .collect();
+
+                    if let Some(frame_id) = effect_frame_id {
+                        frame_dispatch.insert(*frame_id, *dispatch_id);
+                        if let Some(frame) =
+                            frame_stack.iter_mut().find(|f| f.frame_id == *frame_id)
+                        {
+                            if let Some(line) = effect_source_line {
+                                frame.source_line = *line;
+                            }
+                        }
+                    }
+
+                    dispatches.insert(
+                        *dispatch_id,
+                        DispatchState {
+                            function_name: effect_function_name.clone(),
+                            source_file: effect_source_file.clone(),
+                            source_line: *effect_source_line,
+                            effect_repr: effect_repr.clone(),
+                            handler_stack,
+                            result: EffectResult::Active,
+                        },
+                    );
+                }
+                CaptureEvent::Delegated {
+                    dispatch_id,
+                    from_handler_name: _,
+                    from_handler_index,
+                    to_handler_name: _,
+                    to_handler_index,
+                    to_handler_kind: _,
+                    to_handler_source_file: _,
+                    to_handler_source_line: _,
+                } => {
+                    if let Some(dispatch) = dispatches.get_mut(dispatch_id) {
+                        if let Some(from_entry) =
+                            dispatch.handler_stack.get_mut(*from_handler_index)
+                        {
+                            if from_entry.status == HandlerStatus::Active {
+                                from_entry.status = HandlerStatus::Delegated;
+                            }
+                        }
+
+                        if let Some(to_entry) = dispatch.handler_stack.get_mut(*to_handler_index) {
+                            to_entry.status = HandlerStatus::Active;
+                        }
+                    }
+                }
+                CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name,
+                    handler_index,
+                    action,
+                } => {
+                    if let Some(dispatch) = dispatches.get_mut(dispatch_id) {
+                        let status = match action {
+                            HandlerAction::Resumed { .. } => HandlerStatus::Resumed,
+                            HandlerAction::Transferred { .. } => HandlerStatus::Transferred,
+                            HandlerAction::Returned { .. } => HandlerStatus::Returned,
+                            HandlerAction::Threw { .. } => HandlerStatus::Threw,
+                        };
+
+                        if let Some(target) = dispatch.handler_stack.get_mut(*handler_index) {
+                            target.status = status;
+                        }
+
+                        dispatch.result = match action {
+                            HandlerAction::Resumed { value_repr }
+                            | HandlerAction::Returned { value_repr } => EffectResult::Resumed {
+                                value_repr: value_repr
+                                    .clone()
+                                    .unwrap_or_else(|| "None".to_string()),
+                            },
+                            HandlerAction::Transferred { value_repr } => {
+                                EffectResult::Transferred {
+                                    handler_name: handler_name.clone(),
+                                    target_repr: transfer_targets
+                                        .get(dispatch_id)
+                                        .cloned()
+                                        .unwrap_or_else(|| {
+                                            value_repr
+                                                .clone()
+                                                .unwrap_or_else(|| "<target>".to_string())
+                                        }),
+                                }
+                            }
+                            HandlerAction::Threw { exception_repr } => EffectResult::Threw {
+                                handler_name: handler_name.clone(),
+                                exception_repr: exception_repr
+                                    .clone()
+                                    .unwrap_or_else(|| "<exception>".to_string()),
+                            },
+                        };
+                    }
+                }
+                CaptureEvent::Resumed { .. } => {}
+                CaptureEvent::Transferred {
+                    dispatch_id,
+                    resumed_function_name,
+                    source_file,
+                    source_line,
+                    ..
+                } => {
+                    transfer_targets.insert(
+                        *dispatch_id,
+                        format!("{resumed_function_name}() {source_file}:{source_line}"),
+                    );
+                }
+            }
+        }
+
+        let is_visible_effect = |_result: &EffectResult| true;
+
+        // Merge live frame line numbers for currently suspended generators.
+        let mut seg_chain = Vec::new();
+        let mut seg_id = self.current_segment;
+        while let Some(id) = seg_id {
+            seg_chain.push(id);
+            seg_id = self.segments.get(id).and_then(|seg| seg.caller);
+        }
+        seg_chain.reverse();
+
+        for id in seg_chain {
+            let Some(seg) = self.segments.get(id) else {
+                continue;
+            };
+            for frame in &seg.frames {
+                let Frame::Program {
+                    stream,
+                    metadata: Some(metadata),
+                } = frame
+                else {
+                    continue;
+                };
+
+                let line = Self::stream_debug_location(stream)
+                    .map(|location| location.source_line)
+                    .unwrap_or(metadata.source_line);
+                if let Some(existing) = frame_stack
+                    .iter_mut()
+                    .find(|entry| entry.frame_id == metadata.frame_id)
+                {
+                    existing.source_line = line;
+                    if existing.sub_program_repr == "<sub_program>" {
+                        if let Some(repr) = Self::program_call_repr(metadata) {
+                            existing.sub_program_repr = repr;
+                        }
+                    }
+                } else {
+                    frame_stack.push(FrameState {
+                        frame_id: metadata.frame_id as FrameId,
+                        function_name: metadata.function_name.clone(),
+                        source_file: metadata.source_file.clone(),
+                        source_line: line,
+                        sub_program_repr: Self::program_call_repr(metadata)
+                            .unwrap_or_else(|| "<sub_program>".to_string()),
+                    });
+                }
+            }
+        }
+
+        // Refresh frame lines from the latest visible user continuation snapshot.
+        // This keeps program-yield lines precise even when generators unwind on throw.
+        if let Some(dispatch_ctx) = self.dispatch_stack.iter().rev().find(|ctx| {
+            dispatches
+                .get(&ctx.dispatch_id)
+                .is_some_and(|dispatch| is_visible_effect(&dispatch.result))
+        }) {
+            for frame in dispatch_ctx.k_user.frames_snapshot.iter() {
+                let Frame::Program {
+                    stream,
+                    metadata: Some(metadata),
+                } = frame
+                else {
+                    continue;
+                };
+
+                let line = Self::stream_debug_location(stream)
+                    .map(|location| location.source_line)
+                    .unwrap_or(metadata.source_line);
+                if let Some(existing) = frame_stack
+                    .iter_mut()
+                    .find(|entry| entry.frame_id == metadata.frame_id)
+                {
+                    existing.source_line = line;
+                    if existing.sub_program_repr == "<sub_program>" {
+                        if let Some(repr) = Self::program_call_repr(metadata) {
+                            existing.sub_program_repr = repr;
+                        }
+                    }
+                } else {
+                    frame_stack.push(FrameState {
+                        frame_id: metadata.frame_id as FrameId,
+                        function_name: metadata.function_name.clone(),
+                        source_file: metadata.source_file.clone(),
+                        source_line: line,
+                        sub_program_repr: Self::program_call_repr(metadata)
+                            .unwrap_or_else(|| "<sub_program>".to_string()),
+                    });
+                }
+            }
+        }
+
+        let mut active_chain = Vec::new();
+        let mut entry_dispatch_ids: Vec<Option<DispatchId>> = Vec::new();
+        for (index, frame) in frame_stack.iter().enumerate() {
+            let dispatch_id = frame_dispatch.get(&frame.frame_id).copied();
+            let dispatch = dispatch_id.and_then(|id| dispatches.get(&id));
+
+            if let Some(dispatch) = dispatch {
+                if is_visible_effect(&dispatch.result) {
+                    active_chain.push(ActiveChainEntry::EffectYield {
+                        function_name: dispatch
+                            .function_name
+                            .clone()
+                            .unwrap_or_else(|| frame.function_name.clone()),
+                        source_file: dispatch
+                            .source_file
+                            .clone()
+                            .unwrap_or_else(|| frame.source_file.clone()),
+                        source_line: dispatch.source_line.unwrap_or(frame.source_line),
+                        effect_repr: dispatch.effect_repr.clone(),
+                        handler_stack: dispatch.handler_stack.clone(),
+                        result: dispatch.result.clone(),
+                    });
+                    entry_dispatch_ids.push(dispatch_id);
+                    continue;
+                }
+            }
+
+            let inferred_sub_program = frame_stack
+                .get(index + 1)
+                .map(|next| format!("{}()", next.function_name));
+            let sub_program_repr = if frame.sub_program_repr == "<sub_program>" {
+                inferred_sub_program.unwrap_or_else(|| frame.sub_program_repr.clone())
+            } else {
+                frame.sub_program_repr.clone()
+            };
+
+            active_chain.push(ActiveChainEntry::ProgramYield {
+                function_name: frame.function_name.clone(),
+                source_file: frame.source_file.clone(),
+                source_line: frame.source_line,
+                sub_program_repr,
+            });
+            entry_dispatch_ids.push(None);
+        }
+
+        if active_chain.is_empty() {
+            let fallback_dispatch_id = self
+                .dispatch_stack
+                .iter()
+                .rev()
+                .find_map(|ctx| {
+                    dispatches
+                        .get(&ctx.dispatch_id)
+                        .filter(|dispatch| matches!(dispatch.result, EffectResult::Threw { .. }))
+                        .map(|_| ctx.dispatch_id)
+                })
+                .or_else(|| {
+                    self.dispatch_stack.iter().rev().find_map(|ctx| {
+                        dispatches
+                            .get(&ctx.dispatch_id)
+                            .filter(|dispatch| is_visible_effect(&dispatch.result))
+                            .map(|_| ctx.dispatch_id)
+                    })
+                });
+
+            if let Some(dispatch_id) = fallback_dispatch_id {
+                if let Some(dispatch_ctx) = self
+                    .dispatch_stack
+                    .iter()
+                    .rev()
+                    .find(|ctx| ctx.dispatch_id == dispatch_id)
+                {
+                    let snapshot_frames: Vec<FrameState> = dispatch_ctx
+                        .k_user
+                        .frames_snapshot
+                        .iter()
+                        .filter_map(|frame| {
+                            let Frame::Program {
+                                stream,
+                                metadata: Some(metadata),
+                            } = frame
+                            else {
+                                return None;
+                            };
+
+                            let line = Self::stream_debug_location(stream)
+                                .map(|location| location.source_line)
+                                .unwrap_or(metadata.source_line);
+                            Some(FrameState {
+                                frame_id: metadata.frame_id as FrameId,
+                                function_name: metadata.function_name.clone(),
+                                source_file: metadata.source_file.clone(),
+                                source_line: line,
+                                sub_program_repr: Self::program_call_repr(metadata)
+                                    .unwrap_or_else(|| "<sub_program>".to_string()),
+                            })
+                        })
+                        .collect();
+
+                    if let Some(dispatch) = dispatches.get(&dispatch_id) {
+                        if snapshot_frames.is_empty() {
+                            if is_visible_effect(&dispatch.result) {
+                                active_chain.push(ActiveChainEntry::EffectYield {
+                                    function_name: dispatch
+                                        .function_name
+                                        .clone()
+                                        .unwrap_or_else(|| "<unknown>".to_string()),
+                                    source_file: dispatch
+                                        .source_file
+                                        .clone()
+                                        .unwrap_or_else(|| "<unknown>".to_string()),
+                                    source_line: dispatch.source_line.unwrap_or(0),
+                                    effect_repr: dispatch.effect_repr.clone(),
+                                    handler_stack: dispatch.handler_stack.clone(),
+                                    result: dispatch.result.clone(),
+                                });
+                                entry_dispatch_ids.push(Some(dispatch_id));
+                            }
+                        } else {
+                            let last_index = snapshot_frames.len() - 1;
+                            for (index, frame) in snapshot_frames.iter().enumerate() {
+                                if index == last_index && is_visible_effect(&dispatch.result) {
+                                    active_chain.push(ActiveChainEntry::EffectYield {
+                                        function_name: dispatch
+                                            .function_name
+                                            .clone()
+                                            .unwrap_or_else(|| frame.function_name.clone()),
+                                        source_file: dispatch
+                                            .source_file
+                                            .clone()
+                                            .unwrap_or_else(|| frame.source_file.clone()),
+                                        source_line: dispatch
+                                            .source_line
+                                            .unwrap_or(frame.source_line),
+                                        effect_repr: dispatch.effect_repr.clone(),
+                                        handler_stack: dispatch.handler_stack.clone(),
+                                        result: dispatch.result.clone(),
+                                    });
+                                    entry_dispatch_ids.push(Some(dispatch_id));
+                                    continue;
+                                }
+
+                                let inferred_sub_program = snapshot_frames
+                                    .get(index + 1)
+                                    .map(|next| format!("{}()", next.function_name));
+                                let sub_program_repr = if frame.sub_program_repr == "<sub_program>"
+                                {
+                                    inferred_sub_program
+                                        .unwrap_or_else(|| frame.sub_program_repr.clone())
+                                } else {
+                                    frame.sub_program_repr.clone()
+                                };
+
+                                active_chain.push(ActiveChainEntry::ProgramYield {
+                                    function_name: frame.function_name.clone(),
+                                    source_file: frame.source_file.clone(),
+                                    source_line: frame.source_line,
+                                    sub_program_repr,
+                                });
+                                entry_dispatch_ids.push(None);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let spawn_boundaries = Self::spawn_boundaries_from_exception(exception);
+        let has_spawn_boundaries = !spawn_boundaries.is_empty();
+        Self::insert_spawn_boundaries(&mut active_chain, &mut entry_dispatch_ids, spawn_boundaries);
+        let exception_site = Self::exception_site(exception);
+        let exception_function_name = match &exception_site {
+            ActiveChainEntry::ExceptionSite { function_name, .. } => function_name.as_str(),
+            _ => "",
+        };
+
+        let exception_function_is_visible = active_chain.iter().any(|entry| match entry {
+            ActiveChainEntry::ProgramYield { function_name, .. }
+            | ActiveChainEntry::EffectYield { function_name, .. }
+            | ActiveChainEntry::ExceptionSite { function_name, .. } => {
+                function_name == exception_function_name
+            }
+            ActiveChainEntry::SpawnBoundary { .. } => false,
+        });
+
+        let suppress_exception_site = !has_spawn_boundaries
+            && active_chain
+                .iter()
+                .rev()
+                .find(|entry| !matches!(entry, ActiveChainEntry::SpawnBoundary { .. }))
+                .is_some_and(|entry| {
+                    matches!(
+                        entry,
+                        ActiveChainEntry::EffectYield {
+                            result: EffectResult::Threw { .. },
+                            ..
+                        }
+                    ) && !exception_function_is_visible
+                });
+        if !suppress_exception_site {
+            active_chain.push(exception_site);
+        }
+        active_chain
     }
 
     pub fn step(&mut self) -> StepEvent {
@@ -742,26 +1565,26 @@ impl VM {
             Mode::Deliver(_) => "Deliver",
             Mode::Throw(_) => "Throw",
             Mode::HandleYield(y) => match y {
-                Yielded::DoCtrl(p) => match p {
-                    DoCtrl::Pure { .. } => "HandleYield(Pure)",
-                    DoCtrl::Map { .. } => "HandleYield(Map)",
-                    DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
-                    DoCtrl::Perform { .. } => "HandleYield(Perform)",
-                    DoCtrl::Resume { .. } => "HandleYield(Resume)",
-                    DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
-                    DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
-                    DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
-                    DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
-                    DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
-                    DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
-                    DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
-                    DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
-                    DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-                    DoCtrl::Call { .. } => "HandleYield(Call)",
-                    DoCtrl::Eval { .. } => "HandleYield(Eval)",
-                    DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
-                    DoCtrl::GetTrace => "HandleYield(GetTrace)",
-                },
+                DoCtrl::Pure { .. } => "HandleYield(Pure)",
+                DoCtrl::Map { .. } => "HandleYield(Map)",
+                DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
+                DoCtrl::Perform { .. } => "HandleYield(Perform)",
+                DoCtrl::Resume { .. } => "HandleYield(Resume)",
+                DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
+                DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
+                DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
+                DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
+                DoCtrl::Pass { .. } => "HandleYield(Pass)",
+                DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
+                DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+                DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
+                DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
+                DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
+                DoCtrl::Apply { .. } => "HandleYield(Apply)",
+                DoCtrl::Expand { .. } => "HandleYield(Expand)",
+                DoCtrl::Eval { .. } => "HandleYield(Eval)",
+                DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
+                DoCtrl::GetTrace => "HandleYield(GetTrace)",
             },
             Mode::Return(_) => "Return",
         }
@@ -771,10 +1594,10 @@ impl VM {
         self.pending_python
             .as_ref()
             .map(|p| match p {
-                PendingPython::StartProgramFrame { .. } => "StartProgramFrame",
-                PendingPython::CallFuncReturn => "CallFuncReturn",
+                PendingPython::EvalExpr { .. } => "EvalExpr",
+                PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
+                PendingPython::ExpandReturn { .. } => "ExpandReturn",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
-                PendingPython::CallPythonHandler { .. } => "CallPythonHandler",
                 PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
                 PendingPython::AsyncEscape => "AsyncEscape",
             })
@@ -788,9 +1611,8 @@ impl VM {
             StepEvent::Error(e) => format!("Error({e})"),
             StepEvent::NeedsPython(call) => {
                 let call_kind = match call {
-                    PythonCall::StartProgram { .. } => "StartProgram",
+                    PythonCall::EvalExpr { .. } => "EvalExpr",
                     PythonCall::CallFunc { .. } => "CallFunc",
-                    PythonCall::CallHandler { .. } => "CallHandler",
                     PythonCall::GenNext => "GenNext",
                     PythonCall::GenSend { .. } => "GenSend",
                     PythonCall::GenThrow { .. } => "GenThrow",
@@ -832,30 +1654,26 @@ impl VM {
             Mode::Deliver(_) => "Deliver",
             Mode::Throw(_) => "Throw",
             Mode::HandleYield(y) => match y {
-                Yielded::DoCtrl(p) => match p {
-                    DoCtrl::Pure { .. } => "HandleYield(Pure)",
-                    DoCtrl::Map { .. } => "HandleYield(Map)",
-                    DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
-                    DoCtrl::Perform { .. } => "HandleYield(Perform)",
-                    DoCtrl::Resume { .. } => "HandleYield(Resume)",
-                    DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
-                    DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
-                    DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
-                    DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
-                    DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
-                    DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
-                    DoCtrl::CreateContinuation { .. } => {
-                        "HandleYield(CreateContinuation)"
-                    }
-                    DoCtrl::ResumeContinuation { .. } => {
-                        "HandleYield(ResumeContinuation)"
-                    }
-                    DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-                    DoCtrl::Call { .. } => "HandleYield(Call)",
-                    DoCtrl::Eval { .. } => "HandleYield(Eval)",
-                    DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
-                    DoCtrl::GetTrace => "HandleYield(GetTrace)",
-                },
+                DoCtrl::Pure { .. } => "HandleYield(Pure)",
+                DoCtrl::Map { .. } => "HandleYield(Map)",
+                DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
+                DoCtrl::Perform { .. } => "HandleYield(Perform)",
+                DoCtrl::Resume { .. } => "HandleYield(Resume)",
+                DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
+                DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
+                DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
+                DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
+                DoCtrl::Pass { .. } => "HandleYield(Pass)",
+                DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
+                DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+                DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
+                DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
+                DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
+                DoCtrl::Apply { .. } => "HandleYield(Apply)",
+                DoCtrl::Expand { .. } => "HandleYield(Expand)",
+                DoCtrl::Eval { .. } => "HandleYield(Eval)",
+                DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
+                DoCtrl::GetTrace => "HandleYield(GetTrace)",
             },
             Mode::Return(_) => "Return",
         };
@@ -870,10 +1688,10 @@ impl VM {
             .pending_python
             .as_ref()
             .map(|p| match p {
-                PendingPython::StartProgramFrame { .. } => "StartProgramFrame",
-                PendingPython::CallFuncReturn => "CallFuncReturn",
+                PendingPython::EvalExpr { .. } => "EvalExpr",
+                PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
+                PendingPython::ExpandReturn { .. } => "ExpandReturn",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
-                PendingPython::CallPythonHandler { .. } => "CallPythonHandler",
                 PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
                 PendingPython::AsyncEscape => "AsyncEscape",
             })
@@ -893,22 +1711,8 @@ impl VM {
                 for (i, frame) in seg.frames.iter().enumerate() {
                     let frame_kind = match frame {
                         Frame::RustReturn { .. } => "RustReturn",
-                        Frame::RustProgram { .. } => "RustProgram",
-                        Frame::PythonGenerator {
-                            started, metadata, ..
-                        } => {
-                            if *started {
-                                if metadata.is_some() {
-                                    "PythonGenerator(started,meta)"
-                                } else {
-                                    "PythonGenerator(started)"
-                                }
-                            } else if metadata.is_some() {
-                                "PythonGenerator(new,meta)"
-                            } else {
-                                "PythonGenerator(new)"
-                            }
-                        }
+                        Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)",
+                        Frame::Program { .. } => "Program",
                     };
                     eprintln!("  frame[{}]: {}", i, frame_kind);
                 }
@@ -926,9 +1730,8 @@ impl VM {
             }
             StepEvent::NeedsPython(call) => {
                 let call_kind = match call {
-                    PythonCall::StartProgram { .. } => "StartProgram",
+                    PythonCall::EvalExpr { .. } => "EvalExpr",
                     PythonCall::CallFunc { .. } => "CallFunc",
-                    PythonCall::CallHandler { .. } => "CallHandler",
                     PythonCall::GenNext => "GenNext",
                     PythonCall::GenSend { .. } => "GenSend",
                     PythonCall::GenThrow { .. } => "GenThrow",
@@ -973,8 +1776,13 @@ impl VM {
                         } else {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_trace();
+                            let active_chain = self.assemble_active_chain(&exc);
                             self.segments.free(seg_id);
-                            return StepEvent::Error(VMError::uncaught_exception(exc, trace));
+                            return StepEvent::Error(VMError::uncaught_exception(
+                                exc,
+                                trace,
+                                active_chain,
+                            ));
                         }
                     }
                     _ => unreachable!(),
@@ -1011,78 +1819,56 @@ impl VM {
                 }
             }
 
-            Frame::RustProgram { program } => {
-                let step = Python::attach(|_py| {
-                    let mut guard = program.lock().expect("Rust program lock poisoned");
+            Frame::Program { stream, metadata } => {
+                let step = {
+                    let mut guard = stream.lock().expect("ASTStream lock poisoned");
                     match mode {
                         Mode::Deliver(value) => guard.resume(value, &mut self.rust_store),
                         Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store),
                         _ => unreachable!(),
                     }
-                });
-                self.apply_rust_program_step(step, program)
-            }
-
-            Frame::PythonGenerator {
-                generator,
-                started,
-                metadata,
-            } => {
-                // D1 Phase 2: generator + metadata move into PendingPython (no clone).
-                // Driver (pyvm.rs) reads gen from pending_python with GIL held.
-                self.pending_python = Some(PendingPython::StepUserGenerator {
-                    generator,
-                    metadata,
-                });
-
-                match mode {
-                    Mode::Deliver(value) => {
-                        if started {
-                            StepEvent::NeedsPython(PythonCall::GenSend { value })
-                        } else {
-                            StepEvent::NeedsPython(PythonCall::GenNext)
-                        }
-                    }
-                    Mode::Throw(exc) => StepEvent::NeedsPython(PythonCall::GenThrow {
-                        exc,
-                    }),
-                    _ => unreachable!(),
-                }
+                };
+                self.apply_stream_step(step, stream, metadata)
             }
         }
     }
 
-    fn apply_rust_program_step(
+    fn apply_stream_step(
         &mut self,
-        step: crate::handler::RustProgramStep,
-        program: crate::handler::RustProgramRef,
+        step: ASTStreamStep,
+        stream: ASTStreamRef,
+        metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        use crate::handler::RustProgramStep;
         match step {
-            RustProgramStep::Yield(yielded) => {
-                // Terminal DoCtrl variants (Resume, Transfer, TransferThrow, Delegate) transfer control
+            ASTStreamStep::Yield(yielded) => {
+                // Terminal DoCtrl variants (Resume, Transfer, TransferThrow, Delegate, Pass)
+                // transfer control
                 // elsewhere — the handler is done and no value flows back. Do NOT re-push
-                // the RustProgram frame for these. Non-terminal variants (Eval, GetHandlers,
-                // GetCallStack) expect a result to be delivered back to this handler.
+                // the Program frame for these. Non-terminal variants (Eval, GetHandlers,
+                // GetCallStack) expect a result to be delivered back to this stream.
                 let is_terminal = matches!(
                     &yielded,
-                    Yielded::DoCtrl(DoCtrl::Resume { .. })
-                        | Yielded::DoCtrl(DoCtrl::Transfer { .. })
-                        | Yielded::DoCtrl(DoCtrl::TransferThrow { .. })
-                        | Yielded::DoCtrl(DoCtrl::Delegate { .. })
+                    DoCtrl::Resume { .. }
+                        | DoCtrl::Transfer { .. }
+                        | DoCtrl::TransferThrow { .. }
+                        | DoCtrl::Delegate { .. }
+                        | DoCtrl::Pass { .. }
                 );
                 if !is_terminal {
                     if let Some(seg) = self.current_segment_mut() {
-                        seg.push_frame(Frame::RustProgram { program });
+                        seg.push_frame(Frame::Program { stream, metadata });
                     }
                 }
                 self.mode = Mode::HandleYield(yielded);
                 StepEvent::Continue
             }
-            RustProgramStep::Return(value) => {
+            ASTStreamStep::Return(value) => {
+                if let Some(ref m) = metadata {
+                    self.maybe_emit_frame_exited(m);
+                }
                 self.handle_handler_return(value)
             }
-            RustProgramStep::Throw(exc) => {
+            ASTStreamStep::Throw(exc) => {
                 if let Some(dispatch_id) = self
                     .dispatch_stack
                     .last()
@@ -1095,28 +1881,37 @@ impl VM {
                 self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            RustProgramStep::NeedsPython(call) => {
-                if let Some(seg) = self.current_segment_mut() {
-                    seg.push_frame(Frame::RustProgram { program });
+            ASTStreamStep::NeedsPython(call) => {
+                if matches!(
+                    &call,
+                    PythonCall::GenNext | PythonCall::GenSend { .. } | PythonCall::GenThrow { .. }
+                ) {
+                    self.pending_python =
+                        Some(PendingPython::StepUserGenerator { stream, metadata });
+                    return StepEvent::NeedsPython(call);
                 }
-                let top = self.dispatch_stack.last().expect(
-                    "RustProgramContinuation: handler always runs inside dispatch",
-                );
+
+                if let Some(seg) = self.current_segment_mut() {
+                    seg.push_frame(Frame::Program { stream, metadata });
+                }
+                let top = self
+                    .dispatch_stack
+                    .last()
+                    .expect("RustProgramContinuation: handler always runs inside dispatch");
                 let marker = top
                     .handler_chain
                     .get(top.handler_idx)
                     .copied()
                     .unwrap_or_else(Marker::fresh);
                 let k = top.k_user.clone();
-                self.pending_python =
-                    Some(PendingPython::RustProgramContinuation { marker, k });
+                self.pending_python = Some(PendingPython::RustProgramContinuation { marker, k });
                 StepEvent::NeedsPython(call)
             }
         }
     }
 
     fn step_handle_yield(&mut self) -> StepEvent {
-        // Take mode by move — eliminates Yielded clone containing Py<PyAny> values (D1 Phase 1).
+        // Take mode by move — eliminates DoCtrl clone containing Py<PyAny> values (D1 Phase 1).
         let yielded = match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
             Mode::HandleYield(y) => y,
             other => {
@@ -1125,111 +1920,310 @@ impl VM {
             }
         };
 
+        // Spec: Drop completed dispatches before inspecting handler context.
+        self.lazy_pop_completed();
+        use crate::step::DoCtrl;
         match yielded {
-            Yielded::DoCtrl(prim) => {
-                // Spec: Drop completed dispatches before inspecting handler context.
-                self.lazy_pop_completed();
-                use crate::step::DoCtrl;
-                match prim {
-                    DoCtrl::Pure { value } => {
-                        self.mode = Mode::Deliver(value);
-                        StepEvent::Continue
-                    }
-                    DoCtrl::Map { source, mapper } => self.handle_map(source, mapper),
-                    DoCtrl::FlatMap { source, binder } => self.handle_flat_map(source, binder),
-                    DoCtrl::Perform { effect } => match self.start_dispatch(effect) {
-                        Ok(event) => event,
-                        Err(e) => StepEvent::Error(e),
-                    },
-                    DoCtrl::Resume {
-                        continuation,
-                        value,
-                    } => self.handle_resume(continuation, value),
-                    DoCtrl::Transfer {
-                        continuation,
-                        value,
-                    } => self.handle_transfer(continuation, value),
-                    DoCtrl::TransferThrow {
-                        continuation,
-                        exception,
-                    } => self.handle_transfer_throw(continuation, exception),
-                    DoCtrl::WithHandler {
-                        handler,
+            DoCtrl::Pure { value } => {
+                self.mode = Mode::Deliver(value);
+                StepEvent::Continue
+            }
+            DoCtrl::Map {
+                source,
+                mapper,
+                mapper_meta,
+            } => self.handle_map(source, mapper, mapper_meta),
+            DoCtrl::FlatMap {
+                source,
+                binder,
+                binder_meta,
+            } => self.handle_flat_map(source, binder, binder_meta),
+            DoCtrl::Perform { effect } => match self.start_dispatch(effect) {
+                Ok(event) => event,
+                Err(e) => StepEvent::Error(e),
+            },
+            DoCtrl::Resume {
+                continuation,
+                value,
+            } => self.handle_resume(continuation, value),
+            DoCtrl::Transfer {
+                continuation,
+                value,
+            } => self.handle_transfer(continuation, value),
+            DoCtrl::TransferThrow {
+                continuation,
+                exception,
+            } => self.handle_transfer_throw(continuation, exception),
+            DoCtrl::WithHandler {
+                handler,
+                expr,
+                py_identity,
+            } => self.handle_with_handler(handler, expr, py_identity),
+            DoCtrl::Delegate { effect } => self.handle_delegate(effect),
+            DoCtrl::Pass { effect } => self.handle_pass(effect),
+            DoCtrl::GetContinuation => self.handle_get_continuation(),
+            DoCtrl::GetHandlers => self.handle_get_handlers(),
+            DoCtrl::CreateContinuation {
+                expr,
+                handlers,
+                handler_identities,
+            } => self.handle_create_continuation(expr, handlers, handler_identities),
+            DoCtrl::ResumeContinuation {
+                continuation,
+                value,
+            } => self.handle_resume_continuation(continuation, value),
+            DoCtrl::PythonAsyncSyntaxEscape { action } => {
+                self.pending_python = Some(PendingPython::AsyncEscape);
+                StepEvent::NeedsPython(PythonCall::CallAsync {
+                    func: PyShared::new(action),
+                    args: vec![],
+                })
+            }
+            DoCtrl::Apply {
+                f,
+                args,
+                kwargs,
+                metadata,
+            } => {
+                if let CallArg::Expr(expr) = &f {
+                    let expr = expr.clone();
+                    return self.eval_then_reenter_call(
                         expr,
-                        py_identity,
-                    } => {
-                        self.handle_with_handler(handler, expr, py_identity)
-                    }
-                    DoCtrl::Delegate { effect } => self.handle_delegate(effect),
-                    DoCtrl::GetContinuation => self.handle_get_continuation(),
-                    DoCtrl::GetHandlers => self.handle_get_handlers(),
-                    DoCtrl::CreateContinuation {
-                        expr,
-                        handlers,
-                        handler_identities,
-                    } => {
-                        self.handle_create_continuation(expr, handlers, handler_identities)
-                    }
-                    DoCtrl::ResumeContinuation {
-                        continuation,
-                        value,
-                    } => self.handle_resume_continuation(continuation, value),
-                    DoCtrl::PythonAsyncSyntaxEscape { action } => {
-                        self.pending_python = Some(PendingPython::AsyncEscape);
-                        StepEvent::NeedsPython(PythonCall::CallAsync {
-                            func: PyShared::new(action),
-                            args: vec![],
-                        })
-                    }
-                    DoCtrl::Call { f, args, kwargs, metadata } => {
-                        if args.is_empty() && kwargs.is_empty() {
-                            self.pending_python = Some(PendingPython::StartProgramFrame {
-                                metadata: Some(metadata),
-                            });
-                            StepEvent::NeedsPython(PythonCall::StartProgram { program: f })
-                        } else {
-                            self.pending_python = Some(PendingPython::CallFuncReturn);
-                            StepEvent::NeedsPython(PythonCall::CallFunc {
-                                func: f,
+                        Box::new(move |resolved_f, _vm| {
+                            Mode::HandleYield(DoCtrl::Apply {
+                                f: CallArg::Value(resolved_f),
                                 args,
                                 kwargs,
+                                metadata,
                             })
-                        }
-                    }
-                    DoCtrl::Eval {
+                        }),
+                    );
+                }
+
+                if let Some(arg_idx) = args.iter().position(|arg| matches!(arg, CallArg::Expr(_))) {
+                    let expr = match &args[arg_idx] {
+                        CallArg::Expr(expr) => expr.clone(),
+                        CallArg::Value(_) => unreachable!(),
+                    };
+                    return self.eval_then_reenter_call(
                         expr,
-                        handlers,
-                        metadata,
-                    } => {
-                        let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
-                        self.handle_resume_continuation(cont, Value::None)
+                        Box::new(move |resolved_arg, _vm| {
+                            let mut args = args;
+                            args[arg_idx] = CallArg::Value(resolved_arg);
+                            Mode::HandleYield(DoCtrl::Apply {
+                                f,
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
+
+                if let Some(kwargs_idx) = kwargs
+                    .iter()
+                    .position(|(_, value)| matches!(value, CallArg::Expr(_)))
+                {
+                    let expr = match &kwargs[kwargs_idx].1 {
+                        CallArg::Expr(expr) => expr.clone(),
+                        CallArg::Value(_) => unreachable!(),
+                    };
+                    return self.eval_then_reenter_call(
+                        expr,
+                        Box::new(move |resolved_kwarg, _vm| {
+                            let mut kwargs = kwargs;
+                            kwargs[kwargs_idx].1 = CallArg::Value(resolved_kwarg);
+                            Mode::HandleYield(DoCtrl::Apply {
+                                f,
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
+
+                let func = match f {
+                    CallArg::Value(Value::Python(func)) => PyShared::new(func),
+                    CallArg::Value(Value::PythonHandlerCallable(func)) => PyShared::new(func),
+                    CallArg::Value(Value::RustProgramInvocation(invocation)) => {
+                        return self.invoke_rust_program(invocation);
                     }
-                    DoCtrl::GetCallStack => {
-                        let mut stack = Vec::new();
-                        let mut seg_id = self.current_segment;
-                        while let Some(id) = seg_id {
-                            if let Some(seg) = self.segments.get(id) {
-                                for frame in seg.frames.iter().rev() {
-                                    if let Frame::PythonGenerator {
-                                        metadata: Some(m), ..
-                                    } = frame
-                                    {
-                                        stack.push(m.clone());
-                                    }
-                                }
-                                seg_id = seg.caller;
-                            } else {
-                                break;
-                            }
-                        }
-                        self.mode = Mode::Deliver(Value::CallStack(stack));
-                        StepEvent::Continue
+                    CallArg::Value(other) => {
+                        self.mode = Mode::Throw(PyException::type_error(format!(
+                            "DoCtrl::Apply f must be Python callable value, got {:?}",
+                            other
+                        )));
+                        return StepEvent::Continue;
                     }
-                    DoCtrl::GetTrace => {
-                        self.mode = Mode::Deliver(Value::Trace(self.assemble_trace()));
-                        StepEvent::Continue
+                    CallArg::Expr(_) => unreachable!(),
+                };
+
+                let mut value_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    match arg {
+                        CallArg::Value(value) => value_args.push(value),
+                        CallArg::Expr(_) => unreachable!(),
                     }
                 }
+
+                let mut value_kwargs = Vec::with_capacity(kwargs.len());
+                for (key, value) in kwargs {
+                    match value {
+                        CallArg::Value(inner) => value_kwargs.push((key, inner)),
+                        CallArg::Expr(_) => unreachable!(),
+                    }
+                }
+
+                self.pending_python = Some(PendingPython::CallFuncReturn {
+                    metadata: Some(metadata),
+                });
+                StepEvent::NeedsPython(PythonCall::CallFunc {
+                    func,
+                    args: value_args,
+                    kwargs: value_kwargs,
+                })
+            }
+            DoCtrl::Expand {
+                factory,
+                args,
+                kwargs,
+                metadata,
+            } => {
+                if let CallArg::Expr(expr) = &factory {
+                    let expr = expr.clone();
+                    return self.eval_then_reenter_call(
+                        expr,
+                        Box::new(move |resolved_factory, _vm| {
+                            Mode::HandleYield(DoCtrl::Expand {
+                                factory: CallArg::Value(resolved_factory),
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
+
+                if let Some(arg_idx) = args.iter().position(|arg| matches!(arg, CallArg::Expr(_))) {
+                    let expr = match &args[arg_idx] {
+                        CallArg::Expr(expr) => expr.clone(),
+                        CallArg::Value(_) => unreachable!(),
+                    };
+                    return self.eval_then_reenter_call(
+                        expr,
+                        Box::new(move |resolved_arg, _vm| {
+                            let mut args = args;
+                            args[arg_idx] = CallArg::Value(resolved_arg);
+                            Mode::HandleYield(DoCtrl::Expand {
+                                factory,
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
+
+                if let Some(kwargs_idx) = kwargs
+                    .iter()
+                    .position(|(_, value)| matches!(value, CallArg::Expr(_)))
+                {
+                    let expr = match &kwargs[kwargs_idx].1 {
+                        CallArg::Expr(expr) => expr.clone(),
+                        CallArg::Value(_) => unreachable!(),
+                    };
+                    return self.eval_then_reenter_call(
+                        expr,
+                        Box::new(move |resolved_kwarg, _vm| {
+                            let mut kwargs = kwargs;
+                            kwargs[kwargs_idx].1 = CallArg::Value(resolved_kwarg);
+                            Mode::HandleYield(DoCtrl::Expand {
+                                factory,
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
+
+                let (func, handler_return) = match factory {
+                    CallArg::Value(Value::Python(factory)) => (PyShared::new(factory), false),
+                    CallArg::Value(Value::PythonHandlerCallable(factory)) => {
+                        (PyShared::new(factory), true)
+                    }
+                    CallArg::Value(Value::RustProgramInvocation(invocation)) => {
+                        return self.invoke_rust_program(invocation);
+                    }
+                    CallArg::Value(other) => {
+                        self.mode = Mode::Throw(PyException::type_error(format!(
+                            "DoCtrl::Expand factory must be Python callable value, got {:?}",
+                            other
+                        )));
+                        return StepEvent::Continue;
+                    }
+                    CallArg::Expr(_) => unreachable!(),
+                };
+
+                let mut value_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    match arg {
+                        CallArg::Value(value) => value_args.push(value),
+                        CallArg::Expr(_) => unreachable!(),
+                    }
+                }
+
+                let mut value_kwargs = Vec::with_capacity(kwargs.len());
+                for (key, value) in kwargs {
+                    match value {
+                        CallArg::Value(inner) => value_kwargs.push((key, inner)),
+                        CallArg::Expr(_) => unreachable!(),
+                    }
+                }
+
+                self.pending_python = Some(PendingPython::ExpandReturn {
+                    metadata: Some(metadata),
+                    handler_return,
+                });
+                StepEvent::NeedsPython(PythonCall::CallFunc {
+                    func,
+                    args: value_args,
+                    kwargs: value_kwargs,
+                })
+            }
+            DoCtrl::Eval {
+                expr,
+                handlers,
+                metadata,
+            } => {
+                let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
+                self.handle_resume_continuation(cont, Value::None)
+            }
+            DoCtrl::GetCallStack => {
+                let mut stack = Vec::new();
+                let mut seg_id = self.current_segment;
+                while let Some(id) = seg_id {
+                    if let Some(seg) = self.segments.get(id) {
+                        for frame in seg.frames.iter().rev() {
+                            if let Frame::Program {
+                                metadata: Some(m), ..
+                            } = frame
+                            {
+                                stack.push(m.clone());
+                            }
+                        }
+                        seg_id = seg.caller;
+                    } else {
+                        break;
+                    }
+                }
+                self.mode = Mode::Deliver(Value::CallStack(stack));
+                StepEvent::Continue
+            }
+            DoCtrl::GetTrace => {
+                self.mode = Mode::Deliver(Value::Trace(self.assemble_trace()));
+                StepEvent::Continue
             }
         }
     }
@@ -1276,63 +2270,125 @@ impl VM {
         };
 
         match (pending, outcome) {
-            (PendingPython::StartProgramFrame { metadata }, PyCallOutcome::Value(gen_val)) => {
-                match gen_val {
-                    Value::Python(gen) => {
-                        if let Some(ref m) = metadata {
-                            self.maybe_emit_frame_entered(m);
-                        }
-                        if let Some(seg) = self.current_segment_mut() {
-                            seg.push_frame(Frame::PythonGenerator {
-                                generator: PyShared::new(gen),
-                                started: false,
-                                metadata,
-                            });
-                        }
-                        self.mode = Mode::Deliver(Value::Unit);
-                    }
-                    _ => {
-                        self.mode = Mode::Throw(PyException::type_error(
-                            "StartProgram: program did not return a generator",
-                        ));
-                    }
-                }
+            (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenYield(yielded)) => {
+                self.mode = Mode::HandleYield(yielded);
             }
 
-            (PendingPython::StartProgramFrame { .. }, PyCallOutcome::GenError(e)) => {
+            (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
             }
 
-            (PendingPython::CallFuncReturn, PyCallOutcome::Value(value)) => {
+            (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenReturn(value)) => {
                 self.mode = Mode::Deliver(value);
             }
 
-            (PendingPython::CallFuncReturn, PyCallOutcome::GenError(e)) => {
+            (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::Value(value)) => {
+                self.mode = Mode::Deliver(value);
+            }
+
+            (PendingPython::CallFuncReturn { .. }, PyCallOutcome::Value(value)) => {
+                self.mode = Mode::Deliver(value);
+            }
+
+            (PendingPython::CallFuncReturn { .. }, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
             }
 
             (
-                PendingPython::StepUserGenerator {
-                    generator,
+                PendingPython::ExpandReturn {
                     metadata,
+                    handler_return,
                 },
+                PyCallOutcome::Value(value),
+            ) => {
+                if handler_return {
+                    match value {
+                        Value::Python(handler_gen) => {
+                            match Self::extract_doeff_generator(
+                                handler_gen,
+                                metadata,
+                                "ExpandReturn(handler)",
+                            ) {
+                                Ok((stream, metadata)) => {
+                                    let handler_return_cb =
+                                        self.register_callback(Box::new(|value, vm| {
+                                            let _ = vm.handle_handler_return(value);
+                                            std::mem::replace(
+                                                &mut vm.mode,
+                                                Mode::Deliver(Value::Unit),
+                                            )
+                                        }));
+                                    if let Some(seg) = self.current_segment_mut() {
+                                        seg.push_frame(Frame::RustReturn {
+                                            cb: handler_return_cb,
+                                        });
+                                        seg.push_frame(Frame::Program { stream, metadata });
+                                    }
+                                    self.mode = Mode::Deliver(Value::Unit);
+                                }
+                                Err(e) => {
+                                    self.mode = Mode::Throw(e);
+                                }
+                            }
+                        }
+                        other => {
+                            let _ = self.handle_handler_return(other);
+                        }
+                    }
+                } else {
+                    match value {
+                        Value::Python(gen) => {
+                            match Self::extract_doeff_generator(gen, metadata, "ExpandReturn") {
+                                Ok((stream, metadata)) => {
+                                    if let Some(ref m) = metadata {
+                                        self.maybe_emit_frame_entered(m);
+                                    }
+                                    if let Some(seg) = self.current_segment_mut() {
+                                        seg.push_frame(Frame::Program { stream, metadata });
+                                    }
+                                    self.mode = Mode::Deliver(Value::Unit);
+                                }
+                                Err(e) => {
+                                    self.mode = Mode::Throw(e);
+                                }
+                            }
+                        }
+                        other => {
+                            self.mode = Mode::Throw(PyException::type_error(format!(
+                                "ExpandReturn: expected DoeffGenerator, got {other:?}"
+                            )));
+                        }
+                    }
+                }
+            }
+
+            (PendingPython::ExpandReturn { handler_return, .. }, PyCallOutcome::GenError(e)) => {
+                if handler_return {
+                    if let Some(dispatch_id) = self
+                        .dispatch_stack
+                        .last()
+                        .filter(|ctx| !ctx.completed)
+                        .map(|ctx| ctx.dispatch_id)
+                    {
+                        self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
+                        self.mark_dispatch_threw(dispatch_id);
+                    }
+                }
+                self.mode = Mode::Throw(e);
+            }
+
+            (
+                PendingPython::StepUserGenerator { stream, metadata },
                 PyCallOutcome::GenYield(yielded),
             ) => {
                 if let Some(seg) = self.current_segment_mut() {
-                    seg.push_frame(Frame::PythonGenerator {
-                        generator,
-                        started: true,
-                        metadata,
-                    });
+                    seg.push_frame(Frame::Program { stream, metadata });
                 }
                 self.mode = Mode::HandleYield(yielded);
             }
 
             (
-                PendingPython::StepUserGenerator {
-                    metadata,
-                    ..
-                },
+                PendingPython::StepUserGenerator { metadata, .. },
                 PyCallOutcome::GenReturn(value),
             ) => {
                 if let Some(ref m) = metadata {
@@ -1341,54 +2397,21 @@ impl VM {
                 self.mode = Mode::Deliver(value);
             }
 
-            (PendingPython::StepUserGenerator { .. }, PyCallOutcome::GenError(e)) => {
-                if let Some(dispatch_id) = self.current_active_handler_dispatch_id() {
-                    self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
-                    self.mark_dispatch_threw(dispatch_id);
-                }
-                self.mode = Mode::Throw(e);
-            }
-
             (
-                PendingPython::CallPythonHandler {
-                    k_user: _,
-                    effect: _,
+                PendingPython::StepUserGenerator {
+                    stream,
+                    metadata: _,
+                    ..
                 },
-                PyCallOutcome::Value(handler_gen_val),
-            ) => match handler_gen_val {
-                Value::Python(handler_gen) => {
-                    let handler_return_cb = self.register_callback(Box::new(|value, vm| {
-                        let _ = vm.handle_handler_return(value);
-                        std::mem::replace(&mut vm.mode, Mode::Deliver(Value::Unit))
-                    }));
-                    if let Some(seg) = self.current_segment_mut() {
-                        seg.push_frame(Frame::RustReturn {
-                            cb: handler_return_cb,
-                        });
-                        seg.push_frame(Frame::PythonGenerator {
-                            generator: PyShared::new(handler_gen),
-                            started: false,
-                            metadata: None,
-                        });
+                PyCallOutcome::GenError(e),
+            ) => {
+                if let Some(dispatch_id) = self.current_active_handler_dispatch_id() {
+                    if self.dispatch_uses_user_continuation_stream(dispatch_id, &stream) {
+                        self.mark_dispatch_completed(dispatch_id);
+                    } else {
+                        self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
+                        self.mark_dispatch_threw(dispatch_id);
                     }
-                    self.mode = Mode::Deliver(Value::Unit);
-                }
-                _ => {
-                    self.mode = Mode::Throw(PyException::type_error(
-                        "CallPythonHandler: handler did not return a generator",
-                    ));
-                }
-            },
-
-            (PendingPython::CallPythonHandler { .. }, PyCallOutcome::GenError(e)) => {
-                if let Some(dispatch_id) = self
-                    .dispatch_stack
-                    .last()
-                    .filter(|ctx| !ctx.completed)
-                    .map(|ctx| ctx.dispatch_id)
-                {
-                    self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
-                    self.mark_dispatch_threw(dispatch_id);
                 }
                 self.mode = Mode::Throw(e);
             }
@@ -1464,7 +2487,7 @@ impl VM {
             return scope_chain.to_vec();
         };
 
-        if top.completed {
+        if top.completed || self.consumed_cont_ids.contains(&top.k_user.cont_id) {
             return scope_chain.to_vec();
         }
 
@@ -1511,6 +2534,19 @@ impl VM {
         let prompt_seg_id = entry.prompt_seg_id;
         let handler = entry.handler.clone();
         let dispatch_id = DispatchId::fresh();
+        let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
+        for marker in handler_chain.iter().copied() {
+            let Some(entry) = self.handlers.get(&marker) else {
+                continue;
+            };
+            let (name, kind, file, line) = Self::handler_trace_info(&entry.handler);
+            handler_chain_snapshot.push(HandlerSnapshotEntry {
+                handler_name: name,
+                handler_kind: kind,
+                source_file: file,
+                source_line: line,
+            });
+        }
 
         let seg_id = self
             .current_segment
@@ -1537,37 +2573,33 @@ impl VM {
 
         let (handler_name, handler_kind, handler_source_file, handler_source_line) =
             Self::handler_trace_info(&handler);
+        let effect_site = Self::effect_site_from_continuation(&k_user);
         self.capture_log.push(CaptureEvent::DispatchStarted {
             dispatch_id,
             effect_repr: Self::effect_repr(&effect),
+            creation_site: Self::effect_creation_site_from_continuation(&k_user),
             handler_name,
             handler_kind,
             handler_source_file,
             handler_source_line,
+            handler_chain_snapshot,
+            effect_frame_id: effect_site.as_ref().map(|(frame_id, _, _, _)| *frame_id),
+            effect_function_name: effect_site
+                .as_ref()
+                .map(|(_, function_name, _, _)| function_name.clone()),
+            effect_source_file: effect_site
+                .as_ref()
+                .map(|(_, _, source_file, _)| source_file.clone()),
+            effect_source_line: effect_site
+                .as_ref()
+                .map(|(_, _, _, source_line)| *source_line),
         });
 
-        match handler {
-            Handler::RustProgram(rust_handler) => {
-                let program = rust_handler.create_program_for_run(self.current_run_token());
-                let step = {
-                    let mut guard = program.lock().expect("Rust program lock poisoned");
-                    Python::attach(|py| guard.start(py, effect, k_user, &mut self.rust_store))
-                };
-                Ok(self.apply_rust_program_step(step, program))
-            }
-            Handler::Python(py_handler) => {
-                self.register_continuation(k_user.clone());
-                self.pending_python = Some(PendingPython::CallPythonHandler {
-                    k_user: k_user.clone(),
-                    effect: effect.clone(),
-                });
-                Ok(StepEvent::NeedsPython(PythonCall::CallHandler {
-                    handler: py_handler,
-                    effect,
-                    continuation: k_user,
-                }))
-            }
+        if handler.py_identity().is_some() {
+            self.register_continuation(k_user.clone());
         }
+        let ir_node = handler.invoke(effect, k_user);
+        Ok(self.evaluate(ir_node))
     }
 
     fn check_dispatch_completion(&mut self, k: &Continuation) {
@@ -1580,13 +2612,44 @@ impl VM {
         }
     }
 
+    fn active_dispatch_handler_is_python(&self, dispatch_id: DispatchId) -> bool {
+        self.dispatch_stack
+            .last()
+            .filter(|ctx| ctx.dispatch_id == dispatch_id)
+            .and_then(|ctx| ctx.handler_chain.get(ctx.handler_idx))
+            .and_then(|marker| self.handlers.get(marker))
+            .is_some_and(|entry| entry.handler.py_identity().is_some())
+    }
+
     fn mark_dispatch_threw(&mut self, dispatch_id: DispatchId) {
-        if let Some(top) = self.dispatch_stack.last_mut() {
-            if top.dispatch_id == dispatch_id {
-                top.completed = true;
-                self.consumed_cont_ids.insert(top.k_user.cont_id);
-            }
+        self.mark_dispatch_completed(dispatch_id);
+    }
+
+    fn mark_dispatch_completed(&mut self, dispatch_id: DispatchId) {
+        if let Some(ctx) = self
+            .dispatch_stack
+            .iter_mut()
+            .rev()
+            .find(|ctx| ctx.dispatch_id == dispatch_id)
+        {
+            ctx.completed = true;
+            self.consumed_cont_ids.insert(ctx.k_user.cont_id);
         }
+    }
+
+    fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
+        self.capture_log.iter().rev().any(|event| match event {
+            CaptureEvent::HandlerCompleted {
+                dispatch_id: event_dispatch_id,
+                action:
+                    HandlerAction::Resumed { .. }
+                    | HandlerAction::Transferred { .. }
+                    | HandlerAction::Returned { .. }
+                    | HandlerAction::Threw { .. },
+                ..
+            } => *event_dispatch_id == dispatch_id,
+            _ => false,
+        })
     }
 
     fn finalize_active_dispatches_as_threw(&mut self, exception: &PyException) {
@@ -1599,10 +2662,26 @@ impl VM {
             if completed {
                 continue;
             }
-            let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
+            if self.dispatch_has_terminal_handler_action(dispatch_id) {
+                if let Some(ctx) = self.dispatch_stack.get_mut(idx) {
+                    ctx.completed = true;
+                }
+                self.consumed_cont_ids.insert(cont_id);
+                continue;
+            }
+            let Some((handler_index, handler_name)) =
+                self.current_handler_identity_for_dispatch(dispatch_id)
+            else {
+                if let Some(ctx) = self.dispatch_stack.get_mut(idx) {
+                    ctx.completed = true;
+                }
+                self.consumed_cont_ids.insert(cont_id);
+                continue;
+            };
             self.capture_log.push(CaptureEvent::HandlerCompleted {
                 dispatch_id,
                 handler_name,
+                handler_index,
                 action: HandlerAction::Threw {
                     exception_repr: exception_repr.clone(),
                 },
@@ -1629,9 +2708,8 @@ impl VM {
 
     fn handle_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
         if !k.started {
-            return self.throw_runtime_error(
-                "Resume on unstarted continuation; use ResumeContinuation",
-            );
+            return self
+                .throw_runtime_error("Resume on unstarted continuation; use ResumeContinuation");
         }
         if self.is_one_shot_consumed(k.cont_id) {
             return self.throw_runtime_error(&format!(
@@ -1642,24 +2720,28 @@ impl VM {
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
         if let Some(dispatch_id) = k.dispatch_id {
-            let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
-            let value_repr = Self::value_repr(&value);
-            self.capture_log.push(CaptureEvent::HandlerCompleted {
-                dispatch_id,
-                handler_name: handler_name.clone(),
-                action: HandlerAction::Resumed {
-                    value_repr: value_repr.clone(),
-                },
-            });
-            self.maybe_emit_resume_event(
-                dispatch_id,
-                handler_name,
-                value_repr,
-                &k,
-                false,
-            );
+            if let Some((handler_index, handler_name)) =
+                self.current_handler_identity_for_dispatch(dispatch_id)
+            {
+                let value_repr = Self::value_repr(&value);
+                self.capture_log.push(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name: handler_name.clone(),
+                    handler_index,
+                    action: HandlerAction::Resumed {
+                        value_repr: value_repr.clone(),
+                    },
+                });
+                self.maybe_emit_resume_event(dispatch_id, handler_name, value_repr, &k, false);
+            }
         }
-        self.check_dispatch_completion(&k);
+        if let Some(dispatch_id) = k.dispatch_id {
+            if !self.active_dispatch_handler_is_python(dispatch_id) {
+                self.check_dispatch_completion(&k);
+            }
+        } else {
+            self.check_dispatch_completion(&k);
+        }
 
         let exec_seg = Segment {
             marker: k.marker,
@@ -1677,9 +2759,8 @@ impl VM {
 
     fn handle_transfer(&mut self, k: Continuation, value: Value) -> StepEvent {
         if !k.started {
-            return self.throw_runtime_error(
-                "Transfer on unstarted continuation; use ResumeContinuation",
-            );
+            return self
+                .throw_runtime_error("Transfer on unstarted continuation; use ResumeContinuation");
         }
         if self.is_one_shot_consumed(k.cont_id) {
             return self.throw_runtime_error(&format!(
@@ -1690,22 +2771,20 @@ impl VM {
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
         if let Some(dispatch_id) = k.dispatch_id {
-            let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
-            let value_repr = Self::value_repr(&value);
-            self.capture_log.push(CaptureEvent::HandlerCompleted {
-                dispatch_id,
-                handler_name: handler_name.clone(),
-                action: HandlerAction::Transferred {
-                    value_repr: value_repr.clone(),
-                },
-            });
-            self.maybe_emit_resume_event(
-                dispatch_id,
-                handler_name,
-                value_repr,
-                &k,
-                true,
-            );
+            if let Some((handler_index, handler_name)) =
+                self.current_handler_identity_for_dispatch(dispatch_id)
+            {
+                let value_repr = Self::value_repr(&value);
+                self.capture_log.push(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name: handler_name.clone(),
+                    handler_index,
+                    action: HandlerAction::Transferred {
+                        value_repr: value_repr.clone(),
+                    },
+                });
+                self.maybe_emit_resume_event(dispatch_id, handler_name, value_repr, &k, true);
+            }
         }
         self.check_dispatch_completion(&k);
 
@@ -1738,14 +2817,18 @@ impl VM {
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
         if let Some(dispatch_id) = k.dispatch_id {
-            let handler_name = self.current_handler_name_for_dispatch(dispatch_id);
-            self.capture_log.push(CaptureEvent::HandlerCompleted {
-                dispatch_id,
-                handler_name,
-                action: HandlerAction::Threw {
-                    exception_repr: Self::exception_repr(&exception),
-                },
-            });
+            if let Some((handler_index, handler_name)) =
+                self.current_handler_identity_for_dispatch(dispatch_id)
+            {
+                self.capture_log.push(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name,
+                    handler_index,
+                    action: HandlerAction::Threw {
+                        exception_repr: Self::exception_repr(&exception),
+                    },
+                });
+            }
         }
         self.check_dispatch_completion(&k);
 
@@ -1790,10 +2873,7 @@ impl VM {
         );
         let prompt_seg_id = self.alloc_segment(prompt_seg);
 
-        let py_identity = explicit_py_identity.or_else(|| match &handler {
-            Handler::Python(py_handler) => Some(py_handler.clone()),
-            Handler::RustProgram(_) => None,
-        });
+        let py_identity = explicit_py_identity.or_else(|| handler.py_identity());
         match py_identity {
             Some(identity) => {
                 self.handlers.insert(
@@ -1814,28 +2894,26 @@ impl VM {
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
-
-        self.pending_python = Some(PendingPython::StartProgramFrame { metadata: None });
-        StepEvent::NeedsPython(PythonCall::StartProgram {
-            program: PyShared::new(program),
+        self.pending_python = Some(PendingPython::EvalExpr { metadata: None });
+        StepEvent::NeedsPython(PythonCall::EvalExpr {
+            expr: PyShared::new(program),
         })
     }
 
     fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
-        let (handler_chain, start_idx, from_idx, dispatch_id) =
-            match self.dispatch_stack.last() {
-                Some(t) => (
-                    t.handler_chain.clone(),
-                    t.handler_idx + 1,
-                    t.handler_idx,
-                    t.dispatch_id,
-                ),
-                None => {
-                    return StepEvent::Error(VMError::internal(
-                        "Delegate called outside of dispatch context",
-                    ))
-                }
-            };
+        let (handler_chain, start_idx, from_idx, dispatch_id) = match self.dispatch_stack.last() {
+            Some(t) => (
+                t.handler_chain.clone(),
+                t.handler_idx + 1,
+                t.handler_idx,
+                t.dispatch_id,
+            ),
+            None => {
+                return StepEvent::Error(VMError::internal(
+                    "Delegate called outside of dispatch context",
+                ))
+            }
+        };
 
         // Capture inner handler segment so outer handler's return flows back here
         // (result of Delegate). Per spec: caller = Some(inner_seg_id).
@@ -1857,27 +2935,24 @@ impl VM {
                     let from_marker = handler_chain.get(from_idx).copied();
                     let from_name = from_marker
                         .and_then(|m| self.marker_handler_trace_info(m))
-                        .map(|(name, _, _, _)| name)
-                        .unwrap_or_else(|| "<handler>".to_string());
-                    let to_info = self
-                        .marker_handler_trace_info(marker)
-                        .unwrap_or_else(|| {
-                            (
-                                "<handler>".to_string(),
-                                HandlerKind::RustBuiltin,
-                                None,
-                                None,
-                            )
+                        .map(|(name, _, _, _)| name);
+                    let to_info = self.marker_handler_trace_info(marker);
+                    if let (
+                        Some(from_name),
+                        Some((to_name, to_kind, to_source_file, to_source_line)),
+                    ) = (from_name, to_info)
+                    {
+                        self.capture_log.push(CaptureEvent::Delegated {
+                            dispatch_id,
+                            from_handler_name: from_name,
+                            from_handler_index: from_idx,
+                            to_handler_name: to_name,
+                            to_handler_index: idx,
+                            to_handler_kind: to_kind,
+                            to_handler_source_file: to_source_file,
+                            to_handler_source_line: to_source_line,
                         });
-                    let (to_name, to_kind, to_source_file, to_source_line) = to_info;
-                    self.capture_log.push(CaptureEvent::Delegated {
-                        dispatch_id,
-                        from_handler_name: from_name,
-                        to_handler_name: to_name,
-                        to_handler_kind: to_kind,
-                        to_handler_source_file: to_source_file,
-                        to_handler_source_line: to_source_line,
-                    });
+                    }
                     let k_user = {
                         let top = self.dispatch_stack.last_mut().unwrap();
                         top.handler_idx = idx;
@@ -1890,29 +2965,88 @@ impl VM {
                     let handler_seg_id = self.alloc_segment(handler_seg);
                     self.current_segment = Some(handler_seg_id);
 
-                    match handler {
-                        Handler::RustProgram(rust_handler) => {
-                            let program =
-                                rust_handler.create_program_for_run(self.current_run_token());
-                            let step = {
-                                let mut guard = program.lock().expect("Rust program lock poisoned");
-                                Python::attach(|py| guard.start(py, effect, k_user, &mut self.rust_store))
-                            };
-                            return self.apply_rust_program_step(step, program);
-                        }
-                        Handler::Python(py_handler) => {
-                            self.register_continuation(k_user.clone());
-                            self.pending_python = Some(PendingPython::CallPythonHandler {
-                                k_user: k_user.clone(),
-                                effect: effect.clone(),
-                            });
-                            return StepEvent::NeedsPython(PythonCall::CallHandler {
-                                handler: py_handler,
-                                effect: effect.clone(),
-                                continuation: k_user,
-                            });
-                        }
+                    if handler.py_identity().is_some() {
+                        self.register_continuation(k_user.clone());
                     }
+                    let ir_node = handler.invoke(effect.clone(), k_user);
+                    return self.evaluate(ir_node);
+                }
+            }
+        }
+
+        StepEvent::Error(VMError::delegate_no_outer_handler(effect))
+    }
+
+    fn handle_pass(&mut self, effect: DispatchEffect) -> StepEvent {
+        let (handler_chain, start_idx, from_idx, dispatch_id) = match self.dispatch_stack.last() {
+            Some(t) => (
+                t.handler_chain.clone(),
+                t.handler_idx + 1,
+                t.handler_idx,
+                t.dispatch_id,
+            ),
+            None => {
+                return StepEvent::Error(VMError::internal(
+                    "Pass called outside of dispatch context",
+                ))
+            }
+        };
+
+        // Capture inner handler segment so outer handler's return flows back here
+        // (result of Delegate). Per spec: caller = Some(inner_seg_id).
+        let inner_seg_id = self.current_segment;
+
+        // Clear the delegating handler's frames so return values pass through
+        // without trying to resume the handler generator (Delegate is tail).
+        if let Some(seg_id) = inner_seg_id {
+            if let Some(seg) = self.segments.get_mut(seg_id) {
+                seg.frames.clear();
+            }
+        }
+
+        for idx in start_idx..handler_chain.len() {
+            let marker = handler_chain[idx];
+            if let Some(entry) = self.handlers.get(&marker) {
+                if entry.handler.can_handle(&effect) {
+                    let handler = entry.handler.clone();
+                    let from_marker = handler_chain.get(from_idx).copied();
+                    let from_name = from_marker
+                        .and_then(|m| self.marker_handler_trace_info(m))
+                        .map(|(name, _, _, _)| name);
+                    let to_info = self.marker_handler_trace_info(marker);
+                    if let (
+                        Some(from_name),
+                        Some((to_name, to_kind, to_source_file, to_source_line)),
+                    ) = (from_name, to_info)
+                    {
+                        self.capture_log.push(CaptureEvent::Delegated {
+                            dispatch_id,
+                            from_handler_name: from_name,
+                            from_handler_index: from_idx,
+                            to_handler_name: to_name,
+                            to_handler_index: idx,
+                            to_handler_kind: to_kind,
+                            to_handler_source_file: to_source_file,
+                            to_handler_source_line: to_source_line,
+                        });
+                    }
+                    let k_user = {
+                        let top = self.dispatch_stack.last_mut().unwrap();
+                        top.handler_idx = idx;
+                        top.effect = effect.clone();
+                        top.k_user.clone()
+                    };
+
+                    let scope_chain = self.current_scope_chain();
+                    let handler_seg = Segment::new(marker, inner_seg_id, scope_chain);
+                    let handler_seg_id = self.alloc_segment(handler_seg);
+                    self.current_segment = Some(handler_seg_id);
+
+                    if handler.py_identity().is_some() {
+                        self.register_continuation(k_user.clone());
+                    }
+                    let ir_node = handler.invoke(effect.clone(), k_user);
+                    return self.evaluate(ir_node);
                 }
             }
         }
@@ -1942,11 +3076,11 @@ impl VM {
                 if let Some(seg) = self.current_segment_mut() {
                     seg.push_frame(Frame::RustReturn { cb });
                 }
-                self.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+                self.mode = Mode::HandleYield(DoCtrl::Eval {
                     expr,
                     handlers,
                     metadata: None,
-                }));
+                });
                 return StepEvent::Continue;
             }
         }
@@ -1955,11 +3089,17 @@ impl VM {
             return StepEvent::Error(VMError::internal("Return outside of dispatch"));
         };
 
-        let handler_name = self.current_handler_name_for_dispatch(top_snapshot.dispatch_id);
+        let Some((handler_index, handler_name)) =
+            self.current_handler_identity_for_dispatch(top_snapshot.dispatch_id)
+        else {
+            self.mode = Mode::Deliver(value);
+            return StepEvent::Continue;
+        };
         let value_repr = Self::value_repr(&value);
         self.capture_log.push(CaptureEvent::HandlerCompleted {
             dispatch_id: top_snapshot.dispatch_id,
             handler_name: handler_name.clone(),
+            handler_index,
             action: HandlerAction::Returned {
                 value_repr: value_repr.clone(),
             },
@@ -2003,44 +3143,43 @@ impl VM {
         handlers
     }
 
-    fn handle_map(&mut self, source: PyShared, mapper: PyShared) -> StepEvent {
+    fn handle_map(
+        &mut self,
+        source: PyShared,
+        mapper: PyShared,
+        mapper_meta: CallMetadata,
+    ) -> StepEvent {
         let handlers = self.current_visible_handlers();
         let map_cb = self.register_callback(Box::new(move |value, _vm| {
-            Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                f: mapper,
-                args: vec![value],
+            Mode::HandleYield(DoCtrl::Apply {
+                f: CallArg::Value(Value::Python(mapper.into_inner())),
+                args: vec![CallArg::Value(value)],
                 kwargs: vec![],
-                metadata: crate::frame::CallMetadata::anonymous(),
-            }))
+                metadata: mapper_meta.clone(),
+            })
         }));
 
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal("Map outside current segment"));
         };
         seg.push_frame(Frame::RustReturn { cb: map_cb });
-        self.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+        self.mode = Mode::HandleYield(DoCtrl::Eval {
             expr: source,
             handlers,
             metadata: None,
-        }));
+        });
         StepEvent::Continue
     }
 
-    fn handle_flat_map(&mut self, source: PyShared, binder: PyShared) -> StepEvent {
+    fn handle_flat_map(
+        &mut self,
+        source: PyShared,
+        binder: PyShared,
+        binder_meta: CallMetadata,
+    ) -> StepEvent {
         let handlers = self.current_visible_handlers();
-        let handlers_after_bind = handlers.clone();
-
-        let bind_result_cb = self.register_callback(Box::new(move |bound_value, _vm| match bound_value {
-            Value::Python(obj) => Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
-                expr: PyShared::new(obj),
-                handlers: handlers_after_bind,
-                metadata: None,
-            })),
-            other => Mode::Throw(PyException::type_error(format!(
-                "flat_map binder must return Program/Effect/DoCtrl; got {:?}",
-                other
-            ))),
-        }));
+        let bind_result_cb =
+            self.register_callback(Box::new(move |bound_value, _vm| Mode::Deliver(bound_value)));
 
         let bind_source_cb = self.register_callback(Box::new(move |value, vm| {
             let Some(seg) = vm.current_segment_mut() else {
@@ -2049,23 +3188,23 @@ impl VM {
                 ));
             };
             seg.push_frame(Frame::RustReturn { cb: bind_result_cb });
-            Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                f: binder,
-                args: vec![value],
+            Mode::HandleYield(DoCtrl::Expand {
+                factory: CallArg::Value(Value::Python(binder.into_inner())),
+                args: vec![CallArg::Value(value)],
                 kwargs: vec![],
-                metadata: crate::frame::CallMetadata::anonymous(),
-            }))
+                metadata: binder_meta.clone(),
+            })
         }));
 
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal("FlatMap outside current segment"));
         };
         seg.push_frame(Frame::RustReturn { cb: bind_source_cb });
-        self.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+        self.mode = Mode::HandleYield(DoCtrl::Eval {
             expr: source,
             handlers,
             metadata: None,
-        }));
+        });
         StepEvent::Continue
     }
 
@@ -2105,11 +3244,8 @@ impl VM {
         handlers: Vec<Handler>,
         handler_identities: Vec<Option<PyShared>>,
     ) -> StepEvent {
-        let k = Continuation::create_unstarted_with_identities(
-            program,
-            handlers,
-            handler_identities,
-        );
+        let k =
+            Continuation::create_unstarted_with_identities(program, handlers, handler_identities);
         self.register_continuation(k.clone());
         self.mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue
@@ -2152,7 +3288,9 @@ impl VM {
             );
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             let entry = match py_identity {
-                Some(identity) => HandlerEntry::with_identity(handler.clone(), prompt_seg_id, identity),
+                Some(identity) => {
+                    HandlerEntry::with_identity(handler.clone(), prompt_seg_id, identity)
+                }
                 None => HandlerEntry::new(handler.clone(), prompt_seg_id),
             };
             self.handlers.insert(handler_marker, entry);
@@ -2168,10 +3306,10 @@ impl VM {
         }
 
         self.current_segment = outside_seg_id;
-        self.pending_python = Some(PendingPython::StartProgramFrame {
+        self.pending_python = Some(PendingPython::EvalExpr {
             metadata: start_metadata,
         });
-        StepEvent::NeedsPython(PythonCall::StartProgram { program })
+        StepEvent::NeedsPython(PythonCall::EvalExpr { expr: program })
     }
 }
 
@@ -2410,14 +3548,14 @@ mod tests {
         vm.install_handler(
             m1,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::ReaderHandlerFactory)),
+                std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
                 prompt_seg_id,
             ),
         );
         vm.install_handler(
             m2,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -2468,7 +3606,7 @@ mod tests {
         vm.install_handler(
             marker,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -2502,7 +3640,7 @@ mod tests {
         vm.install_handler(
             marker,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -2513,6 +3651,255 @@ mod tests {
         // Handler yields Resume; step through to mark dispatch complete
         let _ = vm.step();
         assert!(vm.dispatch_stack[0].completed);
+    }
+
+    #[test]
+    fn test_start_dispatch_records_effect_creation_site_from_continuation_frame() {
+        Python::attach(|py| {
+            use crate::frame::Frame;
+            use pyo3::types::PyModule;
+            use std::sync::Arc;
+
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+
+            let prompt_seg = Segment::new(marker, None, vec![]);
+            let prompt_seg_id = vm.alloc_segment(prompt_seg);
+
+            let module = PyModule::from_code(
+                py,
+                c"def target_gen():\n    yield 'value'\n\ng = target_gen()\nnext(g)\n\ndef get_frame(_obj):\n    return g.gi_frame\n\nwrapper = object()\nLINE = g.gi_frame.f_lineno\n",
+                c"/tmp/user_program.py",
+                c"_vm_creation_site_test",
+            )
+            .expect("failed to create test module");
+            let wrapper = module.getattr("wrapper").expect("missing wrapper").unbind();
+            let get_frame = module
+                .getattr("get_frame")
+                .expect("missing get_frame")
+                .unbind();
+            let line: u32 = module
+                .getattr("LINE")
+                .expect("missing LINE")
+                .extract()
+                .expect("LINE must be int");
+
+            let mut body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+            let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
+                PyShared::new(wrapper),
+                PyShared::new(get_frame),
+            )) as Box<dyn ASTStream>));
+            body_seg.push_frame(Frame::Program {
+                stream,
+                metadata: Some(CallMetadata::new(
+                    "parent".to_string(),
+                    "/tmp/user_program.py".to_string(),
+                    777,
+                    None,
+                    None,
+                )),
+            });
+            let body_seg_id = vm.alloc_segment(body_seg);
+            vm.current_segment = Some(body_seg_id);
+
+            vm.install_handler(
+                marker,
+                HandlerEntry::new(
+                    Arc::new(crate::scheduler::SchedulerHandler::new()),
+                    prompt_seg_id,
+                ),
+            );
+
+            let spawn = Py::new(py, PySpawn::create(py, py.None(), None, None, None))
+                .expect("failed to create SpawnEffect");
+            let effect_obj = spawn.into_any();
+
+            let result = vm.start_dispatch(Effect::Python(PyShared::new(effect_obj)));
+            assert!(result.is_ok());
+
+            let creation_site = vm.capture_log.iter().find_map(|event| {
+                if let CaptureEvent::DispatchStarted { creation_site, .. } = event {
+                    creation_site.clone()
+                } else {
+                    None
+                }
+            });
+
+            let site = creation_site.expect("dispatch should record effect creation site");
+            assert_eq!(site.function_name, "parent");
+            assert_eq!(site.source_file, "/tmp/user_program.py");
+            assert_eq!(site.source_line, line);
+        });
+    }
+
+    #[test]
+    fn test_stream_debug_location_uses_get_frame_callback_result() {
+        Python::attach(|py| {
+            use pyo3::types::PyModule;
+            use std::sync::Arc;
+
+            let module = PyModule::from_code(
+                py,
+                c"def target_gen():\n    yield 'value'\n\ng = target_gen()\nnext(g)\n\ndef get_frame(_obj):\n    return g.gi_frame\n\nwrapper = object()\nLINE = g.gi_frame.f_lineno\n",
+                c"_vm_get_frame_callback_test.py",
+                c"_vm_get_frame_callback_test",
+            )
+            .expect("failed to create test module");
+            let wrapper = module.getattr("wrapper").expect("missing wrapper").unbind();
+            let get_frame = module
+                .getattr("get_frame")
+                .expect("missing get_frame")
+                .unbind();
+            let line: u32 = module
+                .getattr("LINE")
+                .expect("missing LINE")
+                .extract()
+                .expect("LINE must be int");
+
+            let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
+                PyShared::new(wrapper),
+                PyShared::new(get_frame),
+            )) as Box<dyn ASTStream>));
+            let observed = VM::stream_debug_location(&stream).expect("expected stream location");
+            assert_eq!(observed.source_line, line);
+        });
+    }
+
+    #[test]
+    fn test_vm_proto_runtime_uses_get_frame_callback_instead_of_gi_frame_probe() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
+        let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
+        let runtime_src = &src[..runtime_boundary];
+        let inner_attr = ["__doeff_", "inner__"].concat();
+        assert!(
+            runtime_src.contains("debug_location()")
+                && runtime_src.contains("stream_debug_location"),
+            "VM-PROTO-001: VM must resolve live locations via ASTStream::debug_location()"
+        );
+        assert!(
+            !runtime_src.contains("getattr(\"gi_frame\")"),
+            "VM-PROTO-001: direct gi_frame access in runtime vm.rs is forbidden"
+        );
+        assert!(
+            !runtime_src.contains("import(\"doeff."),
+            "VM-PROTO-001: vm core must not import doeff.* modules"
+        );
+        assert!(
+            !runtime_src.contains(&inner_attr),
+            "VM-PROTO-001: vm core must not walk inner-generator link chains"
+        );
+    }
+
+    #[test]
+    fn test_vm_proto_007_runtime_enforces_c1_c6_c7_constraints() {
+        let vm_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
+        let vm_runtime_boundary = vm_src
+            .find("\n#[cfg(test)]\nmod tests")
+            .unwrap_or(vm_src.len());
+        let vm_runtime_src = &vm_src[..vm_runtime_boundary];
+
+        let pyvm_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let pyvm_runtime_src = pyvm_src.split("#[cfg(test)]").next().unwrap_or(pyvm_src);
+
+        for (file_name, runtime_src) in [("vm.rs", vm_runtime_src), ("pyvm.rs", pyvm_runtime_src)] {
+            assert!(
+                !runtime_src.contains(".setattr(\"__doeff_"),
+                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not set __doeff_* attributes"
+            );
+            assert!(
+                !runtime_src.contains(".getattr(\"__doeff_"),
+                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not read __doeff_* attributes"
+            );
+            assert!(
+                !runtime_src.contains(".hasattr(\"__doeff_"),
+                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not probe __doeff_* attributes"
+            );
+            assert!(
+                !runtime_src.contains("import(\"doeff."),
+                "VM-PROTO-007 C6 FAIL: {file_name} runtime must not import doeff.* modules"
+            );
+            assert!(
+                !runtime_src.contains("CallMetadata::anonymous()")
+                    && !runtime_src.contains("crate::frame::CallMetadata::anonymous()"),
+                "VM-PROTO-007 C7 FAIL: {file_name} runtime must not use anonymous callback metadata"
+            );
+        }
+
+        assert!(
+            !vm_runtime_src.contains("getattr(\"__code__\")")
+                && !vm_runtime_src.contains("getattr(\"__name__\")"),
+            "VM-PROTO-007 C7 FAIL: vm.rs runtime must not probe __code__/__name__"
+        );
+        assert!(
+            !pyvm_runtime_src.contains("PyModule::from_code("),
+            "VM-PROTO-007 C7 FAIL: pyvm.rs runtime must not synthesize modules via PyModule::from_code"
+        );
+    }
+
+    #[test]
+    fn test_vm_proto_frame_push_sites_extract_doeff_generator() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
+        let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
+        let runtime_src = &src[..runtime_boundary];
+        let extraction_calls = runtime_src.matches("extract_doeff_generator(").count();
+        assert!(
+            extraction_calls >= 2,
+            "VM-PROTO-001: expected at least 2 DoeffGenerator extraction sites in vm.rs, got {extraction_calls}"
+        );
+        assert!(
+            runtime_src.contains("PendingPython::ExpandReturn")
+                && runtime_src.contains("ExpandReturn: expected DoeffGenerator"),
+            "VM-PROTO-001: ExpandReturn must enforce DoeffGenerator results explicitly"
+        );
+        assert!(
+            runtime_src.contains("PendingPython::StepUserGenerator {")
+                && runtime_src.contains("stream")
+                && !runtime_src.contains("get_frame,"),
+            "VM-PROTO-001: StepUserGenerator pending state must carry stream handle"
+        );
+    }
+
+    #[test]
+    fn test_insert_spawn_boundaries_does_not_depend_on_scheduler_handler_name() {
+        let mut active_chain = vec![
+            ActiveChainEntry::EffectYield {
+                function_name: "child".to_string(),
+                source_file: "child.py".to_string(),
+                source_line: 12,
+                effect_repr: "Spawn(...)".to_string(),
+                handler_stack: Vec::new(),
+                result: EffectResult::Transferred {
+                    handler_name: "CustomScheduler".to_string(),
+                    target_repr: "parent() parent.py:8".to_string(),
+                },
+            },
+            ActiveChainEntry::ExceptionSite {
+                function_name: "child".to_string(),
+                source_file: "child.py".to_string(),
+                source_line: 13,
+                exception_type: "ValueError".to_string(),
+                message: "boom".to_string(),
+            },
+        ];
+        let mut dispatch_ids = vec![Some(DispatchId(42)), None];
+
+        VM::insert_spawn_boundaries(
+            &mut active_chain,
+            &mut dispatch_ids,
+            vec![SpawnBoundaryDescriptor {
+                boundary: ActiveChainEntry::SpawnBoundary {
+                    task_id: 7,
+                    parent_task: Some(2),
+                    spawn_site: None,
+                },
+                spawn_dispatch_id: Some(DispatchId(42)),
+            }],
+        );
+
+        assert!(matches!(
+            active_chain.get(1),
+            Some(ActiveChainEntry::SpawnBoundary { task_id: 7, .. })
+        ));
     }
 
     #[test]
@@ -2569,7 +3956,10 @@ mod tests {
             let event = vm.handle_resume(k, Value::Int(2));
 
             assert!(matches!(event, StepEvent::Continue));
-            assert!(vm.mode.is_throw(), "One-shot violation should set Mode::Throw");
+            assert!(
+                vm.mode.is_throw(),
+                "One-shot violation should set Mode::Throw"
+            );
         });
     }
 
@@ -2589,7 +3979,10 @@ mod tests {
             let event = vm.handle_transfer(k, Value::Int(2));
 
             assert!(matches!(event, StepEvent::Continue));
-            assert!(vm.mode.is_throw(), "One-shot violation should set Mode::Throw");
+            assert!(
+                vm.mode.is_throw(),
+                "One-shot violation should set Mode::Throw"
+            );
         });
     }
 
@@ -2643,11 +4036,23 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_pass_no_dispatch() {
+        let mut vm = VM::new();
+        let event = vm.handle_pass(Effect::get("dummy"));
+        assert!(matches!(
+            event,
+            StepEvent::Error(VMError::InternalError { .. })
+        ));
+    }
+
+    #[test]
     fn test_rust_store_clone() {
         let mut store = RustStore::new();
         store.put("key".to_string(), Value::Int(42));
         store.tell(Value::String("log".to_string()));
-        store.env.insert("env_key".to_string(), Value::Bool(true));
+        store
+            .env
+            .insert("env_key".to_string().into(), Value::Bool(true));
 
         let cloned = store.clone();
         assert_eq!(cloned.get("key").unwrap().as_int(), Some(42));
@@ -2670,7 +4075,7 @@ mod tests {
         vm.install_handler(
             marker,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -2683,7 +4088,9 @@ mod tests {
         let k_user = make_dummy_continuation();
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get { key: "x".to_string() },
+            effect: Effect::Get {
+                key: "x".to_string(),
+            },
             handler_chain: vec![marker],
             handler_idx: 0,
             k_user,
@@ -2696,7 +4103,7 @@ mod tests {
         match &vm.mode {
             Mode::Deliver(Value::Handlers(h)) => {
                 assert_eq!(h.len(), 1);
-                assert!(matches!(h[0], Handler::RustProgram(_)));
+                assert_eq!(h[0].handler_name(), "StateHandler");
             }
             _ => panic!("Expected Deliver(Handlers)"),
         }
@@ -2748,7 +4155,7 @@ mod tests {
         vm.install_handler(
             marker,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -2775,14 +4182,14 @@ mod tests {
         vm.install_handler(
             m1,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
         vm.install_handler(
             m2,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::WriterHandlerFactory)),
+                std::sync::Arc::new(crate::handler::WriterHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -2865,10 +4272,11 @@ mod tests {
         let mut store = RustStore::new();
         store
             .env
-            .insert("db".to_string(), Value::String("prod".to_string()));
-        store
-            .env
-            .insert("host".to_string(), Value::String("localhost".to_string()));
+            .insert("db".to_string().into(), Value::String("prod".to_string()));
+        store.env.insert(
+            "host".to_string().into(),
+            Value::String("localhost".to_string()),
+        );
 
         let result = store.with_local(
             HashMap::from([
@@ -2965,20 +4373,20 @@ mod tests {
         assert_eq!(tell.type_name(), "Tell");
     }
 
-    /// G15: WithHandler should emit StartProgram, not CallFunc.
+    /// G15: WithHandler should emit EvalExpr, not CallFunc.
     /// We can't construct Py<PyAny> in Rust-only tests, so we verify
     /// this via the Python integration tests. This test serves as a
     /// documentation marker that handle_with_handler must use
-    /// PythonCall::StartProgram { program } per spec.
+    /// PythonCall::EvalExpr { expr } per spec.
     #[test]
-    fn test_gap15_with_handler_start_program_marker() {
+    fn test_gap15_with_handler_eval_expr_marker() {
         // Spec requires handle_with_handler to emit:
-        //   PythonCall::StartProgram { program: body }
+        //   PythonCall::EvalExpr { expr: body }
         // NOT:
         //   PythonCall::CallFunc { func: body, args: vec![] }
         //
         // Verified by code inspection + Python integration tests.
-        // The StartProgram path routes through to_generator validation.
+        // EvalExpr starts from DoExpr directly at VM entry.
         assert!(
             true,
             "See handle_with_handler implementation for spec compliance"
@@ -2999,7 +4407,7 @@ mod tests {
         vm.install_handler(
             m1,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 seg_id,
             ),
         );
@@ -3018,7 +4426,7 @@ mod tests {
             completed: true,
         });
 
-        vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::GetHandlers));
+        vm.mode = Mode::HandleYield(DoCtrl::GetHandlers);
         let event = vm.step_handle_yield();
 
         assert!(
@@ -3132,8 +4540,14 @@ mod tests {
             let _ = vm.handle_resume(k.clone(), Value::Int(1));
             let event = vm.handle_resume(k, Value::Int(2));
 
-            assert!(matches!(event, StepEvent::Continue), "G4a: expected Continue, got Error");
-            assert!(vm.mode.is_throw(), "G4a: expected Mode::Throw after one-shot violation");
+            assert!(
+                matches!(event, StepEvent::Continue),
+                "G4a: expected Continue, got Error"
+            );
+            assert!(
+                vm.mode.is_throw(),
+                "G4a: expected Mode::Throw after one-shot violation"
+            );
         });
     }
 
@@ -3153,8 +4567,14 @@ mod tests {
 
             let event = vm.handle_resume(k, Value::Int(1));
 
-            assert!(matches!(event, StepEvent::Continue), "G4b: expected Continue, got Error");
-            assert!(vm.mode.is_throw(), "G4b: expected Mode::Throw for unstarted Resume");
+            assert!(
+                matches!(event, StepEvent::Continue),
+                "G4b: expected Continue, got Error"
+            );
+            assert!(
+                vm.mode.is_throw(),
+                "G4b: expected Mode::Throw for unstarted Resume"
+            );
         });
     }
 
@@ -3173,8 +4593,14 @@ mod tests {
             let _ = vm.handle_transfer(k.clone(), Value::Int(1));
             let event = vm.handle_transfer(k, Value::Int(2));
 
-            assert!(matches!(event, StepEvent::Continue), "G4c: expected Continue, got Error");
-            assert!(vm.mode.is_throw(), "G4c: expected Mode::Throw after transfer one-shot");
+            assert!(
+                matches!(event, StepEvent::Continue),
+                "G4c: expected Continue, got Error"
+            );
+            assert!(
+                vm.mode.is_throw(),
+                "G4c: expected Mode::Throw after transfer one-shot"
+            );
         });
     }
 
@@ -3189,34 +4615,6 @@ mod tests {
     }
 
     #[test]
-    fn test_g9_kpc_effect_without_handler_is_error_not_call_rewrite() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let locals = pyo3::types::PyDict::new(py);
-            py.run(
-                c"class KleisliProgramCall:\n    function_name='kpc'\n    source_file='x.py'\n    source_line=1\n    def __init__(self):\n        self.args=()\n        self.kwargs={}\n        self.execution_kernel=(lambda: None)\n\nobj = KleisliProgramCall()\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let call_obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = crate::effect::dispatch_from_shared(PyShared::new(call_obj));
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Perform { effect }));
-
-            let event = vm.step_handle_yield();
-            assert!(
-                matches!(event, StepEvent::Error(_)),
-                "G9 FAIL: KpcCall must not be rewritten directly to DoCtrl::Call"
-            );
-        });
-    }
-
-    #[test]
     fn test_g10_resume_continuation_preserves_handler_identity() {
         Python::attach(|py| {
             let mut vm = VM::new();
@@ -3226,7 +4624,7 @@ mod tests {
             vm.current_segment = Some(seg_id);
 
             let id_obj = pyo3::types::PyDict::new(py).into_any().unbind();
-            let handler = Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory));
+            let handler = std::sync::Arc::new(crate::handler::StateHandlerFactory);
             let program = PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any());
 
             let k = Continuation::create_unstarted_with_identities(
@@ -3236,23 +4634,25 @@ mod tests {
             );
 
             let event = vm.handle_resume_continuation(k, Value::Unit);
-            assert!(matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })));
+            assert!(matches!(
+                event,
+                StepEvent::NeedsPython(PythonCall::EvalExpr { .. })
+            ));
 
             let seg_id = vm.current_segment.expect("missing current segment");
             let seg = vm.segments.get(seg_id).expect("missing segment");
             let marker = *seg.scope_chain.first().expect("missing handler marker");
             let entry = vm.handlers.get(&marker).expect("missing handler entry");
-            let identity = entry.py_identity.as_ref().expect(
-                "G10 FAIL: continuation rehydration dropped handler identity",
-            );
+            let identity = entry
+                .py_identity
+                .as_ref()
+                .expect("G10 FAIL: continuation rehydration dropped handler identity");
             assert!(
                 identity.bind(py).is(&id_obj.bind(py)),
                 "G10 FAIL: preserved identity does not match original"
             );
         });
     }
-
-
 
     /// G5/G6 TDD: Tests the full VM dispatch cycle with a handler that returns
     /// NeedsPython from resume(). This exercises the critical path where the
@@ -3280,9 +4680,7 @@ mod tests {
             vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(
-                        crate::handler::DoubleCallHandlerFactory,
-                    )),
+                    std::sync::Arc::new(crate::handler::DoubleCallHandlerFactory),
                     prompt_seg_id,
                 ),
             );
@@ -3372,7 +4770,7 @@ mod tests {
             vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                    std::sync::Arc::new(crate::handler::StateHandlerFactory),
                     prompt_seg_id,
                 ),
             );
@@ -3386,7 +4784,10 @@ mod tests {
             });
             assert!(result.is_ok());
             let event = result.unwrap();
-            assert!(matches!(event, StepEvent::NeedsPython(PythonCall::CallFunc { .. })));
+            assert!(matches!(
+                event,
+                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
+            ));
 
             // Feed modifier result: 5 * 10 = 50
             vm.receive_python_result(PyCallOutcome::Value(Value::Int(50)));
@@ -3399,7 +4800,7 @@ mod tests {
             // SPEC-008 L1271: Modify returns OLD value (read-then-modify).
             // The resume value should be 5 (old_value), NOT 50 (new_value).
             match &vm.mode {
-                Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                Mode::HandleYield(DoCtrl::Resume { value, .. }) => {
                     assert_eq!(
                         value.as_int(),
                         Some(5),
@@ -3433,7 +4834,7 @@ mod tests {
         vm.install_handler(
             marker,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -3484,14 +4885,110 @@ mod tests {
     }
 
     // ==========================================================
-    // R9-A: DoCtrl::Call — dual-path dispatch tests
+    // R9-A: DoCtrl::Apply — direct Python call dispatch tests
     // ==========================================================
 
-    /// R9-A: Call with empty args/kwargs → StartProgram (DoThunk path).
-    /// Spec: "DoThunk (no args): Call { f: thunk, args: [], kwargs: {}, metadata }
-    ///        → driver calls to_generator() on the thunk, pushes frame."
     #[test]
-    fn test_r9a_call_empty_args_yields_start_program() {
+    fn test_apply_return_delivers_value_without_pushing_frame() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let metadata = CallMetadata::new(
+                "test_apply".to_string(),
+                "test.py".to_string(),
+                1,
+                None,
+                None,
+            );
+
+            vm.mode = Mode::HandleYield(DoCtrl::Apply {
+                f: CallArg::Value(Value::Python(dummy_f)),
+                args: vec![],
+                kwargs: vec![],
+                metadata,
+            });
+
+            let event = vm.step_handle_yield();
+            assert!(matches!(
+                event,
+                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
+            ));
+            assert!(matches!(
+                vm.pending_python,
+                Some(PendingPython::CallFuncReturn { .. })
+            ));
+
+            vm.receive_python_result(PyCallOutcome::Value(Value::Int(7)));
+            assert!(matches!(vm.mode, Mode::Deliver(Value::Int(7))));
+            let seg = vm.segments.get(seg_id).expect("segment missing");
+            assert!(
+                seg.frames.is_empty(),
+                "Apply must not push a PythonGenerator frame"
+            );
+        });
+    }
+
+    #[test]
+    fn test_expand_requires_doeff_generator_or_errors() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_factory = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let metadata = CallMetadata::new(
+                "test_expand".to_string(),
+                "test.py".to_string(),
+                1,
+                None,
+                None,
+            );
+
+            vm.mode = Mode::HandleYield(DoCtrl::Expand {
+                factory: CallArg::Value(Value::Python(dummy_factory)),
+                args: vec![],
+                kwargs: vec![],
+                metadata: metadata.clone(),
+            });
+
+            let event = vm.step_handle_yield();
+            assert!(matches!(
+                event,
+                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
+            ));
+            assert!(matches!(
+                vm.pending_python,
+                Some(PendingPython::ExpandReturn {
+                    metadata: Some(_),
+                    ..
+                })
+            ));
+
+            vm.receive_python_result(PyCallOutcome::Value(Value::Int(1)));
+            match &vm.mode {
+                Mode::Throw(PyException::TypeError { message }) => {
+                    assert!(message.contains("ExpandReturn: expected DoeffGenerator"));
+                }
+                other => panic!("expected Expand type error, got {:?}", other),
+            }
+            let seg = vm.segments.get(seg_id).expect("segment missing");
+            assert!(
+                seg.frames.is_empty(),
+                "Expand must not push a frame when return is invalid"
+            );
+        });
+    }
+
+    /// R9-A: Apply with empty args/kwargs still dispatches via CallFunc.
+    #[test]
+    fn test_r9a_apply_empty_args_yields_call_func() {
         Python::attach(|py| {
             let mut vm = VM::new();
             let marker = Marker::fresh();
@@ -3508,38 +5005,38 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                f: PyShared::new(dummy_f),
+            vm.mode = Mode::HandleYield(DoCtrl::Apply {
+                f: CallArg::Value(Value::Python(dummy_f)),
                 args: vec![],
                 kwargs: vec![],
                 metadata: metadata.clone(),
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
             assert!(
-                matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })),
-                "R9-A: empty args must yield StartProgram, got {:?}",
+                matches!(event, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
+                "R9-A: empty args must yield CallFunc, got {:?}",
                 std::mem::discriminant(&event)
             );
 
             match &vm.pending_python {
-                Some(PendingPython::StartProgramFrame { metadata: Some(m) }) => {
+                Some(PendingPython::CallFuncReturn { metadata: Some(m) }) => {
                     assert_eq!(m.function_name, "test_thunk");
                 }
                 other => panic!(
-                    "R9-A: pending_python must be StartProgramFrame with metadata, got {:?}",
+                    "R9-A: pending_python must be CallFuncReturn with metadata, got {:?}",
                     other
                 ),
             }
         });
     }
 
-    /// R9-A: Call with non-empty args → CallFunc (Kernel path).
-    /// Spec: "Kernel call (with args): Call { f: kernel, args, kwargs, metadata }
+    /// R9-A: Apply with non-empty args → CallFunc.
+    /// Spec: "Kernel call (with args): Apply { f: kernel, args, kwargs, metadata }
     ///        → driver calls kernel(*args, **kwargs), gets result, pushes frame."
     #[test]
-    fn test_r9a_call_with_args_yields_call_func() {
+    fn test_r9a_apply_with_args_yields_call_func() {
         Python::attach(|py| {
             let mut vm = VM::new();
             let marker = Marker::fresh();
@@ -3556,12 +5053,15 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                f: PyShared::new(dummy_f),
-                args: vec![Value::Int(42), Value::String("hello".to_string())],
+            vm.mode = Mode::HandleYield(DoCtrl::Apply {
+                f: CallArg::Value(Value::Python(dummy_f)),
+                args: vec![
+                    CallArg::Value(Value::Int(42)),
+                    CallArg::Value(Value::String("hello".to_string())),
+                ],
                 kwargs: vec![],
                 metadata,
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
@@ -3582,10 +5082,10 @@ mod tests {
         });
     }
 
-    /// R9-A: Call with kwargs preserves them as separate field in CallFunc.
+    /// R9-A: Apply with kwargs preserves them as separate field in CallFunc.
     /// Spec: driver calls f(*args, **kwargs) — keyword semantics are preserved.
     #[test]
-    fn test_r9a_call_kwargs_preserved_separately() {
+    fn test_r9a_apply_kwargs_preserved_separately() {
         Python::attach(|py| {
             let mut vm = VM::new();
             let marker = Marker::fresh();
@@ -3602,15 +5102,18 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                f: PyShared::new(dummy_f),
-                args: vec![Value::Int(1)],
+            vm.mode = Mode::HandleYield(DoCtrl::Apply {
+                f: CallArg::Value(Value::Python(dummy_f)),
+                args: vec![CallArg::Value(Value::Int(1))],
                 kwargs: vec![
-                    ("key1".to_string(), Value::Int(2)),
-                    ("key2".to_string(), Value::String("val".to_string())),
+                    ("key1".to_string(), CallArg::Value(Value::Int(2))),
+                    (
+                        "key2".to_string(),
+                        CallArg::Value(Value::String("val".to_string())),
+                    ),
                 ],
                 metadata,
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
@@ -3636,10 +5139,10 @@ mod tests {
         });
     }
 
-    /// R9-A: Call with only kwargs (no positional args) still takes Kernel path.
+    /// R9-A: Apply with only kwargs (no positional args) still takes CallFunc path.
     /// Empty args but non-empty kwargs → not DoThunk path.
     #[test]
-    fn test_r9a_call_kwargs_only_takes_kernel_path() {
+    fn test_r9a_apply_kwargs_only_takes_callfunc_path() {
         Python::attach(|py| {
             let mut vm = VM::new();
             let marker = Marker::fresh();
@@ -3656,18 +5159,21 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                f: PyShared::new(dummy_f),
+            vm.mode = Mode::HandleYield(DoCtrl::Apply {
+                f: CallArg::Value(Value::Python(dummy_f)),
                 args: vec![],
-                kwargs: vec![("name".to_string(), Value::String("test".to_string()))],
+                kwargs: vec![(
+                    "name".to_string(),
+                    CallArg::Value(Value::String("test".to_string())),
+                )],
                 metadata,
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
             assert!(
                 matches!(event, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
-                "R9-A: kwargs-only call must yield CallFunc (not StartProgram), got {:?}",
+                "R9-A: kwargs-only call must yield CallFunc (not EvalExpr), got {:?}",
                 std::mem::discriminant(&event)
             );
         });
@@ -3678,8 +5184,8 @@ mod tests {
     // ==========================================================
 
     /// R9-H: Eval creates unstarted continuation and resumes it via handle_resume_continuation.
-    /// Result: NeedsPython(StartProgram { program: expr }) because unstarted continuation
-    /// has a program that needs to_generator() call.
+    /// Result: NeedsPython(EvalExpr { expr }) because unstarted continuation
+    /// now evaluates DoExpr directly.
     #[test]
     fn test_r9h_eval_creates_and_resumes_continuation() {
         Python::attach(|py| {
@@ -3691,24 +5197,24 @@ mod tests {
 
             let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+            vm.mode = Mode::HandleYield(DoCtrl::Eval {
                 expr: PyShared::new(dummy_expr),
                 handlers: vec![],
                 metadata: None,
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
             assert!(
-                matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })),
-                "R9-H: Eval must create unstarted continuation and yield StartProgram, got {:?}",
+                matches!(event, StepEvent::NeedsPython(PythonCall::EvalExpr { .. })),
+                "R9-H: Eval must create unstarted continuation and yield EvalExpr, got {:?}",
                 std::mem::discriminant(&event)
             );
 
             assert!(
                 matches!(
                     vm.pending_python,
-                    Some(PendingPython::StartProgramFrame { metadata: None })
+                    Some(PendingPython::EvalExpr { metadata: None })
                 ),
                 "R9-H: Eval continuation has no metadata (metadata comes from Call, not Eval)"
             );
@@ -3728,20 +5234,19 @@ mod tests {
 
             let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
 
-            let handler =
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory));
+            let handler = std::sync::Arc::new(crate::handler::StateHandlerFactory);
 
-            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+            vm.mode = Mode::HandleYield(DoCtrl::Eval {
                 expr: PyShared::new(dummy_expr),
                 handlers: vec![handler],
                 metadata: None,
-            }));
+            });
 
             let event = vm.step_handle_yield();
 
             assert!(
-                matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })),
-                "R9-H: Eval with handlers must still yield StartProgram"
+                matches!(event, StepEvent::NeedsPython(PythonCall::EvalExpr { .. })),
+                "R9-H: Eval with handlers must still yield EvalExpr"
             );
 
             assert!(
@@ -3764,6 +5269,125 @@ mod tests {
         assert!(
             !runtime_src.contains("assume_attached()"),
             "G1 FAIL: vm.rs step/runtime path still uses assume_attached"
+        );
+    }
+
+    #[test]
+    fn test_transfer_to_continuation_only_in_transfer_next_or() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/scheduler.rs"));
+        let test_boundary = src.find("#[cfg(test)]").unwrap_or(src.len());
+        let runtime_src = &src[..test_boundary];
+
+        let mut violations: Vec<String> = Vec::new();
+        let target_fn = "fn transfer_next_or";
+        let call_pattern = "transfer_to_continuation(";
+
+        let fn_start = runtime_src.find(target_fn);
+
+        for (line_no, line) in runtime_src.lines().enumerate() {
+            if !line.contains(call_pattern) {
+                continue;
+            }
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || trimmed.starts_with("fn ") {
+                continue;
+            }
+
+            let line_offset = runtime_src
+                .lines()
+                .take(line_no)
+                .map(|l| l.len() + 1)
+                .sum::<usize>();
+            let inside_transfer_next_or = match fn_start {
+                Some(start) => {
+                    if line_offset < start {
+                        false
+                    } else {
+                        let between = &runtime_src[start..line_offset];
+                        let next_fn = between[target_fn.len()..].find("\nfn ");
+                        next_fn.is_none()
+                    }
+                }
+                None => false,
+            };
+
+            if !inside_transfer_next_or {
+                violations.push(format!("  line {}: {}", line_no + 1, trimmed));
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "transfer_to_continuation (Transfer) must only be called from transfer_next_or. \
+             Found in other locations:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    fn caller_chain_length(vm: &VM) -> usize {
+        let mut count: usize = 0;
+        let mut current = vm.current_segment;
+        while let Some(seg_id) = current {
+            count += 1;
+            current = vm.segments.get(seg_id).and_then(|s| s.caller);
+        }
+        count
+    }
+
+    #[test]
+    fn test_transfer_caller_chain_stays_bounded() {
+        let mut vm = VM::new();
+
+        let mut continuations: Vec<Continuation> = Vec::new();
+        for _ in 0..2 {
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![marker]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+            continuations.push(vm.capture_continuation(None).unwrap());
+        }
+
+        for round in 0..64 {
+            let target: &Continuation = &continuations[round % 2];
+            let event = vm.handle_transfer(target.clone(), Value::Int(round as i64));
+            assert!(matches!(event, StepEvent::Continue));
+
+            let chain_len = caller_chain_length(&vm);
+            assert!(
+                chain_len <= 2,
+                "Round {}: caller chain length is {} — Transfer should sever \
+                 the chain (caller: None), keeping it at 1.",
+                round,
+                chain_len
+            );
+
+            vm.consumed_cont_ids.clear();
+            continuations[round % 2] = vm.capture_continuation(None).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_resume_caller_chain_grows_linearly() {
+        let mut vm = VM::new();
+
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![marker]);
+        let seg_id = vm.alloc_segment(seg);
+        vm.current_segment = Some(seg_id);
+        let k = vm.capture_continuation(None).unwrap();
+
+        for round in 0..64 {
+            let event = vm.handle_resume(k.clone(), Value::Int(round as i64));
+            assert!(matches!(event, StepEvent::Continue));
+            vm.consumed_cont_ids.clear();
+        }
+
+        let chain_len = caller_chain_length(&vm);
+        assert!(
+            chain_len >= 60,
+            "Resume caller chain length is {} after 64 resumes — \
+             Resume should chain segments via caller, growing linearly.",
+            chain_len
         );
     }
 }

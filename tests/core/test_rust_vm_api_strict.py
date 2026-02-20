@@ -18,14 +18,15 @@ def test_default_handlers_requires_module_sentinels(monkeypatch: pytest.MonkeyPa
 
 
 def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    from doeff.effects.future import sync_await_handler
+
     sentinels = {
         "state": object(),
         "reader": object(),
         "writer": object(),
         "result_safe": object(),
         "scheduler": object(),
-        "kpc": object(),
-        "await_handler": object(),
+        "lazy_ask": object(),
     }
     fake_vm = SimpleNamespace(**sentinels)
     monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
@@ -38,8 +39,37 @@ def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPa
         sentinels["writer"],
         sentinels["result_safe"],
         sentinels["scheduler"],
-        sentinels["kpc"],
-        sentinels["await_handler"],
+        sentinels["lazy_ask"],
+        sync_await_handler,
+    ]
+
+
+def test_default_async_handlers_use_async_await_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from doeff.effects.future import async_await_handler
+
+    sentinels = {
+        "state": object(),
+        "reader": object(),
+        "writer": object(),
+        "result_safe": object(),
+        "scheduler": object(),
+        "lazy_ask": object(),
+    }
+    fake_vm = SimpleNamespace(**sentinels)
+    monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
+
+    handlers = rust_vm_module.default_async_handlers()
+
+    assert handlers == [
+        sentinels["state"],
+        sentinels["reader"],
+        sentinels["writer"],
+        sentinels["result_safe"],
+        sentinels["scheduler"],
+        sentinels["lazy_ask"],
+        async_await_handler,
     ]
 
 

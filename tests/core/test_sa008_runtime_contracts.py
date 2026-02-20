@@ -11,7 +11,7 @@ import pytest
 
 from doeff import Await, Gather, Spawn, async_run, do
 from doeff.effects.state import Get, Modify, Put
-from doeff.rust_vm import default_handlers, run
+from doeff.rust_vm import default_async_handlers, default_handlers, run
 
 
 def test_sa008_run_store_seed_and_put_get_roundtrip() -> None:
@@ -171,6 +171,6 @@ async def test_sa008_gather_branch_state_changes_not_shared() -> None:
         final = yield Get("message")
         return (results, final)
 
-    result = await async_run(prog(), handlers=default_handlers())
+    result = await async_run(prog(), handlers=default_async_handlers())
 
     assert result.value == (["writer done", "initial"], "initial")

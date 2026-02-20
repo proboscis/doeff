@@ -15,8 +15,8 @@ from doeff import (
     EffectGenerator,
     Get,
     Put,
-    Safe,
     Tell,
+    Try,
     do,
 )
 from doeff_openai.costs import calculate_cost
@@ -24,7 +24,7 @@ from doeff_openai.types import APICallMetadata, TokenUsage
 
 
 def _prepare_prompt_details(
-    request_payload: dict[str, Any]
+    request_payload: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None, list[dict[str, Any]], list[dict[str, Any]] | None]:
     """Create a sanitized payload and extract prompt text/images/messages."""
 
@@ -85,6 +85,7 @@ def _prepare_prompt_details(
 @dataclass
 class ClientHolder:
     """Holds both sync and async OpenAI clients."""
+
     sync: OpenAI | None = None
     async_: AsyncOpenAI | None = None
 
@@ -148,20 +149,21 @@ def _get_state_or_none(key: str) -> EffectGenerator[Any | None]:
     def _read() -> EffectGenerator[Any]:
         return (yield Get(key))
 
-    safe_result = yield Safe(_read())
+    safe_result = yield Try(_read())
     return safe_result.value if safe_result.is_ok() else None
 
 
 @do
 def get_openai_client() -> EffectGenerator[OpenAIClient]:
     """Get OpenAI client from environment or create new one."""
+
     # Create a program that asks for the client
     @do
     def try_ask_client():
         return (yield Ask("openai_client"))
 
-    # Use Safe to handle KeyError
-    safe_result = yield Safe(try_ask_client())
+    # Use Try to handle KeyError
+    safe_result = yield Try(try_ask_client())
     client = safe_result.value if safe_result.is_ok() else None
     if client:
         return client
@@ -177,7 +179,7 @@ def get_openai_client() -> EffectGenerator[OpenAIClient]:
     def try_ask_api_key():
         return (yield Ask("openai_api_key"))
 
-    safe_api_key = yield Safe(try_ask_api_key())
+    safe_api_key = yield Try(try_ask_api_key())
     api_key = safe_api_key.value if safe_api_key.is_ok() else None
 
     # If not found, try State
@@ -264,9 +266,13 @@ def track_api_call(
 
     # Log the API call
     if error:
-        yield Tell(f"OpenAI API error: operation={operation}, model={model}, error={error!s}, latency={latency_ms:.2f}ms")
+        yield Tell(
+            f"OpenAI API error: operation={operation}, model={model}, error={error!s}, latency={latency_ms:.2f}ms"
+        )
     else:
-        log_msg = f"OpenAI API call: operation={operation}, model={model}, latency={latency_ms:.2f}ms"
+        log_msg = (
+            f"OpenAI API call: operation={operation}, model={model}, latency={latency_ms:.2f}ms"
+        )
         if token_usage:
             log_msg += f", tokens={token_usage.total_tokens}"
         if cost_info:

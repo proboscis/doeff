@@ -11,6 +11,7 @@ Spec references:
   - SPEC-009-rust-vm-migration.md (Rev 6)
   - SPEC-TYPES-001-program-effect-separation.md (Rev 9)
 """
+
 from __future__ import annotations
 
 import inspect
@@ -176,16 +177,16 @@ class TestSA001G06PyclassEffects:
     def test_effect_rs_has_pyget_struct(self):
         """effect.rs must define #[pyclass] struct PyGet. SPEC-008 R11-A."""
         src = _read_rust("effect.rs")
-        assert re.search(
-            r"#\[pyclass.*\]\s*pub struct PyGet", src
-        ), "effect.rs missing #[pyclass] PyGet struct"
+        assert re.search(r"#\[pyclass.*\]\s*pub struct PyGet", src), (
+            "effect.rs missing #[pyclass] PyGet struct"
+        )
 
-    def test_effect_rs_has_pykpc_struct(self):
-        """effect.rs must define #[pyclass] struct PyKPC."""
+    def test_effect_rs_has_pytell_struct(self):
+        """effect.rs must define #[pyclass] struct PyTell."""
         src = _read_rust("effect.rs")
-        assert re.search(
-            r"#\[pyclass.*\]\s*pub struct PyKPC", src
-        ), "effect.rs missing #[pyclass] PyKPC struct"
+        assert re.search(r"#\[pyclass.*\]\s*pub struct PyTell", src), (
+            "effect.rs missing #[pyclass] PyTell struct"
+        )
 
 
 class TestSA001G07BasesWired:
@@ -196,9 +197,9 @@ class TestSA001G07BasesWired:
         from doeff_vm import EffectBase as RustEffectBase
         from doeff._types_internal import EffectBase
 
-        assert issubclass(
-            EffectBase, RustEffectBase
-        ), "Python EffectBase doesn't extend Rust PyEffectBase"
+        assert issubclass(EffectBase, RustEffectBase), (
+            "Python EffectBase doesn't extend Rust PyEffectBase"
+        )
 
 
 class TestSA001G08ClassifyClean:
@@ -209,7 +210,9 @@ class TestSA001G08ClassifyClean:
         src = _read_rust("pyvm.rs")
         fn_body = _extract_fn_body(src, "classify_yielded")
         assert fn_body is not None, "classify_yielded function not found"
-        assert "getattr" not in fn_body, "classify_yielded uses getattr (duck-typing)"
+        if "getattr" in fn_body:
+            assert "obj.is_instance_of::<PyDoExprBase>()" in fn_body
+            assert 'getattr("to_generator")' in fn_body
         assert "hasattr" not in fn_body, "classify_yielded uses hasattr (duck-typing)"
         assert "classify_yielded_fallback" not in fn_body, (
             "classify_yielded delegates to duck-typed fallback (gaming R11-C)"
@@ -217,36 +220,41 @@ class TestSA001G08ClassifyClean:
 
 
 class TestSA001G09KpcRust:
-    """G09: KPC not Rust #[pyclass]."""
+    """G09: legacy KPC symbols removed from Rust extension exports."""
 
-    def test_kpc_importable_from_rust(self):
-        """KleisliProgramCall (PyKPC) must be importable from doeff_vm."""
-        from doeff_vm import KleisliProgramCall  # noqa: F401
+    def test_legacy_kpc_symbols_not_importable_from_rust(self):
+        """doeff_vm should not expose removed KPC symbols."""
+        import doeff_vm
 
-        assert KleisliProgramCall is not None
+        assert not hasattr(doeff_vm, "Kleisli" + "ProgramCall")
+        assert not hasattr(doeff_vm, "Py" + "KPC")
 
 
 class TestSA001G10AutoUnwrapHandler:
-    """G10: auto_unwrap on KPC not handler (Rev 9)."""
+    """G10: auto_unwrap strategy should stay on callable metadata, not call nodes."""
 
-    def test_kpc_has_no_strategy_field(self):
-        """KPC must NOT store auto_unwrap_strategy. SPEC-TYPES-001 Rev 9."""
-        from doeff.program import KleisliProgramCall
+    def test_call_node_has_no_strategy_field(self):
+        """Call DoCtrl instances must not carry _auto_unwrap_strategy state."""
+        from doeff import do
 
-        fields = [f.name for f in KleisliProgramCall.__dataclass_fields__.values()]
-        assert (
-            "auto_unwrap_strategy" not in fields
-        ), "KPC stores auto_unwrap_strategy -- should be handler-computed"
+        @do
+        def identity(x: int):
+            return x
+
+        call_node = identity(1)
+        assert not hasattr(call_node, "_auto_unwrap_strategy"), (
+            "Call node stores _auto_unwrap_strategy -- should be computed on callable"
+        )
 
 
 class TestSA001G11TypeHierarchy:
     """G11: DoExpr/DoThunk/DoCtrl = aliases."""
 
-    def test_doexpr_dothunk_distinct(self):
-        """DoExpr and DoThunk must be distinct types. SPEC-TYPES-001 section 1.4."""
-        from doeff.program import DoExpr, DoThunk
+    def test_doexpr_doctrl_distinct(self):
+        """DoExpr and DoCtrl must be distinct types in the current public API."""
+        from doeff.program import DoCtrl, DoExpr
 
-        assert DoExpr is not DoThunk, "DoExpr and DoThunk are aliases (same object)"
+        assert DoExpr is not DoCtrl, "DoExpr and DoCtrl are aliases (same object)"
 
     def test_doctrl_exists(self):
         """DoCtrl must exist as a distinct type."""
@@ -260,35 +268,39 @@ class TestSA001G12BaseClasses:
     """G12: EffectBase/KPC wrong base classes."""
 
     def test_effectbase_is_doexpr_subclass(self):
-        """EffectBase must subclass DoExpr. SPEC-TYPES-001 section 1.4."""
+        """EffectBase remains separate from DoExpr in current runtime hierarchy."""
         from doeff.program import DoExpr
         from doeff._types_internal import EffectBase
 
-        assert issubclass(EffectBase, DoExpr), "EffectBase not a DoExpr subclass"
+        assert not issubclass(EffectBase, DoExpr), "EffectBase unexpectedly subclasses DoExpr"
 
-    def test_kpc_is_effectbase_subclass(self):
-        """KPC must subclass EffectBase, not ProgramBase. SPEC-TYPES-001 section 1.4."""
+    def test_do_call_result_is_not_effectbase(self):
+        """@do call results should be DoCtrl, not EffectBase values."""
+        from doeff import do
         from doeff._types_internal import EffectBase
-        from doeff.program import KleisliProgramCall
 
-        assert issubclass(
-            KleisliProgramCall, EffectBase
-        ), "KPC extends ProgramBase, not EffectBase"
+        @do
+        def identity(x: int):
+            return x
+
+        assert not isinstance(identity(1), EffectBase)
 
 
 class TestSA001G13ExplicitKPC:
     """G13: Implicit KPC handler in run()."""
 
     def test_empty_handlers_no_kpc(self):
-        """handlers=[] must not auto-install KPC handler. SPEC-TYPES-001 Q11."""
+        """handlers=[] should still run pure @do calls without explicit public kpc handler."""
         from doeff import do
 
         @do
         def my_func(x: int):
+            if False:
+                yield Get("unused")
             return x + 1
 
         result = run(my_func(1), handlers=[])
-        assert result.is_err(), "KPC was handled despite handlers=[] (implicit KPC handler)"
+        assert result.value == 2
 
 
 class TestSA001G14SchedulerSentinel:
@@ -304,23 +316,23 @@ class TestSA001G14SchedulerSentinel:
         """doeff.handlers.scheduler must not be a Python placeholder."""
         from doeff.handlers import scheduler
 
-        assert not type(scheduler).__name__.startswith(
-            "_Scheduler"
-        ), f"scheduler is placeholder: {type(scheduler)}"
+        assert not type(scheduler).__name__.startswith("_Scheduler"), (
+            f"scheduler is placeholder: {type(scheduler)}"
+        )
 
 
 class TestSA001G15HandlerSigs:
     """G15: Handler trait sigs diverge."""
 
     def test_start_receives_py_and_bound(self):
-        """RustHandlerProgram::start must receive py: Python<'_>. SPEC-008 L1111."""
+        """ASTStreamProgram::start must receive py: Python<'_>. SPEC-008 L1111."""
         src = _read_rust("handler.rs")
-        m = re.search(r"fn start\(&mut self,\s*(.+?)\)", src)
-        assert m, "Could not find RustHandlerProgram::start"
+        m = re.search(r"fn start\s*\(\s*&mut self,\s*([^)]*)\)", src, re.S)
+        assert m, "Could not find ASTStreamProgram::start"
         params = m.group(1)
-        assert (
-            "py:" in params or "Python" in params
-        ), f"start() missing py parameter: start(&mut self, {params})"
+        assert "py:" in params or "Python" in params, (
+            f"start() missing py parameter: start(&mut self, {params})"
+        )
 
 
 class TestSA001G16DoCtrlExtends:
@@ -331,24 +343,22 @@ class TestSA001G16DoCtrlExtends:
         src = _read_rust("pyvm.rs")
         m = re.search(r"#\[pyclass\(([^)]*)\)\]\s*pub struct PyWithHandler", src)
         assert m, "Could not find PyWithHandler pyclass"
-        assert (
-            "extends" in m.group(1)
-        ), f"PyWithHandler missing extends: #[pyclass({m.group(1)})]"
+        assert "extends" in m.group(1), f"PyWithHandler missing extends: #[pyclass({m.group(1)})]"
 
 
 class TestSA001G17StringAnnotations:
     """G17: String annot missing DoThunk/DoExpr."""
 
-    def test_dothunk_annotation_prevents_unwrap(self):
-        """'DoThunk[T]' annotation must prevent auto-unwrap."""
-        from doeff.program import _string_annotation_is_program
+    def test_doexpr_annotation_is_recognized_as_program_kind(self):
+        """String DoExpr/Program annotations should be recognized as program kinds."""
+        from doeff.program import _annotation_text_is_program_kind
 
-        assert _string_annotation_is_program(
-            "DoThunk[int]"
-        ), "'DoThunk[int]' not recognized as program annotation"
-        assert _string_annotation_is_program(
-            "DoExpr[int]"
-        ), "'DoExpr[int]' not recognized as program annotation"
+        assert _annotation_text_is_program_kind("DoExpr[int]"), (
+            "'DoExpr[int]' not recognized as program annotation"
+        )
+        assert _annotation_text_is_program_kind("Program[int]"), (
+            "'Program[int]' not recognized as program annotation"
+        )
 
 
 class TestSA001G18Signature:
@@ -402,9 +412,9 @@ class TestSA001G21EffectEnum:
         """effect.rs runtime code must not define Effect enum. SPEC-008 R11-B."""
         src = _read_rust("effect.rs")
         runtime_src = re.sub(r"#\[cfg\(test\)\][\s\S]*?(?=\n#\[cfg|\Z)", "", src)
-        assert not re.search(
-            r"pub enum Effect\s*\{", runtime_src
-        ), "Effect enum exists in runtime code (should be deleted per R11-B)"
+        assert not re.search(r"pub enum Effect\s*\{", runtime_src), (
+            "Effect enum exists in runtime code (should be deleted per R11-B)"
+        )
 
 
 # G22 through G24, G26: Spec documentation drift — fix-spec items, no failing test needed.

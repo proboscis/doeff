@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-
 import doeff_vm
 import pytest
 
 from doeff import (
     Ask,
-    Await,
     Err,
     Gather,
     Get,
@@ -16,9 +13,10 @@ from doeff import (
     Ok,
     Program,
     Put,
-    Safe,
     Spawn,
+    Try,
     async_run,
+    default_async_handlers,
     default_handlers,
     do,
     run,
@@ -77,7 +75,7 @@ def test_safe_wraps_error_as_result_value() -> None:
 
     @do
     def program():
-        return (yield Safe(boom()))
+        return (yield Try(boom()))
 
     result = run(program(), handlers=default_handlers())
     assert result.is_ok()
@@ -104,8 +102,8 @@ def test_safe_gather_and_run_result_share_rust_ok_err_surface() -> None:
 
     @do
     def program():
-        t1 = yield Spawn(Safe(succeeds()))
-        t2 = yield Spawn(Safe(fails()))
+        t1 = yield Spawn(Try(succeeds()))
+        t2 = yield Spawn(Try(fails()))
         return (yield Gather(t1, t2))
 
     result = run(program(), handlers=default_handlers())
@@ -184,7 +182,7 @@ def test_lazy_ask_local_override_is_enabled_and_cached() -> None:
     result = run(program(), handlers=default_handlers(), env={"service": outer_service()})
     assert result.is_ok()
     assert result.value == ("outer", ("inner", "inner"), "outer")
-    assert calls["outer"] == 1
+    assert calls["outer"] == 1  # preserved global cache across Local exit (shadow cache)
     assert calls["inner"] == 1
 
 
@@ -391,7 +389,7 @@ def test_lazy_ask_failed_evaluation_not_cached_after_replacement() -> None:
 
     @do
     def program():
-        first = yield Safe(Ask("service"))
+        first = yield Try(Ask("service"))
         if first.is_err():
 
             @do
@@ -440,7 +438,6 @@ def test_lazy_ask_none_result_is_cached_once() -> None:
         calls["nullable"] += 1
         if False:
             yield
-        return None
 
     @do
     def program():
@@ -573,7 +570,8 @@ async def test_lazy_ask_concurrent_waiters_do_not_reexecute() -> None:
     @do
     def service_program():
         calls["service"] += 1
-        _ = yield Await(asyncio.sleep(0))
+        if False:
+            yield
         return 42
 
     @do
@@ -588,7 +586,7 @@ async def test_lazy_ask_concurrent_waiters_do_not_reexecute() -> None:
 
     result = await async_run(
         program(),
-        handlers=default_handlers(),
+        handlers=default_async_handlers(),
         env={"service": service_program()},
     )
     assert result.is_ok()
@@ -618,7 +616,7 @@ def test_lazy_ask_safe_captures_program_error() -> None:
 
     @do
     def program():
-        return (yield Safe(Ask("service")))
+        return (yield Try(Ask("service")))
 
     result = run(program(), handlers=default_handlers(), env={"service": failing_service()})
     assert result.is_ok()

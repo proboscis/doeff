@@ -20,10 +20,9 @@ def _get_sync_preset() -> list[Any]:
 
 def _get_async_preset() -> list[Any]:
     if "async" not in _cache:
-        from doeff.handlers import scheduler
-        from doeff.rust_vm import default_handlers
+        from doeff.rust_vm import default_async_handlers
 
-        _cache["async"] = [*default_handlers(), scheduler]
+        _cache["async"] = default_async_handlers()
     return list(_cache["async"])
 
 

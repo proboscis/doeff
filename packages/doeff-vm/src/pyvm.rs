@@ -4,9 +4,13 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
+use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
-    dispatch_from_shared, dispatch_to_pyobject, PyAsk, PyCompletePromise, PyCreateExternalPromise,
-    PyCreatePromise, PyFailPromise, PyGather, PyGet, PyKPC, PyModify, PyPut, PyRace, PySpawn,
+    dispatch_from_shared, PyAcquireSemaphore, PyAsk, PyCancelEffect, PyCompletePromise,
+    PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise, PyGather, PyGet,
+    PyLocal, PyModify, PyProgramCallFrame, PyProgramCallStack, PyProgramTrace, PyPut,
+    PyPythonAsyncioAwaitEffect, PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn,
     PyTaskCompleted, PyTell,
 };
 
@@ -23,7 +27,6 @@ use crate::effect::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DoExprTag {
     Pure = 0,
-    Call = 1,
     Map = 2,
     FlatMap = 3,
     WithHandler = 4,
@@ -34,11 +37,14 @@ pub enum DoExprTag {
     GetContinuation = 9,
     GetHandlers = 10,
     GetCallStack = 11,
-    GetTrace = 18,
     Eval = 12,
     CreateContinuation = 13,
     ResumeContinuation = 14,
     AsyncEscape = 15,
+    Apply = 16,
+    Expand = 17,
+    GetTrace = 18,
+    Pass = 19,
     Effect = 128,
     Unknown = 255,
 }
@@ -48,7 +54,6 @@ impl TryFrom<u8> for DoExprTag {
     fn try_from(v: u8) -> Result<Self, u8> {
         match v {
             0 => Ok(DoExprTag::Pure),
-            1 => Ok(DoExprTag::Call),
             2 => Ok(DoExprTag::Map),
             3 => Ok(DoExprTag::FlatMap),
             4 => Ok(DoExprTag::WithHandler),
@@ -59,11 +64,14 @@ impl TryFrom<u8> for DoExprTag {
             9 => Ok(DoExprTag::GetContinuation),
             10 => Ok(DoExprTag::GetHandlers),
             11 => Ok(DoExprTag::GetCallStack),
-            18 => Ok(DoExprTag::GetTrace),
             12 => Ok(DoExprTag::Eval),
             13 => Ok(DoExprTag::CreateContinuation),
             14 => Ok(DoExprTag::ResumeContinuation),
             15 => Ok(DoExprTag::AsyncEscape),
+            16 => Ok(DoExprTag::Apply),
+            17 => Ok(DoExprTag::Expand),
+            18 => Ok(DoExprTag::GetTrace),
+            19 => Ok(DoExprTag::Pass),
             128 => Ok(DoExprTag::Effect),
             255 => Ok(DoExprTag::Unknown),
             other => Err(other),
@@ -73,70 +81,78 @@ impl TryFrom<u8> for DoExprTag {
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    AwaitHandlerFactory, ConcurrentKpcHandlerFactory, Handler, HandlerEntry, KpcHandlerFactory,
-    ReaderHandlerFactory, ResultSafeHandlerFactory, RustProgramHandlerRef, StateHandlerFactory,
-    WriterHandlerFactory,
+    AwaitHandlerFactory, Handler, HandlerEntry, HandlerRef, LazyAskHandlerFactory, PythonHandler,
+    ReaderHandlerFactory, ResultSafeHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerHandler;
 use crate::segment::Segment;
-use crate::step::{
-    DoCtrl, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
-};
+use crate::step::{Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent};
 use crate::value::Value;
 use crate::vm::VM;
 
-fn vmerror_to_pyerr(e: VMError) -> PyErr {
+fn build_traceback_data_pyobject(
+    py: Python<'_>,
+    trace: Vec<crate::capture::TraceEntry>,
+    active_chain: Vec<crate::capture::ActiveChainEntry>,
+) -> Option<Py<PyAny>> {
+    let entries = Value::Trace(trace).to_pyobject(py).ok()?.unbind();
+    let active_chain = Value::ActiveChain(active_chain)
+        .to_pyobject(py)
+        .ok()?
+        .unbind();
+    let data = Bound::new(
+        py,
+        PyDoeffTracebackData {
+            entries,
+            active_chain,
+        },
+    )
+    .ok()?;
+    Some(data.into_any().unbind())
+}
+
+fn vmerror_to_pyerr_with_traceback_data(py: Python<'_>, e: VMError) -> (PyErr, Option<Py<PyAny>>) {
     match e {
-        VMError::UnhandledEffect { .. } | VMError::NoMatchingHandler { .. } => {
-            PyTypeError::new_err(format!("UnhandledEffect: {}", e))
-        }
-        VMError::TypeError { .. } => PyTypeError::new_err(e.to_string()),
-        VMError::UncaughtException { exception, trace } => {
-            // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
-            let py = unsafe { Python::assume_attached() };
+        VMError::UnhandledEffect { .. } | VMError::NoMatchingHandler { .. } => (
+            PyTypeError::new_err(format!("UnhandledEffect: {}", e)),
+            None,
+        ),
+        VMError::TypeError { .. } => (PyTypeError::new_err(e.to_string()), None),
+        VMError::UncaughtException {
+            exception,
+            trace,
+            active_chain,
+        } => {
             let exc_value = exception.value_clone_ref(py);
-            if let Ok(trace_obj) = Value::Trace(trace).to_pyobject(py) {
-                let _ = exc_value
-                    .bind(py)
-                    .setattr("__doeff_traceback_data__", trace_obj);
-            }
-            PyErr::from_value(exc_value.bind(py).clone())
+            let traceback_data = build_traceback_data_pyobject(py, trace, active_chain);
+            (
+                PyErr::from_value(exc_value.bind(py).clone()),
+                traceback_data,
+            )
         }
-        _ => PyRuntimeError::new_err(e.to_string()),
+        _ => (PyRuntimeError::new_err(e.to_string()), None),
     }
 }
 
-fn attach_doeff_traceback_best_effort(py: Python<'_>, exc_obj: &Bound<'_, PyAny>) {
-    if !exc_obj
-        .hasattr("__doeff_traceback_data__")
-        .unwrap_or(false)
-    {
-        return;
-    }
-    let Ok(module) = py.import("doeff.traceback") else {
-        return;
-    };
-    let Ok(func) = module.getattr("attach_doeff_traceback") else {
-        return;
-    };
-    let _ = func.call1((exc_obj,));
+fn vmerror_to_pyerr(e: VMError) -> PyErr {
+    // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
+    let py = unsafe { Python::assume_attached() };
+    vmerror_to_pyerr_with_traceback_data(py, e).0
 }
 
 fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     Ok(obj.is_instance_of::<PyEffectBase>())
 }
 
-fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
-    let py = obj.py();
-    let Ok(mod_) = py.import(module) else {
-        return false;
-    };
-    let Ok(cls) = mod_.getattr(class_name) else {
-        return false;
-    };
-    obj.is_instance(&cls).unwrap_or(false)
+fn classify_call_arg(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<CallArg> {
+    if obj.is_instance_of::<PyDoExprBase>() || is_effect_base_like(py, obj)? {
+        Ok(CallArg::Expr(PyShared::new(obj.clone().unbind())))
+    } else {
+        Ok(CallArg::Value(Value::from_pyobject(obj)))
+    }
 }
 
 fn lift_effect_to_perform_expr(py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<PyAny>> {
@@ -176,6 +192,60 @@ impl PyDoExprBase {
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         PyDoExprBase::new_base()
+    }
+
+    fn to_generator(slf: Py<Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let expr = slf.into_any();
+        let gen = Bound::new(
+            py,
+            DoExprOnceGenerator {
+                expr: Some(expr),
+                done: false,
+            },
+        )?
+        .into_any()
+        .unbind();
+        Ok(gen)
+    }
+}
+
+#[pyclass(name = "_DoExprOnceGenerator")]
+struct DoExprOnceGenerator {
+    expr: Option<Py<PyAny>>,
+    done: bool,
+}
+
+#[pymethods]
+impl DoExprOnceGenerator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        if self.done {
+            return Ok(None);
+        }
+        self.done = true;
+        let expr = self
+            .expr
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("DoExprOnceGenerator already consumed"))?;
+        let expr = lift_effect_to_perform_expr(py, expr)?;
+        Ok(Some(expr))
+    }
+
+    fn send(&mut self, py: Python<'_>, value: Py<PyAny>) -> PyResult<Py<PyAny>> {
+        if !self.done {
+            return match self.__next__(py)? {
+                Some(v) => Ok(v),
+                None => Err(PyStopIteration::new_err(py.None())),
+            };
+        }
+        Err(PyStopIteration::new_err((value,)))
+    }
+
+    fn throw(&mut self, _py: Python<'_>, exc: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        Err(PyErr::from_value(exc))
     }
 }
 
@@ -239,9 +309,7 @@ impl PyVM {
     }
 
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let gen = self.to_generator_strict(py, program.unbind())?;
-        let gen_bound = gen.bind(py).clone();
-        self.start_with_generator(gen_bound)?;
+        self.start_with_expr(py, program)?;
 
         loop {
             let event = py.detach(|| self.run_rust_steps());
@@ -270,24 +338,22 @@ impl PyVM {
         py: Python<'_>,
         program: Bound<'_, PyAny>,
     ) -> PyResult<PyRunResult> {
-        let gen = self.to_generator_strict(py, program.unbind())?;
-        let gen_bound = gen.bind(py).clone();
-        self.start_with_generator(gen_bound)?;
+        self.start_with_expr(py, program)?;
 
-        let result = loop {
+        let (result, traceback_data) = loop {
             let event = py.detach(|| self.run_rust_steps());
             match event {
                 StepEvent::Done(value) => match value.to_pyobject(py) {
-                    Ok(v) => break Ok(v.unbind()),
+                    Ok(v) => break (Ok(v.unbind()), None),
                     Err(e) => {
                         let exc = pyerr_to_exception(py, e)?;
-                        break Err(exc);
+                        break (Err(exc), None);
                     }
                 },
                 StepEvent::Error(e) => {
-                    let pyerr = vmerror_to_pyerr(e);
+                    let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
                     let exc = pyerr_to_exception(py, pyerr)?;
-                    break Err(exc);
+                    break (Err(exc), traceback_data);
                 }
                 StepEvent::NeedsPython(call) => {
                     let outcome = self.execute_python_call(py, call)?;
@@ -309,6 +375,7 @@ impl PyVM {
 
         Ok(PyRunResult {
             result,
+            traceback_data,
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
@@ -351,18 +418,19 @@ impl PyVM {
         Ok(())
     }
 
-    pub fn put_env(&mut self, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    pub fn put_env(&mut self, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let env_key = HashedPyKey::from_bound(key)?;
         self.vm
             .rust_store
             .env
-            .insert(key, Value::from_pyobject(value));
+            .insert(env_key, Value::from_pyobject(value));
         Ok(())
     }
 
     pub fn env_items(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = pyo3::types::PyDict::new(py);
         for (k, v) in &self.vm.rust_store.env {
-            dict.set_item(k, v.to_pyobject(py)?)?;
+            dict.set_item(k.to_pyobject(py), v.to_pyobject(py)?)?;
         }
         Ok(dict.into())
     }
@@ -445,16 +513,19 @@ impl PyVM {
         }
         Ok(PyRunResult {
             result: Ok(value.unbind()),
+            traceback_data: None,
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
         })
     }
 
+    #[pyo3(signature = (error, traceback_data=None))]
     pub fn build_run_result_error(
         &self,
         py: Python<'_>,
         error: Bound<'_, PyAny>,
+        traceback_data: Option<Bound<'_, PyAny>>,
     ) -> PyResult<PyRunResult> {
         let raw_store = pyo3::types::PyDict::new(py);
         for (k, v) in &self.vm.rust_store.state {
@@ -465,8 +536,12 @@ impl PyVM {
             log_list.append(entry.to_pyobject(py)?)?;
         }
         let exc = pyerr_to_exception(py, PyErr::from_value(error))?;
+        let traceback_data_obj = traceback_data
+            .filter(|obj| !obj.is_none())
+            .map(Bound::unbind);
         Ok(PyRunResult {
             result: Err(exc),
+            traceback_data: traceback_data_obj,
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
@@ -474,10 +549,7 @@ impl PyVM {
     }
 
     pub fn start_program(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<()> {
-        let gen = self.to_generator_strict(py, program.unbind())?;
-        let gen_bound = gen.bind(py).clone();
-        self.start_with_generator(gen_bound)?;
-        Ok(())
+        self.start_with_expr(py, program)
     }
 
     pub fn step_once(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -494,7 +566,16 @@ impl PyVM {
             }
             StepEvent::Error(e) => {
                 self.vm.end_active_run_session();
-                Err(vmerror_to_pyerr(e))
+                let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
+                let err_obj = pyerr.value(py).clone().into_any();
+                let traceback_obj = traceback_data.unwrap_or_else(|| py.None());
+                let elems: Vec<Bound<'_, pyo3::PyAny>> = vec![
+                    "error".into_pyobject(py)?.into_any(),
+                    err_obj,
+                    traceback_obj.bind(py).clone(),
+                ];
+                let tuple = PyTuple::new(py, elems)?;
+                Ok(tuple.into())
             }
             StepEvent::NeedsPython(call) => {
                 if let PythonCall::CallAsync { func, args } = call {
@@ -558,10 +639,7 @@ impl PyVM {
             let prompt_seg_id = self.vm.alloc_segment(seg);
             self.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(StateHandlerFactory)),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(StateHandlerFactory), prompt_seg_id),
             );
             scoped_markers.push(marker);
         }
@@ -572,10 +650,7 @@ impl PyVM {
             let prompt_seg_id = self.vm.alloc_segment(seg);
             self.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(ReaderHandlerFactory)),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(ReaderHandlerFactory), prompt_seg_id),
             );
             scoped_markers.push(marker);
         }
@@ -586,10 +661,7 @@ impl PyVM {
             let prompt_seg_id = self.vm.alloc_segment(seg);
             self.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(WriterHandlerFactory)),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(WriterHandlerFactory), prompt_seg_id),
             );
             scoped_markers.push(marker);
         }
@@ -607,16 +679,58 @@ impl PyVM {
 }
 
 impl PyVM {
-    fn is_python_generator_object(obj: &Bound<'_, PyAny>) -> bool {
-        obj.get_type()
+    fn classify_handler_object(
+        _py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+        context: &str,
+    ) -> PyResult<(Handler, Option<PyShared>)> {
+        if obj.is_instance_of::<PyRustHandlerSentinel>() {
+            let sentinel: PyRef<'_, PyRustHandlerSentinel> = obj.extract()?;
+            return Ok((
+                sentinel.factory.clone(),
+                Some(PyShared::new(obj.clone().unbind())),
+            ));
+        }
+
+        if obj.is_instance_of::<DoeffGeneratorFn>() {
+            let dgfn = obj.extract::<Py<DoeffGeneratorFn>>()?;
+            let callable_identity = {
+                let dgfn_ref = dgfn.bind(_py).borrow();
+                dgfn_ref.callable.clone_ref(_py)
+            };
+            let handler: Handler = Arc::new(PythonHandler::from_dgfn(dgfn));
+            return Ok((handler, Some(PyShared::new(callable_identity))));
+        }
+
+        let base_message = format!("{context} handler must be DoeffGeneratorFn or RustHandler");
+        if obj.is_callable() {
+            return Err(PyTypeError::new_err(base_message));
+        }
+
+        let ty = obj
+            .get_type()
             .name()
-            .map(|n| n.to_string_lossy().as_ref() == "generator")
-            .unwrap_or(false)
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string());
+        Err(PyTypeError::new_err(format!("{base_message}, got {ty}")))
     }
 
-    fn start_with_generator(&mut self, gen: Bound<'_, PyAny>) -> PyResult<()> {
+    fn start_with_expr(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<()> {
         self.vm.end_active_run_session();
         self.vm.begin_run_session();
+
+        let expr = lift_effect_to_perform_expr(py, program.unbind())?;
+        let expr_bound = expr.bind(py);
+        if !expr_bound.is_instance_of::<PyDoExprBase>() {
+            let ty = expr_bound
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            return Err(PyTypeError::new_err(format!(
+                "program must be DoExpr; got {ty}"
+            )));
+        }
 
         let marker = Marker::fresh();
         let installed_markers = self.vm.installed_handler_markers();
@@ -626,15 +740,11 @@ impl PyVM {
         let seg = Segment::new(marker, None, scope_chain);
         let seg_id = self.vm.alloc_segment(seg);
         self.vm.current_segment = Some(seg_id);
-
-        if let Some(seg) = self.vm.current_segment_mut() {
-            seg.push_frame(crate::frame::Frame::PythonGenerator {
-                generator: PyShared::new(gen.unbind()),
-                started: false,
-                metadata: None,
-            });
-        }
-        self.vm.mode = Mode::Deliver(Value::Unit);
+        self.vm.mode = Mode::HandleYield(DoCtrl::Eval {
+            expr: PyShared::new(expr),
+            handlers: vec![],
+            metadata: None,
+        });
         Ok(())
     }
 
@@ -649,10 +759,10 @@ impl PyVM {
 
     fn execute_python_call(&self, py: Python<'_>, call: PythonCall) -> PyResult<PyCallOutcome> {
         match call {
-            PythonCall::StartProgram { program } => {
-                // D5: Strict only — no callable fallback. Spec requires ProgramBase.
-                match self.to_generator_strict(py, program.clone_ref(py)) {
-                    Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
+            PythonCall::EvalExpr { expr } => {
+                let obj = expr.bind(py);
+                match self.classify_yielded(py, obj) {
+                    Ok(yielded) => Ok(PyCallOutcome::GenYield(yielded)),
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
@@ -672,54 +782,6 @@ impl PyVM {
                         Ok(result) => Ok(PyCallOutcome::Value(Value::from_pyobject(&result))),
                         Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                     }
-                }
-            }
-            PythonCall::CallHandler {
-                handler,
-                effect,
-                continuation,
-            } => {
-                let py_effect = dispatch_to_pyobject(py, &effect)?;
-                let py_k = Bound::new(
-                    py,
-                    PyK {
-                        cont_id: continuation.cont_id,
-                    },
-                )?
-                .into_any();
-                match handler.bind(py).call1((py_effect, py_k)) {
-                    Ok(result) => {
-                        let is_generator = py
-                            .import("types")
-                            .and_then(|m| m.getattr("GeneratorType"))
-                            .and_then(|ty| result.is_instance(&ty))
-                            .unwrap_or(false);
-                        if is_generator {
-                            Ok(PyCallOutcome::Value(Value::Python(result.unbind())))
-                        } else {
-                            if is_effect_base_like(py, &result)? {
-                                let lifted = lift_effect_to_perform_expr(py, result.unbind())?;
-                                let gen = self.wrap_expr_as_generator(py, lifted)?;
-                                return Ok(PyCallOutcome::Value(Value::Python(gen)));
-                            }
-
-                            let is_doexpr_like = result.is_instance_of::<PyKPC>()
-                                || result.is_instance_of::<PyDoCtrlBase>()
-                                || result.is_callable();
-
-                            if !is_doexpr_like {
-                                let gen =
-                                    self.wrap_return_value_as_generator(py, result.unbind())?;
-                                return Ok(PyCallOutcome::Value(Value::Python(gen)));
-                            }
-
-                            match self.to_generator_strict(py, result.unbind()) {
-                                Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
-                                Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
-                            }
-                        }
-                    }
-                    Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
             PythonCall::GenNext => {
@@ -755,81 +817,21 @@ impl PyVM {
 
     fn pending_generator(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.vm.pending_python {
-            Some(PendingPython::StepUserGenerator { generator, .. }) => Ok(generator.clone_ref(py)),
+            Some(PendingPython::StepUserGenerator { stream, .. }) => {
+                let guard = stream
+                    .lock()
+                    .map_err(|_| PyRuntimeError::new_err("ASTStream lock poisoned"))?;
+                let Some(generator) = guard.python_generator() else {
+                    return Err(PyRuntimeError::new_err(
+                        "GenNext/GenSend/GenThrow: pending stream is not PythonGeneratorStream",
+                    ));
+                };
+                Ok(generator.clone_ref(py))
+            }
             _ => Err(PyRuntimeError::new_err(
                 "GenNext/GenSend/GenThrow: expected StepUserGenerator in pending_python",
             )),
         }
-    }
-
-    /// Strict boundary: accept only Rust runtime DoExpr bases.
-    fn to_generator_strict(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
-        let program = lift_effect_to_perform_expr(py, program)?;
-        let program_bound = program.bind(py);
-
-        let is_nesting_step = program_bound
-            .get_type()
-            .name()
-            .map(|n| n.to_string_lossy().as_ref() == "_NestingStep")
-            .unwrap_or(false);
-        if is_nesting_step || program_bound.is_instance_of::<NestingStep>() {
-            let gen = program_bound.call_method0("to_generator")?;
-            return Ok(gen.unbind());
-        }
-
-        if Self::is_python_generator_object(program_bound) {
-            return Ok(program);
-        }
-
-        // ProgramBase path: objects may expose `to_generator()` without being
-        // direct DoCtrl expressions. We intentionally do not accept arbitrary
-        // callables here; strict mode still requires explicit program objects.
-        if let Ok(to_generator) = program_bound.getattr("to_generator") {
-            if to_generator.is_callable() {
-                let generated = to_generator.call0()?;
-                if !Self::is_python_generator_object(&generated) {
-                    return Err(pyo3::exceptions::PyTypeError::new_err(
-                        "Expected ProgramBase.to_generator() to return a generator",
-                    ));
-                }
-                return Ok(generated.unbind());
-            }
-        }
-
-        if program_bound.is_instance_of::<PyDoExprBase>() {
-            return self.wrap_expr_as_generator(py, program);
-        }
-
-        let ty = program_bound
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string());
-        Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "program must be DoExpr; got {ty}"
-        )))
-    }
-
-    fn wrap_expr_as_generator(&self, py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<PyAny>> {
-        use pyo3::types::PyModule;
-        let code = c"def _wrap(e):\n    v = yield e\n    return v\n";
-        let module = PyModule::from_code(py, code, c"_effect_wrap", c"_effect_wrap")?;
-        let wrap_fn = module.getattr("_wrap")?;
-        let gen = wrap_fn.call1((expr.bind(py),))?;
-        Ok(gen.unbind())
-    }
-
-    fn wrap_return_value_as_generator(
-        &self,
-        py: Python<'_>,
-        value: Py<PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        use pyo3::types::PyModule;
-        let code = c"def _ret(v):\n    if False:\n        yield v\n    return v\n";
-        let module = PyModule::from_code(py, code, c"_value_wrap", c"_value_wrap")?;
-        let wrap_fn = module.getattr("_ret")?;
-        let gen = wrap_fn.call1((value.bind(py),))?;
-        Ok(gen.unbind())
     }
 
     fn step_generator(
@@ -858,7 +860,7 @@ impl PyVM {
         }
     }
 
-    fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Yielded> {
+    fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<DoCtrl> {
         // R13-I: GIL-free tag dispatch.
         //
         // 1. Single isinstance check: extract PyDoCtrlBase
@@ -874,70 +876,83 @@ impl PyVM {
                 DoExprTag::WithHandler => {
                     let wh: PyRef<'_, PyWithHandler> = obj.extract()?;
                     let handler_bound = wh.handler.bind(py);
-                    let (handler, py_identity) = if handler_bound
-                        .is_instance_of::<PyRustHandlerSentinel>()
-                    {
-                        let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_bound.extract()?;
-                        (
-                            Handler::RustProgram(sentinel.factory.clone()),
-                            Some(PyShared::new(wh.handler.clone_ref(py))),
-                        )
-                    } else {
-                        (
-                            Handler::Python(PyShared::new(wh.handler.clone_ref(py))),
-                            None,
-                        )
-                    };
-                    Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
+                    let (handler, py_identity) =
+                        Self::classify_handler_object(py, handler_bound, "WithHandler")?;
+                    Ok(DoCtrl::WithHandler {
                         handler,
                         expr: wh.expr.clone_ref(py),
                         py_identity,
-                    }))
+                    })
                 }
                 DoExprTag::Pure => {
                     let p: PyRef<'_, PyPure> = obj.extract()?;
-                    Ok(Yielded::DoCtrl(DoCtrl::Pure {
+                    Ok(DoCtrl::Pure {
                         value: Value::from_pyobject(p.value.bind(py)),
-                    }))
+                    })
                 }
-                DoExprTag::Call => {
-                    let c: PyRef<'_, PyCall> = obj.extract()?;
+                DoExprTag::Apply => {
+                    let a: PyRef<'_, PyApply> = obj.extract()?;
+                    let f = classify_call_arg(py, a.f.bind(py).as_any())?;
                     let mut args = Vec::new();
-                    for item in c.args.bind(py).try_iter()? {
-                        args.push(Value::from_pyobject(item?.as_any()));
+                    for item in a.args.bind(py).try_iter()? {
+                        let item = item?;
+                        args.push(classify_call_arg(py, item.as_any())?);
                     }
-                    let kwargs_dict = c.kwargs.bind(py).cast::<PyDict>()?;
+                    let kwargs_dict = a.kwargs.bind(py).cast::<PyDict>()?;
                     let mut kwargs = Vec::new();
                     for (k, v) in kwargs_dict.iter() {
                         let key = k.str()?.to_str()?.to_string();
-                        kwargs.push((key, Value::from_pyobject(v.as_any())));
+                        kwargs.push((key, classify_call_arg(py, v.as_any())?));
                     }
-                    Ok(Yielded::DoCtrl(DoCtrl::Call {
-                        f: PyShared::new(c.f.clone_ref(py)),
+                    Ok(DoCtrl::Apply {
+                        f,
                         args,
                         kwargs,
-                        metadata: call_metadata_from_pycall(py, &c),
-                    }))
+                        metadata: call_metadata_from_pyapply(py, &a)?,
+                    })
+                }
+                DoExprTag::Expand => {
+                    let e: PyRef<'_, PyExpand> = obj.extract()?;
+                    let factory = classify_call_arg(py, e.factory.bind(py).as_any())?;
+                    let mut args = Vec::new();
+                    for item in e.args.bind(py).try_iter()? {
+                        let item = item?;
+                        args.push(classify_call_arg(py, item.as_any())?);
+                    }
+                    let kwargs_dict = e.kwargs.bind(py).cast::<PyDict>()?;
+                    let mut kwargs = Vec::new();
+                    for (k, v) in kwargs_dict.iter() {
+                        let key = k.str()?.to_str()?.to_string();
+                        kwargs.push((key, classify_call_arg(py, v.as_any())?));
+                    }
+                    Ok(DoCtrl::Expand {
+                        factory,
+                        args,
+                        kwargs,
+                        metadata: call_metadata_from_pyexpand(py, &e)?,
+                    })
                 }
                 DoExprTag::Map => {
                     let m: PyRef<'_, PyMap> = obj.extract()?;
-                    Ok(Yielded::DoCtrl(DoCtrl::Map {
+                    Ok(DoCtrl::Map {
                         source: PyShared::new(m.source.clone_ref(py)),
                         mapper: PyShared::new(m.mapper.clone_ref(py)),
-                    }))
+                        mapper_meta: call_metadata_from_meta_obj(m.mapper_meta.bind(py)),
+                    })
                 }
                 DoExprTag::FlatMap => {
                     let fm: PyRef<'_, PyFlatMap> = obj.extract()?;
-                    Ok(Yielded::DoCtrl(DoCtrl::FlatMap {
+                    Ok(DoCtrl::FlatMap {
                         source: PyShared::new(fm.source.clone_ref(py)),
                         binder: PyShared::new(fm.binder.clone_ref(py)),
-                    }))
+                        binder_meta: call_metadata_from_meta_obj(fm.binder_meta.bind(py)),
+                    })
                 }
                 DoExprTag::Perform => {
                     let pf: PyRef<'_, PyPerform> = obj.extract()?;
-                    Ok(Yielded::DoCtrl(DoCtrl::Perform {
+                    Ok(DoCtrl::Perform {
                         effect: dispatch_from_shared(PyShared::new(pf.effect.clone_ref(py))),
-                    }))
+                    })
                 }
                 DoExprTag::Resume => {
                     let r: PyRef<'_, PyResume> = obj.extract()?;
@@ -957,10 +972,10 @@ impl PyVM {
                                 cont_id.raw()
                             ))
                         })?;
-                    Ok(Yielded::DoCtrl(DoCtrl::Resume {
+                    Ok(DoCtrl::Resume {
                         continuation: k,
                         value: Value::from_pyobject(r.value.bind(py)),
-                    }))
+                    })
                 }
                 DoExprTag::Transfer => {
                     let t: PyRef<'_, PyTransfer> = obj.extract()?;
@@ -980,10 +995,10 @@ impl PyVM {
                                 cont_id.raw()
                             ))
                         })?;
-                    Ok(Yielded::DoCtrl(DoCtrl::Transfer {
+                    Ok(DoCtrl::Transfer {
                         continuation: k,
                         value: Value::from_pyobject(t.value.bind(py)),
-                    }))
+                    })
                 }
                 DoExprTag::Delegate => {
                     let d: PyRef<'_, PyDelegate> = obj.extract()?;
@@ -1000,7 +1015,24 @@ impl PyVM {
                                 )
                             })?
                     };
-                    Ok(Yielded::DoCtrl(DoCtrl::Delegate { effect }))
+                    Ok(DoCtrl::Delegate { effect })
+                }
+                DoExprTag::Pass => {
+                    let p: PyRef<'_, PyPass> = obj.extract()?;
+                    let effect = if let Some(ref eff) = p.effect {
+                        dispatch_from_shared(PyShared::new(eff.clone_ref(py)))
+                    } else {
+                        self.vm
+                            .dispatch_stack
+                            .last()
+                            .map(|ctx| ctx.effect.clone())
+                            .ok_or_else(|| {
+                                PyRuntimeError::new_err(
+                                    "Pass without effect called outside dispatch context",
+                                )
+                            })?
+                    };
+                    Ok(DoCtrl::Pass { effect })
                 }
                 DoExprTag::ResumeContinuation => {
                     let rc: PyRef<'_, PyResumeContinuation> = obj.extract()?;
@@ -1018,10 +1050,10 @@ impl PyVM {
                                 cont_id.raw()
                             ))
                         })?;
-                    Ok(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+                    Ok(DoCtrl::ResumeContinuation {
                         continuation: k,
                         value: Value::from_pyobject(rc.value.bind(py)),
-                    }))
+                    })
                 }
                 DoExprTag::CreateContinuation => {
                     let cc: PyRef<'_, PyCreateContinuation> = obj.extract()?;
@@ -1031,25 +1063,21 @@ impl PyVM {
                     let mut handler_identities = Vec::new();
                     for item in handlers_list.try_iter()? {
                         let item = item?;
-                        if item.is_instance_of::<PyRustHandlerSentinel>() {
-                            let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
-                            handlers.push(Handler::RustProgram(sentinel.factory.clone()));
-                            handler_identities.push(Some(PyShared::new(item.unbind())));
-                        } else {
-                            handlers.push(Handler::Python(PyShared::new(item.unbind())));
-                            handler_identities.push(None);
-                        }
+                        let (handler, identity) =
+                            Self::classify_handler_object(py, &item, "CreateContinuation")?;
+                        handlers.push(handler);
+                        handler_identities.push(identity);
                     }
-                    Ok(Yielded::DoCtrl(DoCtrl::CreateContinuation {
+                    Ok(DoCtrl::CreateContinuation {
                         expr: PyShared::new(program),
                         handlers,
                         handler_identities,
-                    }))
+                    })
                 }
-                DoExprTag::GetContinuation => Ok(Yielded::DoCtrl(DoCtrl::GetContinuation)),
-                DoExprTag::GetHandlers => Ok(Yielded::DoCtrl(DoCtrl::GetHandlers)),
-                DoExprTag::GetCallStack => Ok(Yielded::DoCtrl(DoCtrl::GetCallStack)),
-                DoExprTag::GetTrace => Ok(Yielded::DoCtrl(DoCtrl::GetTrace)),
+                DoExprTag::GetContinuation => Ok(DoCtrl::GetContinuation),
+                DoExprTag::GetHandlers => Ok(DoCtrl::GetHandlers),
+                DoExprTag::GetCallStack => Ok(DoCtrl::GetCallStack),
+                DoExprTag::GetTrace => Ok(DoCtrl::GetTrace),
                 DoExprTag::Eval => {
                     let eval: PyRef<'_, PyEval> = obj.extract()?;
                     let expr = eval.expr.clone_ref(py);
@@ -1057,24 +1085,20 @@ impl PyVM {
                     let mut handlers = Vec::new();
                     for item in handlers_list.try_iter()? {
                         let item = item?;
-                        if item.is_instance_of::<PyRustHandlerSentinel>() {
-                            let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
-                            handlers.push(Handler::RustProgram(sentinel.factory.clone()));
-                        } else {
-                            handlers.push(Handler::Python(PyShared::new(item.unbind())));
-                        }
+                        let (handler, _) = Self::classify_handler_object(py, &item, "Eval")?;
+                        handlers.push(handler);
                     }
-                    Ok(Yielded::DoCtrl(DoCtrl::Eval {
+                    Ok(DoCtrl::Eval {
                         expr: PyShared::new(expr),
                         handlers,
                         metadata: None,
-                    }))
+                    })
                 }
                 DoExprTag::AsyncEscape => {
                     let ae: PyRef<'_, PyAsyncEscape> = obj.extract()?;
-                    Ok(Yielded::DoCtrl(DoCtrl::PythonAsyncSyntaxEscape {
+                    Ok(DoCtrl::PythonAsyncSyntaxEscape {
                         action: ae.action.clone_ref(py),
-                    }))
+                    })
                 }
                 DoExprTag::Effect | DoExprTag::Unknown => {
                     // Unknown tag on a DoCtrlBase — treat as error
@@ -1085,17 +1109,43 @@ impl PyVM {
             };
         }
 
+        if obj.is_instance_of::<PyDoExprBase>() {
+            let to_generator = obj.getattr("to_generator").map_err(|_| {
+                PyTypeError::new_err("DoExpr object is missing callable to_generator()")
+            })?;
+            if !to_generator.is_callable() {
+                return Err(PyTypeError::new_err("DoExpr.to_generator must be callable"));
+            }
+            let ty_name = obj
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| "DoExpr".to_string());
+            return Ok(DoCtrl::Expand {
+                factory: CallArg::Value(Value::Python(to_generator.unbind())),
+                args: vec![],
+                kwargs: vec![],
+                metadata: CallMetadata::new(
+                    format!("{ty_name}.to_generator"),
+                    "<doexpr>".to_string(),
+                    0,
+                    None,
+                    Some(PyShared::new(obj.clone().unbind())),
+                ),
+            });
+        }
+
         // Fallback: bare effect → auto-lift to Perform (R14-C)
         if is_effect_base_like(py, obj)? {
-            if is_instance_from(obj, "doeff.effects.trace", "ProgramTraceEffect") {
-                return Ok(Yielded::DoCtrl(DoCtrl::GetTrace));
+            if obj.is_instance_of::<PyProgramTrace>() {
+                return Ok(DoCtrl::GetTrace);
             }
-            if is_instance_from(obj, "doeff.effects.callstack", "ProgramCallStackEffect") {
-                return Ok(Yielded::DoCtrl(DoCtrl::GetCallStack));
+            if obj.is_instance_of::<PyProgramCallStack>() {
+                return Ok(DoCtrl::GetCallStack);
             }
-            return Ok(Yielded::DoCtrl(DoCtrl::Perform {
+            return Ok(DoCtrl::Perform {
                 effect: dispatch_from_shared(PyShared::new(obj.clone().unbind())),
-            }));
+            });
         }
 
         Err(PyTypeError::new_err(
@@ -1148,10 +1198,7 @@ impl PyStdlib {
             let prompt_seg_id = vm.vm.alloc_segment(seg);
             vm.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(StateHandlerFactory)),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(StateHandlerFactory), prompt_seg_id),
             );
         }
     }
@@ -1162,10 +1209,7 @@ impl PyStdlib {
             let prompt_seg_id = vm.vm.alloc_segment(seg);
             vm.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(ReaderHandlerFactory)),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(ReaderHandlerFactory), prompt_seg_id),
             );
         }
     }
@@ -1176,10 +1220,7 @@ impl PyStdlib {
             let prompt_seg_id = vm.vm.alloc_segment(seg);
             vm.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(WriterHandlerFactory)),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(WriterHandlerFactory), prompt_seg_id),
             );
         }
     }
@@ -1196,10 +1237,7 @@ impl PySchedulerHandler {
             let prompt_seg_id = vm.vm.alloc_segment(seg);
             vm.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(self.handler.clone())),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(self.handler.clone()), prompt_seg_id),
             );
         }
     }
@@ -1209,7 +1247,9 @@ fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
     let exc_type = e.get_type(py).into_any().unbind();
     let exc_value = e.value(py).clone().into_any().unbind();
     let exc_tb = e.traceback(py).map(|tb| tb.into_any().unbind());
-    Ok(PyException::new(exc_type, exc_value, exc_tb))
+    let exc = PyException::new(exc_type, exc_value, exc_tb);
+    crate::scheduler::preserve_exception_origin(&exc);
+    Ok(exc)
 }
 
 fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
@@ -1218,86 +1258,107 @@ fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
 }
 
 fn metadata_attr_as_string(meta: &Bound<'_, PyAny>, key: &str) -> Option<String> {
-    if let Ok(dict) = meta.cast::<PyDict>() {
-        return dict
-            .get_item(key)
-            .ok()
-            .flatten()
-            .and_then(|v| v.extract::<String>().ok());
-    }
-    meta.getattr(key).ok().and_then(|v| v.extract::<String>().ok())
+    meta.cast::<PyDict>()
+        .ok()
+        .and_then(|dict| dict.get_item(key).ok().flatten())
+        .and_then(|v| v.extract::<String>().ok())
 }
 
 fn metadata_attr_as_u32(meta: &Bound<'_, PyAny>, key: &str) -> Option<u32> {
-    if let Ok(dict) = meta.cast::<PyDict>() {
-        return dict
-            .get_item(key)
-            .ok()
-            .flatten()
-            .and_then(|v| v.extract::<u32>().ok());
-    }
-    meta.getattr(key).ok().and_then(|v| v.extract::<u32>().ok())
+    meta.cast::<PyDict>()
+        .ok()
+        .and_then(|dict| dict.get_item(key).ok().flatten())
+        .and_then(|v| v.extract::<u32>().ok())
 }
 
 fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<PyShared> {
-    if let Ok(dict) = meta.cast::<PyDict>() {
-        return dict
-            .get_item(key)
-            .ok()
-            .flatten()
-            .and_then(|v| if v.is_none() { None } else { Some(PyShared::new(v.unbind())) });
-    }
-    meta.getattr(key)
+    meta.cast::<PyDict>()
         .ok()
-        .and_then(|v| if v.is_none() { None } else { Some(PyShared::new(v.unbind())) })
+        .and_then(|dict| dict.get_item(key).ok().flatten())
+        .and_then(|v| {
+            if v.is_none() {
+                None
+            } else {
+                Some(PyShared::new(v.unbind()))
+            }
+        })
 }
 
-fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> CallMetadata {
-    if let Some(meta) = &call.meta {
+fn call_metadata_from_meta_obj(meta_obj: &Bound<'_, PyAny>) -> CallMetadata {
+    let function_name = metadata_attr_as_string(meta_obj, "function_name")
+        .unwrap_or_else(|| "<anonymous>".to_string());
+    let source_file =
+        metadata_attr_as_string(meta_obj, "source_file").unwrap_or_else(|| "<unknown>".to_string());
+    let source_line = metadata_attr_as_u32(meta_obj, "source_line").unwrap_or(0);
+    let args_repr = metadata_attr_as_string(meta_obj, "args_repr");
+    let program_call = metadata_attr_as_py(meta_obj, "program_call");
+    CallMetadata::new(
+        function_name,
+        source_file,
+        source_line,
+        args_repr,
+        program_call,
+    )
+}
+
+fn call_metadata_from_required_meta(
+    py: Python<'_>,
+    meta: &Option<Py<PyAny>>,
+    ctrl_name: &str,
+) -> PyResult<CallMetadata> {
+    if let Some(meta) = meta {
         let meta_obj = meta.bind(py);
-        let function_name = metadata_attr_as_string(meta_obj, "function_name")
-            .unwrap_or_else(|| "<anonymous>".to_string());
-        let source_file = metadata_attr_as_string(meta_obj, "source_file")
-            .unwrap_or_else(|| "<unknown>".to_string());
-        let source_line = metadata_attr_as_u32(meta_obj, "source_line").unwrap_or(0);
-        let args_repr = metadata_attr_as_string(meta_obj, "args_repr");
-        let program_call = metadata_attr_as_py(meta_obj, "program_call");
-        return CallMetadata::new(
-            function_name,
-            source_file,
-            source_line,
-            args_repr,
-            program_call,
-        );
+        if !meta_obj.is_instance_of::<PyDict>() {
+            return Err(PyTypeError::new_err(format!(
+                "{ctrl_name}.meta must be dict with function_name/source_file/source_line"
+            )));
+        }
+        return Ok(call_metadata_from_meta_obj(meta_obj));
     }
 
-    if let Ok(code) = call.f.bind(py).getattr("__code__") {
-        let function_name = call
-            .f
-            .bind(py)
-            .getattr("__name__")
-            .ok()
-            .and_then(|v| v.extract::<String>().ok())
-            .unwrap_or_else(|| "<anonymous>".to_string());
-        let source_file = code
-            .getattr("co_filename")
-            .ok()
-            .and_then(|v| v.extract::<String>().ok())
-            .unwrap_or_else(|| "<unknown>".to_string());
-        let source_line = code
-            .getattr("co_firstlineno")
-            .ok()
-            .and_then(|v| v.extract::<u32>().ok())
-            .unwrap_or(0);
-        return CallMetadata::new(function_name, source_file, source_line, None, None);
-    }
+    Err(PyTypeError::new_err(format!(
+        "{ctrl_name}.meta is required. \
+Supply {ctrl_name}(..., meta={{function_name, source_file, source_line}})."
+    )))
+}
 
-    CallMetadata::anonymous()
+fn call_metadata_from_pyapply(
+    py: Python<'_>,
+    apply: &PyRef<'_, PyApply>,
+) -> PyResult<CallMetadata> {
+    call_metadata_from_required_meta(py, &apply.meta, "Apply")
+}
+
+fn call_metadata_from_pyexpand(
+    py: Python<'_>,
+    expand: &PyRef<'_, PyExpand>,
+) -> PyResult<CallMetadata> {
+    call_metadata_from_required_meta(py, &expand.meta, "Expand")
 }
 
 // ---------------------------------------------------------------------------
 // PyRunResult — execution output [R8-J]
 // ---------------------------------------------------------------------------
+
+#[pyclass(frozen, name = "DoeffTracebackData")]
+pub struct PyDoeffTracebackData {
+    #[pyo3(get)]
+    entries: Py<PyAny>,
+    #[pyo3(get)]
+    active_chain: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyDoeffTracebackData {
+    #[new]
+    #[pyo3(signature = (entries, active_chain=None))]
+    fn new(py: Python<'_>, entries: Py<PyAny>, active_chain: Option<Py<PyAny>>) -> Self {
+        PyDoeffTracebackData {
+            entries,
+            active_chain: active_chain.unwrap_or_else(|| py.None()),
+        }
+    }
+}
 
 // D9: Ok/Err wrapper types for RunResult.result (spec says Ok(val)/Err(exc) objects)
 #[pyclass(frozen, name = "Ok")]
@@ -1364,9 +1425,7 @@ impl PyResultErr {
 
     #[getter]
     fn error(&self, py: Python<'_>) -> Py<PyAny> {
-        let err = self.error.clone_ref(py);
-        attach_doeff_traceback_best_effort(py, err.bind(py));
-        err
+        self.error.clone_ref(py)
     }
 
     #[getter]
@@ -1395,9 +1454,71 @@ impl PyResultErr {
 #[pyclass(frozen, name = "RunResult")]
 pub struct PyRunResult {
     result: Result<Py<PyAny>, PyException>,
+    #[pyo3(get)]
+    traceback_data: Option<Py<PyAny>>,
     raw_store: Py<pyo3::types::PyDict>,
     log: Py<PyAny>,
     trace: Py<PyAny>,
+}
+
+impl PyRunResult {
+    fn preview_sequence(seq: &Bound<'_, PyAny>, max_items: usize) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        if let Ok(iter) = seq.try_iter() {
+            for (idx, item_res) in iter.enumerate() {
+                if idx >= max_items {
+                    lines.push("  ...".to_string());
+                    break;
+                }
+                let text = match item_res {
+                    Ok(item) => item
+                        .repr()
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| "<item>".to_string()),
+                    Err(_) => "<iter-error>".to_string(),
+                };
+                lines.push(format!("  {}. {}", idx + 1, text));
+            }
+            if lines.is_empty() {
+                lines.push("  (empty)".to_string());
+            }
+            return lines.join("\n");
+        }
+        let fallback = seq
+            .repr()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| "<unavailable>".to_string());
+        format!("  {}", fallback)
+    }
+
+    fn format_traceback_data_preview(traceback_data: &Bound<'_, PyAny>, verbose: bool) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        let max_items = if verbose { 32 } else { 8 };
+
+        if let Ok(active_chain) = traceback_data.getattr("active_chain") {
+            if !active_chain.is_none() {
+                lines.push("ActiveChain:".to_string());
+                lines.push(Self::preview_sequence(&active_chain, max_items));
+            }
+        }
+
+        if let Ok(entries) = traceback_data.getattr("entries") {
+            let entry_count = entries.len().ok();
+            if verbose {
+                lines.push("TraceEntries:".to_string());
+                lines.push(Self::preview_sequence(&entries, max_items));
+            } else if let Some(count) = entry_count {
+                lines.push(format!("TraceEntries: {count}"));
+            } else {
+                lines.push("TraceEntries: <unknown>".to_string());
+            }
+        }
+
+        if lines.is_empty() {
+            return "TracebackData: <unavailable>".to_string();
+        }
+        lines.join("\n")
+    }
 }
 
 #[pymethods]
@@ -1413,11 +1534,7 @@ impl PyRunResult {
     #[getter]
     fn error(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.result {
-            Err(e) => {
-                let err = e.value_clone_ref(py);
-                attach_doeff_traceback_best_effort(py, err.bind(py));
-                Ok(err)
-            }
+            Err(e) => Ok(e.value_clone_ref(py)),
             Ok(_) => Err(pyo3::exceptions::PyValueError::new_err(
                 "RunResult is Ok, not Err",
             )),
@@ -1439,17 +1556,11 @@ impl PyRunResult {
             }
             Err(e) => {
                 let err_obj = e.value_clone_ref(py);
-                let err_bound = err_obj.bind(py);
-                attach_doeff_traceback_best_effort(py, err_bound);
-                let captured = err_bound
-                    .getattr("__doeff_traceback__")
-                    .map(|obj| obj.unbind())
-                    .unwrap_or_else(|_| py.None());
                 let err_obj = Bound::new(
                     py,
                     PyResultErr {
                         error: err_obj,
-                        captured_traceback: captured,
+                        captured_traceback: py.None(),
                     },
                 )?;
                 Ok(err_obj.into_any().unbind())
@@ -1484,23 +1595,20 @@ impl PyRunResult {
     fn display(&self, py: Python<'_>, verbose: bool) -> PyResult<String> {
         if let Err(err) = &self.result {
             let err_obj = err.value_clone_ref(py);
-            let err_bound = err_obj.bind(py);
-            attach_doeff_traceback_best_effort(py, err_bound);
-
-            if let Ok(tb_obj) = err_bound.getattr("__doeff_traceback__") {
-                let method = if verbose {
-                    "format_chained"
-                } else {
-                    "format_sectioned"
-                };
-                if let Ok(rendered) = tb_obj.call_method0(method) {
-                    if let Ok(text) = rendered.extract::<String>() {
-                        return Ok(text);
-                    }
-                }
+            let label = if verbose { "verbose" } else { "default" };
+            let mut lines = vec![
+                format!("RunResult status: err ({label})"),
+                format!("Error: {:?}", err_obj),
+            ];
+            if let Some(traceback_data) = &self.traceback_data {
+                lines.push(Self::format_traceback_data_preview(
+                    traceback_data.bind(py),
+                    verbose,
+                ));
+            } else {
+                lines.push("TracebackData: none".to_string());
             }
-
-            return Ok(format!("{:?}", err_obj));
+            return Ok(lines.join("\n"));
         }
 
         let value_text = match &self.result {
@@ -1525,6 +1633,12 @@ pub struct PyK {
     cont_id: crate::ids::ContId,
 }
 
+impl PyK {
+    pub(crate) fn from_cont_id(cont_id: crate::ids::ContId) -> Self {
+        PyK { cont_id }
+    }
+}
+
 #[pymethods]
 impl PyK {
     fn __repr__(&self) -> String {
@@ -1539,22 +1653,43 @@ pub struct PyWithHandler {
     pub handler: Py<PyAny>,
     #[pyo3(get)]
     pub expr: Py<PyAny>,
+    #[pyo3(get)]
+    pub handler_name: Option<String>,
+    #[pyo3(get)]
+    pub handler_file: Option<String>,
+    #[pyo3(get)]
+    pub handler_line: Option<u32>,
 }
 
 #[pymethods]
 impl PyWithHandler {
     #[new]
-    #[pyo3(signature = (handler, expr))]
+    #[pyo3(signature = (handler, expr, handler_name=None, handler_file=None, handler_line=None))]
     fn new(
         py: Python<'_>,
         handler: Py<PyAny>,
         expr: Py<PyAny>,
+        handler_name: Option<String>,
+        handler_file: Option<String>,
+        handler_line: Option<u32>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let handler_obj = handler.bind(py);
-        if !(handler_obj.is_instance_of::<PyRustHandlerSentinel>() || handler_obj.is_callable()) {
-            return Err(PyTypeError::new_err(
-                "WithHandler.handler must be callable or built-in handler sentinel",
-            ));
+        let is_rust_handler = handler_obj.is_instance_of::<PyRustHandlerSentinel>();
+        let is_dgfn = handler_obj.is_instance_of::<DoeffGeneratorFn>();
+        if !is_rust_handler && !is_dgfn {
+            if handler_obj.is_callable() {
+                return Err(PyTypeError::new_err(
+                    "WithHandler handler must be DoeffGeneratorFn or RustHandler",
+                ));
+            }
+            let ty = handler_obj
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            return Err(PyTypeError::new_err(format!(
+                "WithHandler handler must be DoeffGeneratorFn or RustHandler, got {ty}"
+            )));
         }
 
         let expr = lift_effect_to_perform_expr(py, expr)?;
@@ -1568,7 +1703,13 @@ impl PyWithHandler {
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::WithHandler as u8,
             })
-            .add_subclass(PyWithHandler { handler, expr }))
+            .add_subclass(PyWithHandler {
+                handler,
+                expr,
+                handler_name,
+                handler_file,
+                handler_line,
+            }))
     }
 }
 
@@ -1578,6 +1719,8 @@ pub struct PyMap {
     pub source: Py<PyAny>,
     #[pyo3(get)]
     pub mapper: Py<PyAny>,
+    #[pyo3(get)]
+    pub mapper_meta: Py<PyAny>,
 }
 
 #[pyclass(name = "Pure", extends=PyDoCtrlBase)]
@@ -1598,8 +1741,8 @@ impl PyPure {
     }
 }
 
-#[pyclass(name = "Call", extends=PyDoCtrlBase)]
-pub struct PyCall {
+#[pyclass(name = "Apply", extends=PyDoCtrlBase)]
+pub struct PyApply {
     #[pyo3(get)]
     pub f: Py<PyAny>,
     #[pyo3(get)]
@@ -1611,7 +1754,7 @@ pub struct PyCall {
 }
 
 #[pymethods]
-impl PyCall {
+impl PyApply {
     #[new]
     #[pyo3(signature = (f, args, kwargs, meta=None))]
     fn new(
@@ -1621,21 +1764,72 @@ impl PyCall {
         kwargs: Py<PyAny>,
         meta: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        if !f.bind(py).is_callable() {
-            return Err(PyTypeError::new_err("Call.f must be callable"));
-        }
         if args.bind(py).try_iter().is_err() {
-            return Err(PyTypeError::new_err("Call.args must be iterable"));
+            return Err(PyTypeError::new_err("Apply.args must be iterable"));
         }
         if !kwargs.bind(py).is_instance_of::<PyDict>() {
-            return Err(PyTypeError::new_err("Call.kwargs must be dict"));
+            return Err(PyTypeError::new_err("Apply.kwargs must be dict"));
+        }
+        if meta.is_none() {
+            return Err(PyTypeError::new_err(
+                "Apply.meta is required. \
+Program/Kleisli call sites must pass {'function_name', 'source_file', 'source_line'}.",
+            ));
         }
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
-                tag: DoExprTag::Call as u8,
+                tag: DoExprTag::Apply as u8,
             })
-            .add_subclass(PyCall {
+            .add_subclass(PyApply {
                 f,
+                args,
+                kwargs,
+                meta,
+            }))
+    }
+}
+
+#[pyclass(name = "Expand", extends=PyDoCtrlBase)]
+pub struct PyExpand {
+    #[pyo3(get)]
+    pub factory: Py<PyAny>,
+    #[pyo3(get)]
+    pub args: Py<PyAny>,
+    #[pyo3(get)]
+    pub kwargs: Py<PyAny>,
+    #[pyo3(get)]
+    pub meta: Option<Py<PyAny>>,
+}
+
+#[pymethods]
+impl PyExpand {
+    #[new]
+    #[pyo3(signature = (factory, args, kwargs, meta=None))]
+    fn new(
+        py: Python<'_>,
+        factory: Py<PyAny>,
+        args: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        meta: Option<Py<PyAny>>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        if args.bind(py).try_iter().is_err() {
+            return Err(PyTypeError::new_err("Expand.args must be iterable"));
+        }
+        if !kwargs.bind(py).is_instance_of::<PyDict>() {
+            return Err(PyTypeError::new_err("Expand.kwargs must be dict"));
+        }
+        if meta.is_none() {
+            return Err(PyTypeError::new_err(
+                "Expand.meta is required. \
+Program/Kleisli call sites must pass {'function_name', 'source_file', 'source_line'}.",
+            ));
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Expand as u8,
+            })
+            .add_subclass(PyExpand {
+                factory,
                 args,
                 kwargs,
                 meta,
@@ -1692,19 +1886,32 @@ impl PyPerform {
 #[pymethods]
 impl PyMap {
     #[new]
+    #[pyo3(signature = (source, mapper, mapper_meta=None))]
     fn new(
         py: Python<'_>,
         source: Py<PyAny>,
         mapper: Py<PyAny>,
+        mapper_meta: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if !mapper.bind(py).is_callable() {
             return Err(PyTypeError::new_err("Map.mapper must be callable"));
         }
+        let mapper_meta = mapper_meta.ok_or_else(|| {
+            PyTypeError::new_err(
+                "Map.mapper_meta is required. \
+Program.map() should supply metadata from mapper.__code__. \
+Pass mapper_meta={'function_name': ..., 'source_file': ..., 'source_line': ...}.",
+            )
+        })?;
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::Map as u8,
             })
-            .add_subclass(PyMap { source, mapper }))
+            .add_subclass(PyMap {
+                source,
+                mapper,
+                mapper_meta,
+            }))
     }
 }
 
@@ -1714,24 +1921,39 @@ pub struct PyFlatMap {
     pub source: Py<PyAny>,
     #[pyo3(get)]
     pub binder: Py<PyAny>,
+    #[pyo3(get)]
+    pub binder_meta: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyFlatMap {
     #[new]
+    #[pyo3(signature = (source, binder, binder_meta=None))]
     fn new(
         py: Python<'_>,
         source: Py<PyAny>,
         binder: Py<PyAny>,
+        binder_meta: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if !binder.bind(py).is_callable() {
             return Err(PyTypeError::new_err("FlatMap.binder must be callable"));
         }
+        let binder_meta = binder_meta.ok_or_else(|| {
+            PyTypeError::new_err(
+                "FlatMap.binder_meta is required. \
+Program.flat_map() should supply metadata from binder.__code__. \
+Pass binder_meta={'function_name': ..., 'source_file': ..., 'source_line': ...}.",
+            )
+        })?;
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::FlatMap as u8,
             })
-            .add_subclass(PyFlatMap { source, binder }))
+            .add_subclass(PyFlatMap {
+                source,
+                binder,
+                binder_meta,
+            }))
     }
 }
 
@@ -1792,6 +2014,33 @@ impl PyDelegate {
                 tag: DoExprTag::Delegate as u8,
             })
             .add_subclass(PyDelegate { effect }))
+    }
+}
+
+/// Dispatch primitive — handler-only.
+#[pyclass(name = "Pass", extends=PyDoCtrlBase)]
+pub struct PyPass {
+    #[pyo3(get)]
+    pub effect: Option<Py<PyAny>>,
+}
+
+#[pymethods]
+impl PyPass {
+    #[new]
+    #[pyo3(signature = (effect=None))]
+    fn new(py: Python<'_>, effect: Option<Py<PyAny>>) -> PyResult<PyClassInitializer<Self>> {
+        if let Some(ref eff) = effect {
+            if !is_effect_base_like(py, eff.bind(py))? {
+                return Err(PyTypeError::new_err(
+                    "Pass.effect must be EffectBase when provided",
+                ));
+            }
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Pass as u8,
+            })
+            .add_subclass(PyPass { effect }))
     }
 }
 
@@ -1980,11 +2229,11 @@ impl PyAsyncEscape {
 /// WithHandler arms. ADR-14: no string-based shortcuts.
 #[pyclass(frozen, name = "RustHandler")]
 pub struct PyRustHandlerSentinel {
-    pub(crate) factory: RustProgramHandlerRef,
+    pub(crate) factory: HandlerRef,
 }
 
 impl PyRustHandlerSentinel {
-    pub(crate) fn factory_ref(&self) -> RustProgramHandlerRef {
+    pub(crate) fn factory_ref(&self) -> HandlerRef {
         self.factory.clone()
     }
 }
@@ -2011,12 +2260,18 @@ pub struct NestingStep {
 
 #[pymethods]
 impl NestingStep {
-    fn to_generator(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<NestingGenerator> {
-        Ok(NestingGenerator {
-            handler: Some(slf.handler.clone_ref(py)),
-            inner: Some(slf.inner.clone_ref(py)),
-            done: false,
-        })
+    fn to_generator(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let gen = Bound::new(
+            py,
+            NestingGenerator {
+                handler: Some(slf.handler.clone_ref(py)),
+                inner: Some(slf.inner.clone_ref(py)),
+                done: false,
+            },
+        )?
+        .into_any()
+        .unbind();
+        Ok(gen)
     }
 }
 
@@ -2053,6 +2308,9 @@ impl NestingGenerator {
         let wh = PyWithHandler {
             handler,
             expr: inner,
+            handler_name: None,
+            handler_file: None,
+            handler_line: None,
         };
         let bound = Bound::new(
             py,
@@ -2119,6 +2377,9 @@ mod tests {
                     .add_subclass(PyWithHandler {
                         handler: sentinel.clone_ref(py),
                         expr: py.None().into_pyobject(py).unwrap().unbind().into_any(),
+                        handler_name: None,
+                        handler_file: None,
+                        handler_line: None,
                     }),
             )
             .unwrap()
@@ -2162,7 +2423,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    __doeff_scheduler_task_completed__ = True\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
+                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2171,7 +2432,7 @@ mod tests {
 
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "G3 FAIL: expected opaque Python TaskCompleted effect, got {:?}",
                 yielded
             );
@@ -2221,12 +2482,11 @@ mod tests {
             .into_any();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             match yielded {
-                Yielded::DoCtrl(DoCtrl::CreateContinuation { handlers, .. }) => {
+                DoCtrl::CreateContinuation { handlers, .. } => {
                     assert!(
-                        matches!(
-                            handlers.first(),
-                            Some(crate::handler::Handler::RustProgram(_))
-                        ),
+                        handlers
+                            .first()
+                            .is_some_and(|handler| handler.handler_name() == "StateHandler"),
                         "G3 FAIL: CreateContinuation converted rust sentinel into Python handler"
                     );
                 }
@@ -2244,7 +2504,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    __doeff_scheduler_task_completed__ = True\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
+                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2252,30 +2512,8 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "G4 FAIL: expected opaque Python TaskCompleted effect, got {:?}",
-                yielded
-            );
-        });
-    }
-
-    #[test]
-    fn test_g5_kpc_classifies_as_effect_not_direct_call() {
-        Python::attach(|py| {
-            let pyvm = PyVM { vm: VM::new() };
-            let locals = pyo3::types::PyDict::new(py);
-            locals.set_item("PyKPC", py.get_type::<PyKPC>()).unwrap();
-            py.run(
-                c"obj = PyKPC(None, (1,), {}, 'f', (lambda x: x))\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap();
-            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
-            assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
-                "G5 FAIL: KleisliProgramCall should classify as Effect (handler-dispatched), got {:?}",
                 yielded
             );
         });
@@ -2290,7 +2528,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class GatherEffect(EffectBase):\n    __doeff_scheduler_gather__ = True\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
+                c"class GatherEffect(EffectBase):\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2298,7 +2536,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "G6 FAIL: malformed GatherEffect should classify as opaque effect, got {:?}",
                 yielded
             );
@@ -2314,7 +2552,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect(EffectBase):\n    __doeff_scheduler_wait__ = True\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
+                c"class _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect(EffectBase):\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2322,7 +2560,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "G12 FAIL: WaitEffect should classify as opaque effect, got {:?}",
                 yielded
             );
@@ -2349,7 +2587,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
+                c"class SpawnEffect(EffectBase):\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2357,7 +2595,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "G7 FAIL: expected opaque Python Spawn effect, got {:?}",
                 yielded
             );
@@ -2406,8 +2644,28 @@ mod tests {
             let obj = Bound::new(py, PyGetCallStack::new()).unwrap().into_any();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::GetCallStack)),
+                matches!(yielded, DoCtrl::GetCallStack),
                 "GetCallStack must classify to DoCtrl::GetCallStack, got {:?}",
+                yielded
+            );
+        });
+    }
+
+    #[test]
+    fn test_pass_with_explicit_effect_classifies_to_doctrl_pass() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let effect = Bound::new(py, PyEffectBase::new_base())
+                .unwrap()
+                .into_any()
+                .unbind();
+            let obj = Bound::new(py, PyPass::new(py, Some(effect)).unwrap())
+                .unwrap()
+                .into_any();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            assert!(
+                matches!(yielded, DoCtrl::Pass { .. }),
+                "Pass should classify to DoCtrl::Pass, got {:?}",
                 yielded
             );
         });
@@ -2458,6 +2716,80 @@ mod tests {
     }
 
     #[test]
+    fn test_vm_proto_doeff_generator_pyclass_construction_and_fields() {
+        Python::attach(|py| {
+            let module = pyo3::types::PyModule::new(py, "doeff_vm_test")
+                .expect("failed to allocate doeff_vm_test module");
+            doeff_vm(&module).expect("failed to init doeff_vm_test module");
+
+            let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("vm", &module)
+                .expect("failed to set module in locals");
+
+            let result = py.run(
+                c"def _gen():\n    yield 1\n\nraw = _gen()\n\ndef _get_frame(g):\n    return g.gi_frame\n\nwrapped = vm.DoeffGenerator(\n    generator=raw,\n    function_name='sample_fn',\n    source_file='/tmp/sample.py',\n    source_line=77,\n    get_frame=_get_frame,\n)\n\nassert wrapped.generator is raw\nassert wrapped.function_name == 'sample_fn'\nassert wrapped.source_file == '/tmp/sample.py'\nassert wrapped.source_line == 77\nassert wrapped.get_frame(wrapped.generator) is raw.gi_frame\n",
+                Some(&locals),
+                Some(&locals),
+            );
+
+            assert!(
+                result.is_ok(),
+                "VM-PROTO-001: DoeffGenerator must be constructible from Python with all fields, got {:?}",
+                result
+            );
+        });
+    }
+
+    #[test]
+    fn test_vm_proto_entry_uses_eval_expr_and_direct_doeff_eval() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            runtime_src.contains("fn start_with_expr(")
+                && runtime_src.contains("Mode::HandleYield(DoCtrl::Eval")
+                && runtime_src.contains("PythonCall::EvalExpr"),
+            "VM-PROTO-001: entry must start from DoExpr via EvalExpr/DoCtrl::Eval"
+        );
+        assert!(
+            !runtime_src.contains("to_generator_strict(")
+                && !runtime_src.contains("start_with_generator("),
+            "VM-PROTO-001: entry must not use to_generator_strict/start_with_generator"
+        );
+    }
+
+    #[test]
+    fn test_vm_proto_runtime_has_no_vm_side_doeff_generator_auto_wrap() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        let wrap_name = ["wrap_raw_generator_as_", "doeff_generator("].concat();
+        let infer_name = ["infer_generator_", "metadata("].concat();
+        assert!(
+            !runtime_src.contains(&wrap_name),
+            "VM-PROTO-001: VM core must not auto-wrap raw generators into DoeffGenerator"
+        );
+        assert!(
+            !runtime_src.contains(&infer_name),
+            "VM-PROTO-001: VM core must not infer DoeffGenerator metadata from raw generators"
+        );
+    }
+
+    #[test]
+    fn test_vm_proto_runtime_has_no_doeff_module_imports_or_inner_chain_walks() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        let inner_attr = ["__doeff_", "inner__"].concat();
+        assert!(
+            !runtime_src.contains("import(\"doeff."),
+            "VM-PROTO-001: vm core must not import doeff.* modules"
+        );
+        assert!(
+            !runtime_src.contains(&inner_attr),
+            "VM-PROTO-001: vm core must not walk inner-generator link chains"
+        );
+    }
+
+    #[test]
     fn test_spec_stdlib_effects_classify_as_opaque_python_effects() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
@@ -2474,30 +2806,8 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "SPEC GAP: stdlib effects should classify as opaque Python effects, got {:?}",
-                yielded
-            );
-        });
-    }
-
-    #[test]
-    fn test_spec_kpc_classifies_as_opaque_python_effect() {
-        Python::attach(|py| {
-            let pyvm = PyVM { vm: VM::new() };
-            let locals = pyo3::types::PyDict::new(py);
-            locals.set_item("PyKPC", py.get_type::<PyKPC>()).unwrap();
-            py.run(
-                c"obj = PyKPC(None, (1,), {}, 'f', (lambda x: x))\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap();
-            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
-            assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
-                "SPEC GAP: KPC should classify as opaque Python effect, got {:?}",
                 yielded
             );
         });
@@ -2512,7 +2822,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
+                c"class SpawnEffect(EffectBase):\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2520,7 +2830,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
+                matches!(yielded, DoCtrl::Perform { .. }),
                 "SPEC GAP: scheduler effects should classify as opaque Python effects, got {:?}",
                 yielded
             );
@@ -2534,6 +2844,14 @@ mod tests {
     #[test]
     fn test_r13i_tag_matches_variant() {
         Python::attach(|py| {
+            let make_meta = || {
+                let meta = PyDict::new(py);
+                meta.set_item("function_name", "test_fn").unwrap();
+                meta.set_item("source_file", "test_file.py").unwrap();
+                meta.set_item("source_line", 1).unwrap();
+                meta.into_any().unbind()
+            };
+
             // Pure
             let obj = Bound::new(py, PyPure::new(py.None().into()))
                 .unwrap()
@@ -2541,15 +2859,37 @@ mod tests {
             let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
             assert_eq!(base.tag, DoExprTag::Pure as u8);
 
-            // Call
-            let f = py.eval(c"lambda: None", None, None).unwrap().unbind();
-            let args = pyo3::types::PyTuple::empty(py).into_any().unbind();
-            let kwargs = PyDict::new(py).into_any().unbind();
-            let obj = Bound::new(py, PyCall::new(py, f, args, kwargs, None).unwrap())
+            // Apply
+            let f = py.eval(c"lambda x: x", None, None).unwrap().unbind();
+            let args = pyo3::types::PyTuple::new(py, [1])
                 .unwrap()
-                .into_any();
+                .into_any()
+                .unbind();
+            let kwargs = PyDict::new(py).into_any().unbind();
+            let obj = Bound::new(
+                py,
+                PyApply::new(py, f, args, kwargs, Some(make_meta())).unwrap(),
+            )
+            .unwrap()
+            .into_any();
             let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
-            assert_eq!(base.tag, DoExprTag::Call as u8);
+            assert_eq!(base.tag, DoExprTag::Apply as u8);
+
+            // Expand
+            let factory = py.eval(c"lambda x: x", None, None).unwrap().unbind();
+            let args = pyo3::types::PyTuple::new(py, [1])
+                .unwrap()
+                .into_any()
+                .unbind();
+            let kwargs = PyDict::new(py).into_any().unbind();
+            let obj = Bound::new(
+                py,
+                PyExpand::new(py, factory, args, kwargs, Some(make_meta())).unwrap(),
+            )
+            .unwrap()
+            .into_any();
+            let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
+            assert_eq!(base.tag, DoExprTag::Expand as u8);
 
             // GetContinuation
             let obj = Bound::new(py, PyGetContinuation::new()).unwrap().into_any();
@@ -2582,6 +2922,13 @@ mod tests {
         // by testing several concrete variants.
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
+            let make_meta = || {
+                let meta = PyDict::new(py);
+                meta.set_item("function_name", "test_fn").unwrap();
+                meta.set_item("source_file", "test_file.py").unwrap();
+                meta.set_item("source_line", 1).unwrap();
+                meta.into_any().unbind()
+            };
 
             // Pure → DoCtrl::Pure
             let pure_obj = Bound::new(
@@ -2592,7 +2939,7 @@ mod tests {
             .into_any();
             let yielded = pyvm.classify_yielded(py, &pure_obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Pure { .. })),
+                matches!(yielded, DoCtrl::Pure { .. }),
                 "Pure tag dispatch failed, got {:?}",
                 yielded
             );
@@ -2601,7 +2948,7 @@ mod tests {
             let gh_obj = Bound::new(py, PyGetHandlers::new()).unwrap().into_any();
             let yielded = pyvm.classify_yielded(py, &gh_obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::GetHandlers)),
+                matches!(yielded, DoCtrl::GetHandlers),
                 "GetHandlers tag dispatch failed, got {:?}",
                 yielded
             );
@@ -2610,8 +2957,48 @@ mod tests {
             let gcs_obj = Bound::new(py, PyGetCallStack::new()).unwrap().into_any();
             let yielded = pyvm.classify_yielded(py, &gcs_obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::GetCallStack)),
+                matches!(yielded, DoCtrl::GetCallStack),
                 "GetCallStack tag dispatch failed, got {:?}",
+                yielded
+            );
+
+            // Apply → DoCtrl::Apply
+            let f = py.eval(c"lambda x: x", None, None).unwrap().unbind();
+            let args = pyo3::types::PyTuple::new(py, [1])
+                .unwrap()
+                .into_any()
+                .unbind();
+            let kwargs = PyDict::new(py).into_any().unbind();
+            let apply_obj = Bound::new(
+                py,
+                PyApply::new(py, f, args, kwargs, Some(make_meta())).unwrap(),
+            )
+            .unwrap()
+            .into_any();
+            let yielded = pyvm.classify_yielded(py, &apply_obj).unwrap();
+            assert!(
+                matches!(yielded, DoCtrl::Apply { .. }),
+                "Apply tag dispatch failed, got {:?}",
+                yielded
+            );
+
+            // Expand → DoCtrl::Expand
+            let factory = py.eval(c"lambda x: x", None, None).unwrap().unbind();
+            let args = pyo3::types::PyTuple::new(py, [1])
+                .unwrap()
+                .into_any()
+                .unbind();
+            let kwargs = PyDict::new(py).into_any().unbind();
+            let expand_obj = Bound::new(
+                py,
+                PyExpand::new(py, factory, args, kwargs, Some(make_meta())).unwrap(),
+            )
+            .unwrap()
+            .into_any();
+            let yielded = pyvm.classify_yielded(py, &expand_obj).unwrap();
+            assert!(
+                matches!(yielded, DoCtrl::Expand { .. }),
+                "Expand tag dispatch failed, got {:?}",
                 yielded
             );
         });
@@ -2634,11 +3021,57 @@ mod tests {
             assert_eq!(tag, DoExprTag::Unknown as u8);
         });
     }
+
+    #[test]
+    fn test_vm_proto_004_run_result_has_typed_traceback_data_contract() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            runtime_src.contains("name = \"DoeffTracebackData\""),
+            "VM-PROTO-004 FAIL: missing DoeffTracebackData pyclass"
+        );
+        assert!(
+            runtime_src.contains("traceback_data: Option<Py<PyAny>>"),
+            "VM-PROTO-004 FAIL: RunResult missing traceback_data field"
+        );
+    }
+
+    #[test]
+    fn test_vm_proto_004_traceback_dunders_and_import_removed() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            !runtime_src.contains(".setattr(\"__doeff_traceback_data__\""),
+            "VM-PROTO-004 FAIL: __doeff_traceback_data__ setattr still present"
+        );
+        assert!(
+            !runtime_src.contains(".hasattr(\"__doeff_traceback_data__\""),
+            "VM-PROTO-004 FAIL: __doeff_traceback_data__ hasattr still present"
+        );
+        assert!(
+            !runtime_src.contains(".getattr(\"__doeff_traceback__\""),
+            "VM-PROTO-004 FAIL: __doeff_traceback__ getattr still present"
+        );
+        assert!(
+            !runtime_src.contains(".import(\"doeff.traceback\")"),
+            "VM-PROTO-004 FAIL: doeff.traceback import still present"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Module-level functions [G11 / SPEC-008]
 // ---------------------------------------------------------------------------
+
+#[pyfunction]
+fn _notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
+    crate::scheduler::notify_semaphore_handle_dropped(state_id, semaphore_id);
+}
+
+#[pyfunction]
+fn _debug_scheduler_semaphore_count(state_id: u64) -> Option<usize> {
+    crate::scheduler::debug_semaphore_count_for_state(state_id)
+}
 
 /// Module-level `run()` — the public API entry point.
 ///
@@ -2650,7 +3083,7 @@ mod tests {
 /// equivalent to `WithHandler(h0, WithHandler(h1, WithHandler(h2, prog)))`.
 ///
 /// `handlers` accepts a list of:
-///   - `RustHandler` sentinels: `state`, `reader`, `writer`, `result_safe`, `scheduler`, `kpc`
+///   - `RustHandler` sentinels: `state`, `reader`, `writer`, `result_safe`, `scheduler`, `lazy_ask`
 ///   - Python handler callables
 #[pyfunction]
 #[pyo3(signature = (program, handlers=None, env=None, store=None, trace=false))]
@@ -2668,7 +3101,7 @@ fn run(
     // Seed env
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
-            let k: String = key.extract()?;
+            let k = HashedPyKey::from_bound(&key)?;
             vm.vm.rust_store.env.insert(k, Value::from_pyobject(&value));
         }
     }
@@ -2692,6 +3125,9 @@ fn run(
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
+                handler_name: None,
+                handler_file: None,
+                handler_line: None,
             };
             let bound = Bound::new(
                 py,
@@ -2729,7 +3165,7 @@ fn async_run<'py>(
 
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
-            let k: String = key.extract()?;
+            let k = HashedPyKey::from_bound(&key)?;
             vm.vm.rust_store.env.insert(k, Value::from_pyobject(&value));
         }
     }
@@ -2750,6 +3186,9 @@ fn async_run<'py>(
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
+                handler_name: None,
+                handler_file: None,
+                handler_line: None,
             };
             let bound = Bound::new(
                 py,
@@ -2763,9 +3202,7 @@ fn async_run<'py>(
         }
     }
 
-    let gen = vm.to_generator_strict(py, wrapped)?;
-    let gen_bound = gen.bind(py).clone();
-    vm.start_with_generator(gen_bound)?;
+    vm.start_with_expr(py, wrapped.bind(py).clone())?;
 
     let py_vm = Bound::new(py, vm)?;
 
@@ -2778,13 +3215,13 @@ fn async_run<'py>(
         pyo3::ffi::c_str!(concat!(
             "async def _async_run_impl():\n",
             "    while True:\n",
-            "        try:\n",
-            "            result = _vm.step_once()\n",
-            "        except BaseException as exc:\n",
-            "            return _vm.build_run_result_error(exc)\n",
+            "        result = _vm.step_once()\n",
             "        tag = result[0]\n",
             "        if tag == 'done':\n",
             "            return _vm.build_run_result(result[1])\n",
+            "        elif tag == 'error':\n",
+            "            exc, traceback_data = result[1], result[2]\n",
+            "            return _vm.build_run_result_error(exc, traceback_data=traceback_data)\n",
             "        elif tag == 'call_async':\n",
             "            func, args = result[1], result[2]\n",
             "            try:\n",
@@ -2811,25 +3248,30 @@ fn async_run<'py>(
 #[pymodule]
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVM>()?;
+    m.add_class::<DoeffGeneratorFn>()?;
+    m.add_class::<DoeffGenerator>()?;
     m.add_class::<PyDoExprBase>()?;
     m.add_class::<PyEffectBase>()?;
     m.add_class::<PyDoCtrlBase>()?;
     // PyDoThunkBase removed [R12-A]: DoThunk is a Python-side concept, not a VM concept.
     m.add_class::<PyStdlib>()?;
     m.add_class::<PySchedulerHandler>()?;
+    m.add_class::<PyDoeffTracebackData>()?;
     m.add_class::<PyRunResult>()?;
     m.add_class::<PyResultOk>()?;
     m.add_class::<PyResultErr>()?;
     m.add_class::<PyK>()?;
     m.add_class::<PyWithHandler>()?;
     m.add_class::<PyPure>()?;
-    m.add_class::<PyCall>()?;
+    m.add_class::<PyApply>()?;
+    m.add_class::<PyExpand>()?;
     m.add_class::<PyMap>()?;
     m.add_class::<PyFlatMap>()?;
     m.add_class::<PyEval>()?;
     m.add_class::<PyPerform>()?;
     m.add_class::<PyResume>()?;
     m.add_class::<PyDelegate>()?;
+    m.add_class::<PyPass>()?;
     m.add_class::<PyTransfer>()?;
     m.add_class::<PyResumeContinuation>()?;
     m.add_class::<PyCreateContinuation>()?;
@@ -2871,8 +3313,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPut>()?;
     m.add_class::<PyModify>()?;
     m.add_class::<PyAsk>()?;
+    m.add_class::<PyLocal>()?;
     m.add_class::<PyTell>()?;
-    m.add_class::<PyKPC>()?;
     m.add_class::<PySpawn>()?;
     m.add_class::<PyGather>()?;
     m.add_class::<PyRace>()?;
@@ -2880,28 +3322,27 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCompletePromise>()?;
     m.add_class::<PyFailPromise>()?;
     m.add_class::<PyCreateExternalPromise>()?;
+    m.add_class::<PyCancelEffect>()?;
     m.add_class::<PyTaskCompleted>()?;
-    // G09: KleisliProgramCall alias for PyKPC
-    m.add("KleisliProgramCall", m.getattr("PyKPC")?)?;
-    // KPC handler sentinel — explicit, not auto-installed
-    m.add(
-        "kpc",
-        PyRustHandlerSentinel {
-            factory: Arc::new(KpcHandlerFactory),
-        },
-    )?;
-    // Concurrent KPC handler sentinel — uses Spawn+Gather via scheduler
-    m.add(
-        "concurrent_kpc",
-        PyRustHandlerSentinel {
-            factory: Arc::new(ConcurrentKpcHandlerFactory),
-        },
-    )?;
+    m.add_class::<PyCreateSemaphore>()?;
+    m.add_class::<PyAcquireSemaphore>()?;
+    m.add_class::<PyReleaseSemaphore>()?;
+    m.add_class::<PyPythonAsyncioAwaitEffect>()?;
+    m.add_class::<PyResultSafeEffect>()?;
+    m.add_class::<PyProgramTrace>()?;
+    m.add_class::<PyProgramCallStack>()?;
+    m.add_class::<PyProgramCallFrame>()?;
     // G14: scheduler sentinel
     m.add(
         "scheduler",
         PyRustHandlerSentinel {
             factory: Arc::new(SchedulerHandler::new()),
+        },
+    )?;
+    m.add(
+        "lazy_ask",
+        PyRustHandlerSentinel {
+            factory: Arc::new(LazyAskHandlerFactory::new()),
         },
     )?;
     m.add(
@@ -2912,7 +3353,6 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     // R13-I: DoExprTag constants for Python introspection
     m.add("TAG_PURE", DoExprTag::Pure as u8)?;
-    m.add("TAG_CALL", DoExprTag::Call as u8)?;
     m.add("TAG_MAP", DoExprTag::Map as u8)?;
     m.add("TAG_FLAT_MAP", DoExprTag::FlatMap as u8)?;
     m.add("TAG_WITH_HANDLER", DoExprTag::WithHandler as u8)?;
@@ -2920,11 +3360,14 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_RESUME", DoExprTag::Resume as u8)?;
     m.add("TAG_TRANSFER", DoExprTag::Transfer as u8)?;
     m.add("TAG_DELEGATE", DoExprTag::Delegate as u8)?;
+    m.add("TAG_PASS", DoExprTag::Pass as u8)?;
     m.add("TAG_GET_CONTINUATION", DoExprTag::GetContinuation as u8)?;
     m.add("TAG_GET_HANDLERS", DoExprTag::GetHandlers as u8)?;
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
     m.add("TAG_GET_TRACE", DoExprTag::GetTrace as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;
+    m.add("TAG_APPLY", DoExprTag::Apply as u8)?;
+    m.add("TAG_EXPAND", DoExprTag::Expand as u8)?;
     m.add(
         "TAG_CREATE_CONTINUATION",
         DoExprTag::CreateContinuation as u8,
@@ -2936,6 +3379,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_ASYNC_ESCAPE", DoExprTag::AsyncEscape as u8)?;
     m.add("TAG_EFFECT", DoExprTag::Effect as u8)?;
     m.add("TAG_UNKNOWN", DoExprTag::Unknown as u8)?;
+    m.add_function(wrap_pyfunction!(_notify_semaphore_handle_dropped, m)?)?;
+    m.add_function(wrap_pyfunction!(_debug_scheduler_semaphore_count, m)?)?;
     m.add_function(wrap_pyfunction!(run, m)?)?;
     m.add_function(wrap_pyfunction!(async_run, m)?)?;
     Ok(())

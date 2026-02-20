@@ -27,7 +27,8 @@ from doeff_openrouter.handlers import (
 )
 from pydantic import BaseModel
 
-from doeff import Delegate, Resume, WithHandler, default_handlers, do, run, run_with_handler_map
+from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
+from doeff.rust_vm import run_with_handler_map
 
 
 class StructuredPayload(BaseModel):

@@ -1,6 +1,6 @@
 # doeff.nvim
 
-Neovim plugin for running [doeff](https://github.com/CyberAgentAILab/doeff) entrypoints with Telescope integration.
+Neovim plugin for running [doeff](https://github.com/proboscis/doeff) entrypoints with Telescope integration.
 
 ## Features
 
@@ -27,7 +27,7 @@ Neovim plugin for running [doeff](https://github.com/CyberAgentAILab/doeff) entr
 
 ```lua
 {
-  'CyberAgentAILab/doeff.nvim',
+    'proboscis/doeff.nvim',
   dependencies = {
     'nvim-telescope/telescope.nvim',
     'nvim-lua/plenary.nvim',
@@ -42,7 +42,7 @@ Neovim plugin for running [doeff](https://github.com/CyberAgentAILab/doeff) entr
 
 ```lua
 use {
-  'CyberAgentAILab/doeff.nvim',
+    'proboscis/doeff.nvim',
   requires = {
     'nvim-telescope/telescope.nvim',
     'nvim-lua/plenary.nvim',
@@ -278,7 +278,7 @@ cargo build --release
 
 ## Related
 
-- [doeff](https://github.com/CyberAgentAILab/doeff) - The doeff framework
+- [doeff](https://github.com/proboscis/doeff) - The doeff framework
 - [doeff-runner (VSCode)](../vscode/doeff-runner) - VSCode extension
 - [doeff-indexer](../../packages/doeff-indexer) - CLI indexer for doeff
 - [doeff-agentic](../../packages/doeff-agentic) - Agent workflow orchestration

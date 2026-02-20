@@ -1,667 +1,302 @@
 # Async Effects
 
-This chapter covers effects for asynchronous operations: awaiting coroutines, running tasks in parallel, spawning background tasks, and time-based effects.
+This chapter covers async integration and scheduler primitives for cooperative concurrency.
 
 ## Table of Contents
 
+- [Runner and Handler Presets](#runner-and-handler-presets)
 - [Await Effect](#await-effect)
-- [Gather Effect](#gather-effect)
-- [Spawn and Task Effects](#spawn-and-task-effects)
-- [Time Effects](#time-effects)
-- [Async Integration Patterns](#async-integration-patterns)
-- [Best Practices](#best-practices)
+- [Scheduler Effect Catalog](#scheduler-effect-catalog)
+- [Waitables and Handles](#waitables-and-handles)
+- [Task Lifecycle and Scheduling Model](#task-lifecycle-and-scheduling-model)
+- [Gather Fail-Fast Semantics](#gather-fail-fast-semantics)
+- [Race Semantics](#race-semantics)
+- [Cancel and TaskCancelledError](#cancel-and-taskcancellederror)
+- [Promise vs ExternalPromise](#promise-vs-externalpromise)
+- [Common Mistakes](#common-mistakes)
+- [Quick Reference](#quick-reference)
+
+## Runner and Handler Presets
+
+Pair each runner with the matching handler preset. The preferred pairings are marked below.
+
+| Runner | Preset | Status | Await Behavior |
+| --- | --- | --- | --- |
+| `run(...)` | `default_handlers()` | Valid (preferred) | Uses `sync_await_handler` |
+| `await async_run(...)` | `default_async_handlers()` | Valid (preferred) | Uses `async_await_handler` |
+| `await async_run(...)` | `default_handlers()` | Valid (non-preferred) | Works, but `Await` work runs sequentially/blocking |
+| `run(...)` | `default_async_handlers()` | Invalid | Raises `TypeError` (`async_await_handler` requires async driver) |
+
+```python
+from doeff import async_run, default_async_handlers, default_handlers, run
+
+sync_result = run(program(), handlers=default_handlers())
+async_result = await async_run(program(), handlers=default_async_handlers())
+
+# Non-preferred but valid: Await work is sequential/blocking.
+slow_result = await async_run(program(), handlers=default_handlers())
+
+# Invalid pairing: raises TypeError.
+bad_result = run(program(), handlers=default_async_handlers())
+```
 
 ## Await Effect
 
-`Await(awaitable)` integrates async/await with doeff programs.
-
-### Basic Usage
+`Await(awaitable)` bridges Python awaitables (coroutines, tasks, futures) into a doeff program.
 
 ```python
 import asyncio
-from doeff import do, Await, Log, async_run, default_handlers
-
-async def fetch_data():
-    await asyncio.sleep(0.1)
-    return {"user_id": 123, "name": "Alice"}
+from doeff import Await, do
 
 @do
-def process_user():
-    yield Log("Fetching user data...")
-    data = yield Await(fetch_data())
-    yield Log(f"Received: {data}")
-    return data["name"]
-
-async def main():
-    result = await arun(process_user(), default_handlers())
-    print(result.value)  # "Alice"
-
-asyncio.run(main())
+def fetch_value():
+    value = yield Await(asyncio.sleep(0.1, result=42))
+    return value
 ```
 
-### Awaiting Multiple Operations Sequentially
+### Handler behavior
+
+Both Await handlers bridge completion through `CreateExternalPromise` plus `Wait`:
+
+- `sync_await_handler` (`run` preset):
+  - submits the awaitable to a background asyncio loop thread
+  - waits on `promise.future` via `Wait`
+  - spawned Await work is sequential (no overlap)
+- `async_await_handler` (`async_run` preset):
+  - schedules awaitable submission through the async runtime path
+  - waits on `promise.future` via `Wait`
+  - spawned Await work can overlap
+
+### Await timing note
+
+`Await` on sync `run(...)` is not concurrent by itself. If you spawn two Await tasks, each
+`Await` resolves sequentially under `sync_await_handler`. Concurrency requires
+`async_await_handler` with `async_run(...)`.
+
+## Scheduler Effect Catalog
+
+The scheduler primitives are:
+
+| Effect | Input | Output | Purpose |
+| --- | --- | --- | --- |
+| `Spawn(program)` | doeff program | `Task[T]` | Start child task and continue immediately |
+| `Wait(task_or_future)` | `Task` or `Future` waitable handle | `T` | Suspend until one waitable resolves |
+| `Gather(*waitables)` | `Task`/`Future` waitable handles | `list[T]` | Suspend until all complete (input order) |
+| `Race(*waitables)` | `Task`/`Future` waitable handles | `RaceResult` | Suspend until first completion |
+| `Cancel(task)` | `Task[T]` | `None` | Request task cancellation (`yield task.cancel()`) |
+| `SchedulerYield` | internal | internal | Cooperative preemption point inserted per yield |
+| `CreatePromise()` | none | `Promise[T]` | Allocate doeff-internal promise |
+| `CompletePromise(p, value)` | `Promise[T]`, `T` | `None` | Resolve promise successfully |
+| `FailPromise(p, error)` | `Promise[Any]`, exception | `None` | Resolve promise with error |
+| `CreateExternalPromise()` | none | `ExternalPromise[T]` | Allocate externally-completable promise |
+
+`RaceResult` exposes:
+
+- `result.first`: winning waitable handle (`Task` or `Future`)
+- `result.value`: winning value
+- `result.rest`: remaining waitables (losers)
+
+## Waitables and Handles
+
+- `Spawn(...)` returns a `Task[T]` handle.
+- `Promise[T].future` is a `Future[T]` waitable.
+- `ExternalPromise[T].future` is also a `Future[T]` waitable.
+- `Wait`, `Gather`, and `Race` consume these waitable handles.
+- Raw programs are not waitables. Spawn programs first, then wait on the returned handles.
 
 ```python
-async def fetch_user(user_id):
-    await asyncio.sleep(0.1)
-    return {"id": user_id, "name": f"User{user_id}"}
-
-async def fetch_posts(user_id):
-    await asyncio.sleep(0.1)
-    return [{"id": 1, "title": "Post 1"}, {"id": 2, "title": "Post 2"}]
+from doeff import CreatePromise, Spawn, Wait, do
 
 @do
-def load_user_profile(user_id):
-    # Sequential async operations
-    user = yield Await(fetch_user(user_id))
-    yield Log(f"Loaded user: {user['name']}")
+def child():
+    return 7
 
-    posts = yield Await(fetch_posts(user_id))
-    yield Log(f"Loaded {len(posts)} posts")
+@do
+def parent():
+    task = yield Spawn(child())
+    promise = yield CreatePromise()
 
-    return {"user": user, "posts": posts}
+    task_value = yield Wait(task)
+    promise_value = yield Wait(promise.future)
+    return task_value, promise_value
 ```
 
-### With HTTP Requests
-
 ```python
-import httpx
+from doeff import Gather, Race, Spawn, do
 
-@do
-def fetch_api_data():
-    async with httpx.AsyncClient() as client:
-        # Await the request
-        response = yield Await(
-            client.get("https://api.example.com/data")
-        )
-
-        if response.status_code == 200:
-            yield Log("API request successful")
-            return response.json()
-        else:
-            raise Exception(f"HTTP {response.status_code}")
-```
-
-## Gather Effect
-
-`Gather(*programs)` runs multiple **Programs** in parallel and collects their results.
-
-**Important:** `Gather` takes `Program` objects, not awaitables. For raw awaitables, use `Await`.
-
-### Basic Parallel Execution
-
-```python
-from doeff import do, Gather, Log, Delay
-
-@do
-def task1():
-    yield Delay(0.1)
-    return "result1"
-
-@do
-def task2():
-    yield Delay(0.1)
-    return "result2"
-
-@do
-def task3():
-    yield Delay(0.1)
-    return "result3"
-
-@do
-def run_parallel_tasks():
-    yield Log("Starting parallel tasks...")
-
-    # All tasks run concurrently with async_run
-    results = yield Gather(task1(), task2(), task3())
-
-    yield Log(f"All tasks complete: {results}")
-    return results  # ["result1", "result2", "result3"]
-```
-
-**When to use Gather:**
-- Running multiple doeff Programs in parallel
-- When inner tasks need state, logging, or other effects
-- Primary parallel execution mechanism
-- For raw async coroutines, wrap them with `Await` effect
-
-### Parallel API Requests with Gather
-
-```python
-@do
-def fetch_from_api(endpoint):
-    yield Log(f"Fetching {endpoint}...")
-    response = yield Await(httpx_client.get(endpoint))
-    yield Log(f"Got response from {endpoint}")
-    return response.json()
-
-@do
-def fetch_multiple_apis():
-    # Run multiple Program-based fetchers in parallel
-    results = yield Gather(
-        fetch_from_api("https://api1.example.com/data"),
-        fetch_from_api("https://api2.example.com/data"),
-        fetch_from_api("https://api3.example.com/data")
-    )
-
-    yield Log(f"Fetched {len(results)} responses")
-    return results
-```
-
-### Fan-Out Pattern
-
-```python
-from doeff import async_run, default_handlers
-
-@do
-def process_item(item_id):
-    yield Log(f"Processing item {item_id}")
-    yield Delay(0.05)
-    return f"processed-{item_id}"
-
-@do
-def process_batch(item_ids):
-    yield Log(f"Processing {len(item_ids)} items in parallel")
-
-    # Create Program for each item
-    tasks = [process_item(item_id) for item_id in item_ids]
-
-    # Process all in parallel
-    results = yield Gather(*tasks)
-
-    yield Log("All items processed")
-    return results
-
-# Usage
-async def main():
-    result = await arun(process_batch([1, 2, 3, 4, 5]), default_handlers())
-    print(result.value)  # ["processed-1", ..., "processed-5"]
-```
-
-## Spawn and Task Effects
-
-`Spawn` creates background tasks with **snapshot semantics** for fire-and-forget or deferred execution patterns.
-
-See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for the full specification.
-
-### Basic Spawn Usage
-
-```python
-from doeff import do, Spawn, Wait, Log, Delay
-
-@do
-def background_work():
-    yield Log("Background work starting...")
-    yield Delay(1.0)
-    yield Log("Background work complete")
-    return "background_result"
-
-@do
-def main_program():
-    yield Log("Main: Starting")
-
-    # Spawn background task
-    task = yield Spawn(background_work())
-    yield Log("Main: Spawned background task")
-
-    # Do other work while background runs
-    yield Delay(0.5)
-    yield Log("Main: Did some work")
-
-    # Wait for background task result
-    result = yield Wait(task)
-    yield Log(f"Main: Background returned: {result}")
-
-    return result
-```
-
-### Snapshot Semantics
-
-Spawned tasks receive a **snapshot** of the environment and store at spawn time. Changes to state in the spawned task do not affect the parent:
-
-```python
-@do
-def spawned_task():
-    # This modifies the spawned task's isolated store
-    yield Put("counter", 999)
-    return yield Get("counter")  # Returns 999
-
-@do
-def parent_task():
-    yield Put("counter", 0)
-
-    task = yield Spawn(spawned_task())
-
-    # Parent's store is unchanged
-    parent_counter = yield Get("counter")  # Still 0
-
-    # Spawned task sees its own store
-    spawned_result = yield Wait(task)  # Returns 999
-
-    # Parent's store STILL unchanged
-    final_counter = yield Get("counter")  # Still 0
-
-    return {"parent": final_counter, "spawned": spawned_result}
-```
-
-### Task Operations
-
-```python
-@do
-def task_operations_example():
-    # Spawn a task
-    task = yield Spawn(long_running_work())
-
-    # Check if done (returns Effect, must yield)
-    is_done = yield task.is_done()
-    yield Log(f"Is done: {is_done}")  # False initially
-
-    # Cancel the task (returns Effect, must yield)
-    yield task.cancel()
-    yield Log("Requested cancellation")
-
-    # Wait raises TaskCancelledError after cancel
-    result = yield Safe(Wait(task))
-    if result.is_err():
-        yield Log("Task was cancelled")
-```
-
-### Spawn for Fire-and-Forget
-
-```python
-@do
-def send_notification():
-    yield Log("Sending notification...")
-    yield Await(email_service.send("Hello!"))
-    yield Log("Notification sent")
-    return "sent"
-
-@do
-def main_workflow():
-    # Fire and forget - we don't wait for the result
-    yield Spawn(send_notification())
-
-    # Continue immediately
-    yield Log("Workflow continues...")
-    return "done"
-```
-
-### Spawn with Error Handling
-
-```python
-@do
-def failing_task():
-    yield Delay(0.1)
-    raise ValueError("Task failed!")
-
-@do
-def handle_spawn_error():
-    task = yield Spawn(failing_task())
-
-    # Wrap Wait in Safe to handle errors
-    result = yield Safe(Wait(task))
-
-    if result.is_ok():
-        return result.value
-    else:
-        yield Log(f"Task failed: {result.error}")
-        return "fallback_value"
-```
-
-### When to Use Spawn vs Gather
-
-| Use Case | Use Spawn | Use Gather |
-|----------|-----------|------------|
-| Wait for all results | No | Yes |
-| Fire-and-forget | Yes | No |
-| Need cancellation | Yes | No |
-| Check completion | Yes | No |
-| State isolation needed | Yes | No |
-
-## Time Effects
-
-Time effects control timing in your programs.
-
-### Delay - Sleep for Duration
-
-```python
-from doeff import do, Delay, Log
-
-@do
-def with_delay():
-    yield Log("Starting...")
-    yield Delay(1.0)  # Sleep for 1 second
-    yield Log("After 1 second")
-    yield Delay(0.5)
-    yield Log("After another 0.5 seconds")
-    return "done"
-```
-
-**Execution behavior:**
-- `async_run`: Uses `asyncio.sleep` (non-blocking)
-- `run`: Uses cooperative scheduling or `time.sleep`
-
-### GetTime - Get Current Time
-
-```python
-from doeff import do, GetTime, Delay, Log
-
-@do
-def measure_duration():
-    start = yield GetTime()
-    yield Log(f"Start time: {start}")
-
-    yield Delay(1.0)
-
-    end = yield GetTime()
-    duration = (end - start).total_seconds()
-    yield Log(f"Duration: {duration}s")
-
-    return duration
-```
-
-### WaitUntil - Wait Until Specific Time
-
-```python
-from datetime import datetime, timedelta
-from doeff import do, WaitUntil, GetTime, Log
-
-@do
-def wait_until_example():
-    now = yield GetTime()
-    target = now + timedelta(seconds=5)
-
-    yield Log(f"Current time: {now}")
-    yield Log(f"Waiting until: {target}")
-
-    yield WaitUntil(target)
-
-    yield Log("Target time reached!")
-    return "done"
-```
-
-### Time Effects with run
-
-`run` with cooperative scheduling handles time effects efficiently:
-
-```python
-from doeff import run, default_handlers
-
-@do
-def slow_in_real_time():
-    yield Delay(3600)  # 1 hour delay
-    return "done"
-
-# With run, time advances based on handler implementation
-def test_time_based_program():
-    result = run(slow_in_real_time(), default_handlers())
-    assert result.is_ok()
-    assert result.value == "done"
-```
-
-## Async Integration Patterns
-
-### Async Context Managers
-
-```python
-from contextlib import asynccontextmanager
-
-@asynccontextmanager
-async def database_connection():
-    db = await connect_db()
-    try:
-        yield db
-    finally:
-        await db.close()
-
-@do
-def with_database():
-    # Use async context manager
-    async with database_connection() as db:
-        result = yield Await(db.execute("SELECT * FROM users"))
-        yield Log(f"Query returned {len(result)} rows")
-        return result
-```
-
-### Timeouts
-
-```python
-@do
-def with_timeout():
-    async def slow_operation():
-        await asyncio.sleep(10)
-        return "done"
-
-    try:
-        # Set timeout using asyncio
-        result = yield Await(
-            asyncio.wait_for(slow_operation(), timeout=1.0)
-        )
-        yield Log(f"Completed: {result}")
-        return result
-    except asyncio.TimeoutError:
-        yield Log("Operation timed out")
-        raise Exception("Timeout exceeded")
-```
-
-### Rate Limiting
-
-```python
-@do
-def rate_limited_requests(urls):
-    """Process URLs with rate limiting"""
-    results = []
-
-    for i, url in enumerate(urls):
-        if i > 0:
-            # Wait between requests
-            yield Delay(0.5)
-
-        yield Log(f"Fetching {url}...")
-        response = yield Await(fetch_url(url))
-        results.append(response)
-
-    yield Log(f"Completed {len(results)} requests")
-    return results
-```
-
-### Combining with Other Effects
-
-```python
-@do
-def async_with_state_and_config():
-    # Get config from environment
-    api_url = yield Ask("api_url")
-    max_concurrent = yield Ask("max_concurrent")
-
-    # Track progress in state
-    yield Put("completed", 0)
-    yield Put("total", 10)
-
-    # Run parallel async operations with Gather
-    tasks = [fetch_item(api_url, i) for i in range(max_concurrent)]
-    results = yield Gather(*tasks)
-
-    # Update state
-    yield Modify("completed", lambda x: x + len(results))
-
-    # Log progress
-    completed = yield Get("completed")
-    total = yield Get("total")
-    yield Log(f"Progress: {completed}/{total}")
-
-    return results
-
-@do
-def fetch_item(base_url, item_id):
-    yield Delay(0.1)
-    return f"{base_url}/items/{item_id}"
-```
-
-### Error Handling with Async
-
-```python
-@do
-def safe_async_operation():
-    async def risky_async():
-        await asyncio.sleep(0.1)
-        if random.random() < 0.5:
-            raise Exception("Random failure")
-        return "success"
-
-    # Safe wrapping for async errors
-    safe_result = yield Safe(Await(risky_async()))
-
-    if safe_result.is_ok():
-        result = safe_result.value
-    else:
-        result = f"Failed: {safe_result.error}"
-
-    yield Log(f"Result: {result}")
-    return result
-```
-
-## Best Practices
-
-### When to Use Await
-
-**DO:**
-- Await I/O-bound operations (network, disk, database)
-- Integrate with async libraries
-- Call async functions from other libraries
-
-```python
-@do
-def good_await_usage():
-    # I/O-bound: good use of async
-    data = yield Await(httpx_client.get(url))
-    result = yield Await(db.execute(query))
-    return result
-```
-
-**DON'T:**
-- Await CPU-bound operations (use threading/multiprocessing instead)
-- Await trivial operations
-
-### When to Use Gather
-
-**DO:**
-- Independent operations that all need results
-- Multiple Programs with effect support
-- Batch processing where all results matter
-
-```python
-@do
-def good_gather_usage():
-    # Independent Programs - perfect for Gather
-    results = yield Gather(
-        fetch_users(),
-        fetch_posts(),
-        fetch_comments()
-    )
-    return {"users": results[0], "posts": results[1], "comments": results[2]}
-```
-
-**DON'T:**
-- Fire-and-forget patterns (use Spawn)
-- Single operations
-- Dependent operations that must be sequential
-
-### When to Use Spawn
-
-**DO:**
-- Fire-and-forget operations
-- When you need cancellation
-- When you need state isolation
-- Background work with deferred result retrieval
-
-```python
-@do
-def good_spawn_usage():
-    # Fire-and-forget notification
-    yield Spawn(send_notification())
-
-    # Background work with later Wait
-    task = yield Spawn(expensive_computation())
-    yield do_other_work()
-    result = yield Wait(task)
-
-    return result
-```
-
-**DON'T:**
-- When you need all results immediately (use Gather)
-- Simple sequential operations
-
-### Performance Considerations
-
-**Sequential (slower):**
-```python
-@do
-def sequential():
-    r1 = yield task1()  # 100ms
-    r2 = yield task2()  # 100ms
-    r3 = yield task3()  # 100ms
-    return [r1, r2, r3]
-# Total: ~300ms
-```
-
-**Parallel with Gather (faster):**
-```python
 @do
 def parallel():
-    results = yield Gather(
-        task1(),  # 100ms
-        task2(),  # 100ms
-        task3()   # 100ms
-    )
-    return results
-# Total: ~100ms (all run concurrently)
+    task1 = yield Spawn(work_1())
+    task2 = yield Spawn(work_2())
+
+    result = yield Race(task1, task2)
+    winner = result.value
+    losers = result.rest
+    all_results = yield Gather(task1, task2)
+    return winner, losers, all_results
 ```
 
-### Testing Async Programs
+## Task Lifecycle and Scheduling Model
+
+Scheduler state transitions are internal to the scheduler handler
+(`Pending`, `Running`, `Suspended`, `Blocked`, `Completed`, `Failed`, `Cancelled`).
+
+At VM level, scheduling stays handler-internal:
+
+- Wait/Race/Gather may park the current task if inputs are pending.
+- Scheduler selects another ready task and continues execution.
+- VM keeps stepping `Continue` states; task switching is not exposed as a VM primitive.
+- When a waitable completes, scheduler callbacks wake blocked tasks and reschedule them.
+
+The scheduler is single-threaded with no OS-style preemption. Ready tasks are interleaved in
+round-robin order, and context switches happen at effect yield points via internal
+`SchedulerYield` dispatch.
+
+### store isolation
+
+Scheduler tasks run with store isolation:
+
+- `state` and `log` are isolated per task (snapshot at spawn, switched on task context switch)
+- `env` is shared across tasks and treated as read-only scheduler context
+
+This means parent and child tasks do not share mutable state/log writes, but they do share
+the same environment view.
+
+### Preemption (`SchedulerYield`)
+
+Preemption is cooperative. The scheduler inserts an internal `SchedulerYield` point after
+each task yield, so every effect dispatch is a potential context switch point.
+
+`SchedulerYield` is internal (not something user code should yield directly), but it explains
+why long-running concurrent workloads must keep yielding effects to remain fair.
+
+## Gather Fail-Fast Semantics
+
+`Gather` is fail-fast for `Task`/`Future` waitable inputs:
+
+- if any gathered waitable fails, `Gather` raises immediately
+- if any gathered task is cancelled, `Gather` raises `TaskCancelledError`
+- remaining tasks are not auto-cancelled
+
+Use `Try(...)` when you need partial results instead of fail-fast behavior.
 
 ```python
-import asyncio
-import pytest
-from doeff import do, Await, Log, async_run, default_handlers
+from doeff import Gather, Try, Spawn, do
 
-@pytest.mark.asyncio
-async def test_async_program():
-    @do
-    def my_program():
-        result = yield Await(asyncio.sleep(0, result="test"))
-        yield Log(f"Result: {result}")
-        return result
-
-    result = await arun(my_program(), default_handlers())
-
-    assert result.is_ok()
-    assert result.value == "test"
+@do
+def collect_all_even_on_errors():
+    t1 = yield Spawn(Try(work_1()))
+    t2 = yield Spawn(Try(work_2()))
+    return (yield Gather(t1, t2))  # [Ok(...)/Err(...), Ok(...)/Err(...)]
 ```
 
-## Summary
+## Race Semantics
 
-| Effect | Purpose | Execution Support |
-|--------|---------|-------------------|
-| `Await(coro)` | Wait for async operation | async_run (native), run (via thread) |
-| `Gather(*progs)` | Run Programs in parallel | async_run (parallel), run (cooperative) |
-| `Spawn(prog)` | Background task with snapshot | async_run (native), run (cooperative) |
-| `Wait(task)` | Wait for spawned task | async_run, run |
-| `task.cancel()` | Request cancellation | async_run, run |
-| `Delay(seconds)` | Sleep for duration | All |
-| `GetTime()` | Get current time | All |
-| `WaitUntil(time)` | Wait until specific time | All |
+`Race(*waitables)` resumes on first completion of a `Task`/`Future` waitable:
 
-**Key Points:**
-- `Await` integrates Python's async/await with doeff
-- `Gather` runs Programs in parallel (with full effect support)
-- `Spawn` creates isolated background tasks
-- Time effects behave differently per execution function
-- Use `Safe` for error handling in async operations
+- first completed waitable determines the returned `RaceResult`
+- `result.first` is the winning waitable handle
+- `result.value` is the winning value
+- `result.rest` is the remaining waitables
+- if that completion is an error, `Race` raises that error
+- if that completion is cancellation, `Race` raises `TaskCancelledError`
 
-## Next Steps
+Race losers continue running by default. Cancel them explicitly if needed (for Task inputs):
+`for t in result.rest: yield t.cancel()`.
 
-- **[Error Handling](05-error-handling.md)** - Safe effect and RuntimeResult
-- **[Effects Matrix](21-effects-matrix.md)** - Complete effect support reference
-- **[Patterns](12-patterns.md)** - Common async patterns and best practices
+```python
+from doeff import Race, Spawn, do
+
+@do
+def first_result():
+    t1 = yield Spawn(job("a", 0.3))
+    t2 = yield Spawn(job("b", 0.1))
+    result = yield Race(t1, t2)
+    winner = result.first
+    value = result.value
+
+    # Race losers continue by default; cancel explicitly for teardown.
+    for t in result.rest:
+        _ = yield t.cancel()
+    return winner, value
+```
+
+## Cancel and TaskCancelledError
+
+Cancellation is explicit and cooperative:
+
+- request cancellation via `yield task.cancel()`
+- `Cancel` applies to `Pending`, `Running`, `Suspended`, and `Blocked` tasks
+- cancelling `Completed`/`Failed`/`Cancelled` tasks is a no-op
+- waiters (`Wait`, `Gather`, `Race`) observe cancelled tasks as `TaskCancelledError`
+- cancellation request returns immediately; running tasks cancel at next `SchedulerYield`
+
+```python
+from doeff import Try, Spawn, Wait, do
+
+@do
+def cancel_child():
+    task = yield Spawn(work())
+    _ = yield task.cancel()
+    return (yield Try(Wait(task)))  # Err(TaskCancelledError)
+```
+
+## Promise vs ExternalPromise
+
+Use `Promise` when producer and consumer are both inside doeff. Use `ExternalPromise` when
+external code (thread, callback, event-loop task, process) completes the value.
+
+| Type | Created by | Completed by | Completion path |
+| --- | --- | --- | --- |
+| `Promise` | `CreatePromise()` | `CompletePromise` / `FailPromise` | Scheduler effect dispatch |
+| `ExternalPromise` | `CreateExternalPromise()` | `promise.complete()` / `promise.fail()` | External queue drained by scheduler |
+
+```python
+from doeff import CompletePromise, CreatePromise, Spawn, Wait, do
+
+@do
+def internal_sync():
+    p = yield CreatePromise()
+    _ = yield Spawn(complete_later(p))
+    return (yield Wait(p.future))
+
+@do
+def complete_later(p):
+    yield CompletePromise(p, "ready")
+```
+
+## Common Mistakes
+
+1. Passing `default_handlers()` to `async_run(...)` and expecting overlap.
+This pairing is valid, but `Await` work runs sequentially under `sync_await_handler`.
+
+2. Passing `default_async_handlers()` to `run(...)`.
+This pairing is invalid and raises `TypeError` because sync `run(...)` cannot handle async escape effects.
+
+3. Passing a raw coroutine to `Wait(...)`.
+Use `Await(coroutine)` for Python async work; use `Wait` for scheduler waitables.
+
+4. Passing raw programs directly to `Wait`, `Gather`, or `Race`.
+Use `task = yield Spawn(program)` first, then pass the returned `Task` (or a `Future`) handle.
+
+5. Expecting `Gather` to keep going after first failure.
+Use `Try(...)` around child programs if you need partial success collection.
+
+6. Assuming `Await` is concurrent under `run(...)`.
+It is sequential under `sync_await_handler`; use `async_run(...)` for overlap.
+
+## Quick Reference
+
+| Effect | Use when | Notes |
+| --- | --- | --- |
+| `Await(awaitable)` | waiting on Python async objects | Bridge from Python async into doeff |
+| `Spawn(program)` | starting concurrent doeff task | Returns `Task[T]` |
+| `Wait(waitable)` | waiting for one task/future handle | Accepts only `Task` or `Future` handles |
+| `Gather(*waitables)` | waiting for all spawned children | Pass `Task`/`Future` handles; fail-fast on first error/cancellation |
+| `Race(*waitables)` | waiting for first spawned child | Returns `RaceResult` (`first`, `value`, `rest`); losers continue unless cancelled |
+| `Cancel(task)` | requesting task cancellation | Applies to `Pending`/`Running`/`Suspended`/`Blocked`; terminal states are no-op |
+| `SchedulerYield` | understanding scheduler fairness | Internal cooperative preemption point |
+| `CreatePromise()` | internal producer/consumer sync | Complete/fail via effects |
+| `CompletePromise(...)` | resolve internal promise | Wakes waiters |
+| `FailPromise(...)` | fail internal promise | Wakes waiters with error |
+| `CreateExternalPromise()` | external callback/thread/process completion | Complete via `promise.complete()`/`promise.fail()` |

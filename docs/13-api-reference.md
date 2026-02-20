@@ -1,160 +1,139 @@
 # API Reference
 
-Complete API reference for doeff.
+Complete API reference for doeff's current public surface.
 
 ## Core Types
 
 ### Program[T]
 
-The core abstraction representing a lazy, reusable computation.
+The core abstraction for lazy, reusable effectful computations.
 
 ```python
 class Program[T]:
     def map(self, f: Callable[[T], U]) -> Program[U]
     def flat_map(self, f: Callable[[T], Program[U]]) -> Program[U]
-    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> Program[T]
+    def and_then_k(self, binder: Callable[[T], Program[U]]) -> Program[U]
+
+    @staticmethod
+    def pure(value: T) -> Program[T]
+
+    @staticmethod
+    def lift(value: Program[U] | U) -> Program[U]
 ```
 
-**Methods:**
-
-- **`map(f)`** - Transform the result value
-- **`flat_map(f)`** - Chain with another Program
-- **`intercept(transform)`** - Intercept and transform effects
-
-**Static Methods:**
-
-```python
-@staticmethod
-def pure(value: T) -> Program[T]
-```
-
-- **`Program.pure(value)`** - Create a Program that immediately returns a value
-
-**See:** [Core Concepts](02-core-concepts.md#program)
+**See:** [Core Concepts](02-core-concepts.md#program-model)
 
 ---
 
-### Effect
+### EffectBase / EffectValue[T]
 
-Protocol for algebraic effect operations.
+Effects are user-space operation payloads. They are data, not execution control nodes.
 
 ```python
-class Effect(Protocol):
-    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> Effect | Program
+@dataclass(frozen=True, kw_only=True)
+class EffectBase:
+    created_at: EffectCreationContext | None = None
 ```
 
-All effects implement this protocol.
+At runtime, effect dispatch happens through `Perform(effect)`.
 
-**See:** [Core Concepts](02-core-concepts.md#effect-protocol)
+**See:** [Core Concepts](02-core-concepts.md#control-vs-effect-data)
 
 ---
 
-### ExecutionContext
+### RunResult[T]
 
-Mutable context for Program execution.
-
-```python
-@dataclass
-class ExecutionContext:
-    env: dict[str, Any] = field(default_factory=dict)
-    state: dict[str, Any] = field(default_factory=dict)
-    log: list[LogEntry] = field(default_factory=list)
-    graph: WGraph = field(default_factory=WGraph.empty)
-    memo: dict[str, Any] = field(default_factory=dict)
-    cache_handler: CacheHandler | None = None
-    atomic_state: dict[str, Any] = field(default_factory=dict)
-    atomic_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-```
-
-**Fields:**
-
-- **`env`** - Environment variables (Ask/Local effects)
-- **`state`** - Mutable state (Get/Put/Modify effects)
-- **`log`** - Log entries (Log/Tell effects)
-- **`graph`** - Execution graph (Step/Annotate effects)
-- **`memo`** - Within-execution cache (for internal use)
-- **`cache_handler`** - Persistent cache handler (CacheGet/CachePut)
-- **`atomic_state`** - Thread-safe state (AtomicGet/AtomicUpdate)
-- **`atomic_lock`** - Lock for atomic operations
-
-**See:** [Core Concepts](02-core-concepts.md#executioncontext)
-
----
-
-### RuntimeResult[T]
-
-Result of Program execution returned by `run()` and `arun()`.
+Result container returned by `run()` and `async_run()`.
 
 ```python
-class RuntimeResult[T](Protocol):
-    result: Result[T]      # Ok(value) or Err(error)
-    raw_store: dict        # Final store state
-    env: dict              # Final environment
-
-    # Stack traces for debugging
-    k_stack: KStackTrace
-    effect_stack: EffectStackTrace
-    python_stack: PythonStackTrace
+class RunResult[T](Protocol):
+    @property
+    def result(self) -> Result[T]: ...
 
     @property
-    def value(self) -> T        # Unwraps Ok or raises
+    def raw_store(self) -> dict[str, Any]: ...
 
     @property
-    def error(self) -> BaseException  # Get error or raises
+    def value(self) -> T: ...
 
-    def is_ok(self) -> bool     # True if result is Ok
-    def is_err(self) -> bool    # True if result is Err
-    def format(self, *, verbose: bool = False) -> str
+    @property
+    def error(self) -> BaseException: ...
+
+    def is_ok(self) -> bool: ...
+    def is_err(self) -> bool: ...
 ```
 
-**Core Properties:**
+**Core fields:**
 
 - **`result`** - `Ok(value)` or `Err(error)`
-- **`value`** - Unwraps Ok value (raises if Err)
-- **`error`** - Gets the exception (raises if Ok)
-- **`raw_store`** - Final store state dictionary
+- **`raw_store`** - Final store snapshot
+- **`value`** - Unwraps `Ok` value (raises on `Err`)
+- **`error`** - Unwraps `Err` error (raises on `Ok`)
 
-**Methods (NOT properties!):**
-
-- **`is_ok()`** - Returns True if result is Ok
-- **`is_err()`** - Returns True if result is Err
-- **`format(verbose=False)`** - Format result for display
-
-**Accessing logs and graph:**
-
-```python
-result = run(my_program(), default_handlers())
-logs = result.raw_store.get("__log__", [])
-graph = result.raw_store.get("__graph__")
-```
-
-**Stack traces (for debugging errors):**
-
-- **`k_stack`** - Continuation stack snapshot
-- **`effect_stack`** - Effect call tree
-- **`python_stack`** - Python source locations
-
-**See:** [Error Handling](05-error-handling.md#runtimeresult-protocol)
+**See:** [Error Handling](05-error-handling.md#runresult-overview)
 
 ---
 
 ### Result[T]
 
-Represents success (Ok) or failure (Err).
+Success/failure sum type used by `RunResult.result` and `Try(...)`.
 
 ```python
-@dataclass
-class Ok[T]:
-    value: T
-
-@dataclass
-class Err:
-    error: Exception
-
-Result = Ok[T] | Err
+Result[T] = Ok[T] | Err
 ```
 
-**See:** [Error Handling](05-error-handling.md#result-type)
+**See:** [Error Handling](05-error-handling.md#ok-and-err)
+
+---
+
+### Ok(value)
+
+Success constructor for `Result[T]`.
+
+```python
+ok = Ok({"user_id": 42})
+```
+
+**Signature:** `Ok(value: T)`
+
+**Fields:**
+
+- **`value`** - Success payload
+
+**Pattern matching:**
+
+```python
+match result:
+    case Ok(value=v):
+        print("success", v)
+```
+
+---
+
+### Err(error)
+
+Failure constructor for `Result[T]`.
+
+```python
+err = Err(ValueError("invalid input"))
+```
+
+**Signature:**
+`Err(error: Exception, captured_traceback: Maybe[EffectTraceback] = NOTHING)`
+
+**Fields:**
+
+- **`error`** - The captured exception
+- **`captured_traceback`** - Optional effect traceback metadata. Defaults to `NOTHING`,
+  and is populated when traceback capture is enabled for that error path.
+
+**Pattern matching:**
+
+```python
+match result:
+    case Err(error=e, captured_traceback=tb):
+        print("failed", e, tb)
+```
 
 ---
 
@@ -162,28 +141,25 @@ Result = Ok[T] | Err
 
 ### @do
 
-Converts generator function to KleisliProgram.
+Converts a generator function into a `KleisliProgram`.
 
 ```python
 @do
 def my_program(x: int) -> Program[int]:
     value = yield Get("key")
     return value + x
-
-# Creates KleisliProgram with automatic Program unwrapping
 ```
 
-**Parameters:** Generator function that yields Effects or Programs
+**Returns:** `KleisliProgram[..., T]`
 
-**Returns:** KleisliProgram[T]
-
-**See:** [Core Concepts](02-core-concepts.md#do-decorator), [Kleisli Arrows](11-kleisli-arrows.md)
+**See:** [Core Concepts](02-core-concepts.md#generator-as-ast),
+[Kleisli Arrows](11-kleisli-arrows.md)
 
 ---
 
 ### @cache
 
-Caches Program result based on arguments.
+Caches Program results with policy fields.
 
 ```python
 @cache(ttl=60, lifecycle=CacheLifecycle.SESSION)
@@ -192,14 +168,13 @@ def expensive_computation(x: int):
     return x * 2
 ```
 
-**Parameters:**
+**Primary parameters:**
 
-- **`ttl`** (int, optional) - Time-to-live in seconds
-- **`lifecycle`** (CacheLifecycle, optional) - SESSION, PERSISTENT, TEMPORARY
-- **`storage`** (CacheStorage, optional) - MEMORY, DISK, DISTRIBUTED
-- **`**kwargs`** - Additional policy fields
-
-**Returns:** Decorated KleisliProgram with caching
+- **`ttl`** (`float | None`) - Time-to-live in seconds
+- **`lifecycle`** (`CacheLifecycle | str | None`) - Cache lifecycle hint
+- **`storage`** (`CacheStorage | str | None`) - Storage hint
+- **`metadata`** (`Mapping[str, Any] | None`) - Policy metadata
+- **`policy`** (`CachePolicy | Mapping[str, Any] | None`) - Full policy object
 
 **See:** [Cache System](07-cache-system.md), [cache.md](cache.md)
 
@@ -209,36 +184,36 @@ def expensive_computation(x: int):
 
 ### Ask(key)
 
-Request environment variable.
+Request an environment value.
+
+Raises `MissingEnvKeyError` (a `KeyError` subtype) when `key` is not present in the current
+environment.
+
+If the environment value is a `Program`, `Ask` evaluates it lazily once per `run()` invocation and
+caches the computed value per key. Concurrent `Ask` calls for the same lazy key are coordinated so
+only one task performs evaluation while others wait cooperatively. `Local(...)` overrides can
+invalidate that per-run cache for overridden keys.
 
 ```python
 config = yield Ask("database_url")
 ```
 
-**Parameters:** `key: str` - Environment variable name
-
-**Returns:** Value from environment
-
-**Raises:** `MissingEnvKeyError` if key not in environment
+**Signature:** `Ask(key: EnvKey)`
 
 **See:** [Basic Effects](03-basic-effects.md#reader-effects)
 
 ---
 
-### Local(env, program)
+### Local(env_update, sub_program)
 
-Run program with modified environment.
+Run a sub-program with environment overrides.
 
 ```python
 result = yield Local({"timeout": 30}, sub_program())
 ```
 
-**Parameters:**
-
-- **`env: dict[str, Any]`** - Environment overrides
-- **`program: Program[T]`** - Program to run
-
-**Returns:** Result of program with merged environment
+**Signature:**
+`Local(env_update: Mapping[Any, object], sub_program: ProgramLike)`
 
 **See:** [Basic Effects](03-basic-effects.md#local)
 
@@ -254,13 +229,9 @@ Read state value.
 count = yield Get("counter")
 ```
 
-**Parameters:** `key: str` - State key
+**Signature:** `Get(key: str)`
 
-**Returns:** Value from store
-
-**Raises:** `KeyError` if key not found
-
-**See:** [Basic Effects](03-basic-effects.md#state-effects)
+Raises `KeyError` when `key` is missing.
 
 ---
 
@@ -272,164 +243,323 @@ Write state value.
 yield Put("counter", 42)
 ```
 
-**Parameters:**
-
-- **`key: str`** - State key
-- **`value: Any`** - Value to store
-
-**Returns:** None
-
-**See:** [Basic Effects](03-basic-effects.md#put)
+**Signature:** `Put(key: str, value: Any)`
 
 ---
 
 ### Modify(key, f)
 
-Update state value with function.
+Update state value using a transformation function.
 
 ```python
 yield Modify("counter", lambda x: x + 1)
 ```
 
-**Parameters:**
+**Signature:** `Modify(key: str, f: Callable[[Any | None], Any])`
 
-- **`key: str`** - State key
-- **`f: Callable[[T], T]`** - Transformation function
+If `key` is missing, `Modify` calls `f(None)` (it does not raise `KeyError`).
 
-**Returns:** The new (transformed) value
+`Modify` is atomic: if `f` raises, the store is left unchanged.
 
-**See:** [Basic Effects](03-basic-effects.md#modify)
+**See:** [Basic Effects](03-basic-effects.md#state-effects)
 
 ---
 
 ## Writer Effects
 
-### Log(message)
+### Tell(message)
 
-Add log entry.
+Append a log entry.
 
 ```python
-yield Log("Processing data")
+yield Tell("Processing started")
 ```
 
-**Parameters:** `message: str` - Log message
+**Signature:** `Tell(message: object)`
 
-**Returns:** None
+`Log` is a deprecated alias for `Tell`. Use `Tell` instead.
+
+---
+
+### Listen(sub_program)
+
+Run a sub-program and capture emitted writer logs.
+
+```python
+result = yield Listen(sub_program())
+value, logs = result
+```
+
+**Signature:** `Listen(sub_program: ProgramLike)`
+
+**Returns:** `ListenResult(value: T, log: BoundedLog)`
+
+`ListenResult.log` uses bounded retention semantics: when capacity is exceeded, oldest
+entries are evicted.
+
+---
+
+### StructuredLog(**entries)
+
+Append a structured log payload.
+
+```python
+yield StructuredLog(level="info", message="Processing", count=42)
+```
+
+**Signature:** `StructuredLog(**entries: object)`
 
 **See:** [Basic Effects](03-basic-effects.md#writer-effects)
 
 ---
 
-### Tell(message)
-
-Add a log entry. Alias: `Log(message)`.
-
-```python
-yield Tell("Processing started")
-yield Log("Step 1 complete")  # Log is alias for Tell
-```
-
-**Parameters:** `message: object` - Message to log (string or any object)
-
-**Returns:** None
-
-**See:** [Basic Effects](03-basic-effects.md#tell)
-
----
-
-### Listen(program)
-
-Capture logs from sub-program.
-
-```python
-result = yield Listen(sub_program())
-value, logs = result  # Tuple unpacking
-# or
-value = result.value
-logs = result.log
-```
-
-**Parameters:** `program: Program[T]` - Program to run
-
-**Returns:** ListenResult with `.value` and `.log` attributes
-
-**See:** [Basic Effects](03-basic-effects.md#listen)
-
----
-
-### StructuredLog(data)
-
-Add structured log entry.
-
-```python
-yield StructuredLog({"level": "info", "message": "Processing", "count": 42})
-```
-
-**Parameters:** `data: dict[str, Any]` - Structured log data
-
-**Returns:** None
-
-**See:** [Basic Effects](03-basic-effects.md#structuredlog)
-
----
-
-## Async Effects
+## Async and Concurrency Effects
 
 ### Await(awaitable)
 
-Wait for async operation.
+Await a Python awaitable.
 
 ```python
-result = yield Await(async_function())
+value = yield Await(async_call())
 ```
 
-**Parameters:** `awaitable: Awaitable[T]` - Async operation
+**Signature:** `Await(awaitable: Awaitable[Any])`
 
-**Returns:** Result of awaitable
+`Await` bridges Python `asyncio` awaitables into doeff. For doeff-native `Task`/`Future`
+handles, use `Wait` instead.
 
-**See:** [Async Effects](04-async-effects.md#await)
+---
+
+### Spawn(program, **options)
+
+Spawn a Program in the background and return a `Task` handle.
+
+```python
+task = yield Spawn(worker())
+result = yield Wait(task)
+```
+
+**See:** [Advanced Effects](09-advanced-effects.md)
+
+---
+
+### Wait(future)
+
+Wait for a `Task`/`Future` waitable value.
+
+```python
+result = yield Wait(task)
+```
+
+**Signature:** `Wait(future: Waitable[T])`
+
+---
+
+### Gather(*items)
+
+Resolve multiple waitables and return results in input order.
+
+```python
+task_1 = yield Spawn(fetch_user(1))
+task_2 = yield Spawn(fetch_user(2))
+task_3 = yield Spawn(fetch_user(3))
+results = yield Gather(task_1, task_2, task_3)
+```
+
+**Signature:** `Gather(*items: Waitable[Any])`
+
+**See:** [Advanced Effects](09-advanced-effects.md#gather-effects)
+
+---
+
+### Race(*waitables)
+
+Wait for the first waitable to complete.
+
+```python
+winner = yield Race(task_a, task_b)
+value = winner.value
+```
+
+**Signature:** `Race(*futures: Waitable[Any])`
+
+**Returns:** `RaceResult(first, value, rest)`
+
+**See:** [Async Effects](04-async-effects.md#race-semantics),
+[Advanced Effects](09-advanced-effects.md#race-effect)
+
+---
+
+### Task.cancel()
+
+Request cooperative cancellation for a target `Task`.
+
+```python
+task = yield Spawn(worker())
+_ = yield task.cancel()
+```
+
+**Signature:** `Task.cancel()`
+
+`Task.cancel()` is effectful: it returns a cancellation effect that must be yielded.
+
+Cancellation behavior depends on the target task state:
+
+- **`Pending`** - Mark cancelled immediately and wake waiters with `TaskCancelledError`.
+- **`Running`** - Set cooperative cancel flag; task is cancelled at next scheduler yield point.
+- **`Suspended`** - Mark cancelled immediately and wake waiters with `TaskCancelledError`.
+- **`Blocked`** - Mark cancelled, remove target wait registration, wake waiters with
+  `TaskCancelledError`.
+- **`Completed` / `Failed` / `Cancelled`** - No-op.
+
+**See:** [Async Effects](04-async-effects.md#cancel-and-taskcancellederror)
+
+---
+
+### TaskCancelledError
+
+Raised by `Wait`, `Gather`, or `Race` when a waited task was cancelled.
+
+```python
+joined = yield Try(Wait(task))
+if joined.is_err() and joined.error.__class__.__name__ == "TaskCancelledError":
+    ...
+```
+
+**Signature:** `class TaskCancelledError(Exception)`
+
+**Import:** `from doeff.effects import TaskCancelledError`
+
+---
+
+## Semaphore Effects
+
+### CreateSemaphore(permits)
+
+Create a semaphore handle with `permits` initial permits.
+
+`permits` must be `>= 1`; `CreateSemaphore(0)` raises
+`ValueError("permits must be >= 1")`.
+
+```python
+sem = yield CreateSemaphore(3)
+```
+
+**Signature:** `CreateSemaphore(permits: int)`
+
+**Returns:** `Semaphore`
+
+---
+
+### AcquireSemaphore(sem)
+
+Acquire one permit from a semaphore; blocks cooperatively when no permits are available.
+
+```python
+yield AcquireSemaphore(sem)
+try:
+    ...
+finally:
+    yield ReleaseSemaphore(sem)
+```
+
+**Signature:** `AcquireSemaphore(semaphore: Semaphore)`
+
+Blocked acquirers are resumed in FIFO order. When no permit is available, the task transitions to
+`BLOCKED` until a release occurs.
+
+If a blocked waiter is cancelled, it is removed from the semaphore queue, raises
+`TaskCancelledError`, and consumes no permit.
+
+**See:** [Semaphore Effects](21-semaphore-effects.md#acquiresemaphoresem)
+
+---
+
+### ReleaseSemaphore(sem)
+
+Release one permit back to a semaphore.
+
+```python
+yield ReleaseSemaphore(sem)
+```
+
+**Signature:** `ReleaseSemaphore(semaphore: Semaphore)`
+
+When waiters exist, release uses direct handoff to the oldest waiter (FIFO): the permit transfers
+to that waiter and `available_permits` remains `0`.
+
+Permit leak warning: semaphores do not track ownership. If a task fails or is cancelled after
+acquire and before release, that permit is leaked. Always guard critical sections with
+`try/finally` so `ReleaseSemaphore` still runs.
+
+Lifecycle: there is no explicit destroy API; semaphore state is released when handles are garbage
+collected.
+
+**See:** [Semaphore Effects](21-semaphore-effects.md#releasesemaphoresem)
+
+---
+
+## Control Effects
+
+### Pure(value)
+
+Return an immediate value without mutating state, environment, or writer log.
+
+On the control path, `yield Pure(x)` is equivalent to returning `x` directly.
+
+```python
+value = yield Pure({"status": "ok"})
+```
+
+**Signature:** `Pure(value: Any)`
+
+---
+
+### Intercept(program, transform)
+
+Run a program under effect interception. Each yielded effect is offered to `transform`.
+
+```python
+def transform(effect):
+    if isinstance(effect, AskEffect) and effect.key == "timeout":
+        return Pure(30)
+    return None
+
+result = yield Intercept(worker(), transform)
+```
+
+**Signature:**
+`Intercept(program: Program[T], transform: Callable[[Effect], Effect | Program | None])`
+
+**Transform contract:**
+
+- Return `None` to pass through unchanged.
+- Return an `Effect` to substitute that effect.
+- Return a `Program` to execute replacement logic.
+
+For multiple transforms, pass additional transform functions to `Intercept(...)`; first non-`None`
+result wins.
+
+Interception propagates to child execution contexts (for example `Gather`, `Try`, and `Spawn`).
 
 ---
 
 ## Error Handling Effects
 
-### Safe(program)
+### Try(sub_program)
 
-Wrap execution in a `Result` type for explicit error handling.
+Run a sub-program and capture errors as `Result`.
 
 ```python
-result = yield Safe(risky_operation())
+result = yield Try(risky_operation())
 if result.is_ok():
     return result.value
-else:
-    return "fallback"
+return "fallback"
 ```
 
-**Parameters:**
+**Signature:** `Try(sub_program: ProgramLike)`
 
-- **`program: Program[T]`** - Program that may fail
-
-**Returns:** `Result[T]` - Ok(value) on success, Err(error) on failure
-
-**See:** [Error Handling](05-error-handling.md#safe-effect)
-
----
-
-## IO Effects
-
-### IO(thunk)
-
-Execute side effect.
-
-```python
-timestamp = yield IO(lambda: time.time())
-```
-
-**Parameters:** `thunk: Callable[[], T]` - Function to execute
-
-**Returns:** Result of thunk
-
-**See:** [IO Effects](06-io-effects.md#io)
+**See:** [Error Handling](05-error-handling.md#try-effect)
 
 ---
 
@@ -437,42 +567,28 @@ timestamp = yield IO(lambda: time.time())
 
 ### CacheGet(key)
 
-Retrieve cached value.
+Retrieve a cached value.
 
 ```python
 value = yield CacheGet("expensive_key")
 ```
 
-**Parameters:** `key: str` - Cache key
-
-**Returns:** Cached value
-
-**Raises:** KeyError if not in cache
-
-**See:** [Cache System](07-cache-system.md)
+**Signature:** `CacheGet(key: Any)`
 
 ---
 
-### CachePut(key, value, **policy)
+### CachePut(key, value, ttl=None, *, lifecycle=None, storage=None, metadata=None, policy=None)
 
-Store value in cache.
+Store a value in cache.
 
 ```python
 yield CachePut(
     "key",
     value,
     ttl=300,
-    lifecycle=CacheLifecycle.PERSISTENT
+    lifecycle=CacheLifecycle.PERSISTENT,
 )
 ```
-
-**Parameters:**
-
-- **`key: str`** - Cache key
-- **`value: Any`** - Value to cache
-- **`**policy`** - Policy fields (ttl, lifecycle, storage, metadata)
-
-**Returns:** None
 
 **See:** [Cache System](07-cache-system.md), [cache.md](cache.md)
 
@@ -480,38 +596,27 @@ yield CachePut(
 
 ## Graph Effects
 
-### Step(name, description)
+### Step(value, meta=None)
 
-Add named step to graph.
+Add a step node to the execution graph.
 
 ```python
-yield Step("initialize", "Setup phase")
+yield Step("initialize", {"phase": "setup"})
 ```
 
-**Parameters:**
-
-- **`name: str`** - Step name
-- **`description: str | dict`** (optional) - Step description or metadata
-
-**Returns:** None
-
-**See:** [Graph Tracking](08-graph-tracking.md#step)
+**Signature:** `Step(value: Any, meta: dict[str, Any] | None = None)`
 
 ---
 
-### Annotate(metadata)
+### Annotate(meta)
 
-Add metadata to current step.
+Add metadata to the latest graph step.
 
 ```python
 yield Annotate({"user_id": 123, "operation": "fetch"})
 ```
 
-**Parameters:** `metadata: dict[str, Any]` - Metadata dictionary
-
-**Returns:** None
-
-**See:** [Graph Tracking](08-graph-tracking.md#annotate)
+**Signature:** `Annotate(meta: dict[str, Any])`
 
 ---
 
@@ -523,101 +628,47 @@ Capture current graph state.
 graph = yield Snapshot()
 ```
 
-**Parameters:** None
-
-**Returns:** Current WGraph
-
-**See:** [Graph Tracking](08-graph-tracking.md#snapshot)
-
 ---
 
 ### CaptureGraph(program)
 
-Capture graph from sub-program.
+Run a sub-program and capture its graph output.
 
 ```python
-result, graph = yield CaptureGraph(sub_program())
+value, graph = yield CaptureGraph(sub_program())
 ```
 
-**Parameters:** `program: Program[T]` - Program to run
-
-**Returns:** Tuple of (result, graph)
+**Signature:** `CaptureGraph(program: ProgramLike)`
 
 **See:** [Graph Tracking](08-graph-tracking.md#capturegraph)
 
 ---
 
-## Advanced Effects
+## Atomic Effects
 
-### Spawn(program)
+### AtomicGet(key, *, default_factory=None)
 
-Spawn a Program in the background and return a Task handle.
-
-```python
-task = yield Spawn(worker())
-result = yield Wait(task)
-```
-
-**Parameters:**
-
-- **`program: Program[T]`** - Program to execute
-
-**Returns:** `Task[T]` - use `Wait(task)` to get result
-
-**See:** [Advanced Effects](09-advanced-effects.md)
-
-### Gather(*programs)
-
-Execute Programs in parallel.
-
-```python
-results = yield Gather(
-    fetch_user(1),
-    fetch_user(2),
-    fetch_user(3)
-)
-```
-
-**Parameters:** `*programs: Program[T]` - Programs to run in parallel
-
-**Returns:** `list[T]` - Results in order
-
-**See:** [Advanced Effects](09-advanced-effects.md#gather-effects)
-
----
-
-### AtomicGet(key)
-
-Thread-safe state read.
+Thread-safe shared-state read.
 
 ```python
 count = yield AtomicGet("counter")
 ```
 
-**Parameters:** `key: str` - State key
-
-**Returns:** Value from atomic state
-
-**See:** [Advanced Effects](09-advanced-effects.md#atomic-effects)
+**Signature:**
+`AtomicGet(key: str, *, default_factory: Callable[[], Any] | None = None)`
 
 ---
 
-### AtomicUpdate(key, f)
+### AtomicUpdate(key, updater, *, default_factory=None)
 
-Thread-safe state update.
+Thread-safe shared-state update.
 
 ```python
 new_value = yield AtomicUpdate("counter", lambda x: x + 1)
 ```
 
-**Parameters:**
-
-- **`key: str`** - State key
-- **`f: Callable[[T], T]`** - Update function
-
-**Returns:** Updated value
-
-**See:** [Advanced Effects](09-advanced-effects.md#atomicupdate)
+**Signature:**
+`AtomicUpdate(key: str, updater: Callable[[Any], Any], *, default_factory: Callable[[], Any] | None = None)`
 
 ---
 
@@ -625,7 +676,7 @@ new_value = yield AtomicUpdate("counter", lambda x: x + 1)
 
 ### program_to_injected(program)
 
-Convert Program to Injected.
+Convert `Program[T]` to `Injected[T]`.
 
 ```python
 from doeff_pinjected import program_to_injected
@@ -634,41 +685,28 @@ injected = program_to_injected(my_program())
 result = await resolver.provide(injected)
 ```
 
-**Parameters:** `program: Program[T]` - Program to convert
-
-**Returns:** `Injected[T]` - pinjected Injected value
-
-**Package:** doeff-pinjected
-
-**See:** [Pinjected Integration](10-pinjected-integration.md#program_to_injected)
+**Signature:** `program_to_injected(prog: Program[T]) -> Injected[T]`
 
 ---
 
 ### program_to_injected_result(program)
 
-Convert Program to Injected[RunResult].
+Convert `Program[T]` to `Injected[RunResult[T]]`.
 
 ```python
 from doeff_pinjected import program_to_injected_result
 
 injected = program_to_injected_result(my_program())
 result = await resolver.provide(injected)
-# result is RunResult[T] with state, log, graph
 ```
 
-**Parameters:** `program: Program[T]` - Program to convert
-
-**Returns:** `Injected[RunResult[T]]` - Injected returning full context
-
-**Package:** doeff-pinjected
-
-**See:** [Pinjected Integration](10-pinjected-integration.md#program_to_injected_result)
+**Signature:** `program_to_injected_result(prog: Program[T]) -> Injected[RunResult[T]]`
 
 ---
 
 ### program_to_iproxy(program)
 
-Convert Program to IProxy.
+Convert `Program[T]` to `IProxy[T]`.
 
 ```python
 from doeff_pinjected import program_to_iproxy
@@ -676,19 +714,13 @@ from doeff_pinjected import program_to_iproxy
 iproxy = program_to_iproxy(my_program())
 ```
 
-**Parameters:** `program: Program[T]` - Program to convert
-
-**Returns:** `IProxy[T]` - pinjected IProxy value
-
-**Package:** doeff-pinjected
-
-**See:** [Pinjected Integration](10-pinjected-integration.md#program_to_iproxy)
+**Signature:** `program_to_iproxy(prog: Program[T]) -> IProxy[T]`
 
 ---
 
 ### program_to_iproxy_result(program)
 
-Convert Program to IProxy[RunResult].
+Convert `Program[T]` to `IProxy[RunResult[T]]`.
 
 ```python
 from doeff_pinjected import program_to_iproxy_result
@@ -696,13 +728,7 @@ from doeff_pinjected import program_to_iproxy_result
 iproxy = program_to_iproxy_result(my_program())
 ```
 
-**Parameters:** `program: Program[T]` - Program to convert
-
-**Returns:** `IProxy[RunResult[T]]` - IProxy returning full context
-
-**Package:** doeff-pinjected
-
-**See:** [Pinjected Integration](10-pinjected-integration.md#program_to_iproxy_result)
+**Signature:** `program_to_iproxy_result(prog: Program[T]) -> IProxy[RunResult[T]]`
 
 ---
 
@@ -710,20 +736,16 @@ iproxy = program_to_iproxy_result(my_program())
 
 ### run
 
-Executes Programs synchronously with cooperative scheduling.
+Synchronously execute a Program/effect with explicit handler stack.
 
 ```python
-from doeff import run, default_handlers
+from doeff import default_handlers, run
 
-# Run a program synchronously
-result = run(my_program(), default_handlers())
-
-# With initial environment and store
 result = run(
     my_program(),
-    default_handlers(),
+    handlers=default_handlers(),
     env={"key": "value"},
-    store={"state": 0}
+    store={"state": 0},
 )
 ```
 
@@ -731,72 +753,50 @@ result = run(
 
 ```python
 def run(
-    program: Program[T],
-    handlers: list[Handler],
-    env: dict | None = None,
-    store: dict | None = None,
-) -> RuntimeResult[T]
+    program: DoExpr[T] | EffectValue[T],
+    handlers: Sequence[Any] = (),
+    env: dict[Any, Any] | None = None,
+    store: dict[str, Any] | None = None,
+    trace: bool = False,
+) -> RunResult[T]
 ```
 
-**Parameters:**
-
-- **`program`** - Program to execute
-- **`handlers`** - List of effect handlers (use `default_handlers()` for defaults)
-- **`env`** (optional) - Initial environment (Reader effects)
-- **`store`** (optional) - Initial store (State effects)
-
-**Returns:** RuntimeResult with result value
-
-**See:** [Core Concepts](02-core-concepts.md#execution-model)
+`env` and `store` are the execution inputs (Reader and State roots).
 
 ---
 
 ### async_run
 
-Executes Programs asynchronously with real async I/O support.
+Asynchronously execute a Program/effect with async-aware await handling.
 
 ```python
-from doeff import async_run, default_handlers
+from doeff import async_run, default_async_handlers
 
-# Run a program asynchronously
-result = await arun(my_program(), default_handlers())
-
-# With initial environment and store
-result = await arun(
+result = await async_run(
     my_program(),
-    default_handlers(),
+    handlers=default_async_handlers(),
     env={"key": "value"},
-    store={"state": 0}
+    store={"state": 0},
 )
 ```
 
 **Signature:**
 
 ```python
-async def arun(
-    program: Program[T],
-    handlers: list[Handler],
-    env: dict | None = None,
-    store: dict | None = None,
-) -> RuntimeResult[T]
+async def async_run(
+    program: DoExpr[T] | EffectValue[T],
+    handlers: Sequence[Any] = (),
+    env: dict[Any, Any] | None = None,
+    store: dict[str, Any] | None = None,
+    trace: bool = False,
+) -> RunResult[T]
 ```
-
-**Parameters:**
-
-- **`program`** - Program to execute
-- **`handlers`** - List of effect handlers (use `default_handlers()` for defaults)
-- **`env`** (optional) - Initial environment (Reader effects)
-- **`store`** (optional) - Initial store (State effects)
-
-**Returns:** RuntimeResult with result value
-
-**See:** [Core Concepts](02-core-concepts.md#execution-model)
 
 ---
 
-### run_program(program, *, interpreter=None, envs=None, apply=None, transform=None, report=False, report_verbose=False, quiet=False, load_default_env=True)
+### run_program(...)
 
-Run a Program from Python with the same discovery defaults as `doeff run`.
+Run a Program from Python using CLI-equivalent discovery defaults.
 
 ```python
 from doeff import run_program
@@ -805,18 +805,22 @@ result = run_program("pkg.features.login_program", quiet=True, report=True)
 assert result.value == "ok"
 ```
 
-**Parameters:**
+**Signature:**
 
-- **`program`** (`str | Program`) - Program path (enables discovery) or Program instance.
-- **`interpreter`** (`str | AsyncioRuntime | callable | None`) - Override interpreter/runtime.
-- **`envs`** (`list[str | Program[dict] | Mapping] | None`) - Environments to merge.
-- **`apply`** (`str | KleisliProgram | callable | None`) - Kleisli applied before run.
-- **`transform`** (`list[str | callable] | None`) - Additional Program transformers.
-- **`report` / `report_verbose`** - Print RunResult report (string-path mode).
-- **`quiet`** - Suppress discovery stderr output.
-- **`load_default_env`** - Load `~/.doeff.py::__default_env__` when running with object inputs.
-
-**Returns:** ProgramRunResult with final value, RunResult, and discovery metadata
+```python
+def run_program(
+    program: str | Program[Any],
+    *,
+    interpreter: str | Callable[..., Any] | None = None,
+    envs: list[str | Program[dict[str, Any]] | Mapping[str, Any]] | None = None,
+    apply: str | KleisliProgram[..., Any] | Callable[[Program[Any]], Program[Any]] | None = None,
+    transform: list[str | Callable[[Program[Any]], Program[Any]]] | None = None,
+    report: bool = False,
+    report_verbose: bool = False,
+    quiet: bool = False,
+    load_default_env: bool = True,
+) -> ProgramRunResult
+```
 
 **See:** [Python run_program API](16-run-program-api.md)
 
@@ -824,7 +828,7 @@ assert result.value == "ok"
 
 ### ProgramRunResult
 
-Result container returned by `run_program()`.
+Dataclass returned by `run_program()`.
 
 ```python
 from doeff import ProgramRunResult
@@ -832,78 +836,44 @@ from doeff import ProgramRunResult
 
 **Fields:**
 
-- **`value`** - Final Program value (None on errors; inspect `run_result`).
-- **`run_result`** - Full RunResult with context/log/graph data.
-- **`interpreter_path`** - Resolved interpreter path or description of callable used.
-- **`env_sources`** - Environment sources applied (`<dict>`, `<Program[dict]>`, or paths).
-- **`applied_kleisli`** - Description of applied Kleisli (if any).
-- **`applied_transforms`** - Descriptions of applied transformers.
-
----
-
-## KleisliProgram
-
-Auto-unwrapping Program composition.
-
-```python
-from doeff import KleisliProgram
-
-@do
-def add(x: int, y: int):
-    return x + y
-
-# Automatic unwrapping
-prog_x = Program.pure(5)
-result = add(prog_x, 10)  # x unwrapped automatically
-```
-
-**Operators:**
-
-- **`>>`** (and_then_k) - Chain KleisliPrograms
-- **`<<`** (fmap) - Map pure function
-
-**See:** [Kleisli Arrows](11-kleisli-arrows.md)
+- **`value`** - Final Program value
+- **`run_result`** - `RunResult[Any] | None` (present when interpreter returns one)
+- **`interpreter_path`** - Resolved interpreter path or callable descriptor
+- **`env_sources`** - Applied environment sources
+- **`applied_kleisli`** - Applied Kleisli descriptor (if any)
+- **`applied_transforms`** - Applied transform descriptors
 
 ---
 
 ## Utilities
 
-### graph_to_html(graph)
+### graph_to_html(graph, *, title="doeff Graph Snapshot", mark_success=False)
 
-Generate HTML visualization of execution graph.
+Generate graph-visualization HTML as a Program.
 
 ```python
-from doeff import graph_to_html
+from doeff import default_handlers, graph_to_html, run
 
-html = await graph_to_html(result.graph)
+html = run(graph_to_html(graph), handlers=default_handlers()).value
 ```
 
-**Parameters:** `graph: WGraph` - Execution graph
-
-**Returns:** str - HTML visualization
-
-**See:** [Graph Tracking](08-graph-tracking.md#visualization)
+**Signature:**
+`graph_to_html(graph: WGraph, *, title: str = ..., mark_success: bool = False) -> Program[str]`
 
 ---
 
-### write_graph_html(graph, path)
+### write_graph_html(graph, output_path, *, title="doeff Graph Snapshot", mark_success=False)
 
-Write graph HTML to file.
+Write graph HTML to a file as a Program.
 
 ```python
-from doeff import write_graph_html
+from doeff import default_handlers, run, write_graph_html
 
-await write_graph_html(result.graph, "output.html")
+path = run(write_graph_html(graph, "output.html"), handlers=default_handlers()).value
 ```
 
-**Parameters:**
-
-- **`graph: WGraph`** - Execution graph
-- **`path: str`** - Output file path
-
-**Returns:** None
-
-**See:** [Graph Tracking](08-graph-tracking.md#export-to-html)
+**Signature:**
+`write_graph_html(graph: WGraph, output_path: str | Path, *, title: str = ..., mark_success: bool = False) -> Program[Path]`
 
 ---
 
@@ -914,48 +884,58 @@ await write_graph_html(result.graph, "output.html")
 | Category | Effects |
 |----------|---------|
 | **Reader** | Ask, Local |
-| **State** | Get, Put, Modify, AtomicGet, AtomicUpdate |
-| **Writer** | Log, Tell, Listen, StructuredLog |
-| **Async** | Await, Gather, Spawn, Wait |
-| **Error** | Safe |
-| **IO** | IO |
+| **State** | Get, Put, Modify |
+| **Writer** | Tell, Listen, StructuredLog, slog |
+| **Async/Concurrency** | Await, Spawn, Wait, Gather, Race, Task.cancel, TaskCancelledError |
+| **Semaphore** | CreateSemaphore, AcquireSemaphore, ReleaseSemaphore |
+| **Control** | Pure, Intercept |
+| **Error** | Try, Ok, Err |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
-| **Advanced** | Spawn, Gather |
+| **Atomic** | AtomicGet, AtomicUpdate |
 
 ### Common Imports
 
 ```python
 # Core
-from doeff import do, Program
+from doeff import Program, EffectBase, do
 
 # Execution
-from doeff import run, default_handlers
-from doeff import async_run, default_handlers
+from doeff import run, async_run
+from doeff import default_handlers, default_async_handlers
 
-# Basic Effects
-from doeff import Ask, Local, Get, Put, Modify, Log, Tell, Listen
+# Reader / State / Writer
+from doeff import Ask, Local, Get, Put, Modify, Tell, Listen, StructuredLog, slog
 
-# Async
-from doeff import Await, Gather, Spawn, Wait
+# Async / Concurrency
+from doeff import Await, Spawn, Wait, Gather, Race, Task
+from doeff.effects import TaskCancelledError  # raised on Wait/Gather/Race for cancelled tasks
 
-# Error Handling
-from doeff import Safe
+# Semaphore
+from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
 
-# IO
-from doeff import IO
+# Control
+from doeff import Pure, Intercept
+
+# Error handling
+from doeff import Try, Ok, Err
 
 # Cache
 from doeff import CacheGet, CachePut, cache
 
 # Graph
-from doeff import Step, Annotate, Snapshot, CaptureGraph, graph_to_html
+from doeff import Step, Annotate, Snapshot, CaptureGraph, graph_to_html, write_graph_html
 
-# Advanced
-from doeff import Gather, AtomicGet, AtomicUpdate
+# Atomic
+from doeff import AtomicGet, AtomicUpdate
 
 # Pinjected (separate package)
-from doeff_pinjected import program_to_injected, program_to_injected_result
+from doeff_pinjected import (
+    program_to_injected,
+    program_to_injected_result,
+    program_to_iproxy,
+    program_to_iproxy_result,
+)
 ```
 
 ## Next Steps

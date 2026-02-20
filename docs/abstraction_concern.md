@@ -10,7 +10,7 @@ However, this raises fundamental questions about the interpreter's abstraction.
 
 ### What the Interpreter Handles
 
-The `ProgramInterpreter._execute_program_loop()` processes a generator and handles two types:
+The runtime execution loop processes a generator and handles two types:
 
 ```python
 while True:
@@ -305,8 +305,8 @@ some_program = some_func_k('hello')
 # some_program.generator_func = some_func (SAME function!)
 # some_program.args = ('hello',)
 
-# Step 3: Interpreter creates generator via to_generator()
-gen = some_program.to_generator()
+# Step 3: Runtime materializes a generator for execution
+gen = materialize_generator(some_program)
 # Calls: some_func('hello')
 # Returns: Generator[Program, Any, 42]
 
@@ -343,7 +343,7 @@ interpret(program: Program):
     match program:
         case Effect(): return handle_effect(program)
         case KleisliProgramCall():
-            gen = program.to_generator()
+            gen = materialize_generator(program)
             return run_generator(gen)
 ```
 

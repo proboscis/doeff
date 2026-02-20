@@ -89,9 +89,9 @@ def program():
 
 **Status: CONFIRMED**
 
-### Listen + Safe
+### Listen + Try
 
-Logs are preserved even when Safe catches an error. The logs accumulated before the error are NOT lost.
+Logs are preserved even when Try catches an error. The logs accumulated before the error are NOT lost.
 
 ```python
 @do
@@ -101,7 +101,7 @@ def inner():
 
 @do
 def program():
-    result = yield Listen(Safe(inner()))
+    result = yield Listen(Try(inner()))
     # result.value is Err(ValueError("error"))
     # result.log contains ["before_error"]  # Log preserved!
 ```
@@ -179,9 +179,9 @@ def outer():
 
 This is intentional - parallel execution means parallel logging. If deterministic ordering is required, use sequential execution or sort logs by timestamp.
 
-### 2. Listen + Safe (logs preserved on error)
+### 2. Listen + Try (logs preserved on error)
 
-**Resolution:** Yes, logs are preserved. Safe only catches the error and converts to Err result; it does not touch the log store.
+**Resolution:** Yes, logs are preserved. Try only catches the error and converts to Err result; it does not touch the log store.
 
 ### 3. Nested Listen
 
@@ -215,8 +215,8 @@ def slog(**entries: object) -> WriterTellEffect:
 |-------------|--------|------|
 | Listen + Tell | Yes | `tests/effects/test_effect_combinations.py` |
 | Listen + Local | Yes | `tests/effects/test_effect_combinations.py` |
-| Listen + Safe (success) | Yes | `tests/effects/test_effect_combinations.py` |
-| Listen + Safe (error) | Yes | `tests/effects/test_effect_combinations.py` |
+| Listen + Try (success) | Yes | `tests/effects/test_effect_combinations.py` |
+| Listen + Try (error) | Yes | `tests/effects/test_effect_combinations.py` |
 | Listen + Gather (sync) | Yes | `tests/effects/test_effect_combinations.py` |
 | Listen + Gather (async) | Yes | `tests/effects/test_effect_combinations.py` |
 | Listen + Listen (nested) | Yes | `tests/effects/test_effect_combinations.py` |
@@ -226,4 +226,4 @@ def slog(**entries: object) -> WriterTellEffect:
 - Effect definitions: `doeff/effects/writer.py`
 - Handlers: `doeff/handlers.py`
 - ListenFrame: `packages/doeff-vm/src/frame.rs`
-- Related issue: [#176](https://github.com/CyberAgentAILab/doeff/issues/176)
+- Related issue: [#176](https://github.com/proboscis/doeff/issues/176)

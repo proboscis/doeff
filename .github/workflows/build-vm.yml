@@ -1,0 +1,220 @@
+name: Build doeff-vm
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: "Publish to PyPI"
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "doeff-vm-v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to PyPI"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist -i python3.10 python3.11 python3.12 python3.13 python3.14
+          working-directory: packages/doeff-vm
+          manylinux: auto
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-vm-wheels-linux-${{ matrix.target }}
+          path: packages/doeff-vm/dist/*.whl
+
+  build-linux-freethreaded:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist -i python3.13t python3.14t
+          working-directory: packages/doeff-vm
+          manylinux: auto
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-vm-wheels-linux-freethreaded-${{ matrix.target }}
+          path: packages/doeff-vm/dist/*.whl
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}-apple-darwin
+
+      - name: Setup Python versions
+        uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.10
+            3.11
+            3.12
+            3.13
+            3.14
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          working-directory: packages/doeff-vm
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-vm-wheels-macos-${{ matrix.target }}
+          path: packages/doeff-vm/dist/*.whl
+
+  build-macos-freethreaded:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}-apple-darwin
+      - name: Setup free-threaded Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.13t
+            3.14t
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          working-directory: packages/doeff-vm
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-vm-wheels-macos-freethreaded-${{ matrix.target }}
+          path: packages/doeff-vm/dist/*.whl
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python versions
+        uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.10
+            3.11
+            3.12
+            3.13
+            3.14
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist --find-interpreter
+          working-directory: packages/doeff-vm
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-vm-wheels-windows
+          path: packages/doeff-vm/dist/*.whl
+
+  build-windows-freethreaded:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup free-threaded Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.13t
+            3.14t
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist --find-interpreter
+          working-directory: packages/doeff-vm
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-vm-wheels-windows-freethreaded
+          path: packages/doeff-vm/dist/*.whl
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: packages/doeff-vm
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: doeff-vm-sdist
+          path: packages/doeff-vm/dist/*.tar.gz
+
+  publish:
+    name: Publish to PyPI
+    needs: [build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/doeff-vm-v') || (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'workflow_call' && inputs.publish)
+    steps:
+      - name: Download doeff-vm artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: doeff-vm-*
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip_existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}

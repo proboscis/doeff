@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import doeff_vm
 
-from doeff.effects.base import Effect, create_effect_with_trace
+from doeff.effects.base import Effect
 
 if TYPE_CHECKING:
     from doeff.effects.spawn import Future
@@ -127,7 +127,7 @@ def CreateExternalPromise() -> Any:
 
     @do
     def _program():
-        raw_handle = yield create_effect_with_trace(CreateExternalPromiseEffect(), skip_frames=3)
+        raw_handle = yield CreateExternalPromiseEffect()
 
         if isinstance(raw_handle, ExternalPromise):
             return raw_handle

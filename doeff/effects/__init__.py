@@ -34,11 +34,13 @@ from .debug import (
     GetDebugContext,
     GetDebugContextEffect,
 )
+from .external_promise import (
+    CreateExternalPromise,
+    CreateExternalPromiseEffect,
+    ExternalPromise,
+)
 from .future import Await, PythonAsyncioAwaitEffect, await_
 from .gather import Gather, GatherEffect, gather
-from .race import Race, RaceEffect, RaceResult, race
-from .trace import ProgramTrace, ProgramTraceEffect
-from .wait import Wait, WaitEffect, wait
 from .graph import (
     Annotate,
     CaptureGraph,
@@ -60,22 +62,30 @@ from .promise import (
     FailPromise,
     FailPromiseEffect,
 )
-from .external_promise import (
-    CreateExternalPromise,
-    CreateExternalPromiseEffect,
-    ExternalPromise,
-)
 from .pure import Pure, PureEffect
+from .race import Race, RaceEffect, RaceResult, race
 from .reader import Ask, AskEffect, Local, LocalEffect, ask, local
 from .result import (
-    Safe,
-    safe,
+    Try,
+    try_,
+)
+from .scheduler_internal import _SchedulerTaskCompleted as TaskCompleted
+from .semaphore import (
+    AcquireSemaphore,
+    AcquireSemaphoreEffect,
+    CreateSemaphore,
+    CreateSemaphoreEffect,
+    ReleaseSemaphore,
+    ReleaseSemaphoreEffect,
+    Semaphore,
+    acquire_semaphore,
+    create_semaphore,
+    release_semaphore,
 )
 from .spawn import (
     Future,
     Promise,
     Spawn,
-    SpawnBackend,
     SpawnEffect,
     Task,
     TaskCancelEffect,
@@ -94,8 +104,8 @@ from .state import (
     modify,
     put,
 )
-
-from .scheduler_internal import _SchedulerTaskCompleted as TaskCompleted
+from .trace import ProgramTrace, ProgramTraceEffect
+from .wait import Wait, WaitEffect, wait
 from .writer import (
     Listen,
     Log,
@@ -115,6 +125,8 @@ capture = capture_graph
 
 
 __all__ = [
+    "AcquireSemaphore",
+    "AcquireSemaphoreEffect",
     "Annotate",
     "Ask",
     "AskEffect",
@@ -134,10 +146,12 @@ __all__ = [
     "CaptureGraph",
     "CompletePromise",
     "CompletePromiseEffect",
-    "CreatePromise",
-    "CreatePromiseEffect",
     "CreateExternalPromise",
     "CreateExternalPromiseEffect",
+    "CreatePromise",
+    "CreatePromiseEffect",
+    "CreateSemaphore",
+    "CreateSemaphoreEffect",
     "ExternalPromise",
     "FailPromise",
     "FailPromiseEffect",
@@ -153,10 +167,11 @@ __all__ = [
     "GraphStepEffect",
     "Intercept",
     "Listen",
-    "Log",
     "Local",
     "LocalEffect",
+    "Log",
     "Modify",
+    "Promise",
     "ProgramCallFrame",
     "ProgramCallFrameEffect",
     "ProgramCallStack",
@@ -170,10 +185,11 @@ __all__ = [
     "Race",
     "RaceEffect",
     "RaceResult",
-    "Safe",
+    "ReleaseSemaphore",
+    "ReleaseSemaphoreEffect",
+    "Semaphore",
     "Snapshot",
     "Spawn",
-    "SpawnBackend",
     "SpawnEffect",
     "StateGetEffect",
     "StateModifyEffect",
@@ -186,10 +202,12 @@ __all__ = [
     "TaskCompleted",
     "TaskIsDoneEffect",
     "Tell",
+    "Try",
     "Wait",
     "WaitEffect",
     "WriterListenEffect",
     "WriterTellEffect",
+    "acquire_semaphore",
     "annotate",
     "ask",
     "atomic_get",
@@ -201,18 +219,21 @@ __all__ = [
     "cache_put",
     "capture",
     "capture_graph",
+    "create_semaphore",
     "gather",
     "get",
     "graph",
     "listen",
     "local",
+    "modify",
     "put",
     "race",
-    "safe",
+    "release_semaphore",
     "slog",
     "snapshot",
     "spawn",
     "step",
     "tell",
+    "try_",
     "wait",
 ]
