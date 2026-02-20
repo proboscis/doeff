@@ -177,6 +177,7 @@ ResultOk = Ok
 ResultErr = Err
 K = _ext.K
 DoeffGenerator = _ext.DoeffGenerator
+DoeffGeneratorFn = _ext.DoeffGeneratorFn
 
 
 WithHandler = _ext.WithHandler
@@ -184,6 +185,8 @@ WithHandler = _ext.WithHandler
 
 Pure = _ext.Pure
 Call = _ext.Call
+Apply = _ext.Apply
+Expand = _ext.Expand
 Map = _ext.Map
 FlatMap = _ext.FlatMap
 Eval = _ext.Eval
@@ -255,6 +258,8 @@ TAG_GET_HANDLERS = _ext.TAG_GET_HANDLERS
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
 TAG_GET_TRACE = _ext.TAG_GET_TRACE
 TAG_EVAL = _ext.TAG_EVAL
+TAG_APPLY = _ext.TAG_APPLY
+TAG_EXPAND = _ext.TAG_EXPAND
 TAG_CREATE_CONTINUATION = _ext.TAG_CREATE_CONTINUATION
 TAG_RESUME_CONTINUATION = _ext.TAG_RESUME_CONTINUATION
 TAG_ASYNC_ESCAPE = _ext.TAG_ASYNC_ESCAPE
@@ -276,6 +281,8 @@ __all__ = [
     "K",
     "Delegate",
     "Call",
+    "Apply",
+    "Expand",
     "Eval",
     "Perform",
     "Map",
@@ -283,6 +290,7 @@ __all__ = [
     "DoCtrlBase",
     "DoExpr",
     "DoeffGenerator",
+    "DoeffGeneratorFn",
     "DoThunkBase",
     "EffectBase",
     "PyAsk",
@@ -357,6 +365,8 @@ __all__ = [
     "TAG_GET_CALL_STACK",
     "TAG_GET_TRACE",
     "TAG_EVAL",
+    "TAG_APPLY",
+    "TAG_EXPAND",
     "TAG_CREATE_CONTINUATION",
     "TAG_RESUME_CONTINUATION",
     "TAG_ASYNC_ESCAPE",

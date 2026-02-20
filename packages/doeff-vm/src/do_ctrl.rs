@@ -74,6 +74,18 @@ pub enum DoCtrl {
         kwargs: Vec<(String, CallArg)>,
         metadata: CallMetadata,
     },
+    Apply {
+        f: CallArg,
+        args: Vec<CallArg>,
+        kwargs: Vec<(String, CallArg)>,
+        metadata: CallMetadata,
+    },
+    Expand {
+        factory: CallArg,
+        args: Vec<CallArg>,
+        kwargs: Vec<(String, CallArg)>,
+        metadata: CallMetadata,
+    },
     Eval {
         expr: PyShared,
         handlers: Vec<Handler>,
@@ -171,6 +183,28 @@ impl DoCtrl {
                 metadata,
             } => DoCtrl::Call {
                 f: f.clone(),
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+                metadata: metadata.clone(),
+            },
+            DoCtrl::Apply {
+                f,
+                args,
+                kwargs,
+                metadata,
+            } => DoCtrl::Apply {
+                f: f.clone(),
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+                metadata: metadata.clone(),
+            },
+            DoCtrl::Expand {
+                factory,
+                args,
+                kwargs,
+                metadata,
+            } => DoCtrl::Expand {
+                factory: factory.clone(),
                 args: args.clone(),
                 kwargs: kwargs.clone(),
                 metadata: metadata.clone(),
