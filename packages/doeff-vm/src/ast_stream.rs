@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 
 use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
+use crate::py_shared::PyShared;
 use crate::python_call::PythonCall;
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -15,6 +16,9 @@ pub trait ASTStream: fmt::Debug + Send {
     fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep;
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep;
     fn debug_location(&self) -> Option<StreamLocation> {
+        None
+    }
+    fn python_generator(&self) -> Option<PyShared> {
         None
     }
 }
@@ -38,8 +42,8 @@ pub struct StreamLocation {
 }
 
 pub struct PythonGeneratorStream {
-    generator: Py<PyAny>,
-    get_frame: Py<PyAny>,
+    generator: PyShared,
+    get_frame: PyShared,
     started: bool,
 }
 
@@ -52,7 +56,7 @@ impl fmt::Debug for PythonGeneratorStream {
 }
 
 impl PythonGeneratorStream {
-    pub fn new(generator: Py<PyAny>, get_frame: Py<PyAny>) -> Self {
+    pub fn new(generator: PyShared, get_frame: PyShared) -> Self {
         PythonGeneratorStream {
             generator,
             get_frame,
@@ -102,6 +106,10 @@ impl ASTStream for PythonGeneratorStream {
     fn debug_location(&self) -> Option<StreamLocation> {
         Python::attach(|py| self.resolve_location(py))
     }
+
+    fn python_generator(&self) -> Option<PyShared> {
+        Some(self.generator.clone())
+    }
 }
 
 #[cfg(test)]
@@ -132,7 +140,8 @@ mod tests {
                 .expect("_get_frame missing")
                 .unbind();
 
-            let mut stream = PythonGeneratorStream::new(generator, get_frame);
+            let mut stream =
+                PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
             let mut store = RustStore::new();
 
             let step1 = stream.resume(Value::Unit, &mut store);
@@ -173,7 +182,8 @@ mod tests {
                 .expect("_get_frame missing")
                 .unbind();
 
-            let mut stream = PythonGeneratorStream::new(generator, get_frame);
+            let mut stream =
+                PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
             let mut store = RustStore::new();
             let step = stream.throw(PyException::runtime_error("boom"), &mut store);
             assert!(matches!(
@@ -204,7 +214,8 @@ mod tests {
                 .expect("locals.get_item failed")
                 .expect("_get_frame missing")
                 .unbind();
-            let stream = PythonGeneratorStream::new(generator, get_frame);
+            let stream =
+                PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
 
             let location = stream
                 .debug_location()

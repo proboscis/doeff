@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::ast_stream::{ASTStream, ASTStreamStep, StreamLocation};
+use crate::ast_stream::{ASTStream, ASTStreamRef, ASTStreamStep, StreamLocation};
 use crate::capture::SpawnSite;
 use crate::continuation::Continuation;
 #[cfg(test)]
@@ -477,44 +477,13 @@ fn extract_semaphore_id(obj: &Bound<'_, PyAny>) -> Option<u64> {
     obj.getattr("id").ok()?.extract::<u64>().ok()
 }
 
-fn generator_frame_from_callback(
-    generator: &PyShared,
-    get_frame: &PyShared,
-) -> Result<Option<PyShared>, String> {
-    Python::attach(|py| {
-        let callback = get_frame.bind(py);
-        let frame_obj = callback
-            .call1((generator.bind(py),))
-            .map_err(|e| format!("get_frame callback failed: {e}"))?;
-        if frame_obj.is_none() {
-            return Ok(None);
-        }
-        Ok(Some(PyShared::new(frame_obj.unbind())))
-    })
-}
-
-fn resolve_generator_location(
-    generator: &PyShared,
-    get_frame: &PyShared,
-) -> Result<Option<(String, u32)>, String> {
-    let Some(frame) = generator_frame_from_callback(generator, get_frame)? else {
-        return Ok(None);
-    };
-    Python::attach(|py| {
-        let frame_bound = frame.bind(py);
-        let code = frame_bound
-            .getattr("f_code")
-            .map_err(|e| format!("frame missing f_code: {e}"))?;
-        let file = code
-            .getattr("co_filename")
-            .and_then(|v| v.extract::<String>())
-            .map_err(|e| format!("frame code missing co_filename: {e}"))?;
-        let line = frame_bound
-            .getattr("f_lineno")
-            .and_then(|v| v.extract::<u32>())
-            .map_err(|e| format!("frame missing f_lineno: {e}"))?;
-        Ok(Some((file, line)))
-    })
+fn resolve_stream_location(stream: &ASTStreamRef) -> Result<Option<(String, u32)>, String> {
+    let guard = stream
+        .lock()
+        .map_err(|_| "ASTStream lock poisoned".to_string())?;
+    Ok(guard
+        .debug_location()
+        .map(|location| (location.source_file, location.source_line)))
 }
 
 fn is_internal_source_file(source_file: &str) -> bool {
@@ -526,11 +495,9 @@ fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
     let mut fallback: Option<SpawnSite> = None;
 
     for frame in k.frames_snapshot.iter().rev() {
-        if let Frame::PythonGenerator {
-            generator,
-            get_frame,
+        if let Frame::Program {
+            stream,
             metadata: Some(metadata),
-            ..
         } = frame
         {
             let fallback_candidate = SpawnSite {
@@ -538,7 +505,7 @@ fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
                 source_file: metadata.source_file.clone(),
                 source_line: metadata.source_line,
             };
-            let candidate = match resolve_generator_location(generator, get_frame) {
+            let candidate = match resolve_stream_location(stream) {
                 Ok(Some((source_file, source_line))) => SpawnSite {
                     function_name: metadata.function_name.clone(),
                     source_file,
