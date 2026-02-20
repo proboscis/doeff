@@ -99,6 +99,9 @@ def _wrap_python_handler(handler: Any) -> Any:
         _wrapped.__doc__ = handler.__doc__
     _wrapped.__wrapped__ = handler
     _wrapped._doeff_vm_wrapped_handler = True
+    _wrapped._handler_name = handler_name
+    _wrapped._handler_file = handler_file
+    _wrapped._handler_line = handler_line
     return _wrapped
 
 
@@ -114,9 +117,13 @@ def _coerce_program(program: Any) -> Any:
         if inspect.isgeneratorfunction(program):
             raise TypeError("program must be DoExpr; got function. Did you mean to call it?")
         if inspect.isgenerator(program):
-            raise TypeError("program must be DoExpr; got raw generator. Did you mean to wrap with @do?")
+            raise TypeError(
+                "program must be DoExpr; got raw generator. Did you mean to wrap with @do?"
+            )
         if callable(program):
-            raise TypeError("program must be DoExpr; got callable. Did you mean to call @do function?")
+            raise TypeError(
+                "program must be DoExpr; got callable. Did you mean to call @do function?"
+            )
         raise TypeError(f"run() requires DoExpr[T] or EffectValue[T], got {type(program).__name__}")
 
     if isinstance(program, doeff_generator_type):

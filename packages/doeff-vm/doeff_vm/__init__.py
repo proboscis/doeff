@@ -43,7 +43,9 @@ def _handler_registration_metadata(handler):
     source_line = getattr(code_obj, "co_firstlineno", None)
     if not isinstance(source_line, int):
         source_line = None
-    generator_name = getattr(code_obj, "co_name", None) or getattr(metadata_source, "__name__", None)
+    generator_name = getattr(code_obj, "co_name", None) or getattr(
+        metadata_source, "__name__", None
+    )
     if generator_name is None:
         generator_name = "<handler>"
     return handler_qualname, source_file, source_line, generator_name
@@ -85,6 +87,9 @@ def _wrap_python_handler(handler):
         _wrapped.__doc__ = handler.__doc__
     _wrapped.__wrapped__ = handler
     _wrapped._doeff_vm_wrapped_handler = True
+    _wrapped._handler_name = handler_name
+    _wrapped._handler_file = handler_file
+    _wrapped._handler_line = handler_line
 
     for attr in (
         "__signature__",
@@ -114,13 +119,12 @@ def _install_validated_runtime_api() -> None:
     def validated_with_handler(handler, expr):
         _validate_do_handler_annotations((handler,))
         wrapped_handler = _wrap_python_handler(handler)
-        wrapped_name, wrapped_file, wrapped_line, _ = _handler_registration_metadata(wrapped_handler)
         return raw_with_handler(
             wrapped_handler,
             expr,
-            handler_name=wrapped_name,
-            handler_file=wrapped_file,
-            handler_line=wrapped_line,
+            handler_name=getattr(wrapped_handler, "_handler_name", None),
+            handler_file=getattr(wrapped_handler, "_handler_file", None),
+            handler_line=getattr(wrapped_handler, "_handler_line", None),
         )
 
     def validated_run(program, handlers=(), env=None, store=None, trace=False):
@@ -142,13 +146,30 @@ def _install_validated_runtime_api() -> None:
     def validated_doexpr_to_generator(self):
         from doeff.do import make_doeff_generator
 
-        return make_doeff_generator(raw_doexpr_to_generator(self))
+        handler_name = getattr(self, "handler_name", None)
+        handler_file = getattr(self, "handler_file", None)
+        handler_line = getattr(self, "handler_line", None)
+        return make_doeff_generator(
+            raw_doexpr_to_generator(self),
+            function_name=handler_name,
+            source_file=handler_file,
+            source_line=handler_line,
+        )
 
     def validated_nesting_to_generator(self):
         from doeff.do import make_doeff_generator
 
         assert raw_nesting_to_generator is not None
-        return make_doeff_generator(raw_nesting_to_generator(self))
+        handler = getattr(self, "handler", None)
+        handler_name = getattr(handler, "_handler_name", None) if handler is not None else None
+        handler_file = getattr(handler, "_handler_file", None) if handler is not None else None
+        handler_line = getattr(handler, "_handler_line", None) if handler is not None else None
+        return make_doeff_generator(
+            raw_nesting_to_generator(self),
+            function_name=handler_name,
+            source_file=handler_file,
+            source_line=handler_line,
+        )
 
     setattr(_ext, "WithHandler", validated_with_handler)
     setattr(_ext, "run", validated_run)

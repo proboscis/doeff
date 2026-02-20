@@ -26,6 +26,7 @@ _GeneratorFunc = Callable[..., Generator[Effect | Program, Any, T]]
 
 _BRIDGE_CODE_OBJECTS: set[object] = set()
 
+
 def _default_get_frame(generator: object) -> object | None:
     return getattr(generator, "gi_frame", None)
 
@@ -74,6 +75,56 @@ def resolve_generator_location(generator: object) -> tuple[str, int] | None:
     return (filename, lineno)
 
 
+def resolve_exception_location(exc: BaseException) -> tuple[str, str, int] | None:
+    tb = getattr(exc, "__traceback__", None)
+    if tb is None:
+        return None
+
+    last_tb = tb
+    while True:
+        next_tb = getattr(last_tb, "tb_next", None)
+        if next_tb is None:
+            break
+        last_tb = next_tb
+
+    frame = getattr(last_tb, "tb_frame", None)
+    if frame is None:
+        return None
+    code = getattr(frame, "f_code", None)
+    if code is None:
+        return None
+
+    if code not in _BRIDGE_CODE_OBJECTS:
+        return None
+
+    locals_dict = getattr(frame, "f_locals", {})
+    gen = locals_dict.get("gen")
+    if gen is None:
+        return None
+
+    gen_code = getattr(gen, "gi_code", None)
+    if gen_code is None:
+        return None
+
+    fn_name = getattr(gen_code, "co_qualname", None) or getattr(gen_code, "co_name", "<unknown>")
+    filename = getattr(gen_code, "co_filename", "<unknown>")
+
+    user_line = 0
+    scan = tb
+    while scan is not None:
+        scan_frame = getattr(scan, "tb_frame", None)
+        if scan_frame is not None:
+            scan_code = getattr(scan_frame, "f_code", None)
+            if scan_code is gen_code:
+                user_line = getattr(scan, "tb_lineno", 0)
+        scan = getattr(scan, "tb_next", None)
+
+    if user_line == 0:
+        return None
+
+    return (fn_name, filename, user_line)
+
+
 def default_get_frame(generator: object) -> object | None:
     return _default_get_frame(generator)
 
@@ -92,7 +143,9 @@ def make_doeff_generator(
         return generator
 
     is_generator_like = inspect.isgenerator(generator) or (
-        hasattr(generator, "__next__") and hasattr(generator, "send") and hasattr(generator, "throw")
+        hasattr(generator, "__next__")
+        and hasattr(generator, "send")
+        and hasattr(generator, "throw")
     )
     if not is_generator_like:
         raise TypeError(
@@ -290,4 +343,10 @@ def do(
     return DoYieldFunction(func)
 
 
-__all__ = ["DoYieldFunction", "_default_get_frame", "default_get_frame", "do", "make_doeff_generator"]
+__all__ = [
+    "DoYieldFunction",
+    "_default_get_frame",
+    "default_get_frame",
+    "do",
+    "make_doeff_generator",
+]
