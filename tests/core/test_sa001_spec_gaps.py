@@ -325,10 +325,10 @@ class TestSA001G15HandlerSigs:
     """G15: Handler trait sigs diverge."""
 
     def test_start_receives_py_and_bound(self):
-        """RustHandlerProgram::start must receive py: Python<'_>. SPEC-008 L1111."""
+        """ASTStreamProgram::start must receive py: Python<'_>. SPEC-008 L1111."""
         src = _read_rust("handler.rs")
         m = re.search(r"fn start\s*\(\s*&mut self,\s*([^)]*)\)", src, re.S)
-        assert m, "Could not find RustHandlerProgram::start"
+        assert m, "Could not find ASTStreamProgram::start"
         params = m.group(1)
         assert "py:" in params or "Python" in params, (
             f"start() missing py parameter: start(&mut self, {params})"

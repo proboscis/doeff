@@ -987,6 +987,55 @@ rules:
       rationale: "SPEC-VM-PROTOCOL §3.2/§3.7 requires callback-based frame lookup"
 
   # ---------------------------------------------------------------------------
+  # C9 CLEANUP ENFORCEMENT
+  # ---------------------------------------------------------------------------
+
+  - id: vm-no-runtime-type-branching
+    pattern-either:
+      - pattern: is_doeff_generator_object(...)
+      - pattern: is_generator_object(...)
+    message: |
+      C9: Runtime type branching helpers are removed.
+      Use the unified DoExpr/ASTStream protocol path instead.
+    languages: [rust]
+    severity: ERROR
+
+  - id: vm-no-handler-type-dispatch
+    pattern-regex: 'Handler::Python\\s*\\{'
+    message: |
+      C9: Handler enum type switching is removed.
+      Dispatch must flow through HandlerInvoke trait objects.
+    languages: [rust]
+    severity: ERROR
+
+  - id: no-getattr-in-classify-yielded
+    patterns:
+      - pattern-inside: |
+          fn classify_yielded($...ARGS) -> $RET {
+              ...
+          }
+      - pattern: $OBJ.getattr($ATTR)
+    message: |
+      classify_yielded must avoid getattr-based branching.
+      Use tag-based or typed extraction paths only.
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/pyvm.rs"
+
+  - id: no-is-instance-from-in-pyvm
+    pattern: is_instance_from(...)
+    message: |
+      is_instance_from is forbidden in pyvm.rs.
+      Use typed extraction / instance checks against Rust pyclasses.
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/pyvm.rs"
+
+  # ---------------------------------------------------------------------------
   # SPEC AUDIT SA-001: GAP ENFORCEMENT RULES
   # ---------------------------------------------------------------------------
 
