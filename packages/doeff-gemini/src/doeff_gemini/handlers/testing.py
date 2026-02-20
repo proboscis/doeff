@@ -18,7 +18,7 @@ from doeff_llm.effects import (
 )
 from PIL import Image as PILImage
 
-from doeff import Delegate, Resume
+from doeff import Pass, Resume
 from doeff_gemini.effects import (
     GeminiChat,
     GeminiEmbedding,
@@ -190,25 +190,25 @@ def mock_handlers(
 
     def handle_chat(effect: LLMChat | GeminiChat, k):
         if not _is_gemini_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         return (yield Resume(k, active_handler.handle_chat(effect)))
 
     def handle_streaming_chat(effect: LLMStreamingChat | GeminiStreamingChat, k):
         if not _is_gemini_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         return (yield Resume(k, active_handler.handle_chat(effect)))
 
     def handle_structured(effect: LLMStructuredOutput | GeminiStructuredOutput, k):
         if not _is_gemini_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         return (yield Resume(k, active_handler.handle_structured(effect)))
 
     def handle_embedding(effect: LLMEmbedding | GeminiEmbedding, k):
         if not _is_gemini_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         return (yield Resume(k, active_handler.handle_embedding(effect)))
 
@@ -265,7 +265,7 @@ def gemini_mock_handler(
         return (yield Resume(k, active_handler.handle_structured(effect)))
     if isinstance(effect, LLMEmbedding | GeminiEmbedding) and _is_gemini_model(effect.model):
         return (yield Resume(k, active_handler.handle_embedding(effect)))
-    yield Delegate()
+    yield Pass()
 
 
 __all__ = [

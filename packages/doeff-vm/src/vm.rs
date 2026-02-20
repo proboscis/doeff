@@ -1841,17 +1841,15 @@ impl VM {
     ) -> StepEvent {
         match step {
             ASTStreamStep::Yield(yielded) => {
-                // Terminal DoCtrl variants (Resume, Transfer, TransferThrow, Delegate, Pass)
-                // transfer control
-                // elsewhere — the handler is done and no value flows back. Do NOT re-push
-                // the Program frame for these. Non-terminal variants (Eval, GetHandlers,
+                // Terminal DoCtrl variants (Resume, Transfer, TransferThrow, Pass) transfer
+                // control elsewhere — the handler is done and no value flows back. Do NOT
+                // re-push the Program frame for these. Non-terminal variants (Eval, GetHandlers,
                 // GetCallStack) expect a result to be delivered back to this stream.
                 let is_terminal = matches!(
                     &yielded,
                     DoCtrl::Resume { .. }
                         | DoCtrl::Transfer { .. }
                         | DoCtrl::TransferThrow { .. }
-                        | DoCtrl::Delegate { .. }
                         | DoCtrl::Pass { .. }
                 );
                 if !is_terminal {
@@ -2919,12 +2917,22 @@ impl VM {
         // (result of Delegate). Per spec: caller = Some(inner_seg_id).
         let inner_seg_id = self.current_segment;
 
-        // Clear the delegating handler's frames so return values pass through
-        // without trying to resume the handler generator (Delegate is tail).
+        // Delegate is non-terminal: capture the delegating handler's remaining
+        // state as K_new, then clear frames to avoid holding duplicate generator
+        // references from both the segment and continuation snapshot.
+        let Some(k_new) = self.capture_continuation(Some(dispatch_id)) else {
+            return StepEvent::Error(VMError::internal(
+                "Delegate called without current segment",
+            ));
+        };
         if let Some(seg_id) = inner_seg_id {
             if let Some(seg) = self.segments.get_mut(seg_id) {
                 seg.frames.clear();
             }
+        }
+        {
+            let top = self.dispatch_stack.last_mut().unwrap();
+            top.k_user = k_new.clone();
         }
 
         for idx in start_idx..handler_chain.len() {
@@ -2993,7 +3001,7 @@ impl VM {
         };
 
         // Capture inner handler segment so outer handler's return flows back here
-        // (result of Delegate). Per spec: caller = Some(inner_seg_id).
+        // (result of Pass). Per spec: caller = Some(inner_seg_id).
         let inner_seg_id = self.current_segment;
 
         // Clear the delegating handler's frames so return values pass through

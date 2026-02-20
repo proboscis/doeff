@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from doeff import Ask, Delegate, Program, Resume, WithHandler, default_handlers, do, run
+from doeff import Ask, Pass, Program, Resume, WithHandler, default_handlers, do, run
 from doeff.effects import Put
 from doeff.effects.gather import Gather
 from doeff.effects.spawn import Spawn
@@ -131,12 +131,12 @@ def test_spec_example_2_with_handler_stack_markers() -> None:
     def auth_handler(effect: object, k: object):
         if getattr(effect, "key", None) == "token":
             return (yield Resume(k, "Bearer sk-1234"))
-        yield Delegate()
+        yield Pass()
 
     def rate_limiter(effect: object, k: object):
         if getattr(effect, "key", None) == "rate_limit":
             return (yield Resume(k, 100))
-        yield Delegate()
+        yield Pass()
 
     @do
     def call_api() -> Program[None]:
@@ -161,7 +161,7 @@ def test_spec_example_3_handler_throws() -> None:
             value = getattr(effect, "value", None)
             if not isinstance(value, int):
                 raise TypeError(f"expected int, got {type(value).__name__}")
-        yield Delegate()
+        yield Pass()
 
     @do
     def main() -> Program[None]:
@@ -198,7 +198,7 @@ def test_spec_example_6_handler_return_abandons_inner_chain() -> None:
     def short_circuit_handler(effect: object, _k: object):
         if getattr(effect, "key", None) == "mode":
             return "fallback"
-        yield Delegate()
+        yield Pass()
 
     @do
     def inner() -> Program[str]:

@@ -17,12 +17,12 @@ from doeff import (
     Delegate,
     Get,
     K,
+    Pass,
     Perform,
     Resume,
     Transfer,
     WithHandler,
     default_handlers,
-    do,
     run,
 )
 
@@ -115,7 +115,7 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
 
     def delegate_handler(_effect, k):
         delegate_seen["is_k"] = isinstance(k, K)
-        yield Delegate()
+        yield Pass()
 
     delegate_result = run(
         WithHandler(delegate_handler, Perform(Ask("x"))),
