@@ -23,7 +23,7 @@ use crate::effect::{dispatch_ref_as_python, DispatchEffect};
 use crate::effect::{Effect, PySpawn};
 use crate::error::VMError;
 use crate::frame::{CallMetadata, Frame};
-use crate::handler::{Handler, HandlerEntry};
+use crate::handler::{Handler, HandlerEntry, RustProgramInvocation};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
@@ -222,9 +222,7 @@ impl VM {
         };
 
         for entry in self.handlers.values() {
-            if let Handler::RustProgram(factory) = &entry.handler {
-                factory.on_run_end(run_token);
-            }
+            entry.handler.on_run_end(run_token);
         }
     }
 
@@ -289,6 +287,34 @@ impl VM {
             metadata: None,
         });
         StepEvent::Continue
+    }
+
+    fn invoke_rust_program(&mut self, invocation: RustProgramInvocation) -> StepEvent {
+        let program = invocation
+            .factory
+            .create_program_for_run(self.current_run_token());
+        let stream = rust_program_as_stream(program.clone());
+        let step = {
+            let mut guard = program.lock().expect("Rust program lock poisoned");
+            Python::attach(|py| {
+                guard.start(
+                    py,
+                    *invocation.effect,
+                    invocation.continuation,
+                    &mut self.rust_store,
+                )
+            })
+        };
+        self.apply_stream_step(
+            rust_program_step_to_ast_stream_step(step),
+            stream,
+            None,
+        )
+    }
+
+    fn evaluate(&mut self, ir_node: DoCtrl) -> StepEvent {
+        self.mode = Mode::HandleYield(ir_node);
+        self.step_handle_yield()
     }
 
     fn merged_metadata_from_doeff(
@@ -422,25 +448,13 @@ impl VM {
     }
 
     fn handler_trace_info(handler: &Handler) -> (String, HandlerKind, Option<String>, Option<u32>) {
-        match handler {
-            Handler::Python {
-                handler_name,
-                handler_file,
-                handler_line,
-                ..
-            } => (
-                handler_name.clone(),
-                HandlerKind::Python,
-                handler_file.clone(),
-                *handler_line,
-            ),
-            Handler::RustProgram(factory) => (
-                factory.handler_name().to_string(),
-                HandlerKind::RustBuiltin,
-                None,
-                None,
-            ),
-        }
+        let info = handler.handler_debug_info();
+        let kind = if handler.py_identity().is_some() {
+            HandlerKind::Python
+        } else {
+            HandlerKind::RustBuiltin
+        };
+        (info.name, kind, info.file, info.line)
     }
 
     fn marker_handler_trace_info(
@@ -1596,7 +1610,6 @@ impl VM {
                 PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
                 PendingPython::ExpandReturn { .. } => "ExpandReturn",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
-                PendingPython::CallPythonHandler { .. } => "CallPythonHandler",
                 PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
                 PendingPython::AsyncEscape => "AsyncEscape",
             })
@@ -1612,7 +1625,6 @@ impl VM {
                 let call_kind = match call {
                     PythonCall::StartProgram { .. } => "StartProgram",
                     PythonCall::CallFunc { .. } => "CallFunc",
-                    PythonCall::CallHandler { .. } => "CallHandler",
                     PythonCall::GenNext => "GenNext",
                     PythonCall::GenSend { .. } => "GenSend",
                     PythonCall::GenThrow { .. } => "GenThrow",
@@ -1691,7 +1703,6 @@ impl VM {
                 PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
                 PendingPython::ExpandReturn { .. } => "ExpandReturn",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
-                PendingPython::CallPythonHandler { .. } => "CallPythonHandler",
                 PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
                 PendingPython::AsyncEscape => "AsyncEscape",
             })
@@ -1732,7 +1743,6 @@ impl VM {
                 let call_kind = match call {
                     PythonCall::StartProgram { .. } => "StartProgram",
                     PythonCall::CallFunc { .. } => "CallFunc",
-                    PythonCall::CallHandler { .. } => "CallHandler",
                     PythonCall::GenNext => "GenNext",
                     PythonCall::GenSend { .. } => "GenSend",
                     PythonCall::GenThrow { .. } => "GenThrow",
@@ -2043,6 +2053,10 @@ impl VM {
 
                 let func = match f {
                     CallArg::Value(Value::Python(func)) => PyShared::new(func),
+                    CallArg::Value(Value::PythonHandlerCallable(func)) => PyShared::new(func),
+                    CallArg::Value(Value::RustProgramInvocation(invocation)) => {
+                        return self.invoke_rust_program(invocation);
+                    }
                     CallArg::Value(other) => {
                         self.mode = Mode::Throw(PyException::type_error(format!(
                             "DoCtrl::Apply f must be Python callable value, got {:?}",
@@ -2142,8 +2156,14 @@ impl VM {
                     );
                 }
 
-                let func = match factory {
-                    CallArg::Value(Value::Python(factory)) => PyShared::new(factory),
+                let (func, handler_return) = match factory {
+                    CallArg::Value(Value::Python(factory)) => (PyShared::new(factory), false),
+                    CallArg::Value(Value::PythonHandlerCallable(factory)) => {
+                        (PyShared::new(factory), true)
+                    }
+                    CallArg::Value(Value::RustProgramInvocation(invocation)) => {
+                        return self.invoke_rust_program(invocation);
+                    }
                     CallArg::Value(other) => {
                         self.mode = Mode::Throw(PyException::type_error(format!(
                             "DoCtrl::Expand factory must be Python callable value, got {:?}",
@@ -2172,6 +2192,7 @@ impl VM {
 
                 self.pending_python = Some(PendingPython::ExpandReturn {
                     metadata: Some(metadata),
+                    handler_return,
                 });
                 StepEvent::NeedsPython(PythonCall::CallFunc {
                     func,
@@ -2295,33 +2316,89 @@ impl VM {
                 self.mode = Mode::Throw(e);
             }
 
-            (PendingPython::ExpandReturn { metadata }, PyCallOutcome::Value(value)) => {
-                match value {
-                    Value::Python(gen) => {
-                        match Self::extract_doeff_generator(gen, metadata, "ExpandReturn") {
-                            Ok((stream, metadata)) => {
-                                if let Some(ref m) = metadata {
-                                    self.maybe_emit_frame_entered(m);
+            (
+                PendingPython::ExpandReturn {
+                    metadata,
+                    handler_return,
+                },
+                PyCallOutcome::Value(value),
+            ) => {
+                if handler_return {
+                    match value {
+                        Value::Python(handler_gen) => {
+                            match Self::extract_doeff_generator(
+                                handler_gen,
+                                metadata,
+                                "ExpandReturn(handler)",
+                            ) {
+                                Ok((stream, metadata)) => {
+                                    let handler_return_cb =
+                                        self.register_callback(Box::new(|value, vm| {
+                                            let _ = vm.handle_handler_return(value);
+                                            std::mem::replace(
+                                                &mut vm.mode,
+                                                Mode::Deliver(Value::Unit),
+                                            )
+                                        }));
+                                    if let Some(seg) = self.current_segment_mut() {
+                                        seg.push_frame(Frame::RustReturn {
+                                            cb: handler_return_cb,
+                                        });
+                                        seg.push_frame(Frame::Program { stream, metadata });
+                                    }
+                                    self.mode = Mode::Deliver(Value::Unit);
                                 }
-                                if let Some(seg) = self.current_segment_mut() {
-                                    seg.push_frame(Frame::Program { stream, metadata });
+                                Err(e) => {
+                                    self.mode = Mode::Throw(e);
                                 }
-                                self.mode = Mode::Deliver(Value::Unit);
-                            }
-                            Err(e) => {
-                                self.mode = Mode::Throw(e);
                             }
                         }
+                        other => {
+                            let _ = self.handle_handler_return(other);
+                        }
                     }
-                    other => {
-                        self.mode = Mode::Throw(PyException::type_error(format!(
-                            "ExpandReturn: expected DoeffGenerator, got {other:?}"
-                        )));
+                } else {
+                    match value {
+                        Value::Python(gen) => {
+                            match Self::extract_doeff_generator(gen, metadata, "ExpandReturn") {
+                                Ok((stream, metadata)) => {
+                                    if let Some(ref m) = metadata {
+                                        self.maybe_emit_frame_entered(m);
+                                    }
+                                    if let Some(seg) = self.current_segment_mut() {
+                                        seg.push_frame(Frame::Program { stream, metadata });
+                                    }
+                                    self.mode = Mode::Deliver(Value::Unit);
+                                }
+                                Err(e) => {
+                                    self.mode = Mode::Throw(e);
+                                }
+                            }
+                        }
+                        other => {
+                            self.mode = Mode::Throw(PyException::type_error(format!(
+                                "ExpandReturn: expected DoeffGenerator, got {other:?}"
+                            )));
+                        }
                     }
                 }
             }
 
-            (PendingPython::ExpandReturn { .. }, PyCallOutcome::GenError(e)) => {
+            (
+                PendingPython::ExpandReturn { handler_return, .. },
+                PyCallOutcome::GenError(e),
+            ) => {
+                if handler_return {
+                    if let Some(dispatch_id) = self
+                        .dispatch_stack
+                        .last()
+                        .filter(|ctx| !ctx.completed)
+                        .map(|ctx| ctx.dispatch_id)
+                    {
+                        self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
+                        self.mark_dispatch_threw(dispatch_id);
+                    }
+                }
                 self.mode = Mode::Throw(e);
             }
 
@@ -2364,51 +2441,6 @@ impl VM {
                 self.mode = Mode::Throw(e);
             }
 
-            (
-                PendingPython::CallPythonHandler {
-                    k_user: _,
-                    effect: _,
-                },
-                PyCallOutcome::Value(handler_gen_val),
-            ) => match handler_gen_val {
-                Value::Python(handler_gen) => {
-                    match Self::extract_doeff_generator(handler_gen, None, "CallPythonHandler") {
-                        Ok((stream, metadata)) => {
-                            let handler_return_cb =
-                                self.register_callback(Box::new(|value, vm| {
-                                    let _ = vm.handle_handler_return(value);
-                                    std::mem::replace(&mut vm.mode, Mode::Deliver(Value::Unit))
-                                }));
-                            if let Some(seg) = self.current_segment_mut() {
-                                seg.push_frame(Frame::RustReturn {
-                                    cb: handler_return_cb,
-                                });
-                                seg.push_frame(Frame::Program { stream, metadata });
-                            }
-                            self.mode = Mode::Deliver(Value::Unit);
-                        }
-                        Err(e) => {
-                            self.mode = Mode::Throw(e);
-                        }
-                    }
-                }
-                other => {
-                    let _ = self.handle_handler_return(other);
-                }
-            },
-
-            (PendingPython::CallPythonHandler { .. }, PyCallOutcome::GenError(e)) => {
-                if let Some(dispatch_id) = self
-                    .dispatch_stack
-                    .last()
-                    .filter(|ctx| !ctx.completed)
-                    .map(|ctx| ctx.dispatch_id)
-                {
-                    self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
-                    self.mark_dispatch_threw(dispatch_id);
-                }
-                self.mode = Mode::Throw(e);
-            }
 
             (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::Value(result)) => {
                 self.mode = Mode::Deliver(result);
@@ -2589,35 +2621,11 @@ impl VM {
                 .map(|(_, _, _, source_line)| *source_line),
         });
 
-        match handler {
-            Handler::RustProgram(rust_handler) => {
-                let program = rust_handler.create_program_for_run(self.current_run_token());
-                let stream = rust_program_as_stream(program.clone());
-                let step = {
-                    let mut guard = program.lock().expect("Rust program lock poisoned");
-                    Python::attach(|py| guard.start(py, effect, k_user, &mut self.rust_store))
-                };
-                Ok(
-                    self.apply_stream_step(
-                        rust_program_step_to_ast_stream_step(step),
-                        stream,
-                        None,
-                    ),
-                )
-            }
-            Handler::Python { callable, .. } => {
-                self.register_continuation(k_user.clone());
-                self.pending_python = Some(PendingPython::CallPythonHandler {
-                    k_user: k_user.clone(),
-                    effect: effect.clone(),
-                });
-                Ok(StepEvent::NeedsPython(PythonCall::CallHandler {
-                    handler: callable,
-                    effect,
-                    continuation: k_user,
-                }))
-            }
+        if handler.py_identity().is_some() {
+            self.register_continuation(k_user.clone());
         }
+        let ir_node = handler.invoke(effect, k_user);
+        Ok(self.evaluate(ir_node))
     }
 
     fn check_dispatch_completion(&mut self, k: &Continuation) {
@@ -2636,7 +2644,7 @@ impl VM {
             .filter(|ctx| ctx.dispatch_id == dispatch_id)
             .and_then(|ctx| ctx.handler_chain.get(ctx.handler_idx))
             .and_then(|marker| self.handlers.get(marker))
-            .is_some_and(|entry| matches!(entry.handler, Handler::Python { .. }))
+            .is_some_and(|entry| entry.handler.py_identity().is_some())
     }
 
     fn mark_dispatch_threw(&mut self, dispatch_id: DispatchId) {
@@ -2891,10 +2899,7 @@ impl VM {
         );
         let prompt_seg_id = self.alloc_segment(prompt_seg);
 
-        let py_identity = explicit_py_identity.or_else(|| match &handler {
-            Handler::Python { callable, .. } => Some(callable.clone()),
-            Handler::RustProgram(_) => None,
-        });
+        let py_identity = explicit_py_identity.or_else(|| handler.py_identity());
         match py_identity {
             Some(identity) => {
                 self.handlers.insert(
@@ -2987,36 +2992,11 @@ impl VM {
                     let handler_seg_id = self.alloc_segment(handler_seg);
                     self.current_segment = Some(handler_seg_id);
 
-                    match handler {
-                        Handler::RustProgram(rust_handler) => {
-                            let program =
-                                rust_handler.create_program_for_run(self.current_run_token());
-                            let stream = rust_program_as_stream(program.clone());
-                            let step = {
-                                let mut guard = program.lock().expect("Rust program lock poisoned");
-                                Python::attach(|py| {
-                                    guard.start(py, effect, k_user, &mut self.rust_store)
-                                })
-                            };
-                            return self.apply_stream_step(
-                                rust_program_step_to_ast_stream_step(step),
-                                stream,
-                                None,
-                            );
-                        }
-                        Handler::Python { callable, .. } => {
-                            self.register_continuation(k_user.clone());
-                            self.pending_python = Some(PendingPython::CallPythonHandler {
-                                k_user: k_user.clone(),
-                                effect: effect.clone(),
-                            });
-                            return StepEvent::NeedsPython(PythonCall::CallHandler {
-                                handler: callable,
-                                effect: effect.clone(),
-                                continuation: k_user,
-                            });
-                        }
+                    if handler.py_identity().is_some() {
+                        self.register_continuation(k_user.clone());
                     }
+                    let ir_node = handler.invoke(effect.clone(), k_user);
+                    return self.evaluate(ir_node);
                 }
             }
         }
@@ -3518,14 +3498,14 @@ mod tests {
         vm.install_handler(
             m1,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::ReaderHandlerFactory)),
+                std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
                 prompt_seg_id,
             ),
         );
         vm.install_handler(
             m2,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -3576,7 +3556,7 @@ mod tests {
         vm.install_handler(
             marker,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -3610,7 +3590,7 @@ mod tests {
         vm.install_handler(
             marker,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -3675,7 +3655,7 @@ mod tests {
             vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(Arc::new(crate::scheduler::SchedulerHandler::new())),
+                    Arc::new(crate::scheduler::SchedulerHandler::new()),
                     prompt_seg_id,
                 ),
             );
@@ -4046,7 +4026,7 @@ mod tests {
         vm.install_handler(
             marker,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -4074,7 +4054,7 @@ mod tests {
         match &vm.mode {
             Mode::Deliver(Value::Handlers(h)) => {
                 assert_eq!(h.len(), 1);
-                assert!(matches!(h[0], Handler::RustProgram(_)));
+                assert_eq!(h[0].handler_name(), "StateHandler");
             }
             _ => panic!("Expected Deliver(Handlers)"),
         }
@@ -4126,7 +4106,7 @@ mod tests {
         vm.install_handler(
             marker,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -4153,14 +4133,14 @@ mod tests {
         vm.install_handler(
             m1,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
         vm.install_handler(
             m2,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::WriterHandlerFactory)),
+                std::sync::Arc::new(crate::handler::WriterHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -4378,7 +4358,7 @@ mod tests {
         vm.install_handler(
             m1,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 seg_id,
             ),
         );
@@ -4595,8 +4575,7 @@ mod tests {
             vm.current_segment = Some(seg_id);
 
             let id_obj = pyo3::types::PyDict::new(py).into_any().unbind();
-            let handler =
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory));
+            let handler = std::sync::Arc::new(crate::handler::StateHandlerFactory);
             let program = PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any());
 
             let k = Continuation::create_unstarted_with_identities(
@@ -4652,9 +4631,9 @@ mod tests {
             vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(
+                    std::sync::Arc::new(
                         crate::handler::DoubleCallHandlerFactory,
-                    )),
+                    ),
                     prompt_seg_id,
                 ),
             );
@@ -4744,7 +4723,7 @@ mod tests {
             vm.install_handler(
                 marker,
                 HandlerEntry::new(
-                    Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                    std::sync::Arc::new(crate::handler::StateHandlerFactory),
                     prompt_seg_id,
                 ),
             );
@@ -4808,7 +4787,7 @@ mod tests {
         vm.install_handler(
             marker,
             HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 prompt_seg_id,
             ),
         );
@@ -4939,7 +4918,10 @@ mod tests {
             ));
             assert!(matches!(
                 vm.pending_python,
-                Some(PendingPython::ExpandReturn { metadata: Some(_) })
+                Some(PendingPython::ExpandReturn {
+                    metadata: Some(_),
+                    ..
+                })
             ));
 
             vm.receive_python_result(PyCallOutcome::Value(Value::Int(1)));
@@ -5208,8 +5190,7 @@ mod tests {
 
             let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
 
-            let handler =
-                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory));
+            let handler = std::sync::Arc::new(crate::handler::StateHandlerFactory);
 
             vm.mode = Mode::HandleYield(DoCtrl::Eval {
                 expr: PyShared::new(dummy_expr),

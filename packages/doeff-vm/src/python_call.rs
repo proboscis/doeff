@@ -4,7 +4,6 @@ use crate::ast_stream::ASTStreamRef;
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
-use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
 use crate::ids::Marker;
 use crate::py_shared::PyShared;
@@ -19,11 +18,6 @@ pub enum PythonCall {
         func: PyShared,
         args: Vec<Value>,
         kwargs: Vec<(String, Value)>,
-    },
-    CallHandler {
-        handler: PyShared,
-        effect: DispatchEffect,
-        continuation: Continuation,
     },
     GenNext,
     GenSend {
@@ -46,16 +40,13 @@ pub enum PendingPython {
     CallFuncReturn {
         metadata: Option<CallMetadata>,
     },
-    ExpandReturn {
-        metadata: Option<CallMetadata>,
-    },
     StepUserGenerator {
         stream: ASTStreamRef,
         metadata: Option<CallMetadata>,
     },
-    CallPythonHandler {
-        k_user: Continuation,
-        effect: DispatchEffect,
+    ExpandReturn {
+        metadata: Option<CallMetadata>,
+        handler_return: bool,
     },
     RustProgramContinuation {
         marker: Marker,
