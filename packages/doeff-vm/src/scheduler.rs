@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
+use crate::ast_stream::{ASTStream, ASTStreamStep, StreamLocation};
 use crate::capture::SpawnSite;
 use crate::continuation::Continuation;
 #[cfg(test)]
@@ -217,6 +218,15 @@ fn resume_to_continuation(cont: Continuation, result: Value) -> RustProgramStep 
         continuation: cont,
         value: result,
     })
+}
+
+fn rust_program_step_to_ast_stream_step(step: RustProgramStep) -> ASTStreamStep {
+    match step {
+        RustProgramStep::Yield(ctrl) => ASTStreamStep::Yield(ctrl),
+        RustProgramStep::Return(value) => ASTStreamStep::Return(value),
+        RustProgramStep::Throw(exc) => ASTStreamStep::Throw(exc),
+        RustProgramStep::NeedsPython(call) => ASTStreamStep::NeedsPython(call),
+    }
 }
 
 fn annotate_spawn_boundary_dispatch(error: &PyException, dispatch_id: Option<DispatchId>) {
@@ -1765,6 +1775,15 @@ impl SchedulerProgram {
         }
     }
 
+    fn current_phase_name(&self) -> &'static str {
+        match self.phase {
+            SchedulerPhase::Idle => "Idle",
+            SchedulerPhase::SpawnAwaitHandlers { .. } => "SpawnAwaitHandlers",
+            SchedulerPhase::SpawnAwaitContinuation { .. } => "SpawnAwaitContinuation",
+            SchedulerPhase::Driving { .. } => "Driving",
+        }
+    }
+
     fn handle_gather(
         &mut self,
         k_user: Continuation,
@@ -2280,6 +2299,27 @@ impl RustHandlerProgram for SchedulerProgram {
     }
 }
 
+impl ASTStream for SchedulerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::resume(
+            self, value, store,
+        ))
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::throw(self, exc, store))
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: SCHEDULER_HANDLER_NAME.to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SchedulerHandler + RustProgramHandler impl
 // ---------------------------------------------------------------------------
@@ -2359,6 +2399,8 @@ impl RustProgramHandler for SchedulerHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast_stream::{ASTStream, ASTStreamStep};
+    use pyo3::{IntoPyObject, Python};
 
     fn make_test_continuation() -> Continuation {
         use crate::ids::{Marker, SegmentId};
@@ -2410,6 +2452,68 @@ mod tests {
             }
             _ => panic!("unstarted continuation must emit DoCtrl::ResumeContinuation"),
         }
+    }
+
+    #[test]
+    fn test_scheduler_ast_stream_spawn_sequence_and_debug_location() {
+        Python::attach(|py| {
+            let state = Arc::new(Mutex::new(SchedulerState::new()));
+            let mut program = SchedulerProgram::new(state);
+            let mut store = RustStore::new();
+            let k_user = make_test_continuation();
+            let k_user_id = k_user.cont_id;
+            let spawn_program = py.None().into_pyobject(py).unwrap().unbind().into_any();
+
+            program.phase = SchedulerPhase::SpawnAwaitHandlers {
+                k_user,
+                program: spawn_program,
+                store_mode: StoreMode::Shared,
+                store_snapshot: None,
+                spawn_site: None,
+            };
+
+            let location = ASTStream::debug_location(&program).expect("scheduler debug location");
+            assert_eq!(location.function_name, SCHEDULER_HANDLER_NAME);
+            assert_eq!(location.phase.as_deref(), Some("SpawnAwaitHandlers"));
+
+            let step = ASTStream::resume(&mut program, Value::Handlers(vec![]), &mut store);
+            assert!(matches!(
+                step,
+                ASTStreamStep::Yield(DoCtrl::CreateContinuation { .. })
+            ));
+
+            let location = ASTStream::debug_location(&program).expect("scheduler debug location");
+            assert_eq!(location.phase.as_deref(), Some("SpawnAwaitContinuation"));
+
+            let created_continuation = make_test_continuation();
+            let step = ASTStream::resume(
+                &mut program,
+                Value::Continuation(created_continuation),
+                &mut store,
+            );
+
+            match step {
+                ASTStreamStep::Yield(DoCtrl::Resume {
+                    continuation,
+                    value,
+                })
+                | ASTStreamStep::Yield(DoCtrl::Transfer {
+                    continuation,
+                    value,
+                })
+                | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+                    continuation,
+                    value,
+                }) => {
+                    assert_eq!(continuation.cont_id, k_user_id);
+                    assert!(matches!(value, Value::Task(_)));
+                }
+                _ => panic!("expected ASTStream Yield(Resume|Transfer|ResumeContinuation)"),
+            }
+
+            let location = ASTStream::debug_location(&program).expect("scheduler debug location");
+            assert_eq!(location.phase.as_deref(), Some("Idle"));
+        });
     }
 
     #[test]
