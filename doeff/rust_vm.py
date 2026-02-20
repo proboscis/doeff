@@ -18,7 +18,7 @@ def _is_generator_like(value: Any) -> bool:
 
 def _handler_registration_metadata(
     handler: Any,
-) -> tuple[str, str | None, int | None, str]:
+) -> tuple[str, str, int]:
     handler_name = getattr(handler, "__qualname__", None) or getattr(handler, "__name__", None)
     if handler_name is None:
         handler_name = type(handler).__name__
@@ -30,14 +30,11 @@ def _handler_registration_metadata(
         call_method = getattr(handler, "__call__", None)
         code_obj = getattr(call_method, "__code__", None)
 
-    source_file = getattr(code_obj, "co_filename", None)
+    source_file = getattr(code_obj, "co_filename", None) or "<unknown>"
     source_line = getattr(code_obj, "co_firstlineno", None)
     if not isinstance(source_line, int):
-        source_line = None
-    generator_name = getattr(code_obj, "co_name", None) or getattr(handler, "__name__", None)
-    if generator_name is None:
-        generator_name = "<handler>"
-    return handler_name, source_file, source_line, generator_name
+        source_line = 0
+    return handler_name, source_file, source_line
 
 
 def _to_doeff_generator(candidate: Any, *, context: str) -> Any:
@@ -63,48 +60,31 @@ def _to_doeff_generator(candidate: Any, *, context: str) -> Any:
     raise TypeError(f"{context}: expected DoeffGenerator, got {type(candidate).__name__}")
 
 
-def _wrap_python_handler(handler: Any) -> Any:
+def _coerce_handler(handler: Any) -> Any:
+    vm = _vm()
+    rust_handler_type = getattr(vm, "RustHandler", None)
+    if rust_handler_type is not None and isinstance(handler, rust_handler_type):
+        return handler
+
+    doeff_generator_fn_type = getattr(vm, "DoeffGeneratorFn", None)
+    if doeff_generator_fn_type is not None and isinstance(handler, doeff_generator_fn_type):
+        return handler
     if not callable(handler):
         return handler
-    if getattr(handler, "__doeff_vm_wrapped_handler__", False):
+
+    if doeff_generator_fn_type is None:
         return handler
 
-    handler_name, handler_file, handler_line, generator_name = _handler_registration_metadata(
-        handler
+    from doeff.do import _default_get_frame
+
+    handler_name, handler_file, handler_line = _handler_registration_metadata(handler)
+    return vm.DoeffGeneratorFn(
+        callable=handler,
+        function_name=handler_name,
+        source_file=handler_file,
+        source_line=handler_line,
+        get_frame=_default_get_frame,
     )
-
-    def _wrapped(effect, k, _handler=handler):
-        result = _handler(effect, k)
-        if _is_generator_like(result):
-            from doeff.do import make_doeff_generator
-
-            return make_doeff_generator(
-                result,
-                function_name=generator_name,
-                source_file=handler_file,
-                source_line=handler_line,
-            )
-        raise TypeError(
-            f"Handler {handler_name} must return a generator, got {type(result).__name__}. "
-            "Did you forget 'yield'?"
-        )
-
-    if hasattr(handler, "__name__"):
-        _wrapped.__name__ = handler.__name__
-    if hasattr(handler, "__qualname__"):
-        _wrapped.__qualname__ = handler.__qualname__
-    if hasattr(handler, "__module__"):
-        _wrapped.__module__ = handler.__module__
-    if hasattr(handler, "__doc__"):
-        _wrapped.__doc__ = handler.__doc__
-    _wrapped.__wrapped__ = handler
-    setattr(_wrapped, "__doeff_original_handler__", handler)
-
-    _wrapped.__doeff_vm_wrapped_handler__ = True
-    setattr(_wrapped, "__doeff_handler_name__", handler_name)
-    setattr(_wrapped, "__doeff_handler_file__", handler_file)
-    setattr(_wrapped, "__doeff_handler_line__", handler_line)
-    return _wrapped
 
 
 def _coerce_program(program: Any) -> Any:
@@ -283,7 +263,7 @@ def default_handlers() -> list[Any]:
     vm = _vm()
     from doeff.effects.future import sync_await_handler
 
-    return [*_core_handler_sentinels(vm), sync_await_handler]
+    return [*_core_handler_sentinels(vm), _coerce_handler(sync_await_handler)]
 
 
 def default_async_handlers() -> list[Any]:
@@ -291,7 +271,7 @@ def default_async_handlers() -> list[Any]:
     vm = _vm()
     from doeff.effects.future import async_await_handler
 
-    return [*_core_handler_sentinels(vm), async_await_handler]
+    return [*_core_handler_sentinels(vm), _coerce_handler(async_await_handler)]
 
 
 def _wrap_with_handler_map(
@@ -320,7 +300,7 @@ def _wrap_with_handler_map(
             yield delegate()
 
         wrapped = with_handler(
-            _wrap_python_handler(typed_handler),
+            _coerce_handler(typed_handler),
             wrapped,
         )
     return wrapped

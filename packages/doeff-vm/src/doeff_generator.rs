@@ -56,11 +56,31 @@ impl DoeffGeneratorFn {
         args: &Bound<'_, PyTuple>,
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<DoeffGenerator> {
+        let handler_name = slf.function_name.clone();
         let callable = slf.callable.clone_ref(py);
         let produced = match kwargs {
             Some(kwargs) => callable.bind(py).call(args, Some(kwargs))?,
             None => callable.bind(py).call1(args)?,
         };
+
+        if produced.is_instance_of::<DoeffGenerator>() {
+            return Ok(produced.extract::<DoeffGenerator>()?);
+        }
+
+        let is_generator_like = produced.hasattr("__next__")?
+            && produced.hasattr("send")?
+            && produced.hasattr("throw")?;
+        if !is_generator_like {
+            let ty = produced
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            return Err(PyTypeError::new_err(format!(
+                "Handler {handler_name} must return a generator, got {ty}. Did you forget 'yield'?"
+            )));
+        }
+
         let factory_ref: Py<DoeffGeneratorFn> = slf.into();
         DoeffGenerator::from_factory(py, produced.unbind(), factory_ref)
     }
