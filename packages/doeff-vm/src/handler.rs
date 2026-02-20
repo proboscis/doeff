@@ -86,6 +86,24 @@ pub trait RustProgramHandler: std::fmt::Debug + Send + Sync {
     fn on_run_end(&self, _run_token: u64) {}
 }
 
+pub type DoExpr = DoCtrl;
+
+#[derive(Debug, Clone)]
+pub struct HandlerDebugInfo {
+    pub name: String,
+    pub file: Option<String>,
+    pub line: Option<u32>,
+}
+
+pub trait HandlerInvoke: std::fmt::Debug + Send + Sync {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool;
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr;
+    fn handler_name(&self) -> &str;
+    fn handler_debug_info(&self) -> HandlerDebugInfo;
+}
+
+pub type HandlerRef = Arc<dyn HandlerInvoke>;
+
 /// Shared reference to a Rust program handler factory.
 pub type RustProgramHandlerRef = Arc<dyn RustProgramHandler + Send + Sync>;
 

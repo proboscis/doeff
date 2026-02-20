@@ -1492,11 +1492,13 @@ def test_tag_attribute_accessible():
     assert doeff_vm.TAG_GET_CONTINUATION == 9
     assert doeff_vm.TAG_GET_HANDLERS == 10
     assert doeff_vm.TAG_GET_CALL_STACK == 11
-    assert doeff_vm.TAG_GET_TRACE == 18
     assert doeff_vm.TAG_EVAL == 12
     assert doeff_vm.TAG_CREATE_CONTINUATION == 13
     assert doeff_vm.TAG_RESUME_CONTINUATION == 14
     assert doeff_vm.TAG_ASYNC_ESCAPE == 15
+    assert doeff_vm.TAG_APPLY == 16
+    assert doeff_vm.TAG_EXPAND == 17
+    assert doeff_vm.TAG_GET_TRACE == 18
     assert doeff_vm.TAG_EFFECT == 128
     assert doeff_vm.TAG_UNKNOWN == 255
 
@@ -1505,10 +1507,14 @@ def test_tag_on_concrete_instances():
     """R13-I: Concrete DoCtrl instances have correct tag values."""
     from doeff_vm import (
         Pure,
+        Apply,
+        Expand,
         GetHandlers,
         GetCallStack,
         GetTrace,
         TAG_PURE,
+        TAG_APPLY,
+        TAG_EXPAND,
         TAG_GET_HANDLERS,
         TAG_GET_CALL_STACK,
         TAG_GET_TRACE,
@@ -1519,6 +1525,12 @@ def test_tag_on_concrete_instances():
 
     gh = GetHandlers()
     assert gh.tag == TAG_GET_HANDLERS
+
+    apply = Apply(lambda x: x, [1], {})
+    assert apply.tag == TAG_APPLY
+
+    expand = Expand(lambda x: x, [1], {})
+    assert expand.tag == TAG_EXPAND
 
     gcs = GetCallStack()
     assert gcs.tag == TAG_GET_CALL_STACK
@@ -1537,6 +1549,29 @@ def test_tag_on_effect_base():
 
     put = Put("key", 42)
     assert put.tag == TAG_EFFECT
+
+
+def test_doeff_generator_fn_call_wraps_generator_with_factory() -> None:
+    import doeff_vm
+
+    def make_gen():
+        yield 1
+
+    def get_frame(g):
+        return g.gi_frame
+
+    factory = doeff_vm.DoeffGeneratorFn(
+        callable=make_gen,
+        function_name="make_gen",
+        source_file=__file__,
+        source_line=1,
+        get_frame=get_frame,
+    )
+    wrapped = factory()
+
+    assert isinstance(wrapped, doeff_vm.DoeffGenerator)
+    assert wrapped.factory is factory
+    assert wrapped.function_name == "make_gen"
 
 
 def test_tag_dispatch_does_not_break_existing_programs():
