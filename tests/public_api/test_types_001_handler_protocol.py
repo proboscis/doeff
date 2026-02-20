@@ -15,10 +15,9 @@ from doeff import (
     Effect,
     EffectBase,
     Get,
-    Program,
+    Pass,
     Put,
     Resume,
-    Tell,
     WithHandler,
     default_handlers,
     do,
@@ -184,7 +183,7 @@ class TestHP05Delegate:
 
         def inner_handler(effect, k):
             # always delegate
-            yield Delegate()
+            yield Pass()
 
         def body():
             result = yield _CustomEffect(5)
@@ -242,13 +241,13 @@ class TestHP06NestedHandlers:
             if isinstance(effect, _CustomEffect) and effect.value < 10:
                 return (yield Resume(k, effect.value + 100))
             else:
-                yield Delegate()
+                yield Pass()
 
         def outer_handler(effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value * 2))
             else:
-                yield Delegate()
+                yield Pass()
 
         def body():
             a = yield _CustomEffect(5)  # inner: 5 + 100 = 105
@@ -370,7 +369,7 @@ class TestHP10CoexistWithBuiltins:
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value))
             else:
-                yield Delegate()
+                yield Pass()
 
         @do
         def body():

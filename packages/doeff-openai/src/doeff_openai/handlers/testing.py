@@ -14,7 +14,7 @@ from doeff_llm.effects import (
     LLMStructuredOutput,
 )
 
-from doeff import Delegate, Resume
+from doeff import Pass, Resume
 from doeff_openai.effects import (
     ChatCompletion,
     Embedding,
@@ -400,7 +400,7 @@ def openai_mock_handler(
                 effect, k, config=resolved_config, state=resolved_state
             )
         )
-    yield Delegate()
+    yield Pass()
 
 
 def mock_handlers(
@@ -414,7 +414,7 @@ def mock_handlers(
 
     def handle_chat(effect: ChatCompletion, k: Any):
         if not _is_openai_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         if effect.stream:
             return (
@@ -430,7 +430,7 @@ def mock_handlers(
 
     def handle_stream(effect: LLMStreamingChat | StreamingChatCompletion, k: Any):
         if not _is_openai_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         return (
             yield from _handle_streaming_chat_completion(
@@ -440,7 +440,7 @@ def mock_handlers(
 
     def handle_embedding(effect: LLMEmbedding | Embedding, k: Any):
         if not _is_openai_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         return (
             yield from _handle_embedding(effect, k, config=resolved_config, state=resolved_state)
@@ -448,7 +448,7 @@ def mock_handlers(
 
     def handle_structured(effect: LLMStructuredOutput | StructuredOutput, k: Any):
         if not _is_openai_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         return (
             yield from _handle_structured_output(

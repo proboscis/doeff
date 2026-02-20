@@ -242,7 +242,7 @@ def _wrap_with_handler_map(
     """Wrap a program with typed WithHandler layers from an effect->handler mapping."""
     vm = _vm()
     with_handler = vm.WithHandler
-    delegate = vm.Delegate
+    pass_through = vm.Pass
 
     wrapped = program
     if isinstance(wrapped, vm.EffectBase):
@@ -259,7 +259,7 @@ def _wrap_with_handler_map(
                 if _is_generator_like(result):
                     return (yield from result)
                 return result
-            yield delegate()
+            yield pass_through()
 
         wrapped = with_handler(
             _coerce_handler(typed_handler),
