@@ -4,6 +4,7 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
+use crate::ast_stream::PythonGeneratorStream;
 use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
@@ -786,10 +787,12 @@ impl PyVM {
         self.vm.current_segment = Some(seg_id);
 
         if let Some(seg) = self.vm.current_segment_mut() {
-            seg.push_frame(crate::frame::Frame::PythonGenerator {
-                generator,
-                get_frame,
-                started: false,
+            let stream = std::sync::Arc::new(std::sync::Mutex::new(Box::new(
+                PythonGeneratorStream::new(generator, get_frame),
+            )
+                as Box<dyn crate::ast_stream::ASTStream>));
+            seg.push_frame(crate::frame::Frame::Program {
+                stream,
                 metadata: Some(metadata),
             });
         }
@@ -891,7 +894,17 @@ impl PyVM {
 
     fn pending_generator(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.vm.pending_python {
-            Some(PendingPython::StepUserGenerator { generator, .. }) => Ok(generator.clone_ref(py)),
+            Some(PendingPython::StepUserGenerator { stream, .. }) => {
+                let guard = stream
+                    .lock()
+                    .map_err(|_| PyRuntimeError::new_err("ASTStream lock poisoned"))?;
+                let Some(generator) = guard.python_generator() else {
+                    return Err(PyRuntimeError::new_err(
+                        "GenNext/GenSend/GenThrow: pending stream is not PythonGeneratorStream",
+                    ));
+                };
+                Ok(generator.clone_ref(py))
+            }
             _ => Err(PyRuntimeError::new_err(
                 "GenNext/GenSend/GenThrow: expected StepUserGenerator in pending_python",
             )),

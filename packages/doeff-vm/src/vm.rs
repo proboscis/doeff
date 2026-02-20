@@ -2,11 +2,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::arena::SegmentArena;
+use crate::ast_stream::{ASTStream, ASTStreamRef, ASTStreamStep, PythonGeneratorStream};
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectCreationSite,
     EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry,
@@ -34,6 +36,42 @@ pub use crate::rust_store::RustStore;
 
 pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send + Sync>;
 static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
+
+fn rust_program_step_to_ast_stream_step(step: crate::handler::RustProgramStep) -> ASTStreamStep {
+    match step {
+        crate::handler::RustProgramStep::Yield(ctrl) => ASTStreamStep::Yield(ctrl),
+        crate::handler::RustProgramStep::Return(value) => ASTStreamStep::Return(value),
+        crate::handler::RustProgramStep::Throw(exc) => ASTStreamStep::Throw(exc),
+        crate::handler::RustProgramStep::NeedsPython(call) => ASTStreamStep::NeedsPython(call),
+    }
+}
+
+#[derive(Debug)]
+struct RustProgramStream {
+    program: crate::handler::RustProgramRef,
+}
+
+impl ASTStream for RustProgramStream {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        Python::attach(|_py| {
+            let mut guard = self.program.lock().expect("Rust program lock poisoned");
+            rust_program_step_to_ast_stream_step(guard.resume(value, store))
+        })
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        Python::attach(|_py| {
+            let mut guard = self.program.lock().expect("Rust program lock poisoned");
+            rust_program_step_to_ast_stream_step(guard.throw(exc, store))
+        })
+    }
+}
+
+fn rust_program_as_stream(program: crate::handler::RustProgramRef) -> ASTStreamRef {
+    Arc::new(std::sync::Mutex::new(
+        Box::new(RustProgramStream { program }) as Box<dyn ASTStream>,
+    ))
+}
 
 #[derive(Clone)]
 struct SpawnBoundaryDescriptor {
@@ -275,7 +313,7 @@ impl VM {
         value: Py<PyAny>,
         inherited_metadata: Option<CallMetadata>,
         context: &str,
-    ) -> Result<(PyShared, PyShared, Option<CallMetadata>), PyException> {
+    ) -> Result<(ASTStreamRef, Option<CallMetadata>), PyException> {
         Python::attach(|py| {
             let bound = value.bind(py);
             let wrapped: PyRef<'_, DoeffGenerator> = bound.extract().map_err(|_| {
@@ -293,9 +331,12 @@ impl VM {
                 )));
             }
 
-            Ok((
+            let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
                 PyShared::new(wrapped.generator.clone_ref(py)),
                 PyShared::new(wrapped.get_frame.clone_ref(py)),
+            )) as Box<dyn ASTStream>));
+            Ok((
+                stream,
                 Self::merged_metadata_from_doeff(
                     inherited_metadata,
                     wrapped.function_name.clone(),
@@ -441,14 +482,10 @@ impl VM {
         }
     }
 
-    fn py_shared_identity_eq(a: &PyShared, b: &PyShared) -> bool {
-        Python::attach(|py| a.bind(py).as_ptr() == b.bind(py).as_ptr())
-    }
-
-    fn dispatch_uses_user_continuation_generator(
+    fn dispatch_uses_user_continuation_stream(
         &self,
         dispatch_id: DispatchId,
-        generator: &PyShared,
+        stream: &ASTStreamRef,
     ) -> bool {
         self.dispatch_stack
             .iter()
@@ -456,120 +493,33 @@ impl VM {
             .find(|ctx| ctx.dispatch_id == dispatch_id)
             .is_some_and(|ctx| {
                 ctx.k_user.frames_snapshot.iter().any(|frame| match frame {
-                    Frame::PythonGenerator {
-                        generator: snapshot_generator,
+                    Frame::Program {
+                        stream: snapshot_stream,
                         ..
-                    } => Self::py_shared_identity_eq(snapshot_generator, generator),
+                    } => Arc::ptr_eq(snapshot_stream, stream),
                     _ => false,
                 })
             })
     }
 
-    fn generator_is_exhausted(generator: &Bound<'_, PyAny>) -> bool {
-        let py = generator.py();
-        let Ok(inspect) = py.import("inspect") else {
-            return true;
-        };
-        let is_generator = inspect
-            .getattr("isgenerator")
-            .and_then(|f| f.call1((generator.clone(),)))
-            .ok()
-            .and_then(|v| v.extract::<bool>().ok())
-            .unwrap_or(false);
-        if !is_generator {
-            return true;
-        }
-        inspect
-            .getattr("getgeneratorstate")
-            .and_then(|f| f.call1((generator.clone(),)))
-            .ok()
-            .and_then(|v| v.extract::<String>().ok())
-            .is_some_and(|state| state == "GEN_CLOSED")
-    }
-
-    fn generator_frame_from_callback(
-        generator: &PyShared,
-        get_frame: &PyShared,
-    ) -> Result<Option<Py<PyAny>>, String> {
-        Python::attach(|py| {
-            let generator = generator.clone_ref(py);
-            let generator_for_state = generator.clone_ref(py);
-            let get_frame = get_frame.clone_ref(py);
-            let frame = get_frame
-                .call1(py, (generator,))
-                .map_err(|e| format!("get_frame callback raised: {e}"))?;
-            if frame.bind(py).is_none() {
-                if Self::generator_is_exhausted(generator_for_state.bind(py)) {
-                    return Ok(None);
-                }
-                return Err("get_frame callback returned None for live generator".to_string());
-            }
-            Ok(Some(frame))
-        })
-    }
-
-    fn resolve_generator_line(
-        generator: &PyShared,
-        get_frame: &PyShared,
-    ) -> Result<Option<u32>, String> {
-        let Some(frame) = Self::generator_frame_from_callback(generator, get_frame)? else {
-            return Ok(None);
-        };
-        Python::attach(|py| {
-            frame
-                .bind(py)
-                .getattr("f_lineno")
-                .and_then(|v| v.extract::<u32>())
-                .map(Some)
-                .map_err(|e| format!("get_frame returned non-frame object: {e}"))
-        })
-    }
-
-    fn resolve_generator_location(
-        generator: &PyShared,
-        get_frame: &PyShared,
-    ) -> Result<Option<(String, u32)>, String> {
-        let Some(frame) = Self::generator_frame_from_callback(generator, get_frame)? else {
-            return Ok(None);
-        };
-        Python::attach(|py| {
-            let frame_bound = frame.bind(py);
-            let code = frame_bound
-                .getattr("f_code")
-                .map_err(|e| format!("frame missing f_code: {e}"))?;
-            let file = code
-                .getattr("co_filename")
-                .and_then(|v| v.extract::<String>())
-                .map_err(|e| format!("frame code missing co_filename: {e}"))?;
-            let line = frame_bound
-                .getattr("f_lineno")
-                .and_then(|v| v.extract::<u32>())
-                .map_err(|e| format!("frame missing f_lineno: {e}"))?;
-            Ok(Some((file, line)))
-        })
-    }
-
-    fn report_generator_diagnostic(context: &str, message: &str) -> ! {
-        panic!("[doeff-vm][diagnostic] {context}: {message}");
+    fn stream_debug_location(stream: &ASTStreamRef) -> Option<crate::ast_stream::StreamLocation> {
+        let guard = stream.lock().expect("ASTStream lock poisoned");
+        guard.debug_location()
     }
 
     fn resume_location_from_frames(frames: &[Frame]) -> Option<(String, String, u32)> {
         for frame in frames.iter().rev() {
-            if let Frame::PythonGenerator {
-                generator,
-                get_frame,
+            if let Frame::Program {
+                stream,
                 metadata: Some(metadata),
-                ..
             } = frame
             {
-                match Self::resolve_generator_location(generator, get_frame) {
-                    Ok(Some((file, line))) => {
-                        return Some((metadata.function_name.clone(), file, line));
-                    }
-                    Ok(None) => {}
-                    Err(err) => {
-                        Self::report_generator_diagnostic("resume_location_from_frames", &err);
-                    }
+                if let Some(location) = Self::stream_debug_location(stream) {
+                    return Some((
+                        metadata.function_name.clone(),
+                        location.source_file,
+                        location.source_line,
+                    ));
                 }
                 return Some((
                     metadata.function_name.clone(),
@@ -594,11 +544,9 @@ impl VM {
         let mut fallback: Option<(FrameId, String, String, u32)> = None;
 
         for frame in k.frames_snapshot.iter().rev() {
-            if let Frame::PythonGenerator {
-                generator,
-                get_frame,
+            if let Frame::Program {
+                stream,
                 metadata: Some(metadata),
-                ..
             } = frame
             {
                 let fallback_candidate = (
@@ -607,17 +555,14 @@ impl VM {
                     metadata.source_file.clone(),
                     metadata.source_line,
                 );
-                let candidate = match Self::resolve_generator_location(generator, get_frame) {
-                    Ok(Some((file, line))) => (
+                let candidate = match Self::stream_debug_location(stream) {
+                    Some(location) => (
                         metadata.frame_id as FrameId,
                         metadata.function_name.clone(),
-                        file,
-                        line,
+                        location.source_file,
+                        location.source_line,
                     ),
-                    Ok(None) => fallback_candidate,
-                    Err(err) => {
-                        Self::report_generator_diagnostic("effect_site_from_continuation", &err);
-                    }
+                    None => fallback_candidate,
                 };
 
                 if fallback.is_none() {
@@ -868,24 +813,17 @@ impl VM {
                 break;
             };
             for frame in &seg.frames {
-                let Frame::PythonGenerator {
-                    generator,
-                    get_frame,
+                let Frame::Program {
+                    stream,
                     metadata: Some(metadata),
-                    ..
                 } = frame
                 else {
                     continue;
                 };
 
-                let current_line = match Self::resolve_generator_line(generator, get_frame) {
-                    Ok(Some(line)) => line,
-                    Ok(None) => metadata.source_line,
-                    Err(err) => {
-                        Self::report_generator_diagnostic("supplement_with_live_state", &err);
-                        metadata.source_line
-                    }
-                };
+                let current_line = Self::stream_debug_location(stream)
+                    .map(|location| location.source_line)
+                    .unwrap_or(metadata.source_line);
                 let last_line = trace.iter().rev().find_map(|entry| match entry {
                     TraceEntry::Frame {
                         frame_id,
@@ -1312,24 +1250,17 @@ impl VM {
                 continue;
             };
             for frame in &seg.frames {
-                let Frame::PythonGenerator {
-                    generator,
-                    get_frame,
+                let Frame::Program {
+                    stream,
                     metadata: Some(metadata),
-                    ..
                 } = frame
                 else {
                     continue;
                 };
 
-                let line = match Self::resolve_generator_line(generator, get_frame) {
-                    Ok(Some(line)) => line,
-                    Ok(None) => metadata.source_line,
-                    Err(err) => {
-                        Self::report_generator_diagnostic("active_chain/live_segments", &err);
-                        metadata.source_line
-                    }
-                };
+                let line = Self::stream_debug_location(stream)
+                    .map(|location| location.source_line)
+                    .unwrap_or(metadata.source_line);
                 if let Some(existing) = frame_stack
                     .iter_mut()
                     .find(|entry| entry.frame_id == metadata.frame_id)
@@ -1361,24 +1292,17 @@ impl VM {
                 .is_some_and(|dispatch| is_visible_effect(&dispatch.result))
         }) {
             for frame in dispatch_ctx.k_user.frames_snapshot.iter() {
-                let Frame::PythonGenerator {
-                    generator,
-                    get_frame,
+                let Frame::Program {
+                    stream,
                     metadata: Some(metadata),
-                    ..
                 } = frame
                 else {
                     continue;
                 };
 
-                let line = match Self::resolve_generator_line(generator, get_frame) {
-                    Ok(Some(line)) => line,
-                    Ok(None) => metadata.source_line,
-                    Err(err) => {
-                        Self::report_generator_diagnostic("active_chain/user_snapshot", &err);
-                        metadata.source_line
-                    }
-                };
+                let line = Self::stream_debug_location(stream)
+                    .map(|location| location.source_line)
+                    .unwrap_or(metadata.source_line);
                 if let Some(existing) = frame_stack
                     .iter_mut()
                     .find(|entry| entry.frame_id == metadata.frame_id)
@@ -1479,27 +1403,17 @@ impl VM {
                         .frames_snapshot
                         .iter()
                         .filter_map(|frame| {
-                            let Frame::PythonGenerator {
-                                generator,
-                                get_frame,
+                            let Frame::Program {
+                                stream,
                                 metadata: Some(metadata),
-                                ..
                             } = frame
                             else {
                                 return None;
                             };
 
-                            let line = match Self::resolve_generator_line(generator, get_frame) {
-                                Ok(Some(line)) => line,
-                                Ok(None) => metadata.source_line,
-                                Err(err) => {
-                                    Self::report_generator_diagnostic(
-                                        "active_chain/fallback_snapshot",
-                                        &err,
-                                    );
-                                    metadata.source_line
-                                }
-                            };
+                            let line = Self::stream_debug_location(stream)
+                                .map(|location| location.source_line)
+                                .unwrap_or(metadata.source_line);
                             Some(FrameState {
                                 frame_id: metadata.frame_id as FrameId,
                                 function_name: metadata.function_name.clone(),
@@ -1797,22 +1711,8 @@ impl VM {
                 for (i, frame) in seg.frames.iter().enumerate() {
                     let frame_kind = match frame {
                         Frame::RustReturn { .. } => "RustReturn",
-                        Frame::RustProgram { .. } => "RustProgram",
-                        Frame::PythonGenerator {
-                            started, metadata, ..
-                        } => {
-                            if *started {
-                                if metadata.is_some() {
-                                    "PythonGenerator(started,meta)"
-                                } else {
-                                    "PythonGenerator(started)"
-                                }
-                            } else if metadata.is_some() {
-                                "PythonGenerator(new,meta)"
-                            } else {
-                                "PythonGenerator(new)"
-                            }
-                        }
+                        Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)",
+                        Frame::Program { .. } => "Program",
                     };
                     eprintln!("  frame[{}]: {}", i, frame_kind);
                 }
@@ -1920,59 +1820,32 @@ impl VM {
                 }
             }
 
-            Frame::RustProgram { program } => {
-                let step = Python::attach(|_py| {
-                    let mut guard = program.lock().expect("Rust program lock poisoned");
+            Frame::Program { stream, metadata } => {
+                let step = {
+                    let mut guard = stream.lock().expect("ASTStream lock poisoned");
                     match mode {
                         Mode::Deliver(value) => guard.resume(value, &mut self.rust_store),
                         Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store),
                         _ => unreachable!(),
                     }
-                });
-                self.apply_rust_program_step(step, program)
-            }
-
-            Frame::PythonGenerator {
-                generator,
-                get_frame,
-                started,
-                metadata,
-            } => {
-                // D1 Phase 2: generator + metadata move into PendingPython (no clone).
-                // Driver (pyvm.rs) reads gen from pending_python with GIL held.
-                self.pending_python = Some(PendingPython::StepUserGenerator {
-                    generator,
-                    metadata,
-                    get_frame,
-                });
-
-                match mode {
-                    Mode::Deliver(value) => {
-                        if started {
-                            StepEvent::NeedsPython(PythonCall::GenSend { value })
-                        } else {
-                            StepEvent::NeedsPython(PythonCall::GenNext)
-                        }
-                    }
-                    Mode::Throw(exc) => StepEvent::NeedsPython(PythonCall::GenThrow { exc }),
-                    _ => unreachable!(),
-                }
+                };
+                self.apply_stream_step(step, stream, metadata)
             }
         }
     }
 
-    fn apply_rust_program_step(
+    fn apply_stream_step(
         &mut self,
-        step: crate::handler::RustProgramStep,
-        program: crate::handler::RustProgramRef,
+        step: ASTStreamStep,
+        stream: ASTStreamRef,
+        metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        use crate::handler::RustProgramStep;
         match step {
-            RustProgramStep::Yield(yielded) => {
+            ASTStreamStep::Yield(yielded) => {
                 // Terminal DoCtrl variants (Resume, Transfer, TransferThrow, Delegate) transfer control
                 // elsewhere — the handler is done and no value flows back. Do NOT re-push
-                // the RustProgram frame for these. Non-terminal variants (Eval, GetHandlers,
-                // GetCallStack) expect a result to be delivered back to this handler.
+                // the Program frame for these. Non-terminal variants (Eval, GetHandlers,
+                // GetCallStack) expect a result to be delivered back to this stream.
                 let is_terminal = matches!(
                     &yielded,
                     DoCtrl::Resume { .. }
@@ -1982,14 +1855,19 @@ impl VM {
                 );
                 if !is_terminal {
                     if let Some(seg) = self.current_segment_mut() {
-                        seg.push_frame(Frame::RustProgram { program });
+                        seg.push_frame(Frame::Program { stream, metadata });
                     }
                 }
                 self.mode = Mode::HandleYield(yielded);
                 StepEvent::Continue
             }
-            RustProgramStep::Return(value) => self.handle_handler_return(value),
-            RustProgramStep::Throw(exc) => {
+            ASTStreamStep::Return(value) => {
+                if let Some(ref m) = metadata {
+                    self.maybe_emit_frame_exited(m);
+                }
+                self.handle_handler_return(value)
+            }
+            ASTStreamStep::Throw(exc) => {
                 if let Some(dispatch_id) = self
                     .dispatch_stack
                     .last()
@@ -2002,9 +1880,18 @@ impl VM {
                 self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            RustProgramStep::NeedsPython(call) => {
+            ASTStreamStep::NeedsPython(call) => {
+                if matches!(
+                    &call,
+                    PythonCall::GenNext | PythonCall::GenSend { .. } | PythonCall::GenThrow { .. }
+                ) {
+                    self.pending_python =
+                        Some(PendingPython::StepUserGenerator { stream, metadata });
+                    return StepEvent::NeedsPython(call);
+                }
+
                 if let Some(seg) = self.current_segment_mut() {
-                    seg.push_frame(Frame::RustProgram { program });
+                    seg.push_frame(Frame::Program { stream, metadata });
                 }
                 let top = self
                     .dispatch_stack
@@ -2306,7 +2193,7 @@ impl VM {
                 while let Some(id) = seg_id {
                     if let Some(seg) = self.segments.get(id) {
                         for frame in seg.frames.iter().rev() {
-                            if let Frame::PythonGenerator {
+                            if let Frame::Program {
                                 metadata: Some(m), ..
                             } = frame
                             {
@@ -2374,17 +2261,12 @@ impl VM {
                 match gen_val {
                     Value::Python(gen) => {
                         match Self::extract_doeff_generator(gen, metadata, "StartProgram") {
-                            Ok((generator, get_frame, metadata)) => {
+                            Ok((stream, metadata)) => {
                                 if let Some(ref m) = metadata {
                                     self.maybe_emit_frame_entered(m);
                                 }
                                 if let Some(seg) = self.current_segment_mut() {
-                                    seg.push_frame(Frame::PythonGenerator {
-                                        generator,
-                                        get_frame,
-                                        started: false,
-                                        metadata,
-                                    });
+                                    seg.push_frame(Frame::Program { stream, metadata });
                                 }
                                 self.mode = Mode::Deliver(Value::Unit);
                             }
@@ -2417,17 +2299,12 @@ impl VM {
                 match value {
                     Value::Python(gen) => {
                         match Self::extract_doeff_generator(gen, metadata, "ExpandReturn") {
-                            Ok((generator, get_frame, metadata)) => {
+                            Ok((stream, metadata)) => {
                                 if let Some(ref m) = metadata {
                                     self.maybe_emit_frame_entered(m);
                                 }
                                 if let Some(seg) = self.current_segment_mut() {
-                                    seg.push_frame(Frame::PythonGenerator {
-                                        generator,
-                                        get_frame,
-                                        started: false,
-                                        metadata,
-                                    });
+                                    seg.push_frame(Frame::Program { stream, metadata });
                                 }
                                 self.mode = Mode::Deliver(Value::Unit);
                             }
@@ -2449,20 +2326,11 @@ impl VM {
             }
 
             (
-                PendingPython::StepUserGenerator {
-                    generator,
-                    metadata,
-                    get_frame,
-                },
+                PendingPython::StepUserGenerator { stream, metadata },
                 PyCallOutcome::GenYield(yielded),
             ) => {
                 if let Some(seg) = self.current_segment_mut() {
-                    seg.push_frame(Frame::PythonGenerator {
-                        generator,
-                        get_frame,
-                        started: true,
-                        metadata,
-                    });
+                    seg.push_frame(Frame::Program { stream, metadata });
                 }
                 self.mode = Mode::HandleYield(yielded);
             }
@@ -2479,14 +2347,14 @@ impl VM {
 
             (
                 PendingPython::StepUserGenerator {
-                    generator,
+                    stream,
                     metadata: _,
                     ..
                 },
                 PyCallOutcome::GenError(e),
             ) => {
                 if let Some(dispatch_id) = self.current_active_handler_dispatch_id() {
-                    if self.dispatch_uses_user_continuation_generator(dispatch_id, &generator) {
+                    if self.dispatch_uses_user_continuation_stream(dispatch_id, &stream) {
                         self.mark_dispatch_completed(dispatch_id);
                     } else {
                         self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
@@ -2505,7 +2373,7 @@ impl VM {
             ) => match handler_gen_val {
                 Value::Python(handler_gen) => {
                     match Self::extract_doeff_generator(handler_gen, None, "CallPythonHandler") {
-                        Ok((generator, get_frame, metadata)) => {
+                        Ok((stream, metadata)) => {
                             let handler_return_cb =
                                 self.register_callback(Box::new(|value, vm| {
                                     let _ = vm.handle_handler_return(value);
@@ -2515,12 +2383,7 @@ impl VM {
                                 seg.push_frame(Frame::RustReturn {
                                     cb: handler_return_cb,
                                 });
-                                seg.push_frame(Frame::PythonGenerator {
-                                    generator,
-                                    get_frame,
-                                    started: false,
-                                    metadata,
-                                });
+                                seg.push_frame(Frame::Program { stream, metadata });
                             }
                             self.mode = Mode::Deliver(Value::Unit);
                         }
@@ -2729,11 +2592,18 @@ impl VM {
         match handler {
             Handler::RustProgram(rust_handler) => {
                 let program = rust_handler.create_program_for_run(self.current_run_token());
+                let stream = rust_program_as_stream(program.clone());
                 let step = {
                     let mut guard = program.lock().expect("Rust program lock poisoned");
                     Python::attach(|py| guard.start(py, effect, k_user, &mut self.rust_store))
                 };
-                Ok(self.apply_rust_program_step(step, program))
+                Ok(
+                    self.apply_stream_step(
+                        rust_program_step_to_ast_stream_step(step),
+                        stream,
+                        None,
+                    ),
+                )
             }
             Handler::Python { callable, .. } => {
                 self.register_continuation(k_user.clone());
@@ -3121,13 +2991,18 @@ impl VM {
                         Handler::RustProgram(rust_handler) => {
                             let program =
                                 rust_handler.create_program_for_run(self.current_run_token());
+                            let stream = rust_program_as_stream(program.clone());
                             let step = {
                                 let mut guard = program.lock().expect("Rust program lock poisoned");
                                 Python::attach(|py| {
                                     guard.start(py, effect, k_user, &mut self.rust_store)
                                 })
                             };
-                            return self.apply_rust_program_step(step, program);
+                            return self.apply_stream_step(
+                                rust_program_step_to_ast_stream_step(step),
+                                stream,
+                                None,
+                            );
                         }
                         Handler::Python { callable, .. } => {
                             self.register_continuation(k_user.clone());
@@ -3780,10 +3655,12 @@ mod tests {
                 .expect("LINE must be int");
 
             let mut body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
-            body_seg.push_frame(Frame::PythonGenerator {
-                generator: PyShared::new(wrapper),
-                get_frame: PyShared::new(get_frame),
-                started: true,
+            let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
+                PyShared::new(wrapper),
+                PyShared::new(get_frame),
+            )) as Box<dyn ASTStream>));
+            body_seg.push_frame(Frame::Program {
+                stream,
                 metadata: Some(CallMetadata::new(
                     "parent".to_string(),
                     "/tmp/user_program.py".to_string(),
@@ -3826,9 +3703,10 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_generator_line_uses_get_frame_callback_result() {
+    fn test_stream_debug_location_uses_get_frame_callback_result() {
         Python::attach(|py| {
             use pyo3::types::PyModule;
+            use std::sync::Arc;
 
             let module = PyModule::from_code(
                 py,
@@ -3848,11 +3726,12 @@ mod tests {
                 .extract()
                 .expect("LINE must be int");
 
-            let observed =
-                VM::resolve_generator_line(&PyShared::new(wrapper), &PyShared::new(get_frame))
-                    .expect("expected callback resolution to succeed")
-                    .expect("expected generator line");
-            assert_eq!(observed, line);
+            let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
+                PyShared::new(wrapper),
+                PyShared::new(get_frame),
+            )) as Box<dyn ASTStream>));
+            let observed = VM::stream_debug_location(&stream).expect("expected stream location");
+            assert_eq!(observed.source_line, line);
         });
     }
 
@@ -3874,8 +3753,9 @@ mod tests {
         let runtime_src = &src[..runtime_boundary];
         let inner_attr = ["__doeff_", "inner__"].concat();
         assert!(
-            runtime_src.contains(".call1(py, (generator,))") && runtime_src.contains("get_frame"),
-            "VM-PROTO-001: VM must resolve frame through get_frame callback"
+            runtime_src.contains("debug_location()")
+                && runtime_src.contains("stream_debug_location"),
+            "VM-PROTO-001: VM must resolve live locations via ASTStream::debug_location()"
         );
         assert!(
             !runtime_src.contains("getattr(\"gi_frame\")"),
@@ -3954,8 +3834,9 @@ mod tests {
         );
         assert!(
             runtime_src.contains("PendingPython::StepUserGenerator {")
-                && runtime_src.contains("get_frame,"),
-            "VM-PROTO-001: StepUserGenerator pending state must carry get_frame callback"
+                && runtime_src.contains("stream")
+                && !runtime_src.contains("get_frame,"),
+            "VM-PROTO-001: StepUserGenerator pending state must carry stream handle"
         );
     }
 
