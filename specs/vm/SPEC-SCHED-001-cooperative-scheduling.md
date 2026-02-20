@@ -1280,7 +1280,8 @@ result = yield Wait(p.future)              ▲
 | `Transfer` | Yes | No — scheduler is done |
 | `TransferThrow` | Yes | No — scheduler is done (throws exception) |
 | `Resume` | Yes | No |
-| `Delegate` | Yes | No |
+| `Delegate` | No | Yes — VM resumes handler with outer result |
+| `Pass` | Yes | No |
 | `ResumeContinuation` | No | Yes — VM resumes scheduler |
 | `CreateContinuation` | No | Yes — VM resumes scheduler |
 | `GetHandlers` | No | Yes — VM resumes scheduler |
