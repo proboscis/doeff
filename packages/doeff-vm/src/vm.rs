@@ -253,28 +253,6 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn is_generator_object(obj: &Py<PyAny>) -> bool {
-        Python::attach(|py| {
-            let by_type = py
-                .import("types")
-                .and_then(|m| m.getattr("GeneratorType"))
-                .and_then(|ty| obj.bind(py).is_instance(&ty))
-                .unwrap_or(false);
-            if by_type {
-                return true;
-            }
-
-            let bound = obj.bind(py);
-            bound.hasattr("__next__").unwrap_or(false)
-                && bound.hasattr("send").unwrap_or(false)
-                && bound.hasattr("throw").unwrap_or(false)
-        })
-    }
-
-    fn is_doeff_generator_object(obj: &Py<PyAny>) -> bool {
-        Python::attach(|py| obj.bind(py).is_instance_of::<DoeffGenerator>())
-    }
-
     fn merged_metadata_from_doeff(
         inherited: Option<CallMetadata>,
         function_name: String,
@@ -1686,7 +1664,6 @@ impl VM {
                 DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
                 DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
                 DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-                DoCtrl::Call { .. } => "HandleYield(Call)",
                 DoCtrl::Apply { .. } => "HandleYield(Apply)",
                 DoCtrl::Expand { .. } => "HandleYield(Expand)",
                 DoCtrl::Eval { .. } => "HandleYield(Eval)",
@@ -1703,6 +1680,7 @@ impl VM {
             .map(|p| match p {
                 PendingPython::StartProgramFrame { .. } => "StartProgramFrame",
                 PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
+                PendingPython::ExpandReturn { .. } => "ExpandReturn",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
                 PendingPython::CallPythonHandler { .. } => "CallPythonHandler",
                 PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
@@ -1776,7 +1754,6 @@ impl VM {
                 DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
                 DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
                 DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-                DoCtrl::Call { .. } => "HandleYield(Call)",
                 DoCtrl::Apply { .. } => "HandleYield(Apply)",
                 DoCtrl::Expand { .. } => "HandleYield(Expand)",
                 DoCtrl::Eval { .. } => "HandleYield(Eval)",
@@ -1798,6 +1775,7 @@ impl VM {
             .map(|p| match p {
                 PendingPython::StartProgramFrame { .. } => "StartProgramFrame",
                 PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
+                PendingPython::ExpandReturn { .. } => "ExpandReturn",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
                 PendingPython::CallPythonHandler { .. } => "CallPythonHandler",
                 PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
@@ -2112,7 +2090,7 @@ impl VM {
                     args: vec![],
                 })
             }
-            DoCtrl::Call {
+            DoCtrl::Apply {
                 f,
                 args,
                 kwargs,
@@ -2123,7 +2101,7 @@ impl VM {
                     return self.eval_then_reenter_call(
                         expr,
                         Box::new(move |resolved_f, _vm| {
-                            Mode::HandleYield(DoCtrl::Call {
+                            Mode::HandleYield(DoCtrl::Apply {
                                 f: CallArg::Value(resolved_f),
                                 args,
                                 kwargs,
@@ -2143,7 +2121,7 @@ impl VM {
                         Box::new(move |resolved_arg, _vm| {
                             let mut args = args;
                             args[arg_idx] = CallArg::Value(resolved_arg);
-                            Mode::HandleYield(DoCtrl::Call {
+                            Mode::HandleYield(DoCtrl::Apply {
                                 f,
                                 args,
                                 kwargs,
@@ -2166,7 +2144,7 @@ impl VM {
                         Box::new(move |resolved_kwarg, _vm| {
                             let mut kwargs = kwargs;
                             kwargs[kwargs_idx].1 = CallArg::Value(resolved_kwarg);
-                            Mode::HandleYield(DoCtrl::Call {
+                            Mode::HandleYield(DoCtrl::Apply {
                                 f,
                                 args,
                                 kwargs,
@@ -2180,7 +2158,7 @@ impl VM {
                     CallArg::Value(Value::Python(func)) => PyShared::new(func),
                     CallArg::Value(other) => {
                         self.mode = Mode::Throw(PyException::type_error(format!(
-                            "DoCtrl::Call f must be Python callable value, got {:?}",
+                            "DoCtrl::Apply f must be Python callable value, got {:?}",
                             other
                         )));
                         return StepEvent::Continue;
@@ -2213,33 +2191,106 @@ impl VM {
                     kwargs: value_kwargs,
                 })
             }
-            DoCtrl::Apply {
-                f,
-                args,
-                kwargs,
-                metadata,
-            } => {
-                self.mode = Mode::HandleYield(DoCtrl::Call {
-                    f,
-                    args,
-                    kwargs,
-                    metadata,
-                });
-                StepEvent::Continue
-            }
             DoCtrl::Expand {
                 factory,
                 args,
                 kwargs,
                 metadata,
             } => {
-                self.mode = Mode::HandleYield(DoCtrl::Call {
-                    f: factory,
-                    args,
-                    kwargs,
-                    metadata,
+                if let CallArg::Expr(expr) = &factory {
+                    let expr = expr.clone();
+                    return self.eval_then_reenter_call(
+                        expr,
+                        Box::new(move |resolved_factory, _vm| {
+                            Mode::HandleYield(DoCtrl::Expand {
+                                factory: CallArg::Value(resolved_factory),
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
+
+                if let Some(arg_idx) = args.iter().position(|arg| matches!(arg, CallArg::Expr(_))) {
+                    let expr = match &args[arg_idx] {
+                        CallArg::Expr(expr) => expr.clone(),
+                        CallArg::Value(_) => unreachable!(),
+                    };
+                    return self.eval_then_reenter_call(
+                        expr,
+                        Box::new(move |resolved_arg, _vm| {
+                            let mut args = args;
+                            args[arg_idx] = CallArg::Value(resolved_arg);
+                            Mode::HandleYield(DoCtrl::Expand {
+                                factory,
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
+
+                if let Some(kwargs_idx) = kwargs
+                    .iter()
+                    .position(|(_, value)| matches!(value, CallArg::Expr(_)))
+                {
+                    let expr = match &kwargs[kwargs_idx].1 {
+                        CallArg::Expr(expr) => expr.clone(),
+                        CallArg::Value(_) => unreachable!(),
+                    };
+                    return self.eval_then_reenter_call(
+                        expr,
+                        Box::new(move |resolved_kwarg, _vm| {
+                            let mut kwargs = kwargs;
+                            kwargs[kwargs_idx].1 = CallArg::Value(resolved_kwarg);
+                            Mode::HandleYield(DoCtrl::Expand {
+                                factory,
+                                args,
+                                kwargs,
+                                metadata,
+                            })
+                        }),
+                    );
+                }
+
+                let func = match factory {
+                    CallArg::Value(Value::Python(factory)) => PyShared::new(factory),
+                    CallArg::Value(other) => {
+                        self.mode = Mode::Throw(PyException::type_error(format!(
+                            "DoCtrl::Expand factory must be Python callable value, got {:?}",
+                            other
+                        )));
+                        return StepEvent::Continue;
+                    }
+                    CallArg::Expr(_) => unreachable!(),
+                };
+
+                let mut value_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    match arg {
+                        CallArg::Value(value) => value_args.push(value),
+                        CallArg::Expr(_) => unreachable!(),
+                    }
+                }
+
+                let mut value_kwargs = Vec::with_capacity(kwargs.len());
+                for (key, value) in kwargs {
+                    match value {
+                        CallArg::Value(inner) => value_kwargs.push((key, inner)),
+                        CallArg::Expr(_) => unreachable!(),
+                    }
+                }
+
+                self.pending_python = Some(PendingPython::ExpandReturn {
+                    metadata: Some(metadata),
                 });
-                StepEvent::Continue
+                StepEvent::NeedsPython(PythonCall::CallFunc {
+                    func,
+                    args: value_args,
+                    kwargs: value_kwargs,
+                })
             }
             DoCtrl::Eval {
                 expr,
@@ -2354,10 +2405,18 @@ impl VM {
                 self.mode = Mode::Throw(e);
             }
 
-            (PendingPython::CallFuncReturn { metadata }, PyCallOutcome::Value(value)) => {
+            (PendingPython::CallFuncReturn { .. }, PyCallOutcome::Value(value)) => {
+                self.mode = Mode::Deliver(value);
+            }
+
+            (PendingPython::CallFuncReturn { .. }, PyCallOutcome::GenError(e)) => {
+                self.mode = Mode::Throw(e);
+            }
+
+            (PendingPython::ExpandReturn { metadata }, PyCallOutcome::Value(value)) => {
                 match value {
-                    Value::Python(obj) if Self::is_doeff_generator_object(&obj) => {
-                        match Self::extract_doeff_generator(obj, metadata, "CallFuncReturn") {
+                    Value::Python(gen) => {
+                        match Self::extract_doeff_generator(gen, metadata, "ExpandReturn") {
                             Ok((generator, get_frame, metadata)) => {
                                 if let Some(ref m) = metadata {
                                     self.maybe_emit_frame_entered(m);
@@ -2377,31 +2436,15 @@ impl VM {
                             }
                         }
                     }
-                    Value::Python(obj) if Self::is_generator_object(&obj) => {
-                        let details = Python::attach(|py| {
-                            let bound = obj.bind(py);
-                            let ty = bound
-                                .get_type()
-                                .name()
-                                .map(|n| n.to_string())
-                                .unwrap_or_else(|_| "<unknown>".to_string());
-                            let repr = bound
-                                .repr()
-                                .map(|r| r.to_string())
-                                .unwrap_or_else(|_| "<repr failed>".to_string());
-                            format!("type={ty}, repr={repr}")
-                        });
-                        self.mode = Mode::Throw(PyException::type_error(format!(
-                            "CallFuncReturn: raw generator returned; expected DoeffGenerator ({details})"
-                        )));
-                    }
                     other => {
-                        self.mode = Mode::Deliver(other);
+                        self.mode = Mode::Throw(PyException::type_error(format!(
+                            "ExpandReturn: expected DoeffGenerator, got {other:?}"
+                        )));
                     }
                 }
             }
 
-            (PendingPython::CallFuncReturn { .. }, PyCallOutcome::GenError(e)) => {
+            (PendingPython::ExpandReturn { .. }, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
             }
 
@@ -2460,7 +2503,7 @@ impl VM {
                 },
                 PyCallOutcome::Value(handler_gen_val),
             ) => match handler_gen_val {
-                Value::Python(handler_gen) if Self::is_doeff_generator_object(&handler_gen) => {
+                Value::Python(handler_gen) => {
                     match Self::extract_doeff_generator(handler_gen, None, "CallPythonHandler") {
                         Ok((generator, get_frame, metadata)) => {
                             let handler_return_cb =
@@ -2485,24 +2528,6 @@ impl VM {
                             self.mode = Mode::Throw(e);
                         }
                     }
-                }
-                Value::Python(handler_gen) if Self::is_generator_object(&handler_gen) => {
-                    let details = Python::attach(|py| {
-                        let bound = handler_gen.bind(py);
-                        let ty = bound
-                            .get_type()
-                            .name()
-                            .map(|n| n.to_string())
-                            .unwrap_or_else(|_| "<unknown>".to_string());
-                        let repr = bound
-                            .repr()
-                            .map(|r| r.to_string())
-                            .unwrap_or_else(|_| "<repr failed>".to_string());
-                        format!("type={ty}, repr={repr}")
-                    });
-                    self.mode = Mode::Throw(PyException::type_error(format!(
-                        "CallPythonHandler: raw generator returned; expected DoeffGenerator ({details})"
-                    )));
                 }
                 other => {
                     let _ = self.handle_handler_return(other);
@@ -3221,7 +3246,7 @@ impl VM {
     ) -> StepEvent {
         let handlers = self.current_visible_handlers();
         let map_cb = self.register_callback(Box::new(move |value, _vm| {
-            Mode::HandleYield(DoCtrl::Call {
+            Mode::HandleYield(DoCtrl::Apply {
                 f: CallArg::Value(Value::Python(mapper.into_inner())),
                 args: vec![CallArg::Value(value)],
                 kwargs: vec![],
@@ -3248,20 +3273,8 @@ impl VM {
         binder_meta: CallMetadata,
     ) -> StepEvent {
         let handlers = self.current_visible_handlers();
-        let handlers_after_bind = handlers.clone();
-
         let bind_result_cb =
-            self.register_callback(Box::new(move |bound_value, _vm| match bound_value {
-                Value::Python(obj) => Mode::HandleYield(DoCtrl::Eval {
-                    expr: PyShared::new(obj),
-                    handlers: handlers_after_bind,
-                    metadata: None,
-                }),
-                other => Mode::Throw(PyException::type_error(format!(
-                    "flat_map binder must return Program/Effect/DoCtrl; got {:?}",
-                    other
-                ))),
-            }));
+            self.register_callback(Box::new(move |bound_value, _vm| Mode::Deliver(bound_value)));
 
         let bind_source_cb = self.register_callback(Box::new(move |value, vm| {
             let Some(seg) = vm.current_segment_mut() else {
@@ -3270,8 +3283,8 @@ impl VM {
                 ));
             };
             seg.push_frame(Frame::RustReturn { cb: bind_result_cb });
-            Mode::HandleYield(DoCtrl::Call {
-                f: CallArg::Value(Value::Python(binder.into_inner())),
+            Mode::HandleYield(DoCtrl::Expand {
+                factory: CallArg::Value(Value::Python(binder.into_inner())),
                 args: vec![CallArg::Value(value)],
                 kwargs: vec![],
                 metadata: binder_meta.clone(),
@@ -3935,8 +3948,9 @@ mod tests {
             "VM-PROTO-001: expected at least 3 DoeffGenerator extraction sites in vm.rs, got {extraction_calls}"
         );
         assert!(
-            runtime_src.contains("raw generator returned; expected DoeffGenerator"),
-            "VM-PROTO-001: CallFuncReturn must reject raw Python generators explicitly"
+            runtime_src.contains("PendingPython::ExpandReturn")
+                && runtime_src.contains("ExpandReturn: expected DoeffGenerator"),
+            "VM-PROTO-001: ExpandReturn must enforce DoeffGenerator results explicitly"
         );
         assert!(
             runtime_src.contains("PendingPython::StepUserGenerator {")
@@ -4964,12 +4978,107 @@ mod tests {
     }
 
     // ==========================================================
-    // R9-A: DoCtrl::Call — dual-path dispatch tests
+    // R9-A: DoCtrl::Apply — direct Python call dispatch tests
     // ==========================================================
 
-    /// R9-A: Call with empty args/kwargs still dispatches via CallFunc.
     #[test]
-    fn test_r9a_call_empty_args_yields_call_func() {
+    fn test_apply_return_delivers_value_without_pushing_frame() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let metadata = CallMetadata::new(
+                "test_apply".to_string(),
+                "test.py".to_string(),
+                1,
+                None,
+                None,
+            );
+
+            vm.mode = Mode::HandleYield(DoCtrl::Apply {
+                f: CallArg::Value(Value::Python(dummy_f)),
+                args: vec![],
+                kwargs: vec![],
+                metadata,
+            });
+
+            let event = vm.step_handle_yield();
+            assert!(matches!(
+                event,
+                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
+            ));
+            assert!(matches!(
+                vm.pending_python,
+                Some(PendingPython::CallFuncReturn { .. })
+            ));
+
+            vm.receive_python_result(PyCallOutcome::Value(Value::Int(7)));
+            assert!(matches!(vm.mode, Mode::Deliver(Value::Int(7))));
+            let seg = vm.segments.get(seg_id).expect("segment missing");
+            assert!(
+                seg.frames.is_empty(),
+                "Apply must not push a PythonGenerator frame"
+            );
+        });
+    }
+
+    #[test]
+    fn test_expand_requires_doeff_generator_or_errors() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_factory = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let metadata = CallMetadata::new(
+                "test_expand".to_string(),
+                "test.py".to_string(),
+                1,
+                None,
+                None,
+            );
+
+            vm.mode = Mode::HandleYield(DoCtrl::Expand {
+                factory: CallArg::Value(Value::Python(dummy_factory)),
+                args: vec![],
+                kwargs: vec![],
+                metadata: metadata.clone(),
+            });
+
+            let event = vm.step_handle_yield();
+            assert!(matches!(
+                event,
+                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
+            ));
+            assert!(matches!(
+                vm.pending_python,
+                Some(PendingPython::ExpandReturn { metadata: Some(_) })
+            ));
+
+            vm.receive_python_result(PyCallOutcome::Value(Value::Int(1)));
+            match &vm.mode {
+                Mode::Throw(PyException::TypeError { message }) => {
+                    assert!(message.contains("ExpandReturn: expected DoeffGenerator"));
+                }
+                other => panic!("expected Expand type error, got {:?}", other),
+            }
+            let seg = vm.segments.get(seg_id).expect("segment missing");
+            assert!(
+                seg.frames.is_empty(),
+                "Expand must not push a frame when return is invalid"
+            );
+        });
+    }
+
+    /// R9-A: Apply with empty args/kwargs still dispatches via CallFunc.
+    #[test]
+    fn test_r9a_apply_empty_args_yields_call_func() {
         Python::attach(|py| {
             let mut vm = VM::new();
             let marker = Marker::fresh();
@@ -4986,7 +5095,7 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(DoCtrl::Call {
+            vm.mode = Mode::HandleYield(DoCtrl::Apply {
                 f: CallArg::Value(Value::Python(dummy_f)),
                 args: vec![],
                 kwargs: vec![],
@@ -5013,11 +5122,11 @@ mod tests {
         });
     }
 
-    /// R9-A: Call with non-empty args → CallFunc (Kernel path).
-    /// Spec: "Kernel call (with args): Call { f: kernel, args, kwargs, metadata }
+    /// R9-A: Apply with non-empty args → CallFunc.
+    /// Spec: "Kernel call (with args): Apply { f: kernel, args, kwargs, metadata }
     ///        → driver calls kernel(*args, **kwargs), gets result, pushes frame."
     #[test]
-    fn test_r9a_call_with_args_yields_call_func() {
+    fn test_r9a_apply_with_args_yields_call_func() {
         Python::attach(|py| {
             let mut vm = VM::new();
             let marker = Marker::fresh();
@@ -5034,7 +5143,7 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(DoCtrl::Call {
+            vm.mode = Mode::HandleYield(DoCtrl::Apply {
                 f: CallArg::Value(Value::Python(dummy_f)),
                 args: vec![
                     CallArg::Value(Value::Int(42)),
@@ -5063,10 +5172,10 @@ mod tests {
         });
     }
 
-    /// R9-A: Call with kwargs preserves them as separate field in CallFunc.
+    /// R9-A: Apply with kwargs preserves them as separate field in CallFunc.
     /// Spec: driver calls f(*args, **kwargs) — keyword semantics are preserved.
     #[test]
-    fn test_r9a_call_kwargs_preserved_separately() {
+    fn test_r9a_apply_kwargs_preserved_separately() {
         Python::attach(|py| {
             let mut vm = VM::new();
             let marker = Marker::fresh();
@@ -5083,7 +5192,7 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(DoCtrl::Call {
+            vm.mode = Mode::HandleYield(DoCtrl::Apply {
                 f: CallArg::Value(Value::Python(dummy_f)),
                 args: vec![CallArg::Value(Value::Int(1))],
                 kwargs: vec![
@@ -5120,10 +5229,10 @@ mod tests {
         });
     }
 
-    /// R9-A: Call with only kwargs (no positional args) still takes Kernel path.
+    /// R9-A: Apply with only kwargs (no positional args) still takes CallFunc path.
     /// Empty args but non-empty kwargs → not DoThunk path.
     #[test]
-    fn test_r9a_call_kwargs_only_takes_kernel_path() {
+    fn test_r9a_apply_kwargs_only_takes_callfunc_path() {
         Python::attach(|py| {
             let mut vm = VM::new();
             let marker = Marker::fresh();
@@ -5140,7 +5249,7 @@ mod tests {
                 None,
             );
 
-            vm.mode = Mode::HandleYield(DoCtrl::Call {
+            vm.mode = Mode::HandleYield(DoCtrl::Apply {
                 f: CallArg::Value(Value::Python(dummy_f)),
                 args: vec![],
                 kwargs: vec![(
