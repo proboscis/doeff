@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
 use crate::do_ctrl::{CallArg, DoCtrl};
-use crate::doeff_generator::DoeffGenerator;
+use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
     dispatch_from_shared, dispatch_to_pyobject, PyAcquireSemaphore, PyAsk, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
@@ -38,11 +38,13 @@ pub enum DoExprTag {
     GetContinuation = 9,
     GetHandlers = 10,
     GetCallStack = 11,
-    GetTrace = 18,
     Eval = 12,
     CreateContinuation = 13,
     ResumeContinuation = 14,
     AsyncEscape = 15,
+    Apply = 16,
+    Expand = 17,
+    GetTrace = 18,
     Effect = 128,
     Unknown = 255,
 }
@@ -63,11 +65,13 @@ impl TryFrom<u8> for DoExprTag {
             9 => Ok(DoExprTag::GetContinuation),
             10 => Ok(DoExprTag::GetHandlers),
             11 => Ok(DoExprTag::GetCallStack),
-            18 => Ok(DoExprTag::GetTrace),
             12 => Ok(DoExprTag::Eval),
             13 => Ok(DoExprTag::CreateContinuation),
             14 => Ok(DoExprTag::ResumeContinuation),
             15 => Ok(DoExprTag::AsyncEscape),
+            16 => Ok(DoExprTag::Apply),
+            17 => Ok(DoExprTag::Expand),
+            18 => Ok(DoExprTag::GetTrace),
             128 => Ok(DoExprTag::Effect),
             255 => Ok(DoExprTag::Unknown),
             other => Err(other),
@@ -1063,6 +1067,48 @@ impl PyVM {
                         metadata: call_metadata_from_pycall(py, &c)?,
                     })
                 }
+                DoExprTag::Apply => {
+                    let a: PyRef<'_, PyApply> = obj.extract()?;
+                    let f = classify_call_arg(py, a.f.bind(py).as_any())?;
+                    let mut args = Vec::new();
+                    for item in a.args.bind(py).try_iter()? {
+                        let item = item?;
+                        args.push(classify_call_arg(py, item.as_any())?);
+                    }
+                    let kwargs_dict = a.kwargs.bind(py).cast::<PyDict>()?;
+                    let mut kwargs = Vec::new();
+                    for (k, v) in kwargs_dict.iter() {
+                        let key = k.str()?.to_str()?.to_string();
+                        kwargs.push((key, classify_call_arg(py, v.as_any())?));
+                    }
+                    Ok(DoCtrl::Apply {
+                        f,
+                        args,
+                        kwargs,
+                        metadata: call_metadata_from_pyapply(py, &a)?,
+                    })
+                }
+                DoExprTag::Expand => {
+                    let e: PyRef<'_, PyExpand> = obj.extract()?;
+                    let factory = classify_call_arg(py, e.factory.bind(py).as_any())?;
+                    let mut args = Vec::new();
+                    for item in e.args.bind(py).try_iter()? {
+                        let item = item?;
+                        args.push(classify_call_arg(py, item.as_any())?);
+                    }
+                    let kwargs_dict = e.kwargs.bind(py).cast::<PyDict>()?;
+                    let mut kwargs = Vec::new();
+                    for (k, v) in kwargs_dict.iter() {
+                        let key = k.str()?.to_str()?.to_string();
+                        kwargs.push((key, classify_call_arg(py, v.as_any())?));
+                    }
+                    Ok(DoCtrl::Expand {
+                        factory,
+                        args,
+                        kwargs,
+                        metadata: call_metadata_from_pyexpand(py, &e)?,
+                    })
+                }
                 DoExprTag::Map => {
                     let m: PyRef<'_, PyMap> = obj.extract()?;
                     Ok(DoCtrl::Map {
@@ -1473,26 +1519,55 @@ Provide explicit metadata with function_name/source_file/source_line.",
     )))
 }
 
-fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> PyResult<CallMetadata> {
-    if let Some(meta) = &call.meta {
+fn call_metadata_from_call_like(
+    py: Python<'_>,
+    meta: &Option<Py<PyAny>>,
+    callable_obj: &Bound<'_, PyAny>,
+    ctrl_name: &str,
+    field_name: &str,
+) -> PyResult<CallMetadata> {
+    if let Some(meta) = meta {
         return Ok(call_metadata_from_meta_obj(meta.bind(py)));
     }
 
-    let f_obj = call.f.bind(py);
-    if let Ok(pure) = f_obj.extract::<PyRef<'_, PyPure>>() {
+    if let Ok(pure) = callable_obj.extract::<PyRef<'_, PyPure>>() {
         let value = pure.value.bind(py);
         if value.is_callable() {
             return call_metadata_from_callable(value);
         }
     }
-    if f_obj.is_callable() {
-        return call_metadata_from_callable(f_obj);
+    if callable_obj.is_callable() {
+        return call_metadata_from_callable(callable_obj);
     }
     Err(PyTypeError::new_err(format!(
-        "Cannot derive call metadata from Call.f {}. \
-Supply Call(..., meta={{function_name, source_file, source_line}}).",
-        callable_diagnostic_label(f_obj)
+        "Cannot derive call metadata from {ctrl_name}.{field_name} {}. \
+Supply {ctrl_name}(..., meta={{function_name, source_file, source_line}}).",
+        callable_diagnostic_label(callable_obj)
     )))
+}
+
+fn call_metadata_from_pycall(py: Python<'_>, call: &PyRef<'_, PyCall>) -> PyResult<CallMetadata> {
+    call_metadata_from_call_like(py, &call.meta, call.f.bind(py), "Call", "f")
+}
+
+fn call_metadata_from_pyapply(
+    py: Python<'_>,
+    apply: &PyRef<'_, PyApply>,
+) -> PyResult<CallMetadata> {
+    call_metadata_from_call_like(py, &apply.meta, apply.f.bind(py), "Apply", "f")
+}
+
+fn call_metadata_from_pyexpand(
+    py: Python<'_>,
+    expand: &PyRef<'_, PyExpand>,
+) -> PyResult<CallMetadata> {
+    call_metadata_from_call_like(
+        py,
+        &expand.meta,
+        expand.factory.bind(py),
+        "Expand",
+        "factory",
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1957,6 +2032,90 @@ impl PyCall {
             })
             .add_subclass(PyCall {
                 f,
+                args,
+                kwargs,
+                meta,
+            }))
+    }
+}
+
+#[pyclass(name = "Apply", extends=PyDoCtrlBase)]
+pub struct PyApply {
+    #[pyo3(get)]
+    pub f: Py<PyAny>,
+    #[pyo3(get)]
+    pub args: Py<PyAny>,
+    #[pyo3(get)]
+    pub kwargs: Py<PyAny>,
+    #[pyo3(get)]
+    pub meta: Option<Py<PyAny>>,
+}
+
+#[pymethods]
+impl PyApply {
+    #[new]
+    #[pyo3(signature = (f, args, kwargs, meta=None))]
+    fn new(
+        py: Python<'_>,
+        f: Py<PyAny>,
+        args: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        meta: Option<Py<PyAny>>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        if args.bind(py).try_iter().is_err() {
+            return Err(PyTypeError::new_err("Apply.args must be iterable"));
+        }
+        if !kwargs.bind(py).is_instance_of::<PyDict>() {
+            return Err(PyTypeError::new_err("Apply.kwargs must be dict"));
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Apply as u8,
+            })
+            .add_subclass(PyApply {
+                f,
+                args,
+                kwargs,
+                meta,
+            }))
+    }
+}
+
+#[pyclass(name = "Expand", extends=PyDoCtrlBase)]
+pub struct PyExpand {
+    #[pyo3(get)]
+    pub factory: Py<PyAny>,
+    #[pyo3(get)]
+    pub args: Py<PyAny>,
+    #[pyo3(get)]
+    pub kwargs: Py<PyAny>,
+    #[pyo3(get)]
+    pub meta: Option<Py<PyAny>>,
+}
+
+#[pymethods]
+impl PyExpand {
+    #[new]
+    #[pyo3(signature = (factory, args, kwargs, meta=None))]
+    fn new(
+        py: Python<'_>,
+        factory: Py<PyAny>,
+        args: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        meta: Option<Py<PyAny>>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        if args.bind(py).try_iter().is_err() {
+            return Err(PyTypeError::new_err("Expand.args must be iterable"));
+        }
+        if !kwargs.bind(py).is_instance_of::<PyDict>() {
+            return Err(PyTypeError::new_err("Expand.kwargs must be dict"));
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Expand as u8,
+            })
+            .add_subclass(PyExpand {
+                factory,
                 args,
                 kwargs,
                 meta,
@@ -3017,6 +3176,32 @@ mod tests {
             let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
             assert_eq!(base.tag, DoExprTag::Call as u8);
 
+            // Apply
+            let f = py.eval(c"lambda x: x", None, None).unwrap().unbind();
+            let args = pyo3::types::PyTuple::new(py, [1])
+                .unwrap()
+                .into_any()
+                .unbind();
+            let kwargs = PyDict::new(py).into_any().unbind();
+            let obj = Bound::new(py, PyApply::new(py, f, args, kwargs, None).unwrap())
+                .unwrap()
+                .into_any();
+            let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
+            assert_eq!(base.tag, DoExprTag::Apply as u8);
+
+            // Expand
+            let factory = py.eval(c"lambda x: x", None, None).unwrap().unbind();
+            let args = pyo3::types::PyTuple::new(py, [1])
+                .unwrap()
+                .into_any()
+                .unbind();
+            let kwargs = PyDict::new(py).into_any().unbind();
+            let obj = Bound::new(py, PyExpand::new(py, factory, args, kwargs, None).unwrap())
+                .unwrap()
+                .into_any();
+            let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
+            assert_eq!(base.tag, DoExprTag::Expand as u8);
+
             // GetContinuation
             let obj = Bound::new(py, PyGetContinuation::new()).unwrap().into_any();
             let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
@@ -3078,6 +3263,41 @@ mod tests {
             assert!(
                 matches!(yielded, DoCtrl::GetCallStack),
                 "GetCallStack tag dispatch failed, got {:?}",
+                yielded
+            );
+
+            // Apply → DoCtrl::Apply
+            let f = py.eval(c"lambda x: x", None, None).unwrap().unbind();
+            let args = pyo3::types::PyTuple::new(py, [1])
+                .unwrap()
+                .into_any()
+                .unbind();
+            let kwargs = PyDict::new(py).into_any().unbind();
+            let apply_obj = Bound::new(py, PyApply::new(py, f, args, kwargs, None).unwrap())
+                .unwrap()
+                .into_any();
+            let yielded = pyvm.classify_yielded(py, &apply_obj).unwrap();
+            assert!(
+                matches!(yielded, DoCtrl::Apply { .. }),
+                "Apply tag dispatch failed, got {:?}",
+                yielded
+            );
+
+            // Expand → DoCtrl::Expand
+            let factory = py.eval(c"lambda x: x", None, None).unwrap().unbind();
+            let args = pyo3::types::PyTuple::new(py, [1])
+                .unwrap()
+                .into_any()
+                .unbind();
+            let kwargs = PyDict::new(py).into_any().unbind();
+            let expand_obj =
+                Bound::new(py, PyExpand::new(py, factory, args, kwargs, None).unwrap())
+                    .unwrap()
+                    .into_any();
+            let yielded = pyvm.classify_yielded(py, &expand_obj).unwrap();
+            assert!(
+                matches!(yielded, DoCtrl::Expand { .. }),
+                "Expand tag dispatch failed, got {:?}",
                 yielded
             );
         });
@@ -3357,6 +3577,7 @@ fn async_run<'py>(
 #[pymodule]
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVM>()?;
+    m.add_class::<DoeffGeneratorFn>()?;
     m.add_class::<DoeffGenerator>()?;
     m.add_class::<PyDoExprBase>()?;
     m.add_class::<PyEffectBase>()?;
@@ -3372,6 +3593,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWithHandler>()?;
     m.add_class::<PyPure>()?;
     m.add_class::<PyCall>()?;
+    m.add_class::<PyApply>()?;
+    m.add_class::<PyExpand>()?;
     m.add_class::<PyMap>()?;
     m.add_class::<PyFlatMap>()?;
     m.add_class::<PyEval>()?;
@@ -3472,6 +3695,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
     m.add("TAG_GET_TRACE", DoExprTag::GetTrace as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;
+    m.add("TAG_APPLY", DoExprTag::Apply as u8)?;
+    m.add("TAG_EXPAND", DoExprTag::Expand as u8)?;
     m.add(
         "TAG_CREATE_CONTINUATION",
         DoExprTag::CreateContinuation as u8,
