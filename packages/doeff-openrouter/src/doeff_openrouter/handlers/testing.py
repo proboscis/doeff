@@ -14,7 +14,7 @@ from doeff_llm.effects import (
     LLMStructuredOutput,
 )
 
-from doeff import Delegate, Resume
+from doeff import Pass, Resume
 from doeff_openrouter.effects import (
     RouterChat,
     RouterStreamingChat,
@@ -173,9 +173,9 @@ def openrouter_mock_handler(
         )
         return (yield Resume(k, payload))
     if isinstance(effect, LLMEmbedding):
-        yield Delegate()
+        yield Pass()
         return
-    yield Delegate()
+    yield Pass()
 
 
 __all__ = [

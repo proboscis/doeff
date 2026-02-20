@@ -4,7 +4,7 @@ import inspect
 from dataclasses import dataclass
 from pathlib import Path
 
-from doeff import Ask, Delegate, EffectBase, Program, Resume, WithHandler, default_handlers, do, run
+from doeff import Ask, EffectBase, Pass, Program, Resume, WithHandler, default_handlers, do, run
 from doeff.effects import Put
 from doeff.effects.gather import Gather
 from doeff.effects.spawn import Spawn
@@ -241,7 +241,7 @@ def test_format_default_handler_stack_same() -> None:
 
 def test_format_default_keeps_duplicate_handler_names_from_vm_chain() -> None:
     def same_name_handler(_effect: object, _k: object):
-        yield Delegate()
+        yield Pass()
 
     @do
     def body() -> Program[None]:
@@ -270,7 +270,7 @@ def test_format_default_duplicate_name_throw_marks_correct_handler() -> None:
             if getattr(effect, "key", None) == "x":
                 _ = yield Resume(k, f"{label}:resumed")
                 raise RuntimeError(f"{label}:boom")
-            yield Delegate()
+            yield Pass()
 
         return handler
 
@@ -631,7 +631,7 @@ def test_format_default_shows_effect_yield_on_handler_throw() -> None:
     def crash_handler(effect: object, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("handler exploded")
-        yield Delegate()
+        yield Pass()
 
     @do
     def body() -> Program[int]:
@@ -656,7 +656,7 @@ def test_format_default_shows_program_yield_chain() -> None:
     def crash_handler(effect: object, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("handler exploded")
-        yield Delegate()
+        yield Pass()
 
     @do
     def inner() -> Program[int]:
@@ -705,10 +705,10 @@ def test_format_default_shows_delegation_chain() -> None:
     def outer_crash_handler(effect: object, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("delegated boom")
-        yield Delegate()
+        yield Pass()
 
     def inner_delegate_handler(_effect: object, _k: object):
-        yield Delegate()
+        yield Pass()
 
     @do
     def body() -> Program[int]:
@@ -735,7 +735,7 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     def crash_handler(effect: object, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("child exploded")
-        yield Delegate()
+        yield Pass()
 
     @do
     def child() -> Program[int]:
