@@ -652,7 +652,7 @@ impl ASTStreamProgram for AwaitHandlerProgram {
                         kwargs: vec![],
                     })
                 }
-                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
                 Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
@@ -663,7 +663,7 @@ impl ASTStreamProgram for AwaitHandlerProgram {
 
         #[cfg(test)]
         {
-            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+            return ASTStreamStep::Yield(DoCtrl::Pass { effect });
         }
 
         #[cfg(not(test))]
@@ -892,7 +892,7 @@ impl ASTStreamProgram for StateHandlerProgram {
                         })
                     }
                 },
-                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
                 Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
@@ -903,7 +903,7 @@ impl ASTStreamProgram for StateHandlerProgram {
 
         #[cfg(test)]
         {
-            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+            return ASTStreamStep::Yield(DoCtrl::Pass { effect });
         }
 
         #[cfg(not(test))]
@@ -1359,7 +1359,7 @@ impl LazyLocalScopeProgram {
         effect: DispatchEffect,
     ) -> ASTStreamStep {
         let Some(value) = self.overrides.get(&key).cloned() else {
-            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+            return ASTStreamStep::Yield(DoCtrl::Pass { effect });
         };
 
         self.handle_override_ask(key, continuation, value)
@@ -1383,7 +1383,7 @@ impl ASTStreamProgram for LazyLocalScopeProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => self.handle_ask(key, k, dispatch_from_shared(obj)),
-                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
                 Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
@@ -1394,7 +1394,7 @@ impl ASTStreamProgram for LazyLocalScopeProgram {
 
         #[cfg(test)]
         {
-            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+            return ASTStreamStep::Yield(DoCtrl::Pass { effect });
         }
 
         #[cfg(not(test))]
@@ -1790,7 +1790,7 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
 
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => self.begin_delegate_phase(dispatch_from_shared(obj), key, k),
-                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
                 Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
@@ -1801,7 +1801,7 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
 
         #[cfg(test)]
         {
-            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+            return ASTStreamStep::Yield(DoCtrl::Pass { effect });
         }
 
         #[cfg(not(test))]
@@ -2084,7 +2084,7 @@ impl ASTStreamProgram for ReaderHandlerProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => ReaderHandlerProgram::handle_ask(key, k, store),
-                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
                 Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
@@ -2095,7 +2095,7 @@ impl ASTStreamProgram for ReaderHandlerProgram {
 
         #[cfg(test)]
         {
-            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+            return ASTStreamStep::Yield(DoCtrl::Pass { effect });
         }
 
         #[cfg(not(test))]
@@ -2219,7 +2219,7 @@ impl ASTStreamProgram for WriterHandlerProgram {
                         value: Value::Unit,
                     })
                 }
-                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
                 Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
@@ -2230,7 +2230,7 @@ impl ASTStreamProgram for WriterHandlerProgram {
 
         #[cfg(test)]
         {
-            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+            return ASTStreamStep::Yield(DoCtrl::Pass { effect });
         }
 
         #[cfg(not(test))]
@@ -2388,7 +2388,7 @@ impl ASTStreamProgram for ResultSafeHandlerProgram {
                     };
                     ASTStreamStep::Yield(DoCtrl::GetHandlers)
                 }
-                Ok(None) => ASTStreamStep::Yield(DoCtrl::Delegate {
+                Ok(None) => ASTStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
                 Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
@@ -2399,7 +2399,7 @@ impl ASTStreamProgram for ResultSafeHandlerProgram {
 
         #[cfg(test)]
         {
-            return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+            return ASTStreamStep::Yield(DoCtrl::Pass { effect });
         }
 
         #[cfg(not(test))]
@@ -2567,7 +2567,7 @@ impl ASTStreamProgram for DoubleCallHandlerProgram {
                     kwargs: vec![],
                 })
             }
-            other => ASTStreamStep::Yield(DoCtrl::Delegate { effect: other }),
+            other => ASTStreamStep::Yield(DoCtrl::Pass { effect: other }),
         }
     }
 

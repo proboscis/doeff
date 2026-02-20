@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from doeff import Program, do
 from doeff._types_internal import EffectBase
 from doeff.effects import ProgramCallStack, ProgramTrace, Put, slog
-from doeff.rust_vm import Delegate, Resume, WithHandler, default_handlers, run
+from doeff.rust_vm import Delegate, Pass, Resume, WithHandler, default_handlers, run
 from doeff.trace import TraceDispatch, TraceFrame
 from doeff.traceback import attach_doeff_traceback
 
@@ -74,7 +74,7 @@ def test_program_trace_from_python_handler() -> None:
             handler_view = yield ProgramTrace()
             resumed = yield Resume(k, effect.value + 1)
             return resumed, handler_view
-        yield Delegate()
+        yield Pass()
 
     @do
     def body() -> Program[int]:
@@ -143,12 +143,12 @@ def test_delegation_chain_routes_to_outer_handler() -> None:
         if isinstance(effect, NeedsHandler):
             delegated_result = yield Delegate()
             return delegated_result
-        yield Delegate()
+        yield Pass()
 
     def outer_handler(effect, k):
         if isinstance(effect, NeedsHandler):
             return (yield Resume(k, effect.value))
-        yield Delegate()
+        yield Pass()
 
     @do
     def body() -> Program[int]:
@@ -193,7 +193,7 @@ def test_handler_sources_and_exception_repr_for_thrown_handler() -> None:
     def crashing_handler(effect, _k):
         if isinstance(effect, Explode):
             raise RuntimeError("handler exploded")
-        yield Delegate()
+        yield Pass()
 
     @do
     def body() -> Program[int]:

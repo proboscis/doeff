@@ -43,7 +43,7 @@ def listen(sub_program: ProgramLike):
             if isinstance(effect, WriterTellEffect):
                 captured.append(effect.message)
                 return (yield doeff_vm.Resume(k, None))
-            return (yield doeff_vm.Delegate())
+            yield doeff_vm.Pass()
 
         value = yield doeff_vm.WithHandler(handle_listen_tell, sub_program)
         return ListenResult(value=value, log=captured)
@@ -72,7 +72,7 @@ def Listen(sub_program: ProgramLike) -> Effect:
             if isinstance(effect, WriterTellEffect):
                 captured.append(effect.message)
                 return (yield doeff_vm.Resume(k, None))
-            return (yield doeff_vm.Delegate())
+            yield doeff_vm.Pass()
 
         value = yield doeff_vm.WithHandler(handle_listen_tell, sub_program)
         return ListenResult(value=value, log=captured)
