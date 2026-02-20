@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
+use crate::ast_stream::{ASTStream, ASTStreamStep, StreamLocation};
 use crate::continuation::Continuation;
 #[cfg(test)]
 use crate::effect::Effect;
@@ -47,6 +48,15 @@ pub enum RustProgramStep {
     /// Need to call a Python function (e.g., Modify calling modifier).
     /// The program is suspended; result feeds back via resume().
     NeedsPython(PythonCall),
+}
+
+fn rust_program_step_to_ast_stream_step(step: RustProgramStep) -> ASTStreamStep {
+    match step {
+        RustProgramStep::Yield(ctrl) => ASTStreamStep::Yield(ctrl),
+        RustProgramStep::Return(value) => ASTStreamStep::Return(value),
+        RustProgramStep::Throw(exc) => ASTStreamStep::Throw(exc),
+        RustProgramStep::NeedsPython(call) => ASTStreamStep::NeedsPython(call),
+    }
 }
 
 /// A Rust handler program instance (generator-like).
@@ -533,6 +543,14 @@ impl AwaitHandlerProgram {
     fn new() -> Self {
         AwaitHandlerProgram { pending_k: None }
     }
+
+    fn current_phase_name(&self) -> &'static str {
+        if self.pending_k.is_some() {
+            "AwaitBridgeResult"
+        } else {
+            "Idle"
+        }
+    }
 }
 
 impl RustHandlerProgram for AwaitHandlerProgram {
@@ -600,6 +618,27 @@ impl RustHandlerProgram for AwaitHandlerProgram {
     }
 }
 
+impl ASTStream for AwaitHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::resume(
+            self, value, store,
+        ))
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::throw(self, exc, store))
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "AwaitHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // StateHandlerFactory + StateHandlerProgram
 // ---------------------------------------------------------------------------
@@ -648,6 +687,14 @@ impl StateHandlerProgram {
             pending_key: None,
             pending_k: None,
             pending_old_value: None,
+        }
+    }
+
+    fn current_phase_name(&self) -> &'static str {
+        if self.pending_key.is_some() {
+            "ModifyApply"
+        } else {
+            "Idle"
         }
     }
 }
@@ -761,6 +808,27 @@ impl RustHandlerProgram for StateHandlerProgram {
 
     fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
         RustProgramStep::Throw(exc)
+    }
+}
+
+impl ASTStream for StateHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::resume(
+            self, value, store,
+        ))
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::throw(self, exc, store))
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "StateHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
     }
 }
 
@@ -1305,6 +1373,19 @@ impl LazyAskHandlerProgram {
         }
     }
 
+    fn current_phase_name(&self) -> &'static str {
+        match self.phase {
+            LazyAskPhase::Idle => "Idle",
+            LazyAskPhase::AwaitLocalHandlers { .. } => "AwaitLocalHandlers",
+            LazyAskPhase::AwaitLocalEval { .. } => "AwaitLocalEval",
+            LazyAskPhase::AwaitDelegate { .. } => "AwaitDelegate",
+            LazyAskPhase::AwaitAcquire { .. } => "AwaitAcquire",
+            LazyAskPhase::AwaitCache { .. } => "AwaitCache",
+            LazyAskPhase::AwaitEval { .. } => "AwaitEval",
+            LazyAskPhase::AwaitRelease { .. } => "AwaitRelease",
+        }
+    }
+
     fn yield_perform(effect: Result<DispatchEffect, PyException>) -> RustProgramStep {
         match effect {
             Ok(effect) => RustProgramStep::Yield(DoCtrl::Perform { effect }),
@@ -1683,6 +1764,27 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
     }
 }
 
+impl ASTStream for LazyAskHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::resume(
+            self, value, store,
+        ))
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::throw(self, exc, store))
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "LazyAskHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ReaderHandlerFactory + ReaderHandlerProgram
 // ---------------------------------------------------------------------------
@@ -1727,6 +1829,10 @@ impl ReaderHandlerProgram {
             continuation,
             value,
         })
+    }
+
+    fn current_phase_name(&self) -> &'static str {
+        "AskApply"
     }
 }
 
@@ -1773,6 +1879,27 @@ impl RustHandlerProgram for ReaderHandlerProgram {
     }
 }
 
+impl ASTStream for ReaderHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::resume(
+            self, value, store,
+        ))
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::throw(self, exc, store))
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "ReaderHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // WriterHandlerFactory + WriterHandlerProgram
 // ---------------------------------------------------------------------------
@@ -1802,6 +1929,12 @@ impl RustProgramHandler for WriterHandlerFactory {
 
 #[derive(Debug)]
 struct WriterHandlerProgram;
+
+impl WriterHandlerProgram {
+    fn current_phase_name(&self) -> &'static str {
+        "TellApply"
+    }
+}
 
 impl RustHandlerProgram for WriterHandlerProgram {
     fn start(
@@ -1856,6 +1989,27 @@ impl RustHandlerProgram for WriterHandlerProgram {
     }
 }
 
+impl ASTStream for WriterHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::resume(
+            self, value, store,
+        ))
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::throw(self, exc, store))
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "WriterHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ResultSafeHandlerFactory + ResultSafeHandlerProgram
 // ---------------------------------------------------------------------------
@@ -1903,6 +2057,14 @@ impl ResultSafeHandlerProgram {
     fn new() -> Self {
         ResultSafeHandlerProgram {
             phase: ResultSafePhase::Idle,
+        }
+    }
+
+    fn current_phase_name(&self) -> &'static str {
+        match self.phase {
+            ResultSafePhase::Idle => "Idle",
+            ResultSafePhase::AwaitHandlers { .. } => "AwaitHandlers",
+            ResultSafePhase::AwaitEval { .. } => "AwaitEval",
         }
     }
 
@@ -1994,6 +2156,27 @@ impl RustHandlerProgram for ResultSafeHandlerProgram {
             | ResultSafePhase::AwaitEval { continuation } => self.finish_err(continuation, exc),
             ResultSafePhase::Idle => RustProgramStep::Throw(exc),
         }
+    }
+}
+
+impl ASTStream for ResultSafeHandlerProgram {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::resume(
+            self, value, store,
+        ))
+    }
+
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+        rust_program_step_to_ast_stream_step(<Self as RustHandlerProgram>::throw(self, exc, store))
+    }
+
+    fn debug_location(&self) -> Option<StreamLocation> {
+        Some(StreamLocation {
+            function_name: "ResultSafeHandler".to_string(),
+            source_file: "<rust>".to_string(),
+            source_line: 0,
+            phase: Some(self.current_phase_name().to_string()),
+        })
     }
 }
 
@@ -2116,6 +2299,7 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast_stream::{ASTStream, ASTStreamStep};
     use crate::ids::Marker;
     use crate::segment::Segment;
     use pyo3::types::PyDictMethods;
@@ -2143,6 +2327,146 @@ mod tests {
         // Verify that Handler::RustProgram is Clone via Arc
         // (Can't easily instantiate a trait object in unit test, but verify types compile)
         let _: fn() -> RustProgramHandlerRef = || unreachable!();
+    }
+
+    #[test]
+    fn test_await_ast_stream_resume_sequence() {
+        let mut store = RustStore::new();
+        let mut program = AwaitHandlerProgram::new();
+        let continuation = make_test_continuation();
+        let continuation_id = continuation.cont_id;
+        program.pending_k = Some(continuation);
+
+        let location = ASTStream::debug_location(&program).expect("await debug location");
+        assert_eq!(location.function_name, "AwaitHandler");
+        assert_eq!(location.phase.as_deref(), Some("AwaitBridgeResult"));
+
+        let step = ASTStream::resume(&mut program, Value::Int(12), &mut store);
+        match step {
+            ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            }) => {
+                assert_eq!(continuation.cont_id, continuation_id);
+                assert_eq!(value.as_int(), Some(12));
+            }
+            _ => panic!("expected ASTStream Yield(Resume)"),
+        }
+
+        let location = ASTStream::debug_location(&program).expect("await debug location");
+        assert_eq!(location.phase.as_deref(), Some("Idle"));
+    }
+
+    #[test]
+    fn test_state_ast_stream_modify_resume_sequence() {
+        let mut store = RustStore::new();
+        store.put("count".to_string(), Value::Int(5));
+
+        let mut program = StateHandlerProgram::new();
+        let continuation = make_test_continuation();
+        let continuation_id = continuation.cont_id;
+        program.pending_key = Some("count".to_string());
+        program.pending_k = Some(continuation);
+        program.pending_old_value = Some(Value::Int(5));
+
+        let location = ASTStream::debug_location(&program).expect("state debug location");
+        assert_eq!(location.function_name, "StateHandler");
+        assert_eq!(location.phase.as_deref(), Some("ModifyApply"));
+
+        let step = ASTStream::resume(&mut program, Value::Int(8), &mut store);
+        match step {
+            ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            }) => {
+                assert_eq!(continuation.cont_id, continuation_id);
+                assert_eq!(value.as_int(), Some(5));
+            }
+            _ => panic!("expected ASTStream Yield(Resume)"),
+        }
+
+        assert_eq!(store.get("count").and_then(Value::as_int), Some(8));
+        let location = ASTStream::debug_location(&program).expect("state debug location");
+        assert_eq!(location.phase.as_deref(), Some("Idle"));
+    }
+
+    #[test]
+    fn test_reader_ast_stream_throw_sequence() {
+        let mut store = RustStore::new();
+        let mut program = ReaderHandlerProgram;
+
+        let location = ASTStream::debug_location(&program).expect("reader debug location");
+        assert_eq!(location.function_name, "ReaderHandler");
+        assert_eq!(location.phase.as_deref(), Some("AskApply"));
+
+        let step = ASTStream::throw(&mut program, PyException::runtime_error("boom"), &mut store);
+        assert!(matches!(step, ASTStreamStep::Throw(_)));
+    }
+
+    #[test]
+    fn test_writer_ast_stream_throw_sequence() {
+        let mut store = RustStore::new();
+        let mut program = WriterHandlerProgram;
+
+        let location = ASTStream::debug_location(&program).expect("writer debug location");
+        assert_eq!(location.function_name, "WriterHandler");
+        assert_eq!(location.phase.as_deref(), Some("TellApply"));
+
+        let step = ASTStream::throw(&mut program, PyException::runtime_error("boom"), &mut store);
+        assert!(matches!(step, ASTStreamStep::Throw(_)));
+    }
+
+    #[test]
+    fn test_lazy_ask_ast_stream_release_sequence() {
+        let mut store = RustStore::new();
+        let mut program = LazyAskHandlerProgram::new(Arc::new(Mutex::new(LazyAskState::default())));
+        let continuation = make_test_continuation();
+        let continuation_id = continuation.cont_id;
+        program.phase = LazyAskPhase::AwaitRelease {
+            continuation,
+            outcome: Ok(Value::Int(44)),
+        };
+
+        let location = ASTStream::debug_location(&program).expect("lazy ask debug location");
+        assert_eq!(location.function_name, "LazyAskHandler");
+        assert_eq!(location.phase.as_deref(), Some("AwaitRelease"));
+
+        let step = ASTStream::resume(&mut program, Value::Unit, &mut store);
+        match step {
+            ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            }) => {
+                assert_eq!(continuation.cont_id, continuation_id);
+                assert_eq!(value.as_int(), Some(44));
+            }
+            _ => panic!("expected ASTStream Yield(Resume)"),
+        }
+    }
+
+    #[test]
+    fn test_result_safe_ast_stream_handlers_to_eval_sequence() {
+        Python::attach(|py| {
+            let mut store = RustStore::new();
+            let mut program = ResultSafeHandlerProgram::new();
+            let continuation = make_test_continuation();
+            let sub_program =
+                PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any());
+            program.phase = ResultSafePhase::AwaitHandlers {
+                continuation,
+                sub_program,
+            };
+
+            let location = ASTStream::debug_location(&program).expect("result safe debug location");
+            assert_eq!(location.function_name, "ResultSafeHandler");
+            assert_eq!(location.phase.as_deref(), Some("AwaitHandlers"));
+
+            let step = ASTStream::resume(&mut program, Value::Handlers(vec![]), &mut store);
+            assert!(matches!(step, ASTStreamStep::Yield(DoCtrl::Eval { .. })));
+
+            let location = ASTStream::debug_location(&program).expect("result safe debug location");
+            assert_eq!(location.phase.as_deref(), Some("AwaitEval"));
+        });
     }
 
     // --- Factory-based handler tests (R8) ---
