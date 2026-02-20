@@ -173,7 +173,8 @@ impl Continuation {
                 }
                 match handler {
                     Handler::Python {
-                        callable: py_handler, ..
+                        callable: py_handler,
+                        ..
                     } => {
                         list.append(py_handler.bind(py))?;
                     }

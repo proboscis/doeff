@@ -39,7 +39,9 @@ def test_SA_003_G01_callfunc_path_has_distinct_pending_state() -> None:
     src = _read(RUST_SRC / "vm.rs")
     body = _extract_fn_body(src, "step_handle_yield")
     assert "PendingPython::CallFuncReturn" in body
-    assert "DoCtrl::Call" in body
+    assert "PendingPython::ExpandReturn" in body
+    assert "DoCtrl::Apply" in body
+    assert "DoCtrl::Expand" in body
 
 
 def test_SA_003_G02_python_call_errors_are_normalized_to_generror() -> None:
