@@ -10,7 +10,7 @@ use crate::capture::{
     HandlerStatus, TraceEntry,
 };
 use crate::frame::CallMetadata;
-use crate::handler::Handler;
+use crate::handler::{Handler, RustProgramInvocation};
 use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 
 /// A value that can flow through the VM.
@@ -27,6 +27,8 @@ pub enum Value {
     None,
     Continuation(crate::continuation::Continuation),
     Handlers(Vec<Handler>),
+    RustProgramInvocation(RustProgramInvocation),
+    PythonHandlerCallable(Py<PyAny>),
     Task(TaskHandle),
     Promise(PromiseHandle),
     ExternalPromise(ExternalPromise),
@@ -335,25 +337,16 @@ impl Value {
             Value::Handlers(handlers) => {
                 let list = PyList::empty(py);
                 for h in handlers {
-                    match h {
-                        Handler::Python {
-                            callable: py_handler,
-                            ..
-                        } => {
-                            let bound = py_handler.bind(py);
-                            if let Ok(original) = bound.getattr("__doeff_original_handler__") {
-                                list.append(original)?;
-                            } else {
-                                list.append(bound)?;
-                            }
-                        }
-                        Handler::RustProgram(_) => {
-                            list.append(py.None().into_bound(py))?;
-                        }
+                    if let Some(identity) = h.py_identity() {
+                        list.append(identity.bind(py))?;
+                    } else {
+                        list.append(py.None().into_bound(py))?;
                     }
                 }
                 Ok(list.into_any())
             }
+            Value::RustProgramInvocation(_) => Ok(py.None().into_bound(py)),
+            Value::PythonHandlerCallable(callable) => Ok(callable.bind(py).clone()),
             Value::Task(handle) => {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("type", "Task")?;
@@ -498,6 +491,12 @@ impl Value {
             Value::None => Value::None,
             Value::Continuation(k) => Value::Continuation(k.clone()),
             Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
+            Value::RustProgramInvocation(invocation) => {
+                Value::RustProgramInvocation(invocation.clone())
+            }
+            Value::PythonHandlerCallable(callable) => {
+                Value::PythonHandlerCallable(callable.clone_ref(py))
+            }
             Value::Task(h) => Value::Task(*h),
             Value::Promise(h) => Value::Promise(*h),
             Value::ExternalPromise(h) => Value::ExternalPromise(h.clone()),
@@ -572,9 +571,7 @@ mod tests {
 
     #[test]
     fn test_value_handlers() {
-        let handlers = vec![Handler::RustProgram(std::sync::Arc::new(
-            crate::handler::StateHandlerFactory,
-        ))];
+        let handlers = vec![std::sync::Arc::new(crate::handler::StateHandlerFactory) as Handler];
         let val = Value::Handlers(handlers);
         assert!(val.as_handlers().is_some());
         assert_eq!(val.as_handlers().unwrap().len(), 1);

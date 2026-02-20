@@ -12,30 +12,23 @@ use pyo3::types::{PyDict, PyModule};
 
 use crate::ast_stream::{ASTStream, ASTStreamStep, StreamLocation};
 use crate::continuation::Continuation;
+use crate::do_ctrl::CallArg;
+use crate::doeff_generator::DoeffGeneratorFn;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect, PyAsk,
-    PyGet, PyLocal, PyModify, PyPut, PyPythonAsyncioAwaitEffect, PyResultSafeEffect, PyTell,
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, dispatch_to_pyobject,
+    DispatchEffect, PyAsk, PyGet, PyLocal, PyModify, PyPut, PyPythonAsyncioAwaitEffect,
+    PyResultSafeEffect, PyTell,
 };
+use crate::frame::CallMetadata;
 use crate::ids::SegmentId;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
+use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr, PyResultOk};
 use crate::step::{DoCtrl, PyException, PythonCall};
 use crate::value::Value;
 use crate::vm::RustStore;
-
-#[derive(Debug, Clone)]
-pub enum Handler {
-    RustProgram(RustProgramHandlerRef),
-    Python {
-        callable: PyShared,
-        handler_name: String,
-        handler_file: Option<String>,
-        handler_line: Option<u32>,
-    },
-}
 
 /// Result of stepping a Rust handler program.
 pub enum RustProgramStep {
@@ -110,9 +103,16 @@ pub trait HandlerInvoke: std::fmt::Debug + Send + Sync {
     fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr;
     fn handler_name(&self) -> &str;
     fn handler_debug_info(&self) -> HandlerDebugInfo;
+
+    fn py_identity(&self) -> Option<PyShared> {
+        None
+    }
+
+    fn on_run_end(&self, _run_token: u64) {}
 }
 
 pub type HandlerRef = Arc<dyn HandlerInvoke>;
+pub type Handler = HandlerRef;
 
 /// Shared reference to a Rust program handler factory.
 pub type RustProgramHandlerRef = Arc<dyn RustProgramHandler + Send + Sync>;
@@ -122,13 +122,13 @@ pub type RustProgramRef = Arc<Mutex<Box<dyn RustHandlerProgram + Send>>>;
 
 #[derive(Debug, Clone)]
 pub struct HandlerEntry {
-    pub handler: Handler,
+    pub handler: HandlerRef,
     pub prompt_seg_id: SegmentId,
     pub py_identity: Option<PyShared>,
 }
 
 impl HandlerEntry {
-    pub fn new(handler: Handler, prompt_seg_id: SegmentId) -> Self {
+    pub fn new(handler: HandlerRef, prompt_seg_id: SegmentId) -> Self {
         HandlerEntry {
             handler,
             prompt_seg_id,
@@ -137,7 +137,7 @@ impl HandlerEntry {
     }
 
     pub fn with_identity(
-        handler: Handler,
+        handler: HandlerRef,
         prompt_seg_id: SegmentId,
         py_identity: PyShared,
     ) -> Self {
@@ -149,77 +149,145 @@ impl HandlerEntry {
     }
 }
 
-impl Handler {
-    pub fn can_handle(&self, effect: &DispatchEffect) -> bool {
-        match self {
-            Handler::RustProgram(h) => h.can_handle(effect),
-            Handler::Python { .. } => true,
+#[derive(Debug, Clone)]
+pub struct RustProgramInvocation {
+    pub factory: RustProgramHandlerRef,
+    pub effect: Box<DispatchEffect>,
+    pub continuation: Continuation,
+}
+
+fn metadata_from_debug_info(debug: HandlerDebugInfo) -> CallMetadata {
+    CallMetadata::new(
+        debug.name,
+        debug.file.unwrap_or_else(|| "<unknown>".to_string()),
+        debug.line.unwrap_or(0),
+        None,
+        None,
+    )
+}
+
+fn rust_program_apply_expr(
+    factory: RustProgramHandlerRef,
+    effect: DispatchEffect,
+    continuation: Continuation,
+    metadata: CallMetadata,
+) -> DoExpr {
+    DoCtrl::Apply {
+        f: CallArg::Value(Value::RustProgramInvocation(RustProgramInvocation {
+            factory,
+            effect: Box::new(effect),
+            continuation,
+        })),
+        args: vec![],
+        kwargs: vec![],
+        metadata,
+    }
+}
+
+fn rust_program_expand_expr(
+    factory: RustProgramHandlerRef,
+    effect: DispatchEffect,
+    continuation: Continuation,
+    metadata: CallMetadata,
+) -> DoExpr {
+    DoCtrl::Expand {
+        factory: CallArg::Value(Value::RustProgramInvocation(RustProgramInvocation {
+            factory,
+            effect: Box::new(effect),
+            continuation,
+        })),
+        args: vec![],
+        kwargs: vec![],
+        metadata,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PythonHandler {
+    pub dgfn: Py<DoeffGeneratorFn>,
+    handler_name: String,
+    handler_file: Option<String>,
+    handler_line: Option<u32>,
+}
+
+impl PythonHandler {
+    pub fn from_dgfn(dgfn: Py<DoeffGeneratorFn>) -> Self {
+        Python::attach(|py| {
+            let borrowed = dgfn.bind(py).borrow();
+            PythonHandler {
+                dgfn,
+                handler_name: borrowed.function_name.clone(),
+                handler_file: Some(borrowed.source_file.clone()),
+                handler_line: Some(borrowed.source_line),
+            }
+        })
+    }
+}
+
+impl HandlerInvoke for PythonHandler {
+    fn can_handle(&self, _effect: &DispatchEffect) -> bool {
+        true
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        let py_effect = match Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind()))
+        {
+            Ok(obj) => obj,
+            Err(err) => {
+                return DoCtrl::TransferThrow {
+                    continuation: k,
+                    exception: PyException::type_error(format!(
+                        "PythonHandler invoke failed to convert effect: {err}"
+                    )),
+                };
+            }
+        };
+
+        let py_k = match Python::attach(|py| {
+            Bound::new(py, PyK::from_cont_id(k.cont_id)).map(|bound| bound.into_any().unbind())
+        }) {
+            Ok(obj) => obj,
+            Err(err) => {
+                return DoCtrl::TransferThrow {
+                    continuation: k,
+                    exception: PyException::type_error(format!(
+                        "PythonHandler invoke failed to create continuation handle: {err}"
+                    )),
+                };
+            }
+        };
+
+        let metadata = metadata_from_debug_info(self.handler_debug_info());
+        DoCtrl::Expand {
+            factory: CallArg::Value(Value::PythonHandlerCallable(Python::attach(|py| {
+                self.dgfn.clone_ref(py).into_any()
+            }))),
+            args: vec![
+                CallArg::Value(Value::Python(py_effect)),
+                CallArg::Value(Value::Python(py_k)),
+            ],
+            kwargs: vec![],
+            metadata,
         }
     }
 
-    pub fn python_from_callable(callable: &Bound<'_, PyAny>) -> Self {
-        fn optional_attr_string(callable: &Bound<'_, PyAny>, attr: &str) -> Option<String> {
-            callable.getattr(attr).ok().and_then(|value| {
-                if value.is_none() {
-                    None
-                } else {
-                    value.extract::<String>().ok()
-                }
-            })
+    fn handler_name(&self) -> &str {
+        self.handler_name.as_str()
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: self.handler_name.clone(),
+            file: self.handler_file.clone(),
+            line: self.handler_line,
         }
+    }
 
-        fn optional_attr_u32(callable: &Bound<'_, PyAny>, attr: &str) -> Option<u32> {
-            callable.getattr(attr).ok().and_then(|value| {
-                if value.is_none() {
-                    return None;
-                }
-                value.extract::<u32>().ok().or_else(|| {
-                    value
-                        .extract::<i64>()
-                        .ok()
-                        .and_then(|line| u32::try_from(line).ok())
-                })
-            })
-        }
-
-        fn fallback_source(callable: &Bound<'_, PyAny>) -> (Option<String>, Option<u32>) {
-            let code = callable.getattr("__code__").ok().or_else(|| {
-                callable
-                    .getattr("__call__")
-                    .ok()
-                    .and_then(|call| call.getattr("__code__").ok())
-            });
-            let Some(code) = code else {
-                return (None, None);
-            };
-            let file = code
-                .getattr("co_filename")
-                .ok()
-                .and_then(|value| value.extract::<String>().ok());
-            let line = code
-                .getattr("co_firstlineno")
-                .ok()
-                .and_then(|value| value.extract::<u32>().ok());
-            (file, line)
-        }
-
-        let handler_name = optional_attr_string(callable, "__doeff_handler_name__")
-            .or_else(|| optional_attr_string(callable, "__qualname__"))
-            .or_else(|| optional_attr_string(callable, "__name__"))
-            .or_else(|| callable.get_type().name().ok().map(|name| name.to_string()))
-            .unwrap_or_else(|| "<python_handler>".to_string());
-
-        let (fallback_file, fallback_line) = fallback_source(callable);
-        let handler_file =
-            optional_attr_string(callable, "__doeff_handler_file__").or(fallback_file);
-        let handler_line = optional_attr_u32(callable, "__doeff_handler_line__").or(fallback_line);
-
-        Handler::Python {
-            callable: PyShared::new(callable.clone().unbind()),
-            handler_name,
-            handler_file,
-            handler_line,
-        }
+    fn py_identity(&self) -> Option<PyShared> {
+        Some(PyShared::new(Python::attach(|py| {
+            let borrowed = self.dgfn.bind(py).borrow();
+            borrowed.callable.clone_ref(py)
+        })))
     }
 }
 
@@ -534,6 +602,33 @@ impl RustProgramHandler for AwaitHandlerFactory {
     }
 }
 
+impl HandlerInvoke for AwaitHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as RustProgramHandler>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        rust_program_expand_expr(
+            Arc::new(self.clone()),
+            effect,
+            k,
+            metadata_from_debug_info(self.handler_debug_info()),
+        )
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as RustProgramHandler>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as RustProgramHandler>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct AwaitHandlerProgram {
     pending_k: Option<Continuation>,
@@ -666,6 +761,56 @@ impl RustProgramHandler for StateHandlerFactory {
 
     fn handler_name(&self) -> &'static str {
         "StateHandler"
+    }
+}
+
+impl HandlerInvoke for StateHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as RustProgramHandler>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        let is_modify = {
+            #[cfg(test)]
+            if matches!(&effect, Effect::Modify { .. }) {
+                true
+            } else {
+                dispatch_ref_as_python(&effect).is_some_and(|obj| {
+                    matches!(
+                        parse_state_python_effect(obj),
+                        Ok(Some(ParsedStateEffect::Modify { .. }))
+                    )
+                })
+            }
+            #[cfg(not(test))]
+            {
+                dispatch_ref_as_python(&effect).is_some_and(|obj| {
+                    matches!(
+                        parse_state_python_effect(obj),
+                        Ok(Some(ParsedStateEffect::Modify { .. }))
+                    )
+                })
+            }
+        };
+
+        let metadata = metadata_from_debug_info(self.handler_debug_info());
+        if is_modify {
+            rust_program_expand_expr(Arc::new(self.clone()), effect, k, metadata)
+        } else {
+            rust_program_apply_expr(Arc::new(self.clone()), effect, k, metadata)
+        }
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as RustProgramHandler>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as RustProgramHandler>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
     }
 }
 
@@ -930,6 +1075,52 @@ impl RustProgramHandler for LazyAskHandlerFactory {
     }
 }
 
+impl HandlerInvoke for LazyAskHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as RustProgramHandler>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        let is_direct_ask = {
+            #[cfg(test)]
+            if matches!(&effect, Effect::Ask { .. }) {
+                true
+            } else {
+                dispatch_ref_as_python(&effect)
+                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+            }
+            #[cfg(not(test))]
+            {
+                dispatch_ref_as_python(&effect)
+                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+            }
+        };
+
+        let metadata = metadata_from_debug_info(self.handler_debug_info());
+        if is_direct_ask {
+            rust_program_apply_expr(Arc::new(self.clone()), effect, k, metadata)
+        } else {
+            rust_program_expand_expr(Arc::new(self.clone()), effect, k, metadata)
+        }
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as RustProgramHandler>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as RustProgramHandler>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
+    }
+
+    fn on_run_end(&self, run_token: u64) {
+        <Self as RustProgramHandler>::on_run_end(self, run_token);
+    }
+}
+
 #[derive(Debug, Default)]
 struct LazyLocalScopeState {
     cache: HashMap<HashedPyKey, LazyCacheEntry>,
@@ -971,6 +1162,33 @@ impl RustProgramHandler for LazyLocalScopeFactory {
 
     fn handler_name(&self) -> &'static str {
         "LazyLocalScopeHandler"
+    }
+}
+
+impl HandlerInvoke for LazyLocalScopeFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as RustProgramHandler>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        rust_program_expand_expr(
+            Arc::new(self.clone()),
+            effect,
+            k,
+            metadata_from_debug_info(self.handler_debug_info()),
+        )
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as RustProgramHandler>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as RustProgramHandler>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
     }
 }
 
@@ -1631,7 +1849,7 @@ impl RustHandlerProgram for LazyAskHandlerProgram {
                         ));
                     }
                 };
-                handlers.insert(0, Handler::RustProgram(Arc::new(scope.clone())));
+                handlers.insert(0, Arc::new(scope.clone()));
                 self.phase = LazyAskPhase::AwaitLocalEval { continuation };
                 RustProgramStep::Yield(DoCtrl::Eval {
                     expr: sub_program,
@@ -1812,6 +2030,48 @@ impl RustProgramHandler for ReaderHandlerFactory {
     }
 }
 
+impl HandlerInvoke for ReaderHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as RustProgramHandler>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        let is_ask = {
+            #[cfg(test)]
+            if matches!(&effect, Effect::Ask { .. }) {
+                true
+            } else {
+                dispatch_ref_as_python(&effect)
+                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+            }
+            #[cfg(not(test))]
+            {
+                dispatch_ref_as_python(&effect)
+                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+            }
+        };
+
+        let metadata = metadata_from_debug_info(self.handler_debug_info());
+        if is_ask {
+            rust_program_apply_expr(Arc::new(self.clone()), effect, k, metadata)
+        } else {
+            rust_program_expand_expr(Arc::new(self.clone()), effect, k, metadata)
+        }
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as RustProgramHandler>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as RustProgramHandler>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ReaderHandlerProgram;
 
@@ -1927,6 +2187,33 @@ impl RustProgramHandler for WriterHandlerFactory {
     }
 }
 
+impl HandlerInvoke for WriterHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as RustProgramHandler>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        rust_program_apply_expr(
+            Arc::new(self.clone()),
+            effect,
+            k,
+            metadata_from_debug_info(self.handler_debug_info()),
+        )
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as RustProgramHandler>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as RustProgramHandler>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct WriterHandlerProgram;
 
@@ -2033,6 +2320,33 @@ impl RustProgramHandler for ResultSafeHandlerFactory {
 
     fn handler_name(&self) -> &'static str {
         "ResultSafeHandler"
+    }
+}
+
+impl HandlerInvoke for ResultSafeHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as RustProgramHandler>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        rust_program_expand_expr(
+            Arc::new(self.clone()),
+            effect,
+            k,
+            metadata_from_debug_info(self.handler_debug_info()),
+        )
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as RustProgramHandler>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as RustProgramHandler>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
     }
 }
 
@@ -2211,6 +2525,34 @@ impl RustProgramHandler for DoubleCallHandlerFactory {
 }
 
 #[cfg(test)]
+impl HandlerInvoke for DoubleCallHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        <Self as RustProgramHandler>::can_handle(self, effect)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        rust_program_expand_expr(
+            Arc::new(self.clone()),
+            effect,
+            k,
+            metadata_from_debug_info(self.handler_debug_info()),
+        )
+    }
+
+    fn handler_name(&self) -> &str {
+        <Self as RustProgramHandler>::handler_name(self)
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: <Self as RustProgramHandler>::handler_name(self).to_string(),
+            file: None,
+            line: None,
+        }
+    }
+}
+
+#[cfg(test)]
 #[derive(Debug)]
 enum DoubleCallPhase {
     Init,
@@ -2314,17 +2656,17 @@ mod tests {
 
     #[test]
     fn test_handler_entry_creation() {
-        let handler = Handler::RustProgram(Arc::new(StateHandlerFactory));
+        let handler: Handler = Arc::new(StateHandlerFactory);
         let prompt_seg_id = SegmentId::from_index(5);
         let entry = HandlerEntry::new(handler, prompt_seg_id);
 
         assert_eq!(entry.prompt_seg_id, prompt_seg_id);
-        assert!(matches!(entry.handler, Handler::RustProgram(_)));
+        assert_eq!(entry.handler.handler_name(), "StateHandler");
     }
 
     #[test]
     fn test_rust_program_handler_ref_is_clone() {
-        // Verify that Handler::RustProgram is Clone via Arc
+        // Verify that Rust handler references are Clone via Arc
         // (Can't easily instantiate a trait object in unit test, but verify types compile)
         let _: fn() -> RustProgramHandlerRef = || unreachable!();
     }
@@ -2474,17 +2816,17 @@ mod tests {
     #[test]
     fn test_state_factory_can_handle() {
         let f = StateHandlerFactory;
-        assert!(f.can_handle(&Effect::Get {
+        assert!(HandlerInvoke::can_handle(&f, &Effect::Get {
             key: "x".to_string()
         }));
-        assert!(f.can_handle(&Effect::Put {
+        assert!(HandlerInvoke::can_handle(&f, &Effect::Put {
             key: "x".to_string(),
             value: Value::Unit
         }));
-        assert!(!f.can_handle(&Effect::Ask {
+        assert!(!HandlerInvoke::can_handle(&f, &Effect::Ask {
             key: "x".to_string()
         }));
-        assert!(!f.can_handle(&Effect::Tell {
+        assert!(!HandlerInvoke::can_handle(&f, &Effect::Tell {
             message: Value::Unit
         }));
     }
@@ -2619,13 +2961,13 @@ mod tests {
     #[test]
     fn test_reader_factory_can_handle() {
         let f = ReaderHandlerFactory;
-        assert!(f.can_handle(&Effect::Ask {
+        assert!(HandlerInvoke::can_handle(&f, &Effect::Ask {
             key: "x".to_string()
         }));
-        assert!(!f.can_handle(&Effect::Get {
+        assert!(!HandlerInvoke::can_handle(&f, &Effect::Get {
             key: "x".to_string()
         }));
-        assert!(!f.can_handle(&Effect::Tell {
+        assert!(!HandlerInvoke::can_handle(&f, &Effect::Tell {
             message: Value::Unit
         }));
     }
@@ -2660,13 +3002,13 @@ mod tests {
     #[test]
     fn test_writer_factory_can_handle() {
         let f = WriterHandlerFactory;
-        assert!(f.can_handle(&Effect::Tell {
+        assert!(HandlerInvoke::can_handle(&f, &Effect::Tell {
             message: Value::Unit
         }));
-        assert!(!f.can_handle(&Effect::Get {
+        assert!(!HandlerInvoke::can_handle(&f, &Effect::Get {
             key: "x".to_string()
         }));
-        assert!(!f.can_handle(&Effect::Ask {
+        assert!(!HandlerInvoke::can_handle(&f, &Effect::Ask {
             key: "x".to_string()
         }));
     }
@@ -2719,7 +3061,7 @@ mod tests {
             let effect = Effect::from_shared(PyShared::new(obj));
             let f = ResultSafeHandlerFactory;
             assert!(
-                f.can_handle(&effect),
+                HandlerInvoke::can_handle(&f, &effect),
                 "ResultSafe handler should claim ResultSafeEffect"
             );
         });

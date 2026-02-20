@@ -50,8 +50,8 @@ def test_SA_003_G02_python_call_errors_are_normalized_to_generror() -> None:
 
     assert "PythonCall::StartProgram" in body
     assert "to_generator_strict(py, program.clone_ref(py))?" not in body
-    assert "PythonCall::CallHandler" in body
-    assert "to_generator_strict(py, result.unbind())?" not in body
+    assert "PythonCall::CallHandler" not in body
+    assert "PythonCall::CallFunc" in body
     assert "PythonCall::CallAsync" in body
     assert "Ok(PyCallOutcome::GenError" in body
 
