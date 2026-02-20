@@ -1687,6 +1687,8 @@ impl VM {
                 DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
                 DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
                 DoCtrl::Call { .. } => "HandleYield(Call)",
+                DoCtrl::Apply { .. } => "HandleYield(Apply)",
+                DoCtrl::Expand { .. } => "HandleYield(Expand)",
                 DoCtrl::Eval { .. } => "HandleYield(Eval)",
                 DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
                 DoCtrl::GetTrace => "HandleYield(GetTrace)",
@@ -1775,6 +1777,8 @@ impl VM {
                 DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
                 DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
                 DoCtrl::Call { .. } => "HandleYield(Call)",
+                DoCtrl::Apply { .. } => "HandleYield(Apply)",
+                DoCtrl::Expand { .. } => "HandleYield(Expand)",
                 DoCtrl::Eval { .. } => "HandleYield(Eval)",
                 DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
                 DoCtrl::GetTrace => "HandleYield(GetTrace)",
@@ -2208,6 +2212,34 @@ impl VM {
                     args: value_args,
                     kwargs: value_kwargs,
                 })
+            }
+            DoCtrl::Apply {
+                f,
+                args,
+                kwargs,
+                metadata,
+            } => {
+                self.mode = Mode::HandleYield(DoCtrl::Call {
+                    f,
+                    args,
+                    kwargs,
+                    metadata,
+                });
+                StepEvent::Continue
+            }
+            DoCtrl::Expand {
+                factory,
+                args,
+                kwargs,
+                metadata,
+            } => {
+                self.mode = Mode::HandleYield(DoCtrl::Call {
+                    f: factory,
+                    args,
+                    kwargs,
+                    metadata,
+                });
+                StepEvent::Continue
             }
             DoCtrl::Eval {
                 expr,
