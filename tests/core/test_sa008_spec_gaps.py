@@ -21,8 +21,8 @@ def _read(path: Path) -> str:
 
 
 def test_SA_008_G01_no_yielded_unknown_variant() -> None:
-    src = _read(ROOT / "packages" / "doeff-vm" / "src" / "yielded.rs")
-    assert "Unknown" not in src
+    src_dir = ROOT / "packages" / "doeff-vm" / "src"
+    assert not (src_dir / "yielded.rs").exists()
 
 
 def test_SA_008_G02_classifier_no_unknown_fallback_branch() -> None:

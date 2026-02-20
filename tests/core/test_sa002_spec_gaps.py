@@ -105,7 +105,6 @@ def test_SA_002_G08_expected_vm_module_split_files_exist() -> None:
     expected = [
         RUST_SRC / "dispatch.rs",
         RUST_SRC / "do_ctrl.rs",
-        RUST_SRC / "yielded.rs",
         RUST_SRC / "rust_store.rs",
         RUST_SRC / "python_call.rs",
         RUST_SRC / "driver.rs",
