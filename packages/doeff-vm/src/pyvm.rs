@@ -4,14 +4,13 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::ast_stream::PythonGeneratorStream;
 use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
-    dispatch_from_shared, PyAcquireSemaphore, PyAsk, PyCancelEffect,
-    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGet, PyLocal, PyModify, PyProgramCallFrame, PyProgramCallStack, PyProgramTrace,
-    PyPut, PyPythonAsyncioAwaitEffect, PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn,
+    dispatch_from_shared, PyAcquireSemaphore, PyAsk, PyCancelEffect, PyCompletePromise,
+    PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise, PyGather, PyGet,
+    PyLocal, PyModify, PyProgramCallFrame, PyProgramCallStack, PyProgramTrace, PyPut,
+    PyPythonAsyncioAwaitEffect, PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn,
     PyTaskCompleted, PyTell,
 };
 
@@ -308,9 +307,7 @@ impl PyVM {
     }
 
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let gen = self.to_generator_strict(py, program.unbind())?;
-        let gen_bound = gen.bind(py).clone();
-        self.start_with_generator(gen_bound)?;
+        self.start_with_expr(py, program)?;
 
         loop {
             let event = py.detach(|| self.run_rust_steps());
@@ -339,9 +336,7 @@ impl PyVM {
         py: Python<'_>,
         program: Bound<'_, PyAny>,
     ) -> PyResult<PyRunResult> {
-        let gen = self.to_generator_strict(py, program.unbind())?;
-        let gen_bound = gen.bind(py).clone();
-        self.start_with_generator(gen_bound)?;
+        self.start_with_expr(py, program)?;
 
         let (result, traceback_data) = loop {
             let event = py.detach(|| self.run_rust_steps());
@@ -552,10 +547,7 @@ impl PyVM {
     }
 
     pub fn start_program(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<()> {
-        let gen = self.to_generator_strict(py, program.unbind())?;
-        let gen_bound = gen.bind(py).clone();
-        self.start_with_generator(gen_bound)?;
-        Ok(())
+        self.start_with_expr(py, program)
     }
 
     pub fn step_once(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -645,10 +637,7 @@ impl PyVM {
             let prompt_seg_id = self.vm.alloc_segment(seg);
             self.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Arc::new(StateHandlerFactory),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(StateHandlerFactory), prompt_seg_id),
             );
             scoped_markers.push(marker);
         }
@@ -659,10 +648,7 @@ impl PyVM {
             let prompt_seg_id = self.vm.alloc_segment(seg);
             self.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Arc::new(ReaderHandlerFactory),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(ReaderHandlerFactory), prompt_seg_id),
             );
             scoped_markers.push(marker);
         }
@@ -673,10 +659,7 @@ impl PyVM {
             let prompt_seg_id = self.vm.alloc_segment(seg);
             self.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Arc::new(WriterHandlerFactory),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(WriterHandlerFactory), prompt_seg_id),
             );
             scoped_markers.push(marker);
         }
@@ -701,7 +684,10 @@ impl PyVM {
     ) -> PyResult<(Handler, Option<PyShared>)> {
         if obj.is_instance_of::<PyRustHandlerSentinel>() {
             let sentinel: PyRef<'_, PyRustHandlerSentinel> = obj.extract()?;
-            return Ok((sentinel.factory.clone(), Some(PyShared::new(obj.clone().unbind()))));
+            return Ok((
+                sentinel.factory.clone(),
+                Some(PyShared::new(obj.clone().unbind())),
+            ));
         }
 
         if obj.is_instance_of::<DoeffGeneratorFn>() {
@@ -727,88 +713,22 @@ impl PyVM {
         Err(PyTypeError::new_err(format!("{base_message}, got {ty}")))
     }
 
-    fn is_python_generator_object(obj: &Bound<'_, PyAny>) -> bool {
-        let py = obj.py();
-        py.import("inspect")
-            .and_then(|m| m.getattr("isgenerator"))
-            .and_then(|f| f.call1((obj.clone(),)))
-            .ok()
-            .and_then(|v| v.extract::<bool>().ok())
-            .unwrap_or(false)
-    }
+    fn start_with_expr(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<()> {
+        self.vm.end_active_run_session();
+        self.vm.begin_run_session();
 
-    fn is_wrapped_generator_object(obj: &Bound<'_, PyAny>) -> bool {
-        obj.is_instance_of::<DoeffGenerator>()
-    }
-
-    fn require_doeff_generator(
-        &self,
-        py: Python<'_>,
-        candidate: Py<PyAny>,
-        context: &str,
-    ) -> PyResult<Py<PyAny>> {
-        let candidate_bound = candidate.bind(py);
-        if Self::is_wrapped_generator_object(candidate_bound) {
-            return Ok(candidate);
-        }
-
-        let ty = candidate_bound
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string());
-        if Self::is_python_generator_object(candidate_bound) {
-            return Err(PyTypeError::new_err(format!(
-                "{context}: raw generators are not accepted; expected DoeffGenerator"
-            )));
-        }
-        Err(PyTypeError::new_err(format!(
-            "{context}: expected DoeffGenerator, got {ty}"
-        )))
-    }
-
-    fn extract_doeff_generator(
-        &self,
-        py: Python<'_>,
-        gen: Bound<'_, PyAny>,
-        context: &str,
-    ) -> PyResult<(PyShared, PyShared, CallMetadata)> {
-        let wrapped: PyRef<'_, DoeffGenerator> = gen.extract().map_err(|_| {
-            let ty = gen
+        let expr = lift_effect_to_perform_expr(py, program.unbind())?;
+        let expr_bound = expr.bind(py);
+        if !expr_bound.is_instance_of::<PyDoExprBase>() {
+            let ty = expr_bound
                 .get_type()
                 .name()
                 .map(|n| n.to_string())
                 .unwrap_or_else(|_| "<unknown>".to_string());
-            PyTypeError::new_err(format!("{context}: expected DoeffGenerator, got {ty}"))
-        })?;
-
-        if !wrapped.get_frame.bind(py).is_callable() {
             return Err(PyTypeError::new_err(format!(
-                "{context}: DoeffGenerator.get_frame must be callable"
+                "program must be DoExpr; got {ty}"
             )));
         }
-
-        let metadata = CallMetadata::new(
-            wrapped.function_name.clone(),
-            wrapped.source_file.clone(),
-            wrapped.source_line,
-            None,
-            None,
-        );
-        Ok((
-            PyShared::new(wrapped.generator.clone_ref(py)),
-            PyShared::new(wrapped.get_frame.clone_ref(py)),
-            metadata,
-        ))
-    }
-
-    fn start_with_generator(&mut self, gen: Bound<'_, PyAny>) -> PyResult<()> {
-        self.vm.end_active_run_session();
-        self.vm.begin_run_session();
-
-        let py = gen.py();
-        let (generator, get_frame, metadata) =
-            self.extract_doeff_generator(py, gen, "start_with_generator")?;
 
         let marker = Marker::fresh();
         let installed_markers = self.vm.installed_handler_markers();
@@ -818,18 +738,11 @@ impl PyVM {
         let seg = Segment::new(marker, None, scope_chain);
         let seg_id = self.vm.alloc_segment(seg);
         self.vm.current_segment = Some(seg_id);
-
-        if let Some(seg) = self.vm.current_segment_mut() {
-            let stream = std::sync::Arc::new(std::sync::Mutex::new(Box::new(
-                PythonGeneratorStream::new(generator, get_frame),
-            )
-                as Box<dyn crate::ast_stream::ASTStream>));
-            seg.push_frame(crate::frame::Frame::Program {
-                stream,
-                metadata: Some(metadata),
-            });
-        }
-        self.vm.mode = Mode::Deliver(Value::Unit);
+        self.vm.mode = Mode::HandleYield(DoCtrl::Eval {
+            expr: PyShared::new(expr),
+            handlers: vec![],
+            metadata: None,
+        });
         Ok(())
     }
 
@@ -844,10 +757,10 @@ impl PyVM {
 
     fn execute_python_call(&self, py: Python<'_>, call: PythonCall) -> PyResult<PyCallOutcome> {
         match call {
-            PythonCall::StartProgram { program } => {
-                // D5: Strict only — no callable fallback. Spec requires ProgramBase.
-                match self.to_generator_strict(py, program.clone_ref(py)) {
-                    Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
+            PythonCall::EvalExpr { expr } => {
+                let obj = expr.bind(py);
+                match self.classify_yielded(py, obj) {
+                    Ok(yielded) => Ok(PyCallOutcome::GenYield(yielded)),
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
@@ -917,53 +830,6 @@ impl PyVM {
                 "GenNext/GenSend/GenThrow: expected StepUserGenerator in pending_python",
             )),
         }
-    }
-
-    /// Strict boundary: accept only Rust runtime DoExpr bases.
-    fn to_generator_strict(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
-        let program = lift_effect_to_perform_expr(py, program)?;
-        let program_bound = program.bind(py);
-
-        if Self::is_wrapped_generator_object(program_bound) {
-            return Ok(program);
-        }
-
-        if Self::is_python_generator_object(program_bound) {
-            let ty = program_bound
-                .get_type()
-                .name()
-                .map(|n| n.to_string())
-                .unwrap_or_else(|_| "<unknown>".to_string());
-            return Err(PyTypeError::new_err(
-                format!(
-                    "to_generator_strict(program): expected DoeffGenerator, got raw generator type {ty}"
-                ),
-            ));
-        }
-
-        if program_bound.is_instance_of::<PyDoExprBase>() {
-            let gen = program_bound.call_method0("to_generator")?;
-            return self.require_doeff_generator(py, gen.unbind(), "DoExpr.to_generator");
-        }
-
-        let is_nesting_step = program_bound
-            .get_type()
-            .name()
-            .map(|n| n.to_string_lossy().as_ref() == "_NestingStep")
-            .unwrap_or(false);
-        if is_nesting_step || program_bound.is_instance_of::<NestingStep>() {
-            let gen = program_bound.call_method0("to_generator")?;
-            return self.require_doeff_generator(py, gen.unbind(), "NestingStep.to_generator");
-        }
-
-        let ty = program_bound
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string());
-        Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "program must be DoExpr; got {ty}"
-        )))
     }
 
     fn step_generator(
@@ -1224,6 +1090,34 @@ impl PyVM {
             };
         }
 
+        if obj.is_instance_of::<PyDoExprBase>() {
+            let to_generator = obj.getattr("to_generator").map_err(|_| {
+                PyTypeError::new_err("DoExpr object is missing callable to_generator()")
+            })?;
+            if !to_generator.is_callable() {
+                return Err(PyTypeError::new_err(
+                    "DoExpr.to_generator must be callable",
+                ));
+            }
+            let ty_name = obj
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| "DoExpr".to_string());
+            return Ok(DoCtrl::Expand {
+                factory: CallArg::Value(Value::Python(to_generator.unbind())),
+                args: vec![],
+                kwargs: vec![],
+                metadata: CallMetadata::new(
+                    format!("{ty_name}.to_generator"),
+                    "<doexpr>".to_string(),
+                    0,
+                    None,
+                    Some(PyShared::new(obj.clone().unbind())),
+                ),
+            });
+        }
+
         // Fallback: bare effect → auto-lift to Perform (R14-C)
         if is_effect_base_like(py, obj)? {
             if obj.is_instance_of::<PyProgramTrace>() {
@@ -1287,10 +1181,7 @@ impl PyStdlib {
             let prompt_seg_id = vm.vm.alloc_segment(seg);
             vm.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Arc::new(StateHandlerFactory),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(StateHandlerFactory), prompt_seg_id),
             );
         }
     }
@@ -1301,10 +1192,7 @@ impl PyStdlib {
             let prompt_seg_id = vm.vm.alloc_segment(seg);
             vm.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Arc::new(ReaderHandlerFactory),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(ReaderHandlerFactory), prompt_seg_id),
             );
         }
     }
@@ -1315,10 +1203,7 @@ impl PyStdlib {
             let prompt_seg_id = vm.vm.alloc_segment(seg);
             vm.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Arc::new(WriterHandlerFactory),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(WriterHandlerFactory), prompt_seg_id),
             );
         }
     }
@@ -1335,10 +1220,7 @@ impl PySchedulerHandler {
             let prompt_seg_id = vm.vm.alloc_segment(seg);
             vm.vm.install_handler(
                 marker,
-                HandlerEntry::new(
-                    Arc::new(self.handler.clone()),
-                    prompt_seg_id,
-                ),
+                HandlerEntry::new(Arc::new(self.handler.clone()), prompt_seg_id),
             );
         }
     }
@@ -2796,76 +2678,19 @@ mod tests {
     }
 
     #[test]
-    fn test_vm_proto_to_generator_strict_rejects_raw_generator() {
-        Python::attach(|py| {
-            let pyvm = PyVM { vm: VM::new() };
-            let locals = pyo3::types::PyDict::new(py);
-            py.run(
-                c"def _raw_gen():\n    yield 1\nraw = _raw_gen()\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .expect("failed to create raw generator");
-            let raw = locals
-                .get_item("raw")
-                .expect("locals.get_item failed")
-                .expect("raw generator missing");
-            let result = pyvm.to_generator_strict(py, raw.unbind());
-            assert!(
-                result.is_err(),
-                "VM-PROTO-001: to_generator_strict must reject raw generators (require DoeffGenerator), got {:?}",
-                result
-            );
-            let msg = result.err().expect("expected TypeError").to_string();
-            assert!(
-                msg.contains("DoeffGenerator"),
-                "VM-PROTO-001: rejection error should mention DoeffGenerator, got {msg}"
-            );
-        });
-    }
-
-    #[test]
-    fn test_vm_proto_to_generator_strict_rejects_program_to_generator_returning_raw_generator() {
-        Python::attach(|py| {
-            let pyvm = PyVM { vm: VM::new() };
-            let module = pyo3::types::PyModule::new(py, "vm_proto_test_mod")
-                .expect("failed to allocate vm_proto_test_mod");
-            doeff_vm(&module).expect("failed to init vm module");
-            let locals = pyo3::types::PyDict::new(py);
-            locals
-                .set_item("vm", &module)
-                .expect("failed to bind vm module");
-            py.run(
-                c"class ProgramLike(vm.DoExpr):\n    def to_generator(self):\n        def _raw_gen():\n            yield 1\n        return _raw_gen()\n\nobj = ProgramLike()\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .expect("failed to create ProgramLike");
-            let obj = locals
-                .get_item("obj")
-                .expect("locals.get_item failed")
-                .expect("obj missing");
-            let result = pyvm.to_generator_strict(py, obj.unbind());
-            assert!(
-                result.is_err(),
-                "VM-PROTO-001: to_generator_strict must reject Program.to_generator() raw generator returns, got {:?}",
-                result
-            );
-            let msg = result.err().expect("expected TypeError").to_string();
-            assert!(
-                msg.contains("DoeffGenerator") && msg.contains("DoExpr.to_generator"),
-                "VM-PROTO-001: error should mention DoeffGenerator and DoExpr.to_generator boundary, got {msg}"
-            );
-        });
-    }
-
-    #[test]
-    fn test_vm_proto_start_with_generator_uses_doeff_generator_extraction() {
+    fn test_vm_proto_entry_uses_eval_expr_and_direct_doeff_eval() {
         let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
         let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
         assert!(
-            runtime_src.contains("extract_doeff_generator("),
-            "VM-PROTO-001: pyvm start path must extract fields from DoeffGenerator"
+            runtime_src.contains("fn start_with_expr(")
+                && runtime_src.contains("Mode::HandleYield(DoCtrl::Eval")
+                && runtime_src.contains("PythonCall::EvalExpr"),
+            "VM-PROTO-001: entry must start from DoExpr via EvalExpr/DoCtrl::Eval"
+        );
+        assert!(
+            !runtime_src.contains("to_generator_strict(")
+                && !runtime_src.contains("start_with_generator("),
+            "VM-PROTO-001: entry must not use to_generator_strict/start_with_generator"
         );
     }
 
@@ -3313,9 +3138,7 @@ fn async_run<'py>(
         }
     }
 
-    let gen = vm.to_generator_strict(py, wrapped)?;
-    let gen_bound = gen.bind(py).clone();
-    vm.start_with_generator(gen_bound)?;
+    vm.start_with_expr(py, wrapped.bind(py).clone())?;
 
     let py_vm = Bound::new(py, vm)?;
 
