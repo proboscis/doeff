@@ -100,34 +100,33 @@ fn build_traceback_data_pyobject(
     trace: Vec<crate::capture::TraceEntry>,
     active_chain: Vec<crate::capture::ActiveChainEntry>,
 ) -> Option<Py<PyAny>> {
-    let entries = Value::Trace(trace)
-        .to_pyobject(py)
-        .map_err(|e| {
-            eprintln!("[VM WARNING] traceback serialization failed for entries: {e}");
-            e
-        })
-        .ok()?
-        .unbind();
-    let active_chain = Value::ActiveChain(active_chain)
-        .to_pyobject(py)
-        .map_err(|e| {
-            eprintln!("[VM WARNING] traceback serialization failed for active_chain: {e}");
-            e
-        })
-        .ok()?
-        .unbind();
-    let data = Bound::new(
+    let entries = match Value::Trace(trace).to_pyobject(py) {
+        Ok(value) => value.unbind(),
+        Err(err) => {
+            eprintln!("[VM WARNING] traceback serialization failed for entries: {err}");
+            return None;
+        }
+    };
+    let active_chain = match Value::ActiveChain(active_chain).to_pyobject(py) {
+        Ok(value) => value.unbind(),
+        Err(err) => {
+            eprintln!("[VM WARNING] traceback serialization failed for active_chain: {err}");
+            return None;
+        }
+    };
+    let data = match Bound::new(
         py,
         PyDoeffTracebackData {
             entries,
             active_chain,
         },
-    )
-    .map_err(|e| {
-        eprintln!("[VM WARNING] traceback serialization failed for traceback_data object: {e}");
-        e
-    })
-    .ok()?;
+    ) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("[VM WARNING] traceback serialization failed for traceback_data object: {err}");
+            return None;
+        }
+    };
     Some(data.into_any().unbind())
 }
 
