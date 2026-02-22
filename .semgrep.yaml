@@ -794,7 +794,10 @@ rules:
       - pattern-inside: |
           def _print_doeff_trace_if_present(...):
               ...
-      - pattern: print($TB.format_chained(), file=sys.stderr)
+      - pattern-either:
+          - pattern: print($TB.format_chained(), file=sys.stderr)
+          - pattern: print($TB.format_sectioned(), file=sys.stderr)
+          - pattern: print($TB.format_short(), file=sys.stderr)
     paths:
       include:
         - "**/doeff/rust_vm.py"
@@ -806,6 +809,7 @@ rules:
     severity: ERROR
     metadata:
       category: traceback
+      spec: SPEC-TRACE-001
       rationale: "SPEC-TRACE-001 default format requirement"
 
   # ---------------------------------------------------------------------------

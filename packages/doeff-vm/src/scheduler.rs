@@ -238,17 +238,17 @@ fn maybe_attach_spawn_boundary_context(
 
     Python::attach(|py| {
         let exc = exc_value.bind(py);
-        let has_context = exc
+        let context = if let Some(existing_context) = exc
             .getattr(EXECUTION_CONTEXT_ATTR)
             .ok()
-            .is_some_and(|context| !context.is_none());
-        if has_context {
-            return;
-        }
-
-        let context = match make_execution_context_object(py) {
-            Ok(context) => context,
-            Err(_) => return,
+            .filter(|context| !context.is_none())
+        {
+            existing_context.unbind()
+        } else {
+            match make_execution_context_object(py) {
+                Ok(context) => context,
+                Err(_) => return,
+            }
         };
 
         let result = (|| -> PyResult<()> {
@@ -271,7 +271,35 @@ fn maybe_attach_spawn_boundary_context(
             }
 
             let context_bound = context.bind(py);
-            context_bound.getattr("add")?.call1((entry,))?;
+            let already_present = context_bound
+                .getattr("entries")
+                .ok()
+                .and_then(|entries| entries.try_iter().ok())
+                .is_some_and(|iter| {
+                    iter.filter_map(Result::ok).any(|existing| {
+                        let Ok(existing_dict) = existing.cast::<PyDict>() else {
+                            return false;
+                        };
+                        let kind = existing_dict
+                            .get_item("kind")
+                            .ok()
+                            .flatten()
+                            .and_then(|value| value.extract::<String>().ok());
+                        if kind.as_deref() != Some("spawn_boundary") {
+                            return false;
+                        }
+                        existing_dict
+                            .get_item("task_id")
+                            .ok()
+                            .flatten()
+                            .and_then(|value| value.extract::<u64>().ok())
+                            == Some(task_id.raw())
+                    })
+                });
+
+            if !already_present {
+                context_bound.getattr("add")?.call1((entry,))?;
+            }
             exc.setattr(EXECUTION_CONTEXT_ATTR, context_bound)?;
             Ok(())
         })();
