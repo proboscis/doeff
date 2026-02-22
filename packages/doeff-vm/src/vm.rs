@@ -2778,7 +2778,7 @@ impl VM {
     ) -> Result<(usize, Marker, HandlerEntry), VMError> {
         for (idx, &marker) in handler_chain.iter().enumerate() {
             if let Some(entry) = self.handlers.get(&marker) {
-                if entry.handler.can_handle(effect) {
+                if entry.handler.can_handle(effect)? {
                     return Ok((idx, marker, entry.clone()));
                 }
             }
@@ -3319,7 +3319,11 @@ impl VM {
         for idx in start_idx..handler_chain.len() {
             let marker = handler_chain[idx];
             if let Some(entry) = self.handlers.get(&marker) {
-                if entry.handler.can_handle(&effect) {
+                let can_handle = match entry.handler.can_handle(&effect) {
+                    Ok(value) => value,
+                    Err(err) => return StepEvent::Error(err),
+                };
+                if can_handle {
                     let handler = entry.handler.clone();
                     let from_marker = handler_chain.get(from_idx).copied();
                     let from_name = from_marker
@@ -3413,7 +3417,11 @@ impl VM {
         for idx in start_idx..handler_chain.len() {
             let marker = handler_chain[idx];
             if let Some(entry) = self.handlers.get(&marker) {
-                if entry.handler.can_handle(&effect) {
+                let can_handle = match entry.handler.can_handle(&effect) {
+                    Ok(value) => value,
+                    Err(err) => return StepEvent::Error(err),
+                };
+                if can_handle {
                     let handler = entry.handler.clone();
                     let from_marker = handler_chain.get(from_idx).copied();
                     let from_name = from_marker
@@ -4115,6 +4123,41 @@ mod tests {
 
         let result = vm.find_matching_handler(&vec![m1], &get_effect);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_find_matching_handler_propagates_can_handle_parse_error() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let prompt_seg_id = SegmentId::from_index(0);
+
+            vm.install_handler(
+                marker,
+                HandlerEntry::new(
+                    std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
+                    prompt_seg_id,
+                ),
+            );
+
+            let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("Ask", py.get_type::<crate::effect::PyAsk>())
+                .unwrap();
+            py.run(c"effect = Ask(key=[])\n", Some(&locals), Some(&locals))
+                .unwrap();
+            let effect_obj = locals.get_item("effect").unwrap().unwrap().unbind();
+            let effect = Effect::from_shared(PyShared::new(effect_obj));
+
+            let result = vm.find_matching_handler(&vec![marker], &effect);
+            match result {
+                Err(VMError::InternalError { message }) => {
+                    assert!(message.contains("ReaderHandler can_handle failed to parse effect"));
+                    assert!(message.contains("Ask key is not hashable"));
+                }
+                other => panic!("expected can_handle parse error, got {:?}", other),
+            }
+        });
     }
 
     #[test]

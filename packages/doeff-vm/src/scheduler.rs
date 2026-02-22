@@ -23,6 +23,7 @@ use crate::effect::{
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
     PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySpawn, PyTaskCompleted,
 };
+use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
     ASTStreamFactory, ASTStreamProgram, ASTStreamProgramRef, Handler, HandlerInvoke, PythonHandler,
@@ -2316,13 +2317,15 @@ impl SchedulerHandler {
 }
 
 impl ASTStreamFactory for SchedulerHandler {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
-        dispatch_ref_as_python(effect).is_some_and(|obj| {
-            matches!(
-                parse_scheduler_python_effect(obj, None),
-                Ok(Some(_)) | Err(_)
-            )
-        })
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return Ok(false);
+        };
+
+        match parse_scheduler_python_effect(obj, None) {
+            Ok(Some(_)) | Err(_) => Ok(true),
+            Ok(None) => Ok(false),
+        }
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -2348,7 +2351,7 @@ impl ASTStreamFactory for SchedulerHandler {
 }
 
 impl HandlerInvoke for SchedulerHandler {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
@@ -2788,7 +2791,8 @@ mod tests {
             &Effect::Get {
                 key: "x".to_string()
             }
-        ));
+        )
+        .unwrap());
     }
 
     #[test]
