@@ -2383,6 +2383,10 @@ impl HandlerInvoke for SchedulerHandler {
         }
     }
 
+    fn supports_error_context_conversion(&self) -> bool {
+        true
+    }
+
     fn on_run_end(&self, run_token: u64) {
         <Self as ASTStreamFactory>::on_run_end(self, run_token);
     }
