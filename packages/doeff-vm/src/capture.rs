@@ -59,6 +59,20 @@ pub struct EffectCreationSite {
     pub source_line: u32,
 }
 
+/// Single frame captured in traceback query results.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceFrame {
+    pub func_name: String,
+    pub source_file: String,
+    pub source_line: u32,
+}
+
+/// Frames captured for one continuation hop in traceback query results.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceHop {
+    pub frames: Vec<TraceFrame>,
+}
+
 impl From<EffectCreationSite> for SpawnSite {
     fn from(value: EffectCreationSite) -> Self {
         SpawnSite {
