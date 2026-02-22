@@ -4,7 +4,17 @@ import inspect
 from dataclasses import dataclass
 from pathlib import Path
 
-from doeff import Ask, EffectBase, Pass, Program, Resume, WithHandler, default_handlers, do, run
+from doeff import (
+    Ask,
+    EffectBase,
+    Pass,
+    Program,
+    Resume,
+    WithHandler,
+    default_handlers,
+    do,
+    run,
+)
 from doeff.effects import Put
 from doeff.effects.gather import Gather
 from doeff.effects.spawn import Spawn
@@ -37,6 +47,13 @@ def _line_of(function: object, needle: str) -> int:
         if needle in line:
             return start + offset
     raise AssertionError(f"failed to find {needle!r} in source")
+
+
+def _spawn_boundary_from(tb: object) -> object:
+    for entry in getattr(tb, "active_chain", ()):
+        if type(entry).__name__ == "SpawnBoundary":
+            return entry
+    raise AssertionError("expected spawn boundary in active_chain")
 
 
 def _render_single_delegated_handler(handler_name: str) -> str:
@@ -778,3 +795,76 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     assert child_stack_line.count("WriterHandler·") >= 2
     assert child_stack_line.count("ReaderHandler·") >= 2
     assert child_stack_line.count("StateHandler·") >= 2
+
+
+def test_spawn_site_attribution_under_single_delegate_handler() -> None:
+    from doeff.effects.spawn import spawn_intercept_handler
+
+    def crash_handler(effect: object, _k: object):
+        if isinstance(effect, Boom):
+            raise RuntimeError("child exploded")
+        yield Pass()
+
+    @do
+    def child() -> Program[int]:
+        yield Boom()
+        return 1
+
+    @do
+    def parent_single() -> Program[list[object]]:
+        task = yield Spawn(WithHandler(crash_handler, child()))
+        return (yield Gather(task))
+
+    result = run(WithHandler(spawn_intercept_handler, parent_single()), handlers=default_handlers())
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    boundary = _spawn_boundary_from(tb)
+    site = boundary.spawn_site
+    assert site is not None
+
+    source_file = str(Path(__file__).resolve())
+    expected_line = _line_of(parent_single.func, "task = yield Spawn(")
+    assert site.function_name == "parent_single"
+    assert site.source_file == source_file
+    assert site.source_line == expected_line
+    assert f"spawned at parent_single() {source_file}:{expected_line}" in tb.format_default()
+
+
+def test_spawn_site_attribution_under_nested_delegate_handlers() -> None:
+    from doeff.effects.spawn import spawn_intercept_handler
+
+    def crash_handler(effect: object, _k: object):
+        if isinstance(effect, Boom):
+            raise RuntimeError("child exploded")
+        yield Pass()
+
+    @do
+    def child() -> Program[int]:
+        yield Boom()
+        return 1
+
+    @do
+    def parent_nested() -> Program[list[object]]:
+        task = yield Spawn(WithHandler(crash_handler, child()))
+        return (yield Gather(task))
+
+    wrapped = WithHandler(
+        spawn_intercept_handler, WithHandler(spawn_intercept_handler, parent_nested())
+    )
+    result = run(wrapped, handlers=default_handlers())
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    boundary = _spawn_boundary_from(tb)
+    site = boundary.spawn_site
+    assert site is not None
+
+    source_file = str(Path(__file__).resolve())
+    expected_line = _line_of(parent_nested.func, "task = yield Spawn(")
+    assert site.function_name == "parent_nested"
+    assert site.source_file == source_file
+    assert site.source_line == expected_line
+    rendered = tb.format_default()
+    assert f"spawned at parent_nested() {source_file}:{expected_line}" in rendered
+    assert "spawned at spawn_intercept_handler()" not in rendered
