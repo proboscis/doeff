@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 
 import doeff_vm
+import pytest
 
 from doeff import (
     AcquireSemaphore,
@@ -18,6 +19,19 @@ from doeff import (
     run,
 )
 from doeff.effects import TaskCancelledError
+
+
+def test_semaphore_del_warns_when_cleanup_notification_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _notify_and_fail(_state_id: int, _semaphore_id: int) -> None:
+        raise RuntimeError("notify failed")
+
+    monkeypatch.setattr(doeff_vm, "_notify_semaphore_handle_dropped", _notify_and_fail, raising=False)
+
+    semaphore = Semaphore(id=11, _scheduler_state_id=17, _cleanup_on_del=True)
+    with pytest.warns(UserWarning, match="Failed to notify semaphore handle drop"):
+        semaphore.__del__()
 
 
 class TestSemaphoreEffectContract:

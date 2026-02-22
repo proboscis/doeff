@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -91,9 +92,9 @@ def _coerce_program(program: Any) -> Any:
 def _raise_unhandled_effect_if_present(run_result: Any, *, raise_unhandled: bool) -> Any:
     if not raise_unhandled:
         return run_result
-    is_err = getattr(run_result, "is_err", None)
+    is_err = run_result.is_err
     if callable(is_err) and is_err():
-        error = getattr(run_result, "error", None)
+        error = run_result.error
         if isinstance(error, TypeError):
             text = str(error).lower()
             if "unhandledeffect" in text or "unhandled effect" in text:
@@ -118,10 +119,14 @@ def _build_doeff_traceback_if_present(run_result: Any) -> Any | None:
         if doeff_tb is not None:
             try:
                 setattr(error, "doeff_traceback", doeff_tb)
-            except Exception:
-                pass
+            except Exception as exc:
+                warnings.warn(
+                    f"Failed to attach doeff traceback to {type(error).__name__}: {exc}",
+                    stacklevel=2,
+                )
         return doeff_tb
-    except Exception:
+    except Exception as exc:
+        warnings.warn(f"Failed to build doeff traceback: {exc}", stacklevel=2)
         # Best-effort: traceback projection should not block normal execution paths.
         return None
 
@@ -135,7 +140,8 @@ def _print_doeff_trace_if_present(run_result: Any) -> None:
         import sys
 
         print(doeff_tb.format_default(), file=sys.stderr)
-    except Exception:
+    except Exception as exc:
+        warnings.warn(f"Failed to print doeff trace: {exc}", stacklevel=2)
         return
 
 

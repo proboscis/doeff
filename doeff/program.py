@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import inspect
 import types
+import warnings
 from abc import ABC, ABCMeta
 from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
@@ -180,9 +181,9 @@ def _safe_get_type_hints(target: Any) -> dict[str, Any]:
         return {}
     try:
         return get_type_hints(target, include_extras=True)
-    except Exception:
-        annotations = getattr(target, "__annotations__", None)
-        return dict(annotations) if annotations else {}
+    except Exception as exc:
+        warnings.warn(f"Failed to resolve type hints for {target}: {exc}", stacklevel=2)
+        return {}
 
 
 def _safe_signature(target: Any) -> inspect.Signature | None:
@@ -388,8 +389,9 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 
         if not callable(f):
             raise TypeError("binder must be callable returning a Program")
-        from doeff.types import EffectBase
         from doeff_vm import DoExpr, FlatMap, Perform
+
+        from doeff.types import EffectBase
 
         binder_meta = _callable_metadata_dict(f)
 
@@ -420,8 +422,9 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 
     @staticmethod
     def lift(value: Program[U] | U) -> Program[U]:
-        from doeff.types import EffectBase
         from doeff_vm import DoExpr
+
+        from doeff.types import EffectBase
 
         if isinstance(value, ProgramBase):
             return value  # type: ignore[return-value]

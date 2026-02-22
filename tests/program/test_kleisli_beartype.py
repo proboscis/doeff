@@ -7,6 +7,7 @@ import sys
 import pytest
 from beartype import beartype
 
+import doeff.kleisli as kleisli_module
 from doeff import Program
 from doeff.kleisli import KleisliProgram, P
 
@@ -36,3 +37,15 @@ def test_kleisli_call_is_beartype_decoratable() -> None:
     result = decorated_call(kleisli)
 
     assert isinstance(result, Program)
+
+
+def test_hydrate_future_annotations_warns_on_resolution_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_resolution_error(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise NameError("forward reference missing")
+
+    monkeypatch.setattr(kleisli_module, "get_type_hints", _raise_resolution_error)
+
+    with pytest.warns(UserWarning, match="Failed to hydrate KleisliProgram.__call__ annotations"):
+        kleisli_module._hydrate_future_annotations()

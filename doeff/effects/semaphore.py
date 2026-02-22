@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 import doeff_vm
@@ -36,8 +37,12 @@ class Semaphore:
 
         try:
             notify(self._scheduler_state_id, self.id)
-        except Exception:
+        except Exception as exc:
             # Best-effort cleanup hook; never let destructor exceptions escape.
+            warnings.warn(
+                f"Failed to notify semaphore handle drop for id={self.id}: {exc}",
+                stacklevel=2,
+            )
             return
 
 

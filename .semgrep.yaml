@@ -364,6 +364,65 @@ rules:
       issue: VM-PROTO-003
       rationale: "Eliminate runtime handler metadata probing"
 
+  - id: doeff-traceback-except-must-log
+    patterns:
+      - pattern-inside: |
+          def $FUNC(...):
+              ...
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: "^(_build_doeff_traceback_if_present|_print_doeff_trace_if_present)$"
+      - pattern-either:
+          - pattern: |
+              try:
+                  ...
+              except Exception:
+                  ...
+          - pattern: |
+              try:
+                  ...
+              except Exception as $ERR:
+                  ...
+      - pattern-not: |
+          try:
+              ...
+          except Exception:
+              ...
+              warnings.warn(...)
+              ...
+      - pattern-not: |
+          try:
+              ...
+          except Exception as $ERR:
+              ...
+              warnings.warn(...)
+              ...
+      - pattern-not: |
+          try:
+              ...
+          except Exception:
+              ...
+              logging.warning(...)
+              ...
+      - pattern-not: |
+          try:
+              ...
+          except Exception as $ERR:
+              ...
+              logging.warning(...)
+              ...
+    paths:
+      include:
+        - "**/doeff/rust_vm.py"
+    message: |
+      Traceback-layer exception handlers must log before graceful degradation.
+      Add warnings.warn(...) or logging.warning(...) inside except Exception blocks.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: traceback-invariant
+      issue: VM-FAILFAST-001C
+
   # ---------------------------------------------------------------------------
   # LAYER BOUNDARIES
   # ---------------------------------------------------------------------------
