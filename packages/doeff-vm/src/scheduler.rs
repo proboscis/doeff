@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::ast_stream::{ASTStream, ASTStreamRef, ASTStreamStep, StreamLocation};
-use crate::capture::SpawnSite;
+use crate::ast_stream::{ASTStream, ASTStreamStep, StreamLocation};
+use crate::capture::{SpawnSite, TraceHop};
 use crate::continuation::Continuation;
 use crate::do_ctrl::CallArg;
 use crate::doeff_generator::DoeffGeneratorFn;
@@ -23,7 +23,7 @@ use crate::effect::{
     PyCreatePromise, PyCreateSemaphore, PyFailPromise, PyGather, PyRace, PyReleaseSemaphore,
     PySpawn, PyTaskCompleted,
 };
-use crate::frame::{CallMetadata, Frame};
+use crate::frame::CallMetadata;
 use crate::handler::{
     ASTStreamFactory, ASTStreamProgram, ASTStreamProgramRef, Handler, HandlerInvoke, PythonHandler,
     RustProgramInvocation,
@@ -471,50 +471,33 @@ fn extract_semaphore_id(obj: &Bound<'_, PyAny>) -> Option<u64> {
     obj.getattr("id").ok()?.extract::<u64>().ok()
 }
 
-fn resolve_stream_location(stream: &ASTStreamRef) -> Result<Option<(String, u32)>, String> {
-    let guard = stream
-        .lock()
-        .map_err(|_| "ASTStream lock poisoned".to_string())?;
-    Ok(guard
-        .debug_location()
-        .map(|location| (location.source_file, location.source_line)))
-}
-
 fn is_internal_source_file(source_file: &str) -> bool {
     let normalized = source_file.replace('\\', "/").to_lowercase();
     normalized == "_effect_wrap" || normalized.contains("/doeff/")
 }
 
-fn spawn_site_from_continuation(k: &Continuation) -> Option<SpawnSite> {
+fn spawn_site_from_traceback(hops: &[TraceHop]) -> Option<SpawnSite> {
     let mut fallback: Option<SpawnSite> = None;
 
-    for frame in k.frames_snapshot.iter().rev() {
-        if let Frame::Program {
-            stream,
-            metadata: Some(metadata),
-        } = frame
-        {
-            let fallback_candidate = SpawnSite {
-                function_name: metadata.function_name.clone(),
-                source_file: metadata.source_file.clone(),
-                source_line: metadata.source_line,
+    // Traceback hops are ordered inner->outer. Spawn attribution should favor
+    // the outermost user continuation when Delegate chains are present.
+    for hop in hops.iter().rev() {
+        let mut hop_fallback: Option<SpawnSite> = None;
+        for frame in hop.frames.iter().rev() {
+            let candidate = SpawnSite {
+                function_name: frame.func_name.clone(),
+                source_file: frame.source_file.clone(),
+                source_line: frame.source_line,
             };
-            let candidate = match resolve_stream_location(stream) {
-                Ok(Some((source_file, source_line))) => SpawnSite {
-                    function_name: metadata.function_name.clone(),
-                    source_file,
-                    source_line,
-                },
-                Ok(None) => fallback_candidate,
-                Err(_) => fallback_candidate,
-            };
-
-            if fallback.is_none() {
-                fallback = Some(candidate.clone());
+            if hop_fallback.is_none() {
+                hop_fallback = Some(candidate.clone());
             }
             if !is_internal_source_file(&candidate.source_file) {
                 return Some(candidate);
             }
+        }
+        if fallback.is_none() {
+            fallback = hop_fallback;
         }
     }
 
@@ -1708,6 +1691,10 @@ impl Drop for SchedulerState {
 #[derive(Debug)]
 enum SchedulerPhase {
     Idle,
+    SpawnAwaitTraceback {
+        k_user: Continuation,
+        effect: DispatchEffect,
+    },
     SpawnAwaitHandlers {
         k_user: Continuation,
         program: Py<PyAny>,
@@ -1759,6 +1746,7 @@ impl SchedulerProgram {
     fn current_phase_name(&self) -> &'static str {
         match self.phase {
             SchedulerPhase::Idle => "Idle",
+            SchedulerPhase::SpawnAwaitTraceback { .. } => "SpawnAwaitTraceback",
             SchedulerPhase::SpawnAwaitHandlers { .. } => "SpawnAwaitHandlers",
             SchedulerPhase::SpawnAwaitContinuation { .. } => "SpawnAwaitContinuation",
             SchedulerPhase::Driving { .. } => "Driving",
@@ -1982,10 +1970,8 @@ impl ASTStreamProgram for SchedulerProgram {
             }
         }
 
-        let creation_site = spawn_site_from_continuation(&k_user);
-
         let sched_effect = if let Some(obj) = dispatch_into_python(effect.clone()) {
-            match parse_scheduler_python_effect(&obj, creation_site.clone()) {
+            match parse_scheduler_python_effect(&obj, None) {
                 Ok(Some(se)) => se,
                 Ok(None) => {
                     return ASTStreamStep::Yield(DoCtrl::Delegate {
@@ -2010,37 +1996,13 @@ impl ASTStreamProgram for SchedulerProgram {
         };
 
         match sched_effect {
-            SchedulerEffect::Spawn {
-                program,
-                handlers,
-                store_mode,
-                creation_site,
-            } => {
-                let store_snapshot = match store_mode {
-                    StoreMode::Shared => None,
-                    StoreMode::Isolated { .. } => Some(store.clone()),
+            SchedulerEffect::Spawn { .. } => {
+                self.phase = SchedulerPhase::SpawnAwaitTraceback {
+                    k_user: k_user.clone(),
+                    effect,
                 };
-                if handlers.is_empty() {
-                    self.phase = SchedulerPhase::SpawnAwaitHandlers {
-                        k_user,
-                        program,
-                        store_mode,
-                        store_snapshot,
-                        spawn_site: creation_site,
-                    };
-                    return ASTStreamStep::Yield(DoCtrl::GetHandlers);
-                }
-
-                self.phase = SchedulerPhase::SpawnAwaitContinuation {
-                    k_user,
-                    store_mode,
-                    store_snapshot,
-                    spawn_site: creation_site,
-                };
-                ASTStreamStep::Yield(DoCtrl::CreateContinuation {
-                    expr: PyShared::new(program),
-                    handlers,
-                    handler_identities: vec![],
+                ASTStreamStep::Yield(DoCtrl::GetTraceback {
+                    continuation: k_user,
                 })
             }
 
@@ -2143,6 +2105,87 @@ impl ASTStreamProgram for SchedulerProgram {
 
     fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
+            SchedulerPhase::SpawnAwaitTraceback { k_user, effect } => {
+                let traceback = match value {
+                    Value::Traceback(hops) => hops,
+                    _ => {
+                        return ASTStreamStep::Throw(PyException::type_error(
+                            "scheduler Spawn expected GetTraceback result".to_string(),
+                        ));
+                    }
+                };
+                let spawn_site = spawn_site_from_traceback(&traceback);
+
+                let sched_effect = if let Some(obj) = dispatch_into_python(effect.clone()) {
+                    match parse_scheduler_python_effect(&obj, spawn_site.clone()) {
+                        Ok(Some(se)) => se,
+                        Ok(None) => {
+                            return ASTStreamStep::Throw(PyException::runtime_error(
+                                "scheduler Spawn traceback phase got non-scheduler effect"
+                                    .to_string(),
+                            ));
+                        }
+                        Err(msg) => {
+                            return ASTStreamStep::Throw(PyException::type_error(format!(
+                                "failed to parse scheduler effect: {msg}"
+                            )));
+                        }
+                    }
+                } else {
+                    #[cfg(test)]
+                    {
+                        return ASTStreamStep::Throw(PyException::runtime_error(
+                            "scheduler Spawn traceback phase requires python effect".to_string(),
+                        ));
+                    }
+                    #[cfg(not(test))]
+                    {
+                        unreachable!("runtime Effect is always Python")
+                    }
+                };
+
+                let SchedulerEffect::Spawn {
+                    program,
+                    handlers,
+                    store_mode,
+                    creation_site,
+                } = sched_effect
+                else {
+                    return ASTStreamStep::Throw(PyException::runtime_error(
+                        "scheduler Spawn traceback phase expected Spawn effect".to_string(),
+                    ));
+                };
+
+                let store_snapshot = match store_mode {
+                    StoreMode::Shared => None,
+                    StoreMode::Isolated { .. } => Some(store.clone()),
+                };
+
+                if handlers.is_empty() {
+                    self.phase = SchedulerPhase::SpawnAwaitHandlers {
+                        k_user,
+                        program,
+                        store_mode,
+                        store_snapshot,
+                        spawn_site: creation_site,
+                    };
+                    return ASTStreamStep::Yield(DoCtrl::GetHandlers);
+                }
+
+                self.phase = SchedulerPhase::SpawnAwaitContinuation {
+                    k_user,
+                    store_mode,
+                    store_snapshot,
+                    spawn_site: creation_site,
+                };
+
+                ASTStreamStep::Yield(DoCtrl::CreateContinuation {
+                    expr: PyShared::new(program),
+                    handlers,
+                    handler_identities: vec![],
+                })
+            }
+
             SchedulerPhase::SpawnAwaitHandlers {
                 k_user,
                 program,
@@ -2420,6 +2463,7 @@ impl HandlerInvoke for SchedulerHandler {
 mod tests {
     use super::*;
     use crate::ast_stream::{ASTStream, ASTStreamStep};
+    use crate::capture::TraceFrame;
     use pyo3::{IntoPyObject, Python};
 
     fn make_test_continuation() -> Continuation {
@@ -2483,17 +2527,33 @@ mod tests {
             let k_user = make_test_continuation();
             let k_user_id = k_user.cont_id;
             let spawn_program = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let spawn_effect = Py::new(
+                py,
+                PySpawn::create(py, spawn_program.clone_ref(py), None, None, None),
+            )
+            .expect("failed to create SpawnEffect")
+            .into_any();
 
-            program.phase = SchedulerPhase::SpawnAwaitHandlers {
+            program.phase = SchedulerPhase::SpawnAwaitTraceback {
                 k_user,
-                program: spawn_program,
-                store_mode: StoreMode::Shared,
-                store_snapshot: None,
-                spawn_site: None,
+                effect: dispatch_from_shared(PyShared::new(spawn_effect)),
             };
 
             let location = ASTStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.function_name, SCHEDULER_HANDLER_NAME);
+            assert_eq!(location.phase.as_deref(), Some("SpawnAwaitTraceback"));
+
+            let traceback = vec![TraceHop {
+                frames: vec![TraceFrame {
+                    func_name: "parent".to_string(),
+                    source_file: "/tmp/user_program.py".to_string(),
+                    source_line: 321,
+                }],
+            }];
+            let step = ASTStream::resume(&mut program, Value::Traceback(traceback), &mut store);
+            assert!(matches!(step, ASTStreamStep::Yield(DoCtrl::GetHandlers)));
+
+            let location = ASTStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.phase.as_deref(), Some("SpawnAwaitHandlers"));
 
             let step = ASTStream::resume(&mut program, Value::Handlers(vec![]), &mut store);
@@ -2534,6 +2594,46 @@ mod tests {
             let location = ASTStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.phase.as_deref(), Some("Idle"));
         });
+    }
+
+    #[test]
+    fn test_spawn_site_from_traceback_uses_outermost_user_hop() {
+        let hops = vec![
+            TraceHop {
+                frames: vec![TraceFrame {
+                    func_name: "delegate_b".to_string(),
+                    source_file: "/tmp/handlers.py".to_string(),
+                    source_line: 30,
+                }],
+            },
+            TraceHop {
+                frames: vec![TraceFrame {
+                    func_name: "delegate_a".to_string(),
+                    source_file: "/tmp/handlers.py".to_string(),
+                    source_line: 20,
+                }],
+            },
+            TraceHop {
+                frames: vec![
+                    TraceFrame {
+                        func_name: "parent".to_string(),
+                        source_file: "/tmp/user_program.py".to_string(),
+                        source_line: 88,
+                    },
+                    TraceFrame {
+                        func_name: "_spawn_task".to_string(),
+                        source_file: "/repo/doeff/effects/spawn.py".to_string(),
+                        source_line: 199,
+                    },
+                ],
+            },
+        ];
+
+        let site = spawn_site_from_traceback(&hops)
+            .expect("traceback should produce spawn site candidate");
+        assert_eq!(site.function_name, "parent");
+        assert_eq!(site.source_file, "/tmp/user_program.py");
+        assert_eq!(site.source_line, 88);
     }
 
     #[test]
