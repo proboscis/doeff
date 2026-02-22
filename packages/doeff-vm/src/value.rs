@@ -291,23 +291,9 @@ impl Value {
                 dict.set_item("handler_stack", stack)?;
                 dict.set_item("result", Self::effect_result_to_pyobject(py, result)?)?;
             }
-            ActiveChainEntry::SpawnBoundary {
-                task_id,
-                parent_task,
-                spawn_site,
-            } => {
-                dict.set_item("kind", "spawn_boundary")?;
-                dict.set_item("task_id", *task_id)?;
-                dict.set_item("parent_task", *parent_task)?;
-                if let Some(site) = spawn_site {
-                    let site_dict = PyDict::new(py);
-                    site_dict.set_item("function_name", site.function_name.as_str())?;
-                    site_dict.set_item("source_file", site.source_file.as_str())?;
-                    site_dict.set_item("source_line", site.source_line)?;
-                    dict.set_item("spawn_site", site_dict)?;
-                } else {
-                    dict.set_item("spawn_site", py.None())?;
-                }
+            ActiveChainEntry::ContextEntry { data } => {
+                dict.set_item("kind", "context_entry")?;
+                dict.set_item("data", data.clone_ref(py))?;
             }
             ActiveChainEntry::ExceptionSite {
                 function_name,

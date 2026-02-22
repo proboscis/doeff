@@ -1,5 +1,7 @@
 //! Unified traceback capture and assembly types.
 
+use pyo3::prelude::*;
+
 use crate::ids::DispatchId;
 
 /// Unique identifier for a program frame instance.
@@ -101,7 +103,7 @@ pub enum EffectResult {
 }
 
 /// Active chain row assembled by Rust for default traceback rendering.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum ActiveChainEntry {
     ProgramYield {
         function_name: String,
@@ -117,10 +119,8 @@ pub enum ActiveChainEntry {
         handler_stack: Vec<HandlerDispatchEntry>,
         result: EffectResult,
     },
-    SpawnBoundary {
-        task_id: u64,
-        parent_task: Option<u64>,
-        spawn_site: Option<SpawnSite>,
+    ContextEntry {
+        data: Py<PyAny>,
     },
     ExceptionSite {
         function_name: String,
@@ -157,6 +157,7 @@ pub enum CaptureEvent {
     DispatchStarted {
         dispatch_id: DispatchId,
         effect_repr: String,
+        is_execution_context_effect: bool,
         creation_site: Option<EffectCreationSite>,
         handler_name: String,
         handler_kind: HandlerKind,
