@@ -9,8 +9,10 @@ use crate::step::PyException;
 pub struct DispatchContext {
     pub dispatch_id: DispatchId,
     pub effect: DispatchEffect,
+    pub is_execution_context_effect: bool,
     pub handler_chain: Vec<Marker>,
     pub handler_idx: usize,
+    pub supports_error_context_conversion: bool,
     pub k_user: Continuation,
     pub prompt_seg_id: SegmentId,
     pub completed: bool,
