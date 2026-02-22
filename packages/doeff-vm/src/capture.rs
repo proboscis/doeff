@@ -19,6 +19,7 @@ pub enum HandlerKind {
 pub enum HandlerStatus {
     Active,
     Pending,
+    Passed,
     Delegated,
     Resumed,
     Transferred,
@@ -170,6 +171,16 @@ pub enum CaptureEvent {
         effect_source_line: Option<u32>,
     },
     Delegated {
+        dispatch_id: DispatchId,
+        from_handler_name: String,
+        from_handler_index: usize,
+        to_handler_name: String,
+        to_handler_index: usize,
+        to_handler_kind: HandlerKind,
+        to_handler_source_file: Option<String>,
+        to_handler_source_line: Option<u32>,
+    },
+    Passed {
         dispatch_id: DispatchId,
         from_handler_name: String,
         from_handler_index: usize,
