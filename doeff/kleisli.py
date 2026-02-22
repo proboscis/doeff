@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import types
+import warnings
 from collections.abc import Callable
 from collections.abc import Callable as TypingCallable
 from dataclasses import dataclass
@@ -71,8 +72,9 @@ class KleisliProgram(Generic[P, T]):
         return types.MethodType(self, instance)
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Program[T]:
-        from doeff.types import EffectBase
         from doeff_vm import Apply, DoCtrlBase, Expand, Perform, Pure
+
+        from doeff.types import EffectBase
 
         strategy = getattr(self, "_auto_unwrap_strategy", None)
         if strategy is None:
@@ -228,7 +230,8 @@ def _hydrate_future_annotations() -> None:
 
     try:
         hints = get_type_hints(KleisliProgram.__call__, include_extras=True)
-    except Exception:  # pragma: no cover - defensive guard
+    except Exception as exc:  # pragma: no cover - defensive guard
+        warnings.warn(f"Failed to hydrate KleisliProgram.__call__ annotations: {exc}", stacklevel=2)
         hints = {}
     if hints:
         KleisliProgram.__call__.__annotations__ = hints

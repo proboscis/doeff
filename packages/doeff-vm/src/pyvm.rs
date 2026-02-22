@@ -100,9 +100,20 @@ fn build_traceback_data_pyobject(
     trace: Vec<crate::capture::TraceEntry>,
     active_chain: Vec<crate::capture::ActiveChainEntry>,
 ) -> Option<Py<PyAny>> {
-    let entries = Value::Trace(trace).to_pyobject(py).ok()?.unbind();
+    let entries = Value::Trace(trace)
+        .to_pyobject(py)
+        .map_err(|e| {
+            eprintln!("[VM WARNING] traceback serialization failed for entries: {e}");
+            e
+        })
+        .ok()?
+        .unbind();
     let active_chain = Value::ActiveChain(active_chain)
         .to_pyobject(py)
+        .map_err(|e| {
+            eprintln!("[VM WARNING] traceback serialization failed for active_chain: {e}");
+            e
+        })
         .ok()?
         .unbind();
     let data = Bound::new(
@@ -112,6 +123,10 @@ fn build_traceback_data_pyobject(
             active_chain,
         },
     )
+    .map_err(|e| {
+        eprintln!("[VM WARNING] traceback serialization failed for traceback_data object: {e}");
+        e
+    })
     .ok()?;
     Some(data.into_any().unbind())
 }
