@@ -200,6 +200,13 @@ def _spawn_program(effect: SpawnEffect):
     return _spawn_task()
 
 
+def spawn_intercept_handler(effect: Any, k: Any):
+    if isinstance(effect, SpawnEffect):
+        raw = yield doeff_vm.Delegate()
+        return (yield doeff_vm.Resume(k, coerce_task_handle(raw)))
+    yield doeff_vm.Pass()
+
+
 def spawn(
     program: ProgramLike,
     **options: Any,
@@ -262,5 +269,6 @@ __all__ = [
     "coerce_task_handle",
     "promise_id_of",
     "spawn",
+    "spawn_intercept_handler",
     "task_id_of",
 ]
