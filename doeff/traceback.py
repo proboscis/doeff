@@ -56,6 +56,7 @@ else:
 
     from doeff.trace import (
         ActiveChainEntry,
+        ContextEntry,
         EffectResultActive,
         EffectResultResumed,
         EffectResultThrew,
@@ -407,6 +408,10 @@ else:
                     previous_handler_stack = None
                     lines.append(self._format_spawn_boundary(entry))
                     lines.append("")
+                    continue
+
+                if isinstance(entry, ContextEntry):
+                    previous_handler_stack = None
                     continue
 
                 if isinstance(entry, ExceptionSite):
