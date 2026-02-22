@@ -338,7 +338,8 @@ else:
             marker = {
                 "active": "⚡",
                 "pending": "·",
-                "delegated": "↗",
+                "passed": "↗",
+                "delegated": "⇆",
                 "resumed": "✓",
                 "transferred": "⇢",
                 "returned": "✓",

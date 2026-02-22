@@ -10,6 +10,7 @@ TraceDispatchAction: TypeAlias = Literal["active", "resumed", "transferred", "re
 HandlerStatusKind: TypeAlias = Literal[
     "active",
     "pending",
+    "passed",
     "delegated",
     "resumed",
     "transferred",
@@ -179,6 +180,7 @@ def _coerce_handler_status(value: Any) -> HandlerStatusKind:
     lookup: dict[str, HandlerStatusKind] = {
         "active": "active",
         "pending": "pending",
+        "passed": "passed",
         "delegated": "delegated",
         "resumed": "resumed",
         "transferred": "transferred",
