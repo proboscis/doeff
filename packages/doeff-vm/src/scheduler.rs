@@ -36,7 +36,6 @@ use crate::value::Value;
 use crate::vm::RustStore;
 
 pub const SCHEDULER_HANDLER_NAME: &str = "SchedulerHandler";
-const EXECUTION_CONTEXT_ATTR: &str = "doeff_execution_context";
 
 /// Effect variants handled by the scheduler.
 #[derive(Debug, Clone)]
@@ -227,87 +226,6 @@ fn throw_to_continuation(k: Continuation, error: PyException) -> ASTStreamStep {
     ASTStreamStep::Throw(error)
 }
 
-fn maybe_attach_spawn_boundary_context(
-    error: &PyException,
-    task_id: TaskId,
-    metadata: &TaskMetadata,
-) {
-    let PyException::Materialized { exc_value, .. } = error else {
-        return;
-    };
-
-    Python::attach(|py| {
-        let exc = exc_value.bind(py);
-        let context = if let Some(existing_context) = exc
-            .getattr(EXECUTION_CONTEXT_ATTR)
-            .ok()
-            .filter(|context| !context.is_none())
-        {
-            existing_context.unbind()
-        } else {
-            match make_execution_context_object(py) {
-                Ok(context) => context,
-                Err(_) => return,
-            }
-        };
-
-        let result = (|| -> PyResult<()> {
-            let entry = PyDict::new(py);
-            entry.set_item("kind", "spawn_boundary")?;
-            entry.set_item("task_id", task_id.raw())?;
-            match metadata.parent_task {
-                Some(parent_task) => entry.set_item("parent_task", parent_task.raw())?,
-                None => entry.set_item("parent_task", py.None())?,
-            }
-            match &metadata.spawn_site {
-                Some(site) => {
-                    let site_dict = PyDict::new(py);
-                    site_dict.set_item("function_name", site.function_name.clone())?;
-                    site_dict.set_item("source_file", site.source_file.clone())?;
-                    site_dict.set_item("source_line", site.source_line)?;
-                    entry.set_item("spawn_site", site_dict)?;
-                }
-                None => entry.set_item("spawn_site", py.None())?,
-            }
-
-            let context_bound = context.bind(py);
-            let already_present = context_bound
-                .getattr("entries")
-                .ok()
-                .and_then(|entries| entries.try_iter().ok())
-                .is_some_and(|iter| {
-                    iter.filter_map(Result::ok).any(|existing| {
-                        let Ok(existing_dict) = existing.cast::<PyDict>() else {
-                            return false;
-                        };
-                        let kind = existing_dict
-                            .get_item("kind")
-                            .ok()
-                            .flatten()
-                            .and_then(|value| value.extract::<String>().ok());
-                        if kind.as_deref() != Some("spawn_boundary") {
-                            return false;
-                        }
-                        existing_dict
-                            .get_item("task_id")
-                            .ok()
-                            .flatten()
-                            .and_then(|value| value.extract::<u64>().ok())
-                            == Some(task_id.raw())
-                    })
-                });
-
-            if !already_present {
-                context_bound.getattr("add")?.call1((entry,))?;
-            }
-            exc.setattr(EXECUTION_CONTEXT_ATTR, context_bound)?;
-            Ok(())
-        })();
-
-        let _ = result;
-    });
-}
-
 fn step_targets_continuation(step: &ASTStreamStep, target: &Continuation) -> bool {
     match step {
         ASTStreamStep::Yield(DoCtrl::Resume { continuation, .. }) => {
@@ -341,6 +259,7 @@ pub struct SchedulerState {
     pub next_promise: u64,
     pub next_semaphore: u64,
     pub current_task: Option<TaskId>,
+    execution_context_task_override: Option<TaskId>,
     state_id: u64,
 }
 
@@ -785,6 +704,7 @@ impl SchedulerState {
             next_promise: 0,
             next_semaphore: 1,
             current_task: None,
+            execution_context_task_override: None,
             state_id: NEXT_SCHEDULER_STATE_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -1277,14 +1197,6 @@ impl SchedulerState {
         }
     }
 
-    fn error_with_spawn_boundary(&self, task_id: TaskId, error: &PyException) -> PyException {
-        let enriched = error.clone();
-        if let Some(metadata) = self.task_metadata.get(&task_id) {
-            maybe_attach_spawn_boundary_context(&enriched, task_id, metadata);
-        }
-        enriched
-    }
-
     pub fn wake_waiters(&mut self, waitable: Waitable) {
         let Some(waiters_for_item) = self.waiters.remove(&waitable) else {
             return;
@@ -1417,17 +1329,24 @@ impl SchedulerState {
         items.iter().any(|item| self.is_done(*item))
     }
 
-    fn collect_all_result(&self, items: &[Waitable]) -> Option<Result<Value, PyException>> {
+    fn collect_all_result(&mut self, items: &[Waitable]) -> Option<Result<Value, PyException>> {
+        self.execution_context_task_override = None;
         let mut results = Vec::with_capacity(items.len());
         for item in items {
             match item {
-                Waitable::Task(task_id) => match self.tasks.get(task_id) {
-                    Some(TaskState::Done { result: Ok(v), .. }) => results.push(v.clone()),
-                    Some(TaskState::Done { result: Err(e), .. }) => {
-                        return Some(Err(self.error_with_spawn_boundary(*task_id, e)));
+                Waitable::Task(task_id) => {
+                    let task_result = match self.tasks.get(task_id) {
+                        Some(TaskState::Done { result, .. }) => result.clone(),
+                        _ => return None,
+                    };
+                    match task_result {
+                        Ok(value) => results.push(value),
+                        Err(error) => {
+                            self.execution_context_task_override = Some(*task_id);
+                            return Some(Err(error));
+                        }
                     }
-                    _ => return None,
-                },
+                }
                 Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
                     match self.promises.get(pid) {
                         Some(PromiseState::Done(Ok(v))) => results.push(v.clone()),
@@ -1440,16 +1359,19 @@ impl SchedulerState {
         Some(Ok(Value::List(results)))
     }
 
-    fn collect_any_result(&self, items: &[Waitable]) -> Option<Result<Value, PyException>> {
+    fn collect_any_result(&mut self, items: &[Waitable]) -> Option<Result<Value, PyException>> {
+        self.execution_context_task_override = None;
         for item in items {
             match item {
                 Waitable::Task(task_id) => {
-                    if let Some(TaskState::Done { result, .. }) = self.tasks.get(task_id) {
-                        return Some(match result {
-                            Ok(value) => Ok(value.clone()),
-                            Err(error) => Err(self.error_with_spawn_boundary(*task_id, error)),
-                        });
+                    let task_result = match self.tasks.get(task_id) {
+                        Some(TaskState::Done { result, .. }) => result.clone(),
+                        _ => continue,
+                    };
+                    if task_result.is_err() {
+                        self.execution_context_task_override = Some(*task_id);
                     }
+                    return Some(task_result);
                 }
                 Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
                     if let Some(PromiseState::Done(result)) = self.promises.get(pid) {
@@ -1774,8 +1696,12 @@ impl SchedulerProgram {
 
     fn handle_get_execution_context(&mut self, k_user: Continuation) -> ASTStreamStep {
         let spawn_boundary = {
-            let state = self.state.lock().expect("Scheduler lock poisoned");
-            state.current_task.and_then(|task_id| {
+            let mut state = self.state.lock().expect("Scheduler lock poisoned");
+            let task_for_context = state
+                .execution_context_task_override
+                .take()
+                .or(state.current_task);
+            task_for_context.and_then(|task_id| {
                 state.task_metadata.get(&task_id).map(|metadata| {
                     (
                         task_id.raw(),
@@ -2455,6 +2381,10 @@ impl HandlerInvoke for SchedulerHandler {
             file: None,
             line: None,
         }
+    }
+
+    fn supports_error_context_conversion(&self) -> bool {
+        true
     }
 
     fn on_run_end(&self, run_token: u64) {

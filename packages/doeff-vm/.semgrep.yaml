@@ -390,3 +390,77 @@ rules:
     metadata:
       category: vm-protocol
       spec: SPEC-VM-014
+
+  # ---------------------------------------------------------------------------
+  # TRACE-INVARIANT-001 ENFORCEMENT
+  # ---------------------------------------------------------------------------
+
+  - id: vm-no-spawn-boundary-in-active-chain
+    pattern-regex: 'SpawnBoundary'
+    message: |
+      INV-1 violation: VM must not reference SpawnBoundary.
+      Use ContextEntry for opaque handler data.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/vm.rs"
+    metadata:
+      spec: TRACE-INVARIANT-001
+      invariant: INV-1
+
+  - id: scheduler-no-direct-execution-context-setattr
+    pattern-regex: 'setattr\(.*EXECUTION_CONTEXT_ATTR'
+    message: |
+      INV-2 violation: Handler must not directly mutate exception context.
+      Use GetExecutionContext effect dispatch.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/scheduler.rs"
+    metadata:
+      spec: TRACE-INVARIANT-001
+      invariant: INV-2
+
+  - id: vm-no-handler-dict-parsing
+    pattern-regex: 'spawn_boundary|"kind"|"task_id"|"parent_task"|"spawn_site"'
+    message: |
+      INV-3 violation: VM must not parse handler-produced dict schemas.
+      Handler data is opaque.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/vm.rs"
+    metadata:
+      spec: TRACE-INVARIANT-001
+      invariant: INV-3
+
+  - id: vm-no-get-execution-context-repr-matching
+    pattern-regex: 'contains\("GetExecutionContext"\)'
+    message: |
+      INV-1 violation: VM control flow must not rely on effect repr string matching.
+      Use typed dispatch metadata (for example is_execution_context_effect) instead.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/vm.rs"
+    metadata:
+      spec: TRACE-INVARIANT-001
+      invariant: INV-1
+
+  - id: vm-no-scheduler-name-coupling
+    pattern-regex: 'SCHEDULER_HANDLER_NAME'
+    message: |
+      INV-1 violation: VM must not couple behavior to scheduler handler name strings.
+      Use handler capabilities/metadata instead.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/vm.rs"
+    metadata:
+      spec: TRACE-INVARIANT-001
+      invariant: INV-1

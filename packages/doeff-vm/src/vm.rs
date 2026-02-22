@@ -13,7 +13,7 @@ use crate::ast_stream::{ASTStream, ASTStreamRef, ASTStreamStep, PythonGeneratorS
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectCreationSite,
     EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry,
-    HandlerStatus, SpawnSite, TraceEntry, TraceFrame, TraceHop,
+    HandlerStatus, TraceEntry, TraceFrame, TraceHop,
 };
 use crate::continuation::Continuation;
 use crate::do_ctrl::{CallArg, DoCtrl};
@@ -21,7 +21,7 @@ use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
     dispatch_ref_as_python, make_execution_context_object, make_get_execution_context_effect,
-    DispatchEffect, PyExecutionContext,
+    DispatchEffect, PyExecutionContext, PyGetExecutionContext,
 };
 #[cfg(test)]
 use crate::effect::{Effect, PySpawn};
@@ -451,6 +451,25 @@ impl VM {
         Self::truncate_repr(repr)
     }
 
+    fn is_execution_context_effect(effect: &DispatchEffect) -> bool {
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return false;
+        };
+        Python::attach(|py| {
+            obj.bind(py)
+                .extract::<PyRef<'_, PyGetExecutionContext>>()
+                .is_ok()
+        })
+    }
+
+    fn dispatch_supports_error_context_conversion(&self, dispatch_id: DispatchId) -> bool {
+        self.dispatch_stack
+            .iter()
+            .rev()
+            .find(|ctx| ctx.dispatch_id == dispatch_id)
+            .is_some_and(|ctx| ctx.supports_error_context_conversion)
+    }
+
     fn effect_creation_site_from_continuation(k: &Continuation) -> Option<EffectCreationSite> {
         let (_, function_name, source_file, source_line) = Self::effect_site_from_continuation(k)?;
         Some(EffectCreationSite {
@@ -570,7 +589,9 @@ impl VM {
         };
 
         Python::attach(|py| {
-            let _ = exc_value.bind(py).setattr("__cause__", cause.value_clone_ref(py));
+            let _ = exc_value
+                .bind(py)
+                .setattr("__cause__", cause.value_clone_ref(py));
         });
     }
 
@@ -584,8 +605,31 @@ impl VM {
         })
     }
 
-    fn mode_after_generror(&mut self, site: GenErrorSite, exception: PyException) -> Mode {
-        if !site.allows_error_conversion() {
+    fn mode_after_generror(
+        &mut self,
+        site: GenErrorSite,
+        exception: PyException,
+        conversion_hint: bool,
+    ) -> Mode {
+        let active_dispatch_id = self.current_active_handler_dispatch_id();
+        let allow_handler_context_conversion = conversion_hint
+            || active_dispatch_id.is_some_and(|dispatch_id| {
+                self.dispatch_supports_error_context_conversion(dispatch_id)
+                    && matches!(
+                        site,
+                        GenErrorSite::RustProgramContinuation | GenErrorSite::StepUserGeneratorDirect
+                    )
+            });
+        let in_get_execution_context_dispatch = active_dispatch_id
+            .and_then(|dispatch_id| {
+                self.dispatch_stack
+                    .iter()
+                    .rev()
+                    .find(|ctx| ctx.dispatch_id == dispatch_id)
+            })
+            .is_some_and(|ctx| ctx.is_execution_context_effect);
+
+        if !site.allows_error_conversion() && !allow_handler_context_conversion {
             if let Some(original) = self.active_error_dispatch_original_exception() {
                 Self::set_exception_cause(&exception, &original);
             }
@@ -597,8 +641,10 @@ impl VM {
         }
 
         if let Some(original) = self.active_error_dispatch_original_exception() {
-            Self::set_exception_cause(&exception, &original);
-            return Mode::Throw(exception);
+            if !allow_handler_context_conversion || in_get_execution_context_dispatch {
+                Self::set_exception_cause(&exception, &original);
+                return Mode::Throw(exception);
+            }
         }
 
         match make_get_execution_context_effect() {
@@ -781,6 +827,7 @@ impl VM {
                 CaptureEvent::DispatchStarted {
                     dispatch_id,
                     effect_repr,
+                    is_execution_context_effect: _,
                     creation_site: _,
                     handler_name,
                     handler_kind,
@@ -1112,82 +1159,6 @@ impl VM {
         })
     }
 
-    fn context_entry_to_spawn_boundary(entry: &Bound<'_, PyAny>) -> Option<ActiveChainEntry> {
-        let dict = entry.cast::<PyDict>().ok()?;
-        let kind = dict
-            .get_item("kind")
-            .ok()
-            .flatten()
-            .and_then(|value| value.extract::<String>().ok())?;
-        if kind != "spawn_boundary" {
-            return None;
-        }
-
-        let task_id = dict
-            .get_item("task_id")
-            .ok()
-            .flatten()
-            .and_then(|value| value.extract::<u64>().ok())?;
-        let parent_task = dict
-            .get_item("parent_task")
-            .ok()
-            .flatten()
-            .and_then(|value| {
-                if value.is_none() {
-                    Some(None)
-                } else {
-                    value.extract::<u64>().ok().map(Some)
-                }
-            })
-            .flatten();
-
-        let spawn_site = dict
-            .get_item("spawn_site")
-            .ok()
-            .flatten()
-            .and_then(|site| {
-                if site.is_none() {
-                    return None;
-                }
-                let site_dict = site.cast::<PyDict>().ok()?;
-                Some(SpawnSite {
-                    function_name: site_dict
-                        .get_item("function_name")
-                        .ok()
-                        .flatten()?
-                        .extract::<String>()
-                        .ok()?,
-                    source_file: site_dict
-                        .get_item("source_file")
-                        .ok()
-                        .flatten()?
-                        .extract::<String>()
-                        .ok()?,
-                    source_line: site_dict
-                        .get_item("source_line")
-                        .ok()
-                        .flatten()?
-                        .extract::<u32>()
-                        .ok()?,
-                })
-            });
-
-        Some(ActiveChainEntry::SpawnBoundary {
-            task_id,
-            parent_task,
-            spawn_site,
-        })
-    }
-
-    fn spawn_boundaries_from_exception_context(exception: &PyException) -> Vec<ActiveChainEntry> {
-        Python::attach(|py| {
-            Self::context_entries_from_exception(exception)
-                .into_iter()
-                .filter_map(|entry| Self::context_entry_to_spawn_boundary(entry.bind(py)))
-                .collect()
-        })
-    }
-
     fn context_entries_from_context_obj(context: &Bound<'_, PyAny>) -> Vec<Py<PyAny>> {
         if !context.is_instance_of::<PyExecutionContext>() {
             return Vec::new();
@@ -1257,17 +1228,17 @@ impl VM {
             let existing_entries = Self::context_entries_from_exception(&original);
             merged_entries.extend(existing_entries);
 
-            let merged_context = match Self::build_execution_context_from_entries(py, &merged_entries)
-            {
-                Ok(context) => context,
-                Err(err) => {
-                    let err = PyException::runtime_error(format!(
-                        "failed to merge ExecutionContext entries: {err}"
-                    ));
-                    Self::set_exception_cause(&err, &original);
-                    return Err(err);
-                }
-            };
+            let merged_context =
+                match Self::build_execution_context_from_entries(py, &merged_entries) {
+                    Ok(context) => context,
+                    Err(err) => {
+                        let err = PyException::runtime_error(format!(
+                            "failed to merge ExecutionContext entries: {err}"
+                        ));
+                        Self::set_exception_cause(&err, &original);
+                        return Err(err);
+                    }
+                };
 
             Self::attach_execution_context(&original, &merged_context);
             Ok(original)
@@ -1290,6 +1261,7 @@ impl VM {
             source_file: Option<String>,
             source_line: Option<u32>,
             effect_repr: String,
+            is_execution_context_effect: bool,
             handler_stack: Vec<HandlerDispatchEntry>,
             result: EffectResult,
         }
@@ -1325,6 +1297,7 @@ impl VM {
                 CaptureEvent::DispatchStarted {
                     dispatch_id,
                     effect_repr,
+                    is_execution_context_effect,
                     creation_site: _,
                     handler_name: _,
                     handler_kind: _,
@@ -1336,6 +1309,7 @@ impl VM {
                     effect_source_file,
                     effect_source_line,
                 } => {
+                    let visible_effect = !*is_execution_context_effect;
                     let handler_stack: Vec<HandlerDispatchEntry> = handler_chain_snapshot
                         .iter()
                         .enumerate()
@@ -1353,12 +1327,14 @@ impl VM {
                         .collect();
 
                     if let Some(frame_id) = effect_frame_id {
-                        frame_dispatch.insert(*frame_id, *dispatch_id);
-                        if let Some(frame) =
-                            frame_stack.iter_mut().find(|f| f.frame_id == *frame_id)
-                        {
-                            if let Some(line) = effect_source_line {
-                                frame.source_line = *line;
+                        if visible_effect {
+                            frame_dispatch.insert(*frame_id, *dispatch_id);
+                            if let Some(frame) =
+                                frame_stack.iter_mut().find(|f| f.frame_id == *frame_id)
+                            {
+                                if let Some(line) = effect_source_line {
+                                    frame.source_line = *line;
+                                }
                             }
                         }
                     }
@@ -1370,6 +1346,7 @@ impl VM {
                             source_file: effect_source_file.clone(),
                             source_line: *effect_source_line,
                             effect_repr: effect_repr.clone(),
+                            is_execution_context_effect: *is_execution_context_effect,
                             handler_stack,
                             result: EffectResult::Active,
                         },
@@ -1462,7 +1439,7 @@ impl VM {
             }
         }
 
-        let is_visible_effect = |_result: &EffectResult| true;
+        let is_visible_effect = |dispatch: &DispatchState| !dispatch.is_execution_context_effect;
 
         // Merge live frame line numbers for currently suspended generators.
         let mut seg_chain = Vec::new();
@@ -1517,7 +1494,7 @@ impl VM {
         if let Some(dispatch_ctx) = self.dispatch_stack.iter().rev().find(|ctx| {
             dispatches
                 .get(&ctx.dispatch_id)
-                .is_some_and(|dispatch| is_visible_effect(&dispatch.result))
+                .is_some_and(is_visible_effect)
         }) {
             for frame in dispatch_ctx.k_user.frames_snapshot.iter() {
                 let Frame::Program {
@@ -1560,7 +1537,7 @@ impl VM {
             let dispatch = dispatch_id.and_then(|id| dispatches.get(&id));
 
             if let Some(dispatch) = dispatch {
-                if is_visible_effect(&dispatch.result) {
+                if is_visible_effect(dispatch) {
                     active_chain.push(ActiveChainEntry::EffectYield {
                         function_name: dispatch
                             .function_name
@@ -1597,164 +1574,144 @@ impl VM {
         }
 
         if active_chain.is_empty() {
+            let push_effect_yield =
+                |chain: &mut Vec<ActiveChainEntry>,
+                 dispatch: &DispatchState,
+                 frame: Option<&FrameState>| {
+                    let function_name = dispatch.function_name.clone().unwrap_or_else(|| {
+                        frame
+                            .map(|snapshot| snapshot.function_name.clone())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    });
+                    let source_file = dispatch.source_file.clone().unwrap_or_else(|| {
+                        frame
+                            .map(|snapshot| snapshot.source_file.clone())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    });
+                    let source_line = dispatch
+                        .source_line
+                        .unwrap_or_else(|| frame.map_or(0, |snapshot| snapshot.source_line));
+                    chain.push(ActiveChainEntry::EffectYield {
+                        function_name,
+                        source_file,
+                        source_line,
+                        effect_repr: dispatch.effect_repr.clone(),
+                        handler_stack: dispatch.handler_stack.clone(),
+                        result: dispatch.result.clone(),
+                    });
+                };
+
+            let dispatch_id_for_event = |event: &CaptureEvent| -> Option<DispatchId> {
+                match event {
+                    CaptureEvent::DispatchStarted { dispatch_id, .. }
+                    | CaptureEvent::Delegated { dispatch_id, .. }
+                    | CaptureEvent::HandlerCompleted { dispatch_id, .. }
+                    | CaptureEvent::Resumed { dispatch_id, .. }
+                    | CaptureEvent::Transferred { dispatch_id, .. } => Some(*dispatch_id),
+                    _ => None,
+                }
+            };
+
             let fallback_dispatch_id = self
                 .dispatch_stack
                 .iter()
                 .rev()
                 .find_map(|ctx| {
-                    dispatches
-                        .get(&ctx.dispatch_id)
-                        .filter(|dispatch| matches!(dispatch.result, EffectResult::Threw { .. }))
-                        .map(|_| ctx.dispatch_id)
+                    let dispatch = dispatches.get(&ctx.dispatch_id)?;
+                    if is_visible_effect(dispatch) {
+                        Some(ctx.dispatch_id)
+                    } else {
+                        None
+                    }
                 })
                 .or_else(|| {
-                    self.dispatch_stack.iter().rev().find_map(|ctx| {
-                        dispatches
-                            .get(&ctx.dispatch_id)
-                            .filter(|dispatch| is_visible_effect(&dispatch.result))
-                            .map(|_| ctx.dispatch_id)
+                    self.capture_log.iter().rev().find_map(|event| {
+                        let dispatch_id = dispatch_id_for_event(event)?;
+                        let dispatch = dispatches.get(&dispatch_id)?;
+                        if is_visible_effect(dispatch) {
+                            Some(dispatch_id)
+                        } else {
+                            None
+                        }
                     })
                 });
 
             if let Some(dispatch_id) = fallback_dispatch_id {
-                if let Some(dispatch_ctx) = self
-                    .dispatch_stack
-                    .iter()
-                    .rev()
-                    .find(|ctx| ctx.dispatch_id == dispatch_id)
+                if let Some(dispatch) = dispatches
+                    .get(&dispatch_id)
+                    .filter(|d| is_visible_effect(d))
                 {
-                    let snapshot_frames: Vec<FrameState> = dispatch_ctx
-                        .k_user
-                        .frames_snapshot
+                    let snapshot_frames: Vec<FrameState> = self
+                        .dispatch_stack
                         .iter()
-                        .filter_map(|frame| {
-                            let Frame::Program {
-                                stream,
-                                metadata: Some(metadata),
-                            } = frame
-                            else {
-                                return None;
+                        .rev()
+                        .find(|ctx| ctx.dispatch_id == dispatch_id)
+                        .map(|dispatch_ctx| {
+                            dispatch_ctx
+                                .k_user
+                                .frames_snapshot
+                                .iter()
+                                .filter_map(|frame| {
+                                    let Frame::Program {
+                                        stream,
+                                        metadata: Some(metadata),
+                                    } = frame
+                                    else {
+                                        return None;
+                                    };
+
+                                    let line = Self::stream_debug_location(stream)
+                                        .map(|location| location.source_line)
+                                        .unwrap_or(metadata.source_line);
+                                    Some(FrameState {
+                                        frame_id: metadata.frame_id as FrameId,
+                                        function_name: metadata.function_name.clone(),
+                                        source_file: metadata.source_file.clone(),
+                                        source_line: line,
+                                        sub_program_repr: Self::program_call_repr(metadata)
+                                            .unwrap_or_else(|| "<sub_program>".to_string()),
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    if snapshot_frames.is_empty() {
+                        push_effect_yield(&mut active_chain, dispatch, None);
+                    } else {
+                        let last_index = snapshot_frames.len() - 1;
+                        for (index, frame) in snapshot_frames.iter().enumerate() {
+                            if index == last_index {
+                                push_effect_yield(&mut active_chain, dispatch, Some(frame));
+                                continue;
+                            }
+
+                            let inferred_sub_program = snapshot_frames
+                                .get(index + 1)
+                                .map(|next| format!("{}()", next.function_name));
+                            let sub_program_repr = if frame.sub_program_repr == "<sub_program>" {
+                                inferred_sub_program
+                                    .unwrap_or_else(|| frame.sub_program_repr.clone())
+                            } else {
+                                frame.sub_program_repr.clone()
                             };
 
-                            let line = Self::stream_debug_location(stream)
-                                .map(|location| location.source_line)
-                                .unwrap_or(metadata.source_line);
-                            Some(FrameState {
-                                frame_id: metadata.frame_id as FrameId,
-                                function_name: metadata.function_name.clone(),
-                                source_file: metadata.source_file.clone(),
-                                source_line: line,
-                                sub_program_repr: Self::program_call_repr(metadata)
-                                    .unwrap_or_else(|| "<sub_program>".to_string()),
-                            })
-                        })
-                        .collect();
-
-                    if let Some(dispatch) = dispatches.get(&dispatch_id) {
-                        if snapshot_frames.is_empty() {
-                            if is_visible_effect(&dispatch.result) {
-                                active_chain.push(ActiveChainEntry::EffectYield {
-                                    function_name: dispatch
-                                        .function_name
-                                        .clone()
-                                        .unwrap_or_else(|| "<unknown>".to_string()),
-                                    source_file: dispatch
-                                        .source_file
-                                        .clone()
-                                        .unwrap_or_else(|| "<unknown>".to_string()),
-                                    source_line: dispatch.source_line.unwrap_or(0),
-                                    effect_repr: dispatch.effect_repr.clone(),
-                                    handler_stack: dispatch.handler_stack.clone(),
-                                    result: dispatch.result.clone(),
-                                });
-                            }
-                        } else {
-                            let last_index = snapshot_frames.len() - 1;
-                            for (index, frame) in snapshot_frames.iter().enumerate() {
-                                if index == last_index && is_visible_effect(&dispatch.result) {
-                                    active_chain.push(ActiveChainEntry::EffectYield {
-                                        function_name: dispatch
-                                            .function_name
-                                            .clone()
-                                            .unwrap_or_else(|| frame.function_name.clone()),
-                                        source_file: dispatch
-                                            .source_file
-                                            .clone()
-                                            .unwrap_or_else(|| frame.source_file.clone()),
-                                        source_line: dispatch
-                                            .source_line
-                                            .unwrap_or(frame.source_line),
-                                        effect_repr: dispatch.effect_repr.clone(),
-                                        handler_stack: dispatch.handler_stack.clone(),
-                                        result: dispatch.result.clone(),
-                                    });
-                                    continue;
-                                }
-
-                                let inferred_sub_program = snapshot_frames
-                                    .get(index + 1)
-                                    .map(|next| format!("{}()", next.function_name));
-                                let sub_program_repr = if frame.sub_program_repr == "<sub_program>"
-                                {
-                                    inferred_sub_program
-                                        .unwrap_or_else(|| frame.sub_program_repr.clone())
-                                } else {
-                                    frame.sub_program_repr.clone()
-                                };
-
-                                active_chain.push(ActiveChainEntry::ProgramYield {
-                                    function_name: frame.function_name.clone(),
-                                    source_file: frame.source_file.clone(),
-                                    source_line: frame.source_line,
-                                    sub_program_repr,
-                                });
-                            }
+                            active_chain.push(ActiveChainEntry::ProgramYield {
+                                function_name: frame.function_name.clone(),
+                                source_file: frame.source_file.clone(),
+                                source_line: frame.source_line,
+                                sub_program_repr,
+                            });
                         }
                     }
                 }
             }
         }
 
-        let spawn_boundaries = Self::spawn_boundaries_from_exception_context(exception);
-        let has_spawn_boundaries = !spawn_boundaries.is_empty();
-        if has_spawn_boundaries {
-            for boundary in spawn_boundaries {
-                let insert_idx = match &boundary {
-                    ActiveChainEntry::SpawnBoundary {
-                        spawn_site: Some(site),
-                        ..
-                    } => active_chain
-                        .iter()
-                        .enumerate()
-                        .rev()
-                        .find_map(|(idx, entry)| match entry {
-                            ActiveChainEntry::ProgramYield {
-                                function_name,
-                                source_file,
-                                ..
-                            }
-                            | ActiveChainEntry::EffectYield {
-                                function_name,
-                                source_file,
-                                ..
-                            }
-                            | ActiveChainEntry::ExceptionSite {
-                                function_name,
-                                source_file,
-                                ..
-                            } if function_name == &site.function_name
-                                && source_file == &site.source_file =>
-                            {
-                                Some(idx + 1)
-                            }
-                            _ => None,
-                        }),
-                    _ => None,
-                }
-                .unwrap_or(active_chain.len());
-
-                active_chain.insert(insert_idx, boundary);
-            }
+        let context_entries = Self::context_entries_from_exception(exception);
+        let has_context_entries = !context_entries.is_empty();
+        for data in context_entries {
+            active_chain.push(ActiveChainEntry::ContextEntry { data });
         }
         let exception_site = Self::exception_site(exception);
         let exception_function_name = match &exception_site {
@@ -1768,14 +1725,14 @@ impl VM {
             | ActiveChainEntry::ExceptionSite { function_name, .. } => {
                 function_name == exception_function_name
             }
-            ActiveChainEntry::SpawnBoundary { .. } => false,
+            ActiveChainEntry::ContextEntry { .. } => false,
         });
 
-        let suppress_exception_site = !has_spawn_boundaries
+        let suppress_exception_site = !has_context_entries
             && active_chain
                 .iter()
                 .rev()
-                .find(|entry| !matches!(entry, ActiveChainEntry::SpawnBoundary { .. }))
+                .find(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
                 .is_some_and(|entry| {
                     matches!(
                         entry,
@@ -2538,7 +2495,7 @@ impl VM {
             }
 
             (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenError(e)) => {
-                self.mode = self.mode_after_generror(GenErrorSite::EvalExpr, e);
+                self.mode = self.mode_after_generror(GenErrorSite::EvalExpr, e, false);
             }
 
             (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenReturn(value)) => {
@@ -2554,7 +2511,7 @@ impl VM {
             }
 
             (PendingPython::CallFuncReturn { .. }, PyCallOutcome::GenError(e)) => {
-                self.mode = self.mode_after_generror(GenErrorSite::CallFuncReturn, e);
+                self.mode = self.mode_after_generror(GenErrorSite::CallFuncReturn, e, false);
             }
 
             (
@@ -2639,9 +2596,11 @@ impl VM {
                         self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
                         self.mark_dispatch_threw(dispatch_id);
                     }
-                    self.mode = self.mode_after_generror(GenErrorSite::ExpandReturnHandler, e);
+                    self.mode =
+                        self.mode_after_generror(GenErrorSite::ExpandReturnHandler, e, false);
                 } else {
-                    self.mode = self.mode_after_generror(GenErrorSite::ExpandReturnProgram, e);
+                    self.mode =
+                        self.mode_after_generror(GenErrorSite::ExpandReturnProgram, e, false);
                 }
             }
 
@@ -2686,7 +2645,7 @@ impl VM {
                         self.mark_dispatch_threw(dispatch_id);
                     }
                 }
-                self.mode = self.mode_after_generror(site, e);
+                self.mode = self.mode_after_generror(site, e, false);
             }
 
             (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::Value(result)) => {
@@ -2694,7 +2653,8 @@ impl VM {
             }
 
             (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::GenError(e)) => {
-                self.mode = self.mode_after_generror(GenErrorSite::RustProgramContinuation, e);
+                self.mode =
+                    self.mode_after_generror(GenErrorSite::RustProgramContinuation, e, false);
             }
 
             (PendingPython::AsyncEscape, PyCallOutcome::Value(result)) => {
@@ -2702,7 +2662,7 @@ impl VM {
             }
 
             (PendingPython::AsyncEscape, PyCallOutcome::GenError(e)) => {
-                self.mode = self.mode_after_generror(GenErrorSite::AsyncEscape, e);
+                self.mode = self.mode_after_generror(GenErrorSite::AsyncEscape, e, false);
             }
 
             _ => {
@@ -2821,6 +2781,8 @@ impl VM {
         let prompt_seg_id = entry.prompt_seg_id;
         let handler = entry.handler.clone();
         let dispatch_id = DispatchId::fresh();
+        let is_execution_context_effect = Self::is_execution_context_effect(&effect);
+        let supports_error_context_conversion = handler.supports_error_context_conversion();
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
         for marker in handler_chain.iter().copied() {
             let Some(entry) = self.handlers.get(&marker) else {
@@ -2851,8 +2813,10 @@ impl VM {
         self.dispatch_stack.push(DispatchContext {
             dispatch_id,
             effect: effect.clone(),
+            is_execution_context_effect,
             handler_chain: handler_chain.clone(),
             handler_idx,
+            supports_error_context_conversion,
             k_user: k_user.clone(),
             prompt_seg_id,
             completed: false,
@@ -2865,6 +2829,7 @@ impl VM {
         self.capture_log.push(CaptureEvent::DispatchStarted {
             dispatch_id,
             effect_repr: Self::effect_repr(&effect),
+            is_execution_context_effect,
             creation_site: Self::effect_creation_site_from_continuation(&k_user),
             handler_name,
             handler_kind,
@@ -3179,7 +3144,14 @@ impl VM {
         }
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
+        let mut thrown_by_context_conversion_handler = self
+            .current_active_handler_dispatch_id()
+            .is_some_and(|dispatch_id| {
+                self.dispatch_supports_error_context_conversion(dispatch_id)
+            });
         if let Some(dispatch_id) = k.dispatch_id {
+            thrown_by_context_conversion_handler =
+                self.dispatch_supports_error_context_conversion(dispatch_id);
             if let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
             {
@@ -3205,7 +3177,15 @@ impl VM {
         let exec_seg_id = self.alloc_segment(exec_seg);
 
         self.current_segment = Some(exec_seg_id);
-        self.mode = Mode::Throw(exception);
+        self.mode = if thrown_by_context_conversion_handler {
+            self.mode_after_generror(
+                GenErrorSite::RustProgramContinuation,
+                exception,
+                thrown_by_context_conversion_handler,
+            )
+        } else {
+            Mode::Throw(exception)
+        };
         StepEvent::Continue
     }
 
@@ -3327,9 +3307,14 @@ impl VM {
                             to_handler_source_line: to_source_line,
                         });
                     }
+                    let supports_error_context_conversion = self
+                        .handlers
+                        .get(&marker)
+                        .is_some_and(|entry| entry.handler.supports_error_context_conversion());
                     let k_user = {
                         let top = self.dispatch_stack.last_mut().unwrap();
                         top.handler_idx = idx;
+                        top.supports_error_context_conversion = supports_error_context_conversion;
                         top.effect = effect.clone();
                         top.k_user.clone()
                     };
@@ -3348,10 +3333,12 @@ impl VM {
             }
         }
 
-        if let Some((dispatch_id, original_exception)) = self
-            .dispatch_stack
-            .last()
-            .and_then(|ctx| ctx.original_exception.clone().map(|exc| (ctx.dispatch_id, exc)))
+        if let Some((dispatch_id, original_exception)) =
+            self.dispatch_stack.last().and_then(|ctx| {
+                ctx.original_exception
+                    .clone()
+                    .map(|exc| (ctx.dispatch_id, exc))
+            })
         {
             self.mark_dispatch_completed(dispatch_id);
             self.mode = Mode::Throw(original_exception);
@@ -3414,9 +3401,14 @@ impl VM {
                             to_handler_source_line: to_source_line,
                         });
                     }
+                    let supports_error_context_conversion = self
+                        .handlers
+                        .get(&marker)
+                        .is_some_and(|entry| entry.handler.supports_error_context_conversion());
                     let k_user = {
                         let top = self.dispatch_stack.last_mut().unwrap();
                         top.handler_idx = idx;
+                        top.supports_error_context_conversion = supports_error_context_conversion;
                         top.effect = effect.clone();
                         top.k_user.clone()
                     };
@@ -3435,10 +3427,12 @@ impl VM {
             }
         }
 
-        if let Some((dispatch_id, original_exception)) = self
-            .dispatch_stack
-            .last()
-            .and_then(|ctx| ctx.original_exception.clone().map(|exc| (ctx.dispatch_id, exc)))
+        if let Some((dispatch_id, original_exception)) =
+            self.dispatch_stack.last().and_then(|ctx| {
+                ctx.original_exception
+                    .clone()
+                    .map(|exc| (ctx.dispatch_id, exc))
+            })
         {
             self.mark_dispatch_completed(dispatch_id);
             self.mode = Mode::Throw(original_exception);
@@ -3927,8 +3921,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![m1, m2, m3],
             handler_idx: 1,
+            supports_error_context_conversion: false,
             k_user: k_user.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -3953,8 +3949,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![m1, m2],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -3979,8 +3977,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user_1.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -3993,8 +3993,10 @@ mod tests {
             effect: Effect::Get {
                 key: "y".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user_2.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -4007,8 +4009,10 @@ mod tests {
             effect: Effect::Get {
                 key: "z".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user_3.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -4347,51 +4351,6 @@ mod tests {
     }
 
     #[test]
-    fn test_spawn_boundaries_from_execution_context_entries() {
-        Python::attach(|py| {
-            let py_err = pyo3::exceptions::PyValueError::new_err("boom");
-            let exc_value = py_err.value(py).clone().into_any().unbind();
-            let exc_type = exc_value.bind(py).get_type().into_any().unbind();
-            let exc_tb = py_err.traceback(py).map(|tb| tb.into_any().unbind());
-            let exception = PyException::new(exc_type, exc_value.clone_ref(py), exc_tb);
-
-            let context = make_execution_context_object(py).expect("ExecutionContext must construct");
-            let entry = pyo3::types::PyDict::new(py);
-            entry
-                .set_item("kind", "spawn_boundary")
-                .expect("kind must be set");
-            entry.set_item("task_id", 7u64).expect("task_id must be set");
-            entry
-                .set_item("parent_task", 2u64)
-                .expect("parent_task must be set");
-            entry
-                .set_item("spawn_site", py.None())
-                .expect("spawn_site must be set");
-            context
-                .bind(py)
-                .getattr("add")
-                .expect("ExecutionContext.add")
-                .call1((entry,))
-                .expect("ExecutionContext.add should append");
-
-            exc_value
-                .bind(py)
-                .setattr(EXECUTION_CONTEXT_ATTR, context)
-                .expect("exception should accept execution context");
-
-            let boundaries = VM::spawn_boundaries_from_exception_context(&exception);
-            assert!(matches!(
-                boundaries.first(),
-                Some(ActiveChainEntry::SpawnBoundary {
-                    task_id: 7,
-                    parent_task: Some(2),
-                    ..
-                })
-            ));
-        });
-    }
-
-    #[test]
     fn test_handle_resume_call_resume_semantics() {
         let mut vm = VM::new();
         let marker = Marker::fresh();
@@ -4490,8 +4449,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -4538,8 +4499,10 @@ mod tests {
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
             effect: Effect::get("x"),
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: original_k_user,
             prompt_seg_id: seg_id,
             completed: false,
@@ -4618,8 +4581,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user,
             prompt_seg_id,
             completed: false,
@@ -4708,8 +4673,10 @@ mod tests {
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
             effect: Effect::get("x"),
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user.clone(),
             prompt_seg_id: seg_id,
             completed: false,
@@ -4928,8 +4895,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: Continuation {
                 dispatch_id: Some(dispatch_id),
                 cont_id: k_cont_id,
@@ -5031,8 +5000,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user.clone(),
             prompt_seg_id: SegmentId::from_index(0),
             completed: true,
@@ -5473,8 +5444,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user,
             prompt_seg_id,
             completed: false,

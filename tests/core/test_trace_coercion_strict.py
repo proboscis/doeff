@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from doeff.trace import coerce_active_chain_entry, coerce_trace_entry
+from doeff.trace import (
+    ContextEntry,
+    SpawnBoundary,
+    coerce_active_chain_entries,
+    coerce_active_chain_entry,
+    coerce_trace_entry,
+)
 
 
 def test_coerce_active_chain_rejects_unknown_handler_status() -> None:
@@ -71,3 +77,47 @@ def test_coerce_active_chain_rejects_unknown_effect_result_kind() -> None:
                 "result": {"kind": "mystery_result"},
             }
         )
+
+
+def test_coerce_context_entry_wraps_unknown_payload() -> None:
+    entry = coerce_active_chain_entry(
+        {"kind": "context_entry", "data": {"kind": "custom", "value": 1}}
+    )
+    assert isinstance(entry, ContextEntry)
+    assert entry.data == {"kind": "custom", "value": 1}
+
+
+def test_coerce_active_chain_entries_promote_spawn_boundary_context_entries() -> None:
+    entries = coerce_active_chain_entries(
+        [
+            {
+                "kind": "program_yield",
+                "function_name": "parent",
+                "source_file": "parent.py",
+                "source_line": 10,
+                "sub_program_repr": "child()",
+            },
+            {
+                "kind": "context_entry",
+                "data": {
+                    "kind": "spawn_boundary",
+                    "task_id": 7,
+                    "parent_task": 2,
+                    "spawn_site": {
+                        "function_name": "parent",
+                        "source_file": "parent.py",
+                        "source_line": 10,
+                    },
+                },
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "child",
+                "source_file": "child.py",
+                "source_line": 20,
+                "exception_type": "ValueError",
+                "message": "boom",
+            },
+        ]
+    )
+    assert any(isinstance(entry, SpawnBoundary) for entry in entries)

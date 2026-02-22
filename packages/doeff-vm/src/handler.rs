@@ -82,6 +82,10 @@ pub trait HandlerInvoke: std::fmt::Debug + Send + Sync {
     fn handler_name(&self) -> &str;
     fn handler_debug_info(&self) -> HandlerDebugInfo;
 
+    fn supports_error_context_conversion(&self) -> bool {
+        false
+    }
+
     fn py_identity(&self) -> Option<PyShared> {
         None
     }

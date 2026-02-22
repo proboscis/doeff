@@ -490,6 +490,66 @@ def test_format_default_spawn_separator() -> None:
     assert "── in task 4 (spawned at parent() parent.py:22) ──" in rendered
 
 
+def test_format_default_spawn_separator_from_context_entry() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "parent",
+                "source_file": "parent.py",
+                "source_line": 22,
+                "effect_repr": "Gather(task)",
+                "handler_stack": [
+                    {
+                        "handler_name": "SchedulerHandler",
+                        "handler_kind": "rust_builtin",
+                        "status": "transferred",
+                    }
+                ],
+                "result": {
+                    "kind": "transferred",
+                    "handler_name": "SchedulerHandler",
+                    "target_repr": "child() child.py:3",
+                },
+            },
+            {
+                "kind": "program_yield",
+                "function_name": "child",
+                "source_file": "child.py",
+                "source_line": 3,
+                "sub_program_repr": "leaf()",
+            },
+            {
+                "kind": "context_entry",
+                "data": {
+                    "kind": "spawn_boundary",
+                    "task_id": 4,
+                    "parent_task": 0,
+                    "spawn_site": {
+                        "function_name": "parent",
+                        "source_file": "parent.py",
+                        "source_line": 22,
+                    },
+                },
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "child",
+                "source_file": "child.py",
+                "source_line": 4,
+                "exception_type": "ValueError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    gather_pos = rendered.index("yield Gather(task)")
+    boundary_pos = rendered.index("── in task 4 (spawned at parent() parent.py:22) ──")
+    child_pos = rendered.index("  child()  child.py:3")
+    assert gather_pos < boundary_pos < child_pos
+
+
 def test_format_default_nested_spawn() -> None:
     tb = _tb(
         [
