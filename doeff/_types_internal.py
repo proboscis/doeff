@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import traceback
+import warnings
 from abc import abstractmethod
 from collections.abc import Callable, Generator, Hashable, Iterable, Iterator
 from dataclasses import dataclass, field
@@ -1145,7 +1146,8 @@ class PyRunResult(Generic[T]):
             return "{}"
         try:
             json_str = json.dumps(value, indent=None, default=str)
-        except Exception:
+        except Exception as exc:
+            warnings.warn(f"Failed to format dict value for display: {exc}", stacklevel=2)
             return f"<dict with {len(value)} items>"
 
         if len(json_str) <= max_length:
@@ -1164,7 +1166,8 @@ class PyRunResult(Generic[T]):
             return f"[{len(value)} items]"
         try:
             json_str = json.dumps(value, indent=None, default=str)
-        except Exception:
+        except Exception as exc:
+            warnings.warn(f"Failed to format list value for display: {exc}", stacklevel=2)
             return f"<list with {len(value)} items>"
         if len(json_str) > max_length:
             return f"[{len(value)} items]"
