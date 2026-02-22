@@ -21,6 +21,7 @@ use crate::effect::{
     DispatchEffect, PyAsk, PyGet, PyLocal, PyModify, PyPut, PyPythonAsyncioAwaitEffect,
     PyResultSafeEffect, PyTell,
 };
+use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::ids::SegmentId;
 use crate::py_key::HashedPyKey;
@@ -46,7 +47,7 @@ pub trait ASTStreamProgram: std::fmt::Debug + Send {
 
 /// Factory for Rust handler programs. Each dispatch creates a fresh instance.
 pub trait ASTStreamFactory: std::fmt::Debug + Send + Sync {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool;
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError>;
     fn create_program(&self) -> ASTStreamProgramRef;
     fn handler_name(&self) -> &'static str {
         std::any::type_name::<Self>()
@@ -77,7 +78,7 @@ pub struct HandlerDebugInfo {
 }
 
 pub trait HandlerInvoke: std::fmt::Debug + Send + Sync {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool;
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError>;
     fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr;
     fn handler_name(&self) -> &str;
     fn handler_debug_info(&self) -> HandlerDebugInfo;
@@ -207,8 +208,8 @@ impl PythonHandler {
 }
 
 impl HandlerInvoke for PythonHandler {
-    fn can_handle(&self, _effect: &DispatchEffect) -> bool {
-        true
+    fn can_handle(&self, _effect: &DispatchEffect) -> Result<bool, VMError> {
+        Ok(true)
     }
 
     fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
@@ -568,9 +569,17 @@ fn get_sync_await_runner() -> Result<PyShared, String> {
 pub struct AwaitHandlerFactory;
 
 impl ASTStreamFactory for AwaitHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
-        dispatch_ref_as_python(effect)
-            .is_some_and(|obj| parse_await_python_effect(obj).ok().flatten().is_some())
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return Ok(false);
+        };
+        parse_await_python_effect(obj)
+            .map(|parsed| parsed.is_some())
+            .map_err(|msg| {
+                VMError::internal(format!(
+                    "AwaitHandler can_handle failed to parse effect: {msg}"
+                ))
+            })
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -583,7 +592,7 @@ impl ASTStreamFactory for AwaitHandlerFactory {
 }
 
 impl HandlerInvoke for AwaitHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
@@ -720,17 +729,26 @@ impl ASTStream for AwaitHandlerProgram {
 pub struct StateHandlerFactory;
 
 impl ASTStreamFactory for StateHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         #[cfg(test)]
         if matches!(
             effect,
             Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. }
         ) {
-            return true;
+            return Ok(true);
         }
 
-        dispatch_ref_as_python(effect)
-            .is_some_and(|obj| parse_state_python_effect(obj).ok().flatten().is_some())
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return Ok(false);
+        };
+
+        parse_state_python_effect(obj)
+            .map(|parsed| parsed.is_some())
+            .map_err(|msg| {
+                VMError::internal(format!(
+                    "StateHandler can_handle failed to parse effect: {msg}"
+                ))
+            })
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -743,7 +761,7 @@ impl ASTStreamFactory for StateHandlerFactory {
 }
 
 impl HandlerInvoke for StateHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
@@ -1018,15 +1036,25 @@ impl Default for LazyAskHandlerFactory {
 }
 
 impl ASTStreamFactory for LazyAskHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         #[cfg(test)]
         if matches!(effect, Effect::Ask { .. }) {
-            return true;
+            return Ok(true);
         }
 
-        dispatch_ref_as_python(effect).is_some_and(|obj| {
-            parse_reader_python_effect(obj).ok().flatten().is_some() || is_local_python_effect(obj)
-        })
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return Ok(false);
+        };
+
+        let is_reader = parse_reader_python_effect(obj)
+            .map(|parsed| parsed.is_some())
+            .map_err(|msg| {
+                VMError::internal(format!(
+                    "LazyAskHandler can_handle failed to parse reader effect: {msg}"
+                ))
+            })?;
+
+        Ok(is_reader || is_local_python_effect(obj))
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -1052,7 +1080,7 @@ impl ASTStreamFactory for LazyAskHandlerFactory {
 }
 
 impl HandlerInvoke for LazyAskHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
@@ -1063,12 +1091,12 @@ impl HandlerInvoke for LazyAskHandlerFactory {
                 true
             } else {
                 dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
             }
             #[cfg(not(test))]
             {
                 dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
             }
         };
 
@@ -1119,14 +1147,23 @@ impl LazyLocalScopeFactory {
 }
 
 impl ASTStreamFactory for LazyLocalScopeFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         #[cfg(test)]
         if matches!(effect, Effect::Ask { .. }) {
-            return true;
+            return Ok(true);
         }
 
-        dispatch_ref_as_python(effect)
-            .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return Ok(false);
+        };
+
+        parse_reader_python_effect(obj)
+            .map(|parsed| parsed.is_some())
+            .map_err(|msg| {
+                VMError::internal(format!(
+                    "LazyLocalScopeHandler can_handle failed to parse reader effect: {msg}"
+                ))
+            })
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -1142,7 +1179,7 @@ impl ASTStreamFactory for LazyLocalScopeFactory {
 }
 
 impl HandlerInvoke for LazyLocalScopeFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
@@ -1985,14 +2022,23 @@ impl ASTStream for LazyAskHandlerProgram {
 pub struct ReaderHandlerFactory;
 
 impl ASTStreamFactory for ReaderHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         #[cfg(test)]
         if matches!(effect, Effect::Ask { .. }) {
-            return true;
+            return Ok(true);
         }
 
-        dispatch_ref_as_python(effect)
-            .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return Ok(false);
+        };
+
+        parse_reader_python_effect(obj)
+            .map(|parsed| parsed.is_some())
+            .map_err(|msg| {
+                VMError::internal(format!(
+                    "ReaderHandler can_handle failed to parse effect: {msg}"
+                ))
+            })
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -2005,7 +2051,7 @@ impl ASTStreamFactory for ReaderHandlerFactory {
 }
 
 impl HandlerInvoke for ReaderHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
@@ -2016,12 +2062,12 @@ impl HandlerInvoke for ReaderHandlerFactory {
                 true
             } else {
                 dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
             }
             #[cfg(not(test))]
             {
                 dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
+                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
             }
         };
 
@@ -2140,14 +2186,23 @@ impl ASTStream for ReaderHandlerProgram {
 pub struct WriterHandlerFactory;
 
 impl ASTStreamFactory for WriterHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         #[cfg(test)]
         if matches!(effect, Effect::Tell { .. }) {
-            return true;
+            return Ok(true);
         }
 
-        dispatch_ref_as_python(effect)
-            .is_some_and(|obj| parse_writer_python_effect(obj).ok().flatten().is_some())
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return Ok(false);
+        };
+
+        parse_writer_python_effect(obj)
+            .map(|parsed| parsed.is_some())
+            .map_err(|msg| {
+                VMError::internal(format!(
+                    "WriterHandler can_handle failed to parse effect: {msg}"
+                ))
+            })
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -2160,7 +2215,7 @@ impl ASTStreamFactory for WriterHandlerFactory {
 }
 
 impl HandlerInvoke for WriterHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
@@ -2275,13 +2330,18 @@ impl ASTStream for WriterHandlerProgram {
 pub struct ResultSafeHandlerFactory;
 
 impl ASTStreamFactory for ResultSafeHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
-        dispatch_ref_as_python(effect).is_some_and(|obj| {
-            parse_result_safe_python_effect(obj)
-                .ok()
-                .flatten()
-                .is_some()
-        })
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return Ok(false);
+        };
+
+        parse_result_safe_python_effect(obj)
+            .map(|parsed| parsed.is_some())
+            .map_err(|msg| {
+                VMError::internal(format!(
+                    "ResultSafeHandler can_handle failed to parse effect: {msg}"
+                ))
+            })
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -2294,7 +2354,7 @@ impl ASTStreamFactory for ResultSafeHandlerFactory {
 }
 
 impl HandlerInvoke for ResultSafeHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
@@ -2477,8 +2537,8 @@ pub(crate) struct DoubleCallHandlerFactory;
 
 #[cfg(test)]
 impl ASTStreamFactory for DoubleCallHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
-        matches!(effect, Effect::Modify { .. })
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
+        Ok(matches!(effect, Effect::Modify { .. }))
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -2494,7 +2554,7 @@ impl ASTStreamFactory for DoubleCallHandlerFactory {
 
 #[cfg(test)]
 impl HandlerInvoke for DoubleCallHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         <Self as ASTStreamFactory>::can_handle(self, effect)
     }
 
@@ -2789,26 +2849,30 @@ mod tests {
             &Effect::Get {
                 key: "x".to_string()
             }
-        ));
+        )
+        .unwrap());
         assert!(HandlerInvoke::can_handle(
             &f,
             &Effect::Put {
                 key: "x".to_string(),
                 value: Value::Unit
             }
-        ));
+        )
+        .unwrap());
         assert!(!HandlerInvoke::can_handle(
             &f,
             &Effect::Ask {
                 key: "x".to_string()
             }
-        ));
+        )
+        .unwrap());
         assert!(!HandlerInvoke::can_handle(
             &f,
             &Effect::Tell {
                 message: Value::Unit
             }
-        ));
+        )
+        .unwrap());
     }
 
     #[test]
@@ -2946,19 +3010,22 @@ mod tests {
             &Effect::Ask {
                 key: "x".to_string()
             }
-        ));
+        )
+        .unwrap());
         assert!(!HandlerInvoke::can_handle(
             &f,
             &Effect::Get {
                 key: "x".to_string()
             }
-        ));
+        )
+        .unwrap());
         assert!(!HandlerInvoke::can_handle(
             &f,
             &Effect::Tell {
                 message: Value::Unit
             }
-        ));
+        )
+        .unwrap());
     }
 
     #[test]
@@ -2996,19 +3063,22 @@ mod tests {
             &Effect::Tell {
                 message: Value::Unit
             }
-        ));
+        )
+        .unwrap());
         assert!(!HandlerInvoke::can_handle(
             &f,
             &Effect::Get {
                 key: "x".to_string()
             }
-        ));
+        )
+        .unwrap());
         assert!(!HandlerInvoke::can_handle(
             &f,
             &Effect::Ask {
                 key: "x".to_string()
             }
-        ));
+        )
+        .unwrap());
     }
 
     #[test]
@@ -3059,7 +3129,7 @@ mod tests {
             let effect = Effect::from_shared(PyShared::new(obj));
             let f = ResultSafeHandlerFactory;
             assert!(
-                HandlerInvoke::can_handle(&f, &effect),
+                HandlerInvoke::can_handle(&f, &effect).unwrap(),
                 "ResultSafe handler should claim ResultSafeEffect"
             );
         });
