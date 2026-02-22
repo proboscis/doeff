@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 import doeff_vm
+import pytest
 
 from doeff import Program
 from doeff import rust_vm as rust_vm_module
@@ -154,3 +154,53 @@ def test_run_rejects_non_program_object(monkeypatch: pytest.MonkeyPatch) -> None
         rust_vm_module.run(object(), handlers=[])
 
     assert called["run"] is False
+
+
+def test_build_doeff_traceback_warns_on_projection_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RunResultStub:
+        error = ValueError("boom")
+        traceback_data = object()
+
+        @staticmethod
+        def is_err() -> bool:
+            return True
+
+    import doeff.traceback as traceback_module
+
+    def _raise_projection_error(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("projection failed")
+
+    monkeypatch.setattr(traceback_module, "attach_doeff_traceback", _raise_projection_error)
+
+    with pytest.warns(UserWarning, match="Failed to build doeff traceback"):
+        built = rust_vm_module._build_doeff_traceback_if_present(RunResultStub())
+
+    assert built is None
+
+
+def test_print_doeff_trace_warns_on_format_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    class BrokenTrace:
+        @staticmethod
+        def format_default() -> str:
+            raise RuntimeError("format failed")
+
+    monkeypatch.setattr(
+        rust_vm_module,
+        "_build_doeff_traceback_if_present",
+        lambda _run_result: BrokenTrace(),
+    )
+
+    with pytest.warns(UserWarning, match="Failed to print doeff trace"):
+        rust_vm_module._print_doeff_trace_if_present(SimpleNamespace())
+
+
+def test_raise_unhandled_effect_uses_run_result_attributes_directly() -> None:
+    run_result = SimpleNamespace(
+        is_err=lambda: True,
+        error=TypeError("UnhandledEffect: no matching handler"),
+    )
+
+    with pytest.raises(TypeError, match="UnhandledEffect"):
+        rust_vm_module._raise_unhandled_effect_if_present(run_result, raise_unhandled=True)
