@@ -166,6 +166,8 @@ CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
 GetHandlers = _ext.GetHandlers
 GetTraceback = _ext.GetTraceback
+GetExecutionContext = _ext.GetExecutionContext
+ExecutionContext = _ext.ExecutionContext
 GetCallStack = _ext.GetCallStack
 GetTrace = _ext.GetTrace
 TraceFrame = _ext.TraceFrame
@@ -296,6 +298,8 @@ __all__ = [
     "GetCallStack",
     "GetTrace",
     "GetTraceback",
+    "GetExecutionContext",
+    "ExecutionContext",
     "GetContinuation",
     "GetHandlers",
     "TraceFrame",

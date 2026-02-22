@@ -13,6 +13,8 @@ def test_rust_vm_exports_traceback_query_types() -> None:
     assert hasattr(rust_vm_module, "GetTraceback")
     assert hasattr(rust_vm_module, "TraceFrame")
     assert hasattr(rust_vm_module, "TraceHop")
+    assert hasattr(rust_vm_module, "GetExecutionContext")
+    assert hasattr(rust_vm_module, "ExecutionContext")
 
 
 def test_default_handlers_requires_module_sentinels(monkeypatch: pytest.MonkeyPatch) -> None:
