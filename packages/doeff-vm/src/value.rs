@@ -11,6 +11,7 @@ use crate::capture::{
 };
 use crate::frame::CallMetadata;
 use crate::handler::{Handler, RustProgramInvocation};
+use crate::pyvm::{PyTraceFrame, PyTraceHop};
 use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 
 /// A value that can flow through the VM.
@@ -403,35 +404,21 @@ impl Value {
             }
             Value::Traceback(hops) => {
                 let list = PyList::empty(py);
-                let vm_mod = py.import("doeff_vm").ok();
                 for hop in hops {
-                    let frames = PyList::empty(py);
+                    let mut frames: Vec<Py<PyTraceFrame>> = Vec::with_capacity(hop.frames.len());
                     for frame in &hop.frames {
-                        if let Some(mod_) = &vm_mod {
-                            let cls = mod_.getattr("TraceFrame")?;
-                            let obj = cls.call1((
-                                frame.func_name.as_str(),
-                                frame.source_file.as_str(),
-                                frame.source_line,
-                            ))?;
-                            frames.append(obj)?;
-                        } else {
-                            let frame_dict = PyDict::new(py);
-                            frame_dict.set_item("func_name", frame.func_name.as_str())?;
-                            frame_dict.set_item("source_file", frame.source_file.as_str())?;
-                            frame_dict.set_item("source_line", frame.source_line)?;
-                            frames.append(frame_dict)?;
-                        }
+                        let py_frame = Py::new(
+                            py,
+                            PyTraceFrame {
+                                func_name: frame.func_name.clone(),
+                                source_file: frame.source_file.clone(),
+                                source_line: frame.source_line,
+                            },
+                        )?;
+                        frames.push(py_frame);
                     }
-                    if let Some(mod_) = &vm_mod {
-                        let cls = mod_.getattr("TraceHop")?;
-                        let obj = cls.call1((frames,))?;
-                        list.append(obj)?;
-                    } else {
-                        let hop_dict = PyDict::new(py);
-                        hop_dict.set_item("frames", frames)?;
-                        list.append(hop_dict)?;
-                    }
+                    let py_hop = Py::new(py, PyTraceHop { frames })?;
+                    list.append(py_hop)?;
                 }
                 Ok(list.into_any())
             }
