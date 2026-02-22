@@ -868,6 +868,16 @@ impl VM {
                     to_handler_kind,
                     to_handler_source_file,
                     to_handler_source_line,
+                }
+                | CaptureEvent::Passed {
+                    dispatch_id,
+                    from_handler_name: _,
+                    from_handler_index: _,
+                    to_handler_name,
+                    to_handler_index: _,
+                    to_handler_kind,
+                    to_handler_source_file,
+                    to_handler_source_line,
                 } => {
                     if let Some(&pos) = dispatch_positions.get(dispatch_id) {
                         if let TraceEntry::Dispatch {
@@ -1376,6 +1386,30 @@ impl VM {
                         }
                     }
                 }
+                CaptureEvent::Passed {
+                    dispatch_id,
+                    from_handler_name: _,
+                    from_handler_index,
+                    to_handler_name: _,
+                    to_handler_index,
+                    to_handler_kind: _,
+                    to_handler_source_file: _,
+                    to_handler_source_line: _,
+                } => {
+                    if let Some(dispatch) = dispatches.get_mut(dispatch_id) {
+                        if let Some(from_entry) =
+                            dispatch.handler_stack.get_mut(*from_handler_index)
+                        {
+                            if from_entry.status == HandlerStatus::Active {
+                                from_entry.status = HandlerStatus::Passed;
+                            }
+                        }
+
+                        if let Some(to_entry) = dispatch.handler_stack.get_mut(*to_handler_index) {
+                            to_entry.status = HandlerStatus::Active;
+                        }
+                    }
+                }
                 CaptureEvent::HandlerCompleted {
                     dispatch_id,
                     handler_name,
@@ -1605,6 +1639,7 @@ impl VM {
                 match event {
                     CaptureEvent::DispatchStarted { dispatch_id, .. }
                     | CaptureEvent::Delegated { dispatch_id, .. }
+                    | CaptureEvent::Passed { dispatch_id, .. }
                     | CaptureEvent::HandlerCompleted { dispatch_id, .. }
                     | CaptureEvent::Resumed { dispatch_id, .. }
                     | CaptureEvent::Transferred { dispatch_id, .. } => Some(*dispatch_id),
@@ -3368,7 +3403,7 @@ impl VM {
         let inner_seg_id = self.current_segment;
 
         // Clear the delegating handler's frames so return values pass through
-        // without trying to resume the handler generator (Delegate is tail).
+        // without trying to resume the handler generator (Pass is terminal).
         if let Some(seg_id) = inner_seg_id {
             if let Some(seg) = self.segments.get_mut(seg_id) {
                 seg.frames.clear();
@@ -3390,7 +3425,7 @@ impl VM {
                         Some((to_name, to_kind, to_source_file, to_source_line)),
                     ) = (from_name, to_info)
                     {
-                        self.capture_log.push(CaptureEvent::Delegated {
+                        self.capture_log.push(CaptureEvent::Passed {
                             dispatch_id,
                             from_handler_name: from_name,
                             from_handler_index: from_idx,

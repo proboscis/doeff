@@ -17,7 +17,7 @@ _DEFAULT_HANDLER_NAMES = (
     "ReaderHandler",
     "StateHandler",
 )
-_HANDLER_STATUS_MARKERS = {"⚡", "·", "↗", "✓", "⇢", "✗"}
+_HANDLER_STATUS_MARKERS = {"⚡", "·", "↗", "⇆", "✓", "⇢", "✗"}
 
 
 def _line_of(function: object, needle: str) -> int:
