@@ -685,6 +685,10 @@ fn unknown_semaphore_error(semaphore_id: u64) -> PyException {
     PyException::runtime_error(format!("unknown semaphore id {semaphore_id}"))
 }
 
+fn scheduler_internal_error(message: impl Into<String>) -> PyException {
+    PyException::runtime_error(format!("scheduler internal error: {}", message.into()))
+}
+
 // ---------------------------------------------------------------------------
 // SchedulerState implementation
 // ---------------------------------------------------------------------------
@@ -1003,7 +1007,8 @@ impl SchedulerState {
             self.mark_promise_done(promise_id, Err(task_cancelled_error()));
         }
 
-        self.mark_task_done(task_id, Err(task_cancelled_error()));
+        self.mark_task_done(task_id, Err(task_cancelled_error()))
+            .expect("finalize_task_cancellation: task must exist while finalizing cancellation");
         self.wake_waiters(Waitable::Task(task_id));
     }
 
@@ -1148,54 +1153,79 @@ impl SchedulerState {
         Err(unknown_semaphore_error(semaphore_id))
     }
 
-    pub fn save_task_store(&mut self, task_id: TaskId, store: &RustStore) {
-        if let Some(state) = self.tasks.get_mut(&task_id) {
-            match state {
-                TaskState::Pending {
-                    store:
-                        TaskStore::Isolated {
-                            store: ref mut task_store,
-                            ..
-                        },
-                    ..
-                } => {
-                    *task_store = store.clone();
-                }
-                _ => {}
+    pub fn save_task_store(
+        &mut self,
+        task_id: TaskId,
+        store: &RustStore,
+    ) -> Result<(), PyException> {
+        let state = self.tasks.get_mut(&task_id).ok_or_else(|| {
+            scheduler_internal_error(format!("save_task_store: task {} not found", task_id.raw()))
+        })?;
+        match state {
+            TaskState::Pending {
+                store:
+                    TaskStore::Isolated {
+                        store: ref mut task_store,
+                        ..
+                    },
+                ..
+            } => {
+                *task_store = store.clone();
+                Ok(())
             }
+            TaskState::Pending {
+                store: TaskStore::Shared,
+                ..
+            } => Ok(()),
+            TaskState::Done { .. } => Err(scheduler_internal_error(format!(
+                "save_task_store: task {} is already done",
+                task_id.raw()
+            ))),
         }
     }
 
-    pub fn load_task_store(&self, task_id: TaskId, store: &mut RustStore) {
-        if let Some(state) = self.tasks.get(&task_id) {
-            let task_store = match state {
-                TaskState::Pending { store, .. } => store,
-                TaskState::Done { store, .. } => store,
-            };
-            if let TaskStore::Isolated {
-                store: task_store, ..
-            } = task_store
-            {
-                *store = task_store.clone();
-            }
+    pub fn load_task_store(
+        &self,
+        task_id: TaskId,
+        store: &mut RustStore,
+    ) -> Result<(), PyException> {
+        let state = self.tasks.get(&task_id).ok_or_else(|| {
+            scheduler_internal_error(format!("load_task_store: task {} not found", task_id.raw()))
+        })?;
+        let task_store = match state {
+            TaskState::Pending { store, .. } => store,
+            TaskState::Done { store, .. } => store,
+        };
+        if let TaskStore::Isolated {
+            store: task_store, ..
+        } = task_store
+        {
+            *store = task_store.clone();
         }
+        Ok(())
     }
 
-    pub fn mark_task_done(&mut self, task_id: TaskId, result: Result<Value, PyException>) {
+    pub fn mark_task_done(
+        &mut self,
+        task_id: TaskId,
+        result: Result<Value, PyException>,
+    ) -> Result<(), PyException> {
         self.cancel_requested.remove(&task_id);
-        if let Some(state) = self.tasks.remove(&task_id) {
-            let task_store = match state {
-                TaskState::Pending { store, .. } => store,
-                TaskState::Done { store, .. } => store,
-            };
-            self.tasks.insert(
-                task_id,
-                TaskState::Done {
-                    result,
-                    store: task_store,
-                },
-            );
-        }
+        let state = self.tasks.remove(&task_id).ok_or_else(|| {
+            scheduler_internal_error(format!("mark_task_done: task {} not found", task_id.raw()))
+        })?;
+        let task_store = match state {
+            TaskState::Pending { store, .. } => store,
+            TaskState::Done { store, .. } => store,
+        };
+        self.tasks.insert(
+            task_id,
+            TaskState::Done {
+                result,
+                store: task_store,
+            },
+        );
+        Ok(())
     }
 
     pub fn wake_waiters(&mut self, waitable: Waitable) {
@@ -1425,16 +1455,24 @@ impl SchedulerState {
                     self.finalize_task_cancellation(task_id);
                     continue;
                 }
-                if let Some(task_k) = self.task_cont(task_id) {
-                    // Save current task's store before switching away
-                    if let Some(old_id) = self.current_task {
-                        self.save_task_store(old_id, store);
+                let Some(task_k) = self.task_cont(task_id) else {
+                    return ASTStreamStep::Throw(scheduler_internal_error(format!(
+                        "transfer_next_or: ready task {} has no continuation",
+                        task_id.raw()
+                    )));
+                };
+                // Save current task's store before switching away
+                if let Some(old_id) = self.current_task {
+                    if let Err(error) = self.save_task_store(old_id, store) {
+                        return ASTStreamStep::Throw(error);
                     }
-                    // Load new task's store
-                    self.load_task_store(task_id, store);
-                    self.current_task = Some(task_id);
-                    return transfer_to_continuation(task_k, Value::Unit);
                 }
+                // Load new task's store
+                if let Err(error) = self.load_task_store(task_id, store) {
+                    return ASTStreamStep::Throw(error);
+                }
+                self.current_task = Some(task_id);
+                return transfer_to_continuation(task_k, Value::Unit);
             }
 
             let ready_waiter_scan_len = self.ready_waiters.len();
@@ -1461,7 +1499,9 @@ impl SchedulerState {
                             }
 
                             if let Some(waiting_task) = waiter.waiting_task {
-                                self.load_task_store(waiting_task, store);
+                                if let Err(error) = self.load_task_store(waiting_task, store) {
+                                    return ASTStreamStep::Throw(error);
+                                }
                                 self.current_task = Some(waiting_task);
                             } else {
                                 *store = waiter.waiting_store.clone();
@@ -1480,7 +1520,9 @@ impl SchedulerState {
                             }
 
                             if let Some(waiting_task) = waiter.waiting_task {
-                                self.load_task_store(waiting_task, store);
+                                if let Err(error) = self.load_task_store(waiting_task, store) {
+                                    return ASTStreamStep::Throw(error);
+                                }
                                 self.current_task = Some(waiting_task);
                             } else {
                                 *store = waiter.waiting_store.clone();
@@ -1499,7 +1541,9 @@ impl SchedulerState {
                             }
 
                             if let Some(waiting_task) = waiter.waiting_task {
-                                self.load_task_store(waiting_task, store);
+                                if let Err(error) = self.load_task_store(waiting_task, store) {
+                                    return ASTStreamStep::Throw(error);
+                                }
                                 self.current_task = Some(waiting_task);
                             } else {
                                 *store = waiter.waiting_store.clone();
@@ -1515,7 +1559,9 @@ impl SchedulerState {
                             }
 
                             if let Some(waiting_task) = waiter.waiting_task {
-                                self.load_task_store(waiting_task, store);
+                                if let Err(error) = self.load_task_store(waiting_task, store) {
+                                    return ASTStreamStep::Throw(error);
+                                }
                                 self.current_task = Some(waiting_task);
                             } else {
                                 *store = waiter.waiting_store.clone();
@@ -1779,8 +1825,12 @@ impl SchedulerProgram {
             state.current_task = None;
         }
 
-        state.save_task_store(task_id, store);
-        state.mark_task_done(task_id, outcome);
+        if let Err(error) = state.save_task_store(task_id, store) {
+            return ASTStreamStep::Throw(error);
+        }
+        if let Err(error) = state.mark_task_done(task_id, outcome) {
+            return ASTStreamStep::Throw(error);
+        }
 
         // If this continuation was previously queued as a waiter, remove stale
         // entries before wake-up processing. Otherwise it can be resumed once
@@ -1799,7 +1849,9 @@ impl SchedulerProgram {
                             state.clear_waiters_for_continuation(waiting_cont_id);
 
                             if let Some(waiting_task) = waiting_task {
-                                state.load_task_store(waiting_task, store);
+                                if let Err(error) = state.load_task_store(waiting_task, store) {
+                                    return ASTStreamStep::Throw(error);
+                                }
                                 state.current_task = Some(waiting_task);
                             } else {
                                 *store = waiting_store.clone();
@@ -1813,7 +1865,9 @@ impl SchedulerProgram {
                             state.clear_waiters_for_continuation(waiting_cont_id);
 
                             if let Some(waiting_task) = waiting_task {
-                                state.load_task_store(waiting_task, store);
+                                if let Err(error) = state.load_task_store(waiting_task, store) {
+                                    return ASTStreamStep::Throw(error);
+                                }
                                 state.current_task = Some(waiting_task);
                             } else {
                                 *store = waiting_store.clone();
@@ -1830,7 +1884,9 @@ impl SchedulerProgram {
                             state.clear_waiters_for_continuation(waiting_cont_id);
 
                             if let Some(waiting_task) = waiting_task {
-                                state.load_task_store(waiting_task, store);
+                                if let Err(error) = state.load_task_store(waiting_task, store) {
+                                    return ASTStreamStep::Throw(error);
+                                }
                                 state.current_task = Some(waiting_task);
                             } else {
                                 *store = waiting_store.clone();
@@ -1841,7 +1897,9 @@ impl SchedulerProgram {
                             state.clear_waiters_for_continuation(waiting_cont_id);
 
                             if let Some(waiting_task) = waiting_task {
-                                state.load_task_store(waiting_task, store);
+                                if let Err(error) = state.load_task_store(waiting_task, store) {
+                                    return ASTStreamStep::Throw(error);
+                                }
                                 state.current_task = Some(waiting_task);
                             } else {
                                 *store = waiting_store.clone();
@@ -1942,8 +2000,12 @@ impl ASTStreamProgram for SchedulerProgram {
 
             SchedulerEffect::TaskCompleted { task, result } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                state.save_task_store(task, store);
-                state.mark_task_done(task, result);
+                if let Err(error) = state.save_task_store(task, store) {
+                    return ASTStreamStep::Throw(error);
+                }
+                if let Err(error) = state.mark_task_done(task, result) {
+                    return ASTStreamStep::Throw(error);
+                }
                 state.wake_waiters(Waitable::Task(task));
                 state.transfer_next_or(k_user, store)
             }
@@ -2638,7 +2700,9 @@ mod tests {
 
         let waiter = make_test_continuation();
         state.wait_on_all(&[Waitable::Task(task_id)], waiter.clone(), &store);
-        state.mark_task_done(task_id, Ok(Value::Int(7)));
+        state
+            .mark_task_done(task_id, Ok(Value::Int(7)))
+            .expect("task should exist when marking done");
         state.wake_waiters(Waitable::Task(task_id));
 
         // transfer_next_or only resumes waiters that belong to the same owner continuation.
@@ -3206,7 +3270,9 @@ mod tests {
         );
 
         // Complete t1 and wake
-        state.mark_task_done(t1, Ok(Value::Int(20)));
+        state
+            .mark_task_done(t1, Ok(Value::Int(20)))
+            .expect("task should exist when marking done");
         state.wake_waiters(Waitable::Task(t1));
 
         // Waiter should now be in ready_waiters
@@ -3259,7 +3325,9 @@ mod tests {
         );
 
         // Complete only t1
-        state.mark_task_done(t1, Ok(Value::Int(99)));
+        state
+            .mark_task_done(t1, Ok(Value::Int(99)))
+            .expect("task should exist when marking done");
         state.wake_waiters(Waitable::Task(t1));
 
         // Waiter should be in ready_waiters
@@ -3301,11 +3369,15 @@ mod tests {
 
         // Save updated store
         store.put("key".to_string(), Value::Int(42));
-        state.save_task_store(tid, &store);
+        state
+            .save_task_store(tid, &store)
+            .expect("task store save should succeed for existing task");
 
         // Load back
         let mut loaded_store = RustStore::new();
-        state.load_task_store(tid, &mut loaded_store);
+        state
+            .load_task_store(tid, &mut loaded_store)
+            .expect("task store load should succeed for existing task");
         assert_eq!(loaded_store.get("key").unwrap().as_int(), Some(42));
     }
 
