@@ -134,6 +134,11 @@ class SpawnBoundary:
 
 
 @dataclass(frozen=True)
+class ContextEntry:
+    data: Any
+
+
+@dataclass(frozen=True)
 class ExceptionSite:
     function_name: str
     source_file: str
@@ -142,7 +147,7 @@ class ExceptionSite:
     message: str
 
 
-ActiveChainEntry: TypeAlias = ProgramYield | EffectYield | SpawnBoundary | ExceptionSite
+ActiveChainEntry: TypeAlias = ProgramYield | EffectYield | SpawnBoundary | ContextEntry | ExceptionSite
 
 
 def _coerce_handler_kind(value: Any) -> TraceHandlerKind:
@@ -290,24 +295,41 @@ def _coerce_effect_result(result: Any) -> EffectResult:
     raise ValueError(f"Unknown effect result kind: {kind!r}")
 
 
+def _coerce_spawn_boundary_entry(entry: dict[str, Any]) -> SpawnBoundary:
+    spawn_site_raw = entry.get("spawn_site")
+    spawn_site: SpawnSite | None = None
+    if isinstance(spawn_site_raw, dict):
+        spawn_site = SpawnSite(
+            function_name=str(spawn_site_raw.get("function_name", "<unknown>")),
+            source_file=str(spawn_site_raw.get("source_file", "<unknown>")),
+            source_line=int(spawn_site_raw.get("source_line", 0)),
+        )
+    parent_task_raw = entry.get("parent_task")
+    parent_task = None if parent_task_raw is None else int(parent_task_raw)
+    return SpawnBoundary(
+        task_id=int(entry.get("task_id", 0)),
+        parent_task=parent_task,
+        spawn_site=spawn_site,
+    )
+
+
 def coerce_active_chain_entry(entry: Any) -> ActiveChainEntry:
-    if isinstance(entry, (ProgramYield, EffectYield, SpawnBoundary, ExceptionSite)):
+    if isinstance(entry, (ProgramYield, EffectYield, SpawnBoundary, ContextEntry, ExceptionSite)):
         return entry
     if not isinstance(entry, dict):
         raise TypeError(f"Unsupported active-chain entry type: {type(entry).__name__}")
 
     kind = entry.get("kind")
     if kind == "program_yield":
-        return ProgramYield(
+        result: ActiveChainEntry = ProgramYield(
             function_name=str(entry.get("function_name", "<unknown>")),
             source_file=str(entry.get("source_file", "<unknown>")),
             source_line=int(entry.get("source_line", 0)),
             sub_program_repr=str(entry.get("sub_program_repr", "<sub_program>")),
         )
-
-    if kind == "effect_yield":
+    elif kind == "effect_yield":
         stack_raw = entry.get("handler_stack", ())
-        return EffectYield(
+        result = EffectYield(
             function_name=str(entry.get("function_name", "<unknown>")),
             source_file=str(entry.get("source_file", "<unknown>")),
             source_line=int(entry.get("source_line", 0)),
@@ -315,42 +337,68 @@ def coerce_active_chain_entry(entry: Any) -> ActiveChainEntry:
             handler_stack=tuple(_coerce_handler_stack_entry(item) for item in stack_raw),
             result=_coerce_effect_result(entry.get("result")),
         )
-
-    if kind == "spawn_boundary":
-        spawn_site_raw = entry.get("spawn_site")
-        spawn_site: SpawnSite | None = None
-        if isinstance(spawn_site_raw, dict):
-            spawn_site = SpawnSite(
-                function_name=str(spawn_site_raw.get("function_name", "<unknown>")),
-                source_file=str(spawn_site_raw.get("source_file", "<unknown>")),
-                source_line=int(spawn_site_raw.get("source_line", 0)),
-            )
-        parent_task_raw = entry.get("parent_task")
-        parent_task = None if parent_task_raw is None else int(parent_task_raw)
-        return SpawnBoundary(
-            task_id=int(entry.get("task_id", 0)),
-            parent_task=parent_task,
-            spawn_site=spawn_site,
-        )
-
-    if kind == "exception_site":
-        return ExceptionSite(
+    elif kind == "spawn_boundary":
+        result = _coerce_spawn_boundary_entry(entry)
+    elif kind == "context_entry":
+        result = ContextEntry(data=entry.get("data"))
+    elif kind == "exception_site":
+        result = ExceptionSite(
             function_name=str(entry.get("function_name", "<unknown>")),
             source_file=str(entry.get("source_file", "<unknown>")),
             source_line=int(entry.get("source_line", 0)),
             exception_type=str(entry.get("exception_type", "Exception")),
             message=str(entry.get("message", "")),
         )
+    else:
+        result = ContextEntry(data=entry)
+    return result
 
-    raise ValueError(f"Unsupported active-chain entry payload: {entry!r}")
+
+def _entry_site(entry: ActiveChainEntry) -> tuple[str, str] | None:
+    if isinstance(entry, ProgramYield):
+        return (entry.function_name, entry.source_file)
+    if isinstance(entry, EffectYield):
+        return (entry.function_name, entry.source_file)
+    if isinstance(entry, ExceptionSite):
+        return (entry.function_name, entry.source_file)
+    return None
 
 
 def coerce_active_chain_entries(entries: list[Any] | tuple[Any, ...]) -> list[ActiveChainEntry]:
-    return [coerce_active_chain_entry(entry) for entry in entries]
+    coerced = [coerce_active_chain_entry(entry) for entry in entries]
+    active_chain: list[ActiveChainEntry] = []
+    context_boundaries: list[SpawnBoundary] = []
+
+    for entry in coerced:
+        if isinstance(entry, ContextEntry):
+            payload = entry.data
+            if isinstance(payload, dict) and payload.get("kind") == "spawn_boundary":
+                context_boundaries.append(_coerce_spawn_boundary_entry(payload))
+            else:
+                active_chain.append(entry)
+            continue
+        active_chain.append(entry)
+
+    for boundary in context_boundaries:
+        insert_idx = next(
+            (index for index, item in enumerate(active_chain) if isinstance(item, ExceptionSite)),
+            len(active_chain),
+        )
+        if boundary.spawn_site is not None:
+            boundary_site = (boundary.spawn_site.function_name, boundary.spawn_site.source_file)
+            for index in range(len(active_chain) - 1, -1, -1):
+                site = _entry_site(active_chain[index])
+                if site == boundary_site:
+                    insert_idx = index + 1
+                    break
+        active_chain.insert(insert_idx, boundary)
+
+    return active_chain
 
 
 __all__ = [
     "ActiveChainEntry",
+    "ContextEntry",
     "EffectResult",
     "EffectResultActive",
     "EffectResultResumed",
