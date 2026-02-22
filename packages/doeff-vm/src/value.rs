@@ -7,7 +7,7 @@ use pyo3::types::{PyBool, PyDict, PyList, PyString};
 
 use crate::capture::{
     ActiveChainEntry, DispatchAction, EffectResult, HandlerDispatchEntry, HandlerKind,
-    HandlerStatus, TraceEntry,
+    HandlerStatus, TraceEntry, TraceHop,
 };
 use crate::frame::CallMetadata;
 use crate::handler::{Handler, RustProgramInvocation};
@@ -34,6 +34,7 @@ pub enum Value {
     ExternalPromise(ExternalPromise),
     CallStack(Vec<CallMetadata>),
     Trace(Vec<TraceEntry>),
+    Traceback(Vec<TraceHop>),
     ActiveChain(Vec<ActiveChainEntry>),
     List(Vec<Value>),
 }
@@ -400,6 +401,40 @@ impl Value {
                 }
                 Ok(list.into_any())
             }
+            Value::Traceback(hops) => {
+                let list = PyList::empty(py);
+                let vm_mod = py.import("doeff_vm").ok();
+                for hop in hops {
+                    let frames = PyList::empty(py);
+                    for frame in &hop.frames {
+                        if let Some(mod_) = &vm_mod {
+                            let cls = mod_.getattr("TraceFrame")?;
+                            let obj = cls.call1((
+                                frame.func_name.as_str(),
+                                frame.source_file.as_str(),
+                                frame.source_line,
+                            ))?;
+                            frames.append(obj)?;
+                        } else {
+                            let frame_dict = PyDict::new(py);
+                            frame_dict.set_item("func_name", frame.func_name.as_str())?;
+                            frame_dict.set_item("source_file", frame.source_file.as_str())?;
+                            frame_dict.set_item("source_line", frame.source_line)?;
+                            frames.append(frame_dict)?;
+                        }
+                    }
+                    if let Some(mod_) = &vm_mod {
+                        let cls = mod_.getattr("TraceHop")?;
+                        let obj = cls.call1((frames,))?;
+                        list.append(obj)?;
+                    } else {
+                        let hop_dict = PyDict::new(py);
+                        hop_dict.set_item("frames", frames)?;
+                        list.append(hop_dict)?;
+                    }
+                }
+                Ok(list.into_any())
+            }
             Value::ActiveChain(entries) => {
                 let list = PyList::empty(py);
                 for entry in entries {
@@ -502,6 +537,7 @@ impl Value {
             Value::ExternalPromise(h) => Value::ExternalPromise(h.clone()),
             Value::CallStack(stack) => Value::CallStack(stack.clone()),
             Value::Trace(entries) => Value::Trace(entries.clone()),
+            Value::Traceback(hops) => Value::Traceback(hops.clone()),
             Value::ActiveChain(entries) => Value::ActiveChain(entries.clone()),
             Value::List(items) => Value::List(items.iter().map(|v| v.clone_ref(py)).collect()),
         }

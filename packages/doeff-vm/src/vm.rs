@@ -12,7 +12,7 @@ use crate::ast_stream::{ASTStream, ASTStreamRef, ASTStreamStep, PythonGeneratorS
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectCreationSite,
     EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry,
-    HandlerStatus, TraceEntry,
+    HandlerStatus, TraceEntry, TraceFrame, TraceHop,
 };
 use crate::continuation::Continuation;
 use crate::do_ctrl::{CallArg, DoCtrl};
@@ -1577,6 +1577,7 @@ impl VM {
                 DoCtrl::Pass { .. } => "HandleYield(Pass)",
                 DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
                 DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+                DoCtrl::GetTraceback { .. } => "HandleYield(GetTraceback)",
                 DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
                 DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
                 DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
@@ -1666,6 +1667,7 @@ impl VM {
                 DoCtrl::Pass { .. } => "HandleYield(Pass)",
                 DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
                 DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+                DoCtrl::GetTraceback { .. } => "HandleYield(GetTraceback)",
                 DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
                 DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
                 DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
@@ -1961,6 +1963,7 @@ impl VM {
             DoCtrl::Pass { effect } => self.handle_pass(effect),
             DoCtrl::GetContinuation => self.handle_get_continuation(),
             DoCtrl::GetHandlers => self.handle_get_handlers(),
+            DoCtrl::GetTraceback { continuation } => self.handle_get_traceback(continuation),
             DoCtrl::CreateContinuation {
                 expr,
                 handlers,
@@ -2899,19 +2902,21 @@ impl VM {
     }
 
     fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
-        let (handler_chain, start_idx, from_idx, dispatch_id) = match self.dispatch_stack.last() {
-            Some(t) => (
-                t.handler_chain.clone(),
-                t.handler_idx + 1,
-                t.handler_idx,
-                t.dispatch_id,
-            ),
-            None => {
-                return StepEvent::Error(VMError::internal(
-                    "Delegate called outside of dispatch context",
-                ))
-            }
-        };
+        let (handler_chain, start_idx, from_idx, dispatch_id, old_k_user) =
+            match self.dispatch_stack.last() {
+                Some(t) => (
+                    t.handler_chain.clone(),
+                    t.handler_idx + 1,
+                    t.handler_idx,
+                    t.dispatch_id,
+                    t.k_user.clone(),
+                ),
+                None => {
+                    return StepEvent::Error(VMError::internal(
+                        "Delegate called outside of dispatch context",
+                    ))
+                }
+            };
 
         // Capture inner handler segment so outer handler's return flows back here
         // (result of Delegate). Per spec: caller = Some(inner_seg_id).
@@ -2920,11 +2925,10 @@ impl VM {
         // Delegate is non-terminal: capture the delegating handler's remaining
         // state as K_new, then clear frames to avoid holding duplicate generator
         // references from both the segment and continuation snapshot.
-        let Some(k_new) = self.capture_continuation(Some(dispatch_id)) else {
-            return StepEvent::Error(VMError::internal(
-                "Delegate called without current segment",
-            ));
+        let Some(mut k_new) = self.capture_continuation(Some(dispatch_id)) else {
+            return StepEvent::Error(VMError::internal("Delegate called without current segment"));
         };
+        k_new.parent = Some(Arc::new(old_k_user));
         if let Some(seg_id) = inner_seg_id {
             if let Some(seg) = self.segments.get_mut(seg_id) {
                 seg.frames.clear();
@@ -3246,6 +3250,47 @@ impl VM {
         StepEvent::Continue
     }
 
+    fn collect_traceback(continuation: &Continuation) -> Vec<TraceHop> {
+        let mut hops = Vec::new();
+        let mut current: Option<&Continuation> = Some(continuation);
+
+        while let Some(cont) = current {
+            let mut frames = Vec::new();
+            for frame in cont.frames_snapshot.iter() {
+                if let Frame::Program {
+                    stream,
+                    metadata: Some(metadata),
+                } = frame
+                {
+                    let (source_file, source_line) = match Self::stream_debug_location(stream) {
+                        Some(location) => (location.source_file, location.source_line),
+                        None => (metadata.source_file.clone(), metadata.source_line),
+                    };
+                    frames.push(TraceFrame {
+                        func_name: metadata.function_name.clone(),
+                        source_file,
+                        source_line,
+                    });
+                }
+            }
+            hops.push(TraceHop { frames });
+            current = cont.parent.as_deref();
+        }
+
+        hops
+    }
+
+    fn handle_get_traceback(&mut self, continuation: Continuation) -> StepEvent {
+        let Some(_top) = self.dispatch_stack.last() else {
+            return StepEvent::Error(VMError::internal(
+                "GetTraceback called outside of dispatch context",
+            ));
+        };
+        let hops = Self::collect_traceback(&continuation);
+        self.mode = Mode::Deliver(Value::Traceback(hops));
+        StepEvent::Continue
+    }
+
     fn handle_create_continuation(
         &mut self,
         program: PyShared,
@@ -3330,7 +3375,9 @@ impl Default for VM {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast_stream::{ASTStream, ASTStreamStep};
     use crate::frame::CallMetadata;
+    use std::sync::{Arc, Mutex};
 
     fn make_dummy_continuation() -> Continuation {
         Continuation {
@@ -3345,7 +3392,36 @@ mod tests {
             handlers: Vec::new(),
             handler_identities: Vec::new(),
             metadata: None,
+            parent: None,
         }
+    }
+
+    #[derive(Debug)]
+    struct DummyProgramStream;
+
+    impl ASTStream for DummyProgramStream {
+        fn resume(&mut self, _value: Value, _store: &mut RustStore) -> ASTStreamStep {
+            ASTStreamStep::Return(Value::Unit)
+        }
+
+        fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+            ASTStreamStep::Throw(exc)
+        }
+    }
+
+    fn make_program_frame(function_name: &str, source_file: &str, source_line: u32) -> Frame {
+        let metadata = CallMetadata::new(
+            function_name.to_string(),
+            source_file.to_string(),
+            source_line,
+            None,
+            None,
+        );
+        let stream: Arc<Mutex<Box<dyn ASTStream>>> = Arc::new(Mutex::new(Box::new(
+            DummyProgramStream,
+        )
+            as Box<dyn ASTStream>));
+        Frame::program(stream, Some(metadata))
     }
 
     #[test]
@@ -4044,6 +4120,42 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_delegate_links_previous_k_as_parent() {
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![marker]);
+        let seg_id = vm.alloc_segment(seg);
+        vm.current_segment = Some(seg_id);
+
+        let original_k_user = make_dummy_continuation();
+        let original_cont_id = original_k_user.cont_id;
+        vm.dispatch_stack.push(DispatchContext {
+            dispatch_id: DispatchId::fresh(),
+            effect: Effect::get("x"),
+            handler_chain: vec![marker],
+            handler_idx: 0,
+            k_user: original_k_user,
+            prompt_seg_id: seg_id,
+            completed: false,
+        });
+
+        let event = vm.handle_delegate(Effect::get("x"));
+        assert!(matches!(event, StepEvent::Error(_)));
+
+        let top = vm
+            .dispatch_stack
+            .last()
+            .expect("dispatch context must exist");
+        let parent = top
+            .k_user
+            .parent
+            .as_ref()
+            .expect("delegate must set parent");
+        assert_ne!(top.k_user.cont_id, original_cont_id);
+        assert_eq!(parent.cont_id, original_cont_id);
+    }
+
+    #[test]
     fn test_handle_pass_no_dispatch() {
         let mut vm = VM::new();
         let event = vm.handle_pass(Effect::get("dummy"));
@@ -4130,6 +4242,88 @@ mod tests {
             matches!(event, StepEvent::Error(_)),
             "G8: GetHandlers without dispatch must error"
         );
+    }
+
+    #[test]
+    fn test_collect_traceback_preserves_frame_and_hop_ordering_without_filtering() {
+        let mut parent = make_dummy_continuation();
+        parent.frames_snapshot = Arc::new(vec![
+            make_program_frame("parent_outer", "user.py", 10),
+            make_program_frame("parent_internal", "/tmp/doeff/internal.py", 20),
+        ]);
+
+        let mut child = make_dummy_continuation();
+        child.frames_snapshot = Arc::new(vec![
+            make_program_frame("child_outer", "handler.py", 30),
+            make_program_frame("child_inner", "handler.py", 31),
+        ]);
+        child.parent = Some(Arc::new(parent));
+
+        let hops = VM::collect_traceback(&child);
+        assert_eq!(hops.len(), 2);
+
+        let hop0_names: Vec<_> = hops[0]
+            .frames
+            .iter()
+            .map(|f| f.func_name.as_str())
+            .collect();
+        assert_eq!(hop0_names, vec!["child_outer", "child_inner"]);
+
+        let hop1_names: Vec<_> = hops[1]
+            .frames
+            .iter()
+            .map(|f| f.func_name.as_str())
+            .collect();
+        assert_eq!(hop1_names, vec!["parent_outer", "parent_internal"]);
+        assert_eq!(hops[1].frames[1].source_file, "/tmp/doeff/internal.py");
+    }
+
+    #[test]
+    fn test_handle_get_traceback_requires_dispatch_context() {
+        let mut vm = VM::new();
+        let event = vm.handle_get_traceback(make_dummy_continuation());
+        assert!(matches!(
+            event,
+            StepEvent::Error(VMError::InternalError { .. })
+        ));
+    }
+
+    #[test]
+    fn test_step_handle_yield_routes_get_traceback() {
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![marker]);
+        let seg_id = vm.alloc_segment(seg);
+        vm.current_segment = Some(seg_id);
+
+        let k_user = make_dummy_continuation();
+        vm.dispatch_stack.push(DispatchContext {
+            dispatch_id: DispatchId::fresh(),
+            effect: Effect::get("x"),
+            handler_chain: vec![marker],
+            handler_idx: 0,
+            k_user: k_user.clone(),
+            prompt_seg_id: seg_id,
+            completed: false,
+        });
+
+        let mut query_continuation = make_dummy_continuation();
+        query_continuation.frames_snapshot =
+            Arc::new(vec![make_program_frame("query_frame", "query.py", 55)]);
+        vm.mode = Mode::HandleYield(DoCtrl::GetTraceback {
+            continuation: query_continuation,
+        });
+
+        let event = vm.step_handle_yield();
+        assert!(matches!(event, StepEvent::Continue));
+        match &vm.mode {
+            Mode::Deliver(Value::Traceback(hops)) => {
+                assert_eq!(hops.len(), 1);
+                assert_eq!(hops[0].frames.len(), 1);
+                assert_eq!(hops[0].frames[0].func_name, "query_frame");
+            }
+            other => panic!("expected Deliver(Traceback), got {:?}", other),
+        }
     }
 
     #[test]
@@ -4860,6 +5054,7 @@ mod tests {
             handlers: Vec::new(),
             handler_identities: Vec::new(),
             metadata: None,
+            parent: None,
         };
 
         vm.dispatch_stack.push(DispatchContext {
