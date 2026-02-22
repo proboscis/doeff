@@ -260,6 +260,78 @@ rules:
       invariants: ["R13-I"]
 
   # ---------------------------------------------------------------------------
+  # SPEC-VM-013 ENFORCEMENT
+  # ---------------------------------------------------------------------------
+
+  - id: vm-no-exception-spawn-boundaries-global
+    pattern: EXCEPTION_SPAWN_BOUNDARIES
+    message: |
+      SPEC-VM-013 violation: EXCEPTION_SPAWN_BOUNDARIES global static must not exist.
+      Spawn-boundary context must flow through GetExecutionContext and typed execution context.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/scheduler.rs"
+    metadata:
+      spec: SPEC-VM-013
+      category: vm-protocol
+
+  - id: vm-no-take-exception-spawn-boundaries
+    pattern-regex: '\bfn\s+take_exception_spawn_boundaries\b'
+    message: |
+      SPEC-VM-013 violation: take_exception_spawn_boundaries must not exist.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/scheduler.rs"
+    metadata:
+      spec: SPEC-VM-013
+      category: vm-protocol
+
+  - id: vm-no-preserve-exception-origin
+    pattern-regex: '\bfn\s+preserve_exception_origin\b'
+    message: |
+      SPEC-VM-013 violation: preserve_exception_origin must not exist.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/scheduler.rs"
+        - "**/doeff-vm/src/handler.rs"
+    metadata:
+      spec: SPEC-VM-013
+      category: vm-protocol
+
+  - id: vm-no-doeff-exception-origin-dunder
+    pattern-regex: '__doeff_exception_origin__'
+    message: |
+      SPEC-VM-013 violation: __doeff_exception_origin__ dunder is forbidden.
+      Use typed doeff_execution_context enrichment instead.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/**"
+    metadata:
+      spec: SPEC-VM-013
+      category: vm-protocol
+
+  - id: vm-no-exception-spawn-boundary-struct
+    pattern-regex: '\bstruct\s+ExceptionSpawnBoundary\b'
+    message: |
+      SPEC-VM-013 violation: ExceptionSpawnBoundary struct must not exist.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/scheduler.rs"
+    metadata:
+      spec: SPEC-VM-013
+      category: vm-protocol
+
+  # ---------------------------------------------------------------------------
   # R14-C: Perform lowering enforcement
   # ---------------------------------------------------------------------------
 

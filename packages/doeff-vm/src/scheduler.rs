@@ -18,10 +18,10 @@ use crate::doeff_generator::DoeffGeneratorFn;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
-    PyAcquireSemaphore, PyCancelEffect, PyCompletePromise, PyCreateExternalPromise,
-    PyCreatePromise, PyCreateSemaphore, PyFailPromise, PyGather, PyRace, PyReleaseSemaphore,
-    PySpawn, PyTaskCompleted,
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
+    make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
+    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
+    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySpawn, PyTaskCompleted,
 };
 use crate::frame::CallMetadata;
 use crate::handler::{
@@ -36,6 +36,7 @@ use crate::value::Value;
 use crate::vm::RustStore;
 
 pub const SCHEDULER_HANDLER_NAME: &str = "SchedulerHandler";
+const EXECUTION_CONTEXT_ATTR: &str = "doeff_execution_context";
 
 /// Effect variants handled by the scheduler.
 #[derive(Debug, Clone)]
@@ -78,6 +79,7 @@ pub enum SchedulerEffect {
         task: TaskId,
         result: Result<Value, PyException>,
     },
+    GetExecutionContext,
 }
 
 /// What a task can wait on.
@@ -160,14 +162,6 @@ pub struct TaskMetadata {
     pub spawn_dispatch_id: Option<DispatchId>,
 }
 
-#[derive(Clone, Debug)]
-pub struct ExceptionSpawnBoundary {
-    pub task_id: u64,
-    pub parent_task: Option<u64>,
-    pub spawn_site: Option<SpawnSite>,
-    pub insertion_dispatch_id: Option<DispatchId>,
-}
-
 #[derive(Clone, Copy, Debug)]
 struct SemaphoreWaiter {
     promise: PromiseId,
@@ -223,99 +217,7 @@ fn resume_to_continuation(cont: Continuation, result: Value) -> ASTStreamStep {
     })
 }
 
-fn annotate_spawn_boundary_dispatch(error: &PyException, dispatch_id: Option<DispatchId>) {
-    let Some(dispatch_id) = dispatch_id else {
-        return;
-    };
-    let Some(key) = exception_key(error) else {
-        return;
-    };
-    let mut boundaries = exception_spawn_boundaries()
-        .lock()
-        .expect("Scheduler lock poisoned");
-    if let Some(chain) = boundaries.get_mut(&key) {
-        if let Some(boundary) = chain.first_mut() {
-            boundary.insertion_dispatch_id = Some(dispatch_id);
-        }
-    }
-}
-
-pub(crate) fn preserve_exception_origin(error: &PyException) {
-    let PyException::Materialized {
-        exc_value, exc_tb, ..
-    } = error
-    else {
-        return;
-    };
-
-    Python::attach(|py| {
-        let exc_obj = exc_value.bind(py);
-        if exc_obj
-            .getattr("__doeff_exception_origin__")
-            .ok()
-            .is_some_and(|v| !v.is_none())
-        {
-            return;
-        }
-
-        let tb = exc_tb
-            .as_ref()
-            .map(|tb| tb.bind(py).clone().into_any())
-            .or_else(|| {
-                exc_obj
-                    .getattr("__traceback__")
-                    .ok()
-                    .filter(|v| !v.is_none())
-            });
-        let Some(mut current_tb) = tb else {
-            return;
-        };
-
-        loop {
-            let Some(next_tb) = current_tb
-                .getattr("tb_next")
-                .ok()
-                .filter(|next| !next.is_none())
-            else {
-                break;
-            };
-            current_tb = next_tb;
-        }
-
-        let Ok(frame) = current_tb.getattr("tb_frame") else {
-            return;
-        };
-        let Ok(code) = frame.getattr("f_code") else {
-            return;
-        };
-
-        let fn_name = code
-            .getattr("co_qualname")
-            .or_else(|_| code.getattr("co_name"))
-            .ok()
-            .and_then(|v| v.extract::<String>().ok())
-            .unwrap_or_else(|| "<unknown>".to_string());
-        let file = code
-            .getattr("co_filename")
-            .ok()
-            .and_then(|v| v.extract::<String>().ok())
-            .unwrap_or_else(|| "<unknown>".to_string());
-        let line = current_tb
-            .getattr("tb_lineno")
-            .ok()
-            .and_then(|v| v.extract::<u32>().ok())
-            .unwrap_or(0);
-
-        let origin = PyDict::new(py);
-        let _ = origin.set_item("function_name", fn_name);
-        let _ = origin.set_item("source_file", file);
-        let _ = origin.set_item("source_line", line);
-        let _ = exc_obj.setattr("__doeff_exception_origin__", origin);
-    });
-}
-
 fn throw_to_continuation(k: Continuation, error: PyException) -> ASTStreamStep {
-    annotate_spawn_boundary_dispatch(&error, k.dispatch_id);
     if k.started {
         return ASTStreamStep::Yield(DoCtrl::TransferThrow {
             continuation: k,
@@ -323,6 +225,59 @@ fn throw_to_continuation(k: Continuation, error: PyException) -> ASTStreamStep {
         });
     }
     ASTStreamStep::Throw(error)
+}
+
+fn maybe_attach_spawn_boundary_context(
+    error: &PyException,
+    task_id: TaskId,
+    metadata: &TaskMetadata,
+) {
+    let PyException::Materialized { exc_value, .. } = error else {
+        return;
+    };
+
+    Python::attach(|py| {
+        let exc = exc_value.bind(py);
+        let has_context = exc
+            .getattr(EXECUTION_CONTEXT_ATTR)
+            .ok()
+            .is_some_and(|context| !context.is_none());
+        if has_context {
+            return;
+        }
+
+        let context = match make_execution_context_object(py) {
+            Ok(context) => context,
+            Err(_) => return,
+        };
+
+        let result = (|| -> PyResult<()> {
+            let entry = PyDict::new(py);
+            entry.set_item("kind", "spawn_boundary")?;
+            entry.set_item("task_id", task_id.raw())?;
+            match metadata.parent_task {
+                Some(parent_task) => entry.set_item("parent_task", parent_task.raw())?,
+                None => entry.set_item("parent_task", py.None())?,
+            }
+            match &metadata.spawn_site {
+                Some(site) => {
+                    let site_dict = PyDict::new(py);
+                    site_dict.set_item("function_name", site.function_name.clone())?;
+                    site_dict.set_item("source_file", site.source_file.clone())?;
+                    site_dict.set_item("source_line", site.source_line)?;
+                    entry.set_item("spawn_site", site_dict)?;
+                }
+                None => entry.set_item("spawn_site", py.None())?,
+            }
+
+            let context_bound = context.bind(py);
+            context_bound.getattr("add")?.call1((entry,))?;
+            exc.setattr(EXECUTION_CONTEXT_ATTR, context_bound)?;
+            Ok(())
+        })();
+
+        let _ = result;
+    });
 }
 
 fn step_targets_continuation(step: &ASTStreamStep, target: &Continuation) -> bool {
@@ -363,34 +318,11 @@ pub struct SchedulerState {
 
 static NEXT_SCHEDULER_STATE_ID: AtomicU64 = AtomicU64::new(1);
 static SEMAPHORE_DROP_NOTIFICATIONS: OnceLock<Mutex<HashMap<u64, Vec<u64>>>> = OnceLock::new();
-static EXCEPTION_SPAWN_BOUNDARIES: OnceLock<Mutex<HashMap<usize, Vec<ExceptionSpawnBoundary>>>> =
-    OnceLock::new();
 static SCHEDULER_STATE_REGISTRY: OnceLock<Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>>> =
     OnceLock::new();
 
 fn semaphore_drop_notifications() -> &'static Mutex<HashMap<u64, Vec<u64>>> {
     SEMAPHORE_DROP_NOTIFICATIONS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn exception_spawn_boundaries() -> &'static Mutex<HashMap<usize, Vec<ExceptionSpawnBoundary>>> {
-    EXCEPTION_SPAWN_BOUNDARIES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn exception_key(error: &PyException) -> Option<usize> {
-    let PyException::Materialized { exc_value, .. } = error else {
-        return None;
-    };
-    Some(Python::attach(|py| exc_value.bind(py).as_ptr() as usize))
-}
-
-pub(crate) fn take_exception_spawn_boundaries(error: &PyException) -> Vec<ExceptionSpawnBoundary> {
-    let Some(key) = exception_key(error) else {
-        return Vec::new();
-    };
-    let mut boundaries = exception_spawn_boundaries()
-        .lock()
-        .expect("Scheduler lock poisoned");
-    boundaries.remove(&key).unwrap_or_default()
 }
 
 fn scheduler_state_registry() -> &'static Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>> {
@@ -649,6 +581,10 @@ fn parse_scheduler_python_effect(
             let result_obj = done.result.bind(py);
             let result = parse_task_completed_result(py, result_obj)?;
             return Ok(Some(SchedulerEffect::TaskCompleted { task, result }));
+        }
+
+        if obj.extract::<PyRef<'_, PyGetExecutionContext>>().is_ok() {
+            return Ok(Some(SchedulerEffect::GetExecutionContext));
         }
 
         Ok(None)
@@ -1298,10 +1234,6 @@ impl SchedulerState {
 
     pub fn mark_task_done(&mut self, task_id: TaskId, result: Result<Value, PyException>) {
         self.cancel_requested.remove(&task_id);
-        if let Err(error) = &result {
-            self.annotate_failed_task(task_id, error);
-        }
-        self.task_metadata.remove(&task_id);
         if let Some(state) = self.tasks.remove(&task_id) {
             let task_store = match state {
                 TaskState::Pending { store, .. } => store,
@@ -1317,33 +1249,12 @@ impl SchedulerState {
         }
     }
 
-    fn annotate_failed_task(&self, task_id: TaskId, error: &PyException) {
-        let Some(metadata) = self.task_metadata.get(&task_id) else {
-            return;
-        };
-        let boundary_dispatch_id = metadata
-            .parent_task
-            .and_then(|parent_task| self.tasks.get(&parent_task))
-            .and_then(|state| match state {
-                TaskState::Pending { cont, .. } => cont.dispatch_id,
-                TaskState::Done { .. } => None,
-            });
-        let Some(key) = exception_key(error) else {
-            return;
-        };
-        let boundary = ExceptionSpawnBoundary {
-            task_id: task_id.raw(),
-            parent_task: metadata.parent_task.map(|task| task.raw()),
-            spawn_site: metadata.spawn_site.clone(),
-            insertion_dispatch_id: boundary_dispatch_id.or(metadata.spawn_dispatch_id),
-        };
-
-        let mut boundaries = exception_spawn_boundaries()
-            .lock()
-            .expect("Scheduler lock poisoned");
-        let mut chain = boundaries.remove(&key).unwrap_or_default();
-        chain.insert(0, boundary);
-        boundaries.insert(key, chain);
+    fn error_with_spawn_boundary(&self, task_id: TaskId, error: &PyException) -> PyException {
+        let enriched = error.clone();
+        if let Some(metadata) = self.task_metadata.get(&task_id) {
+            maybe_attach_spawn_boundary_context(&enriched, task_id, metadata);
+        }
+        enriched
     }
 
     pub fn wake_waiters(&mut self, waitable: Waitable) {
@@ -1484,7 +1395,9 @@ impl SchedulerState {
             match item {
                 Waitable::Task(task_id) => match self.tasks.get(task_id) {
                     Some(TaskState::Done { result: Ok(v), .. }) => results.push(v.clone()),
-                    Some(TaskState::Done { result: Err(e), .. }) => return Some(Err(e.clone())),
+                    Some(TaskState::Done { result: Err(e), .. }) => {
+                        return Some(Err(self.error_with_spawn_boundary(*task_id, e)));
+                    }
                     _ => return None,
                 },
                 Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
@@ -1504,7 +1417,10 @@ impl SchedulerState {
             match item {
                 Waitable::Task(task_id) => {
                     if let Some(TaskState::Done { result, .. }) = self.tasks.get(task_id) {
-                        return Some(result.clone());
+                        return Some(match result {
+                            Ok(value) => Ok(value.clone()),
+                            Err(error) => Err(self.error_with_spawn_boundary(*task_id, error)),
+                        });
                     }
                 }
                 Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
@@ -1828,6 +1744,63 @@ impl SchedulerProgram {
         step
     }
 
+    fn handle_get_execution_context(&mut self, k_user: Continuation) -> ASTStreamStep {
+        let spawn_boundary = {
+            let state = self.state.lock().expect("Scheduler lock poisoned");
+            state.current_task.and_then(|task_id| {
+                state.task_metadata.get(&task_id).map(|metadata| {
+                    (
+                        task_id.raw(),
+                        metadata.parent_task.map(|parent| parent.raw()),
+                        metadata.spawn_site.clone(),
+                    )
+                })
+            })
+        };
+
+        Python::attach(|py| {
+            let context = match make_execution_context_object(py) {
+                Ok(ctx) => ctx,
+                Err(err) => {
+                    let err_obj = err.value(py).clone().into_any().unbind();
+                    return ASTStreamStep::Throw(pyobject_to_exception(py, err_obj.bind(py)));
+                }
+            };
+
+            if let Some((task_id, parent_task, spawn_site)) = spawn_boundary {
+                let result = (|| -> PyResult<()> {
+                    let entry = PyDict::new(py);
+                    entry.set_item("kind", "spawn_boundary")?;
+                    entry.set_item("task_id", task_id)?;
+                    match parent_task {
+                        Some(parent_task) => entry.set_item("parent_task", parent_task)?,
+                        None => entry.set_item("parent_task", py.None())?,
+                    }
+                    match spawn_site {
+                        Some(site) => {
+                            let site_dict = PyDict::new(py);
+                            site_dict.set_item("function_name", site.function_name)?;
+                            site_dict.set_item("source_file", site.source_file)?;
+                            site_dict.set_item("source_line", site.source_line)?;
+                            entry.set_item("spawn_site", site_dict)?;
+                        }
+                        None => entry.set_item("spawn_site", py.None())?,
+                    }
+                    let add = context.bind(py).getattr("add")?;
+                    add.call1((entry,))?;
+                    Ok(())
+                })();
+
+                if let Err(err) = result {
+                    let err_obj = err.value(py).clone().into_any().unbind();
+                    return ASTStreamStep::Throw(pyobject_to_exception(py, err_obj.bind(py)));
+                }
+            }
+
+            resume_to_continuation(k_user, Value::Python(context))
+        })
+    }
+
     fn continue_driving(
         &mut self,
         outcome: Result<Value, PyException>,
@@ -2100,6 +2073,8 @@ impl ASTStreamProgram for SchedulerProgram {
                 }
                 resume_to_continuation(k_user, Value::Unit)
             }
+
+            SchedulerEffect::GetExecutionContext => self.handle_get_execution_context(k_user),
         }
     }
 
