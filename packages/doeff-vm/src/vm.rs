@@ -139,6 +139,71 @@ pub struct TraceEvent {
     pub result: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModeFormatVerbosity {
+    Compact,
+    Verbose,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContinuationActivationKind {
+    Resume,
+    Transfer,
+}
+
+impl ContinuationActivationKind {
+    fn unstarted_error_message(self) -> &'static str {
+        match self {
+            ContinuationActivationKind::Resume => {
+                "Resume on unstarted continuation; use ResumeContinuation"
+            }
+            ContinuationActivationKind::Transfer => {
+                "Transfer on unstarted continuation; use ResumeContinuation"
+            }
+        }
+    }
+
+    fn handler_action(self, value_repr: Option<String>) -> HandlerAction {
+        match self {
+            ContinuationActivationKind::Resume => HandlerAction::Resumed { value_repr },
+            ContinuationActivationKind::Transfer => HandlerAction::Transferred { value_repr },
+        }
+    }
+
+    fn is_transferred(self) -> bool {
+        matches!(self, ContinuationActivationKind::Transfer)
+    }
+
+    fn caller_segment(self, current_segment: Option<SegmentId>) -> Option<SegmentId> {
+        match self {
+            ContinuationActivationKind::Resume => current_segment,
+            ContinuationActivationKind::Transfer => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForwardKind {
+    Delegate,
+    Pass,
+}
+
+impl ForwardKind {
+    fn outside_dispatch_error(self) -> &'static str {
+        match self {
+            ForwardKind::Delegate => "Delegate called outside of dispatch context",
+            ForwardKind::Pass => "Pass called outside of dispatch context",
+        }
+    }
+
+    fn missing_handler_context(self) -> &'static str {
+        match self {
+            ForwardKind::Delegate => "handle_delegate",
+            ForwardKind::Pass => "handle_pass",
+        }
+    }
+}
+
 impl Default for DebugConfig {
     fn default() -> Self {
         DebugConfig {
@@ -1819,35 +1884,46 @@ impl VM {
         result
     }
 
-    fn mode_kind(&self) -> &'static str {
+    fn format_do_ctrl(yielded: &DoCtrl, verbosity: ModeFormatVerbosity) -> &'static str {
+        let formatted = match yielded {
+            DoCtrl::Pure { .. } => "HandleYield(Pure)",
+            DoCtrl::Map { .. } => "HandleYield(Map)",
+            DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
+            DoCtrl::Perform { .. } => "HandleYield(Perform)",
+            DoCtrl::Resume { .. } => "HandleYield(Resume)",
+            DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
+            DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
+            DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
+            DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
+            DoCtrl::Pass { .. } => "HandleYield(Pass)",
+            DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
+            DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+            DoCtrl::GetTraceback { .. } => "HandleYield(GetTraceback)",
+            DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
+            DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
+            DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
+            DoCtrl::Apply { .. } => "HandleYield(Apply)",
+            DoCtrl::Expand { .. } => "HandleYield(Expand)",
+            DoCtrl::Eval { .. } => "HandleYield(Eval)",
+            DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
+            DoCtrl::GetTrace => "HandleYield(GetTrace)",
+        };
+        match verbosity {
+            ModeFormatVerbosity::Compact | ModeFormatVerbosity::Verbose => formatted,
+        }
+    }
+
+    fn format_mode(&self, verbosity: ModeFormatVerbosity) -> &'static str {
         match &self.mode {
             Mode::Deliver(_) => "Deliver",
             Mode::Throw(_) => "Throw",
-            Mode::HandleYield(y) => match y {
-                DoCtrl::Pure { .. } => "HandleYield(Pure)",
-                DoCtrl::Map { .. } => "HandleYield(Map)",
-                DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
-                DoCtrl::Perform { .. } => "HandleYield(Perform)",
-                DoCtrl::Resume { .. } => "HandleYield(Resume)",
-                DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
-                DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
-                DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
-                DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
-                DoCtrl::Pass { .. } => "HandleYield(Pass)",
-                DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
-                DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
-                DoCtrl::GetTraceback { .. } => "HandleYield(GetTraceback)",
-                DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
-                DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
-                DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-                DoCtrl::Apply { .. } => "HandleYield(Apply)",
-                DoCtrl::Expand { .. } => "HandleYield(Expand)",
-                DoCtrl::Eval { .. } => "HandleYield(Eval)",
-                DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
-                DoCtrl::GetTrace => "HandleYield(GetTrace)",
-            },
+            Mode::HandleYield(yielded) => Self::format_do_ctrl(yielded, verbosity),
             Mode::Return(_) => "Return",
         }
+    }
+
+    fn mode_kind(&self) -> &'static str {
+        self.format_mode(ModeFormatVerbosity::Compact)
     }
 
     fn pending_kind(&self) -> &'static str {
@@ -1910,34 +1986,7 @@ impl VM {
     }
 
     fn debug_step_entry(&self) {
-        let mode_kind = match &self.mode {
-            Mode::Deliver(_) => "Deliver",
-            Mode::Throw(_) => "Throw",
-            Mode::HandleYield(y) => match y {
-                DoCtrl::Pure { .. } => "HandleYield(Pure)",
-                DoCtrl::Map { .. } => "HandleYield(Map)",
-                DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
-                DoCtrl::Perform { .. } => "HandleYield(Perform)",
-                DoCtrl::Resume { .. } => "HandleYield(Resume)",
-                DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
-                DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
-                DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
-                DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
-                DoCtrl::Pass { .. } => "HandleYield(Pass)",
-                DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
-                DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
-                DoCtrl::GetTraceback { .. } => "HandleYield(GetTraceback)",
-                DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
-                DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
-                DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-                DoCtrl::Apply { .. } => "HandleYield(Apply)",
-                DoCtrl::Expand { .. } => "HandleYield(Expand)",
-                DoCtrl::Eval { .. } => "HandleYield(Eval)",
-                DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
-                DoCtrl::GetTrace => "HandleYield(GetTrace)",
-            },
-            Mode::Return(_) => "Return",
-        };
+        let mode_kind = self.format_mode(ModeFormatVerbosity::Verbose);
 
         let seg_info = self
             .current_segment
@@ -1945,18 +1994,7 @@ impl VM {
             .map(|s| format!("seg={:?} frames={}", self.current_segment, s.frames.len()))
             .unwrap_or_else(|| "seg=None".to_string());
 
-        let pending = self
-            .pending_python
-            .as_ref()
-            .map(|p| match p {
-                PendingPython::EvalExpr { .. } => "EvalExpr",
-                PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
-                PendingPython::ExpandReturn { .. } => "ExpandReturn",
-                PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
-                PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
-                PendingPython::AsyncEscape => "AsyncEscape",
-            })
-            .unwrap_or("None");
+        let pending = self.pending_kind();
 
         eprintln!(
             "[step {}] mode={} {} dispatch_depth={} pending={}",
@@ -3058,90 +3096,87 @@ impl VM {
         self.handlers.keys().copied().collect()
     }
 
-    fn handle_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
-        if !k.started {
-            return self
-                .throw_runtime_error("Resume on unstarted continuation; use ResumeContinuation");
-        }
-        if self.is_one_shot_consumed(k.cont_id) {
-            return self.throw_runtime_error(&format!(
-                "one-shot violation: continuation {} already consumed",
-                k.cont_id.raw()
-            ));
-        }
-        self.mark_one_shot_consumed(k.cont_id);
-        self.lazy_pop_completed();
-        let error_dispatch = self.error_dispatch_for_continuation(&k);
+    fn record_continuation_activation(
+        &mut self,
+        kind: ContinuationActivationKind,
+        k: &Continuation,
+        value: &Value,
+    ) {
         if let Some(dispatch_id) = k.dispatch_id {
             if let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
             {
-                let value_repr = Self::value_repr(&value);
+                let value_repr = Self::value_repr(value);
                 self.capture_log.push(CaptureEvent::HandlerCompleted {
                     dispatch_id,
                     handler_name: handler_name.clone(),
                     handler_index,
-                    action: HandlerAction::Resumed {
-                        value_repr: value_repr.clone(),
-                    },
+                    action: kind.handler_action(value_repr.clone()),
                 });
-                self.maybe_emit_resume_event(dispatch_id, handler_name, value_repr, &k, false);
+                self.maybe_emit_resume_event(
+                    dispatch_id,
+                    handler_name,
+                    value_repr,
+                    k,
+                    kind.is_transferred(),
+                );
             }
         }
-        if let Some((dispatch_id, original_exception, terminal)) = error_dispatch {
-            if !terminal {
+    }
+
+    fn check_dispatch_completion_after_activation(
+        &mut self,
+        kind: ContinuationActivationKind,
+        k: &Continuation,
+        had_error_dispatch: bool,
+    ) {
+        match kind {
+            ContinuationActivationKind::Resume => {
+                if had_error_dispatch {
+                    if let Some(dispatch_id) = k.dispatch_id {
+                        if !self.active_dispatch_handler_is_python(dispatch_id) {
+                            self.check_dispatch_completion(k);
+                        }
+                    } else {
+                        self.check_dispatch_completion(k);
+                    }
+                    return;
+                }
+
                 if let Some(dispatch_id) = k.dispatch_id {
                     if !self.active_dispatch_handler_is_python(dispatch_id) {
-                        self.check_dispatch_completion(&k);
+                        self.check_dispatch_completion(k);
                     }
                 } else {
-                    self.check_dispatch_completion(&k);
+                    self.check_dispatch_completion(k);
                 }
-            } else {
-                self.mark_dispatch_completed(dispatch_id);
-                let enriched_exception =
-                    match Self::enrich_original_exception_with_context(original_exception, value) {
-                        Ok(exception) => exception,
-                        Err(effect_err) => effect_err,
-                    };
-                let exec_seg = Segment {
-                    marker: k.marker,
-                    frames: (*k.frames_snapshot).clone(),
-                    caller: self.current_segment,
-                    scope_chain: (*k.scope_chain).clone(),
-                    kind: crate::segment::SegmentKind::Normal,
-                };
-                let exec_seg_id = self.alloc_segment(exec_seg);
-                self.current_segment = Some(exec_seg_id);
-                self.mode = Mode::Throw(enriched_exception);
-                return StepEvent::Continue;
             }
-        } else if let Some(dispatch_id) = k.dispatch_id {
-            if !self.active_dispatch_handler_is_python(dispatch_id) {
-                self.check_dispatch_completion(&k);
+            ContinuationActivationKind::Transfer => {
+                self.check_dispatch_completion(k);
             }
-        } else {
-            self.check_dispatch_completion(&k);
         }
+    }
 
+    fn enter_continuation_segment(&mut self, k: &Continuation, caller: Option<SegmentId>) {
         let exec_seg = Segment {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
-            caller: self.current_segment,
+            caller,
             scope_chain: (*k.scope_chain).clone(),
             kind: crate::segment::SegmentKind::Normal,
         };
         let exec_seg_id = self.alloc_segment(exec_seg);
-
         self.current_segment = Some(exec_seg_id);
-        self.mode = Mode::Deliver(value);
-        StepEvent::Continue
     }
 
-    fn handle_transfer(&mut self, k: Continuation, value: Value) -> StepEvent {
+    fn activate_continuation(
+        &mut self,
+        kind: ContinuationActivationKind,
+        k: Continuation,
+        value: Value,
+    ) -> StepEvent {
         if !k.started {
-            return self
-                .throw_runtime_error("Transfer on unstarted continuation; use ResumeContinuation");
+            return self.throw_runtime_error(kind.unstarted_error_message());
         }
         if self.is_one_shot_consumed(k.cont_id) {
             return self.throw_runtime_error(&format!(
@@ -3152,22 +3187,8 @@ impl VM {
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
         let error_dispatch = self.error_dispatch_for_continuation(&k);
-        if let Some(dispatch_id) = k.dispatch_id {
-            if let Some((handler_index, handler_name)) =
-                self.current_handler_identity_for_dispatch(dispatch_id)
-            {
-                let value_repr = Self::value_repr(&value);
-                self.capture_log.push(CaptureEvent::HandlerCompleted {
-                    dispatch_id,
-                    handler_name: handler_name.clone(),
-                    handler_index,
-                    action: HandlerAction::Transferred {
-                        value_repr: value_repr.clone(),
-                    },
-                });
-                self.maybe_emit_resume_event(dispatch_id, handler_name, value_repr, &k, true);
-            }
-        }
+        self.record_continuation_activation(kind, &k, &value);
+
         if let Some((dispatch_id, original_exception, terminal)) = error_dispatch {
             if terminal {
                 self.mark_dispatch_completed(dispatch_id);
@@ -3176,33 +3197,26 @@ impl VM {
                         Ok(exception) => exception,
                         Err(effect_err) => effect_err,
                     };
-                let exec_seg = Segment {
-                    marker: k.marker,
-                    frames: (*k.frames_snapshot).clone(),
-                    caller: None,
-                    scope_chain: (*k.scope_chain).clone(),
-                    kind: crate::segment::SegmentKind::Normal,
-                };
-                let exec_seg_id = self.alloc_segment(exec_seg);
-                self.current_segment = Some(exec_seg_id);
+                self.enter_continuation_segment(&k, kind.caller_segment(self.current_segment));
                 self.mode = Mode::Throw(enriched_exception);
                 return StepEvent::Continue;
             }
+            self.check_dispatch_completion_after_activation(kind, &k, true);
+        } else {
+            self.check_dispatch_completion_after_activation(kind, &k, false);
         }
-        self.check_dispatch_completion(&k);
 
-        let exec_seg = Segment {
-            marker: k.marker,
-            frames: (*k.frames_snapshot).clone(),
-            caller: None,
-            scope_chain: (*k.scope_chain).clone(),
-            kind: crate::segment::SegmentKind::Normal,
-        };
-        let exec_seg_id = self.alloc_segment(exec_seg);
-
-        self.current_segment = Some(exec_seg_id);
+        self.enter_continuation_segment(&k, kind.caller_segment(self.current_segment));
         self.mode = Mode::Deliver(value);
         StepEvent::Continue
+    }
+
+    fn handle_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
+        self.activate_continuation(ContinuationActivationKind::Resume, k, value)
+    }
+
+    fn handle_transfer(&mut self, k: Continuation, value: Value) -> StepEvent {
+        self.activate_continuation(ContinuationActivationKind::Transfer, k, value)
     }
 
     fn handle_transfer_throw(&mut self, k: Continuation, exception: PyException) -> StepEvent {
@@ -3318,49 +3332,109 @@ impl VM {
         })
     }
 
-    fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
-        let (handler_chain, start_idx, from_idx, dispatch_id, old_k_user) =
-            match self.dispatch_stack.last() {
-                Some(t) => (
-                    t.handler_chain.clone(),
-                    t.handler_idx + 1,
-                    t.handler_idx,
-                    t.dispatch_id,
-                    t.k_user.clone(),
-                ),
-                None => {
-                    return StepEvent::Error(VMError::internal(
-                        "Delegate called outside of dispatch context",
-                    ))
-                }
-            };
-
-        // Capture inner handler segment so outer handler's return flows back here
-        // (result of Delegate). Per spec: caller = Some(inner_seg_id).
-        let inner_seg_id = self.current_segment;
-
-        // Delegate is non-terminal: capture the delegating handler's remaining
-        // state as K_new, then clear frames to avoid holding duplicate generator
-        // references from both the segment and continuation snapshot.
-        let Some(mut k_new) = self.capture_continuation(Some(dispatch_id)) else {
-            return StepEvent::Error(VMError::internal("Delegate called without current segment"));
-        };
-        k_new.parent = Some(Arc::new(old_k_user));
-        if let Some(seg_id) = inner_seg_id {
+    fn clear_segment_frames(&mut self, segment_id: Option<SegmentId>) {
+        if let Some(seg_id) = segment_id {
             if let Some(seg) = self.segments.get_mut(seg_id) {
                 seg.frames.clear();
             }
         }
+    }
+
+    fn maybe_emit_forward_capture_event(
+        &mut self,
+        kind: ForwardKind,
+        dispatch_id: DispatchId,
+        handler_chain: &[Marker],
+        from_idx: usize,
+        to_idx: usize,
+        to_marker: Marker,
+    ) {
+        let from_marker = handler_chain.get(from_idx).copied();
+        let from_name = from_marker
+            .and_then(|m| self.marker_handler_trace_info(m))
+            .map(|(name, _, _, _)| name);
+        let to_info = self.marker_handler_trace_info(to_marker);
+        if let (Some(from_name), Some((to_name, to_kind, to_source_file, to_source_line))) =
+            (from_name, to_info)
         {
-            let top = self.dispatch_stack.last_mut().unwrap();
-            top.k_user = k_new.clone();
+            let event = match kind {
+                ForwardKind::Delegate => CaptureEvent::Delegated {
+                    dispatch_id,
+                    from_handler_name: from_name,
+                    from_handler_index: from_idx,
+                    to_handler_name: to_name,
+                    to_handler_index: to_idx,
+                    to_handler_kind: to_kind,
+                    to_handler_source_file: to_source_file,
+                    to_handler_source_line: to_source_line,
+                },
+                ForwardKind::Pass => CaptureEvent::Passed {
+                    dispatch_id,
+                    from_handler_name: from_name,
+                    from_handler_index: from_idx,
+                    to_handler_name: to_name,
+                    to_handler_index: to_idx,
+                    to_handler_kind: to_kind,
+                    to_handler_source_file: to_source_file,
+                    to_handler_source_line: to_source_line,
+                },
+            };
+            self.capture_log.push(event);
+        }
+    }
+
+    fn handle_forward(&mut self, kind: ForwardKind, effect: DispatchEffect) -> StepEvent {
+        let (handler_chain, start_idx, from_idx, dispatch_id, parent_k_user) =
+            match self.dispatch_stack.last() {
+                Some(top) => (
+                    top.handler_chain.clone(),
+                    top.handler_idx + 1,
+                    top.handler_idx,
+                    top.dispatch_id,
+                    if kind == ForwardKind::Delegate {
+                        Some(top.k_user.clone())
+                    } else {
+                        None
+                    },
+                ),
+                None => return StepEvent::Error(VMError::internal(kind.outside_dispatch_error())),
+            };
+
+        // Capture inner handler segment so outer handler return flows back as the
+        // result of Delegate/Pass. Per spec this preserves caller = Some(inner_seg_id).
+        let inner_seg_id = self.current_segment;
+
+        match kind {
+            ForwardKind::Delegate => {
+                // Delegate is non-terminal: keep a parent chain to the old continuation.
+                let Some(mut k_new) = self.capture_continuation(Some(dispatch_id)) else {
+                    return StepEvent::Error(VMError::internal(
+                        "Delegate called without current segment",
+                    ));
+                };
+                let Some(parent_k_user) = parent_k_user else {
+                    return StepEvent::Error(VMError::internal(
+                        "Delegate called without active dispatch continuation",
+                    ));
+                };
+                k_new.parent = Some(Arc::new(parent_k_user));
+                self.clear_segment_frames(inner_seg_id);
+                if let Some(top) = self.dispatch_stack.last_mut() {
+                    top.k_user = k_new;
+                }
+            }
+            ForwardKind::Pass => {
+                // Pass is terminal for the current handler; clear frames so values pass through.
+                self.clear_segment_frames(inner_seg_id);
+            }
         }
 
         for idx in start_idx..handler_chain.len() {
             let marker = handler_chain[idx];
             let Some(entry) = self.handlers.get(&marker) else {
                 return StepEvent::Error(VMError::internal(format!(
-                    "handle_delegate: missing handler marker {} at index {}",
+                    "{}: missing handler marker {} at index {}",
+                    kind.missing_handler_context(),
                     marker.raw(),
                     idx
                 )));
@@ -3371,27 +3445,16 @@ impl VM {
             };
             if can_handle {
                 let handler = entry.handler.clone();
-                let from_marker = handler_chain.get(from_idx).copied();
-                let from_name = from_marker
-                    .and_then(|m| self.marker_handler_trace_info(m))
-                    .map(|(name, _, _, _)| name);
-                let to_info = self.marker_handler_trace_info(marker);
-                if let (Some(from_name), Some((to_name, to_kind, to_source_file, to_source_line))) =
-                    (from_name, to_info)
-                {
-                    self.capture_log.push(CaptureEvent::Delegated {
-                        dispatch_id,
-                        from_handler_name: from_name,
-                        from_handler_index: from_idx,
-                        to_handler_name: to_name,
-                        to_handler_index: idx,
-                        to_handler_kind: to_kind,
-                        to_handler_source_file: to_source_file,
-                        to_handler_source_line: to_source_line,
-                    });
-                }
                 let supports_error_context_conversion =
                     entry.handler.supports_error_context_conversion();
+                self.maybe_emit_forward_capture_event(
+                    kind,
+                    dispatch_id,
+                    &handler_chain,
+                    from_idx,
+                    idx,
+                    marker,
+                );
                 let k_user = {
                     let top = self.dispatch_stack.last_mut().unwrap();
                     top.handler_idx = idx;
@@ -3428,103 +3491,12 @@ impl VM {
         StepEvent::Error(VMError::delegate_no_outer_handler(effect))
     }
 
+    fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
+        self.handle_forward(ForwardKind::Delegate, effect)
+    }
+
     fn handle_pass(&mut self, effect: DispatchEffect) -> StepEvent {
-        let (handler_chain, start_idx, from_idx, dispatch_id) = match self.dispatch_stack.last() {
-            Some(t) => (
-                t.handler_chain.clone(),
-                t.handler_idx + 1,
-                t.handler_idx,
-                t.dispatch_id,
-            ),
-            None => {
-                return StepEvent::Error(VMError::internal(
-                    "Pass called outside of dispatch context",
-                ))
-            }
-        };
-
-        // Capture inner handler segment so outer handler's return flows back here
-        // (result of Pass). Per spec: caller = Some(inner_seg_id).
-        let inner_seg_id = self.current_segment;
-
-        // Clear the delegating handler's frames so return values pass through
-        // without trying to resume the handler generator (Pass is terminal).
-        if let Some(seg_id) = inner_seg_id {
-            if let Some(seg) = self.segments.get_mut(seg_id) {
-                seg.frames.clear();
-            }
-        }
-
-        for idx in start_idx..handler_chain.len() {
-            let marker = handler_chain[idx];
-            let Some(entry) = self.handlers.get(&marker) else {
-                return StepEvent::Error(VMError::internal(format!(
-                    "handle_pass: missing handler marker {} at index {}",
-                    marker.raw(),
-                    idx
-                )));
-            };
-            let can_handle = match entry.handler.can_handle(&effect) {
-                Ok(value) => value,
-                Err(err) => return StepEvent::Error(err),
-            };
-            if can_handle {
-                let handler = entry.handler.clone();
-                let from_marker = handler_chain.get(from_idx).copied();
-                let from_name = from_marker
-                    .and_then(|m| self.marker_handler_trace_info(m))
-                    .map(|(name, _, _, _)| name);
-                let to_info = self.marker_handler_trace_info(marker);
-                if let (Some(from_name), Some((to_name, to_kind, to_source_file, to_source_line))) =
-                    (from_name, to_info)
-                {
-                    self.capture_log.push(CaptureEvent::Passed {
-                        dispatch_id,
-                        from_handler_name: from_name,
-                        from_handler_index: from_idx,
-                        to_handler_name: to_name,
-                        to_handler_index: idx,
-                        to_handler_kind: to_kind,
-                        to_handler_source_file: to_source_file,
-                        to_handler_source_line: to_source_line,
-                    });
-                }
-                let supports_error_context_conversion =
-                    entry.handler.supports_error_context_conversion();
-                let k_user = {
-                    let top = self.dispatch_stack.last_mut().unwrap();
-                    top.handler_idx = idx;
-                    top.supports_error_context_conversion = supports_error_context_conversion;
-                    top.effect = effect.clone();
-                    top.k_user.clone()
-                };
-
-                let scope_chain = self.current_scope_chain();
-                let handler_seg = Segment::new(marker, inner_seg_id, scope_chain);
-                let handler_seg_id = self.alloc_segment(handler_seg);
-                self.current_segment = Some(handler_seg_id);
-
-                if handler.py_identity().is_some() {
-                    self.register_continuation(k_user.clone());
-                }
-                let ir_node = handler.invoke(effect.clone(), k_user);
-                return self.evaluate(ir_node);
-            }
-        }
-
-        if let Some((dispatch_id, original_exception)) =
-            self.dispatch_stack.last().and_then(|ctx| {
-                ctx.original_exception
-                    .clone()
-                    .map(|exc| (ctx.dispatch_id, exc))
-            })
-        {
-            self.mark_dispatch_completed(dispatch_id);
-            self.mode = Mode::Throw(original_exception);
-            return StepEvent::Continue;
-        }
-
-        StepEvent::Error(VMError::delegate_no_outer_handler(effect))
+        self.handle_forward(ForwardKind::Pass, effect)
     }
 
     /// Handle handler return (explicit or implicit).
