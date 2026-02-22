@@ -7,10 +7,11 @@ use pyo3::types::{PyBool, PyDict, PyList, PyString};
 
 use crate::capture::{
     ActiveChainEntry, DispatchAction, EffectResult, HandlerDispatchEntry, HandlerKind,
-    HandlerStatus, TraceEntry,
+    HandlerStatus, TraceEntry, TraceHop,
 };
 use crate::frame::CallMetadata;
 use crate::handler::{Handler, RustProgramInvocation};
+use crate::pyvm::{PyTraceFrame, PyTraceHop};
 use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 
 /// A value that can flow through the VM.
@@ -34,6 +35,7 @@ pub enum Value {
     ExternalPromise(ExternalPromise),
     CallStack(Vec<CallMetadata>),
     Trace(Vec<TraceEntry>),
+    Traceback(Vec<TraceHop>),
     ActiveChain(Vec<ActiveChainEntry>),
     List(Vec<Value>),
 }
@@ -400,6 +402,26 @@ impl Value {
                 }
                 Ok(list.into_any())
             }
+            Value::Traceback(hops) => {
+                let list = PyList::empty(py);
+                for hop in hops {
+                    let mut frames: Vec<Py<PyTraceFrame>> = Vec::with_capacity(hop.frames.len());
+                    for frame in &hop.frames {
+                        let py_frame = Py::new(
+                            py,
+                            PyTraceFrame {
+                                func_name: frame.func_name.clone(),
+                                source_file: frame.source_file.clone(),
+                                source_line: frame.source_line,
+                            },
+                        )?;
+                        frames.push(py_frame);
+                    }
+                    let py_hop = Py::new(py, PyTraceHop { frames })?;
+                    list.append(py_hop)?;
+                }
+                Ok(list.into_any())
+            }
             Value::ActiveChain(entries) => {
                 let list = PyList::empty(py);
                 for entry in entries {
@@ -502,6 +524,7 @@ impl Value {
             Value::ExternalPromise(h) => Value::ExternalPromise(h.clone()),
             Value::CallStack(stack) => Value::CallStack(stack.clone()),
             Value::Trace(entries) => Value::Trace(entries.clone()),
+            Value::Traceback(hops) => Value::Traceback(hops.clone()),
             Value::ActiveChain(entries) => Value::ActiveChain(entries.clone()),
             Value::List(items) => Value::List(items.iter().map(|v| v.clone_ref(py)).collect()),
         }
