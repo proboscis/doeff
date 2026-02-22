@@ -4,6 +4,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyList;
 
 use crate::py_shared::PyShared;
 use crate::pyvm::{DoExprTag, PyEffectBase};
@@ -162,6 +163,15 @@ pub struct PyProgramCallStack;
 pub struct PyProgramCallFrame {
     #[pyo3(get)]
     pub depth: i64,
+}
+
+#[pyclass(frozen, name = "GetExecutionContext", extends=PyEffectBase)]
+pub struct PyGetExecutionContext {}
+
+#[pyclass(name = "ExecutionContext")]
+pub struct PyExecutionContext {
+    #[pyo3(get)]
+    pub entries: Py<PyList>,
 }
 
 fn py_repr_or(py: Python<'_>, value: &Py<PyAny>, fallback: &str) -> String {
@@ -612,6 +622,39 @@ impl PyProgramCallFrame {
     }
 }
 
+#[pymethods]
+impl PyGetExecutionContext {
+    #[new]
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyGetExecutionContext {})
+    }
+
+    fn __repr__(&self) -> String {
+        "GetExecutionContext()".to_string()
+    }
+}
+
+#[pymethods]
+impl PyExecutionContext {
+    #[new]
+    fn new(py: Python<'_>) -> Self {
+        PyExecutionContext {
+            entries: PyList::empty(py).unbind(),
+        }
+    }
+
+    fn add(&mut self, py: Python<'_>, entry: Py<PyAny>) -> PyResult<()> {
+        self.entries.bind(py).append(entry.bind(py))
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        format!("ExecutionContext(entries={})", self.entries.bind(py).len())
+    }
+}
+
 #[cfg(not(test))]
 #[derive(Debug, Clone)]
 pub struct Effect(pub PyShared);
@@ -668,6 +711,25 @@ pub fn dispatch_into_python(effect: DispatchEffect) -> Option<PyShared> {
     {
         Some(effect)
     }
+}
+
+pub fn make_get_execution_context_effect() -> PyResult<DispatchEffect> {
+    Python::attach(|py| {
+        let effect = Bound::new(py, PyGetExecutionContext::new())?
+            .into_any()
+            .unbind();
+        Ok(dispatch_from_shared(PyShared::new(effect)))
+    })
+}
+
+pub fn make_execution_context_object(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let ctx = Bound::new(
+        py,
+        PyExecutionContext {
+            entries: PyList::empty(py).unbind(),
+        },
+    )?;
+    Ok(ctx.into_any().unbind())
 }
 
 pub fn dispatch_to_pyobject<'py>(
