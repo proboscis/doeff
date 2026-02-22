@@ -62,6 +62,7 @@ impl Value {
         match status {
             HandlerStatus::Active => "active",
             HandlerStatus::Pending => "pending",
+            HandlerStatus::Passed => "passed",
             HandlerStatus::Delegated => "delegated",
             HandlerStatus::Resumed => "resumed",
             HandlerStatus::Transferred => "transferred",

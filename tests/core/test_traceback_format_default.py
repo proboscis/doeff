@@ -6,6 +6,7 @@ from pathlib import Path
 
 from doeff import (
     Ask,
+    Delegate,
     EffectBase,
     Pass,
     Program,
@@ -94,17 +95,17 @@ def _render_single_delegated_handler(handler_name: str) -> str:
 
 def test_format_default_shows_sync_await_handler_when_delegated() -> None:
     rendered = _render_single_delegated_handler("sync_await_handler")
-    assert "sync_await_handler↗" in rendered
+    assert "sync_await_handler⇆" in rendered
 
 
 def test_format_default_shows_async_await_handler_when_delegated() -> None:
     rendered = _render_single_delegated_handler("async_await_handler")
-    assert "async_await_handler↗" in rendered
+    assert "async_await_handler⇆" in rendered
 
 
 def test_format_default_shows_rust_await_handler_when_delegated() -> None:
     rendered = _render_single_delegated_handler("AwaitHandler")
-    assert "AwaitHandler↗" in rendered
+    assert "AwaitHandler⇆" in rendered
 
 
 def test_format_default_shows_every_handler_and_status_marker() -> None:
@@ -119,6 +120,7 @@ def test_format_default_shows_every_handler_and_status_marker() -> None:
                 "handler_stack": [
                     {"handler_name": "h_active", "handler_kind": "python", "status": "active"},
                     {"handler_name": "h_pending", "handler_kind": "python", "status": "pending"},
+                    {"handler_name": "h_passed", "handler_kind": "python", "status": "passed"},
                     {
                         "handler_name": "h_delegated",
                         "handler_kind": "python",
@@ -152,9 +154,44 @@ def test_format_default_shows_every_handler_and_status_marker() -> None:
 
     rendered = tb.format_default()
     assert (
-        "[h_active⚡ > h_pending· > h_delegated↗ > h_resumed✓ > "
+        "[h_active⚡ > h_pending· > h_passed↗ > h_delegated⇆ > h_resumed✓ > "
         "h_transferred⇢ > h_returned✓ > h_threw✗]"
     ) in rendered
+
+
+def test_format_default_distinguishes_passed_and_delegated_markers() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 20,
+                "effect_repr": "Ping()",
+                "handler_stack": [
+                    {"handler_name": "h_passed", "handler_kind": "python", "status": "passed"},
+                    {
+                        "handler_name": "h_delegated",
+                        "handler_kind": "python",
+                        "status": "delegated",
+                    },
+                    {"handler_name": "h_resumed", "handler_kind": "python", "status": "resumed"},
+                ],
+                "result": {"kind": "resumed", "value_repr": "1"},
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 21,
+                "exception_type": "RuntimeError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    assert "[h_passed↗ > h_delegated⇆ > h_resumed✓]" in rendered
 
 
 def test_format_default_program_yield() -> None:
@@ -210,7 +247,7 @@ def test_format_default_effect_yield_with_markers() -> None:
     )
 
     rendered = tb.format_default()
-    assert "[h1↗ > h2✓]" in rendered
+    assert "[h1⇆ > h2✓]" in rendered
     assert "→ resumed with None" in rendered
 
 
@@ -251,7 +288,7 @@ def test_format_default_handler_stack_same() -> None:
     )
 
     rendered = tb.format_default()
-    stack_line = "[h1↗ > h2✓]"
+    stack_line = "[h1⇆ > h2✓]"
     assert rendered.count(stack_line) == 1
     assert rendered.count("[same]") == 1
 
@@ -357,7 +394,7 @@ def test_format_default_renders_all_handlers() -> None:
     )
 
     rendered = tb.format_default()
-    assert "sync_await_handler↗" in rendered
+    assert "sync_await_handler⇆" in rendered
     assert "user_handler" in rendered
 
 
@@ -807,6 +844,46 @@ def test_format_default_shows_delegation_chain() -> None:
     assert "delegated boom" in rendered
     assert "outer_crash_handler" in rendered
     assert "\n\nRuntimeError: delegated boom" in rendered
+
+
+def test_format_default_runtime_distinguishes_passed_and_delegated() -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class MarkerEffect(EffectBase):
+        pass
+
+    def outer_throw_handler(effect: object, _k: object):
+        if isinstance(effect, MarkerEffect):
+            raise RuntimeError("pass-vs-delegate boom")
+        yield Pass()
+
+    def middle_delegate_handler(effect: object, _k: object):
+        if isinstance(effect, MarkerEffect):
+            yield Delegate()
+            return
+        yield Pass()
+
+    def inner_pass_handler(_effect: object, _k: object):
+        yield Pass()
+
+    @do
+    def body() -> Program[int]:
+        yield MarkerEffect()
+        return 1
+
+    result = run(
+        WithHandler(
+            outer_throw_handler,
+            WithHandler(middle_delegate_handler, WithHandler(inner_pass_handler, body())),
+        ),
+        handlers=default_handlers(),
+    )
+    assert result.is_err()
+
+    rendered = _tb_from_run_result(result).format_default()
+    assert "inner_pass_handler↗" in rendered
+    assert "middle_delegate_handler⇆" in rendered
+    assert "outer_throw_handler✗" in rendered
+    assert "pass-vs-delegate boom" in rendered
 
 
 def test_format_default_spawn_shows_effect_in_child() -> None:
