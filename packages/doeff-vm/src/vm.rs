@@ -21,7 +21,7 @@ use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
     dispatch_ref_as_python, make_execution_context_object, make_get_execution_context_effect,
-    DispatchEffect, PyExecutionContext,
+    DispatchEffect, PyExecutionContext, PyGetExecutionContext,
 };
 #[cfg(test)]
 use crate::effect::{Effect, PySpawn};
@@ -32,7 +32,6 @@ use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::pyvm::{PyDoExprBase, PyEffectBase};
-use crate::scheduler::SCHEDULER_HANDLER_NAME;
 use crate::segment::Segment;
 use crate::value::Value;
 
@@ -452,6 +451,25 @@ impl VM {
         Self::truncate_repr(repr)
     }
 
+    fn is_execution_context_effect(effect: &DispatchEffect) -> bool {
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return false;
+        };
+        Python::attach(|py| {
+            obj.bind(py)
+                .extract::<PyRef<'_, PyGetExecutionContext>>()
+                .is_ok()
+        })
+    }
+
+    fn dispatch_supports_error_context_conversion(&self, dispatch_id: DispatchId) -> bool {
+        self.dispatch_stack
+            .iter()
+            .rev()
+            .find(|ctx| ctx.dispatch_id == dispatch_id)
+            .is_some_and(|ctx| ctx.supports_error_context_conversion)
+    }
+
     fn effect_creation_site_from_continuation(k: &Continuation) -> Option<EffectCreationSite> {
         let (_, function_name, source_file, source_line) = Self::effect_site_from_continuation(k)?;
         Some(EffectCreationSite {
@@ -587,13 +605,21 @@ impl VM {
         })
     }
 
-    fn mode_after_generror(&mut self, site: GenErrorSite, exception: PyException) -> Mode {
+    fn mode_after_generror(
+        &mut self,
+        site: GenErrorSite,
+        exception: PyException,
+        conversion_hint: bool,
+    ) -> Mode {
         let active_dispatch_id = self.current_active_handler_dispatch_id();
-        let allow_scheduler_conversion = matches!(site, GenErrorSite::RustProgramContinuation)
-            || (matches!(site, GenErrorSite::StepUserGeneratorDirect)
-                && active_dispatch_id
-                    .and_then(|dispatch_id| self.current_handler_identity_for_dispatch(dispatch_id))
-                    .is_some_and(|(_, handler_name)| handler_name == SCHEDULER_HANDLER_NAME));
+        let allow_handler_context_conversion = conversion_hint
+            || active_dispatch_id.is_some_and(|dispatch_id| {
+                self.dispatch_supports_error_context_conversion(dispatch_id)
+                    && matches!(
+                        site,
+                        GenErrorSite::RustProgramContinuation | GenErrorSite::StepUserGeneratorDirect
+                    )
+            });
         let in_get_execution_context_dispatch = active_dispatch_id
             .and_then(|dispatch_id| {
                 self.dispatch_stack
@@ -601,9 +627,9 @@ impl VM {
                     .rev()
                     .find(|ctx| ctx.dispatch_id == dispatch_id)
             })
-            .is_some_and(|ctx| Self::effect_repr(&ctx.effect).contains("GetExecutionContext"));
+            .is_some_and(|ctx| ctx.is_execution_context_effect);
 
-        if !site.allows_error_conversion() && !allow_scheduler_conversion {
+        if !site.allows_error_conversion() && !allow_handler_context_conversion {
             if let Some(original) = self.active_error_dispatch_original_exception() {
                 Self::set_exception_cause(&exception, &original);
             }
@@ -615,7 +641,7 @@ impl VM {
         }
 
         if let Some(original) = self.active_error_dispatch_original_exception() {
-            if !allow_scheduler_conversion || in_get_execution_context_dispatch {
+            if !allow_handler_context_conversion || in_get_execution_context_dispatch {
                 Self::set_exception_cause(&exception, &original);
                 return Mode::Throw(exception);
             }
@@ -801,6 +827,7 @@ impl VM {
                 CaptureEvent::DispatchStarted {
                     dispatch_id,
                     effect_repr,
+                    is_execution_context_effect: _,
                     creation_site: _,
                     handler_name,
                     handler_kind,
@@ -1234,6 +1261,7 @@ impl VM {
             source_file: Option<String>,
             source_line: Option<u32>,
             effect_repr: String,
+            is_execution_context_effect: bool,
             handler_stack: Vec<HandlerDispatchEntry>,
             result: EffectResult,
         }
@@ -1269,6 +1297,7 @@ impl VM {
                 CaptureEvent::DispatchStarted {
                     dispatch_id,
                     effect_repr,
+                    is_execution_context_effect,
                     creation_site: _,
                     handler_name: _,
                     handler_kind: _,
@@ -1280,7 +1309,7 @@ impl VM {
                     effect_source_file,
                     effect_source_line,
                 } => {
-                    let visible_effect = !effect_repr.contains("GetExecutionContext");
+                    let visible_effect = !*is_execution_context_effect;
                     let handler_stack: Vec<HandlerDispatchEntry> = handler_chain_snapshot
                         .iter()
                         .enumerate()
@@ -1317,6 +1346,7 @@ impl VM {
                             source_file: effect_source_file.clone(),
                             source_line: *effect_source_line,
                             effect_repr: effect_repr.clone(),
+                            is_execution_context_effect: *is_execution_context_effect,
                             handler_stack,
                             result: EffectResult::Active,
                         },
@@ -1409,8 +1439,7 @@ impl VM {
             }
         }
 
-        let is_visible_effect =
-            |dispatch: &DispatchState| !dispatch.effect_repr.contains("GetExecutionContext");
+        let is_visible_effect = |dispatch: &DispatchState| !dispatch.is_execution_context_effect;
 
         // Merge live frame line numbers for currently suspended generators.
         let mut seg_chain = Vec::new();
@@ -2466,7 +2495,7 @@ impl VM {
             }
 
             (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenError(e)) => {
-                self.mode = self.mode_after_generror(GenErrorSite::EvalExpr, e);
+                self.mode = self.mode_after_generror(GenErrorSite::EvalExpr, e, false);
             }
 
             (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenReturn(value)) => {
@@ -2482,7 +2511,7 @@ impl VM {
             }
 
             (PendingPython::CallFuncReturn { .. }, PyCallOutcome::GenError(e)) => {
-                self.mode = self.mode_after_generror(GenErrorSite::CallFuncReturn, e);
+                self.mode = self.mode_after_generror(GenErrorSite::CallFuncReturn, e, false);
             }
 
             (
@@ -2567,9 +2596,11 @@ impl VM {
                         self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
                         self.mark_dispatch_threw(dispatch_id);
                     }
-                    self.mode = self.mode_after_generror(GenErrorSite::ExpandReturnHandler, e);
+                    self.mode =
+                        self.mode_after_generror(GenErrorSite::ExpandReturnHandler, e, false);
                 } else {
-                    self.mode = self.mode_after_generror(GenErrorSite::ExpandReturnProgram, e);
+                    self.mode =
+                        self.mode_after_generror(GenErrorSite::ExpandReturnProgram, e, false);
                 }
             }
 
@@ -2614,7 +2645,7 @@ impl VM {
                         self.mark_dispatch_threw(dispatch_id);
                     }
                 }
-                self.mode = self.mode_after_generror(site, e);
+                self.mode = self.mode_after_generror(site, e, false);
             }
 
             (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::Value(result)) => {
@@ -2622,7 +2653,8 @@ impl VM {
             }
 
             (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::GenError(e)) => {
-                self.mode = self.mode_after_generror(GenErrorSite::RustProgramContinuation, e);
+                self.mode =
+                    self.mode_after_generror(GenErrorSite::RustProgramContinuation, e, false);
             }
 
             (PendingPython::AsyncEscape, PyCallOutcome::Value(result)) => {
@@ -2630,7 +2662,7 @@ impl VM {
             }
 
             (PendingPython::AsyncEscape, PyCallOutcome::GenError(e)) => {
-                self.mode = self.mode_after_generror(GenErrorSite::AsyncEscape, e);
+                self.mode = self.mode_after_generror(GenErrorSite::AsyncEscape, e, false);
             }
 
             _ => {
@@ -2749,6 +2781,8 @@ impl VM {
         let prompt_seg_id = entry.prompt_seg_id;
         let handler = entry.handler.clone();
         let dispatch_id = DispatchId::fresh();
+        let is_execution_context_effect = Self::is_execution_context_effect(&effect);
+        let supports_error_context_conversion = handler.supports_error_context_conversion();
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
         for marker in handler_chain.iter().copied() {
             let Some(entry) = self.handlers.get(&marker) else {
@@ -2779,8 +2813,10 @@ impl VM {
         self.dispatch_stack.push(DispatchContext {
             dispatch_id,
             effect: effect.clone(),
+            is_execution_context_effect,
             handler_chain: handler_chain.clone(),
             handler_idx,
+            supports_error_context_conversion,
             k_user: k_user.clone(),
             prompt_seg_id,
             completed: false,
@@ -2793,6 +2829,7 @@ impl VM {
         self.capture_log.push(CaptureEvent::DispatchStarted {
             dispatch_id,
             effect_repr: Self::effect_repr(&effect),
+            is_execution_context_effect,
             creation_site: Self::effect_creation_site_from_continuation(&k_user),
             handler_name,
             handler_kind,
@@ -3107,15 +3144,17 @@ impl VM {
         }
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
-        let mut thrown_by_scheduler = self
+        let mut thrown_by_context_conversion_handler = self
             .current_active_handler_dispatch_id()
-            .and_then(|dispatch_id| self.current_handler_identity_for_dispatch(dispatch_id))
-            .is_some_and(|(_, handler_name)| handler_name == SCHEDULER_HANDLER_NAME);
+            .is_some_and(|dispatch_id| {
+                self.dispatch_supports_error_context_conversion(dispatch_id)
+            });
         if let Some(dispatch_id) = k.dispatch_id {
+            thrown_by_context_conversion_handler =
+                self.dispatch_supports_error_context_conversion(dispatch_id);
             if let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
             {
-                thrown_by_scheduler = handler_name == SCHEDULER_HANDLER_NAME;
                 self.capture_log.push(CaptureEvent::HandlerCompleted {
                     dispatch_id,
                     handler_name,
@@ -3138,8 +3177,12 @@ impl VM {
         let exec_seg_id = self.alloc_segment(exec_seg);
 
         self.current_segment = Some(exec_seg_id);
-        self.mode = if thrown_by_scheduler {
-            self.mode_after_generror(GenErrorSite::RustProgramContinuation, exception)
+        self.mode = if thrown_by_context_conversion_handler {
+            self.mode_after_generror(
+                GenErrorSite::RustProgramContinuation,
+                exception,
+                thrown_by_context_conversion_handler,
+            )
         } else {
             Mode::Throw(exception)
         };
@@ -3264,9 +3307,14 @@ impl VM {
                             to_handler_source_line: to_source_line,
                         });
                     }
+                    let supports_error_context_conversion = self
+                        .handlers
+                        .get(&marker)
+                        .is_some_and(|entry| entry.handler.supports_error_context_conversion());
                     let k_user = {
                         let top = self.dispatch_stack.last_mut().unwrap();
                         top.handler_idx = idx;
+                        top.supports_error_context_conversion = supports_error_context_conversion;
                         top.effect = effect.clone();
                         top.k_user.clone()
                     };
@@ -3353,9 +3401,14 @@ impl VM {
                             to_handler_source_line: to_source_line,
                         });
                     }
+                    let supports_error_context_conversion = self
+                        .handlers
+                        .get(&marker)
+                        .is_some_and(|entry| entry.handler.supports_error_context_conversion());
                     let k_user = {
                         let top = self.dispatch_stack.last_mut().unwrap();
                         top.handler_idx = idx;
+                        top.supports_error_context_conversion = supports_error_context_conversion;
                         top.effect = effect.clone();
                         top.k_user.clone()
                     };
@@ -3868,8 +3921,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![m1, m2, m3],
             handler_idx: 1,
+            supports_error_context_conversion: false,
             k_user: k_user.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -3894,8 +3949,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![m1, m2],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -3920,8 +3977,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user_1.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -3934,8 +3993,10 @@ mod tests {
             effect: Effect::Get {
                 key: "y".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user_2.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -3948,8 +4009,10 @@ mod tests {
             effect: Effect::Get {
                 key: "z".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user_3.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -4386,8 +4449,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user.clone(),
 
             prompt_seg_id: SegmentId::from_index(0),
@@ -4434,8 +4499,10 @@ mod tests {
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
             effect: Effect::get("x"),
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: original_k_user,
             prompt_seg_id: seg_id,
             completed: false,
@@ -4514,8 +4581,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user,
             prompt_seg_id,
             completed: false,
@@ -4604,8 +4673,10 @@ mod tests {
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
             effect: Effect::get("x"),
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user.clone(),
             prompt_seg_id: seg_id,
             completed: false,
@@ -4824,8 +4895,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: Continuation {
                 dispatch_id: Some(dispatch_id),
                 cont_id: k_cont_id,
@@ -4927,8 +5000,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user: k_user.clone(),
             prompt_seg_id: SegmentId::from_index(0),
             completed: true,
@@ -5369,8 +5444,10 @@ mod tests {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
+            is_execution_context_effect: false,
             handler_chain: vec![marker],
             handler_idx: 0,
+            supports_error_context_conversion: false,
             k_user,
             prompt_seg_id,
             completed: false,

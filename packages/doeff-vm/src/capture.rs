@@ -157,6 +157,7 @@ pub enum CaptureEvent {
     DispatchStarted {
         dispatch_id: DispatchId,
         effect_repr: String,
+        is_execution_context_effect: bool,
         creation_site: Option<EffectCreationSite>,
         handler_name: String,
         handler_kind: HandlerKind,

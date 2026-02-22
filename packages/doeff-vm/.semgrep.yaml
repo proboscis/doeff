@@ -436,3 +436,31 @@ rules:
     metadata:
       spec: TRACE-INVARIANT-001
       invariant: INV-3
+
+  - id: vm-no-get-execution-context-repr-matching
+    pattern-regex: 'contains\("GetExecutionContext"\)'
+    message: |
+      INV-1 violation: VM control flow must not rely on effect repr string matching.
+      Use typed dispatch metadata (for example is_execution_context_effect) instead.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/vm.rs"
+    metadata:
+      spec: TRACE-INVARIANT-001
+      invariant: INV-1
+
+  - id: vm-no-scheduler-name-coupling
+    pattern-regex: 'SCHEDULER_HANDLER_NAME'
+    message: |
+      INV-1 violation: VM must not couple behavior to scheduler handler name strings.
+      Use handler capabilities/metadata instead.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/vm.rs"
+    metadata:
+      spec: TRACE-INVARIANT-001
+      invariant: INV-1
