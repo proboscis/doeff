@@ -8,10 +8,10 @@ use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
     dispatch_from_shared, PyAcquireSemaphore, PyAsk, PyCancelEffect, PyCompletePromise,
-    PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise, PyGather, PyGet,
-    PyLocal, PyModify, PyProgramCallFrame, PyProgramCallStack, PyProgramTrace, PyPut,
-    PyPythonAsyncioAwaitEffect, PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn,
-    PyTaskCompleted, PyTell,
+    PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyExecutionContext,
+    PyFailPromise, PyGather, PyGet, PyGetExecutionContext, PyLocal, PyModify, PyProgramCallFrame,
+    PyProgramCallStack, PyProgramTrace, PyPut, PyPythonAsyncioAwaitEffect, PyRace,
+    PyReleaseSemaphore, PyResultSafeEffect, PySpawn, PyTaskCompleted, PyTell,
 };
 
 // ---------------------------------------------------------------------------
@@ -1269,9 +1269,7 @@ fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
     let exc_type = e.get_type(py).into_any().unbind();
     let exc_value = e.value(py).clone().into_any().unbind();
     let exc_tb = e.traceback(py).map(|tb| tb.into_any().unbind());
-    let exc = PyException::new(exc_type, exc_value, exc_tb);
-    crate::scheduler::preserve_exception_origin(&exc);
-    Ok(exc)
+    Ok(PyException::new(exc_type, exc_value, exc_tb))
 }
 
 fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
@@ -3482,6 +3480,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyProgramTrace>()?;
     m.add_class::<PyProgramCallStack>()?;
     m.add_class::<PyProgramCallFrame>()?;
+    m.add_class::<PyGetExecutionContext>()?;
+    m.add_class::<PyExecutionContext>()?;
     // G14: scheduler sentinel
     m.add(
         "scheduler",

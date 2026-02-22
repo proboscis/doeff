@@ -76,14 +76,6 @@ def resolve_generator_location(generator: object) -> tuple[str, int] | None:
 
 
 def resolve_exception_location(exc: BaseException) -> tuple[str, str, int] | None:
-    origin = getattr(exc, "__doeff_exception_origin__", None)
-    if origin is not None:
-        fn_name = origin.get("function_name")
-        filename = origin.get("source_file")
-        line = origin.get("source_line")
-        if fn_name is not None and filename is not None and line is not None:
-            return (fn_name, filename, line)
-
     tb = getattr(exc, "__traceback__", None)
     if tb is None:
         return None
