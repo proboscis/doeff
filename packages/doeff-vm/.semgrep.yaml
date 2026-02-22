@@ -280,3 +280,41 @@ rules:
       category: spec-enforcement
       spec: SPEC-008
       invariants: ["R14-C"]
+
+  # ---------------------------------------------------------------------------
+  # SPEC-VM-014 ENFORCEMENT
+  # ---------------------------------------------------------------------------
+
+  - id: scheduler-no-spawn-site-from-continuation
+    pattern-regex: 'fn spawn_site_from_continuation'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/scheduler.rs"
+    message: |
+      spawn_site_from_continuation is deleted (SPEC-VM-014 Phase 2).
+      Scheduler must use GetTraceback DoCtrl for spawn site attribution.
+      See spawn_site_from_traceback() which walks TraceHop data instead.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      spec: SPEC-VM-014
+
+  - id: scheduler-no-direct-frame-walk
+    patterns:
+      - pattern: |
+          for $FRAME in $K.frames_snapshot.iter() {
+            ...
+          }
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/scheduler.rs"
+    message: |
+      Scheduler must not walk continuation frames directly.
+      Use GetTraceback DoCtrl to query the VM for traceback data.
+      Direct frame walking duplicates VM logic (SPEC-VM-014 C3 violation).
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      spec: SPEC-VM-014
