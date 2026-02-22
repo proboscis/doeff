@@ -50,6 +50,9 @@ pub struct Continuation {
 
     /// Optional call metadata to attach when starting unstarted continuations.
     pub metadata: Option<CallMetadata>,
+
+    /// Parent continuation captured during Delegate chaining.
+    pub parent: Option<Arc<Continuation>>,
 }
 
 impl Continuation {
@@ -70,6 +73,7 @@ impl Continuation {
             handlers: Vec::new(),
             handler_identities: Vec::new(),
             metadata: None,
+            parent: None,
         }
     }
 
@@ -91,6 +95,7 @@ impl Continuation {
             handlers: Vec::new(),
             handler_identities: Vec::new(),
             metadata: None,
+            parent: None,
         }
     }
 
@@ -116,6 +121,7 @@ impl Continuation {
             handlers,
             handler_identities,
             metadata,
+            parent: None,
         }
     }
 
@@ -150,6 +156,7 @@ impl Continuation {
             handlers,
             handler_identities,
             metadata,
+            parent: None,
         }
     }
 
@@ -208,6 +215,7 @@ mod tests {
         assert!(cont.program.is_none());
         assert!(cont.handlers.is_empty());
         assert!(cont.handler_identities.is_empty());
+        assert!(cont.parent.is_none());
     }
 
     #[test]

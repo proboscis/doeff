@@ -59,6 +59,9 @@ pub enum DoCtrl {
     },
     GetContinuation,
     GetHandlers,
+    GetTraceback {
+        continuation: Continuation,
+    },
     CreateContinuation {
         expr: PyShared,
         handlers: Vec<Handler>,
@@ -157,6 +160,9 @@ impl DoCtrl {
             },
             DoCtrl::GetContinuation => DoCtrl::GetContinuation,
             DoCtrl::GetHandlers => DoCtrl::GetHandlers,
+            DoCtrl::GetTraceback { continuation } => DoCtrl::GetTraceback {
+                continuation: continuation.clone(),
+            },
             DoCtrl::CreateContinuation {
                 expr,
                 handlers,

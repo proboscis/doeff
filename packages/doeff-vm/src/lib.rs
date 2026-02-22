@@ -41,7 +41,7 @@ pub use ast_stream::{
 pub use capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
     HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus,
-    SpawnSite, TraceEntry,
+    SpawnSite, TraceEntry, TraceFrame, TraceHop,
 };
 pub use continuation::Continuation;
 pub use dispatch::DispatchContext;

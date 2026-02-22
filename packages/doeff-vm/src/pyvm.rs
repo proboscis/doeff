@@ -45,6 +45,7 @@ pub enum DoExprTag {
     Expand = 17,
     GetTrace = 18,
     Pass = 19,
+    GetTraceback = 20,
     Effect = 128,
     Unknown = 255,
 }
@@ -72,6 +73,7 @@ impl TryFrom<u8> for DoExprTag {
             17 => Ok(DoExprTag::Expand),
             18 => Ok(DoExprTag::GetTrace),
             19 => Ok(DoExprTag::Pass),
+            20 => Ok(DoExprTag::GetTraceback),
             128 => Ok(DoExprTag::Effect),
             255 => Ok(DoExprTag::Unknown),
             other => Err(other),
@@ -1076,6 +1078,26 @@ impl PyVM {
                 }
                 DoExprTag::GetContinuation => Ok(DoCtrl::GetContinuation),
                 DoExprTag::GetHandlers => Ok(DoCtrl::GetHandlers),
+                DoExprTag::GetTraceback => {
+                    let gt: PyRef<'_, PyGetTraceback> = obj.extract()?;
+                    let k_pyobj = gt.continuation.bind(py).cast::<PyK>().map_err(|_| {
+                        PyTypeError::new_err(
+                            "GetTraceback.continuation must be K (opaque continuation handle)",
+                        )
+                    })?;
+                    let cont_id = k_pyobj.borrow().cont_id;
+                    let k = self
+                        .vm
+                        .lookup_continuation(cont_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            PyRuntimeError::new_err(format!(
+                                "GetTraceback with unknown continuation id {}",
+                                cont_id.raw()
+                            ))
+                        })?;
+                    Ok(DoCtrl::GetTraceback { continuation: k })
+                }
                 DoExprTag::GetCallStack => Ok(DoCtrl::GetCallStack),
                 DoExprTag::GetTrace => Ok(DoCtrl::GetTrace),
                 DoExprTag::Eval => {
@@ -2136,6 +2158,66 @@ impl PyCreateContinuation {
     }
 }
 
+#[pyclass(frozen, name = "TraceFrame")]
+pub struct PyTraceFrame {
+    #[pyo3(get)]
+    pub func_name: String,
+    #[pyo3(get)]
+    pub source_file: String,
+    #[pyo3(get)]
+    pub source_line: u32,
+}
+
+#[pymethods]
+impl PyTraceFrame {
+    #[new]
+    fn new(func_name: String, source_file: String, source_line: u32) -> Self {
+        Self {
+            func_name,
+            source_file,
+            source_line,
+        }
+    }
+}
+
+#[pyclass(frozen, name = "TraceHop")]
+pub struct PyTraceHop {
+    #[pyo3(get)]
+    pub frames: Vec<Py<PyTraceFrame>>,
+}
+
+#[pymethods]
+impl PyTraceHop {
+    #[new]
+    fn new(frames: Vec<Py<PyTraceFrame>>) -> Self {
+        Self { frames }
+    }
+}
+
+/// Request traceback frames for a continuation and its parent chain.
+#[pyclass(name = "GetTraceback", extends=PyDoCtrlBase)]
+pub struct PyGetTraceback {
+    #[pyo3(get)]
+    pub continuation: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyGetTraceback {
+    #[new]
+    fn new(py: Python<'_>, continuation: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        if !continuation.bind(py).is_instance_of::<PyK>() {
+            return Err(PyTypeError::new_err(
+                "GetTraceback.continuation must be K (opaque continuation handle)",
+            ));
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::GetTraceback as u8,
+            })
+            .add_subclass(PyGetTraceback { continuation }))
+    }
+}
+
 /// Request the current continuation.
 #[pyclass(name = "GetContinuation", extends=PyDoCtrlBase)]
 pub struct PyGetContinuation;
@@ -2652,6 +2734,34 @@ mod tests {
     }
 
     #[test]
+    fn test_get_traceback_classifies_to_doctrl() {
+        Python::attach(|py| {
+            let mut pyvm = PyVM { vm: VM::new() };
+            let marker = crate::ids::Marker::fresh();
+            let seg = crate::segment::Segment::new(marker, None, vec![marker]);
+            let continuation = crate::continuation::Continuation::capture(
+                &seg,
+                crate::ids::SegmentId::from_index(0),
+                None,
+            );
+            let cont_id = continuation.cont_id;
+            pyvm.vm.register_continuation(continuation);
+
+            let k = Bound::new(py, PyK { cont_id }).unwrap().into_any().unbind();
+            let obj = Bound::new(py, PyGetTraceback::new(py, k).unwrap())
+                .unwrap()
+                .into_any();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            match yielded {
+                DoCtrl::GetTraceback { continuation } => {
+                    assert_eq!(continuation.cont_id, cont_id);
+                }
+                _ => panic!("GetTraceback must classify to DoCtrl::GetTraceback"),
+            }
+        });
+    }
+
+    #[test]
     fn test_pass_with_explicit_effect_classifies_to_doctrl_pass() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
@@ -2901,6 +3011,22 @@ mod tests {
             let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
             assert_eq!(base.tag, DoExprTag::GetHandlers as u8);
 
+            // GetTraceback
+            let k = Bound::new(
+                py,
+                PyK {
+                    cont_id: crate::ids::ContId::from_raw(1),
+                },
+            )
+            .unwrap()
+            .into_any()
+            .unbind();
+            let obj = Bound::new(py, PyGetTraceback::new(py, k).unwrap())
+                .unwrap()
+                .into_any();
+            let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
+            assert_eq!(base.tag, DoExprTag::GetTraceback as u8);
+
             // GetCallStack
             let obj = Bound::new(py, PyGetCallStack::new()).unwrap().into_any();
             let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
@@ -2921,7 +3047,7 @@ mod tests {
         // Verify that classify_yielded reads the tag and dispatches correctly
         // by testing several concrete variants.
         Python::attach(|py| {
-            let pyvm = PyVM { vm: VM::new() };
+            let mut pyvm = PyVM { vm: VM::new() };
             let make_meta = || {
                 let meta = PyDict::new(py);
                 meta.set_item("function_name", "test_fn").unwrap();
@@ -2950,6 +3076,27 @@ mod tests {
             assert!(
                 matches!(yielded, DoCtrl::GetHandlers),
                 "GetHandlers tag dispatch failed, got {:?}",
+                yielded
+            );
+
+            // GetTraceback → DoCtrl::GetTraceback
+            let marker = crate::ids::Marker::fresh();
+            let seg = crate::segment::Segment::new(marker, None, vec![marker]);
+            let continuation = crate::continuation::Continuation::capture(
+                &seg,
+                crate::ids::SegmentId::from_index(0),
+                None,
+            );
+            let cont_id = continuation.cont_id;
+            pyvm.vm.register_continuation(continuation);
+            let k = Bound::new(py, PyK { cont_id }).unwrap().into_any().unbind();
+            let gt_obj = Bound::new(py, PyGetTraceback::new(py, k).unwrap())
+                .unwrap()
+                .into_any();
+            let yielded = pyvm.classify_yielded(py, &gt_obj).unwrap();
+            assert!(
+                matches!(yielded, DoCtrl::GetTraceback { .. }),
+                "GetTraceback tag dispatch failed, got {:?}",
                 yielded
             );
 
@@ -3261,6 +3408,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyResultOk>()?;
     m.add_class::<PyResultErr>()?;
     m.add_class::<PyK>()?;
+    m.add_class::<PyTraceFrame>()?;
+    m.add_class::<PyTraceHop>()?;
     m.add_class::<PyWithHandler>()?;
     m.add_class::<PyPure>()?;
     m.add_class::<PyApply>()?;
@@ -3277,6 +3426,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCreateContinuation>()?;
     m.add_class::<PyGetContinuation>()?;
     m.add_class::<PyGetHandlers>()?;
+    m.add_class::<PyGetTraceback>()?;
     m.add_class::<PyGetCallStack>()?;
     m.add_class::<PyGetTrace>()?;
     m.add_class::<PyAsyncEscape>()?;
@@ -3363,6 +3513,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_PASS", DoExprTag::Pass as u8)?;
     m.add("TAG_GET_CONTINUATION", DoExprTag::GetContinuation as u8)?;
     m.add("TAG_GET_HANDLERS", DoExprTag::GetHandlers as u8)?;
+    m.add("TAG_GET_TRACEBACK", DoExprTag::GetTraceback as u8)?;
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
     m.add("TAG_GET_TRACE", DoExprTag::GetTrace as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;

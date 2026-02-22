@@ -165,8 +165,11 @@ await_handler = _ext.await_handler
 CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
 GetHandlers = _ext.GetHandlers
+GetTraceback = _ext.GetTraceback
 GetCallStack = _ext.GetCallStack
 GetTrace = _ext.GetTrace
+TraceFrame = _ext.TraceFrame
+TraceHop = _ext.TraceHop
 PythonAsyncSyntaxEscape = _ext.AsyncEscape
 PyGet = _ext.PyGet
 PyPut = _ext.PyPut
@@ -206,6 +209,7 @@ TAG_DELEGATE = _ext.TAG_DELEGATE
 TAG_PASS = _ext.TAG_PASS
 TAG_GET_CONTINUATION = _ext.TAG_GET_CONTINUATION
 TAG_GET_HANDLERS = _ext.TAG_GET_HANDLERS
+TAG_GET_TRACEBACK = _ext.TAG_GET_TRACEBACK
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
 TAG_GET_TRACE = _ext.TAG_GET_TRACE
 TAG_EVAL = _ext.TAG_EVAL
@@ -291,8 +295,11 @@ __all__ = [
     "CreateContinuation",
     "GetCallStack",
     "GetTrace",
+    "GetTraceback",
     "GetContinuation",
     "GetHandlers",
+    "TraceFrame",
+    "TraceHop",
     "async_run",
     "reader",
     "run",
@@ -313,6 +320,7 @@ __all__ = [
     "TAG_PASS",
     "TAG_GET_CONTINUATION",
     "TAG_GET_HANDLERS",
+    "TAG_GET_TRACEBACK",
     "TAG_GET_CALL_STACK",
     "TAG_GET_TRACE",
     "TAG_EVAL",

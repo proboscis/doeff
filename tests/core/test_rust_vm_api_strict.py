@@ -9,6 +9,12 @@ from doeff import Program
 from doeff import rust_vm as rust_vm_module
 
 
+def test_rust_vm_exports_traceback_query_types() -> None:
+    assert hasattr(rust_vm_module, "GetTraceback")
+    assert hasattr(rust_vm_module, "TraceFrame")
+    assert hasattr(rust_vm_module, "TraceHop")
+
+
 def test_default_handlers_requires_module_sentinels(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_vm = SimpleNamespace()
     monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
