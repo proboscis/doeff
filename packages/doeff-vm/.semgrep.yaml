@@ -464,3 +464,44 @@ rules:
     metadata:
       spec: TRACE-INVARIANT-001
       invariant: INV-1
+
+  # ---------------------------------------------------------------------------
+  # VM-FAILFAST-001 REGRESSION GUARDS
+  # ---------------------------------------------------------------------------
+
+  - id: no-bare-ok-in-handler-can-handle
+    pattern-regex: '\.ok\(\)\s*\?'
+    message: "FAILFAST: Do not use .ok()? to discard errors in can_handle(). Use .map_err() to convert or log the error."
+    languages: [generic]
+    paths:
+      include:
+        - "**/doeff-vm/src/handler.rs"
+    severity: ERROR
+    metadata:
+      spec: VM-FAILFAST-001B
+      category: fail-fast
+
+  - id: no-silent-if-let-current-segment
+    pattern-regex: 'if\s+let\s+Some\(\w+\)\s*=\s*self\.current_segment_mut\(\)'
+    message: "FAILFAST: Do not silently skip when current_segment_mut() returns None. Use .ok_or_else(|| VMError::internal(...))? instead."
+    languages: [generic]
+    paths:
+      include:
+        - "**/doeff-vm/src/vm.rs"
+    severity: ERROR
+    metadata:
+      spec: VM-FAILFAST-001A
+      category: fail-fast
+
+  - id: no-bare-ok-in-traceback-build
+    pattern-regex: '\.ok\(\)\s*\?'
+    message: "FAILFAST: Do not use .ok()? in traceback building. Add eprintln! logging before .ok()? or use .map_err()."
+    languages: [generic]
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    severity: WARNING
+    metadata:
+      spec: VM-FAILFAST-001C
+      category: fail-fast
+      note: "Traceback layer should not crash, but must log errors"

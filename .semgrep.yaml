@@ -423,6 +423,45 @@ rules:
       category: traceback-invariant
       issue: VM-FAILFAST-001C
 
+  - id: no-silent-except-in-traceback
+    patterns:
+      - pattern: |
+          try:
+              ...
+          except Exception:
+              return ...
+    message: "FAILFAST: Do not silently swallow exceptions. Add warnings.warn() or logging before return."
+    languages: [python]
+    paths:
+      include:
+        - "**/doeff/rust_vm.py"
+        - "**/doeff/traceback.py"
+        - "**/doeff/trace.py"
+    severity: ERROR
+    metadata:
+      spec: VM-FAILFAST-001C
+      category: fail-fast
+
+  - id: no-silent-except-return-none
+    patterns:
+      - pattern: |
+          try:
+              ...
+          except Exception:
+              return None
+    message: "FAILFAST: Do not silently return None on exception. Add warnings.warn() or re-raise."
+    languages: [python]
+    paths:
+      include:
+        - "**/doeff/*.py"
+      exclude:
+        - "**/doeff/test_*.py"
+        - "**/doeff/*_test.py"
+    severity: WARNING
+    metadata:
+      spec: VM-FAILFAST-001C
+      category: fail-fast
+
   # ---------------------------------------------------------------------------
   # LAYER BOUNDARIES
   # ---------------------------------------------------------------------------
