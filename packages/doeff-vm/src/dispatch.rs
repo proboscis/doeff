@@ -3,6 +3,7 @@
 use crate::continuation::Continuation;
 use crate::effect::DispatchEffect;
 use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::step::PyException;
 
 #[derive(Debug, Clone)]
 pub struct DispatchContext {
@@ -13,4 +14,5 @@ pub struct DispatchContext {
     pub k_user: Continuation,
     pub prompt_seg_id: SegmentId,
     pub completed: bool,
+    pub original_exception: Option<PyException>,
 }

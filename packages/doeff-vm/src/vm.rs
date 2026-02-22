@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -12,13 +13,16 @@ use crate::ast_stream::{ASTStream, ASTStreamRef, ASTStreamStep, PythonGeneratorS
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectCreationSite,
     EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry,
-    HandlerStatus, TraceEntry, TraceFrame, TraceHop,
+    HandlerStatus, SpawnSite, TraceEntry, TraceFrame, TraceHop,
 };
 use crate::continuation::Continuation;
 use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
-use crate::effect::{dispatch_ref_as_python, DispatchEffect};
+use crate::effect::{
+    dispatch_ref_as_python, make_execution_context_object, make_get_execution_context_effect,
+    DispatchEffect, PyExecutionContext,
+};
 #[cfg(test)]
 use crate::effect::{Effect, PySpawn};
 use crate::error::VMError;
@@ -64,10 +68,30 @@ fn rust_program_as_stream(program: crate::handler::ASTStreamProgramRef) -> ASTSt
     ))
 }
 
-#[derive(Clone)]
-struct SpawnBoundaryDescriptor {
-    boundary: ActiveChainEntry,
-    spawn_dispatch_id: Option<DispatchId>,
+const EXECUTION_CONTEXT_ATTR: &str = "doeff_execution_context";
+
+#[derive(Debug, Clone, Copy)]
+enum GenErrorSite {
+    EvalExpr,
+    CallFuncReturn,
+    ExpandReturnHandler,
+    ExpandReturnProgram,
+    StepUserGeneratorConverted,
+    StepUserGeneratorDirect,
+    RustProgramContinuation,
+    AsyncEscape,
+}
+
+impl GenErrorSite {
+    fn allows_error_conversion(self) -> bool {
+        matches!(
+            self,
+            GenErrorSite::EvalExpr
+                | GenErrorSite::CallFuncReturn
+                | GenErrorSite::ExpandReturnProgram
+                | GenErrorSite::StepUserGeneratorConverted
+        )
+    }
 }
 
 /// Optional Python dict for user-defined handler state (Layer 3).
@@ -152,6 +176,7 @@ pub struct VM {
     pub py_store: Option<PyStore>,
     pub current_segment: Option<SegmentId>,
     pub mode: Mode,
+    pub pending_error_context: Option<PyException>,
     pub pending_python: Option<PendingPython>,
     pub debug: DebugConfig,
     pub step_counter: u64,
@@ -174,6 +199,7 @@ impl VM {
             py_store: None,
             current_segment: None,
             mode: Mode::Deliver(Value::Unit),
+            pending_error_context: None,
             pending_python: None,
             debug: DebugConfig::default(),
             step_counter: 0,
@@ -501,6 +527,87 @@ impl VM {
                     _ => false,
                 })
             })
+    }
+
+    fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
+        self.dispatch_stack
+            .iter()
+            .rev()
+            .find(|ctx| !ctx.completed && ctx.original_exception.is_some())
+            .and_then(|ctx| ctx.original_exception.clone())
+    }
+
+    fn original_exception_for_dispatch(&self, dispatch_id: DispatchId) -> Option<PyException> {
+        self.dispatch_stack
+            .iter()
+            .rev()
+            .find(|ctx| ctx.dispatch_id == dispatch_id)
+            .and_then(|ctx| ctx.original_exception.clone())
+    }
+
+    fn same_materialized_exception(lhs: &PyException, rhs: &PyException) -> bool {
+        match (lhs, rhs) {
+            (
+                PyException::Materialized {
+                    exc_value: lhs_value,
+                    ..
+                },
+                PyException::Materialized {
+                    exc_value: rhs_value,
+                    ..
+                },
+            ) => Python::attach(|py| lhs_value.bind(py).as_ptr() == rhs_value.bind(py).as_ptr()),
+            _ => false,
+        }
+    }
+
+    fn set_exception_cause(effect_err: &PyException, cause: &PyException) {
+        if Self::same_materialized_exception(effect_err, cause) {
+            return;
+        }
+        let PyException::Materialized { exc_value, .. } = effect_err else {
+            return;
+        };
+
+        Python::attach(|py| {
+            let _ = exc_value.bind(py).setattr("__cause__", cause.value_clone_ref(py));
+        });
+    }
+
+    fn is_base_exception_not_exception(exception: &PyException) -> bool {
+        let PyException::Materialized { exc_value, .. } = exception else {
+            return false;
+        };
+        Python::attach(|py| {
+            let bound = exc_value.bind(py);
+            bound.is_instance_of::<PyBaseException>() && !bound.is_instance_of::<PyStdException>()
+        })
+    }
+
+    fn mode_after_generror(&mut self, site: GenErrorSite, exception: PyException) -> Mode {
+        if !site.allows_error_conversion() {
+            if let Some(original) = self.active_error_dispatch_original_exception() {
+                Self::set_exception_cause(&exception, &original);
+            }
+            return Mode::Throw(exception);
+        }
+
+        if Self::is_base_exception_not_exception(&exception) {
+            return Mode::Throw(exception);
+        }
+
+        if let Some(original) = self.active_error_dispatch_original_exception() {
+            Self::set_exception_cause(&exception, &original);
+            return Mode::Throw(exception);
+        }
+
+        match make_get_execution_context_effect() {
+            Ok(effect) => {
+                self.pending_error_context = Some(exception.clone());
+                Mode::HandleYield(DoCtrl::Perform { effect })
+            }
+            Err(_) => Mode::Throw(exception),
+        }
     }
 
     fn stream_debug_location(stream: &ASTStreamRef) -> Option<crate::ast_stream::StreamLocation> {
@@ -974,77 +1081,197 @@ impl VM {
         }
     }
 
-    fn spawn_boundaries_from_exception(exception: &PyException) -> Vec<SpawnBoundaryDescriptor> {
-        crate::scheduler::take_exception_spawn_boundaries(exception)
-            .into_iter()
-            .map(|boundary| SpawnBoundaryDescriptor {
-                boundary: ActiveChainEntry::SpawnBoundary {
-                    task_id: boundary.task_id,
-                    parent_task: boundary.parent_task,
-                    spawn_site: boundary.spawn_site,
-                },
-                spawn_dispatch_id: boundary.insertion_dispatch_id,
-            })
-            .collect()
+    fn context_entries_from_exception(exception: &PyException) -> Vec<Py<PyAny>> {
+        let PyException::Materialized { exc_value, .. } = exception else {
+            return Vec::new();
+        };
+
+        Python::attach(|py| {
+            let exc = exc_value.bind(py);
+            let context = exc
+                .getattr(EXECUTION_CONTEXT_ATTR)
+                .ok()
+                .filter(|ctx| !ctx.is_none());
+            let Some(context) = context else {
+                return Vec::new();
+            };
+            let entries = context
+                .getattr("entries")
+                .ok()
+                .filter(|entries| !entries.is_none());
+            let Some(entries) = entries else {
+                return Vec::new();
+            };
+            match entries.try_iter() {
+                Ok(iter) => iter
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.unbind())
+                    .collect(),
+                Err(_) => Vec::new(),
+            }
+        })
     }
 
-    fn insert_spawn_boundaries(
-        active_chain: &mut Vec<ActiveChainEntry>,
-        entry_dispatch_ids: &mut Vec<Option<DispatchId>>,
-        boundaries: Vec<SpawnBoundaryDescriptor>,
-    ) {
-        if boundaries.is_empty() {
-            return;
+    fn context_entry_to_spawn_boundary(entry: &Bound<'_, PyAny>) -> Option<ActiveChainEntry> {
+        let dict = entry.cast::<PyDict>().ok()?;
+        let kind = dict
+            .get_item("kind")
+            .ok()
+            .flatten()
+            .and_then(|value| value.extract::<String>().ok())?;
+        if kind != "spawn_boundary" {
+            return None;
         }
 
-        let mut inserts: HashMap<usize, Vec<ActiveChainEntry>> = HashMap::new();
-        let mut unresolved = Vec::new();
-
-        for boundary in boundaries {
-            if let Some(dispatch_id) = boundary.spawn_dispatch_id {
-                if let Some(index) = entry_dispatch_ids
-                    .iter()
-                    .position(|entry_dispatch_id| *entry_dispatch_id == Some(dispatch_id))
-                {
-                    inserts
-                        .entry(index + 1)
-                        .or_default()
-                        .push(boundary.boundary);
-                    continue;
+        let task_id = dict
+            .get_item("task_id")
+            .ok()
+            .flatten()
+            .and_then(|value| value.extract::<u64>().ok())?;
+        let parent_task = dict
+            .get_item("parent_task")
+            .ok()
+            .flatten()
+            .and_then(|value| {
+                if value.is_none() {
+                    Some(None)
+                } else {
+                    value.extract::<u64>().ok().map(Some)
                 }
-            }
-            unresolved.push(boundary.boundary);
-        }
+            })
+            .flatten();
 
-        if !unresolved.is_empty() {
-            inserts
-                .entry(active_chain.len())
-                .or_default()
-                .extend(unresolved);
-        }
+        let spawn_site = dict
+            .get_item("spawn_site")
+            .ok()
+            .flatten()
+            .and_then(|site| {
+                if site.is_none() {
+                    return None;
+                }
+                let site_dict = site.cast::<PyDict>().ok()?;
+                Some(SpawnSite {
+                    function_name: site_dict
+                        .get_item("function_name")
+                        .ok()
+                        .flatten()?
+                        .extract::<String>()
+                        .ok()?,
+                    source_file: site_dict
+                        .get_item("source_file")
+                        .ok()
+                        .flatten()?
+                        .extract::<String>()
+                        .ok()?,
+                    source_line: site_dict
+                        .get_item("source_line")
+                        .ok()
+                        .flatten()?
+                        .extract::<u32>()
+                        .ok()?,
+                })
+            });
 
-        let active_len = active_chain.len();
-        let inserted_count: usize = inserts.values().map(Vec::len).sum();
-        let mut reordered = Vec::with_capacity(active_len + inserted_count);
-        let mut reordered_dispatch_ids = Vec::with_capacity(active_len + inserted_count);
-        let original_dispatch_ids = std::mem::take(entry_dispatch_ids);
-        for (index, entry) in active_chain.drain(..).enumerate() {
-            if let Some(mut injected) = inserts.remove(&index) {
-                let injected_len = injected.len();
-                reordered.append(&mut injected);
-                reordered_dispatch_ids.extend(std::iter::repeat(None).take(injected_len));
+        Some(ActiveChainEntry::SpawnBoundary {
+            task_id,
+            parent_task,
+            spawn_site,
+        })
+    }
+
+    fn spawn_boundaries_from_exception_context(exception: &PyException) -> Vec<ActiveChainEntry> {
+        Python::attach(|py| {
+            Self::context_entries_from_exception(exception)
+                .into_iter()
+                .filter_map(|entry| Self::context_entry_to_spawn_boundary(entry.bind(py)))
+                .collect()
+        })
+    }
+
+    fn context_entries_from_context_obj(context: &Bound<'_, PyAny>) -> Vec<Py<PyAny>> {
+        if !context.is_instance_of::<PyExecutionContext>() {
+            return Vec::new();
+        }
+        let entries = context
+            .getattr("entries")
+            .ok()
+            .filter(|entries| !entries.is_none());
+        let Some(entries) = entries else {
+            return Vec::new();
+        };
+        match entries.try_iter() {
+            Ok(iter) => iter
+                .filter_map(Result::ok)
+                .map(|entry| entry.unbind())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn build_execution_context_from_entries(
+        py: Python<'_>,
+        entries: &[Py<PyAny>],
+    ) -> PyResult<Py<PyAny>> {
+        let context = make_execution_context_object(py)?;
+        let add = context.bind(py).getattr("add")?;
+        for entry in entries {
+            add.call1((entry.clone_ref(py),))?;
+        }
+        Ok(context)
+    }
+
+    fn attach_execution_context(exception: &PyException, context: &Py<PyAny>) {
+        let PyException::Materialized { exc_value, .. } = exception else {
+            return;
+        };
+        Python::attach(|py| {
+            let _ = exc_value
+                .bind(py)
+                .setattr(EXECUTION_CONTEXT_ATTR, context.clone_ref(py));
+        });
+    }
+
+    fn enrich_original_exception_with_context(
+        original: PyException,
+        context_value: Value,
+    ) -> Result<PyException, PyException> {
+        let Value::Python(new_context) = context_value else {
+            let err = PyException::type_error(
+                "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
+            );
+            Self::set_exception_cause(&err, &original);
+            return Err(err);
+        };
+
+        Python::attach(|py| {
+            let context_bound = new_context.bind(py);
+            if !context_bound.is_instance_of::<PyExecutionContext>() {
+                let err = PyException::type_error(
+                    "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
+                );
+                Self::set_exception_cause(&err, &original);
+                return Err(err);
             }
-            let dispatch_id = original_dispatch_ids.get(index).copied().flatten();
-            reordered.push(entry);
-            reordered_dispatch_ids.push(dispatch_id);
-        }
-        if let Some(mut injected) = inserts.remove(&active_len) {
-            let injected_len = injected.len();
-            reordered.append(&mut injected);
-            reordered_dispatch_ids.extend(std::iter::repeat(None).take(injected_len));
-        }
-        *active_chain = reordered;
-        *entry_dispatch_ids = reordered_dispatch_ids;
+
+            let mut merged_entries = Self::context_entries_from_context_obj(context_bound);
+            let existing_entries = Self::context_entries_from_exception(&original);
+            merged_entries.extend(existing_entries);
+
+            let merged_context = match Self::build_execution_context_from_entries(py, &merged_entries)
+            {
+                Ok(context) => context,
+                Err(err) => {
+                    let err = PyException::runtime_error(format!(
+                        "failed to merge ExecutionContext entries: {err}"
+                    ));
+                    Self::set_exception_cause(&err, &original);
+                    return Err(err);
+                }
+            };
+
+            Self::attach_execution_context(&original, &merged_context);
+            Ok(original)
+        })
     }
 
     pub fn assemble_active_chain(&self, exception: &PyException) -> Vec<ActiveChainEntry> {
@@ -1328,7 +1555,6 @@ impl VM {
         }
 
         let mut active_chain = Vec::new();
-        let mut entry_dispatch_ids: Vec<Option<DispatchId>> = Vec::new();
         for (index, frame) in frame_stack.iter().enumerate() {
             let dispatch_id = frame_dispatch.get(&frame.frame_id).copied();
             let dispatch = dispatch_id.and_then(|id| dispatches.get(&id));
@@ -1349,7 +1575,6 @@ impl VM {
                         handler_stack: dispatch.handler_stack.clone(),
                         result: dispatch.result.clone(),
                     });
-                    entry_dispatch_ids.push(dispatch_id);
                     continue;
                 }
             }
@@ -1369,7 +1594,6 @@ impl VM {
                 source_line: frame.source_line,
                 sub_program_repr,
             });
-            entry_dispatch_ids.push(None);
         }
 
         if active_chain.is_empty() {
@@ -1443,7 +1667,6 @@ impl VM {
                                     handler_stack: dispatch.handler_stack.clone(),
                                     result: dispatch.result.clone(),
                                 });
-                                entry_dispatch_ids.push(Some(dispatch_id));
                             }
                         } else {
                             let last_index = snapshot_frames.len() - 1;
@@ -1465,7 +1688,6 @@ impl VM {
                                         handler_stack: dispatch.handler_stack.clone(),
                                         result: dispatch.result.clone(),
                                     });
-                                    entry_dispatch_ids.push(Some(dispatch_id));
                                     continue;
                                 }
 
@@ -1486,7 +1708,6 @@ impl VM {
                                     source_line: frame.source_line,
                                     sub_program_repr,
                                 });
-                                entry_dispatch_ids.push(None);
                             }
                         }
                     }
@@ -1494,9 +1715,47 @@ impl VM {
             }
         }
 
-        let spawn_boundaries = Self::spawn_boundaries_from_exception(exception);
+        let spawn_boundaries = Self::spawn_boundaries_from_exception_context(exception);
         let has_spawn_boundaries = !spawn_boundaries.is_empty();
-        Self::insert_spawn_boundaries(&mut active_chain, &mut entry_dispatch_ids, spawn_boundaries);
+        if has_spawn_boundaries {
+            for boundary in spawn_boundaries {
+                let insert_idx = match &boundary {
+                    ActiveChainEntry::SpawnBoundary {
+                        spawn_site: Some(site),
+                        ..
+                    } => active_chain
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find_map(|(idx, entry)| match entry {
+                            ActiveChainEntry::ProgramYield {
+                                function_name,
+                                source_file,
+                                ..
+                            }
+                            | ActiveChainEntry::EffectYield {
+                                function_name,
+                                source_file,
+                                ..
+                            }
+                            | ActiveChainEntry::ExceptionSite {
+                                function_name,
+                                source_file,
+                                ..
+                            } if function_name == &site.function_name
+                                && source_file == &site.source_file =>
+                            {
+                                Some(idx + 1)
+                            }
+                            _ => None,
+                        }),
+                    _ => None,
+                }
+                .unwrap_or(active_chain.len());
+
+                active_chain.insert(insert_idx, boundary);
+            }
+        }
         let exception_site = Self::exception_site(exception);
         let exception_function_name = match &exception_site {
             ActiveChainEntry::ExceptionSite { function_name, .. } => function_name.as_str(),
@@ -1869,6 +2128,9 @@ impl VM {
                 self.handle_handler_return(value)
             }
             ASTStreamStep::Throw(exc) => {
+                if let Some(original) = self.active_error_dispatch_original_exception() {
+                    Self::set_exception_cause(&exc, &original);
+                }
                 if let Some(dispatch_id) = self
                     .dispatch_stack
                     .last()
@@ -2276,7 +2538,7 @@ impl VM {
             }
 
             (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenError(e)) => {
-                self.mode = Mode::Throw(e);
+                self.mode = self.mode_after_generror(GenErrorSite::EvalExpr, e);
             }
 
             (PendingPython::EvalExpr { metadata: _ }, PyCallOutcome::GenReturn(value)) => {
@@ -2292,7 +2554,7 @@ impl VM {
             }
 
             (PendingPython::CallFuncReturn { .. }, PyCallOutcome::GenError(e)) => {
-                self.mode = Mode::Throw(e);
+                self.mode = self.mode_after_generror(GenErrorSite::CallFuncReturn, e);
             }
 
             (
@@ -2371,11 +2633,16 @@ impl VM {
                         .filter(|ctx| !ctx.completed)
                         .map(|ctx| ctx.dispatch_id)
                     {
+                        if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
+                            Self::set_exception_cause(&e, &original);
+                        }
                         self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
                         self.mark_dispatch_threw(dispatch_id);
                     }
+                    self.mode = self.mode_after_generror(GenErrorSite::ExpandReturnHandler, e);
+                } else {
+                    self.mode = self.mode_after_generror(GenErrorSite::ExpandReturnProgram, e);
                 }
-                self.mode = Mode::Throw(e);
             }
 
             (
@@ -2406,15 +2673,20 @@ impl VM {
                 },
                 PyCallOutcome::GenError(e),
             ) => {
+                let mut site = GenErrorSite::StepUserGeneratorDirect;
                 if let Some(dispatch_id) = self.current_active_handler_dispatch_id() {
                     if self.dispatch_uses_user_continuation_stream(dispatch_id, &stream) {
                         self.mark_dispatch_completed(dispatch_id);
+                        site = GenErrorSite::StepUserGeneratorConverted;
                     } else {
+                        if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
+                            Self::set_exception_cause(&e, &original);
+                        }
                         self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &e);
                         self.mark_dispatch_threw(dispatch_id);
                     }
                 }
-                self.mode = Mode::Throw(e);
+                self.mode = self.mode_after_generror(site, e);
             }
 
             (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::Value(result)) => {
@@ -2422,7 +2694,7 @@ impl VM {
             }
 
             (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::GenError(e)) => {
-                self.mode = Mode::Throw(e);
+                self.mode = self.mode_after_generror(GenErrorSite::RustProgramContinuation, e);
             }
 
             (PendingPython::AsyncEscape, PyCallOutcome::Value(result)) => {
@@ -2430,7 +2702,7 @@ impl VM {
             }
 
             (PendingPython::AsyncEscape, PyCallOutcome::GenError(e)) => {
-                self.mode = Mode::Throw(e);
+                self.mode = self.mode_after_generror(GenErrorSite::AsyncEscape, e);
             }
 
             _ => {
@@ -2521,16 +2793,30 @@ impl VM {
 
     pub fn start_dispatch(&mut self, effect: DispatchEffect) -> Result<StepEvent, VMError> {
         self.lazy_pop_completed();
+        let original_exception = self.pending_error_context.take();
 
         let scope_chain = self.current_scope_chain();
         let handler_chain = self.visible_handlers(&scope_chain);
 
         if handler_chain.is_empty() {
+            if let Some(original) = original_exception.clone() {
+                self.mode = Mode::Throw(original);
+                return Ok(StepEvent::Continue);
+            }
             return Err(VMError::unhandled_effect(effect));
         }
 
         let (handler_idx, handler_marker, entry) =
-            self.find_matching_handler(&handler_chain, &effect)?;
+            match self.find_matching_handler(&handler_chain, &effect) {
+                Ok(found) => found,
+                Err(err) => {
+                    if let Some(original) = original_exception.clone() {
+                        self.mode = Mode::Throw(original);
+                        return Ok(StepEvent::Continue);
+                    }
+                    return Err(err);
+                }
+            };
 
         let prompt_seg_id = entry.prompt_seg_id;
         let handler = entry.handler.clone();
@@ -2570,6 +2856,7 @@ impl VM {
             k_user: k_user.clone(),
             prompt_seg_id,
             completed: false,
+            original_exception,
         });
 
         let (handler_name, handler_kind, handler_source_file, handler_source_line) =
@@ -2606,11 +2893,35 @@ impl VM {
     fn check_dispatch_completion(&mut self, k: &Continuation) {
         if let Some(dispatch_id) = k.dispatch_id {
             if let Some(top) = self.dispatch_stack.last_mut() {
-                if top.dispatch_id == dispatch_id && top.k_user.cont_id == k.cont_id {
+                if top.dispatch_id == dispatch_id
+                    && top.k_user.cont_id == k.cont_id
+                    && top.k_user.parent.is_none()
+                {
                     top.completed = true;
                 }
             }
         }
+    }
+
+    fn error_dispatch_for_continuation(
+        &self,
+        k: &Continuation,
+    ) -> Option<(DispatchId, PyException, bool)> {
+        let dispatch_id = k.dispatch_id?;
+        let ctx = self
+            .dispatch_stack
+            .iter()
+            .rev()
+            .find(|ctx| ctx.dispatch_id == dispatch_id)?;
+        let original = ctx.original_exception.clone()?;
+        let mut cursor = Some(ctx.k_user.clone());
+        while let Some(current) = cursor {
+            if current.cont_id == k.cont_id {
+                return Some((dispatch_id, original, current.parent.is_none()));
+            }
+            cursor = current.parent.as_ref().map(|parent| (**parent).clone());
+        }
+        None
     }
 
     fn active_dispatch_handler_is_python(&self, dispatch_id: DispatchId) -> bool {
@@ -2720,6 +3031,7 @@ impl VM {
         }
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
+        let error_dispatch = self.error_dispatch_for_continuation(&k);
         if let Some(dispatch_id) = k.dispatch_id {
             if let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
@@ -2736,7 +3048,35 @@ impl VM {
                 self.maybe_emit_resume_event(dispatch_id, handler_name, value_repr, &k, false);
             }
         }
-        if let Some(dispatch_id) = k.dispatch_id {
+        if let Some((dispatch_id, original_exception, terminal)) = error_dispatch {
+            if !terminal {
+                if let Some(dispatch_id) = k.dispatch_id {
+                    if !self.active_dispatch_handler_is_python(dispatch_id) {
+                        self.check_dispatch_completion(&k);
+                    }
+                } else {
+                    self.check_dispatch_completion(&k);
+                }
+            } else {
+                self.mark_dispatch_completed(dispatch_id);
+                let enriched_exception =
+                    match Self::enrich_original_exception_with_context(original_exception, value) {
+                        Ok(exception) => exception,
+                        Err(effect_err) => effect_err,
+                    };
+                let exec_seg = Segment {
+                    marker: k.marker,
+                    frames: (*k.frames_snapshot).clone(),
+                    caller: self.current_segment,
+                    scope_chain: (*k.scope_chain).clone(),
+                    kind: crate::segment::SegmentKind::Normal,
+                };
+                let exec_seg_id = self.alloc_segment(exec_seg);
+                self.current_segment = Some(exec_seg_id);
+                self.mode = Mode::Throw(enriched_exception);
+                return StepEvent::Continue;
+            }
+        } else if let Some(dispatch_id) = k.dispatch_id {
             if !self.active_dispatch_handler_is_python(dispatch_id) {
                 self.check_dispatch_completion(&k);
             }
@@ -2771,6 +3111,7 @@ impl VM {
         }
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
+        let error_dispatch = self.error_dispatch_for_continuation(&k);
         if let Some(dispatch_id) = k.dispatch_id {
             if let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
@@ -2785,6 +3126,27 @@ impl VM {
                     },
                 });
                 self.maybe_emit_resume_event(dispatch_id, handler_name, value_repr, &k, true);
+            }
+        }
+        if let Some((dispatch_id, original_exception, terminal)) = error_dispatch {
+            if terminal {
+                self.mark_dispatch_completed(dispatch_id);
+                let enriched_exception =
+                    match Self::enrich_original_exception_with_context(original_exception, value) {
+                        Ok(exception) => exception,
+                        Err(effect_err) => effect_err,
+                    };
+                let exec_seg = Segment {
+                    marker: k.marker,
+                    frames: (*k.frames_snapshot).clone(),
+                    caller: None,
+                    scope_chain: (*k.scope_chain).clone(),
+                    kind: crate::segment::SegmentKind::Normal,
+                };
+                let exec_seg_id = self.alloc_segment(exec_seg);
+                self.current_segment = Some(exec_seg_id);
+                self.mode = Mode::Throw(enriched_exception);
+                return StepEvent::Continue;
             }
         }
         self.check_dispatch_completion(&k);
@@ -2986,6 +3348,16 @@ impl VM {
             }
         }
 
+        if let Some((dispatch_id, original_exception)) = self
+            .dispatch_stack
+            .last()
+            .and_then(|ctx| ctx.original_exception.clone().map(|exc| (ctx.dispatch_id, exc)))
+        {
+            self.mark_dispatch_completed(dispatch_id);
+            self.mode = Mode::Throw(original_exception);
+            return StepEvent::Continue;
+        }
+
         StepEvent::Error(VMError::delegate_no_outer_handler(effect))
     }
 
@@ -3063,6 +3435,16 @@ impl VM {
             }
         }
 
+        if let Some((dispatch_id, original_exception)) = self
+            .dispatch_stack
+            .last()
+            .and_then(|ctx| ctx.original_exception.clone().map(|exc| (ctx.dispatch_id, exc)))
+        {
+            self.mark_dispatch_completed(dispatch_id);
+            self.mode = Mode::Throw(original_exception);
+            return StepEvent::Continue;
+        }
+
         StepEvent::Error(VMError::delegate_no_outer_handler(effect))
     }
 
@@ -3124,17 +3506,33 @@ impl VM {
             false,
         );
 
-        let Some(top) = self.dispatch_stack.last_mut() else {
-            return StepEvent::Error(VMError::internal("Return outside of dispatch"));
-        };
+        let original_exception = {
+            let Some(top) = self.dispatch_stack.last_mut() else {
+                return StepEvent::Error(VMError::internal("Return outside of dispatch"));
+            };
 
-        if let Some(seg_id) = self.current_segment {
-            if let Some(caller_id) = self.segments.get(seg_id).and_then(|s| s.caller) {
-                if caller_id == top.prompt_seg_id {
-                    top.completed = true;
-                    self.consumed_cont_ids.insert(top.k_user.cont_id);
+            if let Some(seg_id) = self.current_segment {
+                if let Some(caller_id) = self.segments.get(seg_id).and_then(|s| s.caller) {
+                    if caller_id == top.prompt_seg_id {
+                        top.completed = true;
+                        self.consumed_cont_ids.insert(top.k_user.cont_id);
+                    }
                 }
             }
+
+            if top.completed {
+                top.original_exception.clone()
+            } else {
+                None
+            }
+        };
+
+        if let Some(original) = original_exception {
+            self.mode = match Self::enrich_original_exception_with_context(original, value) {
+                Ok(exception) => Mode::Throw(exception),
+                Err(effect_err) => Mode::Throw(effect_err),
+            };
+            return StepEvent::Continue;
         }
 
         // D10: Spec says Mode::Deliver, not Mode::Return + explicit segment jump.
@@ -3536,6 +3934,7 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
 
             completed: false,
+            original_exception: None,
         });
 
         let visible = vm.visible_handlers(&vec![m1, m2, m3]);
@@ -3561,6 +3960,7 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
 
             completed: true,
+            original_exception: None,
         });
 
         let visible = vm.visible_handlers(&vec![m1, m2]);
@@ -3586,6 +3986,7 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
 
             completed: true,
+            original_exception: None,
         });
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
@@ -3599,6 +4000,7 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
 
             completed: true,
+            original_exception: None,
         });
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
@@ -3612,6 +4014,7 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
 
             completed: false,
+            original_exception: None,
         });
 
         vm.lazy_pop_completed();
@@ -3944,46 +4347,48 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_spawn_boundaries_does_not_depend_on_scheduler_handler_name() {
-        let mut active_chain = vec![
-            ActiveChainEntry::EffectYield {
-                function_name: "child".to_string(),
-                source_file: "child.py".to_string(),
-                source_line: 12,
-                effect_repr: "Spawn(...)".to_string(),
-                handler_stack: Vec::new(),
-                result: EffectResult::Transferred {
-                    handler_name: "CustomScheduler".to_string(),
-                    target_repr: "parent() parent.py:8".to_string(),
-                },
-            },
-            ActiveChainEntry::ExceptionSite {
-                function_name: "child".to_string(),
-                source_file: "child.py".to_string(),
-                source_line: 13,
-                exception_type: "ValueError".to_string(),
-                message: "boom".to_string(),
-            },
-        ];
-        let mut dispatch_ids = vec![Some(DispatchId(42)), None];
+    fn test_spawn_boundaries_from_execution_context_entries() {
+        Python::attach(|py| {
+            let py_err = pyo3::exceptions::PyValueError::new_err("boom");
+            let exc_value = py_err.value(py).clone().into_any().unbind();
+            let exc_type = exc_value.bind(py).get_type().into_any().unbind();
+            let exc_tb = py_err.traceback(py).map(|tb| tb.into_any().unbind());
+            let exception = PyException::new(exc_type, exc_value.clone_ref(py), exc_tb);
 
-        VM::insert_spawn_boundaries(
-            &mut active_chain,
-            &mut dispatch_ids,
-            vec![SpawnBoundaryDescriptor {
-                boundary: ActiveChainEntry::SpawnBoundary {
+            let context = make_execution_context_object(py).expect("ExecutionContext must construct");
+            let entry = pyo3::types::PyDict::new(py);
+            entry
+                .set_item("kind", "spawn_boundary")
+                .expect("kind must be set");
+            entry.set_item("task_id", 7u64).expect("task_id must be set");
+            entry
+                .set_item("parent_task", 2u64)
+                .expect("parent_task must be set");
+            entry
+                .set_item("spawn_site", py.None())
+                .expect("spawn_site must be set");
+            context
+                .bind(py)
+                .getattr("add")
+                .expect("ExecutionContext.add")
+                .call1((entry,))
+                .expect("ExecutionContext.add should append");
+
+            exc_value
+                .bind(py)
+                .setattr(EXECUTION_CONTEXT_ATTR, context)
+                .expect("exception should accept execution context");
+
+            let boundaries = VM::spawn_boundaries_from_exception_context(&exception);
+            assert!(matches!(
+                boundaries.first(),
+                Some(ActiveChainEntry::SpawnBoundary {
                     task_id: 7,
                     parent_task: Some(2),
-                    spawn_site: None,
-                },
-                spawn_dispatch_id: Some(DispatchId(42)),
-            }],
-        );
-
-        assert!(matches!(
-            active_chain.get(1),
-            Some(ActiveChainEntry::SpawnBoundary { task_id: 7, .. })
-        ));
+                    ..
+                })
+            ));
+        });
     }
 
     #[test]
@@ -4092,6 +4497,7 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
 
             completed: false,
+            original_exception: None,
         });
 
         let event = vm.handle_get_continuation();
@@ -4137,6 +4543,7 @@ mod tests {
             k_user: original_k_user,
             prompt_seg_id: seg_id,
             completed: false,
+            original_exception: None,
         });
 
         let event = vm.handle_delegate(Effect::get("x"));
@@ -4216,6 +4623,7 @@ mod tests {
             k_user,
             prompt_seg_id,
             completed: false,
+            original_exception: None,
         });
 
         let event = vm.handle_get_handlers();
@@ -4305,6 +4713,7 @@ mod tests {
             k_user: k_user.clone(),
             prompt_seg_id: seg_id,
             completed: false,
+            original_exception: None,
         });
 
         let mut query_continuation = make_dummy_continuation();
@@ -4528,6 +4937,7 @@ mod tests {
             },
             prompt_seg_id: seg_id,
             completed: false,
+            original_exception: None,
         });
 
         // Verify completion check works through k_user.cont_id
@@ -4626,6 +5036,7 @@ mod tests {
             k_user: k_user.clone(),
             prompt_seg_id: SegmentId::from_index(0),
             completed: true,
+            original_exception: None,
         });
 
         vm.mode = Mode::HandleYield(DoCtrl::GetHandlers);
@@ -5067,6 +5478,7 @@ mod tests {
             k_user,
             prompt_seg_id,
             completed: false,
+            original_exception: None,
         });
 
         let event = vm.handle_handler_return(Value::Int(42));
