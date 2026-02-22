@@ -252,8 +252,8 @@ def test_format_default_handler_stack_same() -> None:
 
     rendered = tb.format_default()
     stack_line = "[h1↗ > h2✓]"
-    assert rendered.count(stack_line) == 2
-    assert "[same]" not in rendered
+    assert rendered.count(stack_line) == 1
+    assert rendered.count("[same]") == 1
 
 
 def test_format_default_keeps_duplicate_handler_names_from_vm_chain() -> None:
@@ -313,7 +313,8 @@ def test_format_default_duplicate_name_throw_marks_correct_handler() -> None:
         if line.strip().startswith("[") and "handler" in line
     )
     assert "handler✗ >" in stack_line
-    assert "> " in stack_line and "handler·" in stack_line
+    assert "> " in stack_line
+    assert "handler·" in stack_line
     assert "inner:boom" in rendered
 
 
