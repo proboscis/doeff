@@ -1142,6 +1142,53 @@ rules:
       issue: VM-PROTO-007
 
   # ---------------------------------------------------------------------------
+  # SPEC-VM-014 ENFORCEMENT
+  # ---------------------------------------------------------------------------
+
+  - id: vm-no-py-import-in-value-traceback
+    pattern-regex: '\.import\("doeff_vm"\)'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/value.rs"
+    message: |
+      Value::Traceback conversion must use direct Py::new(py, PyTraceFrame { ... }) construction.
+      Do not import doeff_vm module from value.rs - PyTraceFrame and PyTraceHop are in the same crate.
+      Use: use crate::pyvm::{PyTraceFrame, PyTraceHop};
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      spec: SPEC-VM-014
+
+  - id: vm-no-get-yield-site-artifacts
+    pattern-regex: 'GetYieldSite|YieldSite'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+    message: |
+      GetYieldSite/YieldSite are replaced by GetTraceback/Traceback (SPEC-VM-014).
+      These artifacts must not exist in VM source.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      spec: SPEC-VM-014
+
+  - id: vm-no-spawn-site-on-py-spawn
+    pattern-regex: 'spawn_site.*Option<Py<PyAny>>'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/effect.rs"
+    message: |
+      PySpawn must not carry spawn_site field. Spawn site attribution uses
+      GetTraceback DoCtrl via the scheduler (SPEC-VM-014 Phase 2).
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-protocol
+      spec: SPEC-VM-014
+
+  # ---------------------------------------------------------------------------
   # PUBLIC API LOCATION GUARDS
   # ---------------------------------------------------------------------------
 
