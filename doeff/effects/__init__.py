@@ -84,6 +84,9 @@ from .semaphore import (
 )
 from .spawn import (
     Future,
+    PRIORITY_HIGH,
+    PRIORITY_IDLE,
+    PRIORITY_NORMAL,
     Promise,
     Spawn,
     SpawnEffect,
@@ -178,6 +181,9 @@ __all__ = [
     "ProgramCallStackEffect",
     "ProgramTrace",
     "ProgramTraceEffect",
+    "PRIORITY_HIGH",
+    "PRIORITY_IDLE",
+    "PRIORITY_NORMAL",
     "Pure",
     "PureEffect",
     "Put",

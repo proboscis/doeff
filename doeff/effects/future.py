@@ -9,7 +9,6 @@ from __future__ import annotations
 import atexit
 import asyncio
 from collections.abc import Awaitable
-from dataclasses import dataclass
 import threading
 from typing import Any
 
@@ -19,22 +18,10 @@ from .external_promise import CreateExternalPromise
 from .wait import Wait
 
 from ._validators import ensure_awaitable
-from .base import Effect, EffectBase
+from .base import Effect
 
 
 PythonAsyncioAwaitEffect = doeff_vm.PythonAsyncioAwaitEffect
-
-
-@dataclass(frozen=True)
-class AllTasksSuspendedEffect(EffectBase):
-    """Signal that all tasks are suspended waiting for I/O.
-
-    Used by the scheduler when all tasks are blocked on async I/O
-    and the runtime needs to use asyncio.wait to await them all.
-    """
-
-    pending_io: dict[Any, Any]
-    store: dict[str, Any]
 
 
 # NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern
@@ -93,7 +80,7 @@ def _ensure_background_loop() -> asyncio.AbstractEventLoop:
 def _submit_awaitable(awaitable: Awaitable[Any], promise: Any) -> None:
     loop = _ensure_background_loop()
 
-    async def _run() -> Any:
+    async def _run() -> object:
         return await awaitable
 
     future = asyncio.run_coroutine_threadsafe(_run(), loop)
@@ -153,7 +140,6 @@ def Await(awaitable: Awaitable[Any]) -> Effect:
 
 
 __all__ = [
-    "AllTasksSuspendedEffect",
     "Await",
     "PythonAsyncioAwaitEffect",
     "async_await_handler",
