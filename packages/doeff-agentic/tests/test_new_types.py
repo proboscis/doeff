@@ -87,6 +87,7 @@ class TestAgenticWorkflowHandle:
         assert handle.id == "a3f8b2c"
         assert handle.name == "PR Review"
         assert handle.status == AgenticWorkflowStatus.RUNNING
+        assert handle.metadata is not None
         assert handle.metadata["pr_url"] == "https://github.com/..."
 
     def test_to_dict(self):

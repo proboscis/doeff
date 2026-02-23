@@ -979,7 +979,6 @@ class OpenCodeHandler:
             self._event_log.log_session_status(self._workflow.id, name, status)
 
     @do
-    @do
     def _refresh_session_status(self, session_id: str):
         """Refresh session status from server. Returns Program[..., None]."""
         assert self._client is not None

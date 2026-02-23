@@ -487,7 +487,9 @@ class WorkflowWatchScreen(Screen[None]):
             except Exception as e:
                 self.notify(f"Failed to attach: {e}", severity="error")
             finally:
-                self.app.resume()
+                resume = getattr(self.app, "resume", None)
+                if callable(resume):
+                    resume()
 
     def action_logs(self) -> None:
         """View logs for the selected agent."""
