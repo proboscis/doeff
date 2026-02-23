@@ -2213,11 +2213,13 @@ impl SchedulerProgram {
             ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
-            }) => {
+            }) if continuation.cont_id != k_user.cont_id || !owner_resumed => {
                 if continuation.cont_id == k_user.cont_id && !owner_resumed {
                     resumed_owner_now = true;
                 }
-                ASTStreamStep::Yield(DoCtrl::Resume {
+                // During preemptive transfer, keep the scheduler in control by using
+                // non-terminal resume variants until we are ready to finish.
+                ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
                     continuation,
                     value,
                 })
@@ -2240,12 +2242,9 @@ impl SchedulerProgram {
         let resumed_preempted_caller = step_targets_continuation(&step, &k_user);
         let switched_into_task_body = matches!(
             &step,
-            ASTStreamStep::Yield(DoCtrl::ResumeContinuation { .. })
+            ASTStreamStep::Yield(DoCtrl::Resume { .. })
+                | ASTStreamStep::Yield(DoCtrl::ResumeContinuation { .. })
                 | ASTStreamStep::Yield(DoCtrl::ResumeThrow { .. })
-        ) || matches!(
-            &step,
-            ASTStreamStep::Yield(DoCtrl::Resume { continuation, .. })
-                if continuation.cont_id != k_user.cont_id || !owner_resumed
         );
         let keep_preemptive_transfer = next_running_task.is_some()
             && switched_into_task_body
@@ -2485,21 +2484,6 @@ impl SchedulerProgram {
 }
 
 impl ASTStreamProgram for SchedulerProgram {
-    fn yielded_is_terminal(&self, yielded: &DoCtrl) -> bool {
-        if matches!(self.phase, SchedulerPhase::PreemptiveTransfer { .. })
-            && matches!(yielded, DoCtrl::Resume { .. })
-        {
-            return false;
-        }
-        matches!(
-            yielded,
-            DoCtrl::Resume { .. }
-                | DoCtrl::Transfer { .. }
-                | DoCtrl::TransferThrow { .. }
-                | DoCtrl::Pass { .. }
-        )
-    }
-
     fn start(
         &mut self,
         _py: Python<'_>,
@@ -2926,10 +2910,6 @@ impl ASTStream for SchedulerProgram {
 
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
         <Self as ASTStreamProgram>::throw(self, exc, store)
-    }
-
-    fn yielded_is_terminal(&self, yielded: &DoCtrl) -> bool {
-        <Self as ASTStreamProgram>::yielded_is_terminal(self, yielded)
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
