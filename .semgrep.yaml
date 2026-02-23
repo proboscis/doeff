@@ -59,13 +59,13 @@ rules:
       rationale: "Cancel state ownership — SPEC-SCHED-001, ISSUE-CORE-502"
 
   - id: doeff-no-inline-spawn-coercion-wrapper
-    patterns:
-      - pattern-inside: |
-          @do
-          def $FUNC(...):
-              ...
-      - pattern: $RAW = yield $EFFECT
-      - pattern: return coerce_task_handle($RAW)
+    pattern: |
+      @do
+      def $FUNC(...):
+          ...
+          $RAW = yield $EFFECT
+          ...
+          return coerce_task_handle($RAW)
     paths:
       include:
         - "**/doeff/effects/spawn.py"
