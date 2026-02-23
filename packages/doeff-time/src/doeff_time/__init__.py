@@ -9,10 +9,13 @@ from .effects import (
     GetTimeEffect,
     ScheduleAt,
     ScheduleAtEffect,
+    SetTime,
+    SetTimeEffect,
     WaitUntil,
     WaitUntilEffect,
+    set_time,
 )
-from .handlers import async_time_handler, sync_time_handler
+from .handlers import async_time_handler, sim_time_handler, sync_time_handler
 
 __all__ = [
     "Delay",
@@ -21,8 +24,12 @@ __all__ = [
     "GetTimeEffect",
     "ScheduleAt",
     "ScheduleAtEffect",
+    "SetTime",
+    "SetTimeEffect",
     "WaitUntil",
     "WaitUntilEffect",
     "async_time_handler",
+    "set_time",
+    "sim_time_handler",
     "sync_time_handler",
 ]

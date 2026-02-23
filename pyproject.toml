@@ -71,7 +71,6 @@ doeff-openai = { workspace = true }
 doeff-openrouter = { workspace = true }
 doeff-time = { workspace = true }
 doeff-events = { workspace = true }
-doeff-sim = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
