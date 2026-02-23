@@ -38,10 +38,6 @@ pub enum DoCtrl {
         continuation: Continuation,
         value: Value,
     },
-    ResumeThenTransfer {
-        continuation: Continuation,
-        value: Value,
-    },
     Transfer {
         continuation: Continuation,
         value: Value,
@@ -50,7 +46,7 @@ pub enum DoCtrl {
         continuation: Continuation,
         exception: PyException,
     },
-    TransferThrowThenTransfer {
+    ResumeThrow {
         continuation: Continuation,
         exception: PyException,
     },
@@ -137,13 +133,6 @@ impl DoCtrl {
                 continuation: continuation.clone(),
                 value: value.clone(),
             },
-            DoCtrl::ResumeThenTransfer {
-                continuation,
-                value,
-            } => DoCtrl::ResumeThenTransfer {
-                continuation: continuation.clone(),
-                value: value.clone(),
-            },
             DoCtrl::Transfer {
                 continuation,
                 value,
@@ -158,10 +147,10 @@ impl DoCtrl {
                 continuation: continuation.clone(),
                 exception: exception.clone_ref(py),
             },
-            DoCtrl::TransferThrowThenTransfer {
+            DoCtrl::ResumeThrow {
                 continuation,
                 exception,
-            } => DoCtrl::TransferThrowThenTransfer {
+            } => DoCtrl::ResumeThrow {
                 continuation: continuation.clone(),
                 exception: exception.clone_ref(py),
             },
@@ -243,23 +232,112 @@ impl DoCtrl {
 
 #[cfg(test)]
 mod tests {
+    fn runtime_src() -> &'static str {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/do_ctrl.rs"));
+        src.split("#[cfg(test)]").next().unwrap_or(src)
+    }
+
+    fn doctrl_enum_body(src: &str) -> &str {
+        let enum_start = src
+            .find("pub enum DoCtrl")
+            .expect("DoCtrl enum definition must exist");
+        let enum_src = &src[enum_start..];
+        let open_rel = enum_src.find('{').expect("DoCtrl enum must contain '{'");
+        let body_start = enum_start + open_rel + 1;
+
+        let mut depth = 1usize;
+        for (idx, ch) in src[body_start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let body_end = body_start + idx;
+                        return &src[body_start..body_end];
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        panic!("DoCtrl enum body must be balanced");
+    }
+
+    fn count_top_level_variants(enum_body: &str) -> usize {
+        let mut depth = 0usize;
+        let mut count = 0usize;
+
+        for line in enum_body.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                continue;
+            }
+
+            if depth == 0 {
+                let starts_with_identifier = trimmed
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_');
+                if starts_with_identifier {
+                    count += 1;
+                }
+            }
+
+            for ch in trimmed.chars() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+        }
+
+        count
+    }
+
     #[test]
     fn test_vm_proto_005_map_variant_includes_mapper_meta() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/do_ctrl.rs"));
-        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
         assert!(
-            runtime_src.contains("mapper_meta: CallMetadata"),
+            runtime_src().contains("mapper_meta: CallMetadata"),
             "VM-PROTO-005: DoCtrl::Map must carry mapper_meta: CallMetadata"
         );
     }
 
     #[test]
     fn test_vm_proto_005_flat_map_variant_includes_binder_meta() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/do_ctrl.rs"));
-        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
         assert!(
-            runtime_src.contains("binder_meta: CallMetadata"),
+            runtime_src().contains("binder_meta: CallMetadata"),
             "VM-PROTO-005: DoCtrl::FlatMap must carry binder_meta: CallMetadata"
+        );
+    }
+
+    #[test]
+    fn test_doctrl_does_not_include_resume_then_transfer() {
+        let removed_variant_name = ["ResumeThen", "Transfer"].concat();
+        assert!(
+            !runtime_src().contains(&removed_variant_name),
+            "removed legacy variant must not exist in DoCtrl enum"
+        );
+    }
+
+    #[test]
+    fn test_doctrl_includes_resume_throw() {
+        assert!(
+            runtime_src().contains("ResumeThrow"),
+            "ResumeThrow must exist in DoCtrl enum"
+        );
+    }
+
+    #[test]
+    fn test_doctrl_variant_count_guard() {
+        // DoCtrl is a controlled API surface. New variants require human approval.
+        // Do NOT bump this number without discussing with the maintainer.
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/do_ctrl.rs"));
+        let enum_body = doctrl_enum_body(src);
+        let variant_count = count_top_level_variants(enum_body);
+        assert_eq!(
+            variant_count, 22,
+            "DoCtrl variant count changed! New variants require explicit human approval."
         );
     }
 }

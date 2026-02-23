@@ -337,9 +337,6 @@ fn step_targets_continuation(step: &ASTStreamStep, target: &Continuation) -> boo
         ASTStreamStep::Yield(DoCtrl::Resume { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
-        ASTStreamStep::Yield(DoCtrl::ResumeThenTransfer { continuation, .. }) => {
-            continuation.cont_id == target.cont_id
-        }
         ASTStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
@@ -349,7 +346,7 @@ fn step_targets_continuation(step: &ASTStreamStep, target: &Continuation) -> boo
         ASTStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
-        ASTStreamStep::Yield(DoCtrl::TransferThrowThenTransfer { continuation, .. }) => {
+        ASTStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
         _ => false,
@@ -359,8 +356,7 @@ fn step_targets_continuation(step: &ASTStreamStep, target: &Continuation) -> boo
 fn step_is_terminal(step: &ASTStreamStep) -> bool {
     matches!(
         step,
-        ASTStreamStep::Yield(DoCtrl::Resume { .. })
-            | ASTStreamStep::Yield(DoCtrl::Transfer { .. })
+        ASTStreamStep::Yield(DoCtrl::Transfer { .. })
             | ASTStreamStep::Yield(DoCtrl::TransferThrow { .. })
             | ASTStreamStep::Yield(DoCtrl::Pass { .. })
     )
@@ -2216,11 +2212,11 @@ impl SchedulerProgram {
             ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
-            }) if continuation.cont_id != k_user.cont_id || !owner_resumed => {
+            }) => {
                 if continuation.cont_id == k_user.cont_id && !owner_resumed {
                     resumed_owner_now = true;
                 }
-                ASTStreamStep::Yield(DoCtrl::ResumeThenTransfer {
+                ASTStreamStep::Yield(DoCtrl::Resume {
                     continuation,
                     value,
                 })
@@ -2232,7 +2228,7 @@ impl SchedulerProgram {
                 if continuation.cont_id == k_user.cont_id && !owner_resumed {
                     resumed_owner_now = true;
                 }
-                ASTStreamStep::Yield(DoCtrl::TransferThrowThenTransfer {
+                ASTStreamStep::Yield(DoCtrl::ResumeThrow {
                     continuation,
                     exception,
                 })
@@ -2244,8 +2240,8 @@ impl SchedulerProgram {
         let switched_into_task_body = matches!(
             step,
             ASTStreamStep::Yield(DoCtrl::ResumeContinuation { .. })
-                | ASTStreamStep::Yield(DoCtrl::ResumeThenTransfer { .. })
-                | ASTStreamStep::Yield(DoCtrl::TransferThrowThenTransfer { .. })
+                | ASTStreamStep::Yield(DoCtrl::Resume { .. })
+                | ASTStreamStep::Yield(DoCtrl::ResumeThrow { .. })
         );
         let keep_preemptive_transfer = next_running_task.is_some()
             && switched_into_task_body
@@ -2868,10 +2864,7 @@ impl ASTStreamProgram for SchedulerProgram {
             ),
 
             SchedulerPhase::Idle => {
-                // Unexpected resume
-                ASTStreamStep::Throw(PyException::runtime_error(
-                    "Unexpected resume in scheduler: no pending operation".to_string(),
-                ))
+                ASTStreamStep::Return(value)
             }
         }
     }
@@ -3168,10 +3161,6 @@ mod tests {
     fn test_step_is_terminal() {
         let cont = make_test_continuation();
         let terminal_steps = vec![
-            ASTStreamStep::Yield(DoCtrl::Resume {
-                continuation: cont.clone(),
-                value: Value::Unit,
-            }),
             ASTStreamStep::Yield(DoCtrl::Transfer {
                 continuation: cont.clone(),
                 value: Value::Unit,
@@ -3197,6 +3186,14 @@ mod tests {
                     effect: Effect::Get {
                         key: "k".to_string(),
                     },
+                }),
+                ASTStreamStep::Yield(DoCtrl::Resume {
+                    continuation: cont.clone(),
+                    value: Value::Unit,
+                }),
+                ASTStreamStep::Yield(DoCtrl::ResumeThrow {
+                    continuation: cont.clone(),
+                    exception: PyException::runtime_error("boom".to_string()),
                 }),
                 ASTStreamStep::Yield(DoCtrl::GetTraceback {
                     continuation: cont.clone(),
@@ -3785,7 +3782,7 @@ mod tests {
             assert!(
                 matches!(
                     &step,
-                    ASTStreamStep::Yield(DoCtrl::TransferThrowThenTransfer { continuation, .. })
+                    ASTStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
                     if continuation.cont_id == waiter_k.cont_id
                 ),
                 "higher-priority waiter should receive non-terminal throw transfer, got {:?}",
