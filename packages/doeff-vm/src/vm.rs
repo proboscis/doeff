@@ -2501,7 +2501,7 @@ impl VM {
         continuation: Continuation,
         exception: PyException,
     ) -> StepEvent {
-        self.handle_transfer_throw(continuation, exception)
+        self.handle_transfer_throw_non_terminal(continuation, exception)
     }
 
     fn handle_yield_with_handler(
@@ -3538,7 +3538,22 @@ impl VM {
         self.activate_continuation(ContinuationActivationKind::Transfer, k, value)
     }
 
-    fn handle_transfer_throw(&mut self, k: Continuation, exception: PyException) -> StepEvent {
+    fn check_dispatch_completion_for_non_terminal_throw(&mut self, k: &Continuation) {
+        if let Some(dispatch_id) = k.dispatch_id {
+            if !self.active_dispatch_handler_is_python(dispatch_id) {
+                self.check_dispatch_completion(k);
+            }
+        } else {
+            self.check_dispatch_completion(k);
+        }
+    }
+
+    fn activate_throw_continuation(
+        &mut self,
+        k: Continuation,
+        exception: PyException,
+        terminal_dispatch_completion: bool,
+    ) -> StepEvent {
         if !k.started {
             return self.throw_runtime_error(
                 "TransferThrow on unstarted continuation; use ResumeContinuation",
@@ -3573,7 +3588,11 @@ impl VM {
                 });
             }
         }
-        self.check_dispatch_completion(&k);
+        if terminal_dispatch_completion {
+            self.check_dispatch_completion(&k);
+        } else {
+            self.check_dispatch_completion_for_non_terminal_throw(&k);
+        }
 
         let exec_seg = Segment {
             marker: k.marker,
@@ -3585,7 +3604,7 @@ impl VM {
         let exec_seg_id = self.alloc_segment(exec_seg);
 
         self.current_segment = Some(exec_seg_id);
-        self.mode = if thrown_by_context_conversion_handler {
+        self.mode = if terminal_dispatch_completion && thrown_by_context_conversion_handler {
             self.mode_after_generror(
                 GenErrorSite::RustProgramContinuation,
                 exception,
@@ -3595,6 +3614,18 @@ impl VM {
             Mode::Throw(exception)
         };
         StepEvent::Continue
+    }
+
+    fn handle_transfer_throw(&mut self, k: Continuation, exception: PyException) -> StepEvent {
+        self.activate_throw_continuation(k, exception, true)
+    }
+
+    fn handle_transfer_throw_non_terminal(
+        &mut self,
+        k: Continuation,
+        exception: PyException,
+    ) -> StepEvent {
+        self.activate_throw_continuation(k, exception, false)
     }
 
     fn handle_with_handler(
