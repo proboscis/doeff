@@ -60,11 +60,6 @@ impl ASTStream for RustProgramStream {
             guard.throw(exc, store)
         })
     }
-
-    fn yielded_is_terminal(&self, yielded: &DoCtrl) -> bool {
-        let guard = self.program.lock().expect("Rust program lock poisoned");
-        guard.yielded_is_terminal(yielded)
-    }
 }
 
 fn rust_program_as_stream(program: crate::handler::ASTStreamProgramRef) -> ASTStreamRef {
@@ -2281,10 +2276,13 @@ impl VM {
                 // control elsewhere — the handler is done and no value flows back. Do NOT
                 // re-push the Program frame for these. Non-terminal variants (Eval, GetHandlers,
                 // GetCallStack) expect a result to be delivered back to this stream.
-                let is_terminal = {
-                    let guard = stream.lock().expect("ASTStream lock poisoned");
-                    guard.yielded_is_terminal(&yielded)
-                };
+                let is_terminal = matches!(
+                    &yielded,
+                    DoCtrl::Resume { .. }
+                        | DoCtrl::Transfer { .. }
+                        | DoCtrl::TransferThrow { .. }
+                        | DoCtrl::Pass { .. }
+                );
                 if !is_terminal {
                     let Some(seg) = self.current_segment_mut() else {
                         return StepEvent::Error(VMError::internal(
