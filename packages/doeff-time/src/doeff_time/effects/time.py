@@ -57,6 +57,16 @@ class ScheduleAtEffect(EffectBase):
         object.__setattr__(self, "time", _coerce_finite_float(self.time, name="time"))
 
 
+@dataclass(frozen=True)
+class SetTimeEffect(EffectBase):
+    """Set current epoch time (simulation handlers may support this effect)."""
+
+    time: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "time", _coerce_finite_float(self.time, name="time"))
+
+
 def delay(seconds: float) -> DelayEffect:
     return DelayEffect(seconds=seconds)
 
@@ -71,6 +81,10 @@ def get_time() -> GetTimeEffect:
 
 def schedule_at(time: float, program: Any) -> ScheduleAtEffect:
     return ScheduleAtEffect(time=time, program=program)
+
+
+def set_time(time: float) -> SetTimeEffect:
+    return SetTimeEffect(time=time)
 
 
 def Delay(seconds: float) -> Effect:  # noqa: N802
@@ -89,6 +103,10 @@ def ScheduleAt(time: float, program: Any) -> Effect:  # noqa: N802
     return ScheduleAtEffect(time=time, program=program)
 
 
+def SetTime(time: float) -> Effect:  # noqa: N802
+    return SetTimeEffect(time=time)
+
+
 __all__ = [
     "Delay",
     "DelayEffect",
@@ -96,10 +114,13 @@ __all__ = [
     "GetTimeEffect",
     "ScheduleAt",
     "ScheduleAtEffect",
+    "SetTime",
+    "SetTimeEffect",
     "WaitUntil",
     "WaitUntilEffect",
     "delay",
     "get_time",
     "schedule_at",
+    "set_time",
     "wait_until",
 ]
