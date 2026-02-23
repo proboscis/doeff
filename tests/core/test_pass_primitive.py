@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from doeff import EffectBase, Pass, Resume, WithHandler, default_handlers, do, run
 from doeff.rust_vm import pass_
 
@@ -40,28 +42,9 @@ def test_pass_is_terminal_passthrough() -> None:
     assert resumed_after_pass["value"] is False
 
 
-def test_pass_accepts_explicit_effect_argument() -> None:
-    def remap_handler(effect, _k):
-        if isinstance(effect, _EffectA):
-            yield Pass(_EffectB())
-            return "unreachable"
-        yield Pass()
-
-    def outer_handler(effect, k):
-        if isinstance(effect, _EffectB):
-            return (yield Resume(k, "handled-effect-b"))
-        yield Pass()
-
-    @do
-    def body():
-        value = yield _EffectA()
-        return value
-
-    result = run(
-        WithHandler(outer_handler, WithHandler(remap_handler, body())),
-        handlers=default_handlers(),
-    )
-    assert result.value == "handled-effect-b"
+def test_pass_rejects_explicit_effect_argument() -> None:
+    with pytest.raises(TypeError):
+        Pass(_EffectB())
 
 
 def test_pass_exports_are_available() -> None:

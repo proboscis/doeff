@@ -194,8 +194,8 @@ def deterministic_sim_handler(
     def handler(effect: Any, k: Any):
         replacement: WriterTellEffect | None = maybe_format_writer_message(effect)
         if replacement is not None:
-            yield Delegate(replacement)
-            return
+            formatted_result: Any = yield replacement
+            return (yield Resume(k, formatted_result))
 
         if _is_delay_effect(effect):
             delay_seconds: float = _extract_delay_seconds(effect)
