@@ -27,22 +27,22 @@ def _matching_promises(
 def _remove_promises(
     listeners: ListenerMap,
     promise_ids: set[int],
-) -> None:
+) -> ListenerMap:
     if not promise_ids:
-        return
+        return listeners
 
+    updated: ListenerMap = {}
     for event_type, queued in list(listeners.items()):
         remaining = [promise for promise in queued if id(promise) not in promise_ids]
         if remaining:
-            listeners[event_type] = remaining
-        else:
-            listeners.pop(event_type, None)
+            updated[event_type] = remaining
+    return updated
 
 
 def event_handler():
     """Create a stateful in-memory pub/sub handler.
 
-    WaitForEvent creates a Promise and blocks via Wait(promise.future).
+    WaitForEvent creates an ExternalPromise and blocks via Wait(promise.future).
     Publish resolves promises for listeners whose registered type matches
     via isinstance(event, registered_type).
     """
@@ -50,6 +50,8 @@ def event_handler():
     listeners: ListenerMap = {}
 
     def handler(effect: Any, k: Any):
+        nonlocal listeners
+
         if isinstance(effect, WaitForEventEffect):
             promise = yield CreateExternalPromise()
 
@@ -59,23 +61,24 @@ def event_handler():
             try:
                 event = yield Wait(promise.future)
             finally:
-                _remove_promises(listeners, {id(promise)})
+                listeners = _remove_promises(listeners, {id(promise)})
 
             return (yield Resume(k, event))
 
         if isinstance(effect, PublishEffect):
             event = effect.event
             matched = _matching_promises(listeners, event)
-            _remove_promises(listeners, set(matched))
+            listeners = _remove_promises(listeners, set(matched))
 
             for promise in matched.values():
                 promise.complete(event)
 
             return (yield Resume(k, None))
 
-        yield Delegate()
+        delegated = yield Delegate()
+        return (yield Resume(k, delegated))
 
     return handler
 
 
-__all__ = ["event_handler"]
+__all__ = ["event_handler"]  # noqa: DOEFF021
