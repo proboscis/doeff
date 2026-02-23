@@ -30,8 +30,6 @@ pub struct ContId(pub u64);
 pub struct DispatchId(pub u64);
 
 /// Unique identifier for runnable continuations.
-///
-/// Used internally by scheduler for ResumeThenTransfer semantics.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RunnableId(pub u64);
 

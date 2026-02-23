@@ -60,6 +60,11 @@ impl ASTStream for RustProgramStream {
             guard.throw(exc, store)
         })
     }
+
+    fn yielded_is_terminal(&self, yielded: &DoCtrl) -> bool {
+        let guard = self.program.lock().expect("Rust program lock poisoned");
+        guard.yielded_is_terminal(yielded)
+    }
 }
 
 fn rust_program_as_stream(program: crate::handler::ASTStreamProgramRef) -> ASTStreamRef {
@@ -2022,10 +2027,9 @@ impl VM {
             DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
             DoCtrl::Perform { .. } => "HandleYield(Perform)",
             DoCtrl::Resume { .. } => "HandleYield(Resume)",
-            DoCtrl::ResumeThenTransfer { .. } => "HandleYield(ResumeThenTransfer)",
             DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
             DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
-            DoCtrl::TransferThrowThenTransfer { .. } => "HandleYield(TransferThrowThenTransfer)",
+            DoCtrl::ResumeThrow { .. } => "HandleYield(ResumeThrow)",
             DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
             DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
             DoCtrl::Pass { .. } => "HandleYield(Pass)",
@@ -2277,13 +2281,10 @@ impl VM {
                 // control elsewhere — the handler is done and no value flows back. Do NOT
                 // re-push the Program frame for these. Non-terminal variants (Eval, GetHandlers,
                 // GetCallStack) expect a result to be delivered back to this stream.
-                let is_terminal = matches!(
-                    &yielded,
-                    DoCtrl::Resume { .. }
-                        | DoCtrl::Transfer { .. }
-                        | DoCtrl::TransferThrow { .. }
-                        | DoCtrl::Pass { .. }
-                );
+                let is_terminal = {
+                    let guard = stream.lock().expect("ASTStream lock poisoned");
+                    guard.yielded_is_terminal(&yielded)
+                };
                 if !is_terminal {
                     let Some(seg) = self.current_segment_mut() else {
                         return StepEvent::Error(VMError::internal(
@@ -2380,10 +2381,6 @@ impl VM {
                 continuation,
                 value,
             } => self.handle_yield_resume(continuation, value),
-            DoCtrl::ResumeThenTransfer {
-                continuation,
-                value,
-            } => self.handle_yield_resume_then_transfer(continuation, value),
             DoCtrl::Transfer {
                 continuation,
                 value,
@@ -2392,10 +2389,10 @@ impl VM {
                 continuation,
                 exception,
             } => self.handle_yield_transfer_throw(continuation, exception),
-            DoCtrl::TransferThrowThenTransfer {
+            DoCtrl::ResumeThrow {
                 continuation,
                 exception,
-            } => self.handle_yield_transfer_throw_then_transfer(continuation, exception),
+            } => self.handle_yield_resume_throw(continuation, exception),
             DoCtrl::WithHandler {
                 handler,
                 expr,
@@ -2476,14 +2473,6 @@ impl VM {
         self.handle_resume(continuation, value)
     }
 
-    fn handle_yield_resume_then_transfer(
-        &mut self,
-        continuation: Continuation,
-        value: Value,
-    ) -> StepEvent {
-        self.handle_resume(continuation, value)
-    }
-
     fn handle_yield_transfer(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_transfer(continuation, value)
     }
@@ -2496,7 +2485,7 @@ impl VM {
         self.handle_transfer_throw(continuation, exception)
     }
 
-    fn handle_yield_transfer_throw_then_transfer(
+    fn handle_yield_resume_throw(
         &mut self,
         continuation: Continuation,
         exception: PyException,
