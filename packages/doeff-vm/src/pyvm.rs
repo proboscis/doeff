@@ -1017,37 +1017,27 @@ impl PyVM {
                     })
                 }
                 DoExprTag::Delegate => {
-                    let d: PyRef<'_, PyDelegate> = obj.extract()?;
-                    let effect = if let Some(ref eff) = d.effect {
-                        dispatch_from_shared(PyShared::new(eff.clone_ref(py)))
-                    } else {
-                        self.vm
-                            .dispatch_stack
-                            .last()
-                            .map(|ctx| ctx.effect.clone())
-                            .ok_or_else(|| {
-                                PyRuntimeError::new_err(
-                                    "Delegate without effect called outside dispatch context",
-                                )
-                            })?
-                    };
+                    let _d: PyRef<'_, PyDelegate> = obj.extract()?;
+                    let effect = self
+                        .vm
+                        .dispatch_stack
+                        .last()
+                        .map(|ctx| ctx.effect.clone())
+                        .ok_or_else(|| {
+                            PyRuntimeError::new_err("Delegate called outside dispatch context")
+                        })?;
                     Ok(DoCtrl::Delegate { effect })
                 }
                 DoExprTag::Pass => {
-                    let p: PyRef<'_, PyPass> = obj.extract()?;
-                    let effect = if let Some(ref eff) = p.effect {
-                        dispatch_from_shared(PyShared::new(eff.clone_ref(py)))
-                    } else {
-                        self.vm
-                            .dispatch_stack
-                            .last()
-                            .map(|ctx| ctx.effect.clone())
-                            .ok_or_else(|| {
-                                PyRuntimeError::new_err(
-                                    "Pass without effect called outside dispatch context",
-                                )
-                            })?
-                    };
+                    let _p: PyRef<'_, PyPass> = obj.extract()?;
+                    let effect = self
+                        .vm
+                        .dispatch_stack
+                        .last()
+                        .map(|ctx| ctx.effect.clone())
+                        .ok_or_else(|| {
+                            PyRuntimeError::new_err("Pass called outside dispatch context")
+                        })?;
                     Ok(DoCtrl::Pass { effect })
                 }
                 DoExprTag::ResumeContinuation => {
@@ -2026,55 +2016,35 @@ impl PyResume {
 
 /// Dispatch primitive — handler-only.
 #[pyclass(name = "Delegate", extends=PyDoCtrlBase)]
-pub struct PyDelegate {
-    #[pyo3(get)]
-    pub effect: Option<Py<PyAny>>,
-}
+pub struct PyDelegate {}
 
 #[pymethods]
 impl PyDelegate {
     #[new]
-    #[pyo3(signature = (effect=None))]
-    fn new(py: Python<'_>, effect: Option<Py<PyAny>>) -> PyResult<PyClassInitializer<Self>> {
-        if let Some(ref eff) = effect {
-            if !is_effect_base_like(py, eff.bind(py))? {
-                return Err(PyTypeError::new_err(
-                    "Delegate.effect must be EffectBase when provided",
-                ));
-            }
-        }
-        Ok(PyClassInitializer::from(PyDoExprBase)
+    #[pyo3(signature = ())]
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::Delegate as u8,
             })
-            .add_subclass(PyDelegate { effect }))
+            .add_subclass(PyDelegate {})
     }
 }
 
 /// Dispatch primitive — handler-only.
 #[pyclass(name = "Pass", extends=PyDoCtrlBase)]
-pub struct PyPass {
-    #[pyo3(get)]
-    pub effect: Option<Py<PyAny>>,
-}
+pub struct PyPass {}
 
 #[pymethods]
 impl PyPass {
     #[new]
-    #[pyo3(signature = (effect=None))]
-    fn new(py: Python<'_>, effect: Option<Py<PyAny>>) -> PyResult<PyClassInitializer<Self>> {
-        if let Some(ref eff) = effect {
-            if !is_effect_base_like(py, eff.bind(py))? {
-                return Err(PyTypeError::new_err(
-                    "Pass.effect must be EffectBase when provided",
-                ));
-            }
-        }
-        Ok(PyClassInitializer::from(PyDoExprBase)
+    #[pyo3(signature = ())]
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::Pass as u8,
             })
-            .add_subclass(PyPass { effect }))
+            .add_subclass(PyPass {})
     }
 }
 
@@ -2774,22 +2744,14 @@ mod tests {
     }
 
     #[test]
-    fn test_pass_with_explicit_effect_classifies_to_doctrl_pass() {
+    fn test_pass_outside_dispatch_context_is_error() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
-            let effect = Bound::new(py, PyEffectBase::new_base())
-                .unwrap()
-                .into_any()
-                .unbind();
-            let obj = Bound::new(py, PyPass::new(py, Some(effect)).unwrap())
+            let obj = Bound::new(py, PyPass::new())
                 .unwrap()
                 .into_any();
-            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
-            assert!(
-                matches!(yielded, DoCtrl::Pass { .. }),
-                "Pass should classify to DoCtrl::Pass, got {:?}",
-                yielded
-            );
+            let yielded = pyvm.classify_yielded(py, &obj);
+            assert!(yielded.is_err(), "Pass outside dispatch context must error");
         });
     }
 
