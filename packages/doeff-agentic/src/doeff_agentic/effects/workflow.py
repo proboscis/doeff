@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from doeff import EffectBase
@@ -24,3 +25,5 @@ class AgenticCreateWorkflow(AgenticEffectBase):
 @dataclass(frozen=True, kw_only=True)
 class AgenticGetWorkflow(AgenticEffectBase):
     """Get the current workflow handle."""
+
+    created_at: datetime | None = None
