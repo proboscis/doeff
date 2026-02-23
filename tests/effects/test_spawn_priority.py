@@ -13,6 +13,7 @@ from doeff import (
     Await,
     CompletePromise,
     CreatePromise,
+    FailPromise,
     Gather,
     Spawn,
     Wait,
@@ -188,6 +189,66 @@ def test_complete_promise_preempts_if_woken_task_higher_priority() -> None:
         "idle-before-complete",
         "normal-after-wait",
         "idle-after-complete",
+    )
+
+
+def test_fail_promise_preempts_if_woken_task_higher_priority() -> None:
+    events: list[str] = []
+
+    @do
+    def waiter_task(target_promise, waiter_started):
+        events.append("normal-before-wait")
+        yield CompletePromise(waiter_started, None)
+        try:
+            _ = yield Wait(target_promise.future)
+        except RuntimeError as error:
+            events.append("normal-after-wait")
+            return str(error)
+        raise AssertionError("waiter should observe RuntimeError from failed promise")
+
+    @do
+    def idle_failer(target_promise, release_promise, idle_started):
+        yield CompletePromise(idle_started, None)
+        _ = yield Wait(release_promise.future)
+        events.append("idle-before-fail")
+        yield FailPromise(target_promise, RuntimeError("boom"))
+        events.append("idle-after-fail")
+        return "idle-done"
+
+    @do
+    def program():
+        target_promise = yield CreatePromise()
+        release_promise = yield CreatePromise()
+        idle_started = yield CreatePromise()
+        waiter_started = yield CreatePromise()
+
+        idle_task = yield Spawn(
+            idle_failer(target_promise, release_promise, idle_started),
+            priority=PRIORITY_IDLE,
+        )
+        _ = yield Wait(idle_started.future)
+
+        waiter_task_handle = yield Spawn(
+            waiter_task(target_promise, waiter_started),
+            priority=PRIORITY_NORMAL,
+        )
+        _ = yield Wait(waiter_started.future)
+
+        yield CompletePromise(release_promise, None)
+        _ = yield Wait(idle_task)
+        waiter_result = yield Wait(waiter_task_handle)
+        return tuple(events), waiter_result
+
+    result = run(program(), handlers=default_handlers())
+    assert _result_is_ok(result)
+    assert result.value == (
+        (
+            "normal-before-wait",
+            "idle-before-fail",
+            "normal-after-wait",
+            "idle-after-fail",
+        ),
+        "boom",
     )
 
 
