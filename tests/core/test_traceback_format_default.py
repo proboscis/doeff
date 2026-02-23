@@ -936,8 +936,6 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
 
 
 def test_spawn_site_attribution_under_single_delegate_handler() -> None:
-    from doeff.effects.spawn import spawn_intercept_handler
-
     def crash_handler(effect: object, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("child exploded")
@@ -953,7 +951,7 @@ def test_spawn_site_attribution_under_single_delegate_handler() -> None:
         task = yield Spawn(WithHandler(crash_handler, child()))
         return (yield Gather(task))
 
-    result = run(WithHandler(spawn_intercept_handler, parent_single()), handlers=default_handlers())
+    result = run(parent_single(), handlers=default_handlers())
     assert result.is_err()
 
     tb = _tb_from_run_result(result)
@@ -970,8 +968,6 @@ def test_spawn_site_attribution_under_single_delegate_handler() -> None:
 
 
 def test_spawn_site_attribution_under_nested_delegate_handlers() -> None:
-    from doeff.effects.spawn import spawn_intercept_handler
-
     def crash_handler(effect: object, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("child exploded")
@@ -987,10 +983,7 @@ def test_spawn_site_attribution_under_nested_delegate_handlers() -> None:
         task = yield Spawn(WithHandler(crash_handler, child()))
         return (yield Gather(task))
 
-    wrapped = WithHandler(
-        spawn_intercept_handler, WithHandler(spawn_intercept_handler, parent_nested())
-    )
-    result = run(wrapped, handlers=default_handlers())
+    result = run(parent_nested(), handlers=default_handlers())
     assert result.is_err()
 
     tb = _tb_from_run_result(result)
