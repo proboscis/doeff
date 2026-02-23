@@ -9,6 +9,8 @@ from .time import (
     GetTimeEffect,
     ScheduleAt,
     ScheduleAtEffect,
+    SetTime,
+    SetTimeEffect,
     WaitUntil,
     WaitUntilEffect,
 )
@@ -20,6 +22,8 @@ __all__ = [
     "GetTimeEffect",
     "ScheduleAt",
     "ScheduleAtEffect",
+    "SetTime",
+    "SetTimeEffect",
     "WaitUntil",
     "WaitUntilEffect",
 ]

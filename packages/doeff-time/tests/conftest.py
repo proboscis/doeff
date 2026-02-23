@@ -6,3 +6,7 @@ from pathlib import Path
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
+
+EVENTS_PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "doeff-events" / "src"
+if str(EVENTS_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(EVENTS_PACKAGE_ROOT))

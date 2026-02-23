@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from doeff import Await, Delegate, Resume, WithHandler, async_run, default_handlers
+from doeff import Await, Pass, Resume, WithHandler, async_run, default_handlers
 from doeff_time.effects import DelayEffect, GetTimeEffect, ScheduleAtEffect, WaitUntilEffect
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -90,7 +90,7 @@ class AsyncTimeRuntime:
             return (yield from self._handle_get_time(effect, k))
         if isinstance(effect, ScheduleAtEffect):
             return (yield from self._handle_schedule_at(effect, k))
-        yield Delegate()
+        yield Pass()
 
 
 def async_time_handler(
