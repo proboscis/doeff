@@ -38,11 +38,19 @@ pub enum DoCtrl {
         continuation: Continuation,
         value: Value,
     },
+    ResumeThenTransfer {
+        continuation: Continuation,
+        value: Value,
+    },
     Transfer {
         continuation: Continuation,
         value: Value,
     },
     TransferThrow {
+        continuation: Continuation,
+        exception: PyException,
+    },
+    TransferThrowThenTransfer {
         continuation: Continuation,
         exception: PyException,
     },
@@ -129,6 +137,13 @@ impl DoCtrl {
                 continuation: continuation.clone(),
                 value: value.clone(),
             },
+            DoCtrl::ResumeThenTransfer {
+                continuation,
+                value,
+            } => DoCtrl::ResumeThenTransfer {
+                continuation: continuation.clone(),
+                value: value.clone(),
+            },
             DoCtrl::Transfer {
                 continuation,
                 value,
@@ -140,6 +155,13 @@ impl DoCtrl {
                 continuation,
                 exception,
             } => DoCtrl::TransferThrow {
+                continuation: continuation.clone(),
+                exception: exception.clone_ref(py),
+            },
+            DoCtrl::TransferThrowThenTransfer {
+                continuation,
+                exception,
+            } => DoCtrl::TransferThrowThenTransfer {
                 continuation: continuation.clone(),
                 exception: exception.clone_ref(py),
             },

@@ -2749,9 +2749,7 @@ mod tests {
     fn test_pass_outside_dispatch_context_is_error() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
-            let obj = Bound::new(py, PyPass::new())
-                .unwrap()
-                .into_any();
+            let obj = Bound::new(py, PyPass::new()).unwrap().into_any();
             let yielded = pyvm.classify_yielded(py, &obj);
             assert!(yielded.is_err(), "Pass outside dispatch context must error");
         });

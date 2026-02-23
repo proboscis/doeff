@@ -199,6 +199,11 @@ struct WaitRequest {
     waiting_store: RustStore,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct WokenTask {
+    priority: u32,
+}
+
 #[derive(Clone, Debug)]
 struct ReadyRootResume {
     continuation: Continuation,
@@ -332,6 +337,9 @@ fn step_targets_continuation(step: &ASTStreamStep, target: &Continuation) -> boo
         ASTStreamStep::Yield(DoCtrl::Resume { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
+        ASTStreamStep::Yield(DoCtrl::ResumeThenTransfer { continuation, .. }) => {
+            continuation.cont_id == target.cont_id
+        }
         ASTStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
@@ -339,6 +347,9 @@ fn step_targets_continuation(step: &ASTStreamStep, target: &Continuation) -> boo
             continuation.cont_id == target.cont_id
         }
         ASTStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. }) => {
+            continuation.cont_id == target.cont_id
+        }
+        ASTStreamStep::Yield(DoCtrl::TransferThrowThenTransfer { continuation, .. }) => {
             continuation.cont_id == target.cont_id
         }
         _ => false,
@@ -895,10 +906,25 @@ impl SchedulerState {
         })
     }
 
-    pub fn mark_promise_done(&mut self, promise_id: PromiseId, result: Result<Value, PyException>) {
+    fn mark_promise_done(
+        &mut self,
+        promise_id: PromiseId,
+        result: Result<Value, PyException>,
+    ) -> Option<WokenTask> {
         self.promises.insert(promise_id, PromiseState::Done(result));
-        self.wake_waiters(Waitable::Promise(promise_id));
-        self.wake_waiters(Waitable::ExternalPromise(promise_id));
+        let promise_priority = self.wake_waiters(Waitable::Promise(promise_id));
+        let external_priority = self.wake_waiters(Waitable::ExternalPromise(promise_id));
+        match (promise_priority, external_priority) {
+            (Some(left), Some(right)) => {
+                if left.priority >= right.priority {
+                    Some(left)
+                } else {
+                    Some(right)
+                }
+            }
+            (Some(priority), None) | (None, Some(priority)) => Some(priority),
+            (None, None) => None,
+        }
     }
 
     fn has_external_waiters(&self) -> bool {
@@ -1195,6 +1221,14 @@ impl SchedulerState {
         true
     }
 
+    fn current_task_priority(&self) -> Option<u32> {
+        let task_id = self.current_task?;
+        match self.tasks.get(&task_id) {
+            Some(TaskState::Pending { priority, .. }) => Some(*priority),
+            _ => None,
+        }
+    }
+
     pub fn acquire_semaphore(
         &mut self,
         semaphore_id: u64,
@@ -1412,14 +1446,14 @@ impl SchedulerState {
         }
     }
 
-    fn stage_ready_waiter(&mut self, waiter: WaitRequest) {
+    fn stage_ready_waiter(&mut self, waiter: WaitRequest) -> Option<WokenTask> {
         let waiter_id = waiter.continuation.cont_id;
         let outcome = match waiter.mode {
             WaitMode::All => self.collect_all_result(&waiter.items),
             WaitMode::Any => self.collect_any_result(&waiter.items),
         };
         let Some(outcome) = outcome else {
-            return;
+            return None;
         };
         let should_merge_logs = matches!(outcome, Ok(_))
             && matches!(waiter.mode, WaitMode::All)
@@ -1438,17 +1472,17 @@ impl SchedulerState {
                     ..
                 }) => {
                     if cont.cont_id != waiter_id {
-                        return;
+                        return None;
                     }
                     *resume_outcome = Some(outcome.clone());
                     *pending_log_merge_items = merge_items;
                     *priority
                 }
-                _ => return,
+                _ => return None,
             };
 
             self.enqueue_ready_task(waiting_task, priority);
-            return;
+            return Some(WokenTask { priority });
         }
 
         self.ready_root_resumes.insert(
@@ -1462,12 +1496,15 @@ impl SchedulerState {
             },
         );
         self.enqueue_ready_root(waiter_id);
+        None
     }
 
-    pub fn wake_waiters(&mut self, waitable: Waitable) {
+    fn wake_waiters(&mut self, waitable: Waitable) -> Option<WokenTask> {
         let Some(waiters_for_item) = self.waiters.remove(&waitable) else {
-            return;
+            return None;
         };
+
+        let mut highest_ready: Option<WokenTask> = None;
 
         for waiter in waiters_for_item {
             let waiter_id = waiter.continuation.cont_id;
@@ -1485,9 +1522,60 @@ impl SchedulerState {
             };
 
             if ready {
-                self.stage_ready_waiter(waiter);
+                if let Some(woken) = self.stage_ready_waiter(waiter) {
+                    highest_ready = match highest_ready {
+                        Some(current_max) if current_max.priority >= woken.priority => {
+                            Some(current_max)
+                        }
+                        _ => Some(woken),
+                    };
+                }
             }
         }
+
+        highest_ready
+    }
+
+    fn park_current_with_value(
+        &mut self,
+        continuation: Continuation,
+        value: Value,
+    ) -> Result<(), PyException> {
+        let Some(task_id) = self.current_task else {
+            return Err(scheduler_internal_error(
+                "park_current_with_value: no running task".to_string(),
+            ));
+        };
+
+        let priority = match self.tasks.get_mut(&task_id) {
+            Some(TaskState::Pending {
+                cont,
+                resume_outcome,
+                priority,
+                pending_log_merge_items,
+                ..
+            }) => {
+                *cont = continuation;
+                *resume_outcome = Some(Ok(value));
+                *pending_log_merge_items = None;
+                *priority
+            }
+            Some(TaskState::Done { .. }) => {
+                return Err(scheduler_internal_error(format!(
+                    "park_current_with_value: task {} is already done",
+                    task_id.raw()
+                )));
+            }
+            None => {
+                return Err(scheduler_internal_error(format!(
+                    "park_current_with_value: task {} not found",
+                    task_id.raw()
+                )));
+            }
+        };
+
+        self.enqueue_ready_task(task_id, priority);
+        Ok(())
     }
 
     fn clear_waiters_for_owner(&mut self, waiting_task: Option<TaskId>, cont_id: ContId) {
@@ -1910,6 +1998,10 @@ enum SchedulerPhase {
         priority: u32,
         spawn_site: Option<SpawnSite>,
     },
+    PreemptiveTransfer {
+        k_user: Continuation,
+        owner_resumed: bool,
+    },
     Driving {
         k_user: Continuation,
         items: Vec<Waitable>,
@@ -1951,6 +2043,7 @@ impl SchedulerProgram {
             SchedulerPhase::SpawnAwaitTraceback { .. } => "SpawnAwaitTraceback",
             SchedulerPhase::SpawnAwaitHandlers { .. } => "SpawnAwaitHandlers",
             SchedulerPhase::SpawnAwaitContinuation { .. } => "SpawnAwaitContinuation",
+            SchedulerPhase::PreemptiveTransfer { .. } => "PreemptiveTransfer",
             SchedulerPhase::Driving { .. } => "Driving",
         }
     }
@@ -2109,6 +2202,135 @@ impl SchedulerProgram {
 
             resume_to_continuation(k_user, Value::Python(context))
         })
+    }
+
+    fn transfer_next_after_preemption_step(
+        state: &mut SchedulerState,
+        k_user: Continuation,
+        owner_resumed: bool,
+        store: &mut RustStore,
+    ) -> (ASTStreamStep, bool, bool) {
+        let raw_step = state.transfer_next_or(k_user.clone(), store);
+        let mut resumed_owner_now = false;
+        let step = match raw_step {
+            ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            }) if continuation.cont_id != k_user.cont_id || !owner_resumed => {
+                if continuation.cont_id == k_user.cont_id && !owner_resumed {
+                    resumed_owner_now = true;
+                }
+                ASTStreamStep::Yield(DoCtrl::ResumeThenTransfer {
+                    continuation,
+                    value,
+                })
+            }
+            ASTStreamStep::Yield(DoCtrl::TransferThrow {
+                continuation,
+                exception,
+            }) if continuation.cont_id != k_user.cont_id || !owner_resumed => {
+                if continuation.cont_id == k_user.cont_id && !owner_resumed {
+                    resumed_owner_now = true;
+                }
+                ASTStreamStep::Yield(DoCtrl::TransferThrowThenTransfer {
+                    continuation,
+                    exception,
+                })
+            }
+            other => other,
+        };
+        let next_running_task = state.current_task;
+        let resumed_preempted_caller = step_targets_continuation(&step, &k_user);
+        let switched_into_task_body = matches!(
+            step,
+            ASTStreamStep::Yield(DoCtrl::ResumeContinuation { .. })
+                | ASTStreamStep::Yield(DoCtrl::ResumeThenTransfer { .. })
+                | ASTStreamStep::Yield(DoCtrl::TransferThrowThenTransfer { .. })
+        );
+        let keep_preemptive_transfer = next_running_task.is_some()
+            && switched_into_task_body
+            && (!resumed_preempted_caller || resumed_owner_now);
+        (step, keep_preemptive_transfer, resumed_owner_now)
+    }
+
+    fn continue_preemptive_transfer(
+        &mut self,
+        outcome: Result<Value, PyException>,
+        k_user: Continuation,
+        owner_resumed: bool,
+        store: &mut RustStore,
+    ) -> ASTStreamStep {
+        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+
+        let Some(task_id) = state.current_task else {
+            return ASTStreamStep::Throw(PyException::runtime_error(
+                "scheduler resumed/thrown without current running task",
+            ));
+        };
+        state.current_task = None;
+
+        if let Err(error) = state.save_task_store(task_id, store) {
+            return ASTStreamStep::Throw(error);
+        }
+        if let Err(error) = state.mark_task_done(task_id, outcome) {
+            return ASTStreamStep::Throw(error);
+        }
+        state.wake_waiters(Waitable::Task(task_id));
+        let (step, keep_preemptive_transfer, resumed_owner_now) =
+            Self::transfer_next_after_preemption_step(
+                &mut state,
+                k_user.clone(),
+                owner_resumed,
+                store,
+            );
+        drop(state);
+        if keep_preemptive_transfer {
+            self.phase = SchedulerPhase::PreemptiveTransfer {
+                k_user,
+                owner_resumed: owner_resumed || resumed_owner_now,
+            };
+            step
+        } else if owner_resumed && step_targets_continuation(&step, &k_user) {
+            self.phase = SchedulerPhase::Idle;
+            ASTStreamStep::Return(Value::Unit)
+        } else {
+            self.phase = SchedulerPhase::Idle;
+            step
+        }
+    }
+
+    fn handle_promise_resolution(
+        &mut self,
+        k_user: Continuation,
+        promise: PromiseId,
+        outcome: Result<Value, PyException>,
+        store: &mut RustStore,
+    ) -> ASTStreamStep {
+        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let current_priority = state.current_task_priority();
+        let highest_woken_task = state.mark_promise_done(promise, outcome);
+        if matches!(
+            (current_priority, highest_woken_task),
+            (Some(current), Some(woken)) if woken.priority > current
+        ) {
+            if let Err(error) = state.park_current_with_value(k_user.clone(), Value::Unit) {
+                return ASTStreamStep::Throw(error);
+            }
+            let (step, keep_preemptive_transfer, resumed_owner_now) =
+                Self::transfer_next_after_preemption_step(&mut state, k_user.clone(), false, store);
+            drop(state);
+            if keep_preemptive_transfer {
+                self.phase = SchedulerPhase::PreemptiveTransfer {
+                    k_user,
+                    owner_resumed: resumed_owner_now,
+                };
+            } else {
+                self.phase = SchedulerPhase::Idle;
+            }
+            step
+        } else {
+            resume_to_continuation(k_user, Value::Unit)
+        }
     }
 
     fn continue_driving(
@@ -2339,15 +2561,11 @@ impl ASTStreamProgram for SchedulerProgram {
             }
 
             SchedulerEffect::CompletePromise { promise, value } => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                state.mark_promise_done(promise, Ok(value));
-                state.transfer_next_or(k_user, store)
+                self.handle_promise_resolution(k_user, promise, Ok(value), store)
             }
 
             SchedulerEffect::FailPromise { promise, error } => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                state.mark_promise_done(promise, Err(error));
-                state.transfer_next_or(k_user, store)
+                self.handle_promise_resolution(k_user, promise, Err(error), store)
             }
 
             SchedulerEffect::CreateExternalPromise => {
@@ -2593,9 +2811,38 @@ impl ASTStreamProgram for SchedulerProgram {
                 );
                 state.enqueue_ready_task(task_id, priority);
 
-                // Transfer back to caller with the task handle
-                resume_to_continuation(k_user, Value::Task(TaskHandle { id: task_id }))
+                let current_priority = state.current_task_priority();
+                let task_value = Value::Task(TaskHandle { id: task_id });
+                if matches!(current_priority, Some(current) if priority > current) {
+                    if let Err(error) = state.park_current_with_value(k_user.clone(), task_value) {
+                        return ASTStreamStep::Throw(error);
+                    }
+                    let (step, keep_preemptive_transfer, resumed_owner_now) =
+                        Self::transfer_next_after_preemption_step(
+                            &mut state,
+                            k_user.clone(),
+                            false,
+                            store,
+                        );
+                    drop(state);
+                    if keep_preemptive_transfer {
+                        self.phase = SchedulerPhase::PreemptiveTransfer {
+                            k_user,
+                            owner_resumed: resumed_owner_now,
+                        };
+                    } else {
+                        self.phase = SchedulerPhase::Idle;
+                    }
+                    step
+                } else {
+                    resume_to_continuation(k_user, task_value)
+                }
             }
+
+            SchedulerPhase::PreemptiveTransfer {
+                k_user,
+                owner_resumed,
+            } => self.continue_preemptive_transfer(Ok(value), k_user, owner_resumed, store),
 
             SchedulerPhase::Driving {
                 k_user,
@@ -2643,6 +2890,10 @@ impl ASTStreamProgram for SchedulerProgram {
                 waiting_store,
                 store,
             ),
+            SchedulerPhase::PreemptiveTransfer {
+                k_user,
+                owner_resumed,
+            } => self.continue_preemptive_transfer(Err(exc), k_user, owner_resumed, store),
             _ => ASTStreamStep::Throw(exc),
         }
     }
@@ -2795,7 +3046,9 @@ mod tests {
     use super::*;
     use crate::ast_stream::{ASTStream, ASTStreamStep};
     use crate::capture::TraceFrame;
-    use pyo3::{IntoPyObject, Python};
+    use crate::pyvm::{DoExprTag, PyEffectBase};
+    use pyo3::types::PyDict;
+    use pyo3::{IntoPyObject, PyClassInitializer, Python};
 
     fn make_test_continuation() -> Continuation {
         use crate::ids::{Marker, SegmentId};
@@ -2811,6 +3064,46 @@ mod tests {
         let mut cont = make_test_continuation();
         cont.started = false;
         cont
+    }
+
+    fn make_promise_object(py: Python<'_>, promise_id: PromiseId) -> Py<PyAny> {
+        let handle = PyDict::new(py);
+        handle
+            .set_item("promise_id", promise_id.raw())
+            .expect("promise handle should accept promise_id");
+
+        let types_mod = py
+            .import("types")
+            .expect("failed to import Python types module");
+        let namespace = types_mod
+            .getattr("SimpleNamespace")
+            .expect("types.SimpleNamespace must exist");
+        let kwargs = PyDict::new(py);
+        kwargs
+            .set_item("_promise_handle", handle)
+            .expect("namespace should accept _promise_handle");
+        namespace
+            .call((), Some(&kwargs))
+            .expect("failed to construct promise-like object")
+            .unbind()
+            .into_any()
+    }
+
+    fn make_complete_promise_effect(
+        py: Python<'_>,
+        promise: Py<PyAny>,
+        value: Py<PyAny>,
+    ) -> DispatchEffect {
+        let effect = Py::new(
+            py,
+            PyClassInitializer::from(PyEffectBase {
+                tag: DoExprTag::Effect as u8,
+            })
+            .add_subclass(PyCompletePromise { promise, value }),
+        )
+        .expect("failed to construct CompletePromiseEffect")
+        .into_any();
+        dispatch_from_shared(PyShared::new(effect))
     }
 
     #[test]
@@ -3117,6 +3410,259 @@ mod tests {
             let location = ASTStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.phase.as_deref(), Some("Idle"));
         });
+    }
+
+    #[test]
+    fn test_spawn_higher_priority_yields_to_new_task() {
+        let state = Arc::new(Mutex::new(SchedulerState::new()));
+        let mut program = SchedulerProgram::new(state.clone());
+        let mut store = RustStore::new();
+
+        let caller_k = make_test_continuation();
+        let spawned_k = make_test_continuation();
+
+        let current_task = {
+            let mut guard = state.lock().expect("Scheduler lock poisoned");
+            let task_id = guard.alloc_task_id();
+            guard.tasks.insert(
+                task_id,
+                TaskState::Pending {
+                    cont: make_test_continuation(),
+                    store: TaskStore::Shared,
+                    resume_outcome: None,
+                    priority: PRIORITY_IDLE,
+                    pending_log_merge_items: None,
+                },
+            );
+            guard.current_task = Some(task_id);
+            task_id
+        };
+
+        program.phase = SchedulerPhase::SpawnAwaitContinuation {
+            k_user: caller_k.clone(),
+            store_mode: StoreMode::Shared,
+            store_snapshot: None,
+            priority: PRIORITY_NORMAL,
+            spawn_site: None,
+        };
+
+        let step = ASTStream::resume(
+            &mut program,
+            Value::Continuation(spawned_k.clone()),
+            &mut store,
+        );
+        assert!(
+            step_targets_continuation(&step, &spawned_k),
+            "higher-priority spawned task must run before caller, got {:?}",
+            step
+        );
+
+        let guard = state.lock().expect("Scheduler lock poisoned");
+        assert_ne!(
+            guard.current_task,
+            Some(current_task),
+            "preemption should switch running task away from caller"
+        );
+        let Some(TaskState::Pending {
+            cont,
+            resume_outcome,
+            ..
+        }) = guard.tasks.get(&current_task)
+        else {
+            panic!("current task should remain pending after preemption");
+        };
+        assert_eq!(cont.cont_id, caller_k.cont_id);
+        assert!(
+            matches!(resume_outcome, Some(Ok(Value::Task(_)))),
+            "caller must be parked with spawned task handle"
+        );
+        assert!(
+            guard.ready_task_ids.contains(&current_task),
+            "caller should be re-enqueued when preempted"
+        );
+    }
+
+    #[test]
+    fn test_complete_promise_yields_to_higher_priority_waiter() {
+        Python::attach(|py| {
+            let state = Arc::new(Mutex::new(SchedulerState::new()));
+            let mut program = SchedulerProgram::new(state.clone());
+            let mut store = RustStore::new();
+
+            let waiter_k = make_test_continuation();
+            let idle_k = make_test_continuation();
+
+            let (promise_id, waiter_task, idle_task) = {
+                let mut guard = state.lock().expect("Scheduler lock poisoned");
+                let promise_id = guard.alloc_promise_id();
+                guard.promises.insert(promise_id, PromiseState::Pending);
+
+                let waiter_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    waiter_task,
+                    TaskState::Pending {
+                        cont: waiter_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.current_task = Some(waiter_task);
+                guard.wait_on_any(&[Waitable::Promise(promise_id)], waiter_k.clone(), &store);
+
+                let idle_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    idle_task,
+                    TaskState::Pending {
+                        cont: make_test_continuation(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_IDLE,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.current_task = Some(idle_task);
+
+                (promise_id, waiter_task, idle_task)
+            };
+
+            let promise_obj = make_promise_object(py, promise_id);
+            let complete = make_complete_promise_effect(
+                py,
+                promise_obj,
+                py.None()
+                    .into_pyobject(py)
+                    .expect("None must convert")
+                    .unbind(),
+            );
+
+            let step =
+                ASTStreamProgram::start(&mut program, py, complete, idle_k.clone(), &mut store);
+            assert!(
+                step_targets_continuation(&step, &waiter_k),
+                "higher-priority waiter must run first after promise completion, got {:?}",
+                step
+            );
+
+            let guard = state.lock().expect("Scheduler lock poisoned");
+            assert_eq!(guard.current_task, Some(waiter_task));
+            let Some(TaskState::Pending {
+                cont,
+                resume_outcome,
+                ..
+            }) = guard.tasks.get(&idle_task)
+            else {
+                panic!("idle caller should remain pending after promise completion");
+            };
+            assert_eq!(cont.cont_id, idle_k.cont_id);
+            assert!(
+                matches!(resume_outcome, Some(Ok(Value::Unit))),
+                "idle caller should be parked with unit resume value"
+            );
+            assert!(
+                guard.ready_task_ids.contains(&idle_task),
+                "idle caller should be re-enqueued when preempted by waiter"
+            );
+        });
+    }
+
+    #[test]
+    fn test_spawn_same_priority_resumes_caller() {
+        let state = Arc::new(Mutex::new(SchedulerState::new()));
+        let mut program = SchedulerProgram::new(state.clone());
+        let mut store = RustStore::new();
+
+        let caller_k = make_test_continuation();
+        let spawned_k = make_test_continuation();
+
+        let current_task = {
+            let mut guard = state.lock().expect("Scheduler lock poisoned");
+            let task_id = guard.alloc_task_id();
+            guard.tasks.insert(
+                task_id,
+                TaskState::Pending {
+                    cont: make_test_continuation(),
+                    store: TaskStore::Shared,
+                    resume_outcome: None,
+                    priority: PRIORITY_NORMAL,
+                    pending_log_merge_items: None,
+                },
+            );
+            guard.current_task = Some(task_id);
+            task_id
+        };
+
+        program.phase = SchedulerPhase::SpawnAwaitContinuation {
+            k_user: caller_k.clone(),
+            store_mode: StoreMode::Shared,
+            store_snapshot: None,
+            priority: PRIORITY_NORMAL,
+            spawn_site: None,
+        };
+
+        let step = ASTStream::resume(&mut program, Value::Continuation(spawned_k), &mut store);
+        assert!(
+            step_targets_continuation(&step, &caller_k),
+            "same-priority spawn should resume caller immediately, got {:?}",
+            step
+        );
+
+        let guard = state.lock().expect("Scheduler lock poisoned");
+        let Some(TaskState::Pending { resume_outcome, .. }) = guard.tasks.get(&current_task) else {
+            panic!("current task should remain pending");
+        };
+        assert!(resume_outcome.is_none());
+        assert!(!guard.ready_task_ids.contains(&current_task));
+    }
+
+    #[test]
+    fn test_spawn_lower_priority_resumes_caller() {
+        let state = Arc::new(Mutex::new(SchedulerState::new()));
+        let mut program = SchedulerProgram::new(state.clone());
+        let mut store = RustStore::new();
+
+        let caller_k = make_test_continuation();
+        let spawned_k = make_test_continuation();
+
+        let current_task = {
+            let mut guard = state.lock().expect("Scheduler lock poisoned");
+            let task_id = guard.alloc_task_id();
+            guard.tasks.insert(
+                task_id,
+                TaskState::Pending {
+                    cont: make_test_continuation(),
+                    store: TaskStore::Shared,
+                    resume_outcome: None,
+                    priority: PRIORITY_NORMAL,
+                    pending_log_merge_items: None,
+                },
+            );
+            guard.current_task = Some(task_id);
+            task_id
+        };
+
+        program.phase = SchedulerPhase::SpawnAwaitContinuation {
+            k_user: caller_k.clone(),
+            store_mode: StoreMode::Shared,
+            store_snapshot: None,
+            priority: PRIORITY_IDLE,
+            spawn_site: None,
+        };
+
+        let step = ASTStream::resume(&mut program, Value::Continuation(spawned_k), &mut store);
+        assert!(
+            step_targets_continuation(&step, &caller_k),
+            "lower-priority spawn should resume caller immediately, got {:?}",
+            step
+        );
+
+        let guard = state.lock().expect("Scheduler lock poisoned");
+        let Some(TaskState::Pending { resume_outcome, .. }) = guard.tasks.get(&current_task) else {
+            panic!("current task should remain pending");
+        };
+        assert!(resume_outcome.is_none());
+        assert!(!guard.ready_task_ids.contains(&current_task));
     }
 
     #[test]
