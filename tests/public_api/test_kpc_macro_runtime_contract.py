@@ -25,7 +25,7 @@ class TestNoLegacyKpcExports:
 class TestDefaultAndPresetsRemainUsable:
     def test_default_handlers_contains_core_runtime_handlers(self) -> None:
         handlers = default_handlers()
-        assert len(handlers) == 7
+        assert len(handlers) == 8
 
     def test_sync_preset_uses_runtime_handler_sentinels(self) -> None:
         names = [str(getattr(h, "name", repr(h))).lower() for h in presets.sync_preset]

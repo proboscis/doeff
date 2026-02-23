@@ -58,6 +58,28 @@ rules:
       category: architecture
       rationale: "Cancel state ownership — SPEC-SCHED-001, ISSUE-CORE-502"
 
+  - id: doeff-no-inline-spawn-coercion-wrapper
+    patterns:
+      - pattern-inside: |
+          @do
+          def $FUNC(...):
+              ...
+      - pattern: $RAW = yield $EFFECT
+      - pattern: return coerce_task_handle($RAW)
+    paths:
+      include:
+        - "**/doeff/effects/spawn.py"
+    message: |
+      BANNED: Inline SpawnEffect coercion inside @do wrappers.
+      spawn()/Spawn() must return SpawnEffect directly and coercion must happen
+      in spawn_intercept_handler at the handler layer.
+      See VM-HANDLER-METADATA-001.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      issue: VM-HANDLER-METADATA-001
+
   - id: no-is-instance-from-in-handlers
     pattern: is_instance_from($OBJ, $MODULE, $CLASS)
     message: |

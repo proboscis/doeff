@@ -10,6 +10,7 @@ from doeff.traceback import attach_doeff_traceback
 
 _DEFAULT_HANDLER_NAMES = (
     "sync_await_handler",
+    "spawn_intercept_handler",
     "LazyAskHandler",
     "SchedulerHandler",
     "ResultSafeHandler",
