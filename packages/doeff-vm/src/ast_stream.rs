@@ -15,6 +15,15 @@ use crate::vm::RustStore;
 pub trait ASTStream: fmt::Debug + Send {
     fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep;
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep;
+    fn yielded_is_terminal(&self, yielded: &DoCtrl) -> bool {
+        matches!(
+            yielded,
+            DoCtrl::Resume { .. }
+                | DoCtrl::Transfer { .. }
+                | DoCtrl::TransferThrow { .. }
+                | DoCtrl::Pass { .. }
+        )
+    }
     fn debug_location(&self) -> Option<StreamLocation> {
         None
     }

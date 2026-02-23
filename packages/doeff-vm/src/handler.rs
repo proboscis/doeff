@@ -43,6 +43,15 @@ pub trait ASTStreamProgram: std::fmt::Debug + Send {
     ) -> ASTStreamStep;
     fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep;
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep;
+    fn yielded_is_terminal(&self, yielded: &DoCtrl) -> bool {
+        matches!(
+            yielded,
+            DoCtrl::Resume { .. }
+                | DoCtrl::Transfer { .. }
+                | DoCtrl::TransferThrow { .. }
+                | DoCtrl::Pass { .. }
+        )
+    }
 }
 
 /// Factory for Rust handler programs. Each dispatch creates a fresh instance.
