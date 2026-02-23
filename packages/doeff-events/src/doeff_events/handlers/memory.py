@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Delegate, Resume
+from doeff import Pass, Resume
 from doeff.effects import CreateExternalPromise, ExternalPromise, Wait
 from doeff_events.effects import PublishEffect, WaitForEventEffect
 
@@ -73,7 +73,7 @@ def event_handler():
 
             return (yield Resume(k, None))
 
-        yield Delegate()
+        yield Pass()
 
     return handler
 
