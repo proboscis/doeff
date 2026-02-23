@@ -189,17 +189,6 @@ def normalize_waitable(value: Any) -> Waitable[Any]:
     )
 
 
-def _spawn_program(effect: SpawnEffect):
-    from doeff import do
-
-    @do
-    def _spawn_task():
-        raw_task = yield effect
-        return coerce_task_handle(raw_task)
-
-    return _spawn_task()
-
-
 def spawn_intercept_handler(effect: Any, k: Any):
     if isinstance(effect, SpawnEffect):
         raw = yield doeff_vm.Delegate()
@@ -210,7 +199,7 @@ def spawn_intercept_handler(effect: Any, k: Any):
 def spawn(
     program: ProgramLike,
     **options: Any,
-) -> Any:
+) -> SpawnEffect:
     """Spawn a program as a background task.
 
     Args:
@@ -228,13 +217,13 @@ def spawn(
         options=options,
         store_mode="isolated",
     )
-    return _spawn_program(effect)
+    return effect
 
 
 def Spawn(
     program: ProgramLike,
     **options: Any,
-) -> Any:
+) -> SpawnEffect:
     """Spawn a program as a background task (capitalized alias).
 
     Args:
@@ -252,7 +241,7 @@ def Spawn(
         options=options,
         store_mode="isolated",
     )
-    return _spawn_program(effect)
+    return effect
 
 
 __all__ = [
