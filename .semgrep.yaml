@@ -35,6 +35,20 @@ rules:
       category: vm-protocol
       issue: VM-PROTO-006
 
+  - id: doeff-no-effect-substitution-on-forward
+    pattern-either:
+      - pattern: yield Delegate($ARG)
+      - pattern: yield Pass($ARG)
+    message: |
+      Delegate() and Pass() do not accept effect arguments.
+      Use the 3-step decomposition: yield the substituted effect directly,
+      then Resume(k, result).
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      issue: MIGRATE-PASS-005
+
   - id: doeff-no-python-side-cancel-state
     patterns:
       - pattern-either:
