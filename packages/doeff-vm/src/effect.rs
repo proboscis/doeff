@@ -67,6 +67,8 @@ pub struct PySpawn {
     pub handlers: Py<PyAny>,
     #[pyo3(get)]
     pub store_mode: Py<PyAny>,
+    #[pyo3(get)]
+    pub priority: Py<PyAny>,
 }
 
 #[pyclass(frozen, name = "GatherEffect", extends=PyEffectBase)]
@@ -293,6 +295,7 @@ impl PySpawn {
         options: Option<Py<PyAny>>,
         handlers: Option<Py<PyAny>>,
         store_mode: Option<Py<PyAny>>,
+        priority: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
@@ -303,6 +306,7 @@ impl PySpawn {
             handlers: handlers
                 .unwrap_or_else(|| pyo3::types::PyList::empty(py).into_any().unbind()),
             store_mode: store_mode.unwrap_or_else(|| py.None()),
+            priority: priority.unwrap_or_else(|| py.None()),
         })
     }
 }
@@ -310,24 +314,26 @@ impl PySpawn {
 #[pymethods]
 impl PySpawn {
     #[new]
-    #[pyo3(signature = (program, options=None, handlers=None, store_mode=None))]
+    #[pyo3(signature = (program, options=None, handlers=None, store_mode=None, priority=None))]
     fn new(
         py: Python<'_>,
         program: Py<PyAny>,
         options: Option<Py<PyAny>>,
         handlers: Option<Py<PyAny>>,
         store_mode: Option<Py<PyAny>>,
+        priority: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
-        Self::create(py, program, options, handlers, store_mode)
+        Self::create(py, program, options, handlers, store_mode, priority)
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
         let program_repr = py_repr_or(py, &self.program, "<program>");
         let handlers_repr = py_repr_or(py, &self.handlers, "<handlers>");
         let store_mode_repr = py_repr_or(py, &self.store_mode, "<store_mode>");
+        let priority_repr = py_repr_or(py, &self.priority, "<priority>");
         format!(
-            "Spawn(program={}, handlers={}, store_mode={})",
-            program_repr, handlers_repr, store_mode_repr
+            "Spawn(program={}, handlers={}, store_mode={}, priority={})",
+            program_repr, handlers_repr, store_mode_repr, priority_repr
         )
     }
 }

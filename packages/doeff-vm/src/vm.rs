@@ -4602,7 +4602,7 @@ mod tests {
                 ),
             );
 
-            let spawn = Py::new(py, PySpawn::create(py, py.None(), None, None, None))
+            let spawn = Py::new(py, PySpawn::create(py, py.None(), None, None, None, None))
                 .expect("failed to create SpawnEffect");
             let effect_obj = spawn.into_any();
 

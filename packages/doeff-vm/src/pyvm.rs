@@ -8,8 +8,8 @@ use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
     dispatch_from_shared, PyAcquireSemaphore, PyAsk, PyCancelEffect, PyCompletePromise,
-    PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyExecutionContext,
-    PyFailPromise, PyGather, PyGet, PyGetExecutionContext, PyLocal, PyModify, PyProgramCallFrame,
+    PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyExecutionContext, PyFailPromise,
+    PyGather, PyGet, PyGetExecutionContext, PyLocal, PyModify, PyProgramCallFrame,
     PyProgramCallStack, PyProgramTrace, PyPut, PyPythonAsyncioAwaitEffect, PyRace,
     PyReleaseSemaphore, PyResultSafeEffect, PySpawn, PyTaskCompleted, PyTell,
 };
@@ -123,7 +123,9 @@ fn build_traceback_data_pyobject(
     ) {
         Ok(value) => value,
         Err(err) => {
-            eprintln!("[VM WARNING] traceback serialization failed for traceback_data object: {err}");
+            eprintln!(
+                "[VM WARNING] traceback serialization failed for traceback_data object: {err}"
+            );
             return None;
         }
     };
