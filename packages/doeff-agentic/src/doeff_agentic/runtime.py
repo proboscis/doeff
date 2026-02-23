@@ -14,19 +14,18 @@ HandlerMap = Mapping[type, HandlerProtocol]
 
 def with_handler_map(program: Any, handler_map: HandlerMap) -> Any:
     """Wrap a program with a typed effect-handler map."""
-    wrapped = program
-    for effect_type, handler in reversed(tuple(handler_map.items())):
+    typed_handlers = tuple(handler_map.items())
 
-        def typed_handler(effect, k, _effect_type=effect_type, _handler=handler):
-            if isinstance(effect, _effect_type):
-                result = _handler(effect, k)
+    def dispatch_handler(effect: Any, k):
+        for effect_type, handler in typed_handlers:
+            if isinstance(effect, effect_type):
+                result = handler(effect, k)
                 if inspect.isgenerator(result):
                     return (yield from result)
                 return result
-            yield Delegate()
+        yield Delegate()
 
-        wrapped = WithHandler(handler=typed_handler, expr=wrapped)
-    return wrapped
+    return WithHandler(handler=dispatch_handler, expr=program)
 
 
 def merge_handler_maps(*handler_maps: HandlerMap) -> dict[type, HandlerProtocol]:
