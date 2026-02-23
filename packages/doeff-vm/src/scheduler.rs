@@ -3111,6 +3111,23 @@ mod tests {
         dispatch_from_shared(PyShared::new(effect))
     }
 
+    fn make_fail_promise_effect(
+        py: Python<'_>,
+        promise: Py<PyAny>,
+        error: Py<PyAny>,
+    ) -> DispatchEffect {
+        let effect = Py::new(
+            py,
+            PyClassInitializer::from(PyEffectBase {
+                tag: DoExprTag::Effect as u8,
+            })
+            .add_subclass(PyFailPromise { promise, error }),
+        )
+        .expect("failed to construct FailPromiseEffect")
+        .into_any();
+        dispatch_from_shared(PyShared::new(effect))
+    }
+
     #[test]
     fn test_transfer_to_continuation_started_emits_transfer() {
         let cont = make_test_continuation();
@@ -3703,6 +3720,96 @@ mod tests {
             assert!(
                 guard.ready_task_ids.contains(&high_task),
                 "HIGH task should still be queued for later scheduling"
+            );
+        });
+    }
+
+    #[test]
+    fn test_fail_promise_yields_to_higher_priority_waiter() {
+        Python::attach(|py| {
+            let state = Arc::new(Mutex::new(SchedulerState::new()));
+            let mut program = SchedulerProgram::new(state.clone());
+            let mut store = RustStore::new();
+
+            let waiter_k = make_test_continuation();
+            let idle_k = make_test_continuation();
+
+            let (promise_id, waiter_task, idle_task) = {
+                let mut guard = state.lock().expect("Scheduler lock poisoned");
+                let promise_id = guard.alloc_promise_id();
+                guard.promises.insert(promise_id, PromiseState::Pending);
+
+                let waiter_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    waiter_task,
+                    TaskState::Pending {
+                        cont: waiter_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.current_task = Some(waiter_task);
+                guard.wait_on_any(&[Waitable::Promise(promise_id)], waiter_k.clone(), &store);
+
+                let idle_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    idle_task,
+                    TaskState::Pending {
+                        cont: make_test_continuation(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_IDLE,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.current_task = Some(idle_task);
+
+                (promise_id, waiter_task, idle_task)
+            };
+
+            let promise_obj = make_promise_object(py, promise_id);
+            let error_obj = py
+                .import("builtins")
+                .expect("failed to import Python builtins")
+                .getattr("RuntimeError")
+                .expect("builtins.RuntimeError must exist")
+                .call1(("boom",))
+                .expect("failed to construct RuntimeError instance")
+                .unbind()
+                .into_any();
+            let fail = make_fail_promise_effect(py, promise_obj, error_obj);
+
+            let step = ASTStreamProgram::start(&mut program, py, fail, idle_k.clone(), &mut store);
+            assert!(
+                matches!(
+                    &step,
+                    ASTStreamStep::Yield(DoCtrl::TransferThrowThenTransfer { continuation, .. })
+                    if continuation.cont_id == waiter_k.cont_id
+                ),
+                "higher-priority waiter should receive non-terminal throw transfer, got {:?}",
+                step
+            );
+
+            let guard = state.lock().expect("Scheduler lock poisoned");
+            assert_eq!(guard.current_task, Some(waiter_task));
+            let Some(TaskState::Pending {
+                cont,
+                resume_outcome,
+                ..
+            }) = guard.tasks.get(&idle_task)
+            else {
+                panic!("idle caller should remain pending after promise failure");
+            };
+            assert_eq!(cont.cont_id, idle_k.cont_id);
+            assert!(
+                matches!(resume_outcome, Some(Ok(Value::Unit))),
+                "idle caller should be parked with unit resume value"
+            );
+            assert!(
+                guard.ready_task_ids.contains(&idle_task),
+                "idle caller should be re-enqueued when preempted by waiter"
             );
         });
     }
