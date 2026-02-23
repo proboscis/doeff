@@ -48,15 +48,27 @@ class SimTimeRuntime:
 
     @do
     def _clock_driver(self):
-        """Idle-priority daemon that advances time when normal tasks are parked."""
+        """Idle-priority daemon that advances time one step at a time.
 
-        try:
-            while not self._time_queue.empty():
-                entry = self._time_queue.pop()
-                self._clock.advance_to(entry.time)
-                yield CompletePromise(entry.promise, None)
-        finally:
+        Processes a single time-queue entry per invocation to avoid deep
+        preemption chains in the VM.  After completing the promise for the
+        earliest entry, the driver marks itself as not-running and
+        re-spawns a fresh IDLE driver if more entries remain so the
+        scheduler will pick it up once all woken NORMAL-priority tasks
+        park again.
+        """
+        if self._time_queue.empty():
             self._driver_running = False
+            return
+        entry = self._time_queue.pop()
+        self._clock.advance_to(entry.time)
+        yield CompletePromise(entry.promise, None)
+        # Mark not-running so _ensure_clock_driver can spawn a new one.
+        self._driver_running = False
+        # If more entries remain, eagerly schedule the next driver.
+        if not self._time_queue.empty():
+            self._driver_running = True
+            yield Spawn(self._clock_driver(), priority=PRIORITY_IDLE)
 
     def _ensure_clock_driver(self):
         if self._driver_running:
@@ -72,7 +84,9 @@ class SimTimeRuntime:
         yield Wait(promise.future)
 
     def _run_due_scheduled_programs(self):
-        while self._scheduled_programs and self._scheduled_programs[0][0] <= self._clock.current_time:
+        while (
+            self._scheduled_programs and self._scheduled_programs[0][0] <= self._clock.current_time
+        ):
             _time, _sequence, program = heapq.heappop(self._scheduled_programs)
             yield program
 
