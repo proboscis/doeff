@@ -2022,10 +2022,9 @@ impl VM {
             DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
             DoCtrl::Perform { .. } => "HandleYield(Perform)",
             DoCtrl::Resume { .. } => "HandleYield(Resume)",
-            DoCtrl::ResumeThenTransfer { .. } => "HandleYield(ResumeThenTransfer)",
             DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
             DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
-            DoCtrl::TransferThrowThenTransfer { .. } => "HandleYield(TransferThrowThenTransfer)",
+            DoCtrl::ResumeThrow { .. } => "HandleYield(ResumeThrow)",
             DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
             DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
             DoCtrl::Pass { .. } => "HandleYield(Pass)",
@@ -2273,16 +2272,12 @@ impl VM {
     ) -> StepEvent {
         match step {
             ASTStreamStep::Yield(yielded) => {
-                // Terminal DoCtrl variants (Resume, Transfer, TransferThrow, Pass) transfer
-                // control elsewhere — the handler is done and no value flows back. Do NOT
-                // re-push the Program frame for these. Non-terminal variants (Eval, GetHandlers,
-                // GetCallStack) expect a result to be delivered back to this stream.
+                // Terminal DoCtrl variants (Transfer, TransferThrow, Pass) transfer control
+                // elsewhere — the handler is done and no value flows back. Do NOT re-push
+                // the Program frame for those. Resume and ResumeThrow are non-terminal.
                 let is_terminal = matches!(
                     &yielded,
-                    DoCtrl::Resume { .. }
-                        | DoCtrl::Transfer { .. }
-                        | DoCtrl::TransferThrow { .. }
-                        | DoCtrl::Pass { .. }
+                    DoCtrl::Transfer { .. } | DoCtrl::TransferThrow { .. } | DoCtrl::Pass { .. }
                 );
                 if !is_terminal {
                     let Some(seg) = self.current_segment_mut() else {
@@ -2380,10 +2375,6 @@ impl VM {
                 continuation,
                 value,
             } => self.handle_yield_resume(continuation, value),
-            DoCtrl::ResumeThenTransfer {
-                continuation,
-                value,
-            } => self.handle_yield_resume_then_transfer(continuation, value),
             DoCtrl::Transfer {
                 continuation,
                 value,
@@ -2392,10 +2383,10 @@ impl VM {
                 continuation,
                 exception,
             } => self.handle_yield_transfer_throw(continuation, exception),
-            DoCtrl::TransferThrowThenTransfer {
+            DoCtrl::ResumeThrow {
                 continuation,
                 exception,
-            } => self.handle_yield_transfer_throw_then_transfer(continuation, exception),
+            } => self.handle_yield_resume_throw(continuation, exception),
             DoCtrl::WithHandler {
                 handler,
                 expr,
@@ -2476,14 +2467,6 @@ impl VM {
         self.handle_resume(continuation, value)
     }
 
-    fn handle_yield_resume_then_transfer(
-        &mut self,
-        continuation: Continuation,
-        value: Value,
-    ) -> StepEvent {
-        self.handle_resume(continuation, value)
-    }
-
     fn handle_yield_transfer(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_transfer(continuation, value)
     }
@@ -2496,7 +2479,7 @@ impl VM {
         self.handle_transfer_throw(continuation, exception)
     }
 
-    fn handle_yield_transfer_throw_then_transfer(
+    fn handle_yield_resume_throw(
         &mut self,
         continuation: Continuation,
         exception: PyException,
@@ -3855,6 +3838,10 @@ impl VM {
     /// walk deliver the value back. Does NOT explicitly jump to prompt_seg_id.
     /// If the handler's caller is the prompt boundary, marks dispatch completed.
     fn handle_handler_return(&mut self, value: Value) -> StepEvent {
+        // Transfer paths may complete dispatches before stream return reaches here.
+        // Drop completed entries so handler-return bookkeeping does not bind to stale state.
+        self.lazy_pop_completed();
+
         if let Value::Python(obj) = &value {
             let should_eval = Python::attach(|py| {
                 let bound = obj.bind(py);
@@ -3885,7 +3872,8 @@ impl VM {
         }
 
         let Some(top_snapshot) = self.dispatch_stack.last().cloned() else {
-            return StepEvent::Error(VMError::internal("Return outside of dispatch"));
+            self.mode = Mode::Deliver(value);
+            return StepEvent::Continue;
         };
 
         let Some((handler_index, handler_name)) =
@@ -4805,6 +4793,26 @@ mod tests {
                 && runtime_src.contains("stream")
                 && !runtime_src.contains("get_frame,"),
             "VM-PROTO-001: StepUserGenerator pending state must carry stream handle"
+        );
+    }
+
+    #[test]
+    fn test_resume_is_not_terminal() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
+        let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
+        let runtime_src = &src[..runtime_boundary];
+        let is_terminal_start = runtime_src
+            .find("let is_terminal = matches!(")
+            .expect("apply_stream_step must define is_terminal");
+        let is_terminal_block = &runtime_src[is_terminal_start..];
+        let block_end = is_terminal_block
+            .find("if !is_terminal")
+            .expect("is_terminal block must guard Program frame push");
+        let is_terminal_match = &is_terminal_block[..block_end];
+
+        assert!(
+            !is_terminal_match.contains("DoCtrl::Resume { .. }"),
+            "Resume must be non-terminal in apply_stream_step"
         );
     }
 
