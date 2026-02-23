@@ -9,6 +9,9 @@ from dataclasses import dataclass
 class SimClock:
     current_time: float = 0.0
 
+    def __post_init__(self) -> None:
+        self.current_time = float(self.current_time)
+
     def advance_by(self, seconds: float) -> float:
         delay = float(seconds)
         if delay < 0.0:
@@ -18,8 +21,7 @@ class SimClock:
 
     def advance_to(self, target_time: float) -> float:
         target = float(target_time)
-        if target > self.current_time:
-            self.current_time = target
+        self.current_time = max(self.current_time, target)
         return self.current_time
 
     def set_time(self, new_time: float) -> float:

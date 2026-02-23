@@ -23,7 +23,6 @@ rules:
         - "**/doeff/effects/**"
         - "**/packages/doeff-events/src/**"
         - "**/packages/doeff-time/src/**"
-        - "**/packages/doeff-sim/src/**"
         - "**/doeff/utils.py"
     message: |
       BANNED: EffectCreationContext wrappers are removed (VM-PROTO-006).
@@ -199,6 +198,74 @@ rules:
     metadata:
       category: architecture
       rationale: "Layer boundary — Python must not inspect Rust handle internals"
+
+  - id: time-handler-must-not-handle-spawn
+    patterns:
+      - pattern: |
+          if isinstance($EFFECT, SpawnEffect):
+              ...
+    paths:
+      include:
+        - "**/packages/doeff-time/src/**"
+    message: >
+      Time handlers must not handle SpawnEffect. Concurrency is the core
+      scheduler's responsibility. Use Delegate()/Pass() for Spawn/Wait/Gather/Race.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: architecture
+      violation: handler-boundary
+
+  - id: time-handler-must-not-handle-wait
+    patterns:
+      - pattern: |
+          if isinstance($EFFECT, WaitEffect):
+              ...
+    paths:
+      include:
+        - "**/packages/doeff-time/src/**"
+    message: >
+      Time handlers must not handle WaitEffect. Concurrency is the core
+      scheduler's responsibility. Use Delegate()/Pass() for Spawn/Wait/Gather/Race.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: architecture
+      violation: handler-boundary
+
+  - id: time-handler-must-not-handle-gather
+    patterns:
+      - pattern: |
+          if isinstance($EFFECT, GatherEffect):
+              ...
+    paths:
+      include:
+        - "**/packages/doeff-time/src/**"
+    message: >
+      Time handlers must not handle GatherEffect. Concurrency is the core
+      scheduler's responsibility. Use Delegate()/Pass() for Spawn/Wait/Gather/Race.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: architecture
+      violation: handler-boundary
+
+  - id: time-handler-must-not-handle-race
+    patterns:
+      - pattern: |
+          if isinstance($EFFECT, RaceEffect):
+              ...
+    paths:
+      include:
+        - "**/packages/doeff-time/src/**"
+    message: >
+      Time handlers must not handle RaceEffect. Concurrency is the core
+      scheduler's responsibility. Use Delegate()/Pass() for Spawn/Wait/Gather/Race.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: architecture
+      violation: handler-boundary
 
   - id: doeff-no-rust-poll-python-cancel-state
     pattern-regex: 'getattr\("_cancelled_task_ids"\)'
