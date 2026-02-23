@@ -2309,10 +2309,15 @@ impl SchedulerProgram {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let current_priority = state.current_task_priority();
         let highest_woken_task = state.mark_promise_done(promise, outcome);
+        // Option B (ISSUE-SCHED-006): PreemptiveTransfer is a single slot, so nested
+        // preemption must be non-reentrant to avoid overwriting the outer caller context.
+        let nested_preemptive_transfer_active =
+            matches!(self.phase, SchedulerPhase::PreemptiveTransfer { .. });
         if matches!(
             (current_priority, highest_woken_task),
             (Some(current), Some(woken)) if woken.priority > current
-        ) {
+        ) && !nested_preemptive_transfer_active
+        {
             if let Err(error) = state.park_current_with_value(k_user.clone(), Value::Unit) {
                 return ASTStreamStep::Throw(error);
             }
@@ -3563,6 +3568,141 @@ mod tests {
             assert!(
                 guard.ready_task_ids.contains(&idle_task),
                 "idle caller should be re-enqueued when preempted by waiter"
+            );
+        });
+    }
+
+    #[test]
+    fn test_nested_promise_preemption_is_blocked_in_preemptive_transfer() {
+        Python::attach(|py| {
+            let state = Arc::new(Mutex::new(SchedulerState::new()));
+            let mut program = SchedulerProgram::new(state.clone());
+            let mut store = RustStore::new();
+
+            let idle_k = make_test_continuation();
+            let normal_k = make_test_continuation();
+            let high_k = make_test_continuation();
+
+            let (wake_normal_promise, wake_high_promise, high_task, normal_task) = {
+                let mut guard = state.lock().expect("Scheduler lock poisoned");
+
+                let wake_normal_promise = guard.alloc_promise_id();
+                guard
+                    .promises
+                    .insert(wake_normal_promise, PromiseState::Pending);
+                let wake_high_promise = guard.alloc_promise_id();
+                guard
+                    .promises
+                    .insert(wake_high_promise, PromiseState::Pending);
+
+                let normal_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    normal_task,
+                    TaskState::Pending {
+                        cont: normal_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.current_task = Some(normal_task);
+                guard.wait_on_any(
+                    &[Waitable::Promise(wake_normal_promise)],
+                    normal_k.clone(),
+                    &store,
+                );
+
+                let high_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    high_task,
+                    TaskState::Pending {
+                        cont: high_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_HIGH,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.current_task = Some(high_task);
+                guard.wait_on_any(
+                    &[Waitable::Promise(wake_high_promise)],
+                    high_k.clone(),
+                    &store,
+                );
+
+                let idle_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    idle_task,
+                    TaskState::Pending {
+                        cont: make_test_continuation(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_IDLE,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.current_task = Some(idle_task);
+
+                (
+                    wake_normal_promise,
+                    wake_high_promise,
+                    high_task,
+                    normal_task,
+                )
+            };
+
+            let wake_normal = make_complete_promise_effect(
+                py,
+                make_promise_object(py, wake_normal_promise),
+                py.None()
+                    .into_pyobject(py)
+                    .expect("None must convert")
+                    .unbind(),
+            );
+            let first_step =
+                ASTStreamProgram::start(&mut program, py, wake_normal, idle_k.clone(), &mut store);
+            assert!(
+                step_targets_continuation(&first_step, &normal_k),
+                "first promise completion should preempt IDLE and run NORMAL, got {:?}",
+                first_step
+            );
+            assert!(matches!(
+                &program.phase,
+                SchedulerPhase::PreemptiveTransfer { k_user, .. }
+                if k_user.cont_id == idle_k.cont_id
+            ));
+
+            let wake_high = make_complete_promise_effect(
+                py,
+                make_promise_object(py, wake_high_promise),
+                py.None()
+                    .into_pyobject(py)
+                    .expect("None must convert")
+                    .unbind(),
+            );
+            let second_step =
+                ASTStreamProgram::start(&mut program, py, wake_high, normal_k.clone(), &mut store);
+            assert!(
+                step_targets_continuation(&second_step, &normal_k),
+                "nested preemption must be blocked while transfer is active, got {:?}",
+                second_step
+            );
+            assert!(matches!(
+                &program.phase,
+                SchedulerPhase::PreemptiveTransfer { k_user, .. }
+                if k_user.cont_id == idle_k.cont_id
+            ));
+
+            let guard = state.lock().expect("Scheduler lock poisoned");
+            assert_eq!(
+                guard.current_task,
+                Some(normal_task),
+                "nested completion should keep NORMAL running instead of switching immediately"
+            );
+            assert!(
+                guard.ready_task_ids.contains(&high_task),
+                "HIGH task should still be queued for later scheduling"
             );
         });
     }
