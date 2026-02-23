@@ -2150,8 +2150,11 @@ impl ASTStreamProgram for ReaderHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, _value: Value, _store: &mut RustStore) -> ASTStreamStep {
-        unreachable!("ReaderHandler never yields mid-handling")
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
+        if false {
+            unreachable!("ReaderHandler never yields mid-handling");
+        }
+        ASTStreamStep::Return(value)
     }
 
     fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
@@ -2294,8 +2297,11 @@ impl ASTStreamProgram for WriterHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, _value: Value, _: &mut RustStore) -> ASTStreamStep {
-        unreachable!("WriterHandler never yields mid-handling")
+    fn resume(&mut self, value: Value, _: &mut RustStore) -> ASTStreamStep {
+        if false {
+            unreachable!("WriterHandler never yields mid-handling");
+        }
+        ASTStreamStep::Return(value)
     }
 
     fn throw(&mut self, exc: PyException, _: &mut RustStore) -> ASTStreamStep {

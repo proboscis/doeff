@@ -251,6 +251,20 @@ rules:
       spec: SPEC-SCHED-001
       section: "§resume_task, Invariant S1"
 
+  - id: doctrl-variants-require-approval
+    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|WithHandler\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|Eval\b|GetCallStack\b|GetTrace\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/do_ctrl.rs"
+    message: |
+      DoCtrl is a controlled API. New variants require human approval.
+      Do not add variants without discussing with the maintainer first.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "DoCtrl surface area is intentionally fixed and review-gated."
+
   - id: doeff-cancel-must-be-effectful
     patterns:
       - pattern-inside: |
