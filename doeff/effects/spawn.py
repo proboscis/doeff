@@ -24,12 +24,15 @@ T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
 
 _WAITABLE_TYPES: tuple[str, ...] = ("Task", "Promise", "ExternalPromise")
+PRIORITY_IDLE = 0
+PRIORITY_NORMAL = 10
+PRIORITY_HIGH = 20
 
 
 @runtime_checkable
 class Waitable(Protocol[T_co]):
     @property
-    def _handle(self) -> Any: ...
+    def _handle(self) -> dict[str, object]: ...
 
 
 @dataclass(frozen=True)
@@ -198,6 +201,7 @@ def spawn_intercept_handler(effect: Any, k: Any):
 
 def spawn(
     program: ProgramLike,
+    priority: int = PRIORITY_NORMAL,
     **options: Any,
 ) -> SpawnEffect:
     """Spawn a program as a background task.
@@ -211,17 +215,20 @@ def spawn(
     """
     ensure_program_like(program, name="program")
     ensure_dict_str_any(options, name="options")
+    validated_priority = _validate_priority(priority)
 
     effect = SpawnEffect(
         program=program,
         options=options,
         store_mode="isolated",
+        priority=validated_priority,
     )
     return effect
 
 
 def Spawn(
     program: ProgramLike,
+    priority: int = PRIORITY_NORMAL,
     **options: Any,
 ) -> SpawnEffect:
     """Spawn a program as a background task (capitalized alias).
@@ -235,18 +242,31 @@ def Spawn(
     """
     ensure_program_like(program, name="program")
     ensure_dict_str_any(options, name="options")
+    validated_priority = _validate_priority(priority)
 
     effect = SpawnEffect(
         program=program,
         options=options,
         store_mode="isolated",
+        priority=validated_priority,
     )
     return effect
+
+
+def _validate_priority(priority: int) -> int:
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        raise TypeError(f"priority must be int, got {type(priority).__name__}")
+    if priority < 0:
+        raise ValueError("priority must be >= 0")
+    return priority
 
 
 __all__ = [
     "Future",
     "Promise",
+    "PRIORITY_HIGH",
+    "PRIORITY_IDLE",
+    "PRIORITY_NORMAL",
     "Spawn",
     "SpawnEffect",
     "Task",
