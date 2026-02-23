@@ -2022,8 +2022,10 @@ impl VM {
             DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
             DoCtrl::Perform { .. } => "HandleYield(Perform)",
             DoCtrl::Resume { .. } => "HandleYield(Resume)",
+            DoCtrl::ResumeThenTransfer { .. } => "HandleYield(ResumeThenTransfer)",
             DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
             DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
+            DoCtrl::TransferThrowThenTransfer { .. } => "HandleYield(TransferThrowThenTransfer)",
             DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
             DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
             DoCtrl::Pass { .. } => "HandleYield(Pass)",
@@ -2378,6 +2380,10 @@ impl VM {
                 continuation,
                 value,
             } => self.handle_yield_resume(continuation, value),
+            DoCtrl::ResumeThenTransfer {
+                continuation,
+                value,
+            } => self.handle_yield_resume_then_transfer(continuation, value),
             DoCtrl::Transfer {
                 continuation,
                 value,
@@ -2386,6 +2392,10 @@ impl VM {
                 continuation,
                 exception,
             } => self.handle_yield_transfer_throw(continuation, exception),
+            DoCtrl::TransferThrowThenTransfer {
+                continuation,
+                exception,
+            } => self.handle_yield_transfer_throw_then_transfer(continuation, exception),
             DoCtrl::WithHandler {
                 handler,
                 expr,
@@ -2466,11 +2476,27 @@ impl VM {
         self.handle_resume(continuation, value)
     }
 
+    fn handle_yield_resume_then_transfer(
+        &mut self,
+        continuation: Continuation,
+        value: Value,
+    ) -> StepEvent {
+        self.handle_resume(continuation, value)
+    }
+
     fn handle_yield_transfer(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_transfer(continuation, value)
     }
 
     fn handle_yield_transfer_throw(
+        &mut self,
+        continuation: Continuation,
+        exception: PyException,
+    ) -> StepEvent {
+        self.handle_transfer_throw(continuation, exception)
+    }
+
+    fn handle_yield_transfer_throw_then_transfer(
         &mut self,
         continuation: Continuation,
         exception: PyException,
