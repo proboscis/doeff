@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from doeff import Delegate, Resume, WithHandler, default_handlers, run
+from doeff import Delegate, ProgramBase, Resume, WithHandler, default_handlers, run
 from doeff_time.effects import DelayEffect, GetTimeEffect, ScheduleAtEffect, WaitUntilEffect
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -70,7 +70,11 @@ class SyncTimeRuntime:
             return (yield from self._handle_get_time(effect, k))
         if isinstance(effect, ScheduleAtEffect):
             return (yield from self._handle_schedule_at(effect, k))
-        yield Delegate()
+        if isinstance(effect, ProgramBase):
+            yield Delegate()
+            return None
+        delegated = yield Delegate()
+        return (yield Resume(k, delegated))
 
 
 def sync_time_handler(
@@ -91,7 +95,7 @@ def sync_time_handler(
     return handler
 
 
-__all__ = [
+__all__ = [  # noqa: DOEFF021
     "ProtocolHandler",
     "sync_time_handler",
 ]

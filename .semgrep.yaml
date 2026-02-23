@@ -49,6 +49,74 @@ rules:
       category: architecture
       issue: MIGRATE-PASS-005
 
+  - id: time-handler-must-not-handle-spawn
+    patterns:
+      - pattern: |
+          if isinstance($EFFECT, SpawnEffect):
+              ...
+    paths:
+      include:
+        - "**/packages/doeff-time/src/**"
+    message: >
+      Time handlers must not handle SpawnEffect. Concurrency is the core
+      scheduler's responsibility. Use Delegate() for Spawn/Wait/Gather/Race.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: architecture
+      violation: handler-boundary
+
+  - id: time-handler-must-not-handle-wait
+    patterns:
+      - pattern: |
+          if isinstance($EFFECT, WaitEffect):
+              ...
+    paths:
+      include:
+        - "**/packages/doeff-time/src/**"
+    message: >
+      Time handlers must not handle WaitEffect. Concurrency is the core
+      scheduler's responsibility. Use Delegate() for Spawn/Wait/Gather/Race.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: architecture
+      violation: handler-boundary
+
+  - id: time-handler-must-not-handle-gather
+    patterns:
+      - pattern: |
+          if isinstance($EFFECT, GatherEffect):
+              ...
+    paths:
+      include:
+        - "**/packages/doeff-time/src/**"
+    message: >
+      Time handlers must not handle GatherEffect. Concurrency is the core
+      scheduler's responsibility. Use Delegate() for Spawn/Wait/Gather/Race.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: architecture
+      violation: handler-boundary
+
+  - id: time-handler-must-not-handle-race
+    patterns:
+      - pattern: |
+          if isinstance($EFFECT, RaceEffect):
+              ...
+    paths:
+      include:
+        - "**/packages/doeff-time/src/**"
+    message: >
+      Time handlers must not handle RaceEffect. Concurrency is the core
+      scheduler's responsibility. Use Delegate() for Spawn/Wait/Gather/Race.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: architecture
+      violation: handler-boundary
+
   - id: doeff-no-python-side-cancel-state
     patterns:
       - pattern-either:
