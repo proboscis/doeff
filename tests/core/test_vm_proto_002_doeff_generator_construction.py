@@ -68,7 +68,7 @@ def test_with_handler_wraps_generator_handler_returns_as_doeff_generator() -> No
     def handler(effect, k):
         if False:  # pragma: no cover
             yield
-        return doeff_vm.Delegate(effect)
+        return doeff_vm.Delegate()
 
     control = doeff_vm.WithHandler(handler, doeff_vm.Perform(Ask("x")))
     wrapped = control.handler(Ask("x"), None)

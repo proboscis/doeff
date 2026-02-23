@@ -1594,7 +1594,7 @@ def test_tag_dispatch_does_not_break_existing_programs():
     assert result == 99
 
 
-## -- ISSUE-VM-001: Transfer abandonment + Delegate(effect) substitution -------
+## -- ISSUE-VM-001: Transfer abandonment + forwarding decomposition ------------
 
 
 class SecondCustomEffect(doeff_vm.EffectBase):
@@ -1628,11 +1628,13 @@ def test_transfer_abandons_handler():
             handler_continued["ran"] = True
         yield VMDelegate()
 
-    def body():
+    @do
+    def body() -> Program[int]:
         result = yield CustomEffect(7)
         return result
 
-    def main():
+    @do
+    def main() -> Program[int]:
         result = yield VMWithHandler(handler, VMPerform(CustomEffect(7)))
         return result
 
@@ -1645,11 +1647,11 @@ def test_transfer_abandons_handler():
     )
 
 
-def test_delegate_with_effect_substitution():
-    """ISSUE-VM-001: Delegate(substitute_effect) passes a different effect outward.
+def test_delegate_substitution_via_reperform_and_resume():
+    """ISSUE-VM-001: substitute via re-perform, then resume continuation.
 
-    Inner handler receives CustomEffect, but delegates with SecondCustomEffect
-    to the outer handler. Outer handler should see SecondCustomEffect.
+    Inner handler receives CustomEffect, performs SecondCustomEffect directly,
+    then resumes the original continuation with the outer handler's result.
     """
     from doeff_vm import (
         Delegate as VMDelegate,
@@ -1669,15 +1671,17 @@ def test_delegate_with_effect_substitution():
 
     def inner_handler(effect, k):
         if isinstance(effect, CustomEffect):
-            # Delegate with a DIFFERENT effect to outer handler
-            yield VMDelegate(SecondCustomEffect(effect.value + 100))
+            substituted = yield SecondCustomEffect(effect.value + 100)
+            return (yield VMResume(k, substituted))
         yield VMDelegate()
 
-    def body():
+    @do
+    def body() -> Program[str]:
         result = yield CustomEffect(42)
         return result
 
-    def main():
+    @do
+    def main() -> Program[str]:
         inner = VMWithHandler(inner_handler, VMPerform(CustomEffect(42)))
         result = yield VMWithHandler(outer_handler, inner)
         return result
@@ -1686,6 +1690,16 @@ def test_delegate_with_effect_substitution():
     assert result == "outer_got:142", (
         f"Expected outer handler to see substituted effect, got: {result}"
     )
+
+
+def test_delegate_and_pass_reject_effect_arguments():
+    from doeff_vm import Delegate as VMDelegate, Pass as VMPass
+
+    with pytest.raises(TypeError):
+        VMDelegate(CustomEffect(1))
+
+    with pytest.raises(TypeError):
+        VMPass(CustomEffect(1))
 
 
 ## -- ISSUE-VM-003: Scheduler Spawn/Gather/Race coverage -----------------------
