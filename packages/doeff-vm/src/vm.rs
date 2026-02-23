@@ -2186,7 +2186,9 @@ impl VM {
         {
             let segment = match self.segments.get(seg_id) {
                 Some(s) => s,
-                None => return StepEvent::Error(VMError::invalid_segment("segment not found")),
+                None => {
+                    return StepEvent::Error(VMError::invalid_segment("segment not found"));
+                },
             };
 
             if !segment.has_frames() {
@@ -2223,7 +2225,9 @@ impl VM {
 
         let segment = match self.segments.get_mut(seg_id) {
             Some(s) => s,
-            None => return StepEvent::Error(VMError::invalid_segment("segment not found")),
+            None => {
+                return StepEvent::Error(VMError::invalid_segment("segment not found"));
+            },
         };
         let frame = segment.pop_frame().unwrap();
 
@@ -2799,6 +2803,18 @@ impl VM {
 
         match caller {
             Some(caller_id) => {
+                let caller_exists = self.segments.get(caller_id).is_some();
+                if !caller_exists {
+                    // Caller segment was freed (e.g., by preemption resolving a
+                    // wait and the program running to completion).  This handler
+                    // is stale.  Free our segment and absorb the stale return.
+                    // Return Done so the run loop exits; the real program result
+                    // should have already been captured through the main
+                    // execution path.
+                    self.segments.free(seg_id);
+                    self.current_segment = None;
+                    return StepEvent::Done(value);
+                }
                 self.current_segment = Some(caller_id);
                 self.segments.free(seg_id);
                 self.mode = Mode::Deliver(value);

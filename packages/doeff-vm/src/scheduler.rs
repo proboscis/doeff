@@ -2208,8 +2208,25 @@ impl SchedulerProgram {
     ) -> (ASTStreamStep, bool, bool) {
         let raw_step = state.transfer_next_or(k_user.clone(), store);
         let mut resumed_owner_now = false;
+        // Normalize terminal steps (Transfer, TransferThrow) to non-terminal
+        // equivalents (Resume, ResumeThrow) so the scheduler handler frame
+        // survives across the preemption chain. Without this, a Transfer step
+        // would free the scheduler's VM segment, causing "segment not found"
+        // when the preemption chain later tries to continue.
         let step = match raw_step {
             ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            }) => {
+                if continuation.cont_id == k_user.cont_id && !owner_resumed {
+                    resumed_owner_now = true;
+                }
+                ASTStreamStep::Yield(DoCtrl::Resume {
+                    continuation,
+                    value,
+                })
+            }
+            ASTStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             }) => {
@@ -2265,13 +2282,19 @@ impl SchedulerProgram {
         };
         state.current_task = None;
 
-        if let Err(error) = state.save_task_store(task_id, store) {
-            return ASTStreamStep::Throw(error);
+        // The running task may have already been finalized through a nested
+        // preemption chain (e.g. a deeper SchedulerProgram instance processed
+        // the task's completion). Skip save/mark_done/wake if already done.
+        let task_already_done = matches!(state.tasks.get(&task_id), Some(TaskState::Done { .. }));
+        if !task_already_done {
+            if let Err(error) = state.save_task_store(task_id, store) {
+                return ASTStreamStep::Throw(error);
+            }
+            if let Err(error) = state.mark_task_done(task_id, outcome) {
+                return ASTStreamStep::Throw(error);
+            }
+            state.wake_waiters(Waitable::Task(task_id));
         }
-        if let Err(error) = state.mark_task_done(task_id, outcome) {
-            return ASTStreamStep::Throw(error);
-        }
-        state.wake_waiters(Waitable::Task(task_id));
         let (step, keep_preemptive_transfer, resumed_owner_now) =
             Self::transfer_next_after_preemption_step(
                 &mut state,
@@ -2303,19 +2326,86 @@ impl SchedulerProgram {
         store: &mut RustStore,
     ) -> ASTStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
-        let current_priority = state.current_task_priority();
-        let highest_woken_task = state.mark_promise_done(promise, outcome);
-        // Option B (ISSUE-SCHED-006): PreemptiveTransfer is a single slot, so nested
-        // preemption must be non-reentrant to avoid overwriting the outer caller context.
-        let nested_preemptive_transfer_active =
-            matches!(self.phase, SchedulerPhase::PreemptiveTransfer { .. });
-        if matches!(
-            (current_priority, highest_woken_task),
-            (Some(current), Some(woken)) if woken.priority > current
-        ) && !nested_preemptive_transfer_active
+        let _current_priority = state.current_task_priority();
+
+        // Snapshot ready_task_ids before waking, so we can identify which
+        // tasks were newly woken by this specific promise completion.
+        let pre_wake_ready: HashSet<TaskId> = state.ready_task_ids.clone();
+        let _highest_woken_task = state.mark_promise_done(promise, outcome);
+
+        // Deactivate stale wait-owner status for tasks that were NEWLY
+        // woken by this promise completion.  Without this, woken tasks
+        // remain parked in nested Driving contexts and lower-priority
+        // tasks (e.g. the next clock driver) run before them, causing
+        // incorrect time ordering.
+        //
+        // Only deactivate newly-woken tasks to avoid disturbing other
+        // active wait owners that are unrelated to this promise.
         {
+            let newly_ready: Vec<TaskId> = state
+                .ready_task_ids
+                .iter()
+                .filter(|tid| !pre_wake_ready.contains(tid))
+                .copied()
+                .collect();
+            for tid in newly_ready {
+                if let Some(TaskState::Pending {
+                    cont,
+                    resume_outcome: Some(_),
+                    ..
+                }) = state.tasks.get(&tid)
+                {
+                    let cid = cont.cont_id;
+                    if state.active_wait_owners.contains(&cid) {
+                        state.mark_wait_owner_inactive(cid);
+                    }
+                }
+            }
+        }
+
+        // Note: Priority preemption at CompletePromise boundaries is
+        // intentionally DISABLED for promise resolution.  While the woken
+        // task may have higher priority than the current task, preempting
+        // here creates complex VM segment lifecycle issues when the
+        // preemption chain interacts with Driving-phase Wait/Gather
+        // callbacks (dangling caller segments, one-shot violations).
+        //
+        // Instead, the woken task will naturally run when the current task
+        // yields or completes.  For sim_time, the clock driver processes
+        // one entry at a time and returns quickly, so the woken task will
+        // run promptly.
+        //
+        // Preemption at Spawn and FailPromise boundaries is unaffected.
+        if false {
             if let Err(error) = state.park_current_with_value(k_user.clone(), Value::Unit) {
                 return ASTStreamStep::Throw(error);
+            }
+            // The woken task may be parked by active_wait_owners (it was waiting
+            // on a promise via a Driving loop on another SchedulerProgram instance).
+            // Since the promise is resolved, find ready tasks with resume_outcome
+            // that are still marked as active wait owners, and deactivate them so
+            // transfer_next_or can pick them up for preemption.
+            {
+                let to_deactivate: Vec<ContId> = state
+                    .ready_task_ids
+                    .iter()
+                    .filter_map(|tid| {
+                        if let Some(TaskState::Pending {
+                            cont,
+                            resume_outcome: Some(_),
+                            ..
+                        }) = state.tasks.get(tid)
+                        {
+                            if state.active_wait_owners.contains(&cont.cont_id) {
+                                return Some(cont.cont_id);
+                            }
+                        }
+                        None
+                    })
+                    .collect();
+                for cont_id in to_deactivate {
+                    state.mark_wait_owner_inactive(cont_id);
+                }
             }
             let (step, keep_preemptive_transfer, resumed_owner_now) =
                 Self::transfer_next_after_preemption_step(&mut state, k_user.clone(), false, store);
@@ -2353,15 +2443,84 @@ impl SchedulerProgram {
             ));
         };
 
+        // Stale-owner guard: if a nested preemption chain already satisfied
+        // the Wait/Gather/Race and resumed k_user's continuation, this
+        // Driving callback is stale.  Detect this by checking if the waiting
+        // owner is no longer in its expected suspended state.
+        let owner_already_resumed = match waiting_task {
+            Some(wt) => {
+                // Task-based waiter: still Pending with matching cont_id?
+                !matches!(
+                    state.tasks.get(&wt),
+                    Some(TaskState::Pending { cont, .. }) if cont.cont_id == k_user.cont_id
+                )
+            }
+            None => {
+                // Root waiter: the wait owner was not in active_wait_owners,
+                // meaning preemption already deactivated and resumed it.
+                !state.active_wait_owners.contains(&k_user.cont_id)
+            }
+        };
+        if owner_already_resumed {
+            // The driven task still needs finalization if not already done.
+            if state.current_task == Some(task_id) {
+                state.current_task = None;
+            }
+            let task_already_done =
+                matches!(state.tasks.get(&task_id), Some(TaskState::Done { .. }));
+            if !task_already_done {
+                if let Err(error) = state.save_task_store(task_id, store) {
+                    return ASTStreamStep::Throw(error);
+                }
+                let _ = state.mark_task_done(task_id, outcome);
+                state.wake_waiters(Waitable::Task(task_id));
+            }
+            // Owner was already resumed through a different path.
+            // We must NOT resume k_user again (one-shot violation).
+            // Keep driving ready tasks using the preemptive-transfer drain
+            // pattern: this keeps the scheduler loop alive instead of
+            // returning transparently (which would leak values to the root).
+            state.mark_wait_owner_inactive(k_user.cont_id);
+            let (step, keep_preemptive_transfer, _resumed_owner_now) =
+                Self::transfer_next_after_preemption_step(
+                    &mut state,
+                    k_user.clone(),
+                    true, // owner_resumed = true (already consumed)
+                    store,
+                );
+            drop(state);
+            if keep_preemptive_transfer {
+                self.phase = SchedulerPhase::PreemptiveTransfer {
+                    k_user,
+                    owner_resumed: true,
+                };
+            } else if step_targets_continuation(&step, &k_user) {
+                // Absorbed: nothing ready, fallback targeted consumed k_user
+                self.phase = SchedulerPhase::Idle;
+                return ASTStreamStep::Return(Value::Unit);
+            } else {
+                self.phase = SchedulerPhase::Idle;
+            }
+            return step;
+        }
+
         if state.current_task == Some(task_id) {
             state.current_task = None;
         }
 
-        if let Err(error) = state.save_task_store(task_id, store) {
-            return ASTStreamStep::Throw(error);
-        }
-        if let Err(error) = state.mark_task_done(task_id, outcome) {
-            return ASTStreamStep::Throw(error);
+        // The running task may have already been finalized through a nested
+        // preemption chain (e.g. an inner SchedulerProgram instance processed
+        // CompletePromise → preempted → continue_preemptive_transfer marked the
+        // task done). In that case, skip save/mark_done and go straight to
+        // checking if the Wait/Gather is satisfied.
+        let task_already_done = matches!(state.tasks.get(&task_id), Some(TaskState::Done { .. }));
+        if !task_already_done {
+            if let Err(error) = state.save_task_store(task_id, store) {
+                return ASTStreamStep::Throw(error);
+            }
+            if let Err(error) = state.mark_task_done(task_id, outcome) {
+                return ASTStreamStep::Throw(error);
+            }
         }
 
         // If this continuation was previously queued as a waiter, remove stale
@@ -2371,11 +2530,18 @@ impl SchedulerProgram {
         let waiting_cont_id = k_user.cont_id;
         state.clear_waiters_for_owner(waiting_task, waiting_cont_id);
 
-        state.wake_waiters(Waitable::Task(task_id));
+        if !task_already_done {
+            state.wake_waiters(Waitable::Task(task_id));
+        }
 
         match mode {
             WaitMode::All => {
                 if let Some(aggregate) = state.collect_all_result(&items) {
+                    // Wait/Gather satisfied — resume the waiting owner with
+                    // the aggregated result.  Stale Driving callbacks at
+                    // outer nesting levels are handled by the stale-owner
+                    // guard above (which drains via PreemptiveTransfer).
+                    self.phase = SchedulerPhase::Idle;
                     return match aggregate {
                         Ok(value) => {
                             state.clear_waiters_for_owner(waiting_task, waiting_cont_id);
@@ -2413,6 +2579,7 @@ impl SchedulerProgram {
             }
             WaitMode::Any => {
                 if let Some(first) = state.collect_any_result(&items) {
+                    self.phase = SchedulerPhase::Idle;
                     return match first {
                         Ok(value) => {
                             state.clear_waiters_for_owner(waiting_task, waiting_cont_id);
