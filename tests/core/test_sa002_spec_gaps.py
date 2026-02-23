@@ -77,7 +77,7 @@ def test_SA_002_G05_default_handlers_and_presets_contract() -> None:
 
     handlers = default_handlers()
     names = [str(getattr(h, "name", repr(h))).lower() for h in handlers]
-    assert len(handlers) == 7, "default_handlers() must include core runtime handlers"
+    assert len(handlers) == 8, "default_handlers() must include core runtime handlers"
     assert any("state" in n for n in names)
     assert any("reader" in n for n in names)
     assert any("writer" in n for n in names)

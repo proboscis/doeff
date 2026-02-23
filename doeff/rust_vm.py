@@ -230,16 +230,26 @@ def default_handlers() -> list[Any]:
     """
     vm = _vm()
     from doeff.effects.future import sync_await_handler
+    from doeff.effects.spawn import spawn_intercept_handler
 
-    return [*_core_handler_sentinels(vm), _coerce_handler(sync_await_handler)]
+    return [
+        *_core_handler_sentinels(vm),
+        _coerce_handler(spawn_intercept_handler),
+        _coerce_handler(sync_await_handler),
+    ]
 
 
 def default_async_handlers() -> list[Any]:
     """Default async preset using event-loop aware Await handling."""
     vm = _vm()
     from doeff.effects.future import async_await_handler
+    from doeff.effects.spawn import spawn_intercept_handler
 
-    return [*_core_handler_sentinels(vm), _coerce_handler(async_await_handler)]
+    return [
+        *_core_handler_sentinels(vm),
+        _coerce_handler(spawn_intercept_handler),
+        _coerce_handler(async_await_handler),
+    ]
 
 
 def _wrap_with_handler_map(
