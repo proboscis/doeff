@@ -42,6 +42,28 @@ impl SegmentArena {
         self.segments.get_mut(id.index()).and_then(|s| s.as_mut())
     }
 
+    /// Rewire children that currently point at `old_parent` so they point to `new_parent`.
+    ///
+    /// This keeps caller chains valid when a completed parent segment is freed while
+    /// descendant segments are still alive (for example across scheduler preemption).
+    pub fn reparent_children(
+        &mut self,
+        old_parent: SegmentId,
+        new_parent: Option<SegmentId>,
+    ) -> usize {
+        let mut rewired = 0usize;
+        for slot in &mut self.segments {
+            let Some(segment) = slot.as_mut() else {
+                continue;
+            };
+            if segment.caller == Some(old_parent) {
+                segment.caller = new_parent;
+                rewired += 1;
+            }
+        }
+        rewired
+    }
+
     pub fn len(&self) -> usize {
         self.segments.iter().filter(|s| s.is_some()).count()
     }
@@ -127,5 +149,23 @@ mod tests {
 
         let seg_ref = arena.get(id).unwrap();
         assert_eq!(seg_ref.frame_count(), 1);
+    }
+
+    #[test]
+    fn test_reparent_children() {
+        let mut arena = SegmentArena::new();
+        let marker = Marker::fresh();
+
+        let parent = arena.alloc(Segment::new(marker, None, vec![]));
+        let caller = arena.alloc(Segment::new(marker, None, vec![]));
+        let child_a = arena.alloc(Segment::new(marker, Some(parent), vec![]));
+        let child_b = arena.alloc(Segment::new(marker, Some(parent), vec![]));
+        let unrelated = arena.alloc(Segment::new(marker, Some(caller), vec![]));
+
+        let rewired = arena.reparent_children(parent, Some(caller));
+        assert_eq!(rewired, 2);
+        assert_eq!(arena.get(child_a).and_then(|seg| seg.caller), Some(caller));
+        assert_eq!(arena.get(child_b).and_then(|seg| seg.caller), Some(caller));
+        assert_eq!(arena.get(unrelated).and_then(|seg| seg.caller), Some(caller));
     }
 }
