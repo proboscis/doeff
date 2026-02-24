@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import Resume
+from doeff import Pass, Resume
 from doeff_pinjected.effects import PinjectedProvide, PinjectedResolve
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -36,28 +36,26 @@ def mock_handlers(
     *,
     bindings: Mapping[Any, Any] | None = None,
     runtime: MockPinjectedRuntime | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build deterministic in-memory handler map for pinjected bridge effects."""
+) -> ProtocolHandler:
+    """Build deterministic in-memory protocol handler for pinjected bridge effects."""
 
     active_runtime = runtime or MockPinjectedRuntime.from_bindings(bindings=bindings)
     if runtime is not None and bindings:
         active_runtime.bindings.update(dict(bindings))
 
-    def handle_resolve(effect: PinjectedResolve, k):
-        active_runtime.resolve_calls.append(effect.key)
-        if effect.key not in active_runtime.bindings:
-            raise KeyError(effect.key)
-        return (yield Resume(k, active_runtime.bindings[effect.key]))
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, PinjectedResolve):
+            active_runtime.resolve_calls.append(effect.key)
+            if effect.key not in active_runtime.bindings:
+                raise KeyError(effect.key)
+            return (yield Resume(k, active_runtime.bindings[effect.key]))
+        if isinstance(effect, PinjectedProvide):
+            active_runtime.provide_calls.append((effect.key, effect.value))
+            active_runtime.bindings[effect.key] = effect.value
+            return (yield Resume(k, None))
+        yield Pass()
 
-    def handle_provide(effect: PinjectedProvide, k):
-        active_runtime.provide_calls.append((effect.key, effect.value))
-        active_runtime.bindings[effect.key] = effect.value
-        return (yield Resume(k, None))
-
-    return {
-        PinjectedResolve: handle_resolve,
-        PinjectedProvide: handle_provide,
-    }
+    return handler
 
 
 __all__ = [

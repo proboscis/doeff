@@ -12,8 +12,7 @@ Run:
 
 from doeff_preset import preset_handlers
 
-from doeff import do, slog
-from doeff.rust_vm import run_with_handler_map
+from doeff import WithHandler, default_handlers, do, run, slog
 
 
 @do
@@ -44,7 +43,10 @@ def main():
     """Run the basic slog example."""
     print("=== Basic slog Display Example ===\n")
 
-    result = run_with_handler_map(basic_workflow(), preset_handlers())
+    result = run(
+        WithHandler(preset_handlers(), basic_workflow()),
+        handlers=default_handlers(),
+    )
 
     print("\n=== Results ===")
     print(f"Return value: {result.value}")

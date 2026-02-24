@@ -108,18 +108,9 @@ def openai_production_handler(effect: Any, k: Any):
     yield Delegate()
 
 
-def production_handlers() -> dict[type[Any], ProtocolHandler]:
-    """Typed handler map for real OpenAI API execution."""
-    return {
-        ChatCompletion: _handle_chat_completion,
-        StreamingChatCompletion: _handle_streaming_chat_completion,
-        Embedding: _handle_embedding,
-        StructuredOutput: _handle_structured_output,
-        LLMChat: _handle_chat_completion,
-        LLMStreamingChat: _handle_streaming_chat_completion,
-        LLMEmbedding: _handle_embedding,
-        LLMStructuredOutput: _handle_structured_output,
-    }
+def production_handlers() -> ProtocolHandler:
+    """Protocol handler for real OpenAI API execution."""
+    return openai_production_handler
 
 
 __all__ = [

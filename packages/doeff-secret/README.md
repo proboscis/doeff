@@ -34,11 +34,14 @@ def deploy_workflow():
 `doeff-secret` ships with an in-memory secret store for deterministic tests.
 
 ```python
-from doeff import run_with_handler_map
+from doeff import WithHandler, default_handlers, run
 from doeff_secret.testing import in_memory_handlers
 
 handlers = in_memory_handlers(seed_data={"db-password": "mock-pass"})
-result = run_with_handler_map(deploy_workflow(), handlers)
+result = run(
+    WithHandler(handlers, deploy_workflow()),
+    handlers=default_handlers(),
+)
 ```
 
 ## Environment Variable Fallback

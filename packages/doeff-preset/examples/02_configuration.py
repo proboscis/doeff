@@ -12,8 +12,7 @@ Run:
 
 from doeff_preset import preset_handlers
 
-from doeff import Ask, do, slog
-from doeff.rust_vm import run_with_handler_map
+from doeff import Ask, WithHandler, default_handlers, do, run, slog
 
 
 @do
@@ -47,7 +46,10 @@ def main():
     """Run configuration examples."""
     # Example 1: Default configuration
     print("=== Default Configuration ===\n")
-    result = run_with_handler_map(configurable_workflow(), preset_handlers())
+    result = run(
+        WithHandler(preset_handlers(), configurable_workflow()),
+        handlers=default_handlers(),
+    )
     print(f"\nConfig: {result.value}")
 
     # Example 2: Custom configuration
@@ -59,7 +61,10 @@ def main():
             "preset.log_format": "json",
         }
     )
-    result2 = run_with_handler_map(configurable_workflow(), custom_handlers)
+    result2 = run(
+        WithHandler(custom_handlers, configurable_workflow()),
+        handlers=default_handlers(),
+    )
     print(f"\nConfig: {result2.value}")
 
 

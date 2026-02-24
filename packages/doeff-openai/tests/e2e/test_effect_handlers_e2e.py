@@ -10,8 +10,7 @@ from doeff_openai.effects import StructuredOutput
 from doeff_openai.handlers import production_handlers
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, do
-from doeff.rust_vm import async_run_with_handler_map
+from doeff import EffectGenerator, WithHandler, async_run, default_async_handlers, do
 
 pytestmark = pytest.mark.e2e
 
@@ -23,6 +22,14 @@ class ArithmeticResult(BaseModel):
 _real_api_key = os.environ.get("OPENAI_API_KEY")
 _run_real_e2e = os.environ.get("RUN_OPENAI_E2E") == "1"
 _skip_real_e2e = not bool(_real_api_key and _run_real_e2e)
+
+
+async def _async_run_with_handler(program, handler, *, env):
+    return await async_run(
+        WithHandler(handler, program),
+        handlers=default_async_handlers(),
+        env=env,
+    )
 
 
 @pytest.mark.skipif(
@@ -43,7 +50,7 @@ async def test_chat_completion_effect_with_production_handler() -> None:
         )
         return response.choices[0].message.content
 
-    result = await async_run_with_handler_map(
+    result = await _async_run_with_handler(
         flow(),
         production_handlers(),
         env={"openai_api_key": _real_api_key},
@@ -77,7 +84,7 @@ async def test_structured_output_effect_with_production_handler() -> None:
             )
         )
 
-    result = await async_run_with_handler_map(
+    result = await _async_run_with_handler(
         flow(),
         production_handlers(),
         env={"openai_api_key": _real_api_key},

@@ -250,7 +250,7 @@ async def run_direct_effects_example() -> None:
 
     result = await run_program(
         direct_effects_workflow(session_name, config),
-        handler_maps=(preset_handlers(),),
+        scoped_handlers=(preset_handlers(),),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -280,7 +280,7 @@ async def run_high_level_programs_example() -> None:
 
     result = await run_program(
         high_level_programs_workflow(session_name, config),
-        handler_maps=(preset_handlers(),),
+        scoped_handlers=(preset_handlers(),),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -310,7 +310,7 @@ async def run_bracket_pattern_example() -> None:
 
     result = await run_program(
         bracket_pattern_workflow(session_name, config),
-        handler_maps=(preset_handlers(),),
+        scoped_handlers=(preset_handlers(),),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -342,7 +342,7 @@ async def run_testing_example() -> None:
 
     result = await run_program(
         testable_workflow(session_name, config),
-        handler_maps=(preset_handlers(),),
+        scoped_handlers=(preset_handlers(),),
         custom_handlers=mock_agent_handlers(),
     )
     result_value = result.value if hasattr(type(result), "value") else result
@@ -385,7 +385,7 @@ async def run_with_real_tmux() -> None:
     
     result = await run_program(
         direct_effects_workflow(session_name, config),
-        handler_maps=(preset_handlers(),),
+        scoped_handlers=(preset_handlers(),),
         custom_handlers=agent_effectful_handlers(),
     )
     

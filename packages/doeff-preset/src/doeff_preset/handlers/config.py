@@ -5,10 +5,13 @@ Provides default configuration values that can be queried via Ask("preset.*") ef
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
-from doeff import AskEffect, Delegate, MissingEnvKeyError, Resume
+from doeff import AskEffect, MissingEnvKeyError, Pass, Resume
 from doeff_preset.effects.config import is_preset_config_key
+
+ProtocolHandler = Callable[[Any, Any], Any]
 
 # Default preset configuration
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -20,7 +23,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 def make_config_handler(
     defaults: dict[str, Any] | None = None,
-) -> tuple[type, Any]:
+) -> ProtocolHandler:
     """Create a config handler for Ask("preset.*") effects.
 
     This is a DECORATOR handler that wraps the default Ask handler.
@@ -35,7 +38,7 @@ def make_config_handler(
                   Merged with DEFAULT_CONFIG (user values override).
 
     Returns:
-        Tuple of (AskEffect, handler) for use in handler dict.
+        Protocol handler for use with ``WithHandler``.
     """
     config = {**DEFAULT_CONFIG}
     if defaults:
@@ -48,7 +51,7 @@ def make_config_handler(
         - non-`preset.*` keys are delegated to the outer Reader handler.
         """
         if not isinstance(effect, AskEffect):
-            yield Delegate()
+            yield Pass()
             return
 
         key = effect.key
@@ -58,44 +61,26 @@ def make_config_handler(
                 raise MissingEnvKeyError(key)
             return (yield Resume(k, config[key]))
 
-        yield Delegate()
+        yield Pass()
 
-    return AskEffect, handle_ask_with_config
+    return handle_ask_with_config
 
 
-def config_handlers(defaults: dict[str, Any] | None = None) -> dict[type, Any]:
-    """Return handlers for preset configuration.
+def config_handlers(defaults: dict[str, Any] | None = None) -> ProtocolHandler:
+    """Return a protocol handler for preset configuration.
 
     Args:
         defaults: Optional dict to override default config values.
 
     Returns:
-        Handler dict with AskEffect handler that supports preset.* keys.
-
-    Example:
-        >>> from doeff import Ask, do
-        >>> from doeff.rust_vm import run_with_handler_map
-        >>> from doeff_preset import config_handlers
-        >>>
-        >>> @do
-        ... def workflow():
-        ...     show_logs = yield Ask("preset.show_logs")
-        ...     return show_logs
-        >>>
-        >>> result = run_with_handler_map(workflow(), config_handlers())
-        >>> # result.value == True (default)
-
-        >>> # With custom defaults:
-        >>> custom = config_handlers(defaults={"preset.show_logs": False})
-        >>> result = run_with_handler_map(workflow(), custom)
-        >>> # result.value == False
+        Protocol handler that supports ``preset.*`` Ask keys.
     """
-    effect_type, handler = make_config_handler(defaults)
-    return {effect_type: handler}
+    return make_config_handler(defaults)
 
 
 __all__ = [
     "DEFAULT_CONFIG",
+    "ProtocolHandler",
     "config_handlers",
     "make_config_handler",
 ]

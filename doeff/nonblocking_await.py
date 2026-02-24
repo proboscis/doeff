@@ -117,6 +117,10 @@ def get_loop() -> asyncio.AbstractEventLoop:
 
 def _nonblocking_await_handler(effect: PythonAsyncioAwaitEffect, k: Any):
     """Handle PythonAsyncioAwaitEffect by submitting to the background loop."""
+    if not isinstance(effect, PythonAsyncioAwaitEffect):
+        yield doeff_vm.Pass()
+        return
+
     promise = yield CreateExternalPromise()
 
     awaitable = effect.awaitable
@@ -148,11 +152,11 @@ def with_nonblocking_await(program: Any) -> Any:
     awaitables on a persistent background event loop, communicating results
     via ExternalPromise.
     """
-    from doeff.rust_vm import _wrap_with_handler_map
+    from doeff import WithHandler
 
-    return _wrap_with_handler_map(
-        program,
-        {PythonAsyncioAwaitEffect: _nonblocking_await_handler},
+    return WithHandler(
+        handler=_nonblocking_await_handler,
+        expr=program,
     )
 
 

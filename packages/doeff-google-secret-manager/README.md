@@ -41,10 +41,10 @@ result = run_with_env(fetch_db_password())
 print("password length:", len(result.value))
 ```
 
-## Handler Map Usage
+## Handler Stacking Usage
 
 ```python
-from doeff import do, run_with_handler_map
+from doeff import WithHandler, default_handlers, do, run
 from doeff_google_secret_manager.handlers import production_handlers
 from doeff_secret.effects import GetSecret
 
@@ -54,9 +54,12 @@ def workflow():
     return (yield GetSecret(secret_id="db-password"))
 
 
-result = run_with_handler_map(
-    workflow(),
-    production_handlers(project="my-gcp-project"),
+result = run(
+    WithHandler(
+        production_handlers(project="my-gcp-project"),
+        workflow(),
+    ),
+    handlers=default_handlers(),
 )
 ```
 

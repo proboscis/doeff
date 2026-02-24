@@ -33,29 +33,42 @@ from doeff_preset.handlers import (
 from doeff import (
     Ask,
     AskEffect,
-    Delegate,
     EffectBase,
     MissingEnvKeyError,
+    Pass,
     Resume,
     WithHandler,
     WriterTellEffect,
+    async_run,
+    default_async_handlers,
+    default_handlers,
     do,
+    run,
     slog,
     tell,
 )
-from doeff.rust_vm import async_run_with_handler_map, run_with_handler_map
 
 HandlerFn = Callable[[Any, Any], Any]
 
 
-def _run_with_handler_map(program, handler_map: dict[type, HandlerFn], *, env=None, store=None):
-    return run_with_handler_map(program, handler_map, env=env, store=store)
+def _run_with_handler(program, handler: HandlerFn, *, env=None, store=None):
+    return run(
+        WithHandler(handler, program),
+        handlers=default_handlers(),
+        env=env,
+        store=store,
+    )
 
 
-async def _async_run_with_handler_map(
-    program, handler_map: dict[type, HandlerFn], *, env=None, store=None
+async def _async_run_with_handler(
+    program, handler: HandlerFn, *, env=None, store=None
 ):
-    return await async_run_with_handler_map(program, handler_map, env=env, store=store)
+    return await async_run(
+        WithHandler(handler, program),
+        handlers=default_async_handlers(),
+        env=env,
+        store=store,
+    )
 
 
 class TestCanonicalPackageLayout:
@@ -87,7 +100,7 @@ class TestLogDisplayHandlers:
             yield slog(step="end", msg="Goodbye")
             return "done"
 
-        result = _run_with_handler_map(workflow(), log_display_handlers())
+        result = _run_with_handler(workflow(), log_display_handlers())
 
         assert result.value == "done"
         captured = capsys.readouterr()
@@ -102,7 +115,7 @@ class TestLogDisplayHandlers:
             yield tell("simple message")
             return "done"
 
-        result = _run_with_handler_map(workflow(), log_display_handlers())
+        result = _run_with_handler(workflow(), log_display_handlers())
 
         assert result.value == "done"
         captured = capsys.readouterr()
@@ -122,7 +135,7 @@ class TestConfigHandlers:
             log_format = yield Ask("preset.log_format")
             return (show_logs, log_level, log_format)
 
-        result = _run_with_handler_map(workflow(), config_handlers())
+        result = _run_with_handler(workflow(), config_handlers())
 
         assert result.value == (True, "info", "rich")
 
@@ -139,7 +152,7 @@ class TestConfigHandlers:
             "preset.show_logs": False,
             "preset.log_level": "debug",
         }
-        result = _run_with_handler_map(workflow(), config_handlers(defaults=custom_defaults))
+        result = _run_with_handler(workflow(), config_handlers(defaults=custom_defaults))
 
         assert result.value == (False, "debug")
 
@@ -151,7 +164,7 @@ class TestConfigHandlers:
             value = yield Ask("my_key")
             return value
 
-        result = _run_with_handler_map(workflow(), config_handlers(), env={"my_key": "from_env"})
+        result = _run_with_handler(workflow(), config_handlers(), env={"my_key": "from_env"})
 
         assert result.value == "from_env"
 
@@ -163,7 +176,7 @@ class TestConfigHandlers:
             yield Ask("preset.unknown_key")
             return "done"
 
-        result = _run_with_handler_map(workflow(), config_handlers())
+        result = _run_with_handler(workflow(), config_handlers())
 
         assert result.is_err()
 
@@ -175,7 +188,7 @@ class TestConfigHandlers:
             value = yield Ask("missing_key")
             return value
 
-        result = _run_with_handler_map(workflow(), config_handlers())
+        result = _run_with_handler(workflow(), config_handlers())
 
         assert result.is_err()
         assert isinstance(result.error, MissingEnvKeyError)
@@ -191,10 +204,10 @@ class TestConfigHandlers:
         def mock_preset_config(effect, k):
             if isinstance(effect, AskEffect) and effect.key == "preset.show_logs":
                 return (yield Resume(k, False))
-            yield Delegate()
+            yield Pass()
 
         program = WithHandler(mock_preset_config, workflow())
-        result = _run_with_handler_map(program, preset_handlers())
+        result = _run_with_handler(program, preset_handlers())
 
         assert result.value is False
 
@@ -210,7 +223,7 @@ class TestPresetHandlers:
             yield slog(msg="test message")
             return "done"
 
-        result = _run_with_handler_map(workflow(), preset_handlers())
+        result = _run_with_handler(workflow(), preset_handlers())
 
         assert result.value == "done"
         captured = capsys.readouterr()
@@ -224,7 +237,7 @@ class TestPresetHandlers:
             show_logs = yield Ask("preset.show_logs")
             return show_logs
 
-        result = _run_with_handler_map(workflow(), preset_handlers())
+        result = _run_with_handler(workflow(), preset_handlers())
 
         assert result.value is True
 
@@ -236,7 +249,7 @@ class TestPresetHandlers:
             log_level = yield Ask("preset.log_level")
             return log_level
 
-        result = _run_with_handler_map(
+        result = _run_with_handler(
             workflow(),
             preset_handlers(config_defaults={"preset.log_level": "warning"}),
         )
@@ -255,7 +268,7 @@ class TestPresetHandlers:
         def handle_custom(effect: CustomEffect, k):
             if isinstance(effect, CustomEffect):
                 return (yield Resume(k, f"handled: {effect.value}"))
-            yield Delegate()
+            yield Pass()
 
         @do
         def workflow():
@@ -264,9 +277,12 @@ class TestPresetHandlers:
             custom_result = yield CustomEffect(value="test")
             return custom_result
 
-        # Merge handlers: domain handlers win
-        handlers = {**preset_handlers(), CustomEffect: handle_custom}
-        result = _run_with_handler_map(workflow(), handlers)
+        # Stack handlers explicitly: inner custom handler shadows outer preset handler.
+        stacked_program = WithHandler(
+            preset_handlers(),
+            WithHandler(handle_custom, workflow()),
+        )
+        result = run(stacked_program, handlers=default_handlers())
 
         assert result.value == "handled: test"
         captured = capsys.readouterr()
@@ -285,7 +301,7 @@ class TestProductionAndMockHandlers:
             level = yield Ask("preset.log_level")
             return level
 
-        result = _run_with_handler_map(workflow(), production_handlers())
+        result = _run_with_handler(workflow(), production_handlers())
 
         assert result.value == "info"
         captured = capsys.readouterr()
@@ -299,7 +315,7 @@ class TestProductionAndMockHandlers:
             yield slog(msg="from mock")
             return "done"
 
-        result = _run_with_handler_map(workflow(), mock_handlers())
+        result = _run_with_handler(workflow(), mock_handlers())
 
         assert result.value == "done"
         captured = capsys.readouterr()
@@ -312,7 +328,7 @@ class TestProductionAndMockHandlers:
         def workflow():
             return (yield Ask("preset.show_logs"))
 
-        result = _run_with_handler_map(
+        result = _run_with_handler(
             workflow(),
             mock_handlers(config_defaults={"preset.show_logs": False}),
         )
@@ -348,7 +364,7 @@ class TestSyncAndAsyncCompatibility:
             config = yield Ask("preset.show_logs")
             return config
 
-        result = _run_with_handler_map(workflow(), preset_handlers())
+        result = _run_with_handler(workflow(), preset_handlers())
 
         assert result.is_ok()
         assert result.value is True
@@ -363,7 +379,7 @@ class TestSyncAndAsyncCompatibility:
             config = yield Ask("preset.show_logs")
             return config
 
-        result = await _async_run_with_handler_map(workflow(), preset_handlers())
+        result = await _async_run_with_handler(workflow(), preset_handlers())
 
         assert result.is_ok()
         assert result.value is True

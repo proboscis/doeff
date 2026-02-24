@@ -9,8 +9,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from doeff import do
-from doeff.rust_vm import run_with_handler_map
+from doeff import WithHandler, default_handlers, do, run
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
@@ -25,6 +24,13 @@ from doeff_git.handlers import (
     production_handlers,
 )
 from doeff_git.types import MergeStrategy, PRHandle
+
+
+def _run_with_handler(program, handler):
+    return run(
+        WithHandler(handler, program),
+        handlers=default_handlers(),
+    )
 
 
 @do
@@ -52,7 +58,7 @@ def test_handler_exports() -> None:
 
 def test_mock_handlers_run_program() -> None:
     runtime = MockGitRuntime()
-    result = run_with_handler_map(
+    result = _run_with_handler(
         _mock_flow(Path("/tmp/mock-repo")),
         mock_handlers(runtime=runtime),
     )
@@ -211,7 +217,7 @@ def test_production_handlers_support_handler_swapping() -> None:
         pr = yield CreatePR(work_dir=Path("/tmp/repo"), title="Title")
         return sha, pr
 
-    result = run_with_handler_map(
+    result = _run_with_handler(
         flow(),
         production_handlers(local_handler=LocalStub(), github_handler=HostingStub()),
     )

@@ -28,16 +28,9 @@ class TestEffectBase:
         """Test that effects follow the protocol."""
         effect = CreateWorktree()
 
-        # Should have created_at attribute
-        assert hasattr(effect, "created_at")
-
-        # Should have with_created_at method
-        new_effect = effect.with_created_at("test")
-        assert new_effect.created_at == "test"
-
-        # Should have intercept method
+        # Should have intercept method (no nested programs for conductor effects).
         intercepted = effect.intercept(lambda x: x)
-        assert intercepted is effect  # No nested programs to intercept
+        assert intercepted is effect
 
         # Effect should be a first-class doeff effect value
         from doeff import EffectBase
@@ -464,24 +457,6 @@ class TestModuleExports:
         from doeff_conductor.handlers.testing import MockConductorRuntime
 
         runtime = MockConductorRuntime(tmp_path)
-        expected_effects = {
-            CreateWorktree,
-            MergeBranches,
-            DeleteWorktree,
-            CreateIssue,
-            ListIssues,
-            GetIssue,
-            ResolveIssue,
-            RunAgent,
-            SpawnAgent,
-            SendMessage,
-            WaitForStatus,
-            CaptureOutput,
-            Commit,
-            Push,
-            CreatePR,
-            MergePR,
-        }
 
         production = production_handlers(
             worktree_handler=runtime,
@@ -491,5 +466,5 @@ class TestModuleExports:
         )
         mocked = mock_handlers(runtime=runtime)
 
-        assert expected_effects.issubset(set(production))
-        assert expected_effects.issubset(set(mocked))
+        assert callable(production)
+        assert callable(mocked)

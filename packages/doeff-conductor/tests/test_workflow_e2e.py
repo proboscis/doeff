@@ -206,6 +206,7 @@ class TestTemplateE2E:
         assert callable(func)
 
     def test_basic_pr_template_structure(self):
+        from doeff import ProgramBase
         from doeff_conductor.templates import basic_pr
         from doeff_conductor.types import Issue
 
@@ -219,4 +220,4 @@ class TestTemplateE2E:
         program = basic_pr(issue)
 
         assert program is not None
-        assert hasattr(program, "execution_kernel")
+        assert isinstance(program, ProgramBase)

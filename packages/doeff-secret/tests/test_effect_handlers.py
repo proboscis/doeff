@@ -20,12 +20,18 @@ from doeff_secret.testing import (  # noqa: E402
 )
 
 from doeff import WithHandler, default_handlers, do, run  # noqa: E402
-from doeff.rust_vm import run_with_handler_map
 
 
 def _is_ok(run_result: Any) -> bool:
     checker = run_result.is_ok
     return checker() if callable(checker) else bool(checker)
+
+
+def _run_with_handler(program, handler):
+    return run(
+        WithHandler(handler, program),
+        handlers=default_handlers(),
+    )
 
 
 @do
@@ -50,7 +56,7 @@ def test_effect_exports() -> None:
 
 
 def test_in_memory_handlers_support_secret_crud() -> None:
-    result = run_with_handler_map(
+    result = _run_with_handler(
         _in_memory_program(),
         in_memory_handlers(seed_data={"seed-secret": "seed-value"}),
     )
@@ -79,7 +85,7 @@ def test_in_memory_handler_delegates_when_stacked() -> None:
 
 
 def test_env_var_handlers_resolve_normalized_secret_names() -> None:
-    result = run_with_handler_map(
+    result = _run_with_handler(
         _read_secret("db-password"),
         env_var_handlers(environ={"DB_PASSWORD": "from-env"}),
     )

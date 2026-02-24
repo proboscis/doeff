@@ -7,11 +7,11 @@ Usage:
     import asyncio
     from doeff import async_run, default_handlers
     from doeff_agentic.opencode_handler import opencode_handler
-    from doeff_agentic.runtime import with_handler_map
+    from doeff import WithHandler
 
     async def main():
         handlers = opencode_handler()
-        program = with_handler_map(my_workflow(), handlers)
+        program = WithHandler(handlers, my_workflow())
         result = await async_run(program, handlers=default_handlers())
 
     asyncio.run(main())
@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Await, Resume, do, slog
+from doeff import Await, Delegate, Resume, do, slog
 
 from ..effects import (
     AgenticAbortSession,
@@ -1043,7 +1043,7 @@ def opencode_handler(
     port: int | None = None,
     startup_timeout: float = 30.0,
     working_dir: str | None = None,
-) -> dict[type, Any]:
+) -> Callable[[Any, Any], Any]:
     """Create VM-compatible handlers for agentic effects using OpenCode.
 
     Args:
@@ -1054,17 +1054,17 @@ def opencode_handler(
         working_dir: Default working directory
 
     Returns:
-        Typed handler map for use with WithHandler composition.
+        Protocol handler for use with WithHandler composition.
 
     Usage:
         import asyncio
         from doeff import async_run, default_handlers
         from doeff_agentic import opencode_handler
-        from doeff_agentic.runtime import with_handler_map
+        from doeff import WithHandler
 
         async def main():
             handlers = opencode_handler()
-            program = with_handler_map(my_workflow(), handlers)
+            program = WithHandler(handlers, my_workflow())
             result = await async_run(program, handlers=default_handlers())
 
         asyncio.run(main())
@@ -1077,29 +1077,31 @@ def opencode_handler(
         working_dir=working_dir,
     )
 
-    return {
-        # Workflow
-        AgenticCreateWorkflow: _as_protocol_handler(handler.handle_create_workflow),
-        AgenticGetWorkflow: _as_protocol_handler(handler.handle_get_workflow),
-        # Environment
-        AgenticCreateEnvironment: _as_protocol_handler(handler.handle_create_environment),
-        AgenticGetEnvironment: _as_protocol_handler(handler.handle_get_environment),
-        AgenticDeleteEnvironment: _as_protocol_handler(handler.handle_delete_environment),
-        # Session
-        AgenticCreateSession: _as_protocol_handler(handler.handle_create_session),
-        AgenticForkSession: _as_protocol_handler(handler.handle_fork_session),
-        AgenticGetSession: _as_protocol_handler(handler.handle_get_session),
-        AgenticAbortSession: _as_protocol_handler(handler.handle_abort_session),
-        AgenticDeleteSession: _as_protocol_handler(handler.handle_delete_session),
-        # Message
-        AgenticSendMessage: _as_protocol_handler(handler.handle_send_message),
-        AgenticGetMessages: _as_protocol_handler(handler.handle_get_messages),
-        # Event
-        AgenticNextEvent: _as_protocol_handler(handler.handle_next_event),
-        # Status
-        AgenticGetSessionStatus: _as_protocol_handler(handler.handle_get_session_status),
-        AgenticSupportsCapability: _as_protocol_handler(handler.handle_supports_capability),
-    }
+    effect_handlers: tuple[tuple[type[Any], Callable[[Any, Any], Any]], ...] = (
+        (AgenticCreateWorkflow, _as_protocol_handler(handler.handle_create_workflow)),
+        (AgenticGetWorkflow, _as_protocol_handler(handler.handle_get_workflow)),
+        (AgenticCreateEnvironment, _as_protocol_handler(handler.handle_create_environment)),
+        (AgenticGetEnvironment, _as_protocol_handler(handler.handle_get_environment)),
+        (AgenticDeleteEnvironment, _as_protocol_handler(handler.handle_delete_environment)),
+        (AgenticCreateSession, _as_protocol_handler(handler.handle_create_session)),
+        (AgenticForkSession, _as_protocol_handler(handler.handle_fork_session)),
+        (AgenticGetSession, _as_protocol_handler(handler.handle_get_session)),
+        (AgenticAbortSession, _as_protocol_handler(handler.handle_abort_session)),
+        (AgenticDeleteSession, _as_protocol_handler(handler.handle_delete_session)),
+        (AgenticSendMessage, _as_protocol_handler(handler.handle_send_message)),
+        (AgenticGetMessages, _as_protocol_handler(handler.handle_get_messages)),
+        (AgenticNextEvent, _as_protocol_handler(handler.handle_next_event)),
+        (AgenticGetSessionStatus, _as_protocol_handler(handler.handle_get_session_status)),
+        (AgenticSupportsCapability, _as_protocol_handler(handler.handle_supports_capability)),
+    )
+
+    def protocol_handler(effect: Any, k: Any):
+        for effect_type, effect_handler in effect_handlers:
+            if isinstance(effect, effect_type):
+                return (yield from effect_handler(effect, k))
+        yield Delegate()
+
+    return protocol_handler
 
 
 __all__ = [

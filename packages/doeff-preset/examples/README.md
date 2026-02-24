@@ -8,9 +8,9 @@ Progressive examples demonstrating doeff-preset usage.
 |---------|-------------|----------|
 | [01_basic_slog.py](./01_basic_slog.py) | Basic slog display | slog, rich output, log accumulation |
 | [02_configuration.py](./02_configuration.py) | Configuration via Ask | preset.* config, custom defaults |
-| [03_merge_handlers.py](./03_merge_handlers.py) | Merging with domain handlers | Handler composition, dict merge |
+| [03_merge_handlers.py](./03_merge_handlers.py) | Merging with domain handlers | Handler composition, WithHandler stacking |
 | [04_granular_handlers.py](./04_granular_handlers.py) | Selective handler usage | log_display_handlers, config_handlers |
-| [05_async_runtime.py](./05_async_runtime.py) | Async runtime support | run_with_handler_map, async_run_with_handler_map |
+| [05_async_runtime.py](./05_async_runtime.py) | Async runtime support | run, async_run, WithHandler |
 
 ## Running Examples
 
@@ -58,15 +58,16 @@ handlers = preset_handlers(config_defaults={
 
 ## Example 03: Merging Handlers
 
-**Concepts:** Handler composition, domain effects, dict merge semantics
+**Concepts:** Handler composition, domain effects, explicit handler stacking
 
 Shows how to combine preset with domain-specific handlers:
 ```python
-# Domain handlers win on conflict
-handlers = {**preset_handlers(), **domain_handlers}
+from doeff import WithHandler
 
-# Preset handlers win on conflict
-handlers = {**domain_handlers, **preset_handlers()}
+program = WithHandler(
+    preset_handlers(),
+    WithHandler(domain_handler, my_workflow()),
+)
 ```
 
 ## Example 04: Granular Handler Selection
@@ -84,22 +85,25 @@ handlers = log_display_handlers()
 handlers = config_handlers(defaults={"preset.log_level": "debug"})
 
 # Custom combination
-handlers = {**log_display_handlers(), **config_handlers()}
+program = WithHandler(log_display_handlers(), WithHandler(config_handlers(), my_workflow()))
 ```
 
 ## Example 05: Async Runtime Support
 
-**Concepts:** run_with_handler_map, async_run_with_handler_map, runtime compatibility
+**Concepts:** run, async_run, runtime compatibility
 
 Shows that the same handlers work with both runtimes:
 ```python
 handlers = preset_handlers()
 
 # Sync
-result = run_with_handler_map(workflow(), handlers)
+result = run(WithHandler(handlers, workflow()), handlers=default_handlers())
 
 # Async
-result = await async_run_with_handler_map(workflow(), handlers)
+result = await async_run(
+    WithHandler(handlers, workflow()),
+    handlers=default_async_handlers(),
+)
 ```
 
 ## Key Patterns
@@ -107,7 +111,7 @@ result = await async_run_with_handler_map(workflow(), handlers)
 ### Basic Usage
 
 ```python
-from doeff import do, run_with_handler_map, slog
+from doeff import WithHandler, default_handlers, do, run, slog
 from doeff_preset import preset_handlers
 
 @do
@@ -117,19 +121,24 @@ def my_workflow():
     yield slog(step="done", msg="Complete")
     return "success"
 
-result = run_with_handler_map(my_workflow(), preset_handlers())
+result = run(
+    WithHandler(preset_handlers(), my_workflow()),
+    handlers=default_handlers(),
+)
 # slog messages displayed AND accumulated in result.log
 ```
 
 ### With Domain Handlers
 
 ```python
+from doeff import WithHandler
 from doeff_preset import preset_handlers
-from my_app import domain_handlers
+from my_app import domain_handler
 
-# Merge handlers (domain handlers take precedence)
-handler_map = {**preset_handlers(), **domain_handlers}
-result = run_with_handler_map(my_workflow(), handler_map)
+program = WithHandler(
+    preset_handlers(),
+    WithHandler(domain_handler, my_workflow()),
+)
 ```
 
 ### Custom Configuration

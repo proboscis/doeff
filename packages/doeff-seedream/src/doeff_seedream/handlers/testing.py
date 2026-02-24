@@ -13,7 +13,7 @@ from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 from PIL import Image as PILImage
 
-from doeff import Resume
+from doeff import Delegate, Resume
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
 
@@ -182,8 +182,8 @@ def mock_handlers(
     image_generate_responses: Mapping[str, ImageResult] | None = None,
     image_edit_responses: Mapping[str, ImageResult] | None = None,
     structured_responses: Mapping[type[Any], Any] | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build deterministic mock handlers for Seedream domain effects."""
+) -> ProtocolHandler:
+    """Build a deterministic mock protocol handler for Seedream domain effects."""
 
     active_handler = handler or MockSeedreamHandler(
         default_image_size=default_image_size,
@@ -193,24 +193,18 @@ def mock_handlers(
         structured_responses=structured_responses or {},
     )
 
-    def handle_generate(effect: SeedreamGenerate, k):
-        return (yield Resume(k, active_handler.handle_generate(effect)))
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, SeedreamGenerate):
+            return (yield Resume(k, active_handler.handle_generate(effect)))
+        if isinstance(effect, ImageGenerate):
+            return (yield Resume(k, active_handler.handle_image_generate(effect)))
+        if isinstance(effect, ImageEdit):
+            return (yield Resume(k, active_handler.handle_image_edit(effect)))
+        if isinstance(effect, SeedreamStructuredOutput):
+            return (yield Resume(k, active_handler.handle_structured(effect)))
+        yield Delegate()
 
-    def handle_image_generate(effect: ImageGenerate, k):
-        return (yield Resume(k, active_handler.handle_image_generate(effect)))
-
-    def handle_image_edit(effect: ImageEdit, k):
-        return (yield Resume(k, active_handler.handle_image_edit(effect)))
-
-    def handle_structured(effect: SeedreamStructuredOutput, k):
-        return (yield Resume(k, active_handler.handle_structured(effect)))
-
-    return {
-        SeedreamGenerate: handle_generate,
-        ImageGenerate: handle_image_generate,
-        ImageEdit: handle_image_edit,
-        SeedreamStructuredOutput: handle_structured,
-    }
+    return handler
 
 
 __all__ = [

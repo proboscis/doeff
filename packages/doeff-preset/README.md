@@ -17,7 +17,7 @@ uv add doeff-preset
 ## Quick Start
 
 ```python
-from doeff import do, run_with_handler_map, slog
+from doeff import WithHandler, default_handlers, do, run, slog
 from doeff_preset import preset_handlers
 
 @do
@@ -27,7 +27,10 @@ def my_workflow():
     yield slog(step="done", msg="Workflow complete")
     return "success"
 
-result = run_with_handler_map(my_workflow(), preset_handlers())
+result = run(
+    WithHandler(preset_handlers(), my_workflow()),
+    handlers=default_handlers(),
+)
 # slog messages are displayed to console AND accumulated in log
 ```
 
@@ -68,7 +71,10 @@ custom = preset_handlers(config_defaults={
     "preset.show_logs": False,
     "preset.log_level": "debug",
 })
-result = run_with_handler_map(configurable_workflow(), custom)
+result = run(
+    WithHandler(custom, configurable_workflow()),
+    handlers=default_handlers(),
+)
 ```
 
 ## API
@@ -84,7 +90,7 @@ handlers = preset_handlers()
 
 ### `production_handlers(config_defaults=None)`
 
-Returns the canonical production handler map for this package.
+Returns the canonical production protocol handler for this package.
 
 ```python
 from doeff_preset import production_handlers
@@ -94,7 +100,7 @@ handlers = production_handlers()
 
 ### `mock_handlers(config_defaults=None)`
 
-Returns the canonical test handler map. Structured slog display is disabled.
+Returns the canonical test protocol handler. Structured slog display is disabled.
 
 ```python
 from doeff_preset import mock_handlers
@@ -104,15 +110,12 @@ handlers = mock_handlers(config_defaults={"preset.show_logs": False})
 
 ### `log_display_handlers()`
 
-Returns just the slog display handlers.
+Returns just the slog display protocol handler.
 
 ```python
 from doeff_preset import log_display_handlers
 
-handlers = {
-    **log_display_handlers(),
-    **my_other_handlers,
-}
+handler = log_display_handlers()
 ```
 
 ### `config_handlers(defaults=None)`
@@ -125,17 +128,9 @@ from doeff_preset import config_handlers
 handlers = config_handlers(defaults={"preset.log_level": "debug"})
 ```
 
-## Handler Merge Semantics
+## Handler Stacking Semantics
 
-Python dict merge - **later wins**:
-
-```python
-# Domain handlers override preset (domain handlers win)
-handlers = {**preset_handlers(), **mock_handlers()}
-
-# Preset overrides domain (preset wins)
-handlers = {**mock_handlers(), **preset_handlers()}
-```
+`WithHandler` nesting defines precedence: inner handlers shadow outer handlers.
 
 Typically no conflict since they handle different effect types:
 
@@ -146,34 +141,7 @@ Typically no conflict since they handle different effect types:
 
 ### Granular Control Pattern
 
-Pick exactly what you need:
-
-```python
-from doeff_preset import log_display_handlers, config_handlers
-from my_domain import domain_handlers
-
-# Only slog display, skip config handlers
-handlers = {
-    **log_display_handlers(),
-    **domain_handlers(),
-}
-
-# Custom Ask handling instead of preset's
-handlers = {
-    **log_display_handlers(),
-    **domain_handlers(),
-    **my_custom_ask_handlers(),  # Override Ask handling
-}
-
-# Everything from preset, but override specific handler
-from doeff import WriterTellEffect
-
-handlers = {
-    **preset_handlers(),
-    **domain_handlers(),
-    WriterTellEffect: my_custom_slog_handler,  # Override slog display
-}
-```
+Pick exactly what you need by stacking only the handlers you want.
 
 ## Default Configuration
 
@@ -186,16 +154,19 @@ handlers = {
 ## Works with Both Entrypoints
 
 ```python
-from doeff import async_run_with_handler_map, run_with_handler_map
+from doeff import WithHandler, async_run, default_async_handlers, default_handlers, run
 from doeff_preset import preset_handlers
 
 handlers = preset_handlers()
 
 # Synchronous
-result = run_with_handler_map(my_workflow(), handlers)
+result = run(WithHandler(handlers, my_workflow()), handlers=default_handlers())
 
 # Asynchronous
-result = await async_run_with_handler_map(my_workflow(), handlers)
+result = await async_run(
+    WithHandler(handlers, my_workflow()),
+    handlers=default_async_handlers(),
+)
 ```
 
 ## Package Layout

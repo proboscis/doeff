@@ -126,7 +126,7 @@ class ConductorAPI:
             self._save_workflow(handle)
 
             # Execute the workflow
-            from doeff import default_handlers, run
+            from doeff import Delegate, default_handlers, run
 
             # Build kwargs
             kwargs = params or {}
@@ -143,7 +143,6 @@ class ConductorAPI:
                 IssueHandler,
                 WorktreeHandler,
                 make_scheduled_handler,
-                make_typed_handlers,
             )
 
             worktree_handler = WorktreeHandler()
@@ -170,27 +169,34 @@ class ConductorAPI:
                 WaitForStatus,
             )
 
-            handlers = {
-                CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-                MergeBranches: make_scheduled_handler(worktree_handler.handle_merge_branches),
-                DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-                CreateIssue: make_scheduled_handler(issue_handler.handle_create_issue),
-                ListIssues: make_scheduled_handler(issue_handler.handle_list_issues),
-                GetIssue: make_scheduled_handler(issue_handler.handle_get_issue),
-                ResolveIssue: make_scheduled_handler(issue_handler.handle_resolve_issue),
-                RunAgent: make_scheduled_handler(agent_handler.handle_run_agent),
-                SpawnAgent: make_scheduled_handler(agent_handler.handle_spawn_agent),
-                SendMessage: make_scheduled_handler(agent_handler.handle_send_message),
-                WaitForStatus: make_scheduled_handler(agent_handler.handle_wait_for_status),
-                CaptureOutput: make_scheduled_handler(agent_handler.handle_capture_output),
-                Commit: make_scheduled_handler(git_handler.handle_commit),
-                Push: make_scheduled_handler(git_handler.handle_push),
-                CreatePR: make_scheduled_handler(git_handler.handle_create_pr),
-                MergePR: make_scheduled_handler(git_handler.handle_merge_pr),
-            }
+            handlers = (
+                (CreateWorktree, make_scheduled_handler(worktree_handler.handle_create_worktree)),
+                (MergeBranches, make_scheduled_handler(worktree_handler.handle_merge_branches)),
+                (DeleteWorktree, make_scheduled_handler(worktree_handler.handle_delete_worktree)),
+                (CreateIssue, make_scheduled_handler(issue_handler.handle_create_issue)),
+                (ListIssues, make_scheduled_handler(issue_handler.handle_list_issues)),
+                (GetIssue, make_scheduled_handler(issue_handler.handle_get_issue)),
+                (ResolveIssue, make_scheduled_handler(issue_handler.handle_resolve_issue)),
+                (RunAgent, make_scheduled_handler(agent_handler.handle_run_agent)),
+                (SpawnAgent, make_scheduled_handler(agent_handler.handle_spawn_agent)),
+                (SendMessage, make_scheduled_handler(agent_handler.handle_send_message)),
+                (WaitForStatus, make_scheduled_handler(agent_handler.handle_wait_for_status)),
+                (CaptureOutput, make_scheduled_handler(agent_handler.handle_capture_output)),
+                (Commit, make_scheduled_handler(git_handler.handle_commit)),
+                (Push, make_scheduled_handler(git_handler.handle_push)),
+                (CreatePR, make_scheduled_handler(git_handler.handle_create_pr)),
+                (MergePR, make_scheduled_handler(git_handler.handle_merge_pr)),
+            )
+
+            def conductor_handler(effect: Any, k: Any):
+                for effect_type, effect_handler in handlers:
+                    if isinstance(effect, effect_type):
+                        return (yield from effect_handler(effect, k))
+                yield Delegate()
+
             result = run(
                 program,
-                handlers=[*make_typed_handlers(handlers), *default_handlers()],
+                handlers=[conductor_handler, *default_handlers()],
             )
             result_value = result.value if hasattr(result, "value") else result
 
