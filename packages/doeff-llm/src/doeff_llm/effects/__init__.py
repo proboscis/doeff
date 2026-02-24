@@ -2,11 +2,11 @@
 
 from .chat import LLMChat, LLMStreamingChat
 from .embedding import LLMEmbedding
-from .structured import LLMStructuredOutput
+from .structured import LLMStructuredQuery
 
 __all__ = [
     "LLMChat",
     "LLMEmbedding",
     "LLMStreamingChat",
-    "LLMStructuredOutput",
+    "LLMStructuredQuery",
 ]

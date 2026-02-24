@@ -15,7 +15,7 @@ from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
     LLMStreamingChat,
-    LLMStructuredOutput,
+    LLMStructuredQuery,
 )
 from PIL import Image
 
@@ -149,7 +149,7 @@ def _streaming_chat_impl(effect: LLMStreamingChat | LLMChat) -> EffectGenerator[
 
 
 @do
-def _structured_impl(effect: LLMStructuredOutput) -> EffectGenerator[Any]:
+def _structured_impl(effect: LLMStructuredQuery) -> EffectGenerator[Any]:
     prompt = _messages_to_prompt(effect.messages)
     max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
     return (
@@ -350,7 +350,7 @@ def production_handlers(
     *,
     chat_impl: Callable[[LLMChat], EffectGenerator[str]] | None = None,
     streaming_chat_impl: Callable[[LLMStreamingChat | LLMChat], EffectGenerator[str]] | None = None,
-    structured_impl: Callable[[LLMStructuredOutput], EffectGenerator[Any]] | None = None,
+    structured_impl: Callable[[LLMStructuredQuery], EffectGenerator[Any]] | None = None,
     embedding_impl: Callable[
         [LLMEmbedding],
         EffectGenerator[list[float] | list[list[float]]],
@@ -384,7 +384,7 @@ def production_handlers(
                 return (yield Resume(k, value))
             value = yield active_chat_impl(effect)
             return (yield Resume(k, value))
-        if isinstance(effect, LLMStructuredOutput | GeminiStructuredOutput):
+        if isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput):
             if not _is_gemini_model(effect.model):
                 yield Delegate()
                 return
@@ -426,7 +426,7 @@ def gemini_production_handler(effect: Any, k: Any):
                 return (yield Resume(k, value))
             value = yield _chat_impl(effect)
             return (yield Resume(k, value))
-    elif isinstance(effect, LLMStructuredOutput | GeminiStructuredOutput) and _is_gemini_model(
+    elif isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput) and _is_gemini_model(
         effect.model
     ):
         value = yield _structured_impl(effect)

@@ -9,7 +9,7 @@ from doeff import EffectBase
 
 
 @dataclass(frozen=True, kw_only=True)
-class LLMStructuredOutput(EffectBase):
+class LLMStructuredQuery(EffectBase):
     """Request provider-agnostic structured output."""
 
     messages: list[dict[str, Any]]
@@ -20,5 +20,5 @@ class LLMStructuredOutput(EffectBase):
 
 
 __all__ = [
-    "LLMStructuredOutput",
+    "LLMStructuredQuery",
 ]
