@@ -132,6 +132,7 @@ DoeffGeneratorFn = _ext.DoeffGeneratorFn
 
 
 WithHandler = _ext.WithHandler
+WithIntercept = _ext.WithIntercept
 
 
 Pure = _ext.Pure
@@ -212,6 +213,7 @@ TAG_PASS = _ext.TAG_PASS
 TAG_GET_CONTINUATION = _ext.TAG_GET_CONTINUATION
 TAG_GET_HANDLERS = _ext.TAG_GET_HANDLERS
 TAG_GET_TRACEBACK = _ext.TAG_GET_TRACEBACK
+TAG_WITH_INTERCEPT = _ext.TAG_WITH_INTERCEPT
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
 TAG_GET_TRACE = _ext.TAG_GET_TRACE
 TAG_EVAL = _ext.TAG_EVAL
@@ -293,6 +295,7 @@ __all__ = [
     "RustHandler",
     "Transfer",
     "WithHandler",
+    "WithIntercept",
     "PythonAsyncSyntaxEscape",
     "CreateContinuation",
     "GetCallStack",
@@ -325,6 +328,7 @@ __all__ = [
     "TAG_GET_CONTINUATION",
     "TAG_GET_HANDLERS",
     "TAG_GET_TRACEBACK",
+    "TAG_WITH_INTERCEPT",
     "TAG_GET_CALL_STACK",
     "TAG_GET_TRACE",
     "TAG_EVAL",
