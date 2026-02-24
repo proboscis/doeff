@@ -167,6 +167,37 @@ def test_clock_driver_only_runs_at_idle_priority() -> None:
     assert result.value == (0.0, 1.0)
 
 
+def test_sim_time_preemption_preserves_each_task_wake_time() -> None:
+    @do
+    def _sleep_and_report(name: str, delay_seconds: float):
+        start = yield GetTime()
+        yield Delay(delay_seconds)
+        woke = yield GetTime()
+        yield Tell((name, start, woke))
+        return woke
+
+    @do
+    def _program():
+        t1 = yield Spawn(_sleep_and_report("t1", 1.0))
+        t2 = yield Spawn(_sleep_and_report("t2", 3.0))
+        t3 = yield Spawn(_sleep_and_report("t3", 2.0))
+        wake_times = yield Gather(t1, t2, t3)
+        final_time = yield GetTime()
+        return wake_times, final_time
+
+    result = _run_with_sim(Listen(_program()), start_time=10.0)
+    listen_result = result.value
+    wake_times, final_time = listen_result.value
+
+    assert wake_times == [11.0, 13.0, 12.0]
+    assert final_time == 13.0
+    assert list(listen_result.log) == [
+        ("t1", 10.0, 11.0),
+        ("t3", 10.0, 12.0),
+        ("t2", 10.0, 13.0),
+    ]
+
+
 def test_multiple_tasks_delay_simultaneously() -> None:
     @do
     def _program():
