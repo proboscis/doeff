@@ -31,14 +31,13 @@ For parallel execution, use core doeff effects: `Spawn` + `Gather` (see example 
 
 ```python
 import asyncio
-from doeff import async_run, default_handlers, do
+from doeff import WithHandler, async_run, default_handlers, do
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticSendMessage,
     AgenticGetMessages,
 )
 from doeff_agentic.opencode_handler import opencode_handler
-from doeff_agentic.runtime import with_handler_map
 
 @do
 def my_workflow():
@@ -59,7 +58,7 @@ def my_workflow():
 # Run the workflow
 async def main():
     handlers = opencode_handler()
-    program = with_handler_map(my_workflow(), handlers)
+    program = WithHandler(handlers, my_workflow())
     result = await async_run(program, handlers=default_handlers())
     print(result.value)  # Access the result value
 
@@ -73,7 +72,7 @@ When workflows fail, use `result.format()` to get rich debugging information:
 ```python
 async def main():
     handlers = opencode_handler()
-    program = with_handler_map(my_workflow(), handlers)
+    program = WithHandler(handlers, my_workflow())
     result = await async_run(program, handlers=default_handlers())
 
     if result.is_err():
@@ -157,7 +156,7 @@ uv run python examples/07_pr_review_workflow.py https://github.com/org/repo/pull
 ```
 
 ### 08. Testing with Mock Handlers
-Effect-based deterministic workflow using `MockAgenticHandler` + `with_handler_map`.
+Effect-based deterministic workflow using `MockAgenticHandler` + `WithHandler`.
 ```bash
 uv run python examples/08_testing_with_mocks.py
 ```

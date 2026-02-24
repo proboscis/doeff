@@ -153,36 +153,39 @@ def production_handlers(
     image_generate_impl: Callable[[ImageGenerate], EffectGenerator[ImageResult]] | None = None,
     image_edit_impl: Callable[[ImageEdit], EffectGenerator[ImageResult]] | None = None,
     structured_impl: Callable[[SeedreamStructuredOutput], EffectGenerator[Any]] | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build effect handlers backed by Seedream production logic."""
+) -> ProtocolHandler:
+    """Build a protocol handler backed by Seedream production logic."""
 
     active_generate_impl = generate_impl or _generate_impl
     active_image_generate_impl = image_generate_impl or _image_generate_impl
     active_image_edit_impl = image_edit_impl or _image_edit_impl
     active_structured_impl = structured_impl or _structured_impl
 
-    def handle_generate(effect: SeedreamGenerate, k):
-        value = yield active_generate_impl(effect)
-        return (yield Resume(k, value))
+    def handler(effect: Any, k: Any):  # noqa: PLR0911
+        if isinstance(effect, SeedreamGenerate):
+            if not _is_seedream_model(effect.model):
+                yield Delegate()
+                return
+            value = yield active_generate_impl(effect)
+            return (yield Resume(k, value))
+        if isinstance(effect, ImageGenerate):
+            if not _is_seedream_model(effect.model):
+                yield Delegate()
+                return
+            value = yield active_image_generate_impl(effect)
+            return (yield Resume(k, value))
+        if isinstance(effect, ImageEdit):
+            if not _is_seedream_model(effect.model):
+                yield Delegate()
+                return
+            value = yield active_image_edit_impl(effect)
+            return (yield Resume(k, value))
+        if isinstance(effect, SeedreamStructuredOutput):
+            value = yield active_structured_impl(effect)
+            return (yield Resume(k, value))
+        yield Delegate()
 
-    def handle_image_generate(effect: ImageGenerate, k):
-        value = yield active_image_generate_impl(effect)
-        return (yield Resume(k, value))
-
-    def handle_image_edit(effect: ImageEdit, k):
-        value = yield active_image_edit_impl(effect)
-        return (yield Resume(k, value))
-
-    def handle_structured(effect: SeedreamStructuredOutput, k):
-        value = yield active_structured_impl(effect)
-        return (yield Resume(k, value))
-
-    return {
-        SeedreamGenerate: handle_generate,
-        ImageGenerate: handle_image_generate,
-        ImageEdit: handle_image_edit,
-        SeedreamStructuredOutput: handle_structured,
-    }
+    return handler
 
 
 __all__ = [

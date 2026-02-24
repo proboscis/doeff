@@ -12,9 +12,8 @@ from typing import TypeVar, cast
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff import Effect, Program, RunResult
+from doeff import Effect, Program, RunResult, WithHandler, async_run, default_async_handlers
 from doeff.effects import AskEffect, GraphAnnotateEffect, GraphStepEffect, Intercept, Pure
-from doeff.rust_vm import async_run_with_handler_map
 from doeff_pinjected.effects import PinjectedResolve
 from doeff_pinjected.handlers import production_handlers
 
@@ -107,9 +106,12 @@ def program_to_injected(prog: Program[T]) -> Injected[T]:
 
         try:
             # Run with env containing the resolver for use by ask effects
-            result = await async_run_with_handler_map(
-                wrapped_program,
-                production_handlers(resolver=__resolver__),
+            result = await async_run(
+                WithHandler(
+                    production_handlers(resolver=__resolver__),
+                    wrapped_program,
+                ),
+                handlers=default_async_handlers(),
                 env={"__resolver__": __resolver__},
             )
         finally:
@@ -182,9 +184,12 @@ def program_to_injected_result(prog: Program[T]) -> Injected[RunResult[T]]:
 
         try:
             # Run with env containing the resolver for use by ask effects
-            result = await async_run_with_handler_map(
-                wrapped_program,
-                production_handlers(resolver=__resolver__),
+            result = await async_run(
+                WithHandler(
+                    production_handlers(resolver=__resolver__),
+                    wrapped_program,
+                ),
+                handlers=default_async_handlers(),
                 env={"__resolver__": __resolver__},
             )
         finally:

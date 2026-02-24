@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, MutableSequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import Resume
+from doeff import Pass, Resume
 from doeff.effects import ask, tell
 from doeff_test_target.effects import ReadFixtureValue, RecordFixtureEvent
 
@@ -38,18 +38,22 @@ def production_handlers(
     fallback_env: Mapping[str, Any] | None = None,
     recorded_events: MutableSequence[str] | None = None,
     runtime: ProductionFixtureRuntime | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build production handler map for doeff-test-target fixture effects."""
+) -> ProtocolHandler:
+    """Build a production protocol handler for doeff-test-target fixture effects."""
 
     active_runtime = runtime or ProductionFixtureRuntime(
         fallback_env=dict(fallback_env or {}),
         recorded_events=recorded_events if recorded_events is not None else [],
     )
 
-    return {
-        ReadFixtureValue: active_runtime.handle_read_value,
-        RecordFixtureEvent: active_runtime.handle_record_event,
-    }
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, ReadFixtureValue):
+            return (yield from active_runtime.handle_read_value(effect, k))
+        if isinstance(effect, RecordFixtureEvent):
+            return (yield from active_runtime.handle_record_event(effect, k))
+        yield Pass()
+
+    return handler
 
 
 __all__ = [

@@ -89,17 +89,9 @@ def openrouter_production_handler(effect: Any, k: Any):
     yield Delegate()
 
 
-def production_handlers() -> dict[type[Any], ProtocolHandler]:
-    """Build handler map backed by the real OpenRouter client helpers."""
-
-    return {
-        RouterChat: _handle_chat,
-        RouterStreamingChat: _handle_streaming_chat,
-        RouterStructuredOutput: _handle_structured_output,
-        LLMChat: _handle_chat,
-        LLMStreamingChat: _handle_streaming_chat,
-        LLMStructuredOutput: _handle_structured_output,
-    }
+def production_handlers() -> ProtocolHandler:
+    """Build a protocol handler backed by the real OpenRouter client helpers."""
+    return openrouter_production_handler
 
 
 __all__ = [

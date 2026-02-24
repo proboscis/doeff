@@ -37,15 +37,22 @@ from doeff import (
     Resume,
     WithHandler,
     async_run,
+    default_async_handlers,
     default_handlers,
     do,
 )
-from doeff.rust_vm import async_run_with_handler_map
 
 
 class StructuredAnswer(BaseModel):
     label: str
     score: int
+
+
+async def _async_run_with_handler(program, handler):
+    return await async_run(
+        WithHandler(handler, program),
+        handlers=default_async_handlers(),
+    )
 
 
 async def _collect_stream_text(stream: Any) -> str:
@@ -95,17 +102,8 @@ def test_deprecated_effect_aliases_emit_warnings() -> None:
 
 
 def test_handler_exports() -> None:
-    """Public handlers module should expose production and mock handler maps."""
-    handler_map = production_handlers()
-    assert ChatCompletionEffect in handler_map
-    assert StreamingChatCompletion in handler_map
-    assert EmbeddingEffect in handler_map
-    assert StructuredOutput in handler_map
-    assert LLMChat in handler_map
-    assert LLMStreamingChat in handler_map
-    assert LLMEmbedding in handler_map
-    assert LLMStructuredOutput in handler_map
-
+    """Public handlers module should expose callable protocol handlers."""
+    assert callable(production_handlers())
     assert callable(mock_handlers)
 
 
@@ -156,7 +154,7 @@ async def test_mock_handlers_support_handler_swapping_for_all_effects() -> None:
             "structured": structured,
         }
 
-    result = await async_run_with_handler_map(
+    result = await _async_run_with_handler(
         flow(),
         mock_handlers(config=config, state=state),
     )

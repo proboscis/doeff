@@ -23,8 +23,7 @@ from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.handlers import mock_handlers, production_handlers
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
 
-from doeff import EffectGenerator, do
-from doeff.rust_vm import run_with_handler_map
+from doeff import EffectGenerator, WithHandler, default_handlers, do, run
 
 
 class SummarySchema:
@@ -59,6 +58,13 @@ def _build_result(*, prompt: str, model: str, payload: bytes) -> SeedreamImageEd
         prompt=prompt,
         model=model,
         raw_response={"model": model, "data": [{"size": "2K"}], "usage": {"generated_images": 1}},
+    )
+
+
+def _run_with_handler(program, handler):
+    return run(
+        WithHandler(handler, program),
+        handlers=default_handlers(),
     )
 
 
@@ -113,8 +119,8 @@ def test_mock_handlers_are_configurable_and_deterministic() -> None:
         structured_responses={SummarySchema: {"keyword": "lighthouse", "score": 7}},
     )
 
-    first = run_with_handler_map(_domain_program(), handlers)
-    second = run_with_handler_map(_domain_program(), handlers)
+    first = _run_with_handler(_domain_program(), handlers)
+    second = _run_with_handler(_domain_program(), handlers)
 
     assert first.is_ok()
     assert second.is_ok()
@@ -140,7 +146,7 @@ def _swap_program() -> EffectGenerator[bytes | None]:
 
 
 def test_handler_swapping_changes_behavior() -> None:
-    mock_result = run_with_handler_map(
+    mock_result = _run_with_handler(
         _swap_program(),
         mock_handlers(default_image_size="1K"),
     )
@@ -153,7 +159,7 @@ def test_handler_swapping_changes_behavior() -> None:
             payload=b"production-bytes",
         )
 
-    production_result = run_with_handler_map(
+    production_result = _run_with_handler(
         _swap_program(),
         production_handlers(generate_impl=production_generate),
     )
@@ -175,6 +181,6 @@ def _unified_program() -> EffectGenerator[ImageResult]:
 
 
 def test_mock_handlers_support_unified_effects() -> None:
-    result = run_with_handler_map(_unified_program(), mock_handlers())
+    result = _run_with_handler(_unified_program(), mock_handlers())
     assert result.is_ok()
     assert isinstance(result.value, ImageResult)

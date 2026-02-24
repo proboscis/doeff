@@ -10,9 +10,8 @@ from doeff_agentic.effects import (
     AgenticSendMessage,
 )
 from doeff_agentic.handlers import mock_handlers, production_handlers
-from doeff_agentic.runtime import with_handler_map
 
-from doeff import default_handlers, do, run
+from doeff import WithHandler, default_handlers, do, run
 
 
 def test_handlers_init_exports_required_factory_functions() -> None:
@@ -21,11 +20,10 @@ def test_handlers_init_exports_required_factory_functions() -> None:
     assert callable(mock_handlers)
 
 
-def test_production_handlers_factory_returns_typed_map() -> None:
-    """Production factory returns a handler map without side effects at construction time."""
-    handler_map = production_handlers()
-    assert isinstance(handler_map, dict)
-    assert AgenticCreateSession in handler_map
+def test_production_handlers_factory_returns_protocol_handler() -> None:
+    """Production factory returns a protocol handler without side effects at construction time."""
+    handler = production_handlers()
+    assert callable(handler)
 
 
 def test_mock_handlers_execute_simple_workflow() -> None:
@@ -43,7 +41,7 @@ def test_mock_handlers_execute_simple_workflow() -> None:
         status = yield AgenticGetSessionStatus(session_id=session.id)
         return msg.role, messages[-1].role, status.value
 
-    program = with_handler_map(workflow(), mock_handlers())
+    program = WithHandler(mock_handlers(), workflow())
     result = run(program, handlers=default_handlers())
 
     assert result.value == ("user", "assistant", "done")

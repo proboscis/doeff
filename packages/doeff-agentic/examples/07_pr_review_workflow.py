@@ -209,8 +209,7 @@ if __name__ == "__main__":
     import asyncio
     import sys
 
-    from doeff import async_run, default_handlers
-    from doeff_agentic.runtime import with_handler_maps
+    from doeff import WithHandler, async_run, default_handlers
 
     async def main():
         # Use a sample PR URL or accept from command line
@@ -227,10 +226,12 @@ if __name__ == "__main__":
         # Merge preset handlers with opencode handlers
         # Preset provides: slog display (WriterTellEffect) + config (Ask preset.*)
         # OpenCode provides: agent session management effects
-        program = with_handler_maps(
-            pr_review_workflow(pr_url, require_approval),
+        program = WithHandler(
             preset_handlers(),
-            opencode_handler(),
+            WithHandler(
+                opencode_handler(),
+                pr_review_workflow(pr_url, require_approval),
+            ),
         )
 
         try:

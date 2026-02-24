@@ -174,8 +174,8 @@ def mock_handlers(
     image_edit_responses: Mapping[str, ImageResult] | None = None,
     embedding_dimensions: int = 8,
     embedding_seed: int = 0,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build deterministic mock handlers for Gemini domain effects."""
+) -> ProtocolHandler:
+    """Build a deterministic mock protocol handler for Gemini domain effects."""
 
     active_handler = handler or MockGeminiHandler(
         default_chat_response=default_chat_response,
@@ -188,49 +188,34 @@ def mock_handlers(
         embedding_seed=embedding_seed,
     )
 
-    def handle_chat(effect: LLMChat | GeminiChat, k):
-        if not _is_gemini_model(effect.model):
-            yield Pass()
-            return
-        return (yield Resume(k, active_handler.handle_chat(effect)))
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
+            if not _is_gemini_model(effect.model):
+                yield Pass()
+                return
+            return (yield Resume(k, active_handler.handle_chat(effect)))
+        if isinstance(effect, LLMChat | GeminiChat):
+            if not _is_gemini_model(effect.model):
+                yield Pass()
+                return
+            return (yield Resume(k, active_handler.handle_chat(effect)))
+        if isinstance(effect, LLMStructuredOutput | GeminiStructuredOutput):
+            if not _is_gemini_model(effect.model):
+                yield Pass()
+                return
+            return (yield Resume(k, active_handler.handle_structured(effect)))
+        if isinstance(effect, LLMEmbedding | GeminiEmbedding):
+            if not _is_gemini_model(effect.model):
+                yield Pass()
+                return
+            return (yield Resume(k, active_handler.handle_embedding(effect)))
+        if isinstance(effect, ImageGenerate):
+            return (yield Resume(k, active_handler.handle_image_generate(effect)))
+        if isinstance(effect, ImageEdit | GeminiImageEdit):
+            return (yield Resume(k, active_handler.handle_image_edit(effect)))
+        yield Pass()
 
-    def handle_streaming_chat(effect: LLMStreamingChat | GeminiStreamingChat, k):
-        if not _is_gemini_model(effect.model):
-            yield Pass()
-            return
-        return (yield Resume(k, active_handler.handle_chat(effect)))
-
-    def handle_structured(effect: LLMStructuredOutput | GeminiStructuredOutput, k):
-        if not _is_gemini_model(effect.model):
-            yield Pass()
-            return
-        return (yield Resume(k, active_handler.handle_structured(effect)))
-
-    def handle_embedding(effect: LLMEmbedding | GeminiEmbedding, k):
-        if not _is_gemini_model(effect.model):
-            yield Pass()
-            return
-        return (yield Resume(k, active_handler.handle_embedding(effect)))
-
-    def handle_image_generate(effect: ImageGenerate, k):
-        return (yield Resume(k, active_handler.handle_image_generate(effect)))
-
-    def handle_image_edit(effect: ImageEdit, k):
-        return (yield Resume(k, active_handler.handle_image_edit(effect)))
-
-    return {
-        GeminiChat: handle_chat,
-        GeminiStreamingChat: handle_streaming_chat,
-        GeminiStructuredOutput: handle_structured,
-        GeminiEmbedding: handle_embedding,
-        LLMChat: handle_chat,
-        LLMStreamingChat: handle_streaming_chat,
-        LLMStructuredOutput: handle_structured,
-        LLMEmbedding: handle_embedding,
-        ImageGenerate: handle_image_generate,
-        ImageEdit: handle_image_edit,
-        GeminiImageEdit: handle_image_edit,
-    }
+    return handler
 
 
 def gemini_mock_handler(

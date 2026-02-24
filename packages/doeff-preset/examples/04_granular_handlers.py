@@ -12,8 +12,7 @@ Run:
 
 from doeff_preset import config_handlers, log_display_handlers
 
-from doeff import Ask, do, slog
-from doeff.rust_vm import run_with_handler_map
+from doeff import Ask, WithHandler, default_handlers, do, run, slog
 
 
 @do
@@ -37,14 +36,20 @@ def main():
     """Run granular handler examples."""
     # Example 1: Only slog display (no config)
     print("=== Only Log Display Handlers ===\n")
-    result1 = run_with_handler_map(workflow_with_slog(), log_display_handlers())
+    result1 = run(
+        WithHandler(log_display_handlers(), workflow_with_slog()),
+        handlers=default_handlers(),
+    )
     print(f"Result: {result1.value}")
     print(f"Log entries: {len(result1.log)}")
 
     # Example 2: Only config handlers (slog won't display but will accumulate)
     # Note: Without log_display_handlers, slog still works but won't show rich output
     print("\n=== Only Config Handlers ===\n")
-    result2 = run_with_handler_map(workflow_with_config(), config_handlers())
+    result2 = run(
+        WithHandler(config_handlers(), workflow_with_config()),
+        handlers=default_handlers(),
+    )
     print(f"Config values: {result2.value}")
 
     # Example 3: Custom combination
@@ -57,15 +62,16 @@ def main():
             "preset.log_format": "simple",
         }
     )
-    handlers = {**log_display_handlers(), **custom_config}
-
     @do
     def combined_workflow():
         config = yield Ask("preset.log_level")
         yield slog(level=config, msg="Using custom log level")
         return config
 
-    result3 = run_with_handler_map(combined_workflow(), handlers)
+    result3 = run(
+        WithHandler(log_display_handlers(), WithHandler(custom_config, combined_workflow())),
+        handlers=default_handlers(),
+    )
     print(f"Log level used: {result3.value}")
 
 

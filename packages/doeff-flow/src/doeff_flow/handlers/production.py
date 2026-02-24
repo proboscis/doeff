@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Resume
+from doeff import Delegate, Resume
 from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
 from doeff_flow.trace import (
     LiveTrace,
@@ -143,33 +143,27 @@ def production_handlers(
     trace_dir: Path | str | None = None,
     *,
     recorder: ProductionTraceRecorder | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build handler map for real trace recording."""
+) -> ProtocolHandler:
+    """Build a protocol handler for real trace recording."""
 
     active_recorder = recorder or ProductionTraceRecorder.create(workflow_id=workflow_id, trace_dir=trace_dir)
 
-    def handle_push(effect: TracePush, k):
-        active_recorder.push(effect)
-        return (yield Resume(k, None))
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, TracePush):
+            active_recorder.push(effect)
+            return (yield Resume(k, None))
+        if isinstance(effect, TraceAnnotate):
+            active_recorder.annotate(effect)
+            return (yield Resume(k, None))
+        if isinstance(effect, TraceSnapshot):
+            active_recorder.snapshot(effect)
+            return (yield Resume(k, None))
+        if isinstance(effect, TraceCapture):
+            captured = active_recorder.capture(effect.format)
+            return (yield Resume(k, captured))
+        yield Delegate()
 
-    def handle_annotate(effect: TraceAnnotate, k):
-        active_recorder.annotate(effect)
-        return (yield Resume(k, None))
-
-    def handle_snapshot(effect: TraceSnapshot, k):
-        active_recorder.snapshot(effect)
-        return (yield Resume(k, None))
-
-    def handle_capture(effect: TraceCapture, k):
-        captured = active_recorder.capture(effect.format)
-        return (yield Resume(k, captured))
-
-    return {
-        TracePush: handle_push,
-        TraceAnnotate: handle_annotate,
-        TraceSnapshot: handle_snapshot,
-        TraceCapture: handle_capture,
-    }
+    return handler
 
 
 __all__ = [

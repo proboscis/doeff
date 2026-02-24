@@ -296,7 +296,7 @@ async def run_with_mock_handlers() -> None:
 
     result = await run_program(
         custom_adapter_workflow(session_name, config),
-        handler_maps=(preset_handlers(),),
+        scoped_handlers=(preset_handlers(),),
         custom_handlers=mock_agent_handlers(),
     )
     print(f"\nResult: {result}")
@@ -323,7 +323,7 @@ async def run_with_real_tmux() -> None:
 
     result = await run_program(
         custom_adapter_workflow(session_name, config),
-        handler_maps=(preset_handlers(),),
+        scoped_handlers=(preset_handlers(),),
         custom_handlers=agent_effectful_handlers(),
     )
     print(f"\nResult: {result}")

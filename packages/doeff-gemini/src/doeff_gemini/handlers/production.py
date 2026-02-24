@@ -358,8 +358,8 @@ def production_handlers(
     | None = None,
     image_generate_impl: Callable[[ImageGenerate], EffectGenerator[ImageResult]] | None = None,
     image_edit_impl: Callable[[ImageEdit], EffectGenerator[ImageResult]] | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build effect handlers backed by real Gemini API integrations."""
+) -> ProtocolHandler:
+    """Build a protocol handler backed by real Gemini API integrations."""
 
     active_chat_impl = chat_impl or _chat_impl
     active_streaming_chat_impl = streaming_chat_impl or _streaming_chat_impl
@@ -368,58 +368,49 @@ def production_handlers(
     active_image_generate_impl = image_generate_impl or _image_generate_impl
     active_image_edit_impl = image_edit_impl or _image_edit_impl
 
-    def handle_chat(effect: LLMChat | GeminiChat, k):
-        if not _is_gemini_model(effect.model):
-            yield Delegate()
-            return
-        if effect.stream:
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
+            if not _is_gemini_model(effect.model):
+                yield Delegate()
+                return
             value = yield active_streaming_chat_impl(effect)
             return (yield Resume(k, value))
-        value = yield active_chat_impl(effect)
-        return (yield Resume(k, value))
+        if isinstance(effect, LLMChat | GeminiChat):
+            if not _is_gemini_model(effect.model):
+                yield Delegate()
+                return
+            if effect.stream:
+                value = yield active_streaming_chat_impl(effect)
+                return (yield Resume(k, value))
+            value = yield active_chat_impl(effect)
+            return (yield Resume(k, value))
+        if isinstance(effect, LLMStructuredOutput | GeminiStructuredOutput):
+            if not _is_gemini_model(effect.model):
+                yield Delegate()
+                return
+            value = yield active_structured_impl(effect)
+            return (yield Resume(k, value))
+        if isinstance(effect, LLMEmbedding | GeminiEmbedding):
+            if not _is_gemini_model(effect.model):
+                yield Delegate()
+                return
+            value = yield active_embedding_impl(effect)
+            return (yield Resume(k, value))
+        if isinstance(effect, ImageGenerate):
+            if not _is_gemini_image_model(effect.model):
+                yield Delegate()
+                return
+            value = yield active_image_generate_impl(effect)
+            return (yield Resume(k, value))
+        if isinstance(effect, ImageEdit | GeminiImageEdit):
+            if not _is_gemini_image_model(effect.model):
+                yield Delegate()
+                return
+            value = yield active_image_edit_impl(effect)
+            return (yield Resume(k, value))
+        yield Delegate()
 
-    def handle_streaming_chat(effect: LLMStreamingChat | GeminiStreamingChat, k):
-        if not _is_gemini_model(effect.model):
-            yield Delegate()
-            return
-        value = yield active_streaming_chat_impl(effect)
-        return (yield Resume(k, value))
-
-    def handle_structured(effect: LLMStructuredOutput | GeminiStructuredOutput, k):
-        if not _is_gemini_model(effect.model):
-            yield Delegate()
-            return
-        value = yield active_structured_impl(effect)
-        return (yield Resume(k, value))
-
-    def handle_embedding(effect: LLMEmbedding | GeminiEmbedding, k):
-        if not _is_gemini_model(effect.model):
-            yield Delegate()
-            return
-        value = yield active_embedding_impl(effect)
-        return (yield Resume(k, value))
-
-    def handle_image_generate(effect: ImageGenerate, k):
-        value = yield active_image_generate_impl(effect)
-        return (yield Resume(k, value))
-
-    def handle_image_edit(effect: ImageEdit, k):
-        value = yield active_image_edit_impl(effect)
-        return (yield Resume(k, value))
-
-    return {
-        GeminiChat: handle_chat,
-        GeminiStreamingChat: handle_streaming_chat,
-        GeminiStructuredOutput: handle_structured,
-        GeminiEmbedding: handle_embedding,
-        LLMChat: handle_chat,
-        LLMStreamingChat: handle_streaming_chat,
-        LLMStructuredOutput: handle_structured,
-        LLMEmbedding: handle_embedding,
-        ImageGenerate: handle_image_generate,
-        ImageEdit: handle_image_edit,
-        GeminiImageEdit: handle_image_edit,
-    }
+    return handler
 
 
 def gemini_production_handler(effect: Any, k: Any):

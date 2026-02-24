@@ -87,36 +87,30 @@ def in_memory_handlers(
     seed_data: Mapping[str, SeedValue] | None = None,
     project: str = "mock-project",
     store: InMemorySecretStore | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build in-memory handler map for secret effects."""
+) -> ProtocolHandler:
+    """Build an in-memory protocol handler for secret effects."""
 
     active_store = store or InMemorySecretStore.from_seed_data(
         seed_data=seed_data,
         project=project,
     )
 
-    def handle_get_secret(effect: GetSecret, k):
-        value = active_store.get_secret(effect.secret_id, version=effect.version)
-        return (yield Resume(k, value))
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, GetSecret):
+            value = active_store.get_secret(effect.secret_id, version=effect.version)
+            return (yield Resume(k, value))
+        if isinstance(effect, SetSecret):
+            version_name = active_store.set_secret(effect.secret_id, effect.value)
+            return (yield Resume(k, version_name))
+        if isinstance(effect, ListSecrets):
+            secret_ids = active_store.list_secrets(filter_text=effect.filter)
+            return (yield Resume(k, secret_ids))
+        if isinstance(effect, DeleteSecret):
+            active_store.delete_secret(effect.secret_id)
+            return (yield Resume(k, None))
+        yield Delegate()
 
-    def handle_set_secret(effect: SetSecret, k):
-        version_name = active_store.set_secret(effect.secret_id, effect.value)
-        return (yield Resume(k, version_name))
-
-    def handle_list_secrets(effect: ListSecrets, k):
-        secret_ids = active_store.list_secrets(filter_text=effect.filter)
-        return (yield Resume(k, secret_ids))
-
-    def handle_delete_secret(effect: DeleteSecret, k):
-        active_store.delete_secret(effect.secret_id)
-        return (yield Resume(k, None))
-
-    return {
-        GetSecret: handle_get_secret,
-        SetSecret: handle_set_secret,
-        ListSecrets: handle_list_secrets,
-        DeleteSecret: handle_delete_secret,
-    }
+    return handler
 
 
 def in_memory_handler(
@@ -126,16 +120,7 @@ def in_memory_handler(
     store: InMemorySecretStore | None = None,
 ) -> ProtocolHandler:
     """Build a single handler-protocol callable for stacked WithHandler usage."""
-
-    handler_map = in_memory_handlers(seed_data=seed_data, project=project, store=store)
-
-    def handler(effect, k):
-        for effect_type, effect_handler in handler_map.items():
-            if isinstance(effect, effect_type):
-                return (yield from effect_handler(effect, k))
-        yield Delegate()
-
-    return handler
+    return in_memory_handlers(seed_data=seed_data, project=project, store=store)
 
 
 __all__ = [
