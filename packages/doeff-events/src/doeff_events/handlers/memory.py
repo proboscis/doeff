@@ -9,6 +9,8 @@ from doeff.effects import CreateExternalPromise, ExternalPromise, Wait
 from doeff_events.effects import PublishEffect, WaitForEventEffect
 
 ListenerMap = dict[type[Any], list[ExternalPromise[Any]]]
+BufferedEvents = list[Any]
+_NO_EVENT = object()
 
 
 def _matching_promises(
@@ -39,6 +41,16 @@ def _remove_promises(
             listeners.pop(event_type, None)
 
 
+def _pop_buffered_event(
+    buffered_events: BufferedEvents,
+    event_types: tuple[type[Any], ...],
+) -> Any:
+    for idx, event in enumerate(buffered_events):
+        if isinstance(event, event_types):
+            return buffered_events.pop(idx)
+    return _NO_EVENT
+
+
 def event_handler():
     """Create a stateful in-memory pub/sub handler.
 
@@ -48,9 +60,14 @@ def event_handler():
     """
 
     listeners: ListenerMap = {}
+    buffered_events: BufferedEvents = []
 
     def handler(effect: Any, k: Any):
         if isinstance(effect, WaitForEventEffect):
+            buffered_event = _pop_buffered_event(buffered_events, effect.event_types)
+            if buffered_event is not _NO_EVENT:
+                return (yield Resume(k, buffered_event))
+
             promise = yield CreateExternalPromise()
 
             for event_type in effect.event_types:
@@ -66,6 +83,11 @@ def event_handler():
         if isinstance(effect, PublishEffect):
             event = effect.event
             matched = _matching_promises(listeners, event)
+
+            if not matched:
+                buffered_events.append(event)
+                return (yield Resume(k, None))
+
             _remove_promises(listeners, set(matched))
 
             for promise in matched.values():

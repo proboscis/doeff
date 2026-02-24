@@ -277,6 +277,7 @@ impl DebugConfig {
 
 pub struct VM {
     pub segments: SegmentArena,
+    pub segment_child_counts: HashMap<SegmentId, usize>,
     pub dispatch_stack: Vec<DispatchContext>,
     pub callbacks: HashMap<CallbackId, Callback>,
     pub consumed_cont_ids: HashSet<ContId>,
@@ -300,6 +301,7 @@ impl VM {
     pub fn new() -> Self {
         VM {
             segments: SegmentArena::new(),
+            segment_child_counts: HashMap::new(),
             dispatch_stack: Vec::new(),
             callbacks: HashMap::new(),
             consumed_cont_ids: HashSet::new(),
@@ -376,7 +378,37 @@ impl VM {
     }
 
     pub fn alloc_segment(&mut self, segment: Segment) -> SegmentId {
-        self.segments.alloc(segment)
+        let caller = segment.caller;
+        let id = self.segments.alloc(segment);
+        self.segment_child_counts.insert(id, 0);
+        if let Some(caller_id) = caller {
+            if self.segments.get(caller_id).is_some() {
+                *self.segment_child_counts.entry(caller_id).or_insert(0) += 1;
+            }
+        }
+        id
+    }
+
+    fn segment_has_live_children(&self, id: SegmentId) -> bool {
+        self.segment_child_counts.get(&id).copied().unwrap_or(0) > 0
+    }
+
+    fn free_segment(&mut self, id: SegmentId) {
+        let caller = self.segments.get(id).and_then(|seg| seg.caller);
+        self.segments.free(id);
+        self.segment_child_counts.remove(&id);
+        if let Some(caller_id) = caller {
+            if let Some(count) = self.segment_child_counts.get_mut(&caller_id) {
+                *count = count.saturating_sub(1);
+            }
+        }
+    }
+
+    fn maybe_free_segment(&mut self, id: SegmentId) {
+        if self.segment_has_live_children(id) {
+            return;
+        }
+        self.free_segment(id);
     }
 
     pub fn current_segment_mut(&mut self) -> Option<&mut Segment> {
@@ -2202,13 +2234,13 @@ impl VM {
                         if let Some(caller_id) = caller {
                             self.current_segment = Some(caller_id);
                             self.mode = Mode::Throw(exc);
-                            self.segments.free(seg_id);
+                            self.maybe_free_segment(seg_id);
                             return StepEvent::Continue;
                         } else {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_trace();
                             let active_chain = self.assemble_active_chain(&exc);
-                            self.segments.free(seg_id);
+                            self.maybe_free_segment(seg_id);
                             return StepEvent::Error(VMError::uncaught_exception(
                                 exc,
                                 trace,
@@ -2796,16 +2828,15 @@ impl VM {
         };
 
         let caller = self.segments.get(seg_id).and_then(|s| s.caller);
-
         match caller {
             Some(caller_id) => {
                 self.current_segment = Some(caller_id);
-                self.segments.free(seg_id);
+                self.maybe_free_segment(seg_id);
                 self.mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             None => {
-                self.segments.free(seg_id);
+                self.maybe_free_segment(seg_id);
                 StepEvent::Done(value)
             }
         }
