@@ -13,8 +13,16 @@ import asyncio
 
 from doeff_preset import preset_handlers
 
-from doeff import Ask, do, slog
-from doeff.rust_vm import async_run_with_handler_map, run_with_handler_map
+from doeff import (
+    Ask,
+    WithHandler,
+    async_run,
+    default_async_handlers,
+    default_handlers,
+    do,
+    run,
+    slog,
+)
 
 
 @do
@@ -40,13 +48,19 @@ async def main():
 
     # Run with run()
     print("=== Running with run() ===\n")
-    sync_result = run_with_handler_map(async_workflow(), handlers)
+    sync_result = run(
+        WithHandler(handlers, async_workflow()),
+        handlers=default_handlers(),
+    )
     print(f"\nSync result: {sync_result.value}")
     print(f"Log entries: {len(sync_result.log)}")
 
     # Run with async_run()
     print("\n=== Running with async_run() ===\n")
-    async_result = await async_run_with_handler_map(async_workflow(), handlers)
+    async_result = await async_run(
+        WithHandler(handlers, async_workflow()),
+        handlers=default_async_handlers(),
+    )
     print(f"\nAsync result: {async_result.value}")
     print(f"Log entries: {len(async_result.log)}")
 

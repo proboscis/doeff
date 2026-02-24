@@ -32,8 +32,8 @@ def production_handlers(
     port: int | None = None,
     startup_timeout: float = 30.0,
     working_dir: str | None = None,
-) -> dict[type, Any]:
-    """Create production handler maps for new agentic effects."""
+) -> Any:
+    """Create a production protocol handler for new agentic effects."""
     if backend == "opencode":
         return opencode_handler(
             server_url=server_url,

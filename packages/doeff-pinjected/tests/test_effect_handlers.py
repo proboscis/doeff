@@ -20,8 +20,14 @@ from doeff_pinjected.handlers import (  # noqa: E402
     production_handlers,
 )
 
-from doeff import do  # noqa: E402
-from doeff.rust_vm import async_run_with_handler_map, run_with_handler_map
+from doeff import (  # noqa: E402
+    WithHandler,
+    async_run,
+    default_async_handlers,
+    default_handlers,
+    do,
+    run,
+)
 
 
 def _is_ok(run_result: Any) -> bool:
@@ -41,6 +47,20 @@ class FakeAsyncResolver:
         if key not in self.bindings:
             raise KeyError(key)
         return self.bindings[key]
+
+
+def _run_with_handler(program, handler):
+    return run(
+        WithHandler(handler, program),
+        handlers=default_handlers(),
+    )
+
+
+async def _async_run_with_handler(program, handler):
+    return await async_run(
+        WithHandler(handler, program),
+        handlers=default_async_handlers(),
+    )
 
 
 def test_effect_exports() -> None:
@@ -71,7 +91,7 @@ def test_mock_handlers_support_resolve_and_provide() -> None:
         second = yield PinjectedResolve(key="service")
         return first, second
 
-    result = run_with_handler_map(workflow(), mock_handlers(runtime=runtime))
+    result = _run_with_handler(workflow(), mock_handlers(runtime=runtime))
 
     assert _is_ok(result)
     assert result.value == ("mock-v1", "mock-v2")
@@ -96,11 +116,11 @@ def _resolve_and_override_service():
 async def test_handler_swapping_between_mock_and_production() -> None:
     resolver = FakeAsyncResolver({"service": "prod-v1"})
 
-    mock_result = run_with_handler_map(
+    mock_result = _run_with_handler(
         _resolve_service(),
         mock_handlers(bindings={"service": "mock-v1"}),
     )
-    production_result = await async_run_with_handler_map(
+    production_result = await _async_run_with_handler(
         _resolve_and_override_service(),
         production_handlers(resolver=resolver),
     )

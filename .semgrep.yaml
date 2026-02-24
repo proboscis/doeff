@@ -1423,6 +1423,84 @@ rules:
     metadata:
       category: public-api-removed
 
+  - id: doeff-no-handler-map-run-helpers
+    pattern-regex: '\b(run_with_handler_map|async_run_with_handler_map|_wrap_with_handler_map|merge_handler_maps)\b'
+    paths:
+      include:
+        - "**/doeff/**/*.py"
+        - "**/packages/**/src/**/*.py"
+        - "**/packages/**/examples/**/*.py"
+        - "**/tests/**/*.py"
+    message: |
+      handler_map bridging APIs are removed.
+      Use explicit WithHandler stacking:
+        program = WithHandler(handler, program)
+        result = run(program, handlers=default_handlers())
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: handler-stacking
+      issue: ISSUE-HANDLER-MAP-001
+
+  - id: doeff-no-handler-map-param-annotation
+    pattern-regex: 'def\s+\w+\([^)]*\bhandler_map\s*:\s*dict\[type'
+    paths:
+      include:
+        - "**/doeff/**/*.py"
+        - "**/packages/**/src/**/*.py"
+    message: |
+      Type-keyed handler_map annotations are banned.
+      Accept a protocol handler callable and stack with WithHandler instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: handler-stacking
+      issue: ISSUE-HANDLER-MAP-001
+
+  - id: doeff-no-handler-factory-dict-return
+    pattern-regex: 'def\s+(production_handlers|mock_handlers|[A-Za-z0-9_]*handlers)\s*\([^)]*\)\s*->\s*dict\[type'
+    paths:
+      include:
+        - "**/doeff/**/*.py"
+        - "**/packages/**/src/**/*.py"
+    message: |
+      Handler factories must return a protocol handler callable, not dict[type, handler].
+      Compose handlers by WithHandler stacking.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: handler-stacking
+      issue: ISSUE-HANDLER-MAP-001
+
+  - id: doeff-no-effect-keyed-handler-dict-literal
+    patterns:
+      - pattern-either:
+          - pattern: |
+              return {
+                $EFFECT: $HANDLER,
+                ...
+              }
+          - pattern: |
+              $HANDLERS = {
+                $EFFECT: $HANDLER,
+                ...
+              }
+      - metavariable-regex:
+          metavariable: $EFFECT
+          regex: '^[A-Z][A-Za-z0-9_]*$'
+    paths:
+      include:
+        - "**/doeff/**/*.py"
+        - "**/packages/**/src/**/handlers/**/*.py"
+    message: |
+      Type-keyed handler dict literals are banned.
+      Build a single protocol handler with isinstance(...) checks and Delegate/Pass forwarding.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: handler-stacking
+      issue: ISSUE-HANDLER-MAP-001
+
   - id: doeff-no-safe-use-try
     pattern-regex: '(from\s+doeff[.\w]*\s+import\s+[^#\n]*\bSafe\b|yield\s+Safe\()'
     paths:

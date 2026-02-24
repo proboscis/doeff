@@ -19,8 +19,8 @@ def mock_handlers(
     seed_data: Mapping[str, SeedValue] | None = None,
     project: str = "mock-project",
     store: InMemorySecretStore | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build in-memory handler map for secret effects.
+) -> ProtocolHandler:
+    """Build an in-memory protocol handler for secret effects.
 
     Deprecated: use `doeff_secret.testing.in_memory_handlers(...)`.
     """

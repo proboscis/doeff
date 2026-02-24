@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from doeff import Delegate
 from doeff_conductor.effects.agent import (
     CaptureOutput,
     RunAgent,
@@ -34,7 +35,6 @@ from doeff_conductor.types import (
 from .utils import make_scheduled_handler
 
 ScheduledHandler = Callable[..., Any]
-SimpleHandler = Callable[[Any], Any]
 
 
 def _supports_continuation(handler: Callable[..., Any]) -> bool:
@@ -322,11 +322,11 @@ class MockConductorRuntime:
 def mock_handlers(
     runtime: MockConductorRuntime | None = None,
     *,
-    overrides: Mapping[type, Callable[..., Any]] | None = None,
+    overrides: Mapping[type[Any], Callable[..., Any]] | None = None,
     root: Path | None = None,
     workflow_id: str = "mock-workflow",
-) -> dict[type, ScheduledHandler]:
-    """Build a complete mock handler map for all conductor effects.
+) -> ScheduledHandler:
+    """Build a complete mock protocol handler for all conductor effects.
 
     Args:
         runtime: Optional runtime instance to keep state between invocations.
@@ -336,37 +336,40 @@ def mock_handlers(
     """
     active_runtime = runtime or MockConductorRuntime(root=root, workflow_id=workflow_id)
 
-    handlers: dict[type, ScheduledHandler] = {
-        # Worktree
-        CreateWorktree: make_scheduled_handler(active_runtime.handle_create_worktree),
-        MergeBranches: make_scheduled_handler(active_runtime.handle_merge_branches),
-        DeleteWorktree: make_scheduled_handler(active_runtime.handle_delete_worktree),
-        # Issue
-        CreateIssue: make_scheduled_handler(active_runtime.handle_create_issue),
-        ListIssues: make_scheduled_handler(active_runtime.handle_list_issues),
-        GetIssue: make_scheduled_handler(active_runtime.handle_get_issue),
-        ResolveIssue: make_scheduled_handler(active_runtime.handle_resolve_issue),
-        # Agent
-        RunAgent: make_scheduled_handler(active_runtime.handle_run_agent),
-        SpawnAgent: make_scheduled_handler(active_runtime.handle_spawn_agent),
-        SendMessage: make_scheduled_handler(active_runtime.handle_send_message),
-        WaitForStatus: make_scheduled_handler(active_runtime.handle_wait_for_status),
-        CaptureOutput: make_scheduled_handler(active_runtime.handle_capture_output),
-        # Git
-        Commit: make_scheduled_handler(active_runtime.handle_commit),
-        Push: make_scheduled_handler(active_runtime.handle_push),
-        CreatePR: make_scheduled_handler(active_runtime.handle_create_pr),
-        MergePR: make_scheduled_handler(active_runtime.handle_merge_pr),
-    }
+    handlers: list[tuple[type[Any], ScheduledHandler]] = [
+        (CreateWorktree, make_scheduled_handler(active_runtime.handle_create_worktree)),
+        (MergeBranches, make_scheduled_handler(active_runtime.handle_merge_branches)),
+        (DeleteWorktree, make_scheduled_handler(active_runtime.handle_delete_worktree)),
+        (CreateIssue, make_scheduled_handler(active_runtime.handle_create_issue)),
+        (ListIssues, make_scheduled_handler(active_runtime.handle_list_issues)),
+        (GetIssue, make_scheduled_handler(active_runtime.handle_get_issue)),
+        (ResolveIssue, make_scheduled_handler(active_runtime.handle_resolve_issue)),
+        (RunAgent, make_scheduled_handler(active_runtime.handle_run_agent)),
+        (SpawnAgent, make_scheduled_handler(active_runtime.handle_spawn_agent)),
+        (SendMessage, make_scheduled_handler(active_runtime.handle_send_message)),
+        (WaitForStatus, make_scheduled_handler(active_runtime.handle_wait_for_status)),
+        (CaptureOutput, make_scheduled_handler(active_runtime.handle_capture_output)),
+        (Commit, make_scheduled_handler(active_runtime.handle_commit)),
+        (Push, make_scheduled_handler(active_runtime.handle_push)),
+        (CreatePR, make_scheduled_handler(active_runtime.handle_create_pr)),
+        (MergePR, make_scheduled_handler(active_runtime.handle_merge_pr)),
+    ]
 
     for effect_type, override_handler in (overrides or {}).items():
-        handlers[effect_type] = (
+        normalized = (
             override_handler
             if _supports_continuation(override_handler)
             else make_scheduled_handler(override_handler)  # type: ignore[arg-type]
         )
+        handlers.insert(0, (effect_type, normalized))
 
-    return handlers
+    def handler(effect: Any, k: Any):
+        for effect_type, effect_handler in handlers:
+            if isinstance(effect, effect_type):
+                return (yield from effect_handler(effect, k))
+        yield Delegate()
+
+    return handler
 
 
 __all__ = [

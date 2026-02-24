@@ -8,9 +8,6 @@ import pytest
 @pytest.mark.parametrize(
     "name",
     [
-        "wrap_with_handler_map",
-        "run_with_handler_map",
-        "async_run_with_handler_map",
         "run_program",
         "ProgramRunResult",
     ],
@@ -64,9 +61,6 @@ def test_internal_helpers_not_in_all() -> None:
     import doeff
 
     internals = [
-        "wrap_with_handler_map",
-        "run_with_handler_map",
-        "async_run_with_handler_map",
         "run_program",
         "ProgramRunResult",
         "DoCtrl",
