@@ -16,8 +16,8 @@ use crate::capture::{
     HandlerStatus, TraceEntry, TraceFrame, TraceHop,
 };
 use crate::continuation::Continuation;
-use crate::do_ctrl::{CallArg, DoCtrl};
-use crate::doeff_generator::DoeffGenerator;
+use crate::do_ctrl::{CallArg, DoCtrl, InterceptMode};
+use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
     dispatch_ref_as_python, make_execution_context_object, make_get_execution_context_effect,
@@ -31,7 +31,10 @@ use crate::handler::{Handler, HandlerEntry, RustProgramInvocation};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::pyvm::{PyDoExprBase, PyEffectBase};
+use crate::pyvm::{
+    classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, DoExprTag, PyDoCtrlBase, PyDoExprBase,
+    PyEffectBase, PyPure,
+};
 use crate::segment::Segment;
 use crate::value::Value;
 
@@ -231,6 +234,14 @@ struct ActiveChainAssemblyState {
     transfer_targets: HashMap<DispatchId, String>,
 }
 
+#[derive(Clone)]
+pub struct InterceptorEntry {
+    interceptor: PyShared,
+    types: PyShared,
+    mode: InterceptMode,
+    metadata: CallMetadata,
+}
+
 impl ActiveChainAssemblyState {
     fn new() -> Self {
         Self {
@@ -281,6 +292,12 @@ pub struct VM {
     pub callbacks: HashMap<CallbackId, Callback>,
     pub consumed_cont_ids: HashSet<ContId>,
     pub handlers: HashMap<Marker, HandlerEntry>,
+    pub interceptors: HashMap<Marker, InterceptorEntry>,
+    pub interceptor_callbacks: HashMap<CallbackId, Marker>,
+    pub interceptor_call_metadata: HashMap<CallbackId, CallMetadata>,
+    pub interceptor_eval_callbacks: HashSet<CallbackId>,
+    pub interceptor_eval_depth: usize,
+    pub interceptor_skip_stack: Vec<Marker>,
     pub rust_store: RustStore,
     pub py_store: Option<PyStore>,
     pub current_segment: Option<SegmentId>,
@@ -304,6 +321,12 @@ impl VM {
             callbacks: HashMap::new(),
             consumed_cont_ids: HashSet::new(),
             handlers: HashMap::new(),
+            interceptors: HashMap::new(),
+            interceptor_callbacks: HashMap::new(),
+            interceptor_call_metadata: HashMap::new(),
+            interceptor_eval_callbacks: HashSet::new(),
+            interceptor_eval_depth: 0,
+            interceptor_skip_stack: Vec::new(),
             rust_store: RustStore::new(),
             py_store: None,
             current_segment: None,
@@ -335,6 +358,12 @@ impl VM {
         let token = NEXT_RUN_TOKEN.fetch_add(1, Ordering::Relaxed);
         self.active_run_token = Some(token);
         self.capture_log.clear();
+        self.interceptors.clear();
+        self.interceptor_callbacks.clear();
+        self.interceptor_call_metadata.clear();
+        self.interceptor_eval_callbacks.clear();
+        self.interceptor_eval_depth = 0;
+        self.interceptor_skip_stack.clear();
         token
     }
 
@@ -2026,6 +2055,7 @@ impl VM {
             DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
             DoCtrl::ResumeThrow { .. } => "HandleYield(ResumeThrow)",
             DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
+            DoCtrl::WithIntercept { .. } => "HandleYield(WithIntercept)",
             DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
             DoCtrl::Pass { .. } => "HandleYield(Pass)",
             DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
@@ -2241,10 +2271,28 @@ impl VM {
 
                 match mode {
                     Mode::Deliver(value) => {
+                        if let Some(metadata) = self.interceptor_call_metadata.remove(&cb) {
+                            self.maybe_emit_frame_exited(&metadata);
+                        }
+                        if self.interceptor_eval_callbacks.remove(&cb) {
+                            self.interceptor_eval_depth =
+                                self.interceptor_eval_depth.saturating_sub(1);
+                        }
+                        self.interceptor_callbacks.remove(&cb);
                         self.mode = callback(value, self);
                         StepEvent::Continue
                     }
                     Mode::Throw(exc) => {
+                        if let Some(metadata) = self.interceptor_call_metadata.remove(&cb) {
+                            self.maybe_emit_frame_exited(&metadata);
+                        }
+                        if self.interceptor_eval_callbacks.remove(&cb) {
+                            self.interceptor_eval_depth =
+                                self.interceptor_eval_depth.saturating_sub(1);
+                        }
+                        if let Some(marker) = self.interceptor_callbacks.remove(&cb) {
+                            self.pop_interceptor_skip(marker);
+                        }
                         self.mode = Mode::Throw(exc);
                         StepEvent::Continue
                     }
@@ -2273,26 +2321,7 @@ impl VM {
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         match step {
-            ASTStreamStep::Yield(yielded) => {
-                // Terminal DoCtrl variants (Transfer, TransferThrow, Pass) transfer control
-                // elsewhere — the handler is done and no value flows back. Do NOT re-push
-                // the Program frame for those. Resume and ResumeThrow are non-terminal.
-                let is_terminal = matches!(
-                    &yielded,
-                    DoCtrl::Transfer { .. } | DoCtrl::TransferThrow { .. } | DoCtrl::Pass { .. }
-                );
-                if !is_terminal {
-                    let Some(seg) = self.current_segment_mut() else {
-                        return StepEvent::Error(VMError::internal(
-                            "current_segment_mut() returned None in apply_stream_step \
-                             (Yield non-terminal)",
-                        ));
-                    };
-                    seg.push_frame(Frame::Program { stream, metadata });
-                }
-                self.mode = Mode::HandleYield(yielded);
-                StepEvent::Continue
-            }
+            ASTStreamStep::Yield(yielded) => self.handle_stream_yield(yielded, stream, metadata),
             ASTStreamStep::Return(value) => {
                 if let Some(ref m) = metadata {
                     self.maybe_emit_frame_exited(m);
@@ -2348,6 +2377,378 @@ impl VM {
         }
     }
 
+    fn handle_stream_yield(
+        &mut self,
+        yielded: DoCtrl,
+        stream: ASTStreamRef,
+        metadata: Option<CallMetadata>,
+    ) -> StepEvent {
+        let chain = Arc::new(self.current_interceptor_chain());
+        self.mode = self.continue_interceptor_chain_mode(yielded, stream, metadata, chain, 0);
+        StepEvent::Continue
+    }
+
+    fn finalize_stream_yield_mode(
+        &mut self,
+        yielded: DoCtrl,
+        stream: ASTStreamRef,
+        metadata: Option<CallMetadata>,
+    ) -> Mode {
+        // Terminal DoCtrl variants (Transfer, TransferThrow, Pass) transfer control
+        // elsewhere — the handler is done and no value flows back. Do NOT re-push
+        // the Program frame for those. Resume and ResumeThrow are non-terminal.
+        let is_terminal = matches!(
+            &yielded,
+            DoCtrl::Transfer { .. } | DoCtrl::TransferThrow { .. } | DoCtrl::Pass { .. }
+        );
+        if !is_terminal {
+            match self.current_segment_mut() {
+                Some(seg) => seg.push_frame(Frame::Program { stream, metadata }),
+                None => {
+                    return Mode::Throw(PyException::runtime_error(
+                        "current_segment_mut() returned None in apply_stream_step \
+                         (Yield non-terminal)",
+                    ))
+                }
+            }
+        }
+        Mode::HandleYield(yielded)
+    }
+
+    fn current_interceptor_chain(&self) -> Vec<Marker> {
+        self.current_scope_chain()
+            .into_iter()
+            .filter(|marker| self.interceptors.contains_key(marker))
+            .collect()
+    }
+
+    fn is_interceptor_skipped(&self, marker: Marker) -> bool {
+        self.interceptor_skip_stack.contains(&marker)
+    }
+
+    fn pop_interceptor_skip(&mut self, marker: Marker) {
+        if let Some(pos) = self
+            .interceptor_skip_stack
+            .iter()
+            .rposition(|active| *active == marker)
+        {
+            self.interceptor_skip_stack.remove(pos);
+        }
+    }
+
+    fn should_apply_interceptor(
+        &self,
+        entry: &InterceptorEntry,
+        yielded_obj: &Py<PyAny>,
+    ) -> Result<bool, PyException> {
+        let is_match = Python::attach(|py| {
+            yielded_obj
+                .bind(py)
+                .is_instance(entry.types.bind(py))
+                .map_err(PyException::from)
+        })?;
+        Ok(match entry.mode {
+            InterceptMode::Include => is_match,
+            InterceptMode::Exclude => !is_match,
+        })
+    }
+
+    fn classify_interceptor_result_object(
+        &self,
+        result_obj: Py<PyAny>,
+        original_obj: &Py<PyAny>,
+        original_yielded: DoCtrl,
+    ) -> Result<DoCtrl, PyException> {
+        Python::attach(|py| {
+            if result_obj.bind(py).as_ptr() == original_obj.bind(py).as_ptr() {
+                return Ok(original_yielded);
+            }
+            classify_yielded_for_vm(self, py, result_obj.bind(py))
+        })
+    }
+
+    fn continue_interceptor_chain_mode(
+        &mut self,
+        yielded: DoCtrl,
+        stream: ASTStreamRef,
+        metadata: Option<CallMetadata>,
+        chain: Arc<Vec<Marker>>,
+        start_idx: usize,
+    ) -> Mode {
+        let current = yielded;
+        let mut idx = start_idx;
+
+        while idx < chain.len() {
+            let marker = chain[idx];
+            idx += 1;
+            if self.is_interceptor_skipped(marker) {
+                continue;
+            }
+
+            let Some(entry) = self.interceptors.get(&marker).cloned() else {
+                continue;
+            };
+
+            let yielded_obj = match doctrl_to_pyexpr_for_vm(&current) {
+                Ok(Some(obj)) => obj,
+                Ok(None) => continue,
+                Err(exc) => return Mode::Throw(exc),
+            };
+
+            let should_apply = match self.should_apply_interceptor(&entry, &yielded_obj) {
+                Ok(flag) => flag,
+                Err(exc) => return Mode::Throw(exc),
+            };
+            if !should_apply {
+                continue;
+            }
+
+            return self.start_interceptor_invocation_mode(
+                marker,
+                entry,
+                current,
+                yielded_obj,
+                stream,
+                metadata,
+                chain,
+                idx,
+            );
+        }
+
+        self.finalize_stream_yield_mode(current, stream, metadata)
+    }
+
+    fn start_interceptor_invocation_mode(
+        &mut self,
+        marker: Marker,
+        entry: InterceptorEntry,
+        yielded: DoCtrl,
+        yielded_obj: Py<PyAny>,
+        stream: ASTStreamRef,
+        metadata: Option<CallMetadata>,
+        chain: Arc<Vec<Marker>>,
+        next_idx: usize,
+    ) -> Mode {
+        let interceptor_callable = entry.interceptor.into_inner();
+        let interceptor_meta = entry.metadata.clone();
+        let yielded_obj_for_callback = Python::attach(|py| yielded_obj.clone_ref(py));
+        let interceptor_arg = match self.interceptor_call_arg(&interceptor_callable, &yielded_obj) {
+            Ok(arg) => arg,
+            Err(exc) => return Mode::Throw(exc),
+        };
+
+        let cb = self.register_callback(Box::new(move |value, vm| {
+            vm.handle_interceptor_apply_result(
+                marker,
+                value,
+                yielded,
+                yielded_obj_for_callback,
+                stream,
+                metadata,
+                chain,
+                next_idx,
+            )
+        }));
+
+        self.interceptor_callbacks.insert(cb, marker);
+        self.interceptor_skip_stack.push(marker);
+
+        if self.current_segment.is_none() {
+            self.pop_interceptor_skip(marker);
+            self.interceptor_callbacks.remove(&cb);
+            self.callbacks.remove(&cb);
+            return Mode::Throw(PyException::runtime_error(
+                "current_segment_mut() returned None while invoking interceptor",
+            ));
+        }
+        self.maybe_emit_frame_entered(&interceptor_meta);
+        self.interceptor_call_metadata
+            .insert(cb, interceptor_meta.clone());
+        let Some(seg) = self.current_segment_mut() else {
+            self.interceptor_call_metadata.remove(&cb);
+            self.pop_interceptor_skip(marker);
+            self.interceptor_callbacks.remove(&cb);
+            self.callbacks.remove(&cb);
+            return Mode::Throw(PyException::runtime_error(
+                "current_segment_mut() returned None while invoking interceptor",
+            ));
+        };
+        seg.push_frame(Frame::RustReturn { cb });
+
+        Mode::HandleYield(DoCtrl::Apply {
+            f: CallArg::Value(Value::Python(interceptor_callable)),
+            args: vec![interceptor_arg],
+            kwargs: vec![],
+            metadata: interceptor_meta,
+        })
+    }
+
+    fn interceptor_call_arg(
+        &self,
+        interceptor_callable: &Py<PyAny>,
+        yielded_obj: &Py<PyAny>,
+    ) -> Result<CallArg, PyException> {
+        Python::attach(|py| {
+            let callable = interceptor_callable.bind(py);
+            let is_do_callable =
+                callable.is_instance_of::<DoeffGeneratorFn>()
+                    || callable
+                        .getattr("_doeff_generator_factory")
+                        .is_ok_and(|factory| factory.is_instance_of::<DoeffGeneratorFn>());
+
+            // @do callables are expanded as DoCtrl::Expand and evaluate expression arguments.
+            // Wrap the yielded object in Pure(...) so interceptor functions receive the original
+            // DoExpr value (not the evaluated effect result).
+            if is_do_callable {
+                let quoted = Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::Pure as u8,
+                        })
+                        .add_subclass(PyPure {
+                            value: yielded_obj.clone_ref(py),
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind();
+                return Ok(CallArg::Expr(PyShared::new(quoted)));
+            }
+
+            Ok(CallArg::Value(Value::Python(yielded_obj.clone_ref(py))))
+        })
+    }
+
+    fn handle_interceptor_apply_result(
+        &mut self,
+        marker: Marker,
+        value: Value,
+        original_yielded: DoCtrl,
+        original_obj: Py<PyAny>,
+        stream: ASTStreamRef,
+        metadata: Option<CallMetadata>,
+        chain: Arc<Vec<Marker>>,
+        next_idx: usize,
+    ) -> Mode {
+        let Value::Python(result_obj) = value else {
+            self.pop_interceptor_skip(marker);
+            return Mode::Throw(PyException::type_error(
+                "WithIntercept interceptor must return DoExpr",
+            ));
+        };
+
+        let (doctrl_tag, is_effect_base, is_doexpr) = Python::attach(|py| {
+            let bound = result_obj.bind(py);
+            let doctrl_tag = bound
+                .extract::<PyRef<'_, PyDoCtrlBase>>()
+                .ok()
+                .and_then(|base| DoExprTag::try_from(base.tag).ok());
+            (
+                doctrl_tag,
+                bound.is_instance_of::<PyEffectBase>(),
+                bound.is_instance_of::<PyDoExprBase>(),
+            )
+        });
+        let is_direct_expr = is_effect_base || doctrl_tag.is_some_and(|tag| tag != DoExprTag::Expand);
+
+        if is_direct_expr {
+            let transformed = match self.classify_interceptor_result_object(
+                result_obj,
+                &original_obj,
+                original_yielded,
+            ) {
+                Ok(expr) => expr,
+                Err(exc) => {
+                    self.pop_interceptor_skip(marker);
+                    return Mode::Throw(exc);
+                }
+            };
+            self.pop_interceptor_skip(marker);
+            return self.continue_interceptor_chain_mode(
+                transformed,
+                stream,
+                metadata,
+                chain,
+                next_idx,
+            );
+        }
+
+        if is_doexpr {
+            let cb = self.register_callback(Box::new(move |resolved, vm| {
+                vm.handle_interceptor_eval_result(
+                    marker,
+                    resolved,
+                    original_yielded,
+                    original_obj,
+                    stream,
+                    metadata,
+                    chain,
+                    next_idx,
+                )
+            }));
+            self.interceptor_callbacks.insert(cb, marker);
+            self.interceptor_eval_callbacks.insert(cb);
+            self.interceptor_eval_depth = self.interceptor_eval_depth.saturating_add(1);
+
+            let Some(seg) = self.current_segment_mut() else {
+                self.pop_interceptor_skip(marker);
+                self.interceptor_callbacks.remove(&cb);
+                if self.interceptor_eval_callbacks.remove(&cb) {
+                    self.interceptor_eval_depth = self.interceptor_eval_depth.saturating_sub(1);
+                }
+                self.callbacks.remove(&cb);
+                return Mode::Throw(PyException::runtime_error(
+                    "current_segment_mut() returned None while evaluating interceptor result",
+                ));
+            };
+            seg.push_frame(Frame::RustReturn { cb });
+
+            let handlers = self.current_visible_handlers();
+            return Mode::HandleYield(DoCtrl::Eval {
+                expr: PyShared::new(result_obj),
+                handlers,
+                metadata: None,
+            });
+        }
+
+        self.pop_interceptor_skip(marker);
+        Mode::Throw(PyException::type_error(
+            "WithIntercept interceptor must return DoExpr",
+        ))
+    }
+
+    fn handle_interceptor_eval_result(
+        &mut self,
+        marker: Marker,
+        value: Value,
+        original_yielded: DoCtrl,
+        original_obj: Py<PyAny>,
+        stream: ASTStreamRef,
+        metadata: Option<CallMetadata>,
+        chain: Arc<Vec<Marker>>,
+        next_idx: usize,
+    ) -> Mode {
+        let Value::Python(result_obj) = value else {
+            self.pop_interceptor_skip(marker);
+            return Mode::Throw(PyException::type_error(
+                "WithIntercept effectful interceptor must resolve to DoExpr",
+            ));
+        };
+
+        let transformed =
+            match self.classify_interceptor_result_object(result_obj, &original_obj, original_yielded)
+            {
+                Ok(expr) => expr,
+                Err(exc) => {
+                    self.pop_interceptor_skip(marker);
+                    return Mode::Throw(exc);
+                }
+            };
+        self.pop_interceptor_skip(marker);
+        self.continue_interceptor_chain_mode(transformed, stream, metadata, chain, next_idx)
+    }
+
     fn step_handle_yield(&mut self) -> StepEvent {
         // Take mode by move — eliminates DoCtrl clone containing Py<PyAny> values (D1 Phase 1).
         let yielded = match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
@@ -2394,6 +2795,13 @@ impl VM {
                 expr,
                 py_identity,
             } => self.handle_yield_with_handler(handler, expr, py_identity),
+            DoCtrl::WithIntercept {
+                interceptor,
+                expr,
+                types,
+                mode,
+                metadata,
+            } => self.handle_yield_with_intercept(interceptor, expr, types, mode, metadata),
             DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
             DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
             DoCtrl::GetContinuation => self.handle_yield_get_continuation(),
@@ -2496,6 +2904,17 @@ impl VM {
         py_identity: Option<PyShared>,
     ) -> StepEvent {
         self.handle_with_handler(handler, expr, py_identity)
+    }
+
+    fn handle_yield_with_intercept(
+        &mut self,
+        interceptor: PyShared,
+        expr: Py<PyAny>,
+        types: PyShared,
+        mode: InterceptMode,
+        metadata: CallMetadata,
+    ) -> StepEvent {
+        self.handle_with_intercept(interceptor, expr, types, mode, metadata)
     }
 
     fn handle_yield_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
@@ -3002,15 +3421,14 @@ impl VM {
     ) {
         match outcome {
             PyCallOutcome::GenYield(yielded) => {
-                let Some(seg) = self.current_segment_mut() else {
+                if self.current_segment.is_none() {
                     self.mode = Mode::Throw(PyException::runtime_error(
                         "current_segment_mut() returned None in receive_python_result \
                          StepUserGenerator::GenYield",
                     ));
                     return;
-                };
-                seg.push_frame(Frame::Program { stream, metadata });
-                self.mode = Mode::HandleYield(yielded);
+                }
+                let _ = self.handle_stream_yield(yielded, stream, metadata);
             }
             PyCallOutcome::GenReturn(value) => {
                 if let Some(ref m) = metadata {
@@ -3111,6 +3529,20 @@ impl VM {
             .and_then(|id| self.segments.get(id))
             .map(|seg| seg.scope_chain.clone())
             .unwrap_or_default()
+    }
+
+    fn handler_scope_chain(&self, handler_marker: Marker) -> Vec<Marker> {
+        let Some(entry) = self.handlers.get(&handler_marker) else {
+            return self.current_scope_chain();
+        };
+        let Some(prompt_seg) = self.segments.get(entry.prompt_seg_id) else {
+            return self.current_scope_chain();
+        };
+
+        let mut scope_chain = Vec::with_capacity(prompt_seg.scope_chain.len() + 1);
+        scope_chain.push(handler_marker);
+        scope_chain.extend(prompt_seg.scope_chain.iter().copied());
+        scope_chain
     }
 
     pub fn lazy_pop_completed(&mut self) {
@@ -3225,7 +3657,8 @@ impl VM {
             .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
         let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
 
-        let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id), scope_chain);
+        let handler_scope_chain = self.handler_scope_chain(handler_marker);
+        let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id), handler_scope_chain);
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.current_segment = Some(handler_seg_id);
 
@@ -3669,6 +4102,50 @@ impl VM {
         })
     }
 
+    fn handle_with_intercept(
+        &mut self,
+        interceptor: PyShared,
+        program: Py<PyAny>,
+        types: PyShared,
+        mode: InterceptMode,
+        metadata: CallMetadata,
+    ) -> StepEvent {
+        let interceptor_marker = Marker::fresh();
+        let outside_seg_id = match self.current_segment {
+            Some(id) => id,
+            None => {
+                return StepEvent::Error(VMError::internal("no current segment for WithIntercept"));
+            }
+        };
+        let outside_scope = self
+            .segments
+            .get(outside_seg_id)
+            .map(|s| s.scope_chain.clone())
+            .unwrap_or_default();
+
+        self.interceptors.insert(
+            interceptor_marker,
+            InterceptorEntry {
+                interceptor,
+                types,
+                mode,
+                metadata,
+            },
+        );
+
+        let mut body_scope = vec![interceptor_marker];
+        body_scope.extend(outside_scope);
+
+        let body_seg = Segment::new(interceptor_marker, Some(outside_seg_id), body_scope);
+        let body_seg_id = self.alloc_segment(body_seg);
+
+        self.current_segment = Some(body_seg_id);
+        self.pending_python = Some(PendingPython::EvalExpr { metadata: None });
+        StepEvent::NeedsPython(PythonCall::EvalExpr {
+            expr: PyShared::new(program),
+        })
+    }
+
     fn clear_segment_frames(&mut self, segment_id: Option<SegmentId>) {
         if let Some(seg_id) = segment_id {
             if let Some(seg) = self.segments.get_mut(seg_id) {
@@ -3800,8 +4277,8 @@ impl VM {
                     top.k_user.clone()
                 };
 
-                let scope_chain = self.current_scope_chain();
-                let handler_seg = Segment::new(marker, inner_seg_id, scope_chain);
+                let handler_scope_chain = self.handler_scope_chain(marker);
+                let handler_seg = Segment::new(marker, inner_seg_id, handler_scope_chain);
                 let handler_seg_id = self.alloc_segment(handler_seg);
                 self.current_segment = Some(handler_seg_id);
 
@@ -3852,9 +4329,9 @@ impl VM {
                 bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<PyEffectBase>()
             });
 
-            if should_eval {
+            if should_eval && self.interceptor_eval_depth == 0 {
                 let handlers = self.current_visible_handlers();
-                let expr = PyShared::new(obj.clone());
+                let expr = Python::attach(|py| PyShared::new(obj.clone_ref(py)));
                 let cb = self.register_callback(Box::new(|resolved, vm| {
                     let _ = vm.handle_handler_return(resolved);
                     std::mem::replace(&mut vm.mode, Mode::Deliver(Value::Unit))

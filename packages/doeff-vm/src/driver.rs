@@ -127,6 +127,17 @@ impl Mode {
     }
 }
 
+impl From<PyErr> for PyException {
+    fn from(err: PyErr) -> Self {
+        Python::attach(|py| {
+            let exc_type = err.get_type(py).into_any().unbind();
+            let exc_value = err.value(py).clone().into_any().unbind();
+            let exc_tb = err.traceback(py).map(|tb| tb.into_any().unbind());
+            PyException::new(exc_type, exc_value, exc_tb)
+        })
+    }
+}
+
 impl StepEvent {
     pub fn is_done(&self) -> bool {
         matches!(self, StepEvent::Done(_))
