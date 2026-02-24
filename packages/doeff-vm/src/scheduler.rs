@@ -190,6 +190,20 @@ enum WaitMode {
     Any,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum WaitOwner {
+    Task { task_id: TaskId, cont_id: ContId },
+    Root { cont_id: ContId },
+}
+
+impl WaitOwner {
+    fn cont_id(&self) -> ContId {
+        match self {
+            WaitOwner::Task { cont_id, .. } | WaitOwner::Root { cont_id } => *cont_id,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct WaitRequest {
     continuation: Continuation,
@@ -332,27 +346,20 @@ fn throw_to_continuation(k: Continuation, error: PyException) -> ASTStreamStep {
     ASTStreamStep::Throw(error)
 }
 
-fn step_targets_continuation(step: &ASTStreamStep, target: &Continuation) -> bool {
+fn step_targets_cont_id(step: &ASTStreamStep, cont_id: ContId) -> bool {
     match step {
-        ASTStreamStep::Yield(DoCtrl::Resume { continuation, .. }) => {
-            continuation.cont_id == target.cont_id
-        }
-        ASTStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
-            continuation.cont_id == target.cont_id
-        }
-        ASTStreamStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
-            continuation.cont_id == target.cont_id
-        }
-        ASTStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. }) => {
-            continuation.cont_id == target.cont_id
-        }
-        ASTStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. }) => {
-            continuation.cont_id == target.cont_id
+        ASTStreamStep::Yield(DoCtrl::Resume { continuation, .. })
+        | ASTStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
+        | ASTStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
+        | ASTStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
+        | ASTStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
+            continuation.cont_id == cont_id
         }
         _ => false,
     }
 }
 
+#[cfg(test)]
 fn step_is_terminal(step: &ASTStreamStep) -> bool {
     matches!(
         step,
@@ -362,12 +369,19 @@ fn step_is_terminal(step: &ASTStreamStep) -> bool {
     )
 }
 
+fn step_switches_into_task_body(step: &ASTStreamStep) -> bool {
+    matches!(
+        step,
+        ASTStreamStep::Yield(DoCtrl::ResumeContinuation { .. })
+            | ASTStreamStep::Yield(DoCtrl::Resume { .. })
+            | ASTStreamStep::Yield(DoCtrl::ResumeThrow { .. })
+    )
+}
+
 /// The scheduler's internal state.
 pub struct SchedulerState {
     ready: ReadySet,
     ready_task_ids: HashSet<TaskId>,
-    active_wait_owners: HashSet<ContId>,
-    parked_by_owner: HashMap<ContId, Vec<ReadyEntry>>,
     ready_root_resumes: HashMap<ContId, ReadyRootResume>,
     pub tasks: HashMap<TaskId, TaskState>,
     task_metadata: HashMap<TaskId, TaskMetadata>,
@@ -829,8 +843,6 @@ impl SchedulerState {
         SchedulerState {
             ready: ReadySet::Priority(BinaryHeap::new()),
             ready_task_ids: HashSet::new(),
-            active_wait_owners: HashSet::new(),
-            parked_by_owner: HashMap::new(),
             ready_root_resumes: HashMap::new(),
             tasks: HashMap::new(),
             task_metadata: HashMap::new(),
@@ -1077,21 +1089,6 @@ impl SchedulerState {
 
     fn remove_ready_task(&mut self, task_id: TaskId) {
         self.ready_task_ids.remove(&task_id);
-    }
-
-    fn mark_wait_owner_active(&mut self, cont_id: ContId) {
-        self.active_wait_owners.insert(cont_id);
-    }
-
-    fn mark_wait_owner_inactive(&mut self, cont_id: ContId) {
-        self.active_wait_owners.remove(&cont_id);
-        if let Some(parked) = self.parked_by_owner.remove(&cont_id) {
-            for mut entry in parked {
-                entry.sequence = self.next_ready_sequence;
-                self.next_ready_sequence += 1;
-                self.ready.push(entry);
-            }
-        }
     }
 
     pub fn create_semaphore(&mut self, permits: u64) -> u64 {
@@ -1580,7 +1577,6 @@ impl SchedulerState {
                 self.ready_root_resumes.remove(&cont_id);
             }
         }
-        self.parked_by_owner.remove(&cont_id);
         if waiting_task.is_none() {
             self.ready.retain(
                 |entry| !matches!(entry.target, ReadyTarget::Root(root_id) if root_id == cont_id),
@@ -1807,16 +1803,16 @@ impl SchedulerState {
         }
     }
 
-    /// Transfer to the next ready task, or resume k if no tasks are ready.
+    /// Transfer to the next ready task/root waiter.
     ///
     /// Per spec (SPEC-008 L1434-1447): saves the current task's store before
     /// switching and loads the new task's store after switching.
-    pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> ASTStreamStep {
+    pub fn transfer_next(&mut self, store: &mut RustStore) -> Option<ASTStreamStep> {
         loop {
             self.process_semaphore_drop_notifications();
 
             if let Err(error) = self.drain_external_completions_nonblocking() {
-                return ASTStreamStep::Throw(error);
+                return Some(ASTStreamStep::Throw(error));
             }
 
             let mut selected_ready = None;
@@ -1830,25 +1826,6 @@ impl SchedulerState {
                         // if it is no longer Pending, drop this stale entry and keep popping.
                         if !matches!(self.tasks.get(&task_id), Some(TaskState::Pending { .. })) {
                             self.ready_task_ids.remove(&task_id);
-                            continue;
-                        }
-
-                        let parking_owner = match self.tasks.get(&task_id) {
-                            Some(TaskState::Pending {
-                                cont,
-                                resume_outcome,
-                                ..
-                            }) => (resume_outcome.is_some()
-                                && self.active_wait_owners.contains(&cont.cont_id)
-                                && cont.cont_id != k.cont_id)
-                                .then_some(cont.cont_id),
-                            _ => None,
-                        };
-                        if let Some(owner_id) = parking_owner {
-                            self.parked_by_owner
-                                .entry(owner_id)
-                                .or_default()
-                                .push(entry);
                             continue;
                         }
                         self.ready_task_ids.remove(&task_id);
@@ -1886,9 +1863,11 @@ impl SchedulerState {
                                     (continuation, outcome, pending_merge)
                                 }
                                 Some(TaskState::Done { .. }) | None => {
-                                    return ASTStreamStep::Throw(scheduler_internal_error(format!(
-                                        "transfer_next_or: ready task {} has no continuation",
-                                        task_id.raw()
+                                    return Some(ASTStreamStep::Throw(scheduler_internal_error(
+                                        format!(
+                                            "transfer_next: ready task {} has no continuation",
+                                            task_id.raw()
+                                        ),
                                     )))
                                 }
                             };
@@ -1897,24 +1876,24 @@ impl SchedulerState {
                         if let Some(old_id) = self.current_task {
                             if old_id != task_id {
                                 if let Err(error) = self.save_task_store(old_id, store) {
-                                    return ASTStreamStep::Throw(error);
+                                    return Some(ASTStreamStep::Throw(error));
                                 }
                             }
                         }
                         // Load new task's store.
                         if let Err(error) = self.load_task_store(task_id, store) {
-                            return ASTStreamStep::Throw(error);
+                            return Some(ASTStreamStep::Throw(error));
                         }
                         self.current_task = Some(task_id);
                         if let Some(items) = merge_items.as_ref() {
                             self.merge_gather_logs(items, store);
                         }
                         match resume_outcome {
-                            Some(Err(error)) => return throw_to_continuation(task_k, error),
-                            Some(Ok(value)) => return resume_to_continuation(task_k, value),
+                            Some(Err(error)) => return Some(throw_to_continuation(task_k, error)),
+                            Some(Ok(value)) => return Some(resume_to_continuation(task_k, value)),
                             None => {}
                         }
-                        return transfer_to_continuation(task_k, Value::Unit);
+                        return Some(transfer_to_continuation(task_k, Value::Unit));
                     }
                     ReadyTarget::Root(cont_id) => {
                         let Some(ready_root) = self.ready_root_resumes.remove(&cont_id) else {
@@ -1926,7 +1905,7 @@ impl SchedulerState {
                         );
                         if let Some(waiting_task) = ready_root.waiting_task {
                             if let Err(error) = self.load_task_store(waiting_task, store) {
-                                return ASTStreamStep::Throw(error);
+                                return Some(ASTStreamStep::Throw(error));
                             }
                             self.current_task = Some(waiting_task);
                         } else {
@@ -1936,24 +1915,29 @@ impl SchedulerState {
                         if let Some(items) = &ready_root.merge_items {
                             self.merge_gather_logs(items, store);
                         }
-                        return match ready_root.outcome {
+                        return Some(match ready_root.outcome {
                             Ok(value) => resume_to_continuation(ready_root.continuation, value),
                             Err(error) => throw_to_continuation(ready_root.continuation, error),
-                        };
+                        });
                     }
                 }
             }
 
             if self.ready.is_empty() && self.has_external_waiters() {
                 if let Err(error) = self.block_until_external_completion() {
-                    return ASTStreamStep::Throw(error);
+                    return Some(ASTStreamStep::Throw(error));
                 }
                 continue;
             }
 
-            // No ready tasks, resume the caller.
-            return resume_to_continuation(k, Value::Unit);
+            // No ready tasks.
+            return None;
         }
+    }
+
+    pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> ASTStreamStep {
+        self.transfer_next(store)
+            .unwrap_or_else(|| resume_to_continuation(k, Value::Unit))
     }
 }
 
@@ -1996,15 +1980,10 @@ enum SchedulerPhase {
     },
     PreemptiveTransfer {
         k_user: Continuation,
-        owner_resumed: bool,
     },
     Driving {
-        k_user: Continuation,
-        items: Vec<Waitable>,
-        mode: WaitMode,
-        running_task: Option<TaskId>,
-        waiting_task: Option<TaskId>,
-        waiting_store: RustStore,
+        owner: WaitOwner,
+        running_task: TaskId,
     },
 }
 
@@ -2052,10 +2031,8 @@ impl SchedulerProgram {
     ) -> ASTStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
-        let waiting_store = store.clone();
         if let Some(aggregate) = state.collect_all_result(&items) {
             state.clear_waiters_for_owner(waiting_task, k_user.cont_id);
-            state.mark_wait_owner_inactive(k_user.cont_id);
             return match aggregate {
                 Ok(results) => {
                     if items.len() > 1 {
@@ -2071,24 +2048,35 @@ impl SchedulerProgram {
                 return ASTStreamStep::Throw(error);
             }
         }
+
         state.wait_on_all(&items, k_user.clone(), store);
-        let step = state.transfer_next_or(k_user.clone(), store);
+        let owner = match waiting_task {
+            Some(task_id) => WaitOwner::Task {
+                task_id,
+                cont_id: k_user.cont_id,
+            },
+            None => WaitOwner::Root {
+                cont_id: k_user.cont_id,
+            },
+        };
+
+        let Some(step) = state.transfer_next(store) else {
+            self.phase = SchedulerPhase::Idle;
+            return ASTStreamStep::Throw(scheduler_internal_error(
+                "deadlock: Gather blocked with no runnable tasks".to_string(),
+            ));
+        };
+
         let running_task = state.current_task;
-        let resumed_waiting_owner = step_targets_continuation(&step, &k_user);
+        let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
         let keep_driving =
-            running_task.is_some() && !resumed_waiting_owner && !step_is_terminal(&step);
+            running_task.is_some() && !resumed_waiting_owner && step_switches_into_task_body(&step);
         if keep_driving {
-            state.mark_wait_owner_active(k_user.cont_id);
             self.phase = SchedulerPhase::Driving {
-                k_user,
-                items,
-                mode: WaitMode::All,
-                running_task,
-                waiting_task,
-                waiting_store,
+                owner,
+                running_task: running_task.expect("keep_driving requires running task"),
             };
         } else {
-            state.mark_wait_owner_inactive(k_user.cont_id);
             self.phase = SchedulerPhase::Idle;
         }
         step
@@ -2102,10 +2090,8 @@ impl SchedulerProgram {
     ) -> ASTStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
-        let waiting_store = store.clone();
         if let Some(first) = state.collect_any_result(&items) {
             state.clear_waiters_for_owner(waiting_task, k_user.cont_id);
-            state.mark_wait_owner_inactive(k_user.cont_id);
             return match first {
                 Ok(value) => resume_to_continuation(k_user, value),
                 Err(error) => throw_to_continuation(k_user, error),
@@ -2116,24 +2102,35 @@ impl SchedulerProgram {
                 return ASTStreamStep::Throw(error);
             }
         }
+
         state.wait_on_any(&items, k_user.clone(), store);
-        let step = state.transfer_next_or(k_user.clone(), store);
+        let owner = match waiting_task {
+            Some(task_id) => WaitOwner::Task {
+                task_id,
+                cont_id: k_user.cont_id,
+            },
+            None => WaitOwner::Root {
+                cont_id: k_user.cont_id,
+            },
+        };
+
+        let Some(step) = state.transfer_next(store) else {
+            self.phase = SchedulerPhase::Idle;
+            return ASTStreamStep::Throw(scheduler_internal_error(
+                "deadlock: Race blocked with no runnable tasks".to_string(),
+            ));
+        };
+
         let running_task = state.current_task;
-        let resumed_waiting_owner = step_targets_continuation(&step, &k_user);
+        let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
         let keep_driving =
-            running_task.is_some() && !resumed_waiting_owner && !step_is_terminal(&step);
+            running_task.is_some() && !resumed_waiting_owner && step_switches_into_task_body(&step);
         if keep_driving {
-            state.mark_wait_owner_active(k_user.cont_id);
             self.phase = SchedulerPhase::Driving {
-                k_user,
-                items,
-                mode: WaitMode::Any,
-                running_task,
-                waiting_task,
-                waiting_store,
+                owner,
+                running_task: running_task.expect("keep_driving requires running task"),
             };
         } else {
-            state.mark_wait_owner_inactive(k_user.cont_id);
             self.phase = SchedulerPhase::Idle;
         }
         step
@@ -2203,57 +2200,31 @@ impl SchedulerProgram {
     fn transfer_next_after_preemption_step(
         state: &mut SchedulerState,
         k_user: Continuation,
-        owner_resumed: bool,
         store: &mut RustStore,
-    ) -> (ASTStreamStep, bool, bool) {
+    ) -> (ASTStreamStep, bool) {
         let raw_step = state.transfer_next_or(k_user.clone(), store);
-        let mut resumed_owner_now = false;
         let step = match raw_step {
-            ASTStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value,
-            }) => {
-                if continuation.cont_id == k_user.cont_id && !owner_resumed {
-                    resumed_owner_now = true;
-                }
-                ASTStreamStep::Yield(DoCtrl::Resume {
-                    continuation,
-                    value,
-                })
-            }
             ASTStreamStep::Yield(DoCtrl::TransferThrow {
                 continuation,
                 exception,
-            }) if continuation.cont_id != k_user.cont_id || !owner_resumed => {
-                if continuation.cont_id == k_user.cont_id && !owner_resumed {
-                    resumed_owner_now = true;
-                }
-                ASTStreamStep::Yield(DoCtrl::ResumeThrow {
-                    continuation,
-                    exception,
-                })
-            }
+            }) => ASTStreamStep::Yield(DoCtrl::ResumeThrow {
+                continuation,
+                exception,
+            }),
             other => other,
         };
         let next_running_task = state.current_task;
-        let resumed_preempted_caller = step_targets_continuation(&step, &k_user);
-        let switched_into_task_body = matches!(
-            step,
-            ASTStreamStep::Yield(DoCtrl::ResumeContinuation { .. })
-                | ASTStreamStep::Yield(DoCtrl::Resume { .. })
-                | ASTStreamStep::Yield(DoCtrl::ResumeThrow { .. })
-        );
-        let keep_preemptive_transfer = next_running_task.is_some()
-            && switched_into_task_body
-            && (!resumed_preempted_caller || resumed_owner_now);
-        (step, keep_preemptive_transfer, resumed_owner_now)
+        let resumed_preempted_caller = step_targets_cont_id(&step, k_user.cont_id);
+        let switched_into_task_body = step_switches_into_task_body(&step);
+        let keep_preemptive_transfer =
+            next_running_task.is_some() && switched_into_task_body && !resumed_preempted_caller;
+        (step, keep_preemptive_transfer)
     }
 
     fn continue_preemptive_transfer(
         &mut self,
         outcome: Result<Value, PyException>,
         k_user: Continuation,
-        owner_resumed: bool,
         store: &mut RustStore,
     ) -> ASTStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
@@ -2272,23 +2243,12 @@ impl SchedulerProgram {
             return ASTStreamStep::Throw(error);
         }
         state.wake_waiters(Waitable::Task(task_id));
-        let (step, keep_preemptive_transfer, resumed_owner_now) =
-            Self::transfer_next_after_preemption_step(
-                &mut state,
-                k_user.clone(),
-                owner_resumed,
-                store,
-            );
+        let (step, keep_preemptive_transfer) =
+            Self::transfer_next_after_preemption_step(&mut state, k_user.clone(), store);
         drop(state);
         if keep_preemptive_transfer {
-            self.phase = SchedulerPhase::PreemptiveTransfer {
-                k_user,
-                owner_resumed: owner_resumed || resumed_owner_now,
-            };
+            self.phase = SchedulerPhase::PreemptiveTransfer { k_user };
             step
-        } else if owner_resumed && step_targets_continuation(&step, &k_user) {
-            self.phase = SchedulerPhase::Idle;
-            ASTStreamStep::Return(Value::Unit)
         } else {
             self.phase = SchedulerPhase::Idle;
             step
@@ -2309,22 +2269,19 @@ impl SchedulerProgram {
         // preemption must be non-reentrant to avoid overwriting the outer caller context.
         let nested_preemptive_transfer_active =
             matches!(self.phase, SchedulerPhase::PreemptiveTransfer { .. });
-        if matches!(
+        let should_preempt = matches!(
             (current_priority, highest_woken_task),
             (Some(current), Some(woken)) if woken.priority > current
-        ) && !nested_preemptive_transfer_active
-        {
+        ) && !nested_preemptive_transfer_active;
+        if should_preempt {
             if let Err(error) = state.park_current_with_value(k_user.clone(), Value::Unit) {
                 return ASTStreamStep::Throw(error);
             }
-            let (step, keep_preemptive_transfer, resumed_owner_now) =
-                Self::transfer_next_after_preemption_step(&mut state, k_user.clone(), false, store);
+            let (step, keep_preemptive_transfer) =
+                Self::transfer_next_after_preemption_step(&mut state, k_user.clone(), store);
             drop(state);
             if keep_preemptive_transfer {
-                self.phase = SchedulerPhase::PreemptiveTransfer {
-                    k_user,
-                    owner_resumed: resumed_owner_now,
-                };
+                self.phase = SchedulerPhase::PreemptiveTransfer { k_user };
             } else {
                 self.phase = SchedulerPhase::Idle;
             }
@@ -2337,143 +2294,72 @@ impl SchedulerProgram {
     fn continue_driving(
         &mut self,
         outcome: Result<Value, PyException>,
-        k_user: Continuation,
-        items: Vec<Waitable>,
-        mode: WaitMode,
-        running_task: Option<TaskId>,
-        waiting_task: Option<TaskId>,
-        waiting_store: RustStore,
+        owner: WaitOwner,
+        running_task: TaskId,
         store: &mut RustStore,
     ) -> ASTStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
 
-        let Some(task_id) = running_task else {
-            return ASTStreamStep::Throw(PyException::runtime_error(
-                "scheduler resumed/thrown without current running task",
-            ));
+        let owner_still_waiting = match &owner {
+            WaitOwner::Task { task_id, cont_id } => matches!(
+                state.tasks.get(task_id),
+                Some(TaskState::Pending { cont, .. }) if cont.cont_id == *cont_id
+            ),
+            WaitOwner::Root { cont_id } => state.waiters.values().any(|requests| {
+                requests.iter().any(|request| {
+                    request.waiting_task.is_none() && request.continuation.cont_id == *cont_id
+                })
+            }),
         };
 
-        if state.current_task == Some(task_id) {
+        if state.current_task == Some(running_task) {
             state.current_task = None;
         }
 
-        if let Err(error) = state.save_task_store(task_id, store) {
-            return ASTStreamStep::Throw(error);
+        let outcome_for_fallback = outcome.clone();
+        let task_already_done =
+            matches!(state.tasks.get(&running_task), Some(TaskState::Done { .. }));
+        if task_already_done && !owner_still_waiting {
+            self.phase = SchedulerPhase::Idle;
+            return match outcome_for_fallback {
+                Ok(value) => ASTStreamStep::Return(value),
+                Err(error) => ASTStreamStep::Throw(error),
+            };
         }
-        if let Err(error) = state.mark_task_done(task_id, outcome) {
-            return ASTStreamStep::Throw(error);
-        }
 
-        // If this continuation was previously queued as a waiter, remove stale
-        // entries before wake-up processing. Otherwise it can be resumed once
-        // directly here and then resumed again later from ready queue state,
-        // triggering one-shot continuation violations.
-        let waiting_cont_id = k_user.cont_id;
-        state.clear_waiters_for_owner(waiting_task, waiting_cont_id);
-
-        state.wake_waiters(Waitable::Task(task_id));
-
-        match mode {
-            WaitMode::All => {
-                if let Some(aggregate) = state.collect_all_result(&items) {
-                    return match aggregate {
-                        Ok(value) => {
-                            state.clear_waiters_for_owner(waiting_task, waiting_cont_id);
-
-                            if let Some(waiting_task) = waiting_task {
-                                if let Err(error) = state.load_task_store(waiting_task, store) {
-                                    return ASTStreamStep::Throw(error);
-                                }
-                                state.current_task = Some(waiting_task);
-                            } else {
-                                *store = waiting_store.clone();
-                            }
-                            if items.len() > 1 {
-                                state.merge_gather_logs(&items, store);
-                            }
-                            state.mark_wait_owner_inactive(k_user.cont_id);
-                            resume_to_continuation(k_user, value)
-                        }
-                        Err(error) => {
-                            state.clear_waiters_for_owner(waiting_task, waiting_cont_id);
-
-                            if let Some(waiting_task) = waiting_task {
-                                if let Err(error) = state.load_task_store(waiting_task, store) {
-                                    return ASTStreamStep::Throw(error);
-                                }
-                                state.current_task = Some(waiting_task);
-                            } else {
-                                *store = waiting_store.clone();
-                            }
-                            state.mark_wait_owner_inactive(k_user.cont_id);
-                            throw_to_continuation(k_user, error)
-                        }
-                    };
-                }
+        if !task_already_done {
+            if let Err(error) = state.save_task_store(running_task, store) {
+                return ASTStreamStep::Throw(error);
             }
-            WaitMode::Any => {
-                if let Some(first) = state.collect_any_result(&items) {
-                    return match first {
-                        Ok(value) => {
-                            state.clear_waiters_for_owner(waiting_task, waiting_cont_id);
-
-                            if let Some(waiting_task) = waiting_task {
-                                if let Err(error) = state.load_task_store(waiting_task, store) {
-                                    return ASTStreamStep::Throw(error);
-                                }
-                                state.current_task = Some(waiting_task);
-                            } else {
-                                *store = waiting_store.clone();
-                            }
-                            state.mark_wait_owner_inactive(k_user.cont_id);
-                            resume_to_continuation(k_user, value)
-                        }
-                        Err(error) => {
-                            state.clear_waiters_for_owner(waiting_task, waiting_cont_id);
-
-                            if let Some(waiting_task) = waiting_task {
-                                if let Err(error) = state.load_task_store(waiting_task, store) {
-                                    return ASTStreamStep::Throw(error);
-                                }
-                                state.current_task = Some(waiting_task);
-                            } else {
-                                *store = waiting_store.clone();
-                            }
-                            state.mark_wait_owner_inactive(k_user.cont_id);
-                            throw_to_continuation(k_user, error)
-                        }
-                    };
-                }
+            if let Err(error) = state.mark_task_done(running_task, outcome) {
+                return ASTStreamStep::Throw(error);
             }
+            state.wake_waiters(Waitable::Task(running_task));
         }
 
-        // Re-register waiter using the original suspended owner context, not
-        // the just-finished running task context.
-        state.current_task = waiting_task;
-        *store = waiting_store.clone();
+        let Some(step) = state.transfer_next(store) else {
+            self.phase = SchedulerPhase::Idle;
+            if !owner_still_waiting {
+                return match outcome_for_fallback {
+                    Ok(value) => ASTStreamStep::Return(value),
+                    Err(error) => ASTStreamStep::Throw(error),
+                };
+            }
+            return ASTStreamStep::Return(Value::Unit);
+        };
 
-        match mode {
-            WaitMode::All => state.wait_on_all(&items, k_user.clone(), store),
-            WaitMode::Any => state.wait_on_any(&items, k_user.clone(), store),
-        }
-
-        let step = state.transfer_next_or(k_user.clone(), store);
         let next_running_task = state.current_task;
-        let resumed_waiting_owner = step_targets_continuation(&step, &k_user);
-        let keep_driving =
-            next_running_task.is_some() && !resumed_waiting_owner && !step_is_terminal(&step);
+        let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
+        let keep_driving = owner_still_waiting
+            && next_running_task.is_some()
+            && !resumed_waiting_owner
+            && step_switches_into_task_body(&step);
         if keep_driving {
-            state.mark_wait_owner_active(k_user.cont_id);
             self.phase = SchedulerPhase::Driving {
-                k_user,
-                items,
-                mode,
-                running_task: next_running_task,
-                waiting_task,
-                waiting_store,
+                owner,
+                running_task: next_running_task.expect("keep_driving requires running task"),
             };
         } else {
-            state.mark_wait_owner_inactive(k_user.cont_id);
             self.phase = SchedulerPhase::Idle;
         }
         step
@@ -2620,7 +2506,12 @@ impl ASTStreamProgram for SchedulerProgram {
                             }
                         }
                         state.wait_on_any(&items, k_user.clone(), store);
-                        state.transfer_next_or(k_user, store)
+                        state.transfer_next(store).unwrap_or_else(|| {
+                            ASTStreamStep::Throw(scheduler_internal_error(
+                                "deadlock: AcquireSemaphore blocked with no runnable tasks"
+                                    .to_string(),
+                            ))
+                        })
                     }
                     None => resume_to_continuation(k_user, Value::Unit),
                 }
@@ -2818,19 +2709,15 @@ impl ASTStreamProgram for SchedulerProgram {
                     if let Err(error) = state.park_current_with_value(k_user.clone(), task_value) {
                         return ASTStreamStep::Throw(error);
                     }
-                    let (step, keep_preemptive_transfer, resumed_owner_now) =
+                    let (step, keep_preemptive_transfer) =
                         Self::transfer_next_after_preemption_step(
                             &mut state,
                             k_user.clone(),
-                            false,
                             store,
                         );
                     drop(state);
                     if keep_preemptive_transfer {
-                        self.phase = SchedulerPhase::PreemptiveTransfer {
-                            k_user,
-                            owner_resumed: resumed_owner_now,
-                        };
+                        self.phase = SchedulerPhase::PreemptiveTransfer { k_user };
                     } else {
                         self.phase = SchedulerPhase::Idle;
                     }
@@ -2840,58 +2727,28 @@ impl ASTStreamProgram for SchedulerProgram {
                 }
             }
 
-            SchedulerPhase::PreemptiveTransfer {
-                k_user,
-                owner_resumed,
-            } => self.continue_preemptive_transfer(Ok(value), k_user, owner_resumed, store),
+            SchedulerPhase::PreemptiveTransfer { k_user } => {
+                self.continue_preemptive_transfer(Ok(value), k_user, store)
+            }
 
             SchedulerPhase::Driving {
-                k_user,
-                items,
-                mode,
+                owner,
                 running_task,
-                waiting_task,
-                waiting_store,
-            } => self.continue_driving(
-                Ok(value),
-                k_user,
-                items,
-                mode,
-                running_task,
-                waiting_task,
-                waiting_store,
-                store,
-            ),
+            } => self.continue_driving(Ok(value), owner, running_task, store),
 
-            SchedulerPhase::Idle => {
-                ASTStreamStep::Return(value)
-            }
+            SchedulerPhase::Idle => ASTStreamStep::Return(value),
         }
     }
 
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
             SchedulerPhase::Driving {
-                k_user,
-                items,
-                mode,
+                owner,
                 running_task,
-                waiting_task,
-                waiting_store,
-            } => self.continue_driving(
-                Err(exc),
-                k_user,
-                items,
-                mode,
-                running_task,
-                waiting_task,
-                waiting_store,
-                store,
-            ),
-            SchedulerPhase::PreemptiveTransfer {
-                k_user,
-                owner_resumed,
-            } => self.continue_preemptive_transfer(Err(exc), k_user, owner_resumed, store),
+            } => self.continue_driving(Err(exc), owner, running_task, store),
+            SchedulerPhase::PreemptiveTransfer { k_user } => {
+                self.continue_preemptive_transfer(Err(exc), k_user, store)
+            }
             _ => ASTStreamStep::Throw(exc),
         }
     }
@@ -3471,7 +3328,7 @@ mod tests {
             &mut store,
         );
         assert!(
-            step_targets_continuation(&step, &spawned_k),
+            step_targets_cont_id(&step, spawned_k.cont_id),
             "higher-priority spawned task must run before caller, got {:?}",
             step
         );
@@ -3559,7 +3416,7 @@ mod tests {
             let step =
                 ASTStreamProgram::start(&mut program, py, complete, idle_k.clone(), &mut store);
             assert!(
-                step_targets_continuation(&step, &waiter_k),
+                step_targets_cont_id(&step, waiter_k.cont_id),
                 "higher-priority waiter must run first after promise completion, got {:?}",
                 step
             );
@@ -3582,6 +3439,358 @@ mod tests {
             assert!(
                 guard.ready_task_ids.contains(&idle_task),
                 "idle caller should be re-enqueued when preempted by waiter"
+            );
+        });
+    }
+
+    #[test]
+    fn test_driving_phase_contains_wait_owner_identity_only() {
+        let waiting_task = TaskId::from_raw(7);
+        let running_task = TaskId::from_raw(9);
+        let waiting_cont_id = ContId::from_raw(11);
+
+        let phase = SchedulerPhase::Driving {
+            owner: WaitOwner::Task {
+                task_id: waiting_task,
+                cont_id: waiting_cont_id,
+            },
+            running_task,
+        };
+
+        match phase {
+            SchedulerPhase::Driving {
+                owner: WaitOwner::Task { task_id, cont_id },
+                running_task: active_task,
+            } => {
+                assert_eq!(task_id, waiting_task);
+                assert_eq!(cont_id, waiting_cont_id);
+                assert_eq!(active_task, running_task);
+            }
+            other => panic!("expected Driving phase, got {:?}", other),
+        }
+
+        let debug = format!(
+            "{:?}",
+            SchedulerPhase::Driving {
+                owner: WaitOwner::Task {
+                    task_id: waiting_task,
+                    cont_id: waiting_cont_id,
+                },
+                running_task,
+            }
+        );
+        assert!(!debug.contains("Continuation"));
+        assert!(!debug.contains("k_user"));
+    }
+
+    #[test]
+    fn test_continue_driving_resumes_waiter_via_ready_queue_dequeue() {
+        let state = Arc::new(Mutex::new(SchedulerState::new()));
+        let mut program = SchedulerProgram::new(state.clone());
+        let mut store = RustStore::new();
+
+        let waiter_k = make_test_continuation();
+        let running_k = make_test_continuation();
+
+        let (waiting_task, running_task) = {
+            let mut guard = state.lock().expect("Scheduler lock poisoned");
+            let waiting_task = guard.alloc_task_id();
+            let running_task = guard.alloc_task_id();
+
+            guard.tasks.insert(
+                waiting_task,
+                TaskState::Pending {
+                    cont: waiter_k.clone(),
+                    store: TaskStore::Shared,
+                    resume_outcome: None,
+                    priority: PRIORITY_NORMAL,
+                    pending_log_merge_items: None,
+                },
+            );
+            guard.tasks.insert(
+                running_task,
+                TaskState::Pending {
+                    cont: running_k,
+                    store: TaskStore::Shared,
+                    resume_outcome: None,
+                    priority: PRIORITY_IDLE,
+                    pending_log_merge_items: None,
+                },
+            );
+
+            guard.current_task = Some(waiting_task);
+            guard
+                .suspend_task_for_wait(waiting_task, waiter_k.clone())
+                .expect("waiting task should suspend");
+            guard.wait_on_all(&[Waitable::Task(running_task)], waiter_k.clone(), &store);
+            guard.current_task = Some(running_task);
+
+            (waiting_task, running_task)
+        };
+
+        program.phase = SchedulerPhase::Driving {
+            owner: WaitOwner::Task {
+                task_id: waiting_task,
+                cont_id: waiter_k.cont_id,
+            },
+            running_task,
+        };
+
+        let step = ASTStream::resume(&mut program, Value::Int(55), &mut store);
+        match step {
+            ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            })
+            | ASTStreamStep::Yield(DoCtrl::Transfer {
+                continuation,
+                value,
+            })
+            | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+                continuation,
+                value,
+            }) => {
+                assert_eq!(continuation.cont_id, waiter_k.cont_id);
+                match value {
+                    Value::List(values) => {
+                        assert_eq!(values.len(), 1);
+                        assert_eq!(values[0].as_int(), Some(55));
+                    }
+                    other => panic!(
+                        "waiter must resume with gathered list via ready queue, got {other:?}"
+                    ),
+                }
+            }
+            other => panic!("expected waiter continuation dequeue step, got {:?}", other),
+        }
+
+        assert!(matches!(program.phase, SchedulerPhase::Idle));
+
+        let guard = state.lock().expect("Scheduler lock poisoned");
+        assert_eq!(guard.current_task, Some(waiting_task));
+        assert!(matches!(
+            guard.tasks.get(&running_task),
+            Some(TaskState::Done {
+                result: Ok(Value::Int(55)),
+                ..
+            })
+        ));
+        let Some(TaskState::Pending { resume_outcome, .. }) = guard.tasks.get(&waiting_task) else {
+            panic!("waiting task should remain pending after dequeue");
+        };
+        assert!(resume_outcome.is_none());
+    }
+
+    #[test]
+    fn test_complete_promise_preempts_idle_driver_then_resumes_driver_after_normal() {
+        Python::attach(|py| {
+            let state = Arc::new(Mutex::new(SchedulerState::new()));
+            let mut program = SchedulerProgram::new(state.clone());
+            let mut store = RustStore::new();
+
+            let normal_k = make_test_continuation();
+            let idle_driver_k = make_test_continuation();
+
+            let (promise_id, normal_task, idle_task) = {
+                let mut guard = state.lock().expect("Scheduler lock poisoned");
+                let promise_id = guard.alloc_promise_id();
+                guard.promises.insert(promise_id, PromiseState::Pending);
+
+                let normal_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    normal_task,
+                    TaskState::Pending {
+                        cont: normal_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.current_task = Some(normal_task);
+                guard.wait_on_any(&[Waitable::Promise(promise_id)], normal_k.clone(), &store);
+
+                let idle_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    idle_task,
+                    TaskState::Pending {
+                        cont: make_test_continuation(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_IDLE,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.current_task = Some(idle_task);
+
+                (promise_id, normal_task, idle_task)
+            };
+
+            let complete = make_complete_promise_effect(
+                py,
+                make_promise_object(py, promise_id),
+                py.None()
+                    .into_pyobject(py)
+                    .expect("None must convert")
+                    .unbind(),
+            );
+
+            let first_step = ASTStreamProgram::start(
+                &mut program,
+                py,
+                complete,
+                idle_driver_k.clone(),
+                &mut store,
+            );
+            assert!(
+                step_targets_cont_id(&first_step, normal_k.cont_id),
+                "NORMAL waiter should preempt IDLE driver, got {:?}",
+                first_step
+            );
+            assert!(matches!(
+                &program.phase,
+                SchedulerPhase::PreemptiveTransfer { k_user }
+                if k_user.cont_id == idle_driver_k.cont_id
+            ));
+
+            let second_step = ASTStream::resume(&mut program, Value::Unit, &mut store);
+            assert!(
+                step_targets_cont_id(&second_step, idle_driver_k.cont_id),
+                "IDLE driver should resume after NORMAL task hands control back, got {:?}",
+                second_step
+            );
+            assert!(matches!(program.phase, SchedulerPhase::Idle));
+
+            let guard = state.lock().expect("Scheduler lock poisoned");
+            assert_eq!(guard.current_task, Some(idle_task));
+            assert!(matches!(
+                guard.tasks.get(&normal_task),
+                Some(TaskState::Done {
+                    result: Ok(Value::Unit),
+                    ..
+                })
+            ));
+        });
+    }
+
+    #[test]
+    fn test_waiter_continuation_activates_once_across_scheduler_instances() {
+        Python::attach(|py| {
+            let shared_state = Arc::new(Mutex::new(SchedulerState::new()));
+            let mut driving_program = SchedulerProgram::new(shared_state.clone());
+            let mut resolver_program = SchedulerProgram::new(shared_state.clone());
+            let mut store = RustStore::new();
+
+            let waiter_k = make_test_continuation();
+            let running_k = make_test_continuation();
+            let resolver_k = make_test_continuation();
+
+            let (promise_id, waiting_task, running_task) = {
+                let mut guard = shared_state.lock().expect("Scheduler lock poisoned");
+
+                let waiting_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    waiting_task,
+                    TaskState::Pending {
+                        cont: waiter_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+
+                let running_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    running_task,
+                    TaskState::Pending {
+                        cont: running_k,
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_IDLE,
+                        pending_log_merge_items: None,
+                    },
+                );
+
+                let promise_id = guard.alloc_promise_id();
+                guard.promises.insert(promise_id, PromiseState::Pending);
+
+                guard.current_task = Some(waiting_task);
+                guard
+                    .suspend_task_for_wait(waiting_task, waiter_k.clone())
+                    .expect("waiting task should suspend");
+                guard.wait_on_any(&[Waitable::Promise(promise_id)], waiter_k.clone(), &store);
+                guard.current_task = None;
+
+                (promise_id, waiting_task, running_task)
+            };
+
+            driving_program.phase = SchedulerPhase::Driving {
+                owner: WaitOwner::Task {
+                    task_id: waiting_task,
+                    cont_id: waiter_k.cont_id,
+                },
+                running_task,
+            };
+
+            let complete = make_complete_promise_effect(
+                py,
+                make_promise_object(py, promise_id),
+                py.None()
+                    .into_pyobject(py)
+                    .expect("None must convert")
+                    .unbind(),
+            );
+
+            let resolver_step = ASTStreamProgram::start(
+                &mut resolver_program,
+                py,
+                complete,
+                resolver_k.clone(),
+                &mut store,
+            );
+
+            let dequeue_step = {
+                let mut guard = shared_state.lock().expect("Scheduler lock poisoned");
+                guard.transfer_next_or(make_test_continuation(), &mut store)
+            };
+
+            {
+                let mut guard = shared_state.lock().expect("Scheduler lock poisoned");
+                assert_eq!(guard.current_task, Some(waiting_task));
+                guard.current_task = None;
+                guard
+                    .save_task_store(waiting_task, &store)
+                    .expect("save waiting task store");
+                guard
+                    .mark_task_done(waiting_task, Ok(Value::Int(9)))
+                    .expect("mark waiting task done");
+            }
+
+            let stale_step = ASTStream::resume(&mut driving_program, Value::Unit, &mut store);
+
+            let mut waiter_activation_count = 0;
+            if step_targets_cont_id(&resolver_step, waiter_k.cont_id) {
+                waiter_activation_count += 1;
+            }
+            if step_targets_cont_id(&dequeue_step, waiter_k.cont_id) {
+                waiter_activation_count += 1;
+            }
+            if step_targets_cont_id(&stale_step, waiter_k.cont_id) {
+                waiter_activation_count += 1;
+            }
+
+            assert_eq!(
+                waiter_activation_count, 1,
+                "waiter continuation must be activated exactly once across scheduler instances"
+            );
+            assert!(
+                step_targets_cont_id(&dequeue_step, waiter_k.cont_id),
+                "single activation must happen via ready-queue dequeue"
+            );
+            assert!(
+                !step_targets_cont_id(&stale_step, waiter_k.cont_id),
+                "stale Driving instance must not reactivate waiter continuation"
             );
         });
     }
@@ -3677,7 +3886,7 @@ mod tests {
             let first_step =
                 ASTStreamProgram::start(&mut program, py, wake_normal, idle_k.clone(), &mut store);
             assert!(
-                step_targets_continuation(&first_step, &normal_k),
+                step_targets_cont_id(&first_step, normal_k.cont_id),
                 "first promise completion should preempt IDLE and run NORMAL, got {:?}",
                 first_step
             );
@@ -3698,7 +3907,7 @@ mod tests {
             let second_step =
                 ASTStreamProgram::start(&mut program, py, wake_high, normal_k.clone(), &mut store);
             assert!(
-                step_targets_continuation(&second_step, &normal_k),
+                step_targets_cont_id(&second_step, normal_k.cont_id),
                 "nested preemption must be blocked while transfer is active, got {:?}",
                 second_step
             );
@@ -3847,7 +4056,7 @@ mod tests {
 
         let step = ASTStream::resume(&mut program, Value::Continuation(spawned_k), &mut store);
         assert!(
-            step_targets_continuation(&step, &caller_k),
+            step_targets_cont_id(&step, caller_k.cont_id),
             "same-priority spawn should resume caller immediately, got {:?}",
             step
         );
@@ -3896,7 +4105,7 @@ mod tests {
 
         let step = ASTStream::resume(&mut program, Value::Continuation(spawned_k), &mut store);
         assert!(
-            step_targets_continuation(&step, &caller_k),
+            step_targets_cont_id(&step, caller_k.cont_id),
             "lower-priority spawn should resume caller immediately, got {:?}",
             step
         );
@@ -4029,7 +4238,7 @@ mod tests {
             .expect("task should exist when marking done");
         state.wake_waiters(Waitable::Task(task_id));
 
-        // transfer_next_or only resumes waiters that belong to the same owner continuation.
+        // transfer_next_or should resume whichever waiter is globally ready.
         let step = state.transfer_next_or(waiter.clone(), &mut store);
         match step {
             ASTStreamStep::Yield(DoCtrl::Resume {
@@ -4781,7 +4990,7 @@ mod tests {
             &mut store,
         );
 
-        assert!(step_targets_continuation(&step, &k_user));
+        assert!(step_targets_cont_id(&step, k_user.cont_id));
 
         let s = state.lock().unwrap();
         assert!(
@@ -4897,95 +5106,6 @@ mod tests {
     }
 
     #[test]
-    fn test_owner_parking_flushes_high_priority_waiter_after_driving_ends() {
-        let mut state = SchedulerState::new();
-        let mut store = RustStore::new();
-
-        let normal_task = state.alloc_task_id();
-        let normal_cont = make_test_continuation();
-        state.tasks.insert(
-            normal_task,
-            TaskState::Pending {
-                cont: normal_cont.clone(),
-                store: TaskStore::Shared,
-                resume_outcome: None,
-                priority: PRIORITY_NORMAL,
-                pending_log_merge_items: None,
-            },
-        );
-        state.enqueue_ready_task(normal_task, PRIORITY_NORMAL);
-
-        let waiting_task = state.alloc_task_id();
-        let wait_owner = make_test_continuation();
-        state.tasks.insert(
-            waiting_task,
-            TaskState::Pending {
-                cont: wait_owner.clone(),
-                store: TaskStore::Shared,
-                resume_outcome: None,
-                priority: PRIORITY_HIGH,
-                pending_log_merge_items: None,
-            },
-        );
-
-        let promise_id = state.alloc_promise_id();
-        state.promises.insert(promise_id, PromiseState::Pending);
-        state.current_task = Some(waiting_task);
-        state
-            .suspend_task_for_wait(waiting_task, wait_owner.clone())
-            .expect("waiting task should be suspendable");
-        state.wait_on_any(&[Waitable::Promise(promise_id)], wait_owner.clone(), &store);
-        state.current_task = None;
-
-        state.mark_wait_owner_active(wait_owner.cont_id);
-        state.mark_promise_done(promise_id, Ok(Value::Int(9)));
-
-        let driving_owner = make_test_continuation();
-        let first_step = state.transfer_next_or(driving_owner.clone(), &mut store);
-        match first_step {
-            ASTStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
-            | ASTStreamStep::Yield(DoCtrl::Resume { continuation, .. })
-            | ASTStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
-                assert_eq!(continuation.cont_id, normal_cont.cont_id);
-            }
-            other => panic!(
-                "expected normal task while waiter owner is active, got {:?}",
-                other
-            ),
-        }
-        assert_eq!(
-            state.parked_by_owner.get(&wait_owner.cont_id).map(Vec::len),
-            Some(1)
-        );
-
-        state.mark_wait_owner_inactive(wait_owner.cont_id);
-        assert!(!state.parked_by_owner.contains_key(&wait_owner.cont_id));
-
-        let second_step = state.transfer_next_or(driving_owner, &mut store);
-        match second_step {
-            ASTStreamStep::Yield(DoCtrl::Transfer {
-                continuation,
-                value,
-            })
-            | ASTStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value,
-            })
-            | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
-                continuation,
-                value,
-            }) => {
-                assert_eq!(continuation.cont_id, wait_owner.cont_id);
-                assert_eq!(value.as_int(), Some(9));
-            }
-            other => panic!(
-                "expected flushed high-priority waiter after owner inactivity, got {:?}",
-                other
-            ),
-        }
-    }
-
-    #[test]
     fn test_owner_b_driving_does_not_block_owner_a_woken_task() {
         let mut state = SchedulerState::new();
         let mut store = RustStore::new();
@@ -5040,7 +5160,6 @@ mod tests {
         );
         state.current_task = None;
 
-        state.mark_wait_owner_active(owner_b_cont.cont_id);
         state.mark_promise_done(promise_a, Ok(Value::Int(11)));
 
         let step = state.transfer_next_or(owner_b_cont, &mut store);
@@ -5065,93 +5184,6 @@ mod tests {
                 other
             ),
         }
-    }
-
-    #[test]
-    fn test_external_completion_parked_while_driving_then_flushed() {
-        Python::attach(|py| {
-            let mut state = SchedulerState::new();
-            let mut store = RustStore::new();
-
-            let waiting_task = state.alloc_task_id();
-            let waiting_cont = make_test_continuation();
-            state.tasks.insert(
-                waiting_task,
-                TaskState::Pending {
-                    cont: waiting_cont.clone(),
-                    store: TaskStore::Shared,
-                    resume_outcome: None,
-                    priority: PRIORITY_NORMAL,
-                    pending_log_merge_items: None,
-                },
-            );
-
-            let promise_id = state.alloc_promise_id();
-            state.promises.insert(promise_id, PromiseState::Pending);
-            state.current_task = Some(waiting_task);
-            state
-                .suspend_task_for_wait(waiting_task, waiting_cont.clone())
-                .expect("waiting task should be suspendable");
-            state.wait_on_any(
-                &[Waitable::ExternalPromise(promise_id)],
-                waiting_cont.clone(),
-                &store,
-            );
-            state.current_task = None;
-
-            let queue_mod = py.import("queue").expect("queue module import should work");
-            let queue_obj = queue_mod
-                .getattr("Queue")
-                .expect("queue.Queue should exist")
-                .call0()
-                .expect("queue object should construct");
-            queue_obj
-                .call_method1("put", ((promise_id.raw(), 77, py.None()),))
-                .expect("queue.put should succeed");
-            state.external_completion_queue = Some(PyShared::new(queue_obj.unbind()));
-
-            state.mark_wait_owner_active(waiting_cont.cont_id);
-
-            let driving_owner = make_test_continuation();
-            let first_step = state.transfer_next_or(driving_owner.clone(), &mut store);
-            assert!(
-                step_targets_continuation(&first_step, &driving_owner),
-                "with only owner-parked wakeups, transfer_next_or should yield back to driving owner"
-            );
-            assert_eq!(
-                state
-                    .parked_by_owner
-                    .get(&waiting_cont.cont_id)
-                    .map(Vec::len),
-                Some(1)
-            );
-
-            state.mark_wait_owner_inactive(waiting_cont.cont_id);
-            assert!(!state.parked_by_owner.contains_key(&waiting_cont.cont_id));
-
-            let second_step = state.transfer_next_or(make_test_continuation(), &mut store);
-            match second_step {
-                ASTStreamStep::Yield(DoCtrl::Transfer {
-                    continuation,
-                    value,
-                })
-                | ASTStreamStep::Yield(DoCtrl::Resume {
-                    continuation,
-                    value,
-                })
-                | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
-                    continuation,
-                    value,
-                }) => {
-                    assert_eq!(continuation.cont_id, waiting_cont.cont_id);
-                    assert_eq!(value.as_int(), Some(77));
-                }
-                other => panic!(
-                    "expected parked external wakeup to flush and resume waiter, got {:?}",
-                    other
-                ),
-            }
-        });
     }
 
     #[test]
@@ -5192,7 +5224,7 @@ mod tests {
         let owner_after_first = make_test_continuation();
         let first_step = state.transfer_next_or(owner_after_first.clone(), &mut store);
         assert!(
-            step_targets_continuation(&first_step, &owner_after_first),
+            step_targets_cont_id(&first_step, owner_after_first.cont_id),
             "waiter must not be ready after only first dependency completes"
         );
 
