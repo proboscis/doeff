@@ -407,65 +407,22 @@ def mock_handlers(
     *,
     config: MockOpenAIConfig | None = None,
     state: MockOpenAIState | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Typed handler map for deterministic local tests."""
+) -> ProtocolHandler:
+    """Protocol handler for deterministic local tests."""
     resolved_config = config or MockOpenAIConfig()
     resolved_state = state or MockOpenAIState()
 
-    def handle_chat(effect: ChatCompletion, k: Any):
-        if not _is_openai_model(effect.model):
-            yield Pass()
-            return
-        if effect.stream:
-            return (
-                yield from _handle_streaming_chat_completion(
-                    effect, k, config=resolved_config, state=resolved_state
-                )
-            )
+    def handler(effect: Any, k: Any):
         return (
-            yield from _handle_chat_completion(
-                effect, k, config=resolved_config, state=resolved_state
+            yield from openai_mock_handler(
+                effect,
+                k,
+                config=resolved_config,
+                state=resolved_state,
             )
         )
 
-    def handle_stream(effect: LLMStreamingChat | StreamingChatCompletion, k: Any):
-        if not _is_openai_model(effect.model):
-            yield Pass()
-            return
-        return (
-            yield from _handle_streaming_chat_completion(
-                effect, k, config=resolved_config, state=resolved_state
-            )
-        )
-
-    def handle_embedding(effect: LLMEmbedding | Embedding, k: Any):
-        if not _is_openai_model(effect.model):
-            yield Pass()
-            return
-        return (
-            yield from _handle_embedding(effect, k, config=resolved_config, state=resolved_state)
-        )
-
-    def handle_structured(effect: LLMStructuredOutput | StructuredOutput, k: Any):
-        if not _is_openai_model(effect.model):
-            yield Pass()
-            return
-        return (
-            yield from _handle_structured_output(
-                effect, k, config=resolved_config, state=resolved_state
-            )
-        )
-
-    return {
-        ChatCompletion: handle_chat,
-        StreamingChatCompletion: handle_stream,
-        Embedding: handle_embedding,
-        StructuredOutput: handle_structured,
-        LLMChat: handle_chat,
-        LLMStreamingChat: handle_stream,
-        LLMEmbedding: handle_embedding,
-        LLMStructuredOutput: handle_structured,
-    }
+    return handler
 
 
 __all__ = [

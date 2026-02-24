@@ -6,16 +6,18 @@ to the console using rich, while still accumulating them in the writer log.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from doeff import Delegate, WriterTellEffect
+from doeff import Pass, WriterTellEffect
 
 # Global console for log output
 _console = Console(stderr=True)
+ProtocolHandler = Callable[[Any, Any], Any]
 
 
 def format_slog(message: dict[str, Any]) -> Panel | Text:
@@ -82,10 +84,10 @@ def handle_tell_with_display(
         ctx: Handler context containing task_state and store.
 
     Returns:
-        Delegation to the outer Writer handler after optional display.
+        Pass-through to the outer Writer handler after optional display.
     """
     if not isinstance(effect, WriterTellEffect):
-        yield Delegate()
+        yield Pass()
         return
 
     message = effect.message
@@ -96,28 +98,20 @@ def handle_tell_with_display(
         _console.print(formatted)
 
     # Delegate to outer Writer handler for normal log accumulation.
-    yield Delegate()
+    yield Pass()
 
 
-def log_display_handlers() -> dict[type, Any]:
-    """Return handlers for slog display.
+def log_display_handlers() -> ProtocolHandler:
+    """Return a protocol handler for slog display."""
 
-    Returns:
-        Handler dict with WriterTellEffect -> handle_tell_with_display.
+    def handler(effect: Any, k: Any):
+        return (yield from handle_tell_with_display(effect, k))
 
-    Example:
-        >>> from doeff.rust_vm import run_with_handler_map
-        >>> from doeff_preset import log_display_handlers
-        >>>
-        >>> result = run_with_handler_map(workflow(), log_display_handlers())
-        >>> # slog messages will display to console while still accumulating in result.log
-    """
-    return {
-        WriterTellEffect: handle_tell_with_display,
-    }
+    return handler
 
 
 __all__ = [
+    "ProtocolHandler",
     "format_slog",
     "handle_tell_with_display",
     "log_display_handlers",

@@ -13,7 +13,6 @@ Run this example:
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,25 +20,8 @@ from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnap
 from doeff_flow.handlers import MockTraceRecorder, mock_handlers
 from doeff_flow.trace import get_default_trace_dir
 
-from doeff import Delegate, WithHandler, default_handlers, do
+from doeff import WithHandler, default_handlers, do
 from doeff import run as run_sync
-
-
-def with_handler_map(program, handler_map):
-    """Compose typed handlers onto a program using WithHandler layers."""
-    wrapped = program
-    for effect_type, handler in reversed(list(handler_map.items())):
-
-        def typed_handler(effect, k, _effect_type=effect_type, _handler=handler):
-            if isinstance(effect, _effect_type):
-                result = _handler(effect, k)
-                if inspect.isgenerator(result):
-                    return (yield from result)
-                return result
-            yield Delegate()
-
-        wrapped = WithHandler(typed_handler, wrapped)
-    return wrapped
 
 
 @do
@@ -62,7 +44,7 @@ def main():
     handlers = mock_handlers(recorder=recorder)
     trace_file = get_default_trace_dir() / workflow_id / "trace.jsonl"
 
-    wrapped = with_handler_map(workflow_under_test(), handlers)
+    wrapped = WithHandler(handlers, workflow_under_test())
     result = run_sync(wrapped, handlers=default_handlers())
     if result.is_err():
         raise RuntimeError(f"Workflow unexpectedly failed: {result.error!r}")

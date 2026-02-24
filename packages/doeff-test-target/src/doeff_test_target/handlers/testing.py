@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import Resume
+from doeff import Pass, Resume
 from doeff_test_target.effects import ReadFixtureValue, RecordFixtureEvent
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -36,18 +36,22 @@ def mock_handlers(
     seed_env: Mapping[str, Any] | None = None,
     default_prefix: str = "mock-",
     runtime: MockFixtureRuntime | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build mock handler map for doeff-test-target fixture effects."""
+) -> ProtocolHandler:
+    """Build a mock protocol handler for doeff-test-target fixture effects."""
 
     active_runtime = runtime or MockFixtureRuntime(
         seed_env=dict(seed_env or {}),
         default_prefix=default_prefix,
     )
 
-    return {
-        ReadFixtureValue: active_runtime.handle_read_value,
-        RecordFixtureEvent: active_runtime.handle_record_event,
-    }
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, ReadFixtureValue):
+            return (yield from active_runtime.handle_read_value(effect, k))
+        if isinstance(effect, RecordFixtureEvent):
+            return (yield from active_runtime.handle_record_event(effect, k))
+        yield Pass()
+
+    return handler
 
 
 __all__ = [

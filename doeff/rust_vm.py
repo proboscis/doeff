@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 
@@ -250,80 +250,6 @@ def default_async_handlers() -> list[Any]:
         _coerce_handler(spawn_intercept_handler),
         _coerce_handler(async_await_handler),
     ]
-
-
-def _wrap_with_handler_map(
-    program: Any, handler_map: Mapping[type, Callable[[Any, Any], Any]]
-) -> Any:
-    """Wrap a program with typed WithHandler layers from an effect->handler mapping."""
-    vm = _vm()
-    with_handler = vm.WithHandler
-    pass_through = vm.Pass
-
-    wrapped = program
-    if isinstance(wrapped, vm.EffectBase):
-        wrapped = vm.Perform(wrapped)
-    if not isinstance(wrapped, vm.DoExpr):
-        raise TypeError(
-            f"run_with_handler_map requires Program/DoExpr/Effect, got {type(wrapped).__name__}"
-        )
-    for effect_type, handler in reversed(list(handler_map.items())):
-
-        def typed_handler(effect, k, _effect_type=effect_type, _handler=handler):
-            if isinstance(effect, _effect_type):
-                result = _handler(effect, k)
-                if _is_generator_like(result):
-                    return (yield from result)
-                return result
-            yield pass_through()
-
-        wrapped = with_handler(
-            _coerce_handler(typed_handler),
-            wrapped,
-        )
-    return wrapped
-
-
-def run_with_handler_map(
-    program: Any,
-    handler_map: Mapping[type, Callable[[Any, Any], Any]],
-    *,
-    env: dict[Any, Any] | None = None,
-    store: dict[str, Any] | None = None,
-    trace: bool = False,
-    print_doeff_trace: bool = True,
-) -> Any:
-    """Run with typed Python handlers plus the standard default handler sentinels."""
-    wrapped = _wrap_with_handler_map(program, handler_map)
-    return run(
-        wrapped,
-        handlers=default_handlers(),
-        env=env,
-        store=store,
-        trace=trace,
-        print_doeff_trace=print_doeff_trace,
-    )
-
-
-async def async_run_with_handler_map(
-    program: Any,
-    handler_map: Mapping[type, Callable[[Any, Any], Any]],
-    *,
-    env: dict[Any, Any] | None = None,
-    store: dict[str, Any] | None = None,
-    trace: bool = False,
-    print_doeff_trace: bool = True,
-) -> Any:
-    """Async counterpart to run_with_handler_map."""
-    wrapped = _wrap_with_handler_map(program, handler_map)
-    return await async_run(
-        wrapped,
-        handlers=default_async_handlers(),
-        env=env,
-        store=store,
-        trace=trace,
-        print_doeff_trace=print_doeff_trace,
-    )
 
 
 def run(

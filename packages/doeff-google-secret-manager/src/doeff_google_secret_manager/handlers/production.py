@@ -9,7 +9,7 @@ from typing import Any
 
 from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret
 
-from doeff import Resume
+from doeff import Delegate, Resume
 from doeff_google_secret_manager.client import SecretManagerClient, get_secret_manager_client
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -138,17 +138,23 @@ def production_handlers(
     *,
     client: SecretManagerClient | None = None,
     project: str | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build handler map backed by Google Cloud Secret Manager."""
+) -> ProtocolHandler:
+    """Build a protocol handler backed by Google Cloud Secret Manager."""
 
     runtime = _ProductionSecretRuntime(client=client, project=project)
 
-    return {
-        GetSecret: runtime.handle_get_secret,
-        SetSecret: runtime.handle_set_secret,
-        ListSecrets: runtime.handle_list_secrets,
-        DeleteSecret: runtime.handle_delete_secret,
-    }
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, GetSecret):
+            return (yield from runtime.handle_get_secret(effect, k))
+        if isinstance(effect, SetSecret):
+            return (yield from runtime.handle_set_secret(effect, k))
+        if isinstance(effect, ListSecrets):
+            return (yield from runtime.handle_list_secrets(effect, k))
+        if isinstance(effect, DeleteSecret):
+            return (yield from runtime.handle_delete_secret(effect, k))
+        yield Delegate()
+
+    return handler
 
 
 __all__ = [

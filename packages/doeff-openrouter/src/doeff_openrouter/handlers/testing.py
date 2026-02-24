@@ -79,55 +79,15 @@ def _coerce_structured_payload(effect: LLMStructuredOutput, payload: Any) -> Any
 def mock_handlers(
     *,
     runtime: MockOpenRouterRuntime | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build deterministic in-memory mock handlers for OpenRouter effects."""
+) -> ProtocolHandler:
+    """Build a deterministic in-memory protocol handler for OpenRouter effects."""
 
     active_runtime = runtime or MockOpenRouterRuntime()
 
-    def handle_chat(effect: LLMChat | RouterChat, k):
-        active_runtime.calls.append(
-            {
-                "effect": effect.__class__.__name__,
-                "model": effect.model,
-                "messages": copy.deepcopy(effect.messages),
-            }
-        )
-        if effect.stream:
-            return (yield Resume(k, copy.deepcopy(active_runtime.streaming_response)))
-        return (yield Resume(k, copy.deepcopy(active_runtime.chat_response)))
+    def handler(effect: Any, k: Any):
+        return (yield from openrouter_mock_handler(effect, k, runtime=active_runtime))
 
-    def handle_streaming_chat(effect: LLMStreamingChat | RouterStreamingChat, k):
-        active_runtime.calls.append(
-            {
-                "effect": effect.__class__.__name__,
-                "model": effect.model,
-                "messages": copy.deepcopy(effect.messages),
-            }
-        )
-        return (yield Resume(k, copy.deepcopy(active_runtime.streaming_response)))
-
-    def handle_structured_output(effect: LLMStructuredOutput | RouterStructuredOutput, k):
-        active_runtime.calls.append(
-            {
-                "effect": effect.__class__.__name__,
-                "model": effect.model,
-                "messages": copy.deepcopy(effect.messages),
-                "response_format": effect.response_format.__name__,
-            }
-        )
-        payload = _coerce_structured_payload(
-            effect, copy.deepcopy(active_runtime.structured_response)
-        )
-        return (yield Resume(k, payload))
-
-    return {
-        RouterChat: handle_chat,
-        RouterStreamingChat: handle_streaming_chat,
-        RouterStructuredOutput: handle_structured_output,
-        LLMChat: handle_chat,
-        LLMStreamingChat: handle_streaming_chat,
-        LLMStructuredOutput: handle_structured_output,
-    }
+    return handler
 
 
 def openrouter_mock_handler(

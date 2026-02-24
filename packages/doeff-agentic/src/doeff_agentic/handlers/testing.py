@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Resume
+from doeff import Delegate, Resume
 from doeff_agentic.effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
@@ -439,31 +439,38 @@ def mock_handlers(
     workflow_id: str = "mock-workflow",
     workflow_name: str | None = "mock-workflow",
     working_dir: str | None = None,
-) -> dict[type, Any]:
-    """Create typed VM handler map for tests using in-memory state."""
+) -> Callable[[Any, Any], Any]:
+    """Create a protocol handler for tests using in-memory state."""
     impl = handler or MockAgenticHandler(
         workflow_id=workflow_id,
         workflow_name=workflow_name,
         working_dir=working_dir,
     )
+    effect_handlers: tuple[tuple[type[Any], Callable[[Any, Any], Any]], ...] = (
+        (AgenticCreateWorkflow, _as_protocol_handler(impl.handle_create_workflow)),
+        (AgenticGetWorkflow, _as_protocol_handler(impl.handle_get_workflow)),
+        (AgenticCreateEnvironment, _as_protocol_handler(impl.handle_create_environment)),
+        (AgenticGetEnvironment, _as_protocol_handler(impl.handle_get_environment)),
+        (AgenticDeleteEnvironment, _as_protocol_handler(impl.handle_delete_environment)),
+        (AgenticCreateSession, _as_protocol_handler(impl.handle_create_session)),
+        (AgenticForkSession, _as_protocol_handler(impl.handle_fork_session)),
+        (AgenticGetSession, _as_protocol_handler(impl.handle_get_session)),
+        (AgenticAbortSession, _as_protocol_handler(impl.handle_abort_session)),
+        (AgenticDeleteSession, _as_protocol_handler(impl.handle_delete_session)),
+        (AgenticSendMessage, _as_protocol_handler(impl.handle_send_message)),
+        (AgenticGetMessages, _as_protocol_handler(impl.handle_get_messages)),
+        (AgenticNextEvent, _as_protocol_handler(impl.handle_next_event)),
+        (AgenticGetSessionStatus, _as_protocol_handler(impl.handle_get_session_status)),
+        (AgenticSupportsCapability, _as_protocol_handler(impl.handle_supports_capability)),
+    )
 
-    return {
-        AgenticCreateWorkflow: _as_protocol_handler(impl.handle_create_workflow),
-        AgenticGetWorkflow: _as_protocol_handler(impl.handle_get_workflow),
-        AgenticCreateEnvironment: _as_protocol_handler(impl.handle_create_environment),
-        AgenticGetEnvironment: _as_protocol_handler(impl.handle_get_environment),
-        AgenticDeleteEnvironment: _as_protocol_handler(impl.handle_delete_environment),
-        AgenticCreateSession: _as_protocol_handler(impl.handle_create_session),
-        AgenticForkSession: _as_protocol_handler(impl.handle_fork_session),
-        AgenticGetSession: _as_protocol_handler(impl.handle_get_session),
-        AgenticAbortSession: _as_protocol_handler(impl.handle_abort_session),
-        AgenticDeleteSession: _as_protocol_handler(impl.handle_delete_session),
-        AgenticSendMessage: _as_protocol_handler(impl.handle_send_message),
-        AgenticGetMessages: _as_protocol_handler(impl.handle_get_messages),
-        AgenticNextEvent: _as_protocol_handler(impl.handle_next_event),
-        AgenticGetSessionStatus: _as_protocol_handler(impl.handle_get_session_status),
-        AgenticSupportsCapability: _as_protocol_handler(impl.handle_supports_capability),
-    }
+    def protocol_handler(effect: Any, k: Any):
+        for effect_type, effect_handler in effect_handlers:
+            if isinstance(effect, effect_type):
+                return (yield from effect_handler(effect, k))
+        yield Delegate()
+
+    return protocol_handler
 
 
 __all__ = [
