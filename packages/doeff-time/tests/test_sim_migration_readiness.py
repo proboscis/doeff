@@ -188,9 +188,11 @@ class TestMultiServiceBacktestPattern:
         def _price_feed():
             """Produces MarketSignal events at regular intervals."""
             prices = [100.0, 101.5, 99.0]
-            for i, price in enumerate(prices):
+            for price in prices:
                 yield Delay(1.0)
                 yield Publish(MarketSignal(symbol="BTC", price=price))
+            # Ensure strategy has a chance to re-register its next WaitForEvent.
+            yield Delay(0.0)
             yield Publish(BacktestStop())
 
         @do
@@ -299,7 +301,9 @@ class TestRaceTimeVsEvent:
             return winner, now
 
         result = _run_sim_events(_program(), start_time=0.0)
-        assert result.value == ("time_expired", 10.0)
+        race_result, final_time = result.value
+        assert race_result.value == "time_expired"
+        assert final_time == 10.0
 
     def test_event_wins_when_arrives_before_expiry(self) -> None:
         """Close request arrives before holding period expires."""
@@ -329,7 +333,9 @@ class TestRaceTimeVsEvent:
             return winner, now
 
         result = _run_sim_events(_program(), start_time=0.0)
-        assert result.value == ("close_requested", 5.0)
+        race_result, final_time = result.value
+        assert race_result.value == "close_requested"
+        assert final_time == 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +411,8 @@ class TestEventDrivenStrategyLoop:
             for price in [10.0, 20.0, 30.0]:
                 yield Delay(1.0)
                 yield Publish(MarketSignal(symbol="ETH", price=price))
+            # Publish stop on the next scheduler turn so strategy can wait again.
+            yield Delay(0.0)
             yield Publish(BacktestStop())
 
         @do
@@ -461,7 +469,10 @@ class TestScheduleAtWithEvents:
             yield ScheduleAt(3.0, Publish(MarketSignal(symbol="C", price=3.0)))
             yield ScheduleAt(1.0, Publish(MarketSignal(symbol="A", price=1.0)))
             yield ScheduleAt(2.0, Publish(MarketSignal(symbol="B", price=2.0)))
-            yield Delay(3.0)
+            # Drive clock in steps so collector can re-register between publications.
+            yield Delay(1.0)
+            yield Delay(1.0)
+            yield Delay(1.0)
             return (yield Wait(collector))
 
         result = _run_sim_events(_program(), start_time=0.0)
@@ -644,10 +655,17 @@ class TestLogFormatterWithMultipleServices:
             yield Gather(t1, t2)
             return "done"
 
-        result = _run_sim(
-            Listen(_program()),
-            start_time=100.0,
-            log_formatter=lambda t, msg: f"[{t:.0f}] {msg}",
+        result = run(
+            Listen(
+                WithHandler(
+                    sim_time_handler(
+                        start_time=100.0,
+                        log_formatter=lambda t, msg: f"[{t:.0f}] {msg}",
+                    ),
+                    _program(),
+                ),
+            ),
+            handlers=default_handlers(),
         )
         listen_result = result.value
         assert listen_result.value == "done"
