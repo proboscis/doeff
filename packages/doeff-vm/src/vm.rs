@@ -2200,6 +2200,7 @@ impl VM {
                     }
                     Mode::Throw(exc) => {
                         if let Some(caller_id) = caller {
+                            self.segments.reparent_children(seg_id, Some(caller_id));
                             self.current_segment = Some(caller_id);
                             self.mode = Mode::Throw(exc);
                             self.segments.free(seg_id);
@@ -2208,6 +2209,7 @@ impl VM {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_trace();
                             let active_chain = self.assemble_active_chain(&exc);
+                            self.segments.reparent_children(seg_id, None);
                             self.segments.free(seg_id);
                             return StepEvent::Error(VMError::uncaught_exception(
                                 exc,
@@ -2799,12 +2801,14 @@ impl VM {
 
         match caller {
             Some(caller_id) => {
+                self.segments.reparent_children(seg_id, Some(caller_id));
                 self.current_segment = Some(caller_id);
                 self.segments.free(seg_id);
                 self.mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             None => {
+                self.segments.reparent_children(seg_id, None);
                 self.segments.free(seg_id);
                 StepEvent::Done(value)
             }
