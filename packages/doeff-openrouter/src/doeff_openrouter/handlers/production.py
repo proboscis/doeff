@@ -9,7 +9,7 @@ from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
     LLMStreamingChat,
-    LLMStructuredOutput,
+    LLMStructuredQuery,
 )
 
 from doeff import Delegate, Resume
@@ -56,7 +56,7 @@ def _handle_streaming_chat(effect: LLMStreamingChat | LLMChat, k):
     return (yield Resume(k, response))
 
 
-def _handle_structured_output(effect: LLMStructuredOutput, k):
+def _handle_structured_output(effect: LLMStructuredQuery, k):
     _validate_response_format(effect.response_format)
     response_format_payload = build_response_format_payload(effect.response_format)
     raw_response = yield chat_completion(
@@ -81,7 +81,7 @@ def openrouter_production_handler(effect: Any, k: Any):
         if effect.stream:
             return (yield from _handle_streaming_chat(effect, k))
         return (yield from _handle_chat(effect, k))
-    if isinstance(effect, LLMStructuredOutput | RouterStructuredOutput):
+    if isinstance(effect, LLMStructuredQuery | RouterStructuredOutput):
         return (yield from _handle_structured_output(effect, k))
     if isinstance(effect, LLMEmbedding):
         yield Delegate()

@@ -14,7 +14,7 @@ from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
     LLMStreamingChat,
-    LLMStructuredOutput,
+    LLMStructuredQuery,
 )
 from PIL import Image as PILImage
 
@@ -89,7 +89,7 @@ class MockGeminiHandler:
         signature = _message_signature(effect.messages)
         return f"{self.default_chat_response}:{signature}"
 
-    def handle_structured(self, effect: LLMStructuredOutput) -> Any:
+    def handle_structured(self, effect: LLMStructuredQuery) -> Any:
         configured = self.structured_responses.get(effect.response_format)
         if configured is None:
             configured = self._build_default_structured_payload(effect.response_format)
@@ -199,7 +199,7 @@ def mock_handlers(
                 yield Pass()
                 return
             return (yield Resume(k, active_handler.handle_chat(effect)))
-        if isinstance(effect, LLMStructuredOutput | GeminiStructuredOutput):
+        if isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput):
             if not _is_gemini_model(effect.model):
                 yield Pass()
                 return
@@ -244,7 +244,7 @@ def gemini_mock_handler(
         _is_gemini_model(effect.model)
     ):
         return (yield Resume(k, active_handler.handle_chat(effect)))
-    if isinstance(effect, LLMStructuredOutput | GeminiStructuredOutput) and _is_gemini_model(
+    if isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput) and _is_gemini_model(
         effect.model
     ):
         return (yield Resume(k, active_handler.handle_structured(effect)))

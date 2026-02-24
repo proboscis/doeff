@@ -25,6 +25,7 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 8. **[Graph Tracking](08-graph-tracking.md)** - Execution tracking and visualization
 9. **[Advanced Effects](09-advanced-effects.md)** - Gather, Atomic operations
 10. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
+11. **[WithIntercept](22-with-intercept.md)** - Cross-cutting effect observation across handler boundaries
 
 ### Integration & Advanced Topics
 
@@ -123,9 +124,10 @@ main()
 ### For Advanced Users
 
 1. **[Advanced Effects](09-advanced-effects.md)** for Gather, Atomic
-2. **[Graph Tracking](08-graph-tracking.md)** for execution visualization
-3. **[Pinjected Integration](10-pinjected-integration.md)** for DI patterns
-4. **[API Reference](13-api-reference.md)** for complete API details
+2. **[WithIntercept](22-with-intercept.md)** for cross-cutting observation
+3. **[Graph Tracking](08-graph-tracking.md)** for execution visualization
+4. **[Pinjected Integration](10-pinjected-integration.md)** for DI patterns
+5. **[API Reference](13-api-reference.md)** for complete API details
 
 ## By Use Case
 

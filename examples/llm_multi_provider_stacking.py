@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from doeff_gemini.handlers import gemini_mock_handler
-from doeff_llm.effects import LLMChat, LLMStructuredOutput
+from doeff_llm.effects import LLMChat, LLMStructuredQuery
 from doeff_openai.handlers import (
     MockOpenAIConfig,
     MockOpenAIState,
@@ -24,7 +24,7 @@ class AnalysisResult(BaseModel):
 
 @do
 def workflow() -> EffectGenerator[dict[str, Any]]:
-    analysis = yield LLMStructuredOutput(
+    analysis = yield LLMStructuredQuery(
         messages=[{"role": "user", "content": "Analyze this change"}],
         response_format=AnalysisResult,
         model="gpt-4o",
