@@ -162,6 +162,7 @@ capture = capture_graph
 # G8: lazy re-exports of VM dispatch primitives from doeff_vm
 _VM_LAZY_EXPORTS = {
     "WithHandler",
+    "WithIntercept",
     "Pure",
     "Apply",
     "Expand",
@@ -325,6 +326,7 @@ __all__ = [
     "WStep",
     "Wait",
     "WithHandler",
+    "WithIntercept",
     "WriterTellEffect",
     "acquire_semaphore",
     "annotate",

@@ -16,6 +16,12 @@ pub enum CallArg {
     Expr(PyShared),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterceptMode {
+    Include,
+    Exclude,
+}
+
 #[derive(Debug, Clone)]
 pub enum DoCtrl {
     Pure {
@@ -54,6 +60,13 @@ pub enum DoCtrl {
         handler: Handler,
         expr: Py<PyAny>,
         py_identity: Option<PyShared>,
+    },
+    WithIntercept {
+        interceptor: PyShared,
+        expr: Py<PyAny>,
+        types: PyShared,
+        mode: InterceptMode,
+        metadata: CallMetadata,
     },
     Delegate {
         effect: DispatchEffect,
@@ -162,6 +175,19 @@ impl DoCtrl {
                 handler: handler.clone(),
                 expr: expr.clone_ref(py),
                 py_identity: py_identity.clone(),
+            },
+            DoCtrl::WithIntercept {
+                interceptor,
+                expr,
+                types,
+                mode,
+                metadata,
+            } => DoCtrl::WithIntercept {
+                interceptor: interceptor.clone(),
+                expr: expr.clone_ref(py),
+                types: types.clone(),
+                mode: *mode,
+                metadata: metadata.clone(),
             },
             DoCtrl::Delegate { effect } => DoCtrl::Delegate {
                 effect: effect.clone(),
@@ -336,7 +362,7 @@ mod tests {
         let enum_body = doctrl_enum_body(src);
         let variant_count = count_top_level_variants(enum_body);
         assert_eq!(
-            variant_count, 22,
+            variant_count, 23,
             "DoCtrl variant count changed! New variants require explicit human approval."
         );
     }

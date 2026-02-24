@@ -2,12 +2,13 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
-use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::do_ctrl::{CallArg, DoCtrl, InterceptMode};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
-    dispatch_from_shared, PyAcquireSemaphore, PyAsk, PyCancelEffect, PyCompletePromise,
+    dispatch_from_shared, dispatch_ref_as_python, PyAcquireSemaphore, PyAsk, PyCancelEffect,
+    PyCompletePromise,
     PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyExecutionContext, PyFailPromise,
     PyGather, PyGet, PyGetExecutionContext, PyLocal, PyModify, PyProgramCallFrame,
     PyProgramCallStack, PyProgramTrace, PyPut, PyPythonAsyncioAwaitEffect, PyRace,
@@ -46,6 +47,7 @@ pub enum DoExprTag {
     GetTrace = 18,
     Pass = 19,
     GetTraceback = 20,
+    WithIntercept = 21,
     Effect = 128,
     Unknown = 255,
 }
@@ -74,6 +76,7 @@ impl TryFrom<u8> for DoExprTag {
             18 => Ok(DoExprTag::GetTrace),
             19 => Ok(DoExprTag::Pass),
             20 => Ok(DoExprTag::GetTraceback),
+            21 => Ok(DoExprTag::WithIntercept),
             128 => Ok(DoExprTag::Effect),
             255 => Ok(DoExprTag::Unknown),
             other => Err(other),
@@ -879,306 +882,7 @@ impl PyVM {
     }
 
     fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<DoCtrl> {
-        // R13-I: GIL-free tag dispatch.
-        //
-        // 1. Single isinstance check: extract PyDoCtrlBase
-        // 2. Read tag (u8 on frozen struct — no GIL contention)
-        // 3. Match on DoExprTag → single targeted extract for the variant
-        // 4. EffectBase instances are wrapped as DoCtrl::Perform
-        //
-        // Reduces average isinstance checks from ~8 to 2, worst case from 16 to 2.
-
-        if let Ok(base) = obj.extract::<PyRef<'_, PyDoCtrlBase>>() {
-            let tag = DoExprTag::try_from(base.tag).unwrap_or(DoExprTag::Unknown);
-            return match tag {
-                DoExprTag::WithHandler => {
-                    let wh: PyRef<'_, PyWithHandler> = obj.extract()?;
-                    let handler_bound = wh.handler.bind(py);
-                    let (handler, py_identity) =
-                        Self::classify_handler_object(py, handler_bound, "WithHandler")?;
-                    Ok(DoCtrl::WithHandler {
-                        handler,
-                        expr: wh.expr.clone_ref(py),
-                        py_identity,
-                    })
-                }
-                DoExprTag::Pure => {
-                    let p: PyRef<'_, PyPure> = obj.extract()?;
-                    Ok(DoCtrl::Pure {
-                        value: Value::from_pyobject(p.value.bind(py)),
-                    })
-                }
-                DoExprTag::Apply => {
-                    let a: PyRef<'_, PyApply> = obj.extract()?;
-                    let f = classify_call_arg(py, a.f.bind(py).as_any())?;
-                    let mut args = Vec::new();
-                    for item in a.args.bind(py).try_iter()? {
-                        let item = item?;
-                        args.push(classify_call_arg(py, item.as_any())?);
-                    }
-                    let kwargs_dict = a.kwargs.bind(py).cast::<PyDict>()?;
-                    let mut kwargs = Vec::new();
-                    for (k, v) in kwargs_dict.iter() {
-                        let key = k.str()?.to_str()?.to_string();
-                        kwargs.push((key, classify_call_arg(py, v.as_any())?));
-                    }
-                    Ok(DoCtrl::Apply {
-                        f,
-                        args,
-                        kwargs,
-                        metadata: call_metadata_from_pyapply(py, &a)?,
-                    })
-                }
-                DoExprTag::Expand => {
-                    let e: PyRef<'_, PyExpand> = obj.extract()?;
-                    let factory = classify_call_arg(py, e.factory.bind(py).as_any())?;
-                    let mut args = Vec::new();
-                    for item in e.args.bind(py).try_iter()? {
-                        let item = item?;
-                        args.push(classify_call_arg(py, item.as_any())?);
-                    }
-                    let kwargs_dict = e.kwargs.bind(py).cast::<PyDict>()?;
-                    let mut kwargs = Vec::new();
-                    for (k, v) in kwargs_dict.iter() {
-                        let key = k.str()?.to_str()?.to_string();
-                        kwargs.push((key, classify_call_arg(py, v.as_any())?));
-                    }
-                    Ok(DoCtrl::Expand {
-                        factory,
-                        args,
-                        kwargs,
-                        metadata: call_metadata_from_pyexpand(py, &e)?,
-                    })
-                }
-                DoExprTag::Map => {
-                    let m: PyRef<'_, PyMap> = obj.extract()?;
-                    Ok(DoCtrl::Map {
-                        source: PyShared::new(m.source.clone_ref(py)),
-                        mapper: PyShared::new(m.mapper.clone_ref(py)),
-                        mapper_meta: call_metadata_from_meta_obj(m.mapper_meta.bind(py)),
-                    })
-                }
-                DoExprTag::FlatMap => {
-                    let fm: PyRef<'_, PyFlatMap> = obj.extract()?;
-                    Ok(DoCtrl::FlatMap {
-                        source: PyShared::new(fm.source.clone_ref(py)),
-                        binder: PyShared::new(fm.binder.clone_ref(py)),
-                        binder_meta: call_metadata_from_meta_obj(fm.binder_meta.bind(py)),
-                    })
-                }
-                DoExprTag::Perform => {
-                    let pf: PyRef<'_, PyPerform> = obj.extract()?;
-                    Ok(DoCtrl::Perform {
-                        effect: dispatch_from_shared(PyShared::new(pf.effect.clone_ref(py))),
-                    })
-                }
-                DoExprTag::Resume => {
-                    let r: PyRef<'_, PyResume> = obj.extract()?;
-                    let k_pyobj = r.continuation.bind(py).cast::<PyK>().map_err(|_| {
-                        PyTypeError::new_err(
-                            "Resume.continuation must be K (opaque continuation handle)",
-                        )
-                    })?;
-                    let cont_id = k_pyobj.borrow().cont_id;
-                    let k = self
-                        .vm
-                        .lookup_continuation(cont_id)
-                        .cloned()
-                        .ok_or_else(|| {
-                            PyRuntimeError::new_err(format!(
-                                "Resume with unknown continuation id {}",
-                                cont_id.raw()
-                            ))
-                        })?;
-                    Ok(DoCtrl::Resume {
-                        continuation: k,
-                        value: Value::from_pyobject(r.value.bind(py)),
-                    })
-                }
-                DoExprTag::Transfer => {
-                    let t: PyRef<'_, PyTransfer> = obj.extract()?;
-                    let k_pyobj = t.continuation.bind(py).cast::<PyK>().map_err(|_| {
-                        PyTypeError::new_err(
-                            "Transfer.continuation must be K (opaque continuation handle)",
-                        )
-                    })?;
-                    let cont_id = k_pyobj.borrow().cont_id;
-                    let k = self
-                        .vm
-                        .lookup_continuation(cont_id)
-                        .cloned()
-                        .ok_or_else(|| {
-                            PyRuntimeError::new_err(format!(
-                                "Transfer with unknown continuation id {}",
-                                cont_id.raw()
-                            ))
-                        })?;
-                    Ok(DoCtrl::Transfer {
-                        continuation: k,
-                        value: Value::from_pyobject(t.value.bind(py)),
-                    })
-                }
-                DoExprTag::Delegate => {
-                    let _d: PyRef<'_, PyDelegate> = obj.extract()?;
-                    let effect = self
-                        .vm
-                        .dispatch_stack
-                        .last()
-                        .map(|ctx| ctx.effect.clone())
-                        .ok_or_else(|| {
-                            PyRuntimeError::new_err("Delegate called outside dispatch context")
-                        })?;
-                    Ok(DoCtrl::Delegate { effect })
-                }
-                DoExprTag::Pass => {
-                    let _p: PyRef<'_, PyPass> = obj.extract()?;
-                    let effect = self
-                        .vm
-                        .dispatch_stack
-                        .last()
-                        .map(|ctx| ctx.effect.clone())
-                        .ok_or_else(|| {
-                            PyRuntimeError::new_err("Pass called outside dispatch context")
-                        })?;
-                    Ok(DoCtrl::Pass { effect })
-                }
-                DoExprTag::ResumeContinuation => {
-                    let rc: PyRef<'_, PyResumeContinuation> = obj.extract()?;
-                    let k_pyobj = rc.continuation.bind(py).cast::<PyK>().map_err(|_| {
-                        PyTypeError::new_err("ResumeContinuation.continuation must be K (opaque continuation handle)")
-                    })?;
-                    let cont_id = k_pyobj.borrow().cont_id;
-                    let k = self
-                        .vm
-                        .lookup_continuation(cont_id)
-                        .cloned()
-                        .ok_or_else(|| {
-                            PyRuntimeError::new_err(format!(
-                                "ResumeContinuation with unknown continuation id {}",
-                                cont_id.raw()
-                            ))
-                        })?;
-                    Ok(DoCtrl::ResumeContinuation {
-                        continuation: k,
-                        value: Value::from_pyobject(rc.value.bind(py)),
-                    })
-                }
-                DoExprTag::CreateContinuation => {
-                    let cc: PyRef<'_, PyCreateContinuation> = obj.extract()?;
-                    let program = cc.program.clone_ref(py);
-                    let handlers_list = cc.handlers.bind(py);
-                    let mut handlers = Vec::new();
-                    let mut handler_identities = Vec::new();
-                    for item in handlers_list.try_iter()? {
-                        let item = item?;
-                        let (handler, identity) =
-                            Self::classify_handler_object(py, &item, "CreateContinuation")?;
-                        handlers.push(handler);
-                        handler_identities.push(identity);
-                    }
-                    Ok(DoCtrl::CreateContinuation {
-                        expr: PyShared::new(program),
-                        handlers,
-                        handler_identities,
-                    })
-                }
-                DoExprTag::GetContinuation => Ok(DoCtrl::GetContinuation),
-                DoExprTag::GetHandlers => Ok(DoCtrl::GetHandlers),
-                DoExprTag::GetTraceback => {
-                    let gt: PyRef<'_, PyGetTraceback> = obj.extract()?;
-                    let k_pyobj = gt.continuation.bind(py).cast::<PyK>().map_err(|_| {
-                        PyTypeError::new_err(
-                            "GetTraceback.continuation must be K (opaque continuation handle)",
-                        )
-                    })?;
-                    let cont_id = k_pyobj.borrow().cont_id;
-                    let k = self
-                        .vm
-                        .lookup_continuation(cont_id)
-                        .cloned()
-                        .ok_or_else(|| {
-                            PyRuntimeError::new_err(format!(
-                                "GetTraceback with unknown continuation id {}",
-                                cont_id.raw()
-                            ))
-                        })?;
-                    Ok(DoCtrl::GetTraceback { continuation: k })
-                }
-                DoExprTag::GetCallStack => Ok(DoCtrl::GetCallStack),
-                DoExprTag::GetTrace => Ok(DoCtrl::GetTrace),
-                DoExprTag::Eval => {
-                    let eval: PyRef<'_, PyEval> = obj.extract()?;
-                    let expr = eval.expr.clone_ref(py);
-                    let handlers_list = eval.handlers.bind(py);
-                    let mut handlers = Vec::new();
-                    for item in handlers_list.try_iter()? {
-                        let item = item?;
-                        let (handler, _) = Self::classify_handler_object(py, &item, "Eval")?;
-                        handlers.push(handler);
-                    }
-                    Ok(DoCtrl::Eval {
-                        expr: PyShared::new(expr),
-                        handlers,
-                        metadata: None,
-                    })
-                }
-                DoExprTag::AsyncEscape => {
-                    let ae: PyRef<'_, PyAsyncEscape> = obj.extract()?;
-                    Ok(DoCtrl::PythonAsyncSyntaxEscape {
-                        action: ae.action.clone_ref(py),
-                    })
-                }
-                DoExprTag::Effect | DoExprTag::Unknown => {
-                    // Unknown tag on a DoCtrlBase — treat as error
-                    Err(PyTypeError::new_err(
-                        "yielded DoCtrlBase has unrecognized tag",
-                    ))
-                }
-            };
-        }
-
-        if obj.is_instance_of::<PyDoExprBase>() {
-            let to_generator = obj.getattr("to_generator").map_err(|_| {
-                PyTypeError::new_err("DoExpr object is missing callable to_generator()")
-            })?;
-            if !to_generator.is_callable() {
-                return Err(PyTypeError::new_err("DoExpr.to_generator must be callable"));
-            }
-            let ty_name = obj
-                .get_type()
-                .name()
-                .map(|n| n.to_string())
-                .unwrap_or_else(|_| "DoExpr".to_string());
-            return Ok(DoCtrl::Expand {
-                factory: CallArg::Value(Value::Python(to_generator.unbind())),
-                args: vec![],
-                kwargs: vec![],
-                metadata: CallMetadata::new(
-                    format!("{ty_name}.to_generator"),
-                    "<doexpr>".to_string(),
-                    0,
-                    None,
-                    Some(PyShared::new(obj.clone().unbind())),
-                ),
-            });
-        }
-
-        // Fallback: bare effect → auto-lift to Perform (R14-C)
-        if is_effect_base_like(py, obj)? {
-            if obj.is_instance_of::<PyProgramTrace>() {
-                return Ok(DoCtrl::GetTrace);
-            }
-            if obj.is_instance_of::<PyProgramCallStack>() {
-                return Ok(DoCtrl::GetCallStack);
-            }
-            return Ok(DoCtrl::Perform {
-                effect: dispatch_from_shared(PyShared::new(obj.clone().unbind())),
-            });
-        }
-
-        Err(PyTypeError::new_err(
-            "yielded value must be EffectBase or DoExpr",
-        ))
+        classify_yielded_bound(&self.vm, py, obj)
     }
 
     fn values_to_tuple<'py>(
@@ -1269,6 +973,837 @@ impl PySchedulerHandler {
             );
         }
     }
+}
+
+fn parse_intercept_mode(mode: &str) -> Result<InterceptMode, String> {
+    match mode.to_ascii_lowercase().as_str() {
+        "include" => Ok(InterceptMode::Include),
+        "exclude" => Ok(InterceptMode::Exclude),
+        other => Err(format!(
+            "WithIntercept.mode must be 'include' or 'exclude', got {other:?}"
+        )),
+    }
+}
+
+fn intercept_mode_to_string(mode: InterceptMode) -> String {
+    match mode {
+        InterceptMode::Include => "include".to_string(),
+        InterceptMode::Exclude => "exclude".to_string(),
+    }
+}
+
+fn call_metadata_from_callable(
+    py: Python<'_>,
+    callable: &Bound<'_, PyAny>,
+    fallback_name: &str,
+) -> CallMetadata {
+    let function_name = callable
+        .getattr("__qualname__")
+        .ok()
+        .and_then(|name| name.extract::<String>().ok())
+        .or_else(|| {
+            callable
+                .getattr("__name__")
+                .ok()
+                .and_then(|name| name.extract::<String>().ok())
+        })
+        .unwrap_or_else(|| fallback_name.to_string());
+
+    let (source_file, source_line) = callable
+        .getattr("__code__")
+        .ok()
+        .map(|code| {
+            let file = code
+                .getattr("co_filename")
+                .ok()
+                .and_then(|value| value.extract::<String>().ok())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let line = code
+                .getattr("co_firstlineno")
+                .ok()
+                .and_then(|value| value.extract::<u32>().ok())
+                .unwrap_or(0);
+            (file, line)
+        })
+        .unwrap_or_else(|| ("<unknown>".to_string(), 0));
+
+    let _ = py;
+    CallMetadata::new(function_name, source_file, source_line, None, None)
+}
+
+fn call_metadata_to_dict(py: Python<'_>, metadata: &CallMetadata) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    dict.set_item("function_name", metadata.function_name.as_str())?;
+    dict.set_item("source_file", metadata.source_file.as_str())?;
+    dict.set_item("source_line", metadata.source_line)?;
+    if let Some(args_repr) = &metadata.args_repr {
+        dict.set_item("args_repr", args_repr.as_str())?;
+    }
+    if let Some(program_call) = &metadata.program_call {
+        dict.set_item("program_call", program_call.bind(py))?;
+    }
+    Ok(dict.into_any().unbind())
+}
+
+fn call_arg_to_pyobject(py: Python<'_>, arg: &CallArg) -> PyResult<Py<PyAny>> {
+    match arg {
+        CallArg::Value(value) => Ok(value.to_pyobject(py)?.unbind()),
+        CallArg::Expr(expr) => Ok(expr.clone_ref(py)),
+    }
+}
+
+pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAny>>, PyException> {
+    Python::attach(|py| {
+        let obj = match yielded {
+            DoCtrl::Pure { value } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::Pure as u8,
+                        })
+                        .add_subclass(PyPure {
+                            value: value.to_pyobject(py)?.unbind(),
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::Map {
+                source,
+                mapper,
+                mapper_meta,
+            } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::Map as u8,
+                        })
+                        .add_subclass(PyMap {
+                            source: source.clone_ref(py),
+                            mapper: mapper.clone_ref(py),
+                            mapper_meta: call_metadata_to_dict(py, mapper_meta)?,
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::FlatMap {
+                source,
+                binder,
+                binder_meta,
+            } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::FlatMap as u8,
+                        })
+                        .add_subclass(PyFlatMap {
+                            source: source.clone_ref(py),
+                            binder: binder.clone_ref(py),
+                            binder_meta: call_metadata_to_dict(py, binder_meta)?,
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::Perform { effect } => dispatch_ref_as_python(effect).map(|value| value.clone_ref(py)),
+            DoCtrl::Resume {
+                continuation,
+                value,
+            } => {
+                let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind();
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::Resume as u8,
+                            })
+                            .add_subclass(PyResume {
+                                continuation: k,
+                                value: value.to_pyobject(py)?.unbind(),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::Transfer {
+                continuation,
+                value,
+            } => {
+                let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind();
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::Transfer as u8,
+                            })
+                            .add_subclass(PyTransfer {
+                                continuation: k,
+                                value: value.to_pyobject(py)?.unbind(),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::TransferThrow { .. } | DoCtrl::ResumeThrow { .. } => None,
+            DoCtrl::WithHandler {
+                handler,
+                expr,
+                py_identity,
+            } => {
+                let debug = handler.handler_debug_info();
+                let handler_obj = py_identity
+                    .as_ref()
+                    .map(|identity| identity.clone_ref(py))
+                    .or_else(|| handler.py_identity().map(|identity| identity.clone_ref(py)))
+                    .unwrap_or_else(|| py.None());
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::WithHandler as u8,
+                            })
+                            .add_subclass(PyWithHandler {
+                                handler: handler_obj,
+                                expr: expr.clone_ref(py),
+                                handler_name: Some(debug.name),
+                                handler_file: debug.file,
+                                handler_line: debug.line,
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::WithIntercept {
+                interceptor,
+                expr,
+                types,
+                mode,
+                ..
+            } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::WithIntercept as u8,
+                        })
+                        .add_subclass(PyWithIntercept {
+                            f: interceptor.clone_ref(py),
+                            expr: expr.clone_ref(py),
+                            types: types.clone_ref(py),
+                            mode: intercept_mode_to_string(*mode),
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::Delegate { .. } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::Delegate as u8,
+                        })
+                        .add_subclass(PyDelegate {}),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::Pass { .. } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::Pass as u8,
+                        })
+                        .add_subclass(PyPass {}),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::GetContinuation => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::GetContinuation as u8,
+                        })
+                        .add_subclass(PyGetContinuation),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::GetHandlers => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::GetHandlers as u8,
+                        })
+                        .add_subclass(PyGetHandlers),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::GetTraceback { continuation } => {
+                let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind();
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::GetTraceback as u8,
+                            })
+                            .add_subclass(PyGetTraceback { continuation: k }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::CreateContinuation {
+                expr,
+                handlers,
+                handler_identities,
+            } => {
+                let list = PyList::empty(py);
+                for (idx, handler) in handlers.iter().enumerate() {
+                    if let Some(Some(identity)) = handler_identities.get(idx) {
+                        list.append(identity.bind(py))
+                            .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                    } else if let Some(identity) = handler.py_identity() {
+                        list.append(identity.bind(py))
+                            .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                    } else {
+                        list.append(py.None())
+                            .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                    }
+                }
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::CreateContinuation as u8,
+                            })
+                            .add_subclass(PyCreateContinuation {
+                                program: expr.clone_ref(py),
+                                handlers: list.into_any().unbind(),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::ResumeContinuation {
+                continuation,
+                value,
+            } => {
+                let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind();
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::ResumeContinuation as u8,
+                            })
+                            .add_subclass(PyResumeContinuation {
+                                continuation: k,
+                                value: value.to_pyobject(py)?.unbind(),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::PythonAsyncSyntaxEscape { action } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::AsyncEscape as u8,
+                        })
+                        .add_subclass(PyAsyncEscape {
+                            action: action.clone_ref(py),
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::Apply {
+                f,
+                args,
+                kwargs,
+                metadata,
+            } => {
+                let py_args = PyList::empty(py);
+                for arg in args {
+                    py_args
+                        .append(call_arg_to_pyobject(py, arg)?.bind(py))
+                        .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                }
+                let py_kwargs = PyDict::new(py);
+                for (key, value) in kwargs {
+                    py_kwargs
+                        .set_item(key, call_arg_to_pyobject(py, value)?.bind(py))
+                        .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                }
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::Apply as u8,
+                            })
+                            .add_subclass(PyApply {
+                                f: call_arg_to_pyobject(py, f)?,
+                                args: py_args.into_any().unbind(),
+                                kwargs: py_kwargs.into_any().unbind(),
+                                meta: Some(call_metadata_to_dict(py, metadata)?),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::Expand {
+                factory,
+                args,
+                kwargs,
+                metadata,
+            } => {
+                let py_args = PyList::empty(py);
+                for arg in args {
+                    py_args
+                        .append(call_arg_to_pyobject(py, arg)?.bind(py))
+                        .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                }
+                let py_kwargs = PyDict::new(py);
+                for (key, value) in kwargs {
+                    py_kwargs
+                        .set_item(key, call_arg_to_pyobject(py, value)?.bind(py))
+                        .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                }
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::Expand as u8,
+                            })
+                            .add_subclass(PyExpand {
+                                factory: call_arg_to_pyobject(py, factory)?,
+                                args: py_args.into_any().unbind(),
+                                kwargs: py_kwargs.into_any().unbind(),
+                                meta: Some(call_metadata_to_dict(py, metadata)?),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::Eval { expr, handlers, .. } => {
+                let list = PyList::empty(py);
+                for handler in handlers {
+                    if let Some(identity) = handler.py_identity() {
+                        list.append(identity.bind(py))
+                            .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                    } else {
+                        list.append(py.None())
+                            .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                    }
+                }
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::Eval as u8,
+                            })
+                            .add_subclass(PyEval {
+                                expr: expr.clone_ref(py),
+                                handlers: list.into_any().unbind(),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::GetCallStack => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::GetCallStack as u8,
+                        })
+                        .add_subclass(PyGetCallStack),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::GetTrace => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::GetTrace as u8,
+                        })
+                        .add_subclass(PyGetTrace),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+        };
+
+        Ok(obj)
+    })
+}
+
+pub(crate) fn classify_yielded_bound(
+    vm: &VM,
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<DoCtrl> {
+    // R13-I: GIL-free tag dispatch.
+    //
+    // 1. Single isinstance check: extract PyDoCtrlBase
+    // 2. Read tag (u8 on frozen struct — no GIL contention)
+    // 3. Match on DoExprTag → single targeted extract for the variant
+    // 4. EffectBase instances are wrapped as DoCtrl::Perform
+    //
+    // Reduces average isinstance checks from ~8 to 2, worst case from 16 to 2.
+    if let Ok(base) = obj.extract::<PyRef<'_, PyDoCtrlBase>>() {
+        let tag = DoExprTag::try_from(base.tag).unwrap_or(DoExprTag::Unknown);
+        return match tag {
+            DoExprTag::WithHandler => {
+                let wh: PyRef<'_, PyWithHandler> = obj.extract()?;
+                let handler_bound = wh.handler.bind(py);
+                let (handler, py_identity) =
+                    PyVM::classify_handler_object(py, handler_bound, "WithHandler")?;
+                Ok(DoCtrl::WithHandler {
+                    handler,
+                    expr: wh.expr.clone_ref(py),
+                    py_identity,
+                })
+            }
+            DoExprTag::WithIntercept => {
+                let wi: PyRef<'_, PyWithIntercept> = obj.extract()?;
+                let mode = parse_intercept_mode(&wi.mode).map_err(PyTypeError::new_err)?;
+                Ok(DoCtrl::WithIntercept {
+                    interceptor: PyShared::new(wi.f.clone_ref(py)),
+                    expr: wi.expr.clone_ref(py),
+                    types: PyShared::new(wi.types.clone_ref(py)),
+                    mode,
+                    metadata: call_metadata_from_callable(
+                        py,
+                        wi.f.bind(py),
+                        "WithIntercept.interceptor",
+                    ),
+                })
+            }
+            DoExprTag::Pure => {
+                let p: PyRef<'_, PyPure> = obj.extract()?;
+                Ok(DoCtrl::Pure {
+                    value: Value::from_pyobject(p.value.bind(py)),
+                })
+            }
+            DoExprTag::Apply => {
+                let a: PyRef<'_, PyApply> = obj.extract()?;
+                let f = classify_call_arg(py, a.f.bind(py).as_any())?;
+                let mut args = Vec::new();
+                for item in a.args.bind(py).try_iter()? {
+                    let item = item?;
+                    args.push(classify_call_arg(py, item.as_any())?);
+                }
+                let kwargs_dict = a.kwargs.bind(py).cast::<PyDict>()?;
+                let mut kwargs = Vec::new();
+                for (k, v) in kwargs_dict.iter() {
+                    let key = k.str()?.to_str()?.to_string();
+                    kwargs.push((key, classify_call_arg(py, v.as_any())?));
+                }
+                Ok(DoCtrl::Apply {
+                    f,
+                    args,
+                    kwargs,
+                    metadata: call_metadata_from_pyapply(py, &a)?,
+                })
+            }
+            DoExprTag::Expand => {
+                let e: PyRef<'_, PyExpand> = obj.extract()?;
+                let factory = classify_call_arg(py, e.factory.bind(py).as_any())?;
+                let mut args = Vec::new();
+                for item in e.args.bind(py).try_iter()? {
+                    let item = item?;
+                    args.push(classify_call_arg(py, item.as_any())?);
+                }
+                let kwargs_dict = e.kwargs.bind(py).cast::<PyDict>()?;
+                let mut kwargs = Vec::new();
+                for (k, v) in kwargs_dict.iter() {
+                    let key = k.str()?.to_str()?.to_string();
+                    kwargs.push((key, classify_call_arg(py, v.as_any())?));
+                }
+                Ok(DoCtrl::Expand {
+                    factory,
+                    args,
+                    kwargs,
+                    metadata: call_metadata_from_pyexpand(py, &e)?,
+                })
+            }
+            DoExprTag::Map => {
+                let m: PyRef<'_, PyMap> = obj.extract()?;
+                Ok(DoCtrl::Map {
+                    source: PyShared::new(m.source.clone_ref(py)),
+                    mapper: PyShared::new(m.mapper.clone_ref(py)),
+                    mapper_meta: call_metadata_from_meta_obj(m.mapper_meta.bind(py)),
+                })
+            }
+            DoExprTag::FlatMap => {
+                let fm: PyRef<'_, PyFlatMap> = obj.extract()?;
+                Ok(DoCtrl::FlatMap {
+                    source: PyShared::new(fm.source.clone_ref(py)),
+                    binder: PyShared::new(fm.binder.clone_ref(py)),
+                    binder_meta: call_metadata_from_meta_obj(fm.binder_meta.bind(py)),
+                })
+            }
+            DoExprTag::Perform => {
+                let pf: PyRef<'_, PyPerform> = obj.extract()?;
+                Ok(DoCtrl::Perform {
+                    effect: dispatch_from_shared(PyShared::new(pf.effect.clone_ref(py))),
+                })
+            }
+            DoExprTag::Resume => {
+                let r: PyRef<'_, PyResume> = obj.extract()?;
+                let k_pyobj = r.continuation.bind(py).cast::<PyK>().map_err(|_| {
+                    PyTypeError::new_err("Resume.continuation must be K (opaque continuation handle)")
+                })?;
+                let cont_id = k_pyobj.borrow().cont_id;
+                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                    PyRuntimeError::new_err(format!(
+                        "Resume with unknown continuation id {}",
+                        cont_id.raw()
+                    ))
+                })?;
+                Ok(DoCtrl::Resume {
+                    continuation: k,
+                    value: Value::from_pyobject(r.value.bind(py)),
+                })
+            }
+            DoExprTag::Transfer => {
+                let t: PyRef<'_, PyTransfer> = obj.extract()?;
+                let k_pyobj = t.continuation.bind(py).cast::<PyK>().map_err(|_| {
+                    PyTypeError::new_err(
+                        "Transfer.continuation must be K (opaque continuation handle)",
+                    )
+                })?;
+                let cont_id = k_pyobj.borrow().cont_id;
+                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                    PyRuntimeError::new_err(format!(
+                        "Transfer with unknown continuation id {}",
+                        cont_id.raw()
+                    ))
+                })?;
+                Ok(DoCtrl::Transfer {
+                    continuation: k,
+                    value: Value::from_pyobject(t.value.bind(py)),
+                })
+            }
+            DoExprTag::Delegate => {
+                let _d: PyRef<'_, PyDelegate> = obj.extract()?;
+                let effect = vm
+                    .dispatch_stack
+                    .last()
+                    .map(|ctx| ctx.effect.clone())
+                    .ok_or_else(|| PyRuntimeError::new_err("Delegate called outside dispatch context"))?;
+                Ok(DoCtrl::Delegate { effect })
+            }
+            DoExprTag::Pass => {
+                let _p: PyRef<'_, PyPass> = obj.extract()?;
+                let effect = vm
+                    .dispatch_stack
+                    .last()
+                    .map(|ctx| ctx.effect.clone())
+                    .ok_or_else(|| PyRuntimeError::new_err("Pass called outside dispatch context"))?;
+                Ok(DoCtrl::Pass { effect })
+            }
+            DoExprTag::ResumeContinuation => {
+                let rc: PyRef<'_, PyResumeContinuation> = obj.extract()?;
+                let k_pyobj = rc.continuation.bind(py).cast::<PyK>().map_err(|_| {
+                    PyTypeError::new_err(
+                        "ResumeContinuation.continuation must be K (opaque continuation handle)",
+                    )
+                })?;
+                let cont_id = k_pyobj.borrow().cont_id;
+                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                    PyRuntimeError::new_err(format!(
+                        "ResumeContinuation with unknown continuation id {}",
+                        cont_id.raw()
+                    ))
+                })?;
+                Ok(DoCtrl::ResumeContinuation {
+                    continuation: k,
+                    value: Value::from_pyobject(rc.value.bind(py)),
+                })
+            }
+            DoExprTag::CreateContinuation => {
+                let cc: PyRef<'_, PyCreateContinuation> = obj.extract()?;
+                let program = cc.program.clone_ref(py);
+                let handlers_list = cc.handlers.bind(py);
+                let mut handlers = Vec::new();
+                let mut handler_identities = Vec::new();
+                for item in handlers_list.try_iter()? {
+                    let item = item?;
+                    let (handler, identity) =
+                        PyVM::classify_handler_object(py, &item, "CreateContinuation")?;
+                    handlers.push(handler);
+                    handler_identities.push(identity);
+                }
+                Ok(DoCtrl::CreateContinuation {
+                    expr: PyShared::new(program),
+                    handlers,
+                    handler_identities,
+                })
+            }
+            DoExprTag::GetContinuation => Ok(DoCtrl::GetContinuation),
+            DoExprTag::GetHandlers => Ok(DoCtrl::GetHandlers),
+            DoExprTag::GetTraceback => {
+                let gt: PyRef<'_, PyGetTraceback> = obj.extract()?;
+                let k_pyobj = gt.continuation.bind(py).cast::<PyK>().map_err(|_| {
+                    PyTypeError::new_err(
+                        "GetTraceback.continuation must be K (opaque continuation handle)",
+                    )
+                })?;
+                let cont_id = k_pyobj.borrow().cont_id;
+                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                    PyRuntimeError::new_err(format!(
+                        "GetTraceback with unknown continuation id {}",
+                        cont_id.raw()
+                    ))
+                })?;
+                Ok(DoCtrl::GetTraceback { continuation: k })
+            }
+            DoExprTag::GetCallStack => Ok(DoCtrl::GetCallStack),
+            DoExprTag::GetTrace => Ok(DoCtrl::GetTrace),
+            DoExprTag::Eval => {
+                let eval: PyRef<'_, PyEval> = obj.extract()?;
+                let expr = eval.expr.clone_ref(py);
+                let handlers_list = eval.handlers.bind(py);
+                let mut handlers = Vec::new();
+                for item in handlers_list.try_iter()? {
+                    let item = item?;
+                    let (handler, _) = PyVM::classify_handler_object(py, &item, "Eval")?;
+                    handlers.push(handler);
+                }
+                Ok(DoCtrl::Eval {
+                    expr: PyShared::new(expr),
+                    handlers,
+                    metadata: None,
+                })
+            }
+            DoExprTag::AsyncEscape => {
+                let ae: PyRef<'_, PyAsyncEscape> = obj.extract()?;
+                Ok(DoCtrl::PythonAsyncSyntaxEscape {
+                    action: ae.action.clone_ref(py),
+                })
+            }
+            DoExprTag::Effect | DoExprTag::Unknown => Err(PyTypeError::new_err(
+                "yielded DoCtrlBase has unrecognized tag",
+            )),
+        };
+    }
+
+    if obj.is_instance_of::<PyDoExprBase>() {
+        let to_generator = obj
+            .getattr("to_generator")
+            .map_err(|_| PyTypeError::new_err("DoExpr object is missing callable to_generator()"))?;
+        if !to_generator.is_callable() {
+            return Err(PyTypeError::new_err("DoExpr.to_generator must be callable"));
+        }
+        let ty_name = obj
+            .get_type()
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "DoExpr".to_string());
+        return Ok(DoCtrl::Expand {
+            factory: CallArg::Value(Value::Python(to_generator.unbind())),
+            args: vec![],
+            kwargs: vec![],
+            metadata: CallMetadata::new(
+                format!("{ty_name}.to_generator"),
+                "<doexpr>".to_string(),
+                0,
+                None,
+                Some(PyShared::new(obj.clone().unbind())),
+            ),
+        });
+    }
+
+    // Fallback: bare effect -> auto-lift to Perform (R14-C)
+    if is_effect_base_like(py, obj)? {
+        if obj.is_instance_of::<PyProgramTrace>() {
+            return Ok(DoCtrl::GetTrace);
+        }
+        if obj.is_instance_of::<PyProgramCallStack>() {
+            return Ok(DoCtrl::GetCallStack);
+        }
+        return Ok(DoCtrl::Perform {
+            effect: dispatch_from_shared(PyShared::new(obj.clone().unbind())),
+        });
+    }
+
+    Err(PyTypeError::new_err(
+        "yielded value must be EffectBase or DoExpr",
+    ))
+}
+
+pub(crate) fn classify_yielded_for_vm(
+    vm: &VM,
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+) -> Result<DoCtrl, PyException> {
+    classify_yielded_bound(vm, py, obj).map_err(|err| {
+        pyerr_to_exception(py, err)
+            .unwrap_or_else(|conv_err| PyException::runtime_error(format!("{conv_err}")))
+    })
 }
 
 fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
@@ -1735,6 +2270,68 @@ impl PyWithHandler {
                 handler_name,
                 handler_file,
                 handler_line,
+            }))
+    }
+}
+
+#[pyclass(name = "WithIntercept", extends=PyDoCtrlBase)]
+pub struct PyWithIntercept {
+    #[pyo3(get)]
+    pub f: Py<PyAny>,
+    #[pyo3(get)]
+    pub expr: Py<PyAny>,
+    #[pyo3(get)]
+    pub types: Py<PyAny>,
+    #[pyo3(get)]
+    pub mode: String,
+}
+
+#[pymethods]
+impl PyWithIntercept {
+    #[new]
+    #[pyo3(signature = (f, expr, types=None, mode=None))]
+    fn new(
+        py: Python<'_>,
+        f: Py<PyAny>,
+        expr: Py<PyAny>,
+        types: Option<Py<PyAny>>,
+        mode: Option<String>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        if !f.bind(py).is_callable() {
+            return Err(PyTypeError::new_err("WithIntercept.f must be callable"));
+        }
+
+        let types = types.unwrap_or_else(|| PyTuple::empty(py).into_any().unbind());
+        let types_bound = types.bind(py);
+        if !types_bound.is_instance_of::<PyTuple>() {
+            return Err(PyTypeError::new_err("WithIntercept.types must be tuple[type, ...]"));
+        }
+        for item in types_bound.try_iter()? {
+            let item = item?;
+            if !item.is_instance_of::<PyType>() {
+                return Err(PyTypeError::new_err(
+                    "WithIntercept.types must contain only Python type objects",
+                ));
+            }
+        }
+
+        let normalized_mode = parse_intercept_mode(mode.as_deref().unwrap_or("include"))
+            .map_err(PyTypeError::new_err)?;
+        let expr = lift_effect_to_perform_expr(py, expr)?;
+        let expr_obj = expr.bind(py);
+        if !expr_obj.is_instance_of::<PyDoExprBase>() {
+            return Err(PyTypeError::new_err("WithIntercept.expr must be DoExpr"));
+        }
+
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::WithIntercept as u8,
+            })
+            .add_subclass(PyWithIntercept {
+                f,
+                expr,
+                types,
+                mode: intercept_mode_to_string(normalized_mode),
             }))
     }
 }
@@ -3385,6 +3982,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTraceFrame>()?;
     m.add_class::<PyTraceHop>()?;
     m.add_class::<PyWithHandler>()?;
+    m.add_class::<PyWithIntercept>()?;
     m.add_class::<PyPure>()?;
     m.add_class::<PyApply>()?;
     m.add_class::<PyExpand>()?;
@@ -3490,6 +4088,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_GET_CONTINUATION", DoExprTag::GetContinuation as u8)?;
     m.add("TAG_GET_HANDLERS", DoExprTag::GetHandlers as u8)?;
     m.add("TAG_GET_TRACEBACK", DoExprTag::GetTraceback as u8)?;
+    m.add("TAG_WITH_INTERCEPT", DoExprTag::WithIntercept as u8)?;
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
     m.add("TAG_GET_TRACE", DoExprTag::GetTrace as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;
