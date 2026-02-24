@@ -2422,6 +2422,38 @@ impl VM {
             .collect()
     }
 
+    fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
+        let Some(dispatch_id) = self.current_active_handler_dispatch_id() else {
+            return true;
+        };
+        let Some(dispatch_ctx) = self
+            .dispatch_stack
+            .iter()
+            .rev()
+            .find(|ctx| ctx.dispatch_id == dispatch_id)
+        else {
+            debug_assert!(false, "active dispatch_id not found on stack");
+            return false;
+        };
+        let Some(handler_marker) = dispatch_ctx
+            .handler_chain
+            .get(dispatch_ctx.handler_idx)
+            .copied()
+        else {
+            debug_assert!(false, "handler_idx out of bounds");
+            return false;
+        };
+        let Some(entry) = self.handlers.get(&handler_marker) else {
+            debug_assert!(false, "handler marker not in registry");
+            return false;
+        };
+        let Some(prompt_seg) = self.segments.get(entry.prompt_seg_id) else {
+            debug_assert!(false, "prompt segment missing");
+            return false;
+        };
+        prompt_seg.scope_chain.contains(&interceptor_marker)
+    }
+
     fn is_interceptor_skipped(&self, marker: Marker) -> bool {
         self.interceptor_skip_stack.contains(&marker)
     }
@@ -2482,6 +2514,9 @@ impl VM {
             let marker = chain[idx];
             idx += 1;
             if self.is_interceptor_skipped(marker) {
+                continue;
+            }
+            if !self.interceptor_visible_to_active_handler(marker) {
                 continue;
             }
 
@@ -3531,20 +3566,6 @@ impl VM {
             .unwrap_or_default()
     }
 
-    fn handler_scope_chain(&self, handler_marker: Marker) -> Vec<Marker> {
-        let Some(entry) = self.handlers.get(&handler_marker) else {
-            return self.current_scope_chain();
-        };
-        let Some(prompt_seg) = self.segments.get(entry.prompt_seg_id) else {
-            return self.current_scope_chain();
-        };
-
-        let mut scope_chain = Vec::with_capacity(prompt_seg.scope_chain.len() + 1);
-        scope_chain.push(handler_marker);
-        scope_chain.extend(prompt_seg.scope_chain.iter().copied());
-        scope_chain
-    }
-
     pub fn lazy_pop_completed(&mut self) {
         while let Some(top) = self.dispatch_stack.last() {
             if top.completed {
@@ -3657,8 +3678,8 @@ impl VM {
             .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
         let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
 
-        let handler_scope_chain = self.handler_scope_chain(handler_marker);
-        let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id), handler_scope_chain);
+        let scope_chain = self.current_scope_chain();
+        let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id), scope_chain);
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.current_segment = Some(handler_seg_id);
 
@@ -4277,8 +4298,8 @@ impl VM {
                     top.k_user.clone()
                 };
 
-                let handler_scope_chain = self.handler_scope_chain(marker);
-                let handler_seg = Segment::new(marker, inner_seg_id, handler_scope_chain);
+                let scope_chain = self.current_scope_chain();
+                let handler_seg = Segment::new(marker, inner_seg_id, scope_chain);
                 let handler_seg_id = self.alloc_segment(handler_seg);
                 self.current_segment = Some(handler_seg_id);
 
