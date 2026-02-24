@@ -3531,6 +3531,20 @@ impl VM {
             .unwrap_or_default()
     }
 
+    fn handler_scope_chain(&self, handler_marker: Marker) -> Vec<Marker> {
+        let Some(entry) = self.handlers.get(&handler_marker) else {
+            return self.current_scope_chain();
+        };
+        let Some(prompt_seg) = self.segments.get(entry.prompt_seg_id) else {
+            return self.current_scope_chain();
+        };
+
+        let mut scope_chain = Vec::with_capacity(prompt_seg.scope_chain.len() + 1);
+        scope_chain.push(handler_marker);
+        scope_chain.extend(prompt_seg.scope_chain.iter().copied());
+        scope_chain
+    }
+
     pub fn lazy_pop_completed(&mut self) {
         while let Some(top) = self.dispatch_stack.last() {
             if top.completed {
@@ -3643,7 +3657,8 @@ impl VM {
             .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
         let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
 
-        let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id), scope_chain);
+        let handler_scope_chain = self.handler_scope_chain(handler_marker);
+        let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id), handler_scope_chain);
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.current_segment = Some(handler_seg_id);
 
@@ -4262,8 +4277,8 @@ impl VM {
                     top.k_user.clone()
                 };
 
-                let scope_chain = self.current_scope_chain();
-                let handler_seg = Segment::new(marker, inner_seg_id, scope_chain);
+                let handler_scope_chain = self.handler_scope_chain(marker);
+                let handler_seg = Segment::new(marker, inner_seg_id, handler_scope_chain);
                 let handler_seg_id = self.alloc_segment(handler_seg);
                 self.current_segment = Some(handler_seg_id);
 

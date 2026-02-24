@@ -13,6 +13,11 @@ class Ping(EffectBase):
     label: str
 
 
+@dataclass(frozen=True)
+class Log(EffectBase):
+    msg: str
+
+
 def ping_handler(effect, k):
     if isinstance(effect, Ping):
         return (yield doeff_vm.Resume(k, f"handled:{effect.label}"))
@@ -26,6 +31,42 @@ def ping_with_tell_handler(effect, k):
         return (yield doeff_vm.Resume(k, f"handled:{effect.label}"))
     delegated = yield doeff_vm.Delegate()
     return (yield doeff_vm.Resume(k, delegated))
+
+
+def handler_a(effect, k):
+    if isinstance(effect, Ping):
+        yield Tell(f"handler_a:{effect.label}")
+        yield Log(msg=f"log_from_a:{effect.label}")
+        return (yield doeff_vm.Resume(k, f"handled:{effect.label}"))
+    delegated = yield doeff_vm.Delegate()
+    return (yield doeff_vm.Resume(k, delegated))
+
+
+def handler_b(effect, k):
+    if isinstance(effect, Log):
+        yield Tell(f"handler_b_saw:{effect.msg}")
+        return (yield doeff_vm.Resume(k, None))
+    delegated = yield doeff_vm.Delegate()
+    return (yield doeff_vm.Resume(k, delegated))
+
+
+def always_delegate(effect, k):
+    delegated = yield doeff_vm.Delegate()
+    return (yield doeff_vm.Resume(k, delegated))
+
+
+def _run_result_is_ok(result) -> bool:
+    is_ok = getattr(result, "is_ok", None)
+    if callable(is_ok):
+        return bool(is_ok())
+    return bool(is_ok)
+
+
+def _run_result_is_err(result) -> bool:
+    is_err = getattr(result, "is_err", None)
+    if callable(is_err):
+        return bool(is_err())
+    return bool(is_err)
 
 
 @do
@@ -377,3 +418,199 @@ def test_with_intercept_trace_contains_interceptor_frame() -> None:
         isinstance(entry, dict) and "HandleYield(Apply)" in str(entry.get("mode", ""))
         for entry in result.trace
     )
+
+
+@pytest.mark.asyncio
+async def test_with_intercept_deep_handler_nesting_cross_cutting(parameterized_interpreter) -> None:
+    seen: list[str] = []
+
+    def observe(expr):
+        if isinstance(expr, WriterTellEffect):
+            seen.append(expr.message)
+        return expr
+
+    wrapped = doeff_vm.WithIntercept(
+        observe,
+        doeff_vm.WithHandler(handler_b, doeff_vm.WithHandler(handler_a, _ping_program("deep"))),
+        (WriterTellEffect,),
+        "include",
+    )
+    result = await parameterized_interpreter.run_async(wrapped)
+    assert result.is_ok
+    assert result.value == "handled:deep"
+    assert "handler_a:deep" in seen
+    assert "handler_b_saw:log_from_a:deep" in seen
+
+
+@pytest.mark.asyncio
+async def test_with_intercept_observes_delegate_path(parameterized_interpreter) -> None:
+    seen_types: list[str] = []
+
+    def observe(expr):
+        seen_types.append(type(expr).__name__)
+        return expr
+
+    wrapped = doeff_vm.WithIntercept(
+        observe,
+        doeff_vm.WithHandler(ping_handler, doeff_vm.WithHandler(always_delegate, _ping_program("x"))),
+        (),
+        "exclude",
+    )
+    result = await parameterized_interpreter.run_async(wrapped)
+    assert result.is_ok
+    assert result.value == "handled:x"
+    assert any("Delegate" in name for name in seen_types)
+
+
+@pytest.mark.asyncio
+async def test_with_intercept_withhandler_outside_scope(parameterized_interpreter) -> None:
+    seen: list[str] = []
+
+    def observe(expr):
+        if isinstance(expr, WriterTellEffect):
+            seen.append(expr.message)
+        return expr
+
+    @do
+    def body():
+        yield Tell("from_program")
+        _ = yield Ping("x")
+        return "done"
+
+    wrapped = doeff_vm.WithHandler(
+        ping_with_tell_handler,
+        doeff_vm.WithIntercept(observe, body(), (WriterTellEffect,), "include"),
+    )
+    result = await parameterized_interpreter.run_async(wrapped)
+    assert result.is_ok
+    assert result.value == "done"
+    assert "from_program" in seen
+    assert "handler:x" not in seen
+
+
+@pytest.mark.asyncio
+async def test_with_intercept_nested_filters_match_spec_example(parameterized_interpreter) -> None:
+    f1_seen: list[str] = []
+    f2_seen: list[str] = []
+
+    def f1(expr):
+        if isinstance(expr, WriterTellEffect):
+            f1_seen.append(expr.message)
+        return expr
+
+    def f2(expr):
+        if isinstance(expr, Ping):
+            f2_seen.append(expr.label)
+        return expr
+
+    @do
+    def body():
+        yield Tell("spec_tell")
+        _ = yield Ping("spec_ping")
+        return "done"
+
+    wrapped = doeff_vm.WithHandler(
+        ping_handler,
+        doeff_vm.WithIntercept(
+            f1,
+            doeff_vm.WithIntercept(f2, body(), (Ping,), "include"),
+            (WriterTellEffect,),
+            "include",
+        ),
+    )
+    result = await parameterized_interpreter.run_async(wrapped)
+    assert result.is_ok
+    assert result.value == "done"
+    assert f1_seen == ["spec_tell"]
+    assert f2_seen == ["spec_ping"]
+
+
+@pytest.mark.asyncio
+async def test_with_intercept_long_sequence_ordered_observation(parameterized_interpreter) -> None:
+    seen: list[str] = []
+
+    def observe(expr):
+        if isinstance(expr, WriterTellEffect):
+            seen.append(expr.message)
+        return expr
+
+    @do
+    def chatty_program():
+        yield Tell("first")
+        yield Tell("second")
+        _ = yield Ping("mid")
+        yield Tell("third")
+        yield Tell("fourth")
+        return "done"
+
+    wrapped = doeff_vm.WithHandler(
+        ping_handler,
+        doeff_vm.WithIntercept(observe, chatty_program(), (WriterTellEffect,), "include"),
+    )
+    result = await parameterized_interpreter.run_async(wrapped)
+    assert result.is_ok
+    assert result.value == "done"
+    assert seen == ["first", "second", "third", "fourth"]
+
+
+@pytest.mark.asyncio
+async def test_with_intercept_observer_raises_propagates_and_cleans_state(
+    parameterized_interpreter,
+) -> None:
+    def bad_observer(expr):
+        raise RuntimeError("interceptor broke")
+
+    @do
+    def body():
+        yield Tell("boom")
+        return "ok"
+
+    wrapped = doeff_vm.WithIntercept(bad_observer, body(), (WriterTellEffect,), "include")
+    result = await parameterized_interpreter.run_async(wrapped)
+    assert _run_result_is_err(result)
+    assert isinstance(result.error, RuntimeError)
+    assert "interceptor broke" in str(result.error)
+
+    fire_count = 0
+
+    def observe_after(expr):
+        nonlocal fire_count
+        if isinstance(expr, WriterTellEffect):
+            fire_count += 1
+        return expr
+
+    @do
+    def after():
+        yield Tell("after")
+        return "after-ok"
+
+    after_result = await parameterized_interpreter.run_async(
+        doeff_vm.WithIntercept(observe_after, after(), (WriterTellEffect,), "include")
+    )
+    assert _run_result_is_ok(after_result)
+    assert after_result.value == "after-ok"
+    assert fire_count == 1
+
+
+@pytest.mark.asyncio
+async def test_with_intercept_program_error_propagates_after_prior_observation(
+    parameterized_interpreter,
+) -> None:
+    seen: list[str] = []
+
+    def observe(expr):
+        if isinstance(expr, WriterTellEffect):
+            seen.append(expr.message)
+        return expr
+
+    @do
+    def failing_program():
+        yield Tell("before_error")
+        raise ValueError("program failed")
+
+    wrapped = doeff_vm.WithIntercept(observe, failing_program(), (WriterTellEffect,), "include")
+    result = await parameterized_interpreter.run_async(wrapped)
+    assert _run_result_is_err(result)
+    assert isinstance(result.error, ValueError)
+    assert "program failed" in str(result.error)
+    assert seen == ["before_error"]
