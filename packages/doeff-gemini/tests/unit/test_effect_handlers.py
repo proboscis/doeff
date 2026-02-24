@@ -72,7 +72,7 @@ from doeff_image.effects import ImageEdit
 from doeff_image.effects import ImageEdit as UnifiedImageEdit
 from doeff_image.effects import ImageGenerate as UnifiedImageGenerate
 from doeff_image.types import ImageResult
-from doeff_llm.effects import LLMChat, LLMEmbedding, LLMStructuredOutput
+from doeff_llm.effects import LLMChat, LLMEmbedding, LLMStructuredQuery
 from doeff_gemini.effects import (
     GeminiChat,
     GeminiEmbedding,
@@ -99,7 +99,7 @@ def _domain_program() -> EffectGenerator[dict[str, Any]]:
         model="gemini-test-model",
         temperature=0.1,
     )
-    structured = yield LLMStructuredOutput(
+    structured = yield LLMStructuredQuery(
         messages=[{"role": "user", "content": "Return a hummingbird fact"}],
         response_format=FunFact,
         model="gemini-test-model",
@@ -124,7 +124,7 @@ def test_effect_exports() -> None:
     assert ImportedImageEdit is GeminiImageEdit
     assert ImportedStructured is GeminiStructuredOutput
     assert issubclass(GeminiChat, LLMChat)
-    assert issubclass(GeminiStructuredOutput, LLMStructuredOutput)
+    assert issubclass(GeminiStructuredOutput, LLMStructuredQuery)
     assert issubclass(GeminiEmbedding, LLMEmbedding)
 
 

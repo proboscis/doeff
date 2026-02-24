@@ -1,4 +1,4 @@
-"""Provider-agnostic structured-output effects."""
+"""Provider-agnostic structured-extraction effects."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from doeff import EffectBase
 
 
 @dataclass(frozen=True, kw_only=True)
-class LLMStructuredOutput(EffectBase):
-    """Request provider-agnostic structured output."""
+class LLMStructuredQuery(EffectBase):
+    """Extract structured data from an LLM (provider-agnostic)."""
 
     messages: list[dict[str, Any]]
     response_format: type[Any]
@@ -20,5 +20,5 @@ class LLMStructuredOutput(EffectBase):
 
 
 __all__ = [
-    "LLMStructuredOutput",
+    "LLMStructuredQuery",
 ]

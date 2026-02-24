@@ -9,7 +9,7 @@ from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
     LLMStreamingChat,
-    LLMStructuredOutput,
+    LLMStructuredQuery,
 )
 from doeff_openai.effects import (
     ChatCompletion as ChatCompletionEffect,
@@ -67,7 +67,7 @@ def test_effect_exports() -> None:
     assert issubclass(ChatCompletionEffect, LLMChat)
     assert issubclass(StreamingChatCompletion, LLMStreamingChat)
     assert issubclass(EmbeddingEffect, LLMEmbedding)
-    assert issubclass(StructuredOutput, LLMStructuredOutput)
+    assert issubclass(StructuredOutput, LLMStructuredQuery)
 
 
 def test_deprecated_effect_aliases_emit_warnings() -> None:
@@ -104,7 +104,7 @@ def test_handler_exports() -> None:
     assert LLMChat in handler_map
     assert LLMStreamingChat in handler_map
     assert LLMEmbedding in handler_map
-    assert LLMStructuredOutput in handler_map
+    assert LLMStructuredQuery in handler_map
 
     assert callable(mock_handlers)
 
@@ -143,7 +143,7 @@ async def test_mock_handlers_support_handler_swapping_for_all_effects() -> None:
             input=["alpha", "beta"],
             model="text-embedding-3-small",
         )
-        structured = yield LLMStructuredOutput(
+        structured = yield LLMStructuredQuery(
             messages=[{"role": "user", "content": "Return structured output"}],
             response_format=StructuredAnswer,
             model="gpt-4o-mini",
