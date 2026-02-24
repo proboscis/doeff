@@ -11,7 +11,7 @@ from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
     LLMStreamingChat,
-    LLMStructuredOutput,
+    LLMStructuredQuery,
 )
 
 from doeff import Pass, Resume
@@ -329,7 +329,7 @@ def _handle_embedding(
 
 
 def _handle_structured_output(
-    effect: LLMStructuredOutput,
+    effect: LLMStructuredQuery,
     k: Any,
     *,
     config: MockOpenAIConfig,
@@ -392,7 +392,7 @@ def openai_mock_handler(
         return (
             yield from _handle_embedding(effect, k, config=resolved_config, state=resolved_state)
         )
-    elif isinstance(effect, LLMStructuredOutput | StructuredOutput) and _is_openai_model(
+    elif isinstance(effect, LLMStructuredQuery | StructuredOutput) and _is_openai_model(
         effect.model
     ):
         return (
@@ -446,7 +446,7 @@ def mock_handlers(
             yield from _handle_embedding(effect, k, config=resolved_config, state=resolved_state)
         )
 
-    def handle_structured(effect: LLMStructuredOutput | StructuredOutput, k: Any):
+    def handle_structured(effect: LLMStructuredQuery | StructuredOutput, k: Any):
         if not _is_openai_model(effect.model):
             yield Pass()
             return
@@ -464,7 +464,7 @@ def mock_handlers(
         LLMChat: handle_chat,
         LLMStreamingChat: handle_stream,
         LLMEmbedding: handle_embedding,
-        LLMStructuredOutput: handle_structured,
+        LLMStructuredQuery: handle_structured,
     }
 
 

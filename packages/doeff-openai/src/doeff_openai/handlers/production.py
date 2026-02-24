@@ -9,7 +9,7 @@ from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
     LLMStreamingChat,
-    LLMStructuredOutput,
+    LLMStructuredQuery,
 )
 
 from doeff import Delegate, Resume
@@ -69,7 +69,7 @@ def _handle_embedding(effect: LLMEmbedding, k):
     return (yield Resume(k, response))
 
 
-def _handle_structured_output(effect: LLMStructuredOutput, k):
+def _handle_structured_output(effect: LLMStructuredQuery, k):
     api_params = yield build_api_parameters(
         model=effect.model,
         messages=effect.messages,
@@ -101,7 +101,7 @@ def openai_production_handler(effect: Any, k: Any):
             return (yield from _handle_chat_completion(effect, k))
     elif isinstance(effect, LLMEmbedding | Embedding) and _is_openai_model(effect.model):
         return (yield from _handle_embedding(effect, k))
-    elif isinstance(effect, LLMStructuredOutput | StructuredOutput) and _is_openai_model(
+    elif isinstance(effect, LLMStructuredQuery | StructuredOutput) and _is_openai_model(
         effect.model
     ):
         return (yield from _handle_structured_output(effect, k))
@@ -118,7 +118,7 @@ def production_handlers() -> dict[type[Any], ProtocolHandler]:
         LLMChat: _handle_chat_completion,
         LLMStreamingChat: _handle_streaming_chat_completion,
         LLMEmbedding: _handle_embedding,
-        LLMStructuredOutput: _handle_structured_output,
+        LLMStructuredQuery: _handle_structured_output,
     }
 
 
