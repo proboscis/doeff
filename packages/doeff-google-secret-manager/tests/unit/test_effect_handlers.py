@@ -20,8 +20,7 @@ from doeff_google_secret_manager.client import SecretManagerClient  # noqa: E402
 from doeff_google_secret_manager.handlers import mock_handlers, production_handlers  # noqa: E402
 from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret  # noqa: E402
 
-from doeff import do  # noqa: E402
-from doeff.rust_vm import run_with_handler_map
+from doeff import WithHandler, default_handlers, do, run  # noqa: E402
 
 
 class AlreadyExistsError(Exception):
@@ -89,6 +88,13 @@ def _is_err(run_result: Any) -> bool:
     return bool(checker()) if callable(checker) else bool(checker)
 
 
+def _run_with_handler(program, handler):
+    return run(
+        WithHandler(handler, program),
+        handlers=default_handlers(),
+    )
+
+
 def test_effect_exports() -> None:
     sys.modules.pop("doeff_google_secret_manager.effects", None)
     sys.modules.pop("doeff_google_secret_manager.effects.secrets", None)
@@ -122,7 +128,7 @@ def _mock_program():
 def test_mock_handlers_use_in_memory_store() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", DeprecationWarning)
-        result = run_with_handler_map(
+        result = _run_with_handler(
             _mock_program(),
             mock_handlers(seed_data={"seed-secret": "seed-value"}),
         )
@@ -157,7 +163,7 @@ def test_production_handlers_wrap_client_logic_with_injected_client() -> None:
     )
     injected_client._client = fake_api
 
-    result = run_with_handler_map(
+    result = _run_with_handler(
         _set_and_get_program("prod-secret"),
         production_handlers(client=injected_client),
     )
@@ -186,7 +192,7 @@ def test_handler_swapping_changes_behavior() -> None:
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", DeprecationWarning)
-        mock_result = run_with_handler_map(
+        mock_result = _run_with_handler(
             _read_swap_target(),
             mock_handlers(seed_data={"swap-target": "from-mock"}),
         )
@@ -197,7 +203,7 @@ def test_handler_swapping_changes_behavior() -> None:
         for item in caught
     )
 
-    production_result = run_with_handler_map(
+    production_result = _run_with_handler(
         _read_swap_target(),
         production_handlers(client=injected_client),
     )

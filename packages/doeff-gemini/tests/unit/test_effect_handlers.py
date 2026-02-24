@@ -67,7 +67,6 @@ from doeff import (
     do,
     run,
 )
-from doeff.rust_vm import run_with_handler_map
 from doeff_image.effects import ImageEdit
 from doeff_image.effects import ImageEdit as UnifiedImageEdit
 from doeff_image.effects import ImageGenerate as UnifiedImageGenerate
@@ -90,6 +89,13 @@ from doeff_gemini.handlers import (
 class FunFact(BaseModel):
     topic: str
     fact: str
+
+
+def _run_with_handler(program, handler):
+    return run(
+        WithHandler(handler, program),
+        handlers=default_handlers(),
+    )
 
 
 @do
@@ -178,8 +184,8 @@ def test_mock_handlers_are_configurable_and_deterministic() -> None:
         embedding_seed=17,
     )
 
-    first = run_with_handler_map(_domain_program(), handlers)
-    second = run_with_handler_map(_domain_program(), handlers)
+    first = _run_with_handler(_domain_program(), handlers)
+    second = _run_with_handler(_domain_program(), handlers)
 
     assert first.is_ok()
     assert second.is_ok()
@@ -205,7 +211,7 @@ def test_handler_swapping_changes_behavior() -> None:
             )
         )
 
-    mock_result = run_with_handler_map(
+    mock_result = _run_with_handler(
         chat_program(),
         mock_handlers(chat_responses={"gemini-swap-model": "mock-result"}),
     )
@@ -214,7 +220,7 @@ def test_handler_swapping_changes_behavior() -> None:
     def production_chat(effect: LLMChat) -> EffectGenerator[str]:
         return f"production:{effect.model}:{len(effect.messages)}"
 
-    production_result = run_with_handler_map(
+    production_result = _run_with_handler(
         chat_program(),
         production_handlers(chat_impl=production_chat),
     )
@@ -264,6 +270,6 @@ def _unified_image_program() -> EffectGenerator[ImageResult]:
 
 
 def test_mock_handlers_support_unified_image_effects() -> None:
-    result = run_with_handler_map(_unified_image_program(), mock_handlers())
+    result = _run_with_handler(_unified_image_program(), mock_handlers())
     assert result.is_ok()
     assert isinstance(result.value, ImageResult)

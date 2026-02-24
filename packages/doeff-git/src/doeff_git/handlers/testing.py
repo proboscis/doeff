@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import Resume
+from doeff import Delegate, Resume
 from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
 from doeff_git.types import PRHandle
 
@@ -88,25 +88,30 @@ class MockGitRuntime:
 def mock_handlers(
     *,
     runtime: MockGitRuntime | None = None,
-    overrides: Mapping[type[Any], ProtocolHandler] | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build handler map backed by MockGitRuntime."""
+) -> ProtocolHandler:
+    """Build a protocol handler backed by MockGitRuntime."""
 
     active_runtime = runtime or MockGitRuntime()
 
-    handlers: dict[type[Any], ProtocolHandler] = {
-        GitCommit: lambda effect, k: (yield Resume(k, active_runtime.handle_commit(effect))),
-        GitDiff: lambda effect, k: (yield Resume(k, active_runtime.handle_diff(effect))),
-        GitPush: lambda effect, k: (yield Resume(k, active_runtime.handle_push(effect))),
-        GitPull: lambda effect, k: (yield Resume(k, active_runtime.handle_pull(effect))),
-        CreatePR: lambda effect, k: (yield Resume(k, active_runtime.handle_create_pr(effect))),
-        MergePR: lambda effect, k: (yield Resume(k, active_runtime.handle_merge_pr(effect))),
-    }
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, GitCommit):
+            return (yield Resume(k, active_runtime.handle_commit(effect)))
+        if isinstance(effect, GitDiff):
+            return (yield Resume(k, active_runtime.handle_diff(effect)))
+        if isinstance(effect, GitPush):
+            active_runtime.handle_push(effect)
+            return (yield Resume(k, None))
+        if isinstance(effect, GitPull):
+            active_runtime.handle_pull(effect)
+            return (yield Resume(k, None))
+        if isinstance(effect, CreatePR):
+            return (yield Resume(k, active_runtime.handle_create_pr(effect)))
+        if isinstance(effect, MergePR):
+            active_runtime.handle_merge_pr(effect)
+            return (yield Resume(k, None))
+        yield Delegate()
 
-    for effect_type, handler in (overrides or {}).items():
-        handlers[effect_type] = handler
-
-    return handlers
+    return handler
 
 
 __all__ = [

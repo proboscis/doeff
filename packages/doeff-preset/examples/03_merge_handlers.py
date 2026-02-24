@@ -14,8 +14,7 @@ from dataclasses import dataclass
 
 from doeff_preset import preset_handlers
 
-from doeff import Delegate, EffectBase, Resume, do, slog
-from doeff.rust_vm import run_with_handler_map
+from doeff import Delegate, EffectBase, Resume, WithHandler, default_handlers, do, run, slog
 
 
 # Define a custom domain effect
@@ -86,28 +85,27 @@ def main():
     """Run the merge handlers example."""
     print("=== Merging Handlers Example ===\n")
 
-    # Create domain-specific handlers
-    domain_handlers = {
-        FetchUserEffect: handle_fetch_user,
-        SendEmailEffect: handle_send_email,
-    }
-
-    # Merge preset handlers with domain handlers
-    # Later handlers win on conflict (domain handlers override preset)
-    handlers = {**preset_handlers(), **domain_handlers}
-
-    result = run_with_handler_map(
-        notification_workflow(user_id=1, message="Hello from doeff!"),
-        handlers,
+    # Stack handlers explicitly: inner handlers shadow outer handlers.
+    stacked_program = WithHandler(
+        preset_handlers(),
+        WithHandler(
+            handle_fetch_user,
+            WithHandler(
+                handle_send_email,
+                notification_workflow(user_id=1, message="Hello from doeff!"),
+            ),
+        ),
+    )
+    result = run(
+        stacked_program,
+        handlers=default_handlers(),
     )
 
     print("\n=== Results ===")
     print(f"Email sent: {result.value}")
 
-    print("\n=== Alternative: Preset handlers win ===")
-    # If you want preset handlers to win on conflict:
-    _ = {**domain_handlers, **preset_handlers()}
-    # This reverses priority (not usually needed, but possible)
+    print("\n=== Alternative ===")
+    print("Swap WithHandler nesting order to change precedence.")
 
 
 if __name__ == "__main__":

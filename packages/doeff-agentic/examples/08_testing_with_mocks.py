@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import sys
 
-from doeff import default_handlers, do, run
+from doeff import WithHandler, default_handlers, do, run
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -23,7 +23,6 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.handlers.testing import MockAgenticHandler, mock_handlers
-from doeff_agentic.runtime import with_handler_map
 
 
 @do
@@ -41,9 +40,9 @@ def mock_conversation():
 
 
 def main() -> int:
-    # runtime.with_handler_map composes typed handlers via WithHandler internally.
+    # Compose the mock protocol handler directly with WithHandler.
     handler_impl = MockAgenticHandler(workflow_name="mock-example")
-    program = with_handler_map(mock_conversation(), mock_handlers(handler_impl))
+    program = WithHandler(mock_handlers(handler_impl), mock_conversation())
     result = run(program, handlers=default_handlers())
 
     if result.is_err():

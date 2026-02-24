@@ -88,16 +88,19 @@ def env_var_handlers(
     environ: Mapping[str, str] | None = None,
     prefix: str = "",
     include_raw_secret_id: bool = True,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build handler-map style env var handlers for run_with_handler_map.
+) -> ProtocolHandler:
+    """Build strict env-var handlers that raise when the secret is missing.
 
-    This variant raises KeyError when a requested secret is missing.
+    This variant raises ``KeyError`` when a requested secret is missing.
     """
 
     active_environ = os.environ if environ is None else environ
     normalized_prefix = _normalize_prefix(prefix)
 
-    def handle_get_secret(effect: GetSecret, k):
+    def handler(effect: Any, k: Any):
+        if not isinstance(effect, GetSecret):
+            yield Delegate()
+            return
         value = _resolve_env_secret(
             effect.secret_id,
             environ=active_environ,
@@ -108,7 +111,7 @@ def env_var_handlers(
             raise KeyError(f"Secret not found in environment variables: {effect.secret_id}")
         return (yield Resume(k, value))
 
-    return {GetSecret: handle_get_secret}
+    return handler
 
 
 __all__ = [

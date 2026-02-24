@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from doeff import Resume
+from doeff import Delegate, Resume
 
 if TYPE_CHECKING:
     from .agent_handler import AgentHandler
@@ -62,8 +62,8 @@ def default_scheduled_handlers(
     issue_handler: IssueHandler | None = None,
     agent_handler: AgentHandler | None = None,
     git_handler: GitHandler | None = None,
-) -> dict[type, Callable[..., Any]]:
-    """Build a complete handler map for all conductor effects.
+) -> Callable[..., Any]:
+    """Build a complete protocol handler for all conductor effects.
 
     Args:
         worktree_handler: Custom WorktreeHandler, or None to create default
@@ -72,7 +72,7 @@ def default_scheduled_handlers(
         git_handler: Custom GitHandler, or None to create default
 
     Returns:
-        Dict mapping effect types to handler-protocol callables.
+        Handler-protocol callable for all conductor effects.
     """
     # Import effect types
     from ..effects.agent import (
@@ -96,28 +96,32 @@ def default_scheduled_handlers(
     agent = agent_handler or AgentHandler()
     git = git_handler or GitHandler()
 
-    return {
-        # Worktree effects (blocking - subprocess)
-        CreateWorktree: make_blocking_scheduled_handler(wt.handle_create_worktree),
-        MergeBranches: make_blocking_scheduled_handler(wt.handle_merge_branches),
-        DeleteWorktree: make_blocking_scheduled_handler(wt.handle_delete_worktree),
-        # Issue effects (blocking - file I/O)
-        CreateIssue: make_blocking_scheduled_handler(iss.handle_create_issue),
-        ListIssues: make_blocking_scheduled_handler(iss.handle_list_issues),
-        GetIssue: make_blocking_scheduled_handler(iss.handle_get_issue),
-        ResolveIssue: make_blocking_scheduled_handler(iss.handle_resolve_issue),
-        # Agent effects (blocking - subprocess/network)
-        RunAgent: make_blocking_scheduled_handler(agent.handle_run_agent),
-        SpawnAgent: make_blocking_scheduled_handler(agent.handle_spawn_agent),
-        SendMessage: make_blocking_scheduled_handler(agent.handle_send_message),
-        WaitForStatus: make_blocking_scheduled_handler(agent.handle_wait_for_status),
-        CaptureOutput: make_blocking_scheduled_handler(agent.handle_capture_output),
-        # Git effects (blocking - subprocess)
-        Commit: make_blocking_scheduled_handler(git.handle_commit),
-        Push: make_blocking_scheduled_handler(git.handle_push),
-        CreatePR: make_blocking_scheduled_handler(git.handle_create_pr),
-        MergePR: make_blocking_scheduled_handler(git.handle_merge_pr),
-    }
+    handlers: tuple[tuple[type[Any], Callable[..., Any]], ...] = (
+        (CreateWorktree, make_blocking_scheduled_handler(wt.handle_create_worktree)),
+        (MergeBranches, make_blocking_scheduled_handler(wt.handle_merge_branches)),
+        (DeleteWorktree, make_blocking_scheduled_handler(wt.handle_delete_worktree)),
+        (CreateIssue, make_blocking_scheduled_handler(iss.handle_create_issue)),
+        (ListIssues, make_blocking_scheduled_handler(iss.handle_list_issues)),
+        (GetIssue, make_blocking_scheduled_handler(iss.handle_get_issue)),
+        (ResolveIssue, make_blocking_scheduled_handler(iss.handle_resolve_issue)),
+        (RunAgent, make_blocking_scheduled_handler(agent.handle_run_agent)),
+        (SpawnAgent, make_blocking_scheduled_handler(agent.handle_spawn_agent)),
+        (SendMessage, make_blocking_scheduled_handler(agent.handle_send_message)),
+        (WaitForStatus, make_blocking_scheduled_handler(agent.handle_wait_for_status)),
+        (CaptureOutput, make_blocking_scheduled_handler(agent.handle_capture_output)),
+        (Commit, make_blocking_scheduled_handler(git.handle_commit)),
+        (Push, make_blocking_scheduled_handler(git.handle_push)),
+        (CreatePR, make_blocking_scheduled_handler(git.handle_create_pr)),
+        (MergePR, make_blocking_scheduled_handler(git.handle_merge_pr)),
+    )
+
+    def handler(effect: Any, k: Any):
+        for effect_type, effect_handler in handlers:
+            if isinstance(effect, effect_type):
+                return (yield from effect_handler(effect, k))
+        yield Delegate()
+
+    return handler
 
 
 __all__ = [

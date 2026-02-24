@@ -28,12 +28,18 @@ from doeff_openrouter.handlers import (
 from pydantic import BaseModel
 
 from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
-from doeff.rust_vm import run_with_handler_map
 
 
 class StructuredPayload(BaseModel):
     keyword: str
     number: int
+
+
+def _run_with_handler(program, handler):
+    return run(
+        WithHandler(handler, program),
+        handlers=default_handlers(),
+    )
 
 
 def test_effect_exports():
@@ -109,7 +115,7 @@ def test_mock_handlers_return_configured_deterministic_payloads() -> None:
         )
         return chat, stream, structured
 
-    result = run_with_handler_map(workflow(), mock_handlers(runtime=runtime))
+    result = _run_with_handler(workflow(), mock_handlers(runtime=runtime))
 
     assert result.is_ok()
     chat_payload, stream_payload, structured_payload = result.value
@@ -173,11 +179,11 @@ def test_handler_swapping_between_mock_and_production(monkeypatch) -> None:
         )
         return chat, structured
 
-    mock_result = run_with_handler_map(
+    mock_result = _run_with_handler(
         workflow(),
         mock_handlers(runtime=MockOpenRouterRuntime(chat_response={"id": "mock-only"})),
     )
-    production_result = run_with_handler_map(workflow(), production_handlers())
+    production_result = _run_with_handler(workflow(), production_handlers())
 
     assert mock_result.is_ok()
     assert production_result.is_ok()

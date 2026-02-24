@@ -6,7 +6,7 @@ experience for examples, demos, and rapid development.
 
 Example:
     >>> from doeff import do, slog
-    >>> from doeff.rust_vm import run_with_handler_map
+    >>> from doeff import WithHandler, default_handlers, run
     >>> from doeff_preset import preset_handlers
     >>>
     >>> @do
@@ -16,7 +16,10 @@ Example:
     ...     yield slog(step="done", msg="Workflow complete")
     ...     return "success"
     >>>
-    >>> result = run_with_handler_map(my_workflow(), preset_handlers())
+    >>> result = run(
+    ...     WithHandler(preset_handlers(), my_workflow()),
+    ...     handlers=default_handlers(),
+    ... )
     >>> # slog messages are displayed to console AND accumulated in log
 """
 
@@ -35,36 +38,14 @@ from doeff_preset.handlers import (
 
 def preset_handlers(
     config_defaults: dict[str, Any] | None = None,
-) -> dict[type, Any]:
-    """Return all preset handlers combined.
+) -> Any:
+    """Return the combined preset protocol handler.
 
     Args:
         config_defaults: Optional dict to override default preset.* config values.
 
     Returns:
-        Handler dict combining log display and config handlers.
-
-    Example:
-        >>> from doeff.rust_vm import run_with_handler_map
-        >>> from doeff_preset import preset_handlers
-        >>>
-        >>> result = run_with_handler_map(my_workflow(), preset_handlers())
-        >>>
-        >>> # With custom config
-        >>> custom = preset_handlers(config_defaults={"preset.log_level": "debug"})
-        >>> result = run_with_handler_map(my_workflow(), custom)
-
-    Handler Merge Pattern:
-        Preset handlers can be merged with domain-specific handlers:
-
-        >>> from doeff_preset import preset_handlers
-        >>> from my_domain import domain_handlers
-        >>>
-        >>> # Domain handlers win on conflict
-        >>> handlers = {**preset_handlers(), **domain_handlers()}
-        >>>
-        >>> # Preset handlers win on conflict
-        >>> handlers = {**domain_handlers(), **preset_handlers()}
+        Protocol handler combining log display and config behavior.
     """
     return production_handlers(config_defaults=config_defaults)
 

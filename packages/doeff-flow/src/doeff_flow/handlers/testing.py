@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from doeff import Resume
+from doeff import Delegate, Resume
 from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -93,33 +93,27 @@ class MockTraceRecorder:
 def mock_handlers(
     *,
     recorder: MockTraceRecorder | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build in-memory mock handlers for trace effects."""
+) -> ProtocolHandler:
+    """Build an in-memory mock protocol handler for trace effects."""
 
     active_recorder = recorder or MockTraceRecorder()
 
-    def handle_push(effect: TracePush, k):
-        active_recorder.push(effect)
-        return (yield Resume(k, None))
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, TracePush):
+            active_recorder.push(effect)
+            return (yield Resume(k, None))
+        if isinstance(effect, TraceAnnotate):
+            active_recorder.annotate(effect)
+            return (yield Resume(k, None))
+        if isinstance(effect, TraceSnapshot):
+            active_recorder.snapshot(effect)
+            return (yield Resume(k, None))
+        if isinstance(effect, TraceCapture):
+            captured = active_recorder.capture(effect.format)
+            return (yield Resume(k, captured))
+        yield Delegate()
 
-    def handle_annotate(effect: TraceAnnotate, k):
-        active_recorder.annotate(effect)
-        return (yield Resume(k, None))
-
-    def handle_snapshot(effect: TraceSnapshot, k):
-        active_recorder.snapshot(effect)
-        return (yield Resume(k, None))
-
-    def handle_capture(effect: TraceCapture, k):
-        captured = active_recorder.capture(effect.format)
-        return (yield Resume(k, captured))
-
-    return {
-        TracePush: handle_push,
-        TraceAnnotate: handle_annotate,
-        TraceSnapshot: handle_snapshot,
-        TraceCapture: handle_capture,
-    }
+    return handler
 
 
 __all__ = [

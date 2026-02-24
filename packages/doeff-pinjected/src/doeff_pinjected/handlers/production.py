@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from doeff import Ask, Await, Resume
+from doeff import Ask, Await, Pass, Resume
 from doeff_pinjected.effects import PinjectedProvide, PinjectedResolve
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -53,17 +53,21 @@ def production_handlers(
     *,
     resolver: ResolverLike | None = None,
     bindings: Mapping[Any, Any] | None = None,
-) -> dict[type[Any], ProtocolHandler]:
-    """Build production handler map for pinjected bridge effects."""
+) -> ProtocolHandler:
+    """Build a production protocol handler for pinjected bridge effects."""
 
     runtime = _ProductionPinjectedRuntime(
         resolver=resolver,
         bindings=dict(bindings or {}),
     )
-    return {
-        PinjectedResolve: runtime.handle_resolve,
-        PinjectedProvide: runtime.handle_provide,
-    }
+    def handler(effect: Any, k: Any):
+        if isinstance(effect, PinjectedResolve):
+            return (yield from runtime.handle_resolve(effect, k))
+        if isinstance(effect, PinjectedProvide):
+            return (yield from runtime.handle_provide(effect, k))
+        yield Pass()
+
+    return handler
 
 
 __all__ = [
