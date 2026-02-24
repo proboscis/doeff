@@ -463,6 +463,48 @@ async def test_with_intercept_observes_delegate_path(parameterized_interpreter) 
 
 
 @pytest.mark.asyncio
+async def test_with_intercept_delegate_resume_no_leak(parameterized_interpreter) -> None:
+    """After delegate-resume, outer handler yields should not be intercepted."""
+    seen: list[str] = []
+
+    def observe(expr):
+        if isinstance(expr, WriterTellEffect):
+            seen.append(expr.message)
+        return expr
+
+    def inner_handler(effect, k):
+        if isinstance(effect, Ping):
+            return (yield doeff_vm.Resume(k, f"inner:{effect.label}"))
+        delegated = yield doeff_vm.Delegate()
+        return (yield doeff_vm.Resume(k, delegated))
+
+    def outer_handler(effect, k):
+        if isinstance(effect, Ping):
+            delegated = yield doeff_vm.Delegate()
+            yield Tell(f"outer-after-resume:{delegated}")
+            return (yield doeff_vm.Resume(k, delegated))
+        delegated = yield doeff_vm.Delegate()
+        return (yield doeff_vm.Resume(k, delegated))
+
+    @do
+    def body():
+        return (yield Ping("x"))
+
+    wrapped = doeff_vm.WithHandler(
+        outer_handler,
+        doeff_vm.WithIntercept(
+            observe,
+            doeff_vm.WithHandler(inner_handler, body()),
+            (WriterTellEffect,),
+            "include",
+        ),
+    )
+    result = await parameterized_interpreter.run_async(wrapped)
+    assert result.is_ok
+    assert "outer-after-resume:inner:x" not in seen
+
+
+@pytest.mark.asyncio
 async def test_with_intercept_withhandler_outside_scope(parameterized_interpreter) -> None:
     seen: list[str] = []
 
