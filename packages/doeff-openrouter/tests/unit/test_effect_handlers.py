@@ -11,7 +11,7 @@ from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
     LLMStreamingChat,
-    LLMStructuredOutput,
+    LLMStructuredQuery,
 )
 from doeff_openrouter.effects import (
     RouterChat,
@@ -52,7 +52,7 @@ def test_effect_exports():
     assert ImportedRouterStructuredOutput is RouterStructuredOutput
     assert issubclass(RouterChat, LLMChat)
     assert issubclass(RouterStreamingChat, LLMStreamingChat)
-    assert issubclass(RouterStructuredOutput, LLMStructuredOutput)
+    assert issubclass(RouterStructuredOutput, LLMStructuredQuery)
 
 
 def test_deprecated_effect_aliases_emit_warnings() -> None:
@@ -108,7 +108,7 @@ def test_mock_handlers_return_configured_deterministic_payloads() -> None:
             messages=[{"role": "user", "content": "stream"}],
             model="openai/gpt-4o-mini",
         )
-        structured = yield LLMStructuredOutput(
+        structured = yield LLMStructuredQuery(
             messages=[{"role": "user", "content": "return JSON"}],
             response_format=StructuredPayload,
             model="openai/gpt-4o-mini",
@@ -127,7 +127,7 @@ def test_mock_handlers_return_configured_deterministic_payloads() -> None:
     assert [call["effect"] for call in runtime.calls] == [
         "LLMChat",
         "LLMStreamingChat",
-        "LLMStructuredOutput",
+        "LLMStructuredQuery",
     ]
 
 
@@ -172,7 +172,7 @@ def test_handler_swapping_between_mock_and_production(monkeypatch) -> None:
             model="openai/gpt-4o-mini",
             temperature=0.3,
         )
-        structured = yield LLMStructuredOutput(
+        structured = yield LLMStructuredQuery(
             messages=[{"role": "user", "content": "return JSON"}],
             response_format=StructuredPayload,
             model="openai/gpt-4o-mini",

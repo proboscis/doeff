@@ -11,7 +11,7 @@ from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
     LLMStreamingChat,
-    LLMStructuredOutput,
+    LLMStructuredQuery,
 )
 
 from doeff import Pass, Resume
@@ -68,7 +68,7 @@ class MockOpenRouterRuntime:
     calls: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _coerce_structured_payload(effect: LLMStructuredOutput, payload: Any) -> Any:
+def _coerce_structured_payload(effect: LLMStructuredQuery, payload: Any) -> Any:
     if isinstance(payload, effect.response_format):
         return payload
     if isinstance(payload, dict):
@@ -119,7 +119,7 @@ def openrouter_mock_handler(
         if effect.stream:
             return (yield Resume(k, copy.deepcopy(active_runtime.streaming_response)))
         return (yield Resume(k, copy.deepcopy(active_runtime.chat_response)))
-    if isinstance(effect, LLMStructuredOutput | RouterStructuredOutput):
+    if isinstance(effect, LLMStructuredQuery | RouterStructuredOutput):
         active_runtime.calls.append(
             {
                 "effect": effect.__class__.__name__,

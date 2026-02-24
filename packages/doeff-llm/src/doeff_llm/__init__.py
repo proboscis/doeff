@@ -1,6 +1,6 @@
 """Provider-agnostic LLM effects and shared types for doeff."""
 
-from .effects import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredOutput
+from .effects import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuery
 from .types import CostInfo, Message, TokenUsage
 
 __all__ = [
@@ -8,7 +8,7 @@ __all__ = [
     "LLMChat",
     "LLMEmbedding",
     "LLMStreamingChat",
-    "LLMStructuredOutput",
+    "LLMStructuredQuery",
     "Message",
     "TokenUsage",
 ]
