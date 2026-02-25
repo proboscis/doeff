@@ -252,6 +252,39 @@ def default_async_handlers() -> list[Any]:
     ]
 
 
+def with_intercept(
+    f: Any,
+    expr: Any,
+    types: tuple[type, ...] | None = (),
+    mode: str | None = "include",
+) -> Any:
+    vm = _vm()
+    if not callable(f):
+        raise TypeError("with_intercept.f must be callable")
+
+    if types is None:
+        normalized_types: tuple[type, ...] = ()
+    elif isinstance(types, tuple):
+        if not all(isinstance(item, type) for item in types):
+            raise TypeError("with_intercept.types must contain only Python type objects")
+        normalized_types = types
+    else:
+        raise TypeError("with_intercept.types must be tuple[type, ...] or None")
+
+    normalized_mode = (mode or "include").lower()
+    if normalized_mode not in {"include", "exclude"}:
+        raise TypeError("with_intercept.mode must be 'include' or 'exclude'")
+
+    def filtered(effect: Any) -> Any:
+        is_match = isinstance(effect, normalized_types)
+        should_apply = is_match if normalized_mode == "include" else not is_match
+        if not should_apply:
+            return effect
+        return f(effect)
+
+    return vm.WithIntercept(filtered, expr)
+
+
 def run(
     program: Any,
     handlers: Sequence[Any] = (),
@@ -383,4 +416,5 @@ __all__ = [
     "pass_",
     "state",
     "writer",
+    "with_intercept",
 ]

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import doeff_vm
 import pytest
 
 from doeff import (
@@ -17,6 +16,7 @@ from doeff import (
     default_handlers,
     do,
     run,
+    with_intercept,
 )
 
 
@@ -148,11 +148,11 @@ async def test_handler_ask_with_intercept_and_local(parameterized_interpreter) -
     def body():
         return (yield Ping())
 
-    program = doeff_vm.WithIntercept(
+    program = with_intercept(
         observer,
         Local({"key": "intercepted_local"}, body()),
-        (),
-        "exclude",
+        types=(),
+        mode="exclude",
     )
     result = await _run_with_handlers(
         parameterized_interpreter.mode,

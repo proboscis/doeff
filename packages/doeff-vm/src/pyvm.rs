@@ -2,10 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple, PyType};
+use pyo3::types::{PyDict, PyList, PyTuple};
 
 use crate::ast_stream::{ASTStream, PythonGeneratorStream};
-use crate::do_ctrl::{CallArg, DoCtrl, InterceptMode};
+use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
     dispatch_from_shared, dispatch_ref_as_python, PyAcquireSemaphore, PyAsk, PyCancelEffect,
@@ -975,62 +975,6 @@ impl PySchedulerHandler {
     }
 }
 
-fn parse_intercept_mode(mode: &str) -> Result<InterceptMode, String> {
-    match mode.to_ascii_lowercase().as_str() {
-        "include" => Ok(InterceptMode::Include),
-        "exclude" => Ok(InterceptMode::Exclude),
-        other => Err(format!(
-            "WithIntercept.mode must be 'include' or 'exclude', got {other:?}"
-        )),
-    }
-}
-
-fn intercept_mode_to_string(mode: InterceptMode) -> String {
-    match mode {
-        InterceptMode::Include => "include".to_string(),
-        InterceptMode::Exclude => "exclude".to_string(),
-    }
-}
-
-fn call_metadata_from_callable(
-    py: Python<'_>,
-    callable: &Bound<'_, PyAny>,
-    fallback_name: &str,
-) -> CallMetadata {
-    let function_name = callable
-        .getattr("__qualname__")
-        .ok()
-        .and_then(|name| name.extract::<String>().ok())
-        .or_else(|| {
-            callable
-                .getattr("__name__")
-                .ok()
-                .and_then(|name| name.extract::<String>().ok())
-        })
-        .unwrap_or_else(|| fallback_name.to_string());
-
-    let (source_file, source_line) = callable
-        .getattr("__code__")
-        .ok()
-        .map(|code| {
-            let file = code
-                .getattr("co_filename")
-                .ok()
-                .and_then(|value| value.extract::<String>().ok())
-                .unwrap_or_else(|| "<unknown>".to_string());
-            let line = code
-                .getattr("co_firstlineno")
-                .ok()
-                .and_then(|value| value.extract::<u32>().ok())
-                .unwrap_or(0);
-            (file, line)
-        })
-        .unwrap_or_else(|| ("<unknown>".to_string(), 0));
-
-    let _ = py;
-    CallMetadata::new(function_name, source_file, source_line, None, None)
-}
-
 fn call_metadata_to_dict(py: Python<'_>, metadata: &CallMetadata) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("function_name", metadata.function_name.as_str())?;
@@ -1197,13 +1141,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                     .unbind(),
                 )
             }
-            DoCtrl::WithIntercept {
-                interceptor,
-                expr,
-                types,
-                mode,
-                ..
-            } => Some(
+            DoCtrl::WithIntercept { interceptor, expr } => Some(
                 Bound::new(
                     py,
                     PyClassInitializer::from(PyDoExprBase)
@@ -1213,8 +1151,6 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                         .add_subclass(PyWithIntercept {
                             f: interceptor.clone_ref(py),
                             expr: expr.clone_ref(py),
-                            types: types.clone_ref(py),
-                            mode: intercept_mode_to_string(*mode),
                         }),
                 )
                 .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1587,17 +1523,9 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::WithIntercept => {
                 let wi: PyRef<'_, PyWithIntercept> = obj.extract()?;
-                let mode = parse_intercept_mode(&wi.mode).map_err(PyTypeError::new_err)?;
                 Ok(DoCtrl::WithIntercept {
                     interceptor: PyShared::new(wi.f.clone_ref(py)),
                     expr: wi.expr.clone_ref(py),
-                    types: PyShared::new(wi.types.clone_ref(py)),
-                    mode,
-                    metadata: call_metadata_from_callable(
-                        py,
-                        wi.f.bind(py),
-                        "WithIntercept.interceptor",
-                    ),
                 })
             }
             DoExprTag::Pure => {
@@ -2351,45 +2279,17 @@ pub struct PyWithIntercept {
     pub f: Py<PyAny>,
     #[pyo3(get)]
     pub expr: Py<PyAny>,
-    #[pyo3(get)]
-    pub types: Py<PyAny>,
-    #[pyo3(get)]
-    pub mode: String,
 }
 
 #[pymethods]
 impl PyWithIntercept {
     #[new]
-    #[pyo3(signature = (f, expr, types=None, mode=None))]
-    fn new(
-        py: Python<'_>,
-        f: Py<PyAny>,
-        expr: Py<PyAny>,
-        types: Option<Py<PyAny>>,
-        mode: Option<String>,
-    ) -> PyResult<PyClassInitializer<Self>> {
+    #[pyo3(signature = (f, expr))]
+    fn new(py: Python<'_>, f: Py<PyAny>, expr: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         if !f.bind(py).is_callable() {
             return Err(PyTypeError::new_err("WithIntercept.f must be callable"));
         }
 
-        let types = types.unwrap_or_else(|| PyTuple::empty(py).into_any().unbind());
-        let types_bound = types.bind(py);
-        if !types_bound.is_instance_of::<PyTuple>() {
-            return Err(PyTypeError::new_err(
-                "WithIntercept.types must be tuple[type, ...]",
-            ));
-        }
-        for item in types_bound.try_iter()? {
-            let item = item?;
-            if !item.is_instance_of::<PyType>() {
-                return Err(PyTypeError::new_err(
-                    "WithIntercept.types must contain only Python type objects",
-                ));
-            }
-        }
-
-        let normalized_mode = parse_intercept_mode(mode.as_deref().unwrap_or("include"))
-            .map_err(PyTypeError::new_err)?;
         let expr = lift_effect_to_perform_expr(py, expr)?;
         let expr_obj = expr.bind(py);
         if !expr_obj.is_instance_of::<PyDoExprBase>() {
@@ -2400,12 +2300,7 @@ impl PyWithIntercept {
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::WithIntercept as u8,
             })
-            .add_subclass(PyWithIntercept {
-                f,
-                expr,
-                types,
-                mode: intercept_mode_to_string(normalized_mode),
-            }))
+            .add_subclass(PyWithIntercept { f, expr }))
     }
 }
 
