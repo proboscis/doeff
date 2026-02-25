@@ -89,6 +89,28 @@ def _coerce_program(program: Any) -> Any:
     raise TypeError(f"run() requires DoExpr[T] or EffectValue[T], got {type(program).__name__}")
 
 
+def _normalize_intercept_types(types: Any) -> tuple[type[Any], ...] | None:
+    if types is None:
+        return None
+    try:
+        normalized = tuple(types)
+    except TypeError as exc:
+        raise TypeError("WithIntercept.types must be an iterable of type objects") from exc
+    for typ in normalized:
+        if not isinstance(typ, type):
+            raise TypeError("WithIntercept.types must contain only Python type objects")
+    return normalized
+
+
+def _with_intercept_metadata(interceptor: Any) -> dict[str, Any]:
+    function_name, source_file, source_line = _handler_registration_metadata(interceptor)
+    return {
+        "function_name": function_name,
+        "source_file": source_file,
+        "source_line": source_line,
+    }
+
+
 def _raise_unhandled_effect_if_present(run_result: Any, *, raise_unhandled: bool) -> Any:
     if not raise_unhandled:
         return run_result
@@ -306,6 +328,36 @@ async def async_run(
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
+def WithIntercept(
+    f: Any,
+    expr: Any,
+    types: Any = None,
+    mode: str = "include",
+) -> Any:
+    if not callable(f):
+        raise TypeError("WithIntercept.f must be callable")
+    if mode not in {"include", "exclude"}:
+        raise TypeError(f"WithIntercept.mode must be 'include' or 'exclude', got {mode!r}")
+
+    normalized_types = _normalize_intercept_types(types)
+    metadata = _with_intercept_metadata(f)
+
+    if normalized_types is not None:
+        original_f = f
+
+        def filtered(effect: Any) -> Any:
+            matches = isinstance(effect, normalized_types)
+            should_call = (mode == "include" and matches) or (mode == "exclude" and not matches)
+            if should_call:
+                return original_f(effect)
+            return effect
+
+        f = filtered
+
+    vm = _vm()
+    return vm.WithIntercept(f, expr, metadata)
+
+
 def __getattr__(name: str) -> Any:
     if name == "pass_":
         vm = _vm()
@@ -316,7 +368,6 @@ def __getattr__(name: str) -> Any:
         "RunResult",
         "DoeffTracebackData",
         "WithHandler",
-        "WithIntercept",
         "Pure",
         "Apply",
         "Expand",

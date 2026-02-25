@@ -12,6 +12,7 @@ from doeff import (
     Local,
     Pass,
     Resume,
+    WithIntercept,
     async_run,
     default_async_handlers,
     default_handlers,
@@ -148,7 +149,7 @@ async def test_handler_ask_with_intercept_and_local(parameterized_interpreter) -
     def body():
         return (yield Ping())
 
-    program = doeff_vm.WithIntercept(
+    program = WithIntercept(
         observer,
         Local({"key": "intercepted_local"}, body()),
         (),
