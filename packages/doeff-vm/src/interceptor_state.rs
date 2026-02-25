@@ -6,16 +6,14 @@ use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
 use crate::dispatch::DispatchContext;
-use crate::do_ctrl::{CallArg, InterceptMode};
-use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
+use crate::doeff_generator::DoeffGenerator;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::HandlerEntry;
 use crate::ids::{CallbackId, DispatchId, Marker, SegmentId};
 use crate::py_shared::PyShared;
-use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyPure};
+use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase};
 use crate::segment::Segment;
-use crate::step::PyException;
 use crate::vm::InterceptorEntry;
 
 #[derive(Clone, Default)]
@@ -105,22 +103,6 @@ impl InterceptorState {
         self.interceptor_skip_stack.push(marker);
     }
 
-    pub(crate) fn should_apply(
-        entry: &InterceptorEntry,
-        yielded_obj: &Py<PyAny>,
-    ) -> Result<bool, PyException> {
-        let is_match = Python::attach(|py| {
-            yielded_obj
-                .bind(py)
-                .is_instance(entry.types.bind(py))
-                .map_err(PyException::from)
-        })?;
-        Ok(match entry.mode {
-            InterceptMode::Include => is_match,
-            InterceptMode::Exclude => !is_match,
-        })
-    }
-
     pub(crate) fn classify_result_shape(result_obj: &Py<PyAny>) -> (bool, bool) {
         Python::attach(|py| {
             let bound = result_obj.bind(py);
@@ -136,40 +118,6 @@ impl InterceptorState {
                     tag != crate::pyvm::DoExprTag::Expand && tag != crate::pyvm::DoExprTag::Apply
                 });
             (is_direct_expr, is_doexpr)
-        })
-    }
-
-    pub(crate) fn interceptor_call_arg(
-        interceptor_callable: &Py<PyAny>,
-        yielded_obj: &Py<PyAny>,
-    ) -> Result<CallArg, PyException> {
-        Python::attach(|py| {
-            let callable = interceptor_callable.bind(py);
-            let is_do_callable = callable.is_instance_of::<DoeffGeneratorFn>()
-                || callable
-                    .getattr("_doeff_generator_factory")
-                    .is_ok_and(|factory| factory.is_instance_of::<DoeffGeneratorFn>());
-
-            if is_do_callable {
-                let quoted = Bound::new(
-                    py,
-                    PyClassInitializer::from(crate::pyvm::PyDoExprBase)
-                        .add_subclass(PyDoCtrlBase {
-                            tag: crate::pyvm::DoExprTag::Pure as u8,
-                        })
-                        .add_subclass(PyPure {
-                            value: yielded_obj.clone_ref(py),
-                        }),
-                )
-                .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                .into_any()
-                .unbind();
-                return Ok(CallArg::Expr(PyShared::new(quoted)));
-            }
-
-            Ok(CallArg::Value(crate::value::Value::Python(
-                yielded_obj.clone_ref(py),
-            )))
         })
     }
 
@@ -197,16 +145,12 @@ impl InterceptorState {
         &mut self,
         marker: Marker,
         interceptor: PyShared,
-        types: PyShared,
-        mode: InterceptMode,
-        metadata: CallMetadata,
+        metadata: Option<CallMetadata>,
     ) {
         self.interceptors.insert(
             marker,
             InterceptorEntry {
                 interceptor,
-                types,
-                mode,
                 metadata,
             },
         );
@@ -260,9 +204,7 @@ impl InterceptorState {
     pub(crate) fn prepare_with_intercept(
         &mut self,
         interceptor: PyShared,
-        types: PyShared,
-        mode: InterceptMode,
-        metadata: CallMetadata,
+        metadata: Option<CallMetadata>,
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
     ) -> Result<Segment, VMError> {
@@ -275,7 +217,7 @@ impl InterceptorState {
             .map(|s| s.scope_chain.clone())
             .unwrap_or_default();
 
-        self.insert(interceptor_marker, interceptor, types, mode, metadata);
+        self.insert(interceptor_marker, interceptor, metadata);
 
         let mut body_scope = vec![interceptor_marker];
         body_scope.extend(outside_scope);
