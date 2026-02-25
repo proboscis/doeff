@@ -1,6 +1,18 @@
 # SPEC-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 15)
+## Status: Draft (Revision 16)
+
+### Revision 16 Changelog
+
+Changes from Rev 15. ASTStream as DoExpr; Expand unification; WithIntercept redesign.
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R16-A** | DoExpr hierarchy | **ASTStream is a DoExpr.** An ASTStream (streaming program) is promoted to a DoExpr variant. `Eval` can process both static DoExpr nodes (Pure, Map, FlatMap, etc.) and streaming ASTStream programs uniformly. This unifies the two evaluation paths. |
+| **R16-B** | Expand unification | **`Expand(f, args)` = `Eval(Apply(f, args))`.** `Apply(f, args)` calls `f`, which returns a DoExpr (possibly an ASTStream). `Eval` evaluates the result. The separate `Expand` node is no longer semantically necessary — it becomes sugar for `Eval(Apply(...))`. The VM no longer needs to distinguish Apply-vs-Expand at the call site. |
+| **R16-C** | Macro expansion model | **Program invocation is macro expansion.** `Apply(f, args)` = expand macro `f` with inputs `args`, producing IR (DoExpr). `Eval` = evaluate the produced IR. `@do` generators are lazy macros: they produce IR nodes incrementally (one DoCtrl per yield) via ASTStream. Static callables produce IR in one shot. Both go through the same `Eval(Apply(...))` path. |
+| **R16-D** | WithIntercept redesign | **`WithIntercept(f, expr)` — interceptor is `Effect -> DoExpr`.** `f` is any callable that takes an effect and returns DoExpr. Interceptor invocation is `Eval(Apply(f, [effect]))`. No type filtering at VM level (moved to Python-side wrapper). No `is_do_callable` sniffing. `types`, `mode` removed from DoCtrl variant. See SPEC-WITH-INTERCEPT Rev 3. |
+| **R16-E** | `interceptor_call_arg` deleted | **VM-INTERCEPT-003 resolved.** The `interceptor_call_arg` function that probed for `DoeffGeneratorFn` to decide Apply-vs-Expand calling convention is eliminated. All callables are invoked uniformly via `Apply`. |
 
 ### Revision 15 Changelog
 
