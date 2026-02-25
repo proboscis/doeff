@@ -7,6 +7,7 @@ from doeff import (
     Ask,
     Eval,
     Expand,
+    Program,
     Perform,
     Pure,
     ResumeContinuation,
@@ -45,10 +46,21 @@ def test_pure_apply_eval_execute() -> None:
 
     @do
     def identity(x: int):
+        if False:  # pragma: no cover
+            yield Program.pure(None)
         return x
 
     expand_result = run(identity(4))
     assert expand_result.value == 4
+
+    generator_factory = getattr(identity, "_doeff_generator_factory")
+    eval_apply_result = run(
+        Eval(
+            Apply(Pure(generator_factory), [Pure(5)], {}, _meta()),
+            default_handlers(),
+        )
+    )
+    assert eval_apply_result.value == 5
 
     eval_result = run(Eval(Perform(Ask("k")), default_handlers()), env={"k": "value"})
     assert eval_result.value == "value"

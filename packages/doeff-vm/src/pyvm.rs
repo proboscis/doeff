@@ -1372,6 +1372,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 args,
                 kwargs,
                 metadata,
+                evaluate_result,
             } => {
                 let py_args = PyList::empty(py);
                 for arg in args {
@@ -1397,6 +1398,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                                 args: py_args.into_any().unbind(),
                                 kwargs: py_kwargs.into_any().unbind(),
                                 meta: Some(call_metadata_to_dict(py, metadata)?),
+                                evaluate_result: *evaluate_result,
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1625,6 +1627,7 @@ pub(crate) fn classify_yielded_bound(
                     args,
                     kwargs,
                     metadata: call_metadata_from_pyapply(py, &a)?,
+                    evaluate_result: a.evaluate_result,
                 })
             }
             DoExprTag::Expand => {
@@ -2447,6 +2450,8 @@ pub struct PyApply {
     pub kwargs: Py<PyAny>,
     #[pyo3(get)]
     pub meta: Option<Py<PyAny>>,
+    #[pyo3(get)]
+    pub evaluate_result: bool,
 }
 
 #[pymethods]
@@ -2481,6 +2486,7 @@ Program/Kleisli call sites must pass {'function_name', 'source_file', 'source_li
                 args,
                 kwargs,
                 meta,
+                evaluate_result: true,
             }))
     }
 }
