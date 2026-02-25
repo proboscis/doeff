@@ -522,6 +522,13 @@ def track_api_call(
             log_line += f", cost=${cost_info.total_cost:.6f}"
         yield slog(msg=log_line)
 
+    yield slog(
+        handler="gemini_cost",
+        model=model,
+        operation=operation,
+        cost_info=cost_info,
+    )
+
     yield Tell(
         GeminiAPIPayloadLog(
             operation=operation,
