@@ -128,6 +128,7 @@ from doeff.graph_snapshot import (
 from doeff.kleisli import KleisliProgram
 from doeff.program import Program, ProgramBase
 from doeff.rust_vm import (
+    WithIntercept,
     async_run,
     default_async_handlers,
     default_handlers,
@@ -162,7 +163,6 @@ capture = capture_graph
 # G8: lazy re-exports of VM dispatch primitives from doeff_vm
 _VM_LAZY_EXPORTS = {
     "WithHandler",
-    "WithIntercept",
     "Pure",
     "Apply",
     "Expand",
