@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import doeff_vm
 import pytest
 
-from doeff import EffectBase, Listen, Tell, WriterTellEffect, default_handlers, do, run
+from doeff import Effect, EffectBase, Listen, Tell, WriterTellEffect, default_handlers, do, run
 
 
 @dataclass(frozen=True)
@@ -353,6 +353,70 @@ async def test_with_intercept_effectful_interceptor(parameterized_interpreter) -
     assert result.is_ok
     assert result.value.value == "ok"
     assert result.value.log == ["side-effect", "body"]
+
+
+@pytest.mark.asyncio
+async def test_with_intercept_do_observer_effect_annotation_passthrough(
+    parameterized_interpreter,
+) -> None:
+    seen_types: list[str] = []
+
+    @do
+    def observe(effect: Effect):
+        seen_types.append(type(effect).__name__)
+        return effect
+
+    @do
+    def body():
+        yield Tell("body")
+        return "ok"
+
+    @do
+    def main():
+        return (
+            yield Listen(doeff_vm.WithIntercept(observe, body(), (WriterTellEffect,), "include"))
+        )
+
+    result = await parameterized_interpreter.run_async(main())
+    assert result.is_ok
+    assert result.value.value == "ok"
+    assert result.value.log == ["body"]
+    assert seen_types == ["PyTell"]
+
+
+@pytest.mark.asyncio
+async def test_with_intercept_do_observer_effect_annotation_with_program_callstack_effect(
+    parameterized_interpreter,
+) -> None:
+    seen_messages: list[str] = []
+    observed_stacks: list[object] = []
+
+    @do
+    def observe(effect: Effect):
+        stack = yield doeff_vm.ProgramCallStackEffect()
+        observed_stacks.append(stack)
+        if isinstance(effect, WriterTellEffect):
+            seen_messages.append(effect.message)
+        return effect
+
+    @do
+    def body():
+        yield Tell("body")
+        return "ok"
+
+    @do
+    def main():
+        return (
+            yield Listen(doeff_vm.WithIntercept(observe, body(), (WriterTellEffect,), "include"))
+        )
+
+    result = await parameterized_interpreter.run_async(main())
+    assert result.is_ok
+    assert result.value.value == "ok"
+    assert result.value.log == ["body"]
+    assert seen_messages == ["body"]
+    assert len(observed_stacks) == 1
+    assert isinstance(observed_stacks[0], (tuple, list))
 
 
 @pytest.mark.asyncio
