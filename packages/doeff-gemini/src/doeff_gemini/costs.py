@@ -20,12 +20,24 @@ class ModelPricing:
 
 
 _MODEL_PRICING: dict[str, ModelPricing] = {
-    "gemini-2.5-flash": ModelPricing(text_input=0.30, text_output=2.50, image_input=0.0, image_output=0.0),
-    "gemini-2.5-flash-image-preview": ModelPricing(text_input=0.30, text_output=2.50, image_input=0.30, image_output=30.0),
-    "gemini-2.5-pro": ModelPricing(text_input=12.50, text_output=150.0, image_input=0.0, image_output=0.0),
-    "gemini-2.0-flash": ModelPricing(text_input=1.25, text_output=10.0, image_input=0.0, image_output=0.0),
-    "gemini-1.5-flash": ModelPricing(text_input=1.25, text_output=10.0, image_input=0.0, image_output=0.0),
-    "gemini-1.5-pro": ModelPricing(text_input=12.50, text_output=150.0, image_input=0.0, image_output=0.0),
+    "gemini-2.5-flash": ModelPricing(
+        text_input=0.30, text_output=2.50, image_input=0.0, image_output=0.0
+    ),
+    "gemini-2.5-flash-image-preview": ModelPricing(
+        text_input=0.30, text_output=2.50, image_input=0.30, image_output=30.0
+    ),
+    "gemini-2.5-pro": ModelPricing(
+        text_input=12.50, text_output=150.0, image_input=0.0, image_output=0.0
+    ),
+    "gemini-2.0-flash": ModelPricing(
+        text_input=1.25, text_output=10.0, image_input=0.0, image_output=0.0
+    ),
+    "gemini-1.5-flash": ModelPricing(
+        text_input=1.25, text_output=10.0, image_input=0.0, image_output=0.0
+    ),
+    "gemini-1.5-pro": ModelPricing(
+        text_input=12.50, text_output=150.0, image_input=0.0, image_output=0.0
+    ),
     # Gemini 3 Pro Image (Nano Banana Pro) pricing
     "gemini-3-pro-image-preview": ModelPricing(
         text_input=2.00,
@@ -33,6 +45,10 @@ _MODEL_PRICING: dict[str, ModelPricing] = {
         image_input=2.00,
         image_output=120.00,
     ),
+    # Gemini 3 Flash Preview — $0.50/$3.00 per 1M tokens (standard context)
+    "gemini-3-flash-preview": ModelPricing(text_input=0.50, text_output=3.00),
+    # Gemini 3.1 Pro Preview — $2.00/$12.00 per 1M tokens (standard context ≤200K)
+    "gemini-3.1-pro-preview": ModelPricing(text_input=2.00, text_output=12.00),
 }
 
 
