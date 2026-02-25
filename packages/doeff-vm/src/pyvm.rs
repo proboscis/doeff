@@ -9,10 +9,11 @@ use crate::do_ctrl::{CallArg, DoCtrl, InterceptMode};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
     dispatch_from_shared, dispatch_ref_as_python, PyAcquireSemaphore, PyAsk, PyCancelEffect,
-    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore,
-    PyExecutionContext, PyFailPromise, PyGather, PyGet, PyGetExecutionContext, PyLocal, PyModify,
-    PyProgramCallFrame, PyProgramCallStack, PyProgramTrace, PyPut, PyPythonAsyncioAwaitEffect,
-    PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn, PyTaskCompleted, PyTell,
+    PyCompletePromise,
+    PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyExecutionContext, PyFailPromise,
+    PyGather, PyGet, PyGetExecutionContext, PyLocal, PyModify, PyProgramCallFrame,
+    PyProgramCallStack, PyProgramTrace, PyPut, PyPythonAsyncioAwaitEffect, PyRace,
+    PyReleaseSemaphore, PyResultSafeEffect, PySpawn, PyTaskCompleted, PyTell,
 };
 
 // ---------------------------------------------------------------------------
@@ -1673,9 +1674,7 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::Resume => {
                 let r: PyRef<'_, PyResume> = obj.extract()?;
                 let k_pyobj = r.continuation.bind(py).cast::<PyK>().map_err(|_| {
-                    PyTypeError::new_err(
-                        "Resume.continuation must be K (opaque continuation handle)",
-                    )
+                    PyTypeError::new_err("Resume.continuation must be K (opaque continuation handle)")
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
                 let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
@@ -1711,9 +1710,8 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::Delegate => {
                 let _d: PyRef<'_, PyDelegate> = obj.extract()?;
                 let effect = vm
-                    .dispatch_stack
-                    .last()
-                    .map(|ctx| ctx.effect.clone())
+                    .dispatch_state
+                    .top_effect_cloned()
                     .ok_or_else(|| {
                         PyRuntimeError::new_err("Delegate called outside dispatch context")
                     })?;
@@ -1722,9 +1720,8 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::Pass => {
                 let _p: PyRef<'_, PyPass> = obj.extract()?;
                 let effect = vm
-                    .dispatch_stack
-                    .last()
-                    .map(|ctx| ctx.effect.clone())
+                    .dispatch_state
+                    .top_effect_cloned()
                     .ok_or_else(|| {
                         PyRuntimeError::new_err("Pass called outside dispatch context")
                     })?;
@@ -2375,9 +2372,7 @@ impl PyWithIntercept {
         let types = types.unwrap_or_else(|| PyTuple::empty(py).into_any().unbind());
         let types_bound = types.bind(py);
         if !types_bound.is_instance_of::<PyTuple>() {
-            return Err(PyTypeError::new_err(
-                "WithIntercept.types must be tuple[type, ...]",
-            ));
+            return Err(PyTypeError::new_err("WithIntercept.types must be tuple[type, ...]"));
         }
         for item in types_bound.try_iter()? {
             let item = item?;
