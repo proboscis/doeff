@@ -132,6 +132,7 @@ from doeff.rust_vm import (
     default_async_handlers,
     default_handlers,
     run,
+    with_intercept,
 )
 from doeff.types import (
     DEFAULT_REPR_LIMIT,
@@ -375,4 +376,5 @@ __all__ = [
     "wait",
     "write_graph_html",
     "write_graph_html_async",
+    "with_intercept",
 ]

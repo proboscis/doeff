@@ -16,8 +16,8 @@ use crate::capture::{
     HandlerStatus, TraceEntry, TraceFrame, TraceHop,
 };
 use crate::continuation::Continuation;
-use crate::do_ctrl::{CallArg, DoCtrl, InterceptMode};
-use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
+use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
     dispatch_ref_as_python, make_execution_context_object, make_get_execution_context_effect,
@@ -33,7 +33,7 @@ use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::pyvm::{
     classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, DoExprTag, PyDoCtrlBase, PyDoExprBase,
-    PyEffectBase, PyPure,
+    PyEffectBase,
 };
 use crate::segment::Segment;
 use crate::value::Value;
@@ -237,8 +237,6 @@ struct ActiveChainAssemblyState {
 #[derive(Clone)]
 pub struct InterceptorEntry {
     interceptor: PyShared,
-    types: PyShared,
-    mode: InterceptMode,
     metadata: CallMetadata,
 }
 
@@ -2469,20 +2467,39 @@ impl VM {
         }
     }
 
-    fn should_apply_interceptor(
-        &self,
-        entry: &InterceptorEntry,
-        yielded_obj: &Py<PyAny>,
-    ) -> Result<bool, PyException> {
-        let is_match = Python::attach(|py| {
-            yielded_obj
-                .bind(py)
-                .is_instance(entry.types.bind(py))
-                .map_err(PyException::from)
-        })?;
-        Ok(match entry.mode {
-            InterceptMode::Include => is_match,
-            InterceptMode::Exclude => !is_match,
+    fn metadata_for_interceptor_callable(interceptor: &PyShared) -> CallMetadata {
+        Python::attach(|py| {
+            let callable = interceptor.bind(py);
+            let function_name = callable
+                .getattr("__qualname__")
+                .ok()
+                .and_then(|name| name.extract::<String>().ok())
+                .or_else(|| {
+                    callable
+                        .getattr("__name__")
+                        .ok()
+                        .and_then(|name| name.extract::<String>().ok())
+                })
+                .unwrap_or_else(|| "WithIntercept.interceptor".to_string());
+
+            let source_code = callable.getattr("__code__").ok().or_else(|| {
+                callable
+                    .getattr("__call__")
+                    .ok()
+                    .and_then(|call| call.getattr("__code__").ok())
+            });
+            let source_file = source_code
+                .as_ref()
+                .and_then(|code| code.getattr("co_filename").ok())
+                .and_then(|value| value.extract::<String>().ok())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let source_line = source_code
+                .as_ref()
+                .and_then(|code| code.getattr("co_firstlineno").ok())
+                .and_then(|value| value.extract::<u32>().ok())
+                .unwrap_or(0);
+
+            CallMetadata::new(function_name, source_file, source_line, None, None)
         })
     }
 
@@ -2531,14 +2548,6 @@ impl VM {
                 Err(exc) => return Mode::Throw(exc),
             };
 
-            let should_apply = match self.should_apply_interceptor(&entry, &yielded_obj) {
-                Ok(flag) => flag,
-                Err(exc) => return Mode::Throw(exc),
-            };
-            if !should_apply {
-                continue;
-            }
-
             return self.start_interceptor_invocation_mode(
                 marker,
                 entry,
@@ -2565,16 +2574,41 @@ impl VM {
         chain: Arc<Vec<Marker>>,
         next_idx: usize,
     ) -> Mode {
-        let interceptor_callable = entry.interceptor.into_inner();
+        let interceptor_callable = entry.interceptor;
         let interceptor_meta = entry.metadata.clone();
         let yielded_obj_for_callback = Python::attach(|py| yielded_obj.clone_ref(py));
-        let interceptor_arg = match self.interceptor_call_arg(&interceptor_callable, &yielded_obj) {
-            Ok(arg) => arg,
+        let quoted_effect_expr = DoCtrl::Pure {
+            value: Value::Python(Python::attach(|py| yielded_obj.clone_ref(py))),
+        };
+        let quoted_effect_obj = match doctrl_to_pyexpr_for_vm(&quoted_effect_expr) {
+            Ok(Some(obj)) => obj,
+            Ok(None) => {
+                return Mode::Throw(PyException::runtime_error(
+                    "WithIntercept failed to materialize quoted effect expression",
+                ))
+            }
+            Err(exc) => return Mode::Throw(exc),
+        };
+        let apply_expr = DoCtrl::Apply {
+            f: CallArg::Value(Value::Python(Python::attach(|py| {
+                interceptor_callable.clone_ref(py)
+            }))),
+            args: vec![CallArg::Expr(PyShared::new(quoted_effect_obj))],
+            kwargs: vec![],
+            metadata: interceptor_meta.clone(),
+        };
+        let apply_expr_obj = match doctrl_to_pyexpr_for_vm(&apply_expr) {
+            Ok(Some(obj)) => obj,
+            Ok(None) => {
+                return Mode::Throw(PyException::runtime_error(
+                    "WithIntercept failed to materialize Apply expression",
+                ))
+            }
             Err(exc) => return Mode::Throw(exc),
         };
 
         let cb = self.register_callback(Box::new(move |value, vm| {
-            vm.handle_interceptor_apply_result(
+            vm.handle_interceptor_invocation_result(
                 marker,
                 value,
                 yielded,
@@ -2611,51 +2645,14 @@ impl VM {
         };
         seg.push_frame(Frame::RustReturn { cb });
 
-        Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(interceptor_callable)),
-            args: vec![interceptor_arg],
-            kwargs: vec![],
-            metadata: interceptor_meta,
+        Mode::HandleYield(DoCtrl::Eval {
+            expr: PyShared::new(apply_expr_obj),
+            handlers: self.current_visible_handlers(),
+            metadata: None,
         })
     }
 
-    fn interceptor_call_arg(
-        &self,
-        interceptor_callable: &Py<PyAny>,
-        yielded_obj: &Py<PyAny>,
-    ) -> Result<CallArg, PyException> {
-        Python::attach(|py| {
-            let callable = interceptor_callable.bind(py);
-            let is_do_callable = callable.is_instance_of::<DoeffGeneratorFn>()
-                || callable
-                    .getattr("_doeff_generator_factory")
-                    .is_ok_and(|factory| factory.is_instance_of::<DoeffGeneratorFn>());
-
-            // @do callables are expanded as DoCtrl::Expand and evaluate expression arguments.
-            // Wrap the yielded object in Pure(...) so interceptor functions receive the original
-            // DoExpr value (not the evaluated effect result).
-            if is_do_callable {
-                let quoted = Bound::new(
-                    py,
-                    PyClassInitializer::from(PyDoExprBase)
-                        .add_subclass(PyDoCtrlBase {
-                            tag: DoExprTag::Pure as u8,
-                        })
-                        .add_subclass(PyPure {
-                            value: yielded_obj.clone_ref(py),
-                        }),
-                )
-                .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                .into_any()
-                .unbind();
-                return Ok(CallArg::Expr(PyShared::new(quoted)));
-            }
-
-            Ok(CallArg::Value(Value::Python(yielded_obj.clone_ref(py))))
-        })
-    }
-
-    fn handle_interceptor_apply_result(
+    fn handle_interceptor_invocation_result(
         &mut self,
         marker: Marker,
         value: Value,
@@ -2669,7 +2666,7 @@ impl VM {
         let Value::Python(result_obj) = value else {
             self.pop_interceptor_skip(marker);
             return Mode::Throw(PyException::type_error(
-                "WithIntercept interceptor must return DoExpr",
+                "WithIntercept interceptor must resolve to Effect or DoExpr",
             ));
         };
 
@@ -2833,13 +2830,9 @@ impl VM {
                 expr,
                 py_identity,
             } => self.handle_yield_with_handler(handler, expr, py_identity),
-            DoCtrl::WithIntercept {
-                interceptor,
-                expr,
-                types,
-                mode,
-                metadata,
-            } => self.handle_yield_with_intercept(interceptor, expr, types, mode, metadata),
+            DoCtrl::WithIntercept { interceptor, expr } => {
+                self.handle_yield_with_intercept(interceptor, expr)
+            }
             DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
             DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
             DoCtrl::GetContinuation => self.handle_yield_get_continuation(),
@@ -2947,15 +2940,8 @@ impl VM {
         self.handle_with_handler(handler, expr, py_identity)
     }
 
-    fn handle_yield_with_intercept(
-        &mut self,
-        interceptor: PyShared,
-        expr: Py<PyAny>,
-        types: PyShared,
-        mode: InterceptMode,
-        metadata: CallMetadata,
-    ) -> StepEvent {
-        self.handle_with_intercept(interceptor, expr, types, mode, metadata)
+    fn handle_yield_with_intercept(&mut self, interceptor: PyShared, expr: Py<PyAny>) -> StepEvent {
+        self.handle_with_intercept(interceptor, expr)
     }
 
     fn handle_yield_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
@@ -4136,14 +4122,8 @@ impl VM {
         })
     }
 
-    fn handle_with_intercept(
-        &mut self,
-        interceptor: PyShared,
-        program: Py<PyAny>,
-        types: PyShared,
-        mode: InterceptMode,
-        metadata: CallMetadata,
-    ) -> StepEvent {
+    fn handle_with_intercept(&mut self, interceptor: PyShared, program: Py<PyAny>) -> StepEvent {
+        let metadata = Self::metadata_for_interceptor_callable(&interceptor);
         let interceptor_marker = Marker::fresh();
         let outside_seg_id = match self.current_segment {
             Some(id) => id,
@@ -4161,8 +4141,6 @@ impl VM {
             interceptor_marker,
             InterceptorEntry {
                 interceptor,
-                types,
-                mode,
                 metadata,
             },
         );

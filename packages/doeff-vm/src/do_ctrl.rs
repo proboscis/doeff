@@ -17,12 +17,6 @@ pub enum CallArg {
     Expr(PyShared),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InterceptMode {
-    Include,
-    Exclude,
-}
-
 #[derive(Debug, Clone)]
 pub enum DoCtrl {
     Pure {
@@ -65,9 +59,6 @@ pub enum DoCtrl {
     WithIntercept {
         interceptor: PyShared,
         expr: Py<PyAny>,
-        types: PyShared,
-        mode: InterceptMode,
-        metadata: CallMetadata,
     },
     Delegate {
         effect: DispatchEffect,
@@ -181,18 +172,9 @@ impl DoCtrl {
                 expr: expr.clone_ref(py),
                 py_identity: py_identity.clone(),
             },
-            DoCtrl::WithIntercept {
-                interceptor,
-                expr,
-                types,
-                mode,
-                metadata,
-            } => DoCtrl::WithIntercept {
+            DoCtrl::WithIntercept { interceptor, expr } => DoCtrl::WithIntercept {
                 interceptor: interceptor.clone(),
                 expr: expr.clone_ref(py),
-                types: types.clone(),
-                mode: *mode,
-                metadata: metadata.clone(),
             },
             DoCtrl::Delegate { effect } => DoCtrl::Delegate {
                 effect: effect.clone(),
