@@ -17,9 +17,7 @@ use crate::capture::{
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
 use crate::dispatch_state::DispatchState;
-use crate::interceptor_state::InterceptorState;
-use crate::trace_state::TraceState;
-use crate::do_ctrl::{CallArg, DoCtrl, InterceptMode};
+use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
@@ -32,12 +30,12 @@ use crate::error::VMError;
 use crate::frame::{CallMetadata, Frame};
 use crate::handler::{Handler, HandlerEntry, RustProgramInvocation};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
+use crate::interceptor_state::InterceptorState;
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::pyvm::{
-    classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase,
-};
+use crate::pyvm::{classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase};
 use crate::segment::Segment;
+use crate::trace_state::TraceState;
 use crate::value::Value;
 
 pub use crate::dispatch::DispatchContext;
@@ -206,9 +204,7 @@ impl ForwardKind {
 #[derive(Clone)]
 pub struct InterceptorEntry {
     pub(crate) interceptor: PyShared,
-    pub(crate) types: PyShared,
-    pub(crate) mode: InterceptMode,
-    pub(crate) metadata: CallMetadata,
+    pub(crate) metadata: Option<CallMetadata>,
 }
 
 impl Default for DebugConfig {
@@ -487,12 +483,18 @@ impl VM {
     }
 
     fn dispatch_supports_error_context_conversion(&self, dispatch_id: DispatchId) -> bool {
-        self.dispatch_state.dispatch_supports_error_context_conversion(dispatch_id)
+        self.dispatch_state
+            .dispatch_supports_error_context_conversion(dispatch_id)
     }
 
     fn effect_creation_site_from_continuation(k: &Continuation) -> Option<EffectCreationSite> {
-        let (_, function_name, source_file, source_line) = TraceState::effect_site_from_continuation(k)?;
-        Some(EffectCreationSite { function_name, source_file, source_line })
+        let (_, function_name, source_file, source_line) =
+            TraceState::effect_site_from_continuation(k)?;
+        Some(EffectCreationSite {
+            function_name,
+            source_file,
+            source_line,
+        })
     }
 
     fn handler_trace_info(handler: &Handler) -> (String, HandlerKind, Option<String>, Option<u32>) {
@@ -518,7 +520,10 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<(usize, String)> {
-        let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?.clone();
+        let ctx = self
+            .dispatch_state
+            .find_by_dispatch_id(dispatch_id)?
+            .clone();
         let marker = *ctx.handler_chain.get(ctx.handler_idx)?;
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
         Some((ctx.handler_idx, name))
@@ -551,11 +556,13 @@ impl VM {
     }
 
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
-        self.dispatch_state.active_error_dispatch_original_exception()
+        self.dispatch_state
+            .active_error_dispatch_original_exception()
     }
 
     fn original_exception_for_dispatch(&self, dispatch_id: DispatchId) -> Option<PyException> {
-        self.dispatch_state.original_exception_for_dispatch(dispatch_id)
+        self.dispatch_state
+            .original_exception_for_dispatch(dispatch_id)
     }
 
     fn is_base_exception_not_exception(exception: &PyException) -> bool {
@@ -584,11 +591,10 @@ impl VM {
                             | GenErrorSite::StepUserGeneratorDirect
                     )
             });
-        let in_get_execution_context_dispatch = active_dispatch_id
-            .is_some_and(|dispatch_id| {
-                self.dispatch_state
-                    .dispatch_is_execution_context_effect(dispatch_id)
-            });
+        let in_get_execution_context_dispatch = active_dispatch_id.is_some_and(|dispatch_id| {
+            self.dispatch_state
+                .dispatch_is_execution_context_effect(dispatch_id)
+        });
 
         if !site.allows_error_conversion() && !allow_handler_context_conversion {
             if let Some(original) = self.active_error_dispatch_original_exception() {
@@ -969,14 +975,6 @@ impl VM {
         self.interceptor_state.pop_skip(marker);
     }
 
-    fn should_apply_interceptor(
-        &self,
-        entry: &InterceptorEntry,
-        yielded_obj: &Py<PyAny>,
-    ) -> Result<bool, PyException> {
-        InterceptorState::should_apply(entry, yielded_obj)
-    }
-
     fn classify_interceptor_result_object(
         &self,
         result_obj: Py<PyAny>,
@@ -1022,14 +1020,6 @@ impl VM {
                 Err(exc) => return Mode::Throw(exc),
             };
 
-            let should_apply = match self.should_apply_interceptor(&entry, &yielded_obj) {
-                Ok(flag) => flag,
-                Err(exc) => return Mode::Throw(exc),
-            };
-            if !should_apply {
-                continue;
-            }
-
             return self.start_interceptor_invocation_mode(
                 marker,
                 entry,
@@ -1043,6 +1033,16 @@ impl VM {
         }
 
         self.finalize_stream_yield_mode(current, stream, metadata)
+    }
+
+    fn fallback_interceptor_metadata() -> CallMetadata {
+        CallMetadata::new(
+            "WithIntercept.interceptor".to_string(),
+            "<unknown>".to_string(),
+            0,
+            None,
+            None,
+        )
     }
 
     fn start_interceptor_invocation_mode(
@@ -1059,10 +1059,9 @@ impl VM {
         let interceptor_callable = entry.interceptor.into_inner();
         let interceptor_meta = entry.metadata.clone();
         let yielded_obj_for_callback = Python::attach(|py| yielded_obj.clone_ref(py));
-        let interceptor_arg = match self.interceptor_call_arg(&interceptor_callable, &yielded_obj) {
-            Ok(arg) => arg,
-            Err(exc) => return Mode::Throw(exc),
-        };
+        let apply_metadata = interceptor_meta
+            .clone()
+            .unwrap_or_else(Self::fallback_interceptor_metadata);
 
         let cb = self.register_callback(Box::new(move |value, vm| {
             vm.handle_interceptor_apply_result(
@@ -1088,9 +1087,10 @@ impl VM {
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         }
-        self.maybe_emit_frame_entered(&interceptor_meta);
-        self.interceptor_state
-            .set_call_metadata(cb, interceptor_meta.clone());
+        if let Some(meta) = interceptor_meta.as_ref() {
+            self.maybe_emit_frame_entered(meta);
+            self.interceptor_state.set_call_metadata(cb, meta.clone());
+        }
         let Some(seg) = self.current_segment_mut() else {
             self.interceptor_state.take_call_metadata(cb);
             self.pop_interceptor_skip(marker);
@@ -1104,19 +1104,11 @@ impl VM {
 
         Mode::HandleYield(DoCtrl::Apply {
             f: CallArg::Value(Value::Python(interceptor_callable)),
-            args: vec![interceptor_arg],
+            args: vec![CallArg::Value(Value::Python(yielded_obj))],
             kwargs: vec![],
-            metadata: interceptor_meta,
+            metadata: apply_metadata,
             evaluate_result: false,
         })
-    }
-
-    fn interceptor_call_arg(
-        &self,
-        interceptor_callable: &Py<PyAny>,
-        yielded_obj: &Py<PyAny>,
-    ) -> Result<CallArg, PyException> {
-        InterceptorState::interceptor_call_arg(interceptor_callable, yielded_obj)
     }
 
     fn handle_interceptor_apply_result(
@@ -1137,8 +1129,7 @@ impl VM {
             ));
         };
 
-        let (is_direct_expr, is_doexpr) =
-            InterceptorState::classify_result_shape(&result_obj);
+        let (is_direct_expr, is_doexpr) = InterceptorState::classify_result_shape(&result_obj);
 
         if is_direct_expr {
             let transformed = match self.classify_interceptor_result_object(
@@ -1221,15 +1212,17 @@ impl VM {
             ));
         };
 
-        let transformed =
-            match self.classify_interceptor_result_object(result_obj, &original_obj, original_yielded)
-            {
-                Ok(expr) => expr,
-                Err(exc) => {
-                    self.pop_interceptor_skip(marker);
-                    return Mode::Throw(exc);
-                }
-            };
+        let transformed = match self.classify_interceptor_result_object(
+            result_obj,
+            &original_obj,
+            original_yielded,
+        ) {
+            Ok(expr) => expr,
+            Err(exc) => {
+                self.pop_interceptor_skip(marker);
+                return Mode::Throw(exc);
+            }
+        };
         self.pop_interceptor_skip(marker);
         self.continue_interceptor_chain_mode(transformed, stream, metadata, chain, next_idx)
     }
@@ -1281,10 +1274,8 @@ impl VM {
             DoCtrl::WithIntercept {
                 interceptor,
                 expr,
-                types,
-                mode,
                 metadata,
-            } => self.handle_yield_with_intercept(interceptor, expr, types, mode, metadata),
+            } => self.handle_yield_with_intercept(interceptor, expr, metadata),
             DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
             DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
             DoCtrl::GetContinuation => self.handle_yield_get_continuation(),
@@ -1397,11 +1388,9 @@ impl VM {
         &mut self,
         interceptor: PyShared,
         expr: Py<PyAny>,
-        types: PyShared,
-        mode: InterceptMode,
-        metadata: CallMetadata,
+        metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        self.handle_with_intercept(interceptor, expr, types, mode, metadata)
+        self.handle_with_intercept(interceptor, expr, metadata)
     }
 
     fn handle_yield_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
@@ -2519,14 +2508,10 @@ impl VM {
         &mut self,
         interceptor: PyShared,
         program: Py<PyAny>,
-        types: PyShared,
-        mode: InterceptMode,
-        metadata: CallMetadata,
+        metadata: Option<CallMetadata>,
     ) -> StepEvent {
         let body_seg = match self.interceptor_state.prepare_with_intercept(
             interceptor,
-            types,
-            mode,
             metadata,
             self.current_segment,
             &self.segments,
@@ -2683,7 +2668,9 @@ impl VM {
             }
         }
 
-        if let Some((dispatch_id, original_exception)) = self.dispatch_state.top_original_exception() {
+        if let Some((dispatch_id, original_exception)) =
+            self.dispatch_state.top_original_exception()
+        {
             self.mark_dispatch_completed(dispatch_id);
             self.mode = Mode::Throw(original_exception);
             return StepEvent::Continue;
