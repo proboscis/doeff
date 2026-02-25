@@ -1613,3 +1613,130 @@ rules:
     metadata:
       category: public-api-location
       rationale: "Docs should reflect stable top-level public API"
+
+  # ---------------------------------------------------------------------------
+  # SPEC-VM-015: SEGMENT-OWNED EXECUTION STATE ENFORCEMENT
+  # ---------------------------------------------------------------------------
+  # These rules enforce that execution-local state lives on Segment, not on
+  # VM or InterceptorState. They prevent regression after the structural
+  # migration (VM-SCOPE-STRUCTURAL).
+  #
+  # Theoretical backing: CEK/CESK machines, Hillerström's ⟨C,E,H⟩ model,
+  # OCaml fibers, libmprompt gstacks. See SPEC-VM-015 §3.
+  #
+  # The type system enforces access patterns (self.mode won't compile if mode
+  # is not on VM), but these rules prevent someone from ADDING the fields back
+  # to the wrong struct.
+
+  - id: vm-scope-no-mode-on-vm-struct
+    pattern-regex: 'pub\s+mode\s*:\s*Mode'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+    message: |
+      SPEC-VM-015 INV-1: `mode` must live on Segment, not VM.
+      The instruction register is execution-local state owned by the current
+      segment. Access via self.current_seg().mode / self.current_seg_mut().mode.
+      See SPEC-VM-015 §4.1 (target Segment definition) and §6 (invariants).
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-scope-structural
+      spec: SPEC-VM-015
+      invariant: INV-1
+
+  - id: vm-scope-no-pending-python-on-vm-struct
+    pattern-regex: 'pub\s+pending_python\s*:\s*Option<PendingPython>'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+    message: |
+      SPEC-VM-015 INV-1: `pending_python` must live on Segment, not VM.
+      Each execution context tracks its own outstanding Python call.
+      See SPEC-VM-015 §4.1 and VM-SCOPE-004 (corruption via overwrite).
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-scope-structural
+      spec: SPEC-VM-015
+      invariant: INV-1
+
+  - id: vm-scope-no-pending-error-context-on-vm-struct
+    pattern-regex: 'pub\s+pending_error_context\s*:\s*Option<PyException>'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+    message: |
+      SPEC-VM-015 INV-1: `pending_error_context` must live on Segment, not VM.
+      Each execution context owns its error context, preventing .take() theft.
+      See SPEC-VM-015 §4.1 and VM-SCOPE-003 (stolen by nested .take()).
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-scope-structural
+      spec: SPEC-VM-015
+      invariant: INV-1
+
+  - id: vm-scope-no-eval-depth-on-interceptor-state
+    pattern-regex: 'interceptor_eval_depth\s*:\s*usize'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/interceptor_state.rs"
+    message: |
+      SPEC-VM-015 INV-1: `interceptor_eval_depth` must live on Segment, not InterceptorState.
+      Interceptor eval depth is execution-local — outer depth must not leak into inner dispatch.
+      See SPEC-VM-015 §4.3 and VM-SCOPE-005 (depth leaks across dispatch).
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-scope-structural
+      spec: SPEC-VM-015
+      invariant: INV-1
+
+  - id: vm-scope-no-skip-stack-on-interceptor-state
+    pattern-regex: 'interceptor_skip_stack\s*:\s*Vec<Marker>'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/interceptor_state.rs"
+    message: |
+      SPEC-VM-015 INV-1: `interceptor_skip_stack` must live on Segment, not InterceptorState.
+      Skip markers are execution-local — inner dispatch skips must not leak to outer.
+      See SPEC-VM-015 §4.3 and VM-SCOPE-006 (marker leak across dispatch).
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-scope-structural
+      spec: SPEC-VM-015
+      invariant: INV-1
+
+  - id: vm-scope-no-saved-mode-on-dispatch-context
+    pattern-regex: 'saved_mode\s*:\s*Mode'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/dispatch.rs"
+    message: |
+      SPEC-VM-015: Save/restore on DispatchContext is the REJECTED approach.
+      With segment-owned state, there is nothing to save or restore.
+      DispatchContext must not carry saved_mode. See SPEC-VM-015 §1.3 and §4.4.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-scope-structural
+      spec: SPEC-VM-015
+      rejected-approach: save-restore
+
+  - id: vm-scope-no-saved-segment-on-dispatch-context
+    pattern-regex: 'saved_segment\s*:\s*Option<SegmentId>'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/dispatch.rs"
+    message: |
+      SPEC-VM-015: Save/restore on DispatchContext is the REJECTED approach.
+      With segment-owned state, there is nothing to save or restore.
+      DispatchContext must not carry saved_segment. See SPEC-VM-015 §1.3 and §4.4.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-scope-structural
+      spec: SPEC-VM-015
+      rejected-approach: save-restore
