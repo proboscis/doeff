@@ -733,8 +733,13 @@ fn test_handle_get_continuation() {
     vm.current_segment = Some(seg_id);
 
     let k_user = make_dummy_continuation();
+    let dispatch_id = DispatchId::fresh();
+    vm.segments
+        .get_mut(seg_id)
+        .expect("segment must exist")
+        .dispatch_id = Some(dispatch_id);
     vm.dispatch_state.push_dispatch(DispatchContext {
-        dispatch_id: DispatchId::fresh(),
+        dispatch_id,
         effect: Effect::Get {
             key: "x".to_string(),
         },
@@ -785,8 +790,13 @@ fn test_handle_delegate_links_previous_k_as_parent() {
 
     let original_k_user = make_dummy_continuation();
     let original_cont_id = original_k_user.cont_id;
+    let dispatch_id = DispatchId::fresh();
+    vm.segments
+        .get_mut(seg_id)
+        .expect("segment must exist")
+        .dispatch_id = Some(dispatch_id);
     vm.dispatch_state.push_dispatch(DispatchContext {
-        dispatch_id: DispatchId::fresh(),
+        dispatch_id,
         effect: Effect::get("x"),
         is_execution_context_effect: false,
         handler_chain: vec![marker],
@@ -862,8 +872,13 @@ fn test_handle_get_handlers() {
 
     // G8: GetHandlers requires dispatch context
     let k_user = make_dummy_continuation();
+    let dispatch_id = DispatchId::fresh();
+    vm.segments
+        .get_mut(handler_seg_id)
+        .expect("segment must exist")
+        .dispatch_id = Some(dispatch_id);
     vm.dispatch_state.push_dispatch(DispatchContext {
-        dispatch_id: DispatchId::fresh(),
+        dispatch_id,
         effect: Effect::Get {
             key: "x".to_string(),
         },
@@ -956,8 +971,13 @@ fn test_step_handle_yield_routes_get_traceback() {
     vm.current_segment = Some(seg_id);
 
     let k_user = make_dummy_continuation();
+    let dispatch_id = DispatchId::fresh();
+    vm.segments
+        .get_mut(seg_id)
+        .expect("segment must exist")
+        .dispatch_id = Some(dispatch_id);
     vm.dispatch_state.push_dispatch(DispatchContext {
-        dispatch_id: DispatchId::fresh(),
+        dispatch_id,
         effect: Effect::get("x"),
         is_execution_context_effect: false,
         handler_chain: vec![marker],

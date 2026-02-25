@@ -83,6 +83,24 @@ impl DispatchState {
             .find(|ctx| ctx.dispatch_id == dispatch_id)
     }
 
+    pub(crate) fn find_mut_by_dispatch_id(
+        &mut self,
+        dispatch_id: DispatchId,
+    ) -> Option<&mut DispatchContext> {
+        self.dispatch_stack
+            .iter_mut()
+            .rev()
+            .find(|ctx| ctx.dispatch_id == dispatch_id)
+    }
+
+    pub(crate) fn effect_for_dispatch(
+        &self,
+        dispatch_id: DispatchId,
+    ) -> Option<DispatchEffect> {
+        self.find_by_dispatch_id(dispatch_id)
+            .map(|ctx| ctx.effect.clone())
+    }
+
     pub(crate) fn dispatch_is_execution_context_effect(
         &self,
         dispatch_id: DispatchId,
@@ -176,12 +194,9 @@ impl DispatchState {
 
     pub(crate) fn check_dispatch_completion(&mut self, k: &Continuation) {
         if let Some(dispatch_id) = k.dispatch_id {
-            if let Some(top) = self.dispatch_stack.last_mut() {
-                if top.dispatch_id == dispatch_id
-                    && top.k_user.cont_id == k.cont_id
-                    && top.k_user.parent.is_none()
-                {
-                    top.completed = true;
+            if let Some(ctx) = self.find_mut_by_dispatch_id(dispatch_id) {
+                if ctx.k_user.cont_id == k.cont_id && ctx.k_user.parent.is_none() {
+                    ctx.completed = true;
                 }
             }
         }
@@ -238,25 +253,19 @@ impl DispatchState {
         None
     }
 
-    pub(crate) fn active_dispatch_handler_is_python(
-        &self,
-        dispatch_id: DispatchId,
-        handlers: &HashMap<Marker, HandlerEntry>,
-    ) -> bool {
-        self.dispatch_stack
-            .last()
-            .filter(|ctx| ctx.dispatch_id == dispatch_id)
-            .and_then(|ctx| ctx.handler_chain.get(ctx.handler_idx))
-            .and_then(|marker| handlers.get(marker))
-            .is_some_and(|entry| entry.handler.py_identity().is_some())
-    }
-
     pub(crate) fn mark_dispatch_threw(
         &mut self,
         dispatch_id: DispatchId,
-        consumed_cont_ids: &mut HashSet<ContId>,
+        _consumed_cont_ids: &mut HashSet<ContId>,
     ) {
-        self.mark_dispatch_completed(dispatch_id, consumed_cont_ids);
+        if let Some(ctx) = self
+            .dispatch_stack
+            .iter_mut()
+            .rev()
+            .find(|ctx| ctx.dispatch_id == dispatch_id)
+        {
+            ctx.completed = true;
+        }
     }
 
     pub(crate) fn mark_dispatch_completed(
