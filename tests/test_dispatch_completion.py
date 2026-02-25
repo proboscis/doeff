@@ -27,6 +27,11 @@ class Noop(EffectBase):
     tag: str = "noop"
 
 
+@dataclass(frozen=True, kw_only=True)
+class InnerEffect(EffectBase):
+    pass
+
+
 def greet_handler(effect, k):
     if not isinstance(effect, Greet):
         yield Pass()
@@ -172,3 +177,27 @@ def test_delegate_without_prior_effect_yield_regression_guard() -> None:
     result = run(main(), handlers=[*default_handlers(), greet_handler, interceptor])
     assert result.is_ok(), f"Expected OK, got: {result.error}"
     assert result.value == "hello world!"
+
+
+def test_nested_resume_then_throw_preserves_error_context() -> None:
+    """Test 6: Nested resume-then-throw path preserves error attribution."""
+
+    def inner_handler(effect, k):
+        if not isinstance(effect, InnerEffect):
+            yield Pass()
+            return
+        return (yield Resume(k, "inner_value"))
+
+    def interceptor_that_throws(effect, _k):
+        if not isinstance(effect, Greet):
+            yield Pass()
+            return
+        _ = yield InnerEffect()
+        raise ValueError("interceptor failed after inner effect")
+
+    result = run(
+        main(),
+        handlers=[*default_handlers(), inner_handler, greet_handler, interceptor_that_throws],
+    )
+    assert result.is_err(), "Expected error from interceptor"
+    assert "interceptor failed" in str(result.error)

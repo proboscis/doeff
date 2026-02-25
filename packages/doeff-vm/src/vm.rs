@@ -2170,23 +2170,34 @@ impl VM {
         Ok(self.evaluate(ir_node))
     }
 
+    /// Root-level Python handler dispatches must defer completion because the handler
+    /// generator may still yield Delegate/Pass after Resume. Completing the dispatch
+    /// here would destroy the forwarding context. Nested dispatches are safe to
+    /// complete eagerly because the outer dispatch remains on the stack.
+    fn should_defer_root_python_completion(
+        &self,
+        k: &Continuation,
+        dispatch_id: DispatchId,
+    ) -> bool {
+        if self.dispatch_state.depth() != 1 {
+            return false;
+        }
+
+        self.dispatch_state
+            .find_by_dispatch_id(dispatch_id)
+            .is_some_and(|ctx| {
+                let is_python = ctx
+                    .handler_chain
+                    .get(ctx.handler_idx)
+                    .and_then(|marker| self.handlers.get(marker))
+                    .is_some_and(|entry| entry.handler.py_identity().is_some());
+                is_python && ctx.k_user.cont_id == k.cont_id && ctx.k_user.parent.is_none()
+            })
+    }
+
     fn check_dispatch_completion(&mut self, k: &Continuation) {
         if let Some(dispatch_id) = k.dispatch_id {
-            let is_python_handler = self
-                .dispatch_state
-                .find_by_dispatch_id(dispatch_id)
-                .and_then(|ctx| ctx.handler_chain.get(ctx.handler_idx))
-                .and_then(|marker| self.handlers.get(marker))
-                .is_some_and(|entry| entry.handler.py_identity().is_some());
-            if self.dispatch_state.depth() == 1
-                && is_python_handler
-                && self
-                    .dispatch_state
-                    .find_by_dispatch_id(dispatch_id)
-                    .is_some_and(|ctx| {
-                        ctx.k_user.cont_id == k.cont_id && ctx.k_user.parent.is_none()
-                    })
-            {
+            if self.should_defer_root_python_completion(k, dispatch_id) {
                 return;
             }
         }
@@ -2293,23 +2304,11 @@ impl VM {
 
     fn check_dispatch_completion_after_activation(
         &mut self,
-        kind: ContinuationActivationKind,
+        _kind: ContinuationActivationKind,
         k: &Continuation,
-        had_error_dispatch: bool,
+        _had_error_dispatch: bool,
     ) {
-        match kind {
-            ContinuationActivationKind::Resume => {
-                if had_error_dispatch {
-                    self.check_dispatch_completion(k);
-                    return;
-                }
-
-                self.check_dispatch_completion(k);
-            }
-            ContinuationActivationKind::Transfer => {
-                self.check_dispatch_completion(k);
-            }
-        }
+        self.check_dispatch_completion(k);
     }
 
     fn enter_continuation_segment(&mut self, k: &Continuation, caller: Option<SegmentId>) {
@@ -2576,6 +2575,8 @@ impl VM {
     }
 
     fn handle_forward(&mut self, kind: ForwardKind, effect: DispatchEffect) -> StepEvent {
+        self.lazy_pop_completed();
+
         let (handler_chain, start_idx, from_idx, dispatch_id, parent_k_user) =
             match self.dispatch_state.top() {
                 Some(top) => (
