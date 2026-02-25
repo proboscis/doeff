@@ -2167,7 +2167,33 @@ impl VM {
     }
 
     pub fn lazy_pop_completed(&mut self) {
-        self.dispatch_state.lazy_pop_completed();
+        while let Some((dispatch_id, saved_mode, saved_segment)) =
+            self.dispatch_state.pop_completed_with_saved_state()
+        {
+            let has_parent_dispatch = !self.dispatch_state.is_empty();
+            let neutral_mode = matches!(self.mode, Mode::Deliver(Value::Unit));
+            let in_popped_dispatch_segment = self
+                .current_segment
+                .and_then(|seg_id| self.segments.get(seg_id))
+                .and_then(|seg| seg.dispatch_id)
+                .is_some_and(|seg_dispatch_id| seg_dispatch_id == dispatch_id);
+            let saved_segment_is_empty = match saved_segment.and_then(|id| self.segments.get(id)) {
+                Some(seg) => !seg.has_frames(),
+                None => true,
+            };
+
+            // Restore only when control is still parked on the completed dispatch context.
+            // If the saved segment still has frames, a continuation segment has already been
+            // materialized and restoring would re-enter stale frames.
+            if has_parent_dispatch
+                && neutral_mode
+                && in_popped_dispatch_segment
+                && saved_segment_is_empty
+            {
+                self.mode = saved_mode;
+                self.current_segment = saved_segment;
+            }
+        }
     }
 
     pub fn visible_handlers(&self, scope_chain: &[Marker]) -> Vec<Marker> {
@@ -2242,6 +2268,9 @@ impl VM {
             .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
         let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
 
+        let saved_mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
+        let saved_segment = self.current_segment;
+
         let scope_chain = self.current_scope_chain();
         let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id), scope_chain);
         handler_seg.dispatch_id = Some(dispatch_id);
@@ -2257,6 +2286,8 @@ impl VM {
             supports_error_context_conversion,
             k_user: k_user.clone(),
             prompt_seg_id,
+            saved_mode,
+            saved_segment,
             completed: false,
             original_exception,
         });

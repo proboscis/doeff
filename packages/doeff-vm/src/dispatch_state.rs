@@ -6,6 +6,7 @@ use crate::arena::SegmentArena;
 use crate::capture::{CaptureEvent, HandlerAction};
 use crate::continuation::Continuation;
 use crate::dispatch::DispatchContext;
+use crate::driver::Mode;
 use crate::effect::DispatchEffect;
 use crate::error::VMError;
 use crate::handler::{Handler, HandlerEntry};
@@ -68,18 +69,12 @@ impl DispatchState {
             .find(|ctx| ctx.dispatch_id == dispatch_id)
     }
 
-    pub(crate) fn effect_for_dispatch(
-        &self,
-        dispatch_id: DispatchId,
-    ) -> Option<DispatchEffect> {
+    pub(crate) fn effect_for_dispatch(&self, dispatch_id: DispatchId) -> Option<DispatchEffect> {
         self.find_by_dispatch_id(dispatch_id)
             .map(|ctx| ctx.effect.clone())
     }
 
-    pub(crate) fn dispatch_is_execution_context_effect(
-        &self,
-        dispatch_id: DispatchId,
-    ) -> bool {
+    pub(crate) fn dispatch_is_execution_context_effect(&self, dispatch_id: DispatchId) -> bool {
         self.find_by_dispatch_id(dispatch_id)
             .is_some_and(|ctx| ctx.is_execution_context_effect)
     }
@@ -112,14 +107,15 @@ impl DispatchState {
             .unwrap_or_default()
     }
 
-    pub(crate) fn lazy_pop_completed(&mut self) {
-        while let Some(top) = self.dispatch_stack.last() {
-            if top.completed {
-                self.dispatch_stack.pop();
-            } else {
-                break;
-            }
+    pub(crate) fn pop_completed_with_saved_state(
+        &mut self,
+    ) -> Option<(DispatchId, Mode, Option<SegmentId>)> {
+        let top = self.dispatch_stack.last()?;
+        if !top.completed {
+            return None;
         }
+        let ctx = self.dispatch_stack.pop()?;
+        Some((ctx.dispatch_id, ctx.saved_mode, ctx.saved_segment))
     }
 
     pub(crate) fn visible_handlers(
