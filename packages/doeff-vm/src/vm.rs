@@ -17,7 +17,7 @@ use crate::capture::{
 };
 use crate::continuation::Continuation;
 use crate::do_ctrl::{CallArg, DoCtrl, InterceptMode};
-use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
+use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
     dispatch_ref_as_python, make_execution_context_object, make_get_execution_context_effect,
@@ -33,7 +33,7 @@ use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::pyvm::{
     classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, DoExprTag, PyDoCtrlBase, PyDoExprBase,
-    PyEffectBase, PyPure,
+    PyEffectBase,
 };
 use crate::segment::Segment;
 use crate::value::Value;
@@ -2620,39 +2620,10 @@ impl VM {
 
     fn interceptor_call_arg(
         &self,
-        interceptor_callable: &Py<PyAny>,
+        _interceptor_callable: &Py<PyAny>,
         yielded_obj: &Py<PyAny>,
     ) -> Result<CallArg, PyException> {
-        Python::attach(|py| {
-            let callable = interceptor_callable.bind(py);
-            let is_do_callable =
-                callable.is_instance_of::<DoeffGeneratorFn>()
-                    || callable
-                        .getattr("_doeff_generator_factory")
-                        .is_ok_and(|factory| factory.is_instance_of::<DoeffGeneratorFn>());
-
-            // @do callables are expanded as DoCtrl::Expand and evaluate expression arguments.
-            // Wrap the yielded object in Pure(...) so interceptor functions receive the original
-            // DoExpr value (not the evaluated effect result).
-            if is_do_callable {
-                let quoted = Bound::new(
-                    py,
-                    PyClassInitializer::from(PyDoExprBase)
-                        .add_subclass(PyDoCtrlBase {
-                            tag: DoExprTag::Pure as u8,
-                        })
-                        .add_subclass(PyPure {
-                            value: yielded_obj.clone_ref(py),
-                        }),
-                )
-                .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                .into_any()
-                .unbind();
-                return Ok(CallArg::Expr(PyShared::new(quoted)));
-            }
-
-            Ok(CallArg::Value(Value::Python(yielded_obj.clone_ref(py))))
-        })
+        Python::attach(|py| Ok(CallArg::Value(Value::Python(yielded_obj.clone_ref(py)))))
     }
 
     fn handle_interceptor_apply_result(
