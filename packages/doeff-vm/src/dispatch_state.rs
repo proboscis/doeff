@@ -68,7 +68,11 @@ impl DispatchState {
     }
 
     pub(crate) fn top_effect_cloned(&self) -> Option<DispatchEffect> {
-        self.top().map(|ctx| ctx.effect.clone())
+        self.dispatch_stack
+            .iter()
+            .rev()
+            .find(|ctx| !ctx.completed)
+            .map(|ctx| ctx.effect.clone())
     }
 
     pub(crate) fn top_original_exception(&self) -> Option<(DispatchId, PyException)> {
@@ -236,19 +240,6 @@ impl DispatchState {
             cursor = current.parent.as_ref().map(|parent| (**parent).clone());
         }
         None
-    }
-
-    pub(crate) fn active_dispatch_handler_is_python(
-        &self,
-        dispatch_id: DispatchId,
-        handlers: &HashMap<Marker, HandlerEntry>,
-    ) -> bool {
-        self.dispatch_stack
-            .last()
-            .filter(|ctx| ctx.dispatch_id == dispatch_id)
-            .and_then(|ctx| ctx.handler_chain.get(ctx.handler_idx))
-            .and_then(|marker| handlers.get(marker))
-            .is_some_and(|entry| entry.handler.py_identity().is_some())
     }
 
     pub(crate) fn mark_dispatch_threw(
