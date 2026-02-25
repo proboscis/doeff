@@ -161,7 +161,8 @@ fn test_visible_handlers_with_busy_boundary() {
         k_user: k_user.clone(),
 
         prompt_seg_id: SegmentId::from_index(0),
-
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: false,
         original_exception: None,
     });
@@ -189,7 +190,8 @@ fn test_visible_handlers_completed_dispatch() {
         k_user: k_user.clone(),
 
         prompt_seg_id: SegmentId::from_index(0),
-
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: true,
         original_exception: None,
     });
@@ -217,7 +219,8 @@ fn test_lazy_pop_completed() {
         k_user: k_user_1.clone(),
 
         prompt_seg_id: SegmentId::from_index(0),
-
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: true,
         original_exception: None,
     });
@@ -233,7 +236,8 @@ fn test_lazy_pop_completed() {
         k_user: k_user_2.clone(),
 
         prompt_seg_id: SegmentId::from_index(0),
-
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: true,
         original_exception: None,
     });
@@ -249,7 +253,8 @@ fn test_lazy_pop_completed() {
         k_user: k_user_3.clone(),
 
         prompt_seg_id: SegmentId::from_index(0),
-
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: false,
         original_exception: None,
     });
@@ -294,6 +299,8 @@ fn test_current_segment_dispatch_id_ignores_completed_dispatch_context() {
             ..make_dummy_continuation()
         },
         prompt_seg_id: seg_id,
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: true,
         original_exception: None,
     });
@@ -793,7 +800,8 @@ fn test_handle_get_continuation() {
         k_user: k_user.clone(),
 
         prompt_seg_id: SegmentId::from_index(0),
-
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: false,
         original_exception: None,
     });
@@ -847,6 +855,8 @@ fn test_handle_delegate_links_previous_k_as_parent() {
         supports_error_context_conversion: false,
         k_user: original_k_user,
         prompt_seg_id: seg_id,
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: false,
         original_exception: None,
     });
@@ -934,6 +944,8 @@ fn test_handle_get_handlers() {
         supports_error_context_conversion: false,
         k_user,
         prompt_seg_id,
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: false,
         original_exception: None,
     });
@@ -1031,6 +1043,8 @@ fn test_step_handle_yield_routes_get_traceback() {
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
         prompt_seg_id: seg_id,
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: false,
         original_exception: None,
     });
@@ -1257,6 +1271,8 @@ fn test_gap12_dispatch_completion_via_k_user() {
             ..make_dummy_continuation()
         },
         prompt_seg_id: seg_id,
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: false,
         original_exception: None,
     });
@@ -1300,6 +1316,8 @@ fn test_terminal_error_resume_marks_only_target_dispatch_completed() {
         supports_error_context_conversion: false,
         k_user: outer_k.clone(),
         prompt_seg_id: seg_id,
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: false,
         original_exception: None,
     });
@@ -1320,6 +1338,8 @@ fn test_terminal_error_resume_marks_only_target_dispatch_completed() {
         supports_error_context_conversion: false,
         k_user: inner_k.clone(),
         prompt_seg_id: seg_id,
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: false,
         original_exception: Some(PyException::runtime_error("original failure")),
     });
@@ -1431,6 +1451,8 @@ fn test_gap16_lazy_pop_before_get_handlers() {
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
         prompt_seg_id: SegmentId::from_index(0),
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: true,
         original_exception: None,
     });
@@ -1794,6 +1816,8 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
             supports_error_context_conversion: false,
             k_user: outer_k.clone(),
             prompt_seg_id: seg_id,
+            saved_mode: Mode::Deliver(Value::Unit),
+            saved_segment: None,
             completed: false,
             original_exception: None,
         });
@@ -1814,6 +1838,8 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
             supports_error_context_conversion: false,
             k_user: inner_k.clone(),
             prompt_seg_id: seg_id,
+            saved_mode: Mode::Deliver(Value::Unit),
+            saved_segment: None,
             completed: false,
             original_exception: None,
         });
@@ -1967,6 +1993,8 @@ fn test_d10_handler_return_uses_deliver_not_return() {
         supports_error_context_conversion: false,
         k_user,
         prompt_seg_id,
+        saved_mode: Mode::Deliver(Value::Unit),
+        saved_segment: None,
         completed: false,
         original_exception: None,
     });
