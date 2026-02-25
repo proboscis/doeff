@@ -76,7 +76,10 @@ impl DispatchState {
     }
 
     pub(crate) fn top_original_exception(&self) -> Option<(DispatchId, PyException)> {
-        self.top()
+        self.dispatch_stack
+            .iter()
+            .rev()
+            .find(|ctx| !ctx.completed)
             .and_then(|ctx| ctx.original_exception.clone().map(|exc| (ctx.dispatch_id, exc)))
     }
 
