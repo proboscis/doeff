@@ -97,6 +97,7 @@ pub enum DoCtrl {
         args: Vec<CallArg>,
         kwargs: Vec<(String, CallArg)>,
         metadata: CallMetadata,
+        evaluate_result: bool,
     },
     Expand {
         factory: CallArg,
@@ -229,11 +230,13 @@ impl DoCtrl {
                 args,
                 kwargs,
                 metadata,
+                evaluate_result,
             } => DoCtrl::Apply {
                 f: f.clone(),
                 args: args.clone(),
                 kwargs: kwargs.clone(),
                 metadata: metadata.clone(),
+                evaluate_result: *evaluate_result,
             },
             DoCtrl::Expand {
                 factory,

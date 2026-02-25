@@ -164,6 +164,7 @@ fn rust_program_apply_expr(
         args: vec![],
         kwargs: vec![],
         metadata,
+        evaluate_result: false,
     }
 }
 

@@ -132,7 +132,9 @@ impl InterceptorState {
             let is_doexpr =
                 bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<DoeffGenerator>();
             let is_direct_expr = is_effect_base
-                || doctrl_tag.is_some_and(|tag| tag != crate::pyvm::DoExprTag::Expand);
+                || doctrl_tag.is_some_and(|tag| {
+                    tag != crate::pyvm::DoExprTag::Expand && tag != crate::pyvm::DoExprTag::Apply
+                });
             (is_direct_expr, is_doexpr)
         })
     }
