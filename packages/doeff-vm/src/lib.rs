@@ -13,6 +13,8 @@ pub mod arena;
 pub mod ast_stream;
 pub mod capture;
 pub mod continuation;
+mod dispatch_state;
+mod debug_state;
 pub mod dispatch;
 pub mod do_ctrl;
 pub mod doeff_generator;
@@ -30,6 +32,8 @@ pub mod rust_store;
 pub mod scheduler;
 pub mod segment;
 mod step;
+mod interceptor_state;
+mod trace_state;
 pub mod value;
 mod vm;
 
