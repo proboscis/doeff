@@ -11,17 +11,20 @@ use pyo3::types::PyDict;
 use crate::arena::SegmentArena;
 use crate::ast_stream::{ASTStream, ASTStreamRef, ASTStreamStep, PythonGeneratorStream};
 use crate::capture::{
-    ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectCreationSite,
-    EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry,
-    HandlerStatus, TraceEntry, TraceFrame, TraceHop,
+    ActiveChainEntry, CaptureEvent, EffectCreationSite, HandlerAction, HandlerKind,
+    HandlerSnapshotEntry, TraceEntry,
 };
 use crate::continuation::Continuation;
+use crate::debug_state::DebugState;
+use crate::dispatch_state::DispatchState;
+use crate::interceptor_state::InterceptorState;
+use crate::trace_state::TraceState;
 use crate::do_ctrl::{CallArg, DoCtrl, InterceptMode};
-use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
+use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
-    dispatch_ref_as_python, make_execution_context_object, make_get_execution_context_effect,
-    DispatchEffect, PyExecutionContext, PyGetExecutionContext,
+    dispatch_ref_as_python, make_get_execution_context_effect, DispatchEffect,
+    PyGetExecutionContext,
 };
 #[cfg(test)]
 use crate::effect::{Effect, PySpawn};
@@ -32,8 +35,7 @@ use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::pyvm::{
-    classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, DoExprTag, PyDoCtrlBase, PyDoExprBase,
-    PyEffectBase, PyPure,
+    classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase,
 };
 use crate::segment::Segment;
 use crate::value::Value;
@@ -71,13 +73,7 @@ fn rust_program_as_stream(program: crate::handler::ASTStreamProgramRef) -> ASTSt
     ))
 }
 
-const EXECUTION_CONTEXT_ATTR: &str = "doeff_execution_context";
 const MISSING_UNKNOWN: &str = "[MISSING] <unknown>";
-const MISSING_SUB_PROGRAM: &str = "[MISSING] <sub_program>";
-const MISSING_TARGET: &str = "[MISSING] <target>";
-const MISSING_EXCEPTION: &str = "[MISSING] <exception>";
-const MISSING_EXCEPTION_TYPE: &str = "[MISSING] Exception";
-const MISSING_NONE_REPR: &str = "[MISSING] None";
 
 #[derive(Debug, Clone, Copy)]
 enum GenErrorSite {
@@ -143,7 +139,7 @@ pub struct TraceEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ModeFormatVerbosity {
+pub(crate) enum ModeFormatVerbosity {
     Compact,
     Verbose,
 }
@@ -208,49 +204,11 @@ impl ForwardKind {
 }
 
 #[derive(Clone)]
-struct ActiveChainFrameState {
-    frame_id: FrameId,
-    function_name: String,
-    source_file: String,
-    source_line: u32,
-    sub_program_repr: String,
-}
-
-#[derive(Clone)]
-struct ActiveChainDispatchState {
-    function_name: Option<String>,
-    source_file: Option<String>,
-    source_line: Option<u32>,
-    effect_repr: String,
-    is_execution_context_effect: bool,
-    handler_stack: Vec<HandlerDispatchEntry>,
-    result: EffectResult,
-}
-
-struct ActiveChainAssemblyState {
-    frame_stack: Vec<ActiveChainFrameState>,
-    dispatches: HashMap<DispatchId, ActiveChainDispatchState>,
-    frame_dispatch: HashMap<FrameId, DispatchId>,
-    transfer_targets: HashMap<DispatchId, String>,
-}
-
-#[derive(Clone)]
 pub struct InterceptorEntry {
-    interceptor: PyShared,
-    types: PyShared,
-    mode: InterceptMode,
-    metadata: CallMetadata,
-}
-
-impl ActiveChainAssemblyState {
-    fn new() -> Self {
-        Self {
-            frame_stack: Vec::new(),
-            dispatches: HashMap::new(),
-            frame_dispatch: HashMap::new(),
-            transfer_targets: HashMap::new(),
-        }
-    }
+    pub(crate) interceptor: PyShared,
+    pub(crate) types: PyShared,
+    pub(crate) mode: InterceptMode,
+    pub(crate) metadata: CallMetadata,
 }
 
 impl Default for DebugConfig {
@@ -288,27 +246,19 @@ impl DebugConfig {
 
 pub struct VM {
     pub segments: SegmentArena,
-    pub dispatch_stack: Vec<DispatchContext>,
+    pub(crate) dispatch_state: DispatchState,
     pub callbacks: HashMap<CallbackId, Callback>,
     pub consumed_cont_ids: HashSet<ContId>,
     pub handlers: HashMap<Marker, HandlerEntry>,
-    pub interceptors: HashMap<Marker, InterceptorEntry>,
-    pub interceptor_callbacks: HashMap<CallbackId, Marker>,
-    pub interceptor_call_metadata: HashMap<CallbackId, CallMetadata>,
-    pub interceptor_eval_callbacks: HashSet<CallbackId>,
-    pub interceptor_eval_depth: usize,
-    pub interceptor_skip_stack: Vec<Marker>,
+    pub(crate) interceptor_state: InterceptorState,
     pub rust_store: RustStore,
     pub py_store: Option<PyStore>,
     pub current_segment: Option<SegmentId>,
     pub mode: Mode,
     pub pending_error_context: Option<PyException>,
     pub pending_python: Option<PendingPython>,
-    pub debug: DebugConfig,
-    pub step_counter: u64,
-    pub trace_enabled: bool,
-    pub trace_events: Vec<TraceEvent>,
-    pub capture_log: Vec<CaptureEvent>,
+    pub(crate) debug: DebugState,
+    pub(crate) trace_state: TraceState,
     pub continuation_registry: HashMap<ContId, Continuation>,
     pub active_run_token: Option<u64>,
 }
@@ -317,53 +267,39 @@ impl VM {
     pub fn new() -> Self {
         VM {
             segments: SegmentArena::new(),
-            dispatch_stack: Vec::new(),
+            dispatch_state: DispatchState::default(),
             callbacks: HashMap::new(),
             consumed_cont_ids: HashSet::new(),
             handlers: HashMap::new(),
-            interceptors: HashMap::new(),
-            interceptor_callbacks: HashMap::new(),
-            interceptor_call_metadata: HashMap::new(),
-            interceptor_eval_callbacks: HashSet::new(),
-            interceptor_eval_depth: 0,
-            interceptor_skip_stack: Vec::new(),
+            interceptor_state: InterceptorState::default(),
             rust_store: RustStore::new(),
             py_store: None,
             current_segment: None,
             mode: Mode::Deliver(Value::Unit),
             pending_error_context: None,
             pending_python: None,
-            debug: DebugConfig::default(),
-            step_counter: 0,
-            trace_enabled: false,
-            trace_events: Vec::new(),
-            capture_log: Vec::new(),
+            debug: DebugState::new(DebugConfig::default()),
+            trace_state: TraceState::default(),
             continuation_registry: HashMap::new(),
             active_run_token: None,
         }
     }
 
     pub fn with_debug(debug: DebugConfig) -> Self {
-        VM {
-            debug,
-            ..Self::new()
-        }
+        let mut vm = Self::new();
+        vm.debug.set_config(debug);
+        vm
     }
 
     pub fn set_debug(&mut self, config: DebugConfig) {
-        self.debug = config;
+        self.debug.set_config(config);
     }
 
     pub fn begin_run_session(&mut self) -> u64 {
         let token = NEXT_RUN_TOKEN.fetch_add(1, Ordering::Relaxed);
         self.active_run_token = Some(token);
-        self.capture_log.clear();
-        self.interceptors.clear();
-        self.interceptor_callbacks.clear();
-        self.interceptor_call_metadata.clear();
-        self.interceptor_eval_callbacks.clear();
-        self.interceptor_eval_depth = 0;
-        self.interceptor_skip_stack.clear();
+        self.trace_state.clear();
+        self.interceptor_state.clear_for_run();
         token
     }
 
@@ -382,12 +318,11 @@ impl VM {
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
-        self.trace_enabled = enabled;
-        self.trace_events.clear();
+        self.debug.enable_trace(enabled);
     }
 
     pub fn trace_events(&self) -> &[TraceEvent] {
-        &self.trace_events
+        self.debug.trace_events()
     }
 
     pub fn py_store(&self) -> Option<&PyStore> {
@@ -524,69 +459,20 @@ impl VM {
         })
     }
 
-    fn truncate_repr(mut text: String) -> String {
-        const MAX_REPR_LEN: usize = 200;
-        if text.len() > MAX_REPR_LEN {
-            text.truncate(MAX_REPR_LEN);
-            text.push_str("...");
-        }
-        text
-    }
-
     fn value_repr(value: &Value) -> Option<String> {
-        let repr = match value {
-            Value::None | Value::Unit => "None".to_string(),
-            Value::Python(obj) => Python::attach(|py| {
-                obj.bind(py)
-                    .repr()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|_| "<python-value>".to_string())
-            }),
-            other => format!("{other:?}"),
-        };
-        Some(Self::truncate_repr(repr))
+        DebugState::value_repr(value)
     }
 
     fn program_call_repr(metadata: &CallMetadata) -> Option<String> {
-        let repr = metadata.program_call.as_ref().map(|program_call| {
-            Python::attach(|py| {
-                program_call
-                    .bind(py)
-                    .repr()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|_| MISSING_SUB_PROGRAM.to_string())
-            })
-        })?;
-        Some(Self::truncate_repr(repr))
+        DebugState::program_call_repr(metadata)
     }
 
     fn exception_repr(exception: &PyException) -> Option<String> {
-        let repr = match exception {
-            PyException::Materialized { exc_value, .. } => Python::attach(|py| {
-                exc_value
-                    .bind(py)
-                    .repr()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|_| MISSING_EXCEPTION.to_string())
-            }),
-            PyException::RuntimeError { message } => format!("RuntimeError({message:?})"),
-            PyException::TypeError { message } => format!("TypeError({message:?})"),
-        };
-        Some(Self::truncate_repr(repr))
+        DebugState::exception_repr(exception)
     }
 
     fn effect_repr(effect: &DispatchEffect) -> String {
-        let repr = if let Some(obj) = dispatch_ref_as_python(effect) {
-            Python::attach(|py| {
-                obj.bind(py)
-                    .repr()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|_| "<effect>".to_string())
-            })
-        } else {
-            format!("{effect:?}")
-        };
-        Self::truncate_repr(repr)
+        DebugState::effect_repr(effect)
     }
 
     fn is_execution_context_effect(effect: &DispatchEffect) -> bool {
@@ -601,20 +487,12 @@ impl VM {
     }
 
     fn dispatch_supports_error_context_conversion(&self, dispatch_id: DispatchId) -> bool {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-            .is_some_and(|ctx| ctx.supports_error_context_conversion)
+        self.dispatch_state.dispatch_supports_error_context_conversion(dispatch_id)
     }
 
     fn effect_creation_site_from_continuation(k: &Continuation) -> Option<EffectCreationSite> {
-        let (_, function_name, source_file, source_line) = Self::effect_site_from_continuation(k)?;
-        Some(EffectCreationSite {
-            function_name,
-            source_file,
-            source_line,
-        })
+        let (_, function_name, source_file, source_line) = TraceState::effect_site_from_continuation(k)?;
+        Some(EffectCreationSite { function_name, source_file, source_line })
     }
 
     fn handler_trace_info(handler: &Handler) -> (String, HandlerKind, Option<String>, Option<u32>) {
@@ -640,30 +518,18 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<(usize, String)> {
-        let ctx = self
-            .dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-            .cloned()?;
+        let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?.clone();
         let marker = *ctx.handler_chain.get(ctx.handler_idx)?;
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
         Some((ctx.handler_idx, name))
     }
 
     fn current_active_handler_dispatch_id(&self) -> Option<DispatchId> {
-        let top = self.dispatch_stack.last()?;
-        if top.completed {
-            return None;
-        }
-        let marker = *top.handler_chain.get(top.handler_idx)?;
-        let seg_id = self.current_segment?;
-        let seg = self.segments.get(seg_id)?;
-        if seg.marker == marker {
-            Some(top.dispatch_id)
-        } else {
-            None
-        }
+        self.interceptor_state.current_active_handler_dispatch_id(
+            self.dispatch_state.contexts(),
+            self.current_segment,
+            &self.segments,
+        )
     }
 
     fn dispatch_uses_user_continuation_stream(
@@ -671,10 +537,8 @@ impl VM {
         dispatch_id: DispatchId,
         stream: &ASTStreamRef,
     ) -> bool {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
+        self.dispatch_state
+            .find_by_dispatch_id(dispatch_id)
             .is_some_and(|ctx| {
                 ctx.k_user.frames_snapshot.iter().any(|frame| match frame {
                     Frame::Program {
@@ -687,50 +551,11 @@ impl VM {
     }
 
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| !ctx.completed && ctx.original_exception.is_some())
-            .and_then(|ctx| ctx.original_exception.clone())
+        self.dispatch_state.active_error_dispatch_original_exception()
     }
 
     fn original_exception_for_dispatch(&self, dispatch_id: DispatchId) -> Option<PyException> {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-            .and_then(|ctx| ctx.original_exception.clone())
-    }
-
-    fn same_materialized_exception(lhs: &PyException, rhs: &PyException) -> bool {
-        match (lhs, rhs) {
-            (
-                PyException::Materialized {
-                    exc_value: lhs_value,
-                    ..
-                },
-                PyException::Materialized {
-                    exc_value: rhs_value,
-                    ..
-                },
-            ) => Python::attach(|py| lhs_value.bind(py).as_ptr() == rhs_value.bind(py).as_ptr()),
-            _ => false,
-        }
-    }
-
-    fn set_exception_cause(effect_err: &PyException, cause: &PyException) {
-        if Self::same_materialized_exception(effect_err, cause) {
-            return;
-        }
-        let PyException::Materialized { exc_value, .. } = effect_err else {
-            return;
-        };
-
-        Python::attach(|py| {
-            let _ = exc_value
-                .bind(py)
-                .setattr("__cause__", cause.value_clone_ref(py));
-        });
+        self.dispatch_state.original_exception_for_dispatch(dispatch_id)
     }
 
     fn is_base_exception_not_exception(exception: &PyException) -> bool {
@@ -760,17 +585,14 @@ impl VM {
                     )
             });
         let in_get_execution_context_dispatch = active_dispatch_id
-            .and_then(|dispatch_id| {
-                self.dispatch_stack
-                    .iter()
-                    .rev()
-                    .find(|ctx| ctx.dispatch_id == dispatch_id)
-            })
-            .is_some_and(|ctx| ctx.is_execution_context_effect);
+            .is_some_and(|dispatch_id| {
+                self.dispatch_state
+                    .dispatch_is_execution_context_effect(dispatch_id)
+            });
 
         if !site.allows_error_conversion() && !allow_handler_context_conversion {
             if let Some(original) = self.active_error_dispatch_original_exception() {
-                Self::set_exception_cause(&exception, &original);
+                TraceState::set_exception_cause(&exception, &original);
             }
             return Mode::Throw(exception);
         }
@@ -781,7 +603,7 @@ impl VM {
 
         if let Some(original) = self.active_error_dispatch_original_exception() {
             if !allow_handler_context_conversion || in_get_execution_context_dispatch {
-                Self::set_exception_cause(&exception, &original);
+                TraceState::set_exception_cause(&exception, &original);
                 return Mode::Throw(exception);
             }
         }
@@ -800,91 +622,13 @@ impl VM {
         guard.debug_location()
     }
 
-    fn resume_location_from_frames(frames: &[Frame]) -> Option<(String, String, u32)> {
-        for frame in frames.iter().rev() {
-            if let Frame::Program {
-                stream,
-                metadata: Some(metadata),
-            } = frame
-            {
-                if let Some(location) = Self::stream_debug_location(stream) {
-                    return Some((
-                        metadata.function_name.clone(),
-                        location.source_file,
-                        location.source_line,
-                    ));
-                }
-                return Some((
-                    metadata.function_name.clone(),
-                    metadata.source_file.clone(),
-                    metadata.source_line,
-                ));
-            }
-        }
-        None
-    }
-
-    fn continuation_resume_location(k: &Continuation) -> Option<(String, String, u32)> {
-        Self::resume_location_from_frames(k.frames_snapshot.as_ref())
-    }
-
-    fn is_internal_source_file(source_file: &str) -> bool {
-        let normalized = source_file.replace('\\', "/").to_lowercase();
-        normalized == "_effect_wrap" || normalized.contains("/doeff/")
-    }
-
-    fn effect_site_from_continuation(k: &Continuation) -> Option<(FrameId, String, String, u32)> {
-        let mut fallback: Option<(FrameId, String, String, u32)> = None;
-
-        for frame in k.frames_snapshot.iter().rev() {
-            if let Frame::Program {
-                stream,
-                metadata: Some(metadata),
-            } = frame
-            {
-                let fallback_candidate = (
-                    metadata.frame_id as FrameId,
-                    metadata.function_name.clone(),
-                    metadata.source_file.clone(),
-                    metadata.source_line,
-                );
-                let candidate = match Self::stream_debug_location(stream) {
-                    Some(location) => (
-                        metadata.frame_id as FrameId,
-                        metadata.function_name.clone(),
-                        location.source_file,
-                        location.source_line,
-                    ),
-                    None => fallback_candidate,
-                };
-
-                if fallback.is_none() {
-                    fallback = Some(candidate.clone());
-                }
-                if !Self::is_internal_source_file(&candidate.2) {
-                    return Some(candidate);
-                }
-            }
-        }
-
-        fallback
-    }
-
     fn maybe_emit_frame_entered(&mut self, metadata: &CallMetadata) {
-        self.capture_log.push(CaptureEvent::FrameEntered {
-            frame_id: metadata.frame_id as FrameId,
-            function_name: metadata.function_name.clone(),
-            source_file: metadata.source_file.clone(),
-            source_line: metadata.source_line,
-            args_repr: metadata.args_repr.clone(),
-            program_call_repr: Self::program_call_repr(metadata),
-        });
+        self.trace_state
+            .maybe_emit_frame_entered(metadata, Self::program_call_repr(metadata));
     }
 
     fn maybe_emit_frame_exited(&mut self, metadata: &CallMetadata) {
-        self.capture_log.push(CaptureEvent::FrameExited {
-            function_name: metadata.function_name.clone(),
-        });
+        self.trace_state.maybe_emit_frame_exited(metadata);
     }
 
     fn maybe_emit_handler_threw_for_dispatch(
@@ -897,14 +641,12 @@ impl VM {
         else {
             return;
         };
-        self.capture_log.push(CaptureEvent::HandlerCompleted {
+        self.trace_state.maybe_emit_handler_threw_for_dispatch(
             dispatch_id,
             handler_name,
             handler_index,
-            action: HandlerAction::Threw {
-                exception_repr: Self::exception_repr(exc),
-            },
-        });
+            Self::exception_repr(exc),
+        );
     }
 
     fn maybe_emit_resume_event(
@@ -915,1111 +657,46 @@ impl VM {
         continuation: &Continuation,
         transferred: bool,
     ) {
-        if let Some((resumed_function_name, source_file, source_line)) =
-            Self::continuation_resume_location(continuation)
-        {
-            if transferred {
-                self.capture_log.push(CaptureEvent::Transferred {
-                    dispatch_id,
-                    handler_name,
-                    value_repr,
-                    resumed_function_name,
-                    source_file,
-                    source_line,
-                });
-            } else {
-                self.capture_log.push(CaptureEvent::Resumed {
-                    dispatch_id,
-                    handler_name,
-                    value_repr,
-                    resumed_function_name,
-                    source_file,
-                    source_line,
-                });
-            }
-        }
+        self.trace_state.maybe_emit_resume_event(
+            dispatch_id,
+            handler_name,
+            value_repr,
+            continuation,
+            transferred,
+            TraceState::continuation_resume_location,
+        );
     }
 
     pub fn assemble_trace(&self) -> Vec<TraceEntry> {
-        let mut trace: Vec<TraceEntry> = Vec::new();
-        let mut dispatch_positions: HashMap<DispatchId, usize> = HashMap::new();
-
-        for event in &self.capture_log {
-            match event {
-                CaptureEvent::FrameEntered {
-                    frame_id,
-                    function_name,
-                    source_file,
-                    source_line,
-                    args_repr,
-                    program_call_repr: _,
-                } => {
-                    trace.push(TraceEntry::Frame {
-                        frame_id: *frame_id,
-                        function_name: function_name.clone(),
-                        source_file: source_file.clone(),
-                        source_line: *source_line,
-                        args_repr: args_repr.clone(),
-                    });
-                }
-                CaptureEvent::FrameExited { .. } => {}
-                CaptureEvent::DispatchStarted {
-                    dispatch_id,
-                    effect_repr,
-                    is_execution_context_effect: _,
-                    creation_site: _,
-                    handler_name,
-                    handler_kind,
-                    handler_source_file,
-                    handler_source_line,
-                    handler_chain_snapshot: _,
-                    effect_frame_id: _,
-                    effect_function_name: _,
-                    effect_source_file: _,
-                    effect_source_line: _,
-                } => {
-                    let pos = trace.len();
-                    dispatch_positions.insert(*dispatch_id, pos);
-                    trace.push(TraceEntry::Dispatch {
-                        dispatch_id: *dispatch_id,
-                        effect_repr: effect_repr.clone(),
-                        handler_name: handler_name.clone(),
-                        handler_kind: handler_kind.clone(),
-                        handler_source_file: handler_source_file.clone(),
-                        handler_source_line: *handler_source_line,
-                        delegation_chain: vec![DelegationEntry {
-                            handler_name: handler_name.clone(),
-                            handler_kind: handler_kind.clone(),
-                            handler_source_file: handler_source_file.clone(),
-                            handler_source_line: *handler_source_line,
-                        }],
-                        action: DispatchAction::Active,
-                        value_repr: None,
-                        exception_repr: None,
-                    });
-                }
-                CaptureEvent::Delegated {
-                    dispatch_id,
-                    from_handler_name: _,
-                    from_handler_index: _,
-                    to_handler_name,
-                    to_handler_index: _,
-                    to_handler_kind,
-                    to_handler_source_file,
-                    to_handler_source_line,
-                }
-                | CaptureEvent::Passed {
-                    dispatch_id,
-                    from_handler_name: _,
-                    from_handler_index: _,
-                    to_handler_name,
-                    to_handler_index: _,
-                    to_handler_kind,
-                    to_handler_source_file,
-                    to_handler_source_line,
-                } => {
-                    if let Some(&pos) = dispatch_positions.get(dispatch_id) {
-                        if let TraceEntry::Dispatch {
-                            handler_name,
-                            handler_kind,
-                            handler_source_file,
-                            handler_source_line,
-                            delegation_chain,
-                            ..
-                        } = &mut trace[pos]
-                        {
-                            *handler_name = to_handler_name.clone();
-                            *handler_kind = to_handler_kind.clone();
-                            *handler_source_file = to_handler_source_file.clone();
-                            *handler_source_line = *to_handler_source_line;
-                            delegation_chain.push(DelegationEntry {
-                                handler_name: to_handler_name.clone(),
-                                handler_kind: to_handler_kind.clone(),
-                                handler_source_file: to_handler_source_file.clone(),
-                                handler_source_line: *to_handler_source_line,
-                            });
-                        }
-                    }
-                }
-                CaptureEvent::HandlerCompleted {
-                    dispatch_id,
-                    handler_name: _,
-                    handler_index: _,
-                    action,
-                } => {
-                    if let Some(&pos) = dispatch_positions.get(dispatch_id) {
-                        if let TraceEntry::Dispatch {
-                            action: dispatch_action,
-                            value_repr,
-                            exception_repr,
-                            ..
-                        } = &mut trace[pos]
-                        {
-                            match action {
-                                HandlerAction::Resumed { value_repr: repr } => {
-                                    *dispatch_action = DispatchAction::Resumed;
-                                    *value_repr = repr.clone();
-                                }
-                                HandlerAction::Transferred { value_repr: repr } => {
-                                    *dispatch_action = DispatchAction::Transferred;
-                                    *value_repr = repr.clone();
-                                }
-                                HandlerAction::Returned { value_repr: repr } => {
-                                    *dispatch_action = DispatchAction::Returned;
-                                    *value_repr = repr.clone();
-                                }
-                                HandlerAction::Threw {
-                                    exception_repr: repr,
-                                } => {
-                                    *dispatch_action = DispatchAction::Threw;
-                                    *exception_repr = repr.clone();
-                                }
-                            }
-                        }
-                    }
-                }
-                CaptureEvent::Resumed {
-                    dispatch_id,
-                    handler_name,
-                    value_repr,
-                    resumed_function_name,
-                    source_file,
-                    source_line,
-                }
-                | CaptureEvent::Transferred {
-                    dispatch_id,
-                    handler_name,
-                    value_repr,
-                    resumed_function_name,
-                    source_file,
-                    source_line,
-                } => {
-                    trace.push(TraceEntry::ResumePoint {
-                        dispatch_id: *dispatch_id,
-                        handler_name: handler_name.clone(),
-                        resumed_function_name: resumed_function_name.clone(),
-                        source_file: source_file.clone(),
-                        source_line: *source_line,
-                        value_repr: value_repr.clone(),
-                    });
-                }
-            }
-        }
-
-        self.supplement_with_live_state(&mut trace);
-        trace
-    }
-
-    fn supplement_with_live_state(&self, trace: &mut Vec<TraceEntry>) {
-        let mut seg_id = self.current_segment;
-        while let Some(id) = seg_id {
-            let Some(seg) = self.segments.get(id) else {
-                break;
-            };
-            for frame in &seg.frames {
-                let Frame::Program {
-                    stream,
-                    metadata: Some(metadata),
-                } = frame
-                else {
-                    continue;
-                };
-
-                let current_line = Self::stream_debug_location(stream)
-                    .map(|location| location.source_line)
-                    .unwrap_or(metadata.source_line);
-                let last_line = trace.iter().rev().find_map(|entry| match entry {
-                    TraceEntry::Frame {
-                        frame_id,
-                        source_line,
-                        ..
-                    } if *frame_id == metadata.frame_id => Some(*source_line),
-                    _ => None,
-                });
-                if last_line != Some(current_line) {
-                    trace.push(TraceEntry::Frame {
-                        frame_id: metadata.frame_id,
-                        function_name: metadata.function_name.clone(),
-                        source_file: metadata.source_file.clone(),
-                        source_line: current_line,
-                        args_repr: metadata.args_repr.clone(),
-                    });
-                }
-            }
-            seg_id = seg.caller;
-        }
-
-        for ctx in &self.dispatch_stack {
-            if ctx.completed {
-                continue;
-            }
-            let already_in_trace = trace.iter().any(|entry| {
-                matches!(
-                    entry,
-                    TraceEntry::Dispatch { dispatch_id, .. } if *dispatch_id == ctx.dispatch_id
-                )
-            });
-            if already_in_trace {
-                continue;
-            }
-
-            let Some((handler_name, handler_kind, handler_source_file, handler_source_line)) = ctx
-                .handler_chain
-                .get(ctx.handler_idx)
-                .and_then(|marker| self.marker_handler_trace_info(*marker))
-            else {
-                continue;
-            };
-
-            trace.push(TraceEntry::Dispatch {
-                dispatch_id: ctx.dispatch_id,
-                effect_repr: Self::effect_repr(&ctx.effect),
-                handler_name: handler_name.clone(),
-                handler_kind: handler_kind.clone(),
-                handler_source_file: handler_source_file.clone(),
-                handler_source_line,
-                delegation_chain: vec![DelegationEntry {
-                    handler_name,
-                    handler_kind,
-                    handler_source_file,
-                    handler_source_line,
-                }],
-                action: DispatchAction::Active,
-                value_repr: None,
-                exception_repr: None,
-            });
-        }
-    }
-
-    fn exception_site(exception: &PyException) -> ActiveChainEntry {
-        match exception {
-            PyException::Materialized {
-                exc_type: _exc_type,
-                exc_value,
-                exc_tb,
-            } => Python::attach(|py| {
-                let exc_value_bound = exc_value.bind(py);
-
-                let exception_type = exc_value_bound
-                    .get_type()
-                    .name()
-                    .ok()
-                    .map(|name| name.to_string())
-                    .unwrap_or_else(|| MISSING_EXCEPTION_TYPE.to_string());
-
-                let message = exc_value_bound
-                    .str()
-                    .map(|v| v.to_string())
-                    .unwrap_or_default();
-
-                let mut function_name = MISSING_UNKNOWN.to_string();
-                let mut source_file = MISSING_UNKNOWN.to_string();
-                let mut source_line = 0u32;
-
-                let mut tb = exc_tb
-                    .as_ref()
-                    .map(|tb| tb.bind(py).clone().into_any())
-                    .or_else(|| exc_value_bound.getattr("__traceback__").ok());
-
-                while let Some(tb_obj) = tb {
-                    let next = tb_obj.getattr("tb_next").ok();
-                    let has_next = next.as_ref().is_some_and(|n| !n.is_none());
-                    if has_next {
-                        tb = next;
-                        continue;
-                    }
-
-                    source_line = tb_obj
-                        .getattr("tb_lineno")
-                        .ok()
-                        .and_then(|v| v.extract::<u32>().ok())
-                        .unwrap_or(0);
-
-                    if let Ok(frame) = tb_obj.getattr("tb_frame") {
-                        if let Ok(code) = frame.getattr("f_code") {
-                            function_name = code
-                                .getattr("co_name")
-                                .ok()
-                                .and_then(|v| v.extract::<String>().ok())
-                                .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
-                            source_file = code
-                                .getattr("co_filename")
-                                .ok()
-                                .and_then(|v| v.extract::<String>().ok())
-                                .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
-                        }
-                    }
-                    break;
-                }
-
-                ActiveChainEntry::ExceptionSite {
-                    function_name,
-                    source_file,
-                    source_line,
-                    exception_type,
-                    message,
-                }
-            }),
-            PyException::RuntimeError { message } => ActiveChainEntry::ExceptionSite {
-                function_name: "<runtime>".to_string(),
-                source_file: "<runtime>".to_string(),
-                source_line: 0,
-                exception_type: "RuntimeError".to_string(),
-                message: message.clone(),
-            },
-            PyException::TypeError { message } => ActiveChainEntry::ExceptionSite {
-                function_name: "<runtime>".to_string(),
-                source_file: "<runtime>".to_string(),
-                source_line: 0,
-                exception_type: "TypeError".to_string(),
-                message: message.clone(),
-            },
-        }
-    }
-
-    fn context_entries_from_exception(exception: &PyException) -> Vec<Py<PyAny>> {
-        let PyException::Materialized { exc_value, .. } = exception else {
-            return Vec::new();
-        };
-
-        Python::attach(|py| {
-            let exc = exc_value.bind(py);
-            let context = exc
-                .getattr(EXECUTION_CONTEXT_ATTR)
-                .ok()
-                .filter(|ctx| !ctx.is_none());
-            let Some(context) = context else {
-                return Vec::new();
-            };
-            let entries = context
-                .getattr("entries")
-                .ok()
-                .filter(|entries| !entries.is_none());
-            let Some(entries) = entries else {
-                return Vec::new();
-            };
-            match entries.try_iter() {
-                Ok(iter) => iter
-                    .filter_map(Result::ok)
-                    .map(|entry| entry.unbind())
-                    .collect(),
-                Err(_) => Vec::new(),
-            }
-        })
-    }
-
-    fn context_entries_from_context_obj(context: &Bound<'_, PyAny>) -> Vec<Py<PyAny>> {
-        if !context.is_instance_of::<PyExecutionContext>() {
-            return Vec::new();
-        }
-        let entries = context
-            .getattr("entries")
-            .ok()
-            .filter(|entries| !entries.is_none());
-        let Some(entries) = entries else {
-            return Vec::new();
-        };
-        match entries.try_iter() {
-            Ok(iter) => iter
-                .filter_map(Result::ok)
-                .map(|entry| entry.unbind())
-                .collect(),
-            Err(_) => Vec::new(),
-        }
-    }
-
-    fn build_execution_context_from_entries(
-        py: Python<'_>,
-        entries: &[Py<PyAny>],
-    ) -> PyResult<Py<PyAny>> {
-        let context = make_execution_context_object(py)?;
-        let add = context.bind(py).getattr("add")?;
-        for entry in entries {
-            add.call1((entry.clone_ref(py),))?;
-        }
-        Ok(context)
-    }
-
-    fn attach_execution_context(exception: &PyException, context: &Py<PyAny>) {
-        let PyException::Materialized { exc_value, .. } = exception else {
-            return;
-        };
-        Python::attach(|py| {
-            let _ = exc_value
-                .bind(py)
-                .setattr(EXECUTION_CONTEXT_ATTR, context.clone_ref(py));
-        });
+        self.trace_state.assemble_trace(
+            &self.segments,
+            self.current_segment,
+            self.dispatch_state.contexts(),
+            &self.handlers,
+            Self::effect_repr,
+        )
     }
 
     fn enrich_original_exception_with_context(
         original: PyException,
         context_value: Value,
     ) -> Result<PyException, PyException> {
-        let Value::Python(new_context) = context_value else {
-            let err = PyException::type_error(
-                "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
-            );
-            Self::set_exception_cause(&err, &original);
-            return Err(err);
-        };
-
-        Python::attach(|py| {
-            let context_bound = new_context.bind(py);
-            if !context_bound.is_instance_of::<PyExecutionContext>() {
-                let err = PyException::type_error(
-                    "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
-                );
-                Self::set_exception_cause(&err, &original);
-                return Err(err);
-            }
-
-            let mut merged_entries = Self::context_entries_from_context_obj(context_bound);
-            let existing_entries = Self::context_entries_from_exception(&original);
-            merged_entries.extend(existing_entries);
-
-            let merged_context =
-                match Self::build_execution_context_from_entries(py, &merged_entries) {
-                    Ok(context) => context,
-                    Err(err) => {
-                        let err = PyException::runtime_error(format!(
-                            "failed to merge ExecutionContext entries: {err}"
-                        ));
-                        Self::set_exception_cause(&err, &original);
-                        return Err(err);
-                    }
-                };
-
-            Self::attach_execution_context(&original, &merged_context);
-            Ok(original)
-        })
+        TraceState::enrich_original_exception_with_context(original, context_value)
     }
 
     pub fn assemble_active_chain(&self, exception: &PyException) -> Vec<ActiveChainEntry> {
-        let raw_events = self.collect_raw_events();
-        let entries = self.events_to_entries(&raw_events);
-        let entries = self.dedup_adjacent(entries);
-        self.inject_context(entries, exception)
-    }
-
-    fn collect_raw_events(&self) -> Vec<CaptureEvent> {
-        self.capture_log.clone()
-    }
-
-    fn events_to_entries(&self, raw_events: &[CaptureEvent]) -> Vec<ActiveChainEntry> {
-        let mut state = ActiveChainAssemblyState::new();
-        for event in raw_events {
-            self.apply_active_chain_event(&mut state, event);
-        }
-        self.merge_live_frame_state(&mut state);
-        self.entries_from_active_chain_state(&state, raw_events)
-    }
-
-    fn apply_active_chain_event(&self, state: &mut ActiveChainAssemblyState, event: &CaptureEvent) {
-        match event {
-            CaptureEvent::FrameEntered {
-                frame_id,
-                function_name,
-                source_file,
-                source_line,
-                args_repr: _,
-                program_call_repr,
-            } => {
-                state.frame_stack.push(ActiveChainFrameState {
-                    frame_id: *frame_id,
-                    function_name: function_name.clone(),
-                    source_file: source_file.clone(),
-                    source_line: *source_line,
-                    sub_program_repr: program_call_repr
-                        .clone()
-                        .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-                });
-            }
-            CaptureEvent::FrameExited { .. } => {
-                let _ = state.frame_stack.pop();
-            }
-            CaptureEvent::DispatchStarted {
-                dispatch_id,
-                effect_repr,
-                is_execution_context_effect,
-                creation_site: _,
-                handler_name: _,
-                handler_kind: _,
-                handler_source_file: _,
-                handler_source_line: _,
-                handler_chain_snapshot,
-                effect_frame_id,
-                effect_function_name,
-                effect_source_file,
-                effect_source_line,
-            } => {
-                let visible_effect = !*is_execution_context_effect;
-                if let Some(frame_id) = effect_frame_id {
-                    if visible_effect {
-                        state.frame_dispatch.insert(*frame_id, *dispatch_id);
-                        if let Some(frame) = state
-                            .frame_stack
-                            .iter_mut()
-                            .find(|f| f.frame_id == *frame_id)
-                        {
-                            if let Some(line) = effect_source_line {
-                                frame.source_line = *line;
-                            }
-                        }
-                    }
-                }
-
-                state.dispatches.insert(
-                    *dispatch_id,
-                    ActiveChainDispatchState {
-                        function_name: effect_function_name.clone(),
-                        source_file: effect_source_file.clone(),
-                        source_line: *effect_source_line,
-                        effect_repr: effect_repr.clone(),
-                        is_execution_context_effect: *is_execution_context_effect,
-                        handler_stack: Self::handler_stack_from_snapshot(handler_chain_snapshot),
-                        result: EffectResult::Active,
-                    },
-                );
-            }
-            CaptureEvent::Delegated {
-                dispatch_id,
-                from_handler_name: _,
-                from_handler_index,
-                to_handler_name: _,
-                to_handler_index,
-                to_handler_kind: _,
-                to_handler_source_file: _,
-                to_handler_source_line: _,
-            } => {
-                if let Some(dispatch) = state.dispatches.get_mut(dispatch_id) {
-                    if let Some(from_entry) = dispatch.handler_stack.get_mut(*from_handler_index) {
-                        if from_entry.status == HandlerStatus::Active {
-                            from_entry.status = HandlerStatus::Delegated;
-                        }
-                    }
-                    if let Some(to_entry) = dispatch.handler_stack.get_mut(*to_handler_index) {
-                        to_entry.status = HandlerStatus::Active;
-                    }
-                }
-            }
-            CaptureEvent::Passed {
-                dispatch_id,
-                from_handler_name: _,
-                from_handler_index,
-                to_handler_name: _,
-                to_handler_index,
-                to_handler_kind: _,
-                to_handler_source_file: _,
-                to_handler_source_line: _,
-            } => {
-                if let Some(dispatch) = state.dispatches.get_mut(dispatch_id) {
-                    if let Some(from_entry) = dispatch.handler_stack.get_mut(*from_handler_index) {
-                        if from_entry.status == HandlerStatus::Active {
-                            from_entry.status = HandlerStatus::Passed;
-                        }
-                    }
-                    if let Some(to_entry) = dispatch.handler_stack.get_mut(*to_handler_index) {
-                        to_entry.status = HandlerStatus::Active;
-                    }
-                }
-            }
-            CaptureEvent::HandlerCompleted {
-                dispatch_id,
-                handler_name,
-                handler_index,
-                action,
-            } => {
-                if let Some(dispatch) = state.dispatches.get_mut(dispatch_id) {
-                    let status = match action {
-                        HandlerAction::Resumed { .. } => HandlerStatus::Resumed,
-                        HandlerAction::Transferred { .. } => HandlerStatus::Transferred,
-                        HandlerAction::Returned { .. } => HandlerStatus::Returned,
-                        HandlerAction::Threw { .. } => HandlerStatus::Threw,
-                    };
-                    if let Some(target) = dispatch.handler_stack.get_mut(*handler_index) {
-                        target.status = status;
-                    }
-
-                    dispatch.result = match action {
-                        HandlerAction::Resumed { value_repr }
-                        | HandlerAction::Returned { value_repr } => EffectResult::Resumed {
-                            value_repr: value_repr
-                                .clone()
-                                .unwrap_or_else(|| MISSING_NONE_REPR.to_string()),
-                        },
-                        HandlerAction::Transferred { value_repr } => EffectResult::Transferred {
-                            handler_name: handler_name.clone(),
-                            target_repr: state
-                                .transfer_targets
-                                .get(dispatch_id)
-                                .cloned()
-                                .unwrap_or_else(|| {
-                                    value_repr
-                                        .clone()
-                                        .unwrap_or_else(|| MISSING_TARGET.to_string())
-                                }),
-                        },
-                        HandlerAction::Threw { exception_repr } => EffectResult::Threw {
-                            handler_name: handler_name.clone(),
-                            exception_repr: exception_repr
-                                .clone()
-                                .unwrap_or_else(|| MISSING_EXCEPTION.to_string()),
-                        },
-                    };
-                }
-            }
-            CaptureEvent::Resumed { .. } => {}
-            CaptureEvent::Transferred {
-                dispatch_id,
-                resumed_function_name,
-                source_file,
-                source_line,
-                ..
-            } => {
-                state.transfer_targets.insert(
-                    *dispatch_id,
-                    format!("{resumed_function_name}() {source_file}:{source_line}"),
-                );
-            }
-        }
-    }
-
-    fn handler_stack_from_snapshot(
-        handler_chain_snapshot: &[HandlerSnapshotEntry],
-    ) -> Vec<HandlerDispatchEntry> {
-        handler_chain_snapshot
-            .iter()
-            .enumerate()
-            .map(|(index, snapshot)| HandlerDispatchEntry {
-                handler_name: snapshot.handler_name.clone(),
-                handler_kind: snapshot.handler_kind.clone(),
-                source_file: snapshot.source_file.clone(),
-                source_line: snapshot.source_line,
-                status: if index == 0 {
-                    HandlerStatus::Active
-                } else {
-                    HandlerStatus::Pending
-                },
-            })
-            .collect()
-    }
-
-    fn merge_live_frame_state(&self, state: &mut ActiveChainAssemblyState) {
-        self.merge_frame_lines_from_segments(&mut state.frame_stack);
-        let (frame_stack, dispatches) = (&mut state.frame_stack, &state.dispatches);
-        self.merge_frame_lines_from_visible_dispatch_snapshot(frame_stack, dispatches);
-    }
-
-    fn merge_frame_lines_from_segments(&self, frame_stack: &mut Vec<ActiveChainFrameState>) {
-        let mut seg_chain = Vec::new();
-        let mut seg_id = self.current_segment;
-        while let Some(id) = seg_id {
-            seg_chain.push(id);
-            seg_id = self.segments.get(id).and_then(|seg| seg.caller);
-        }
-        seg_chain.reverse();
-
-        for id in seg_chain {
-            let Some(seg) = self.segments.get(id) else {
-                continue;
-            };
-            for frame in &seg.frames {
-                let Frame::Program {
-                    stream,
-                    metadata: Some(metadata),
-                } = frame
-                else {
-                    continue;
-                };
-                Self::upsert_frame_state_from_metadata(frame_stack, stream, metadata);
-            }
-        }
-    }
-
-    fn merge_frame_lines_from_visible_dispatch_snapshot(
-        &self,
-        frame_stack: &mut Vec<ActiveChainFrameState>,
-        dispatches: &HashMap<DispatchId, ActiveChainDispatchState>,
-    ) {
-        let Some(dispatch_ctx) = self.dispatch_stack.iter().rev().find(|ctx| {
-            dispatches
-                .get(&ctx.dispatch_id)
-                .is_some_and(|dispatch| Self::is_visible_dispatch(dispatch))
-        }) else {
-            return;
-        };
-
-        for frame in dispatch_ctx.k_user.frames_snapshot.iter() {
-            let Frame::Program {
-                stream,
-                metadata: Some(metadata),
-            } = frame
-            else {
-                continue;
-            };
-            Self::upsert_frame_state_from_metadata(frame_stack, stream, metadata);
-        }
-    }
-
-    fn upsert_frame_state_from_metadata(
-        frame_stack: &mut Vec<ActiveChainFrameState>,
-        stream: &ASTStreamRef,
-        metadata: &CallMetadata,
-    ) {
-        let line = Self::stream_debug_location(stream)
-            .map(|location| location.source_line)
-            .unwrap_or(metadata.source_line);
-        if let Some(existing) = frame_stack
-            .iter_mut()
-            .find(|entry| entry.frame_id == metadata.frame_id)
-        {
-            existing.source_line = line;
-            if existing.sub_program_repr == MISSING_SUB_PROGRAM {
-                if let Some(repr) = Self::program_call_repr(metadata) {
-                    existing.sub_program_repr = repr;
-                }
-            }
-            return;
-        }
-
-        frame_stack.push(ActiveChainFrameState {
-            frame_id: metadata.frame_id as FrameId,
-            function_name: metadata.function_name.clone(),
-            source_file: metadata.source_file.clone(),
-            source_line: line,
-            sub_program_repr: Self::program_call_repr(metadata)
-                .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-        });
-    }
-
-    fn entries_from_active_chain_state(
-        &self,
-        state: &ActiveChainAssemblyState,
-        raw_events: &[CaptureEvent],
-    ) -> Vec<ActiveChainEntry> {
-        let mut active_chain = self.entries_from_frame_stack(state);
-        if active_chain.is_empty() {
-            self.fallback_entries_when_chain_empty(state, raw_events, &mut active_chain);
-        }
-        active_chain
-    }
-
-    fn entries_from_frame_stack(&self, state: &ActiveChainAssemblyState) -> Vec<ActiveChainEntry> {
-        let mut active_chain = Vec::new();
-        for (index, frame) in state.frame_stack.iter().enumerate() {
-            let dispatch_id = state.frame_dispatch.get(&frame.frame_id).copied();
-            let dispatch = dispatch_id.and_then(|id| state.dispatches.get(&id));
-            if let Some(dispatch) = dispatch.filter(|dispatch| Self::is_visible_dispatch(dispatch))
-            {
-                Self::push_effect_yield_entry(&mut active_chain, dispatch, Some(frame));
-                continue;
-            }
-
-            active_chain.push(Self::program_yield_entry(
-                frame,
-                state.frame_stack.get(index + 1),
-            ));
-        }
-        active_chain
-    }
-
-    fn fallback_entries_when_chain_empty(
-        &self,
-        state: &ActiveChainAssemblyState,
-        raw_events: &[CaptureEvent],
-        active_chain: &mut Vec<ActiveChainEntry>,
-    ) {
-        let Some(dispatch_id) = self.fallback_dispatch_id(state, raw_events) else {
-            return;
-        };
-        let Some(dispatch) = state
-            .dispatches
-            .get(&dispatch_id)
-            .filter(|dispatch| Self::is_visible_dispatch(dispatch))
-        else {
-            return;
-        };
-
-        let snapshot_frames = self.snapshot_frames_for_dispatch(dispatch_id);
-        if snapshot_frames.is_empty() {
-            Self::push_effect_yield_entry(active_chain, dispatch, None);
-            return;
-        }
-
-        let last_index = snapshot_frames.len() - 1;
-        for (index, frame) in snapshot_frames.iter().enumerate() {
-            if index == last_index {
-                Self::push_effect_yield_entry(active_chain, dispatch, Some(frame));
-                continue;
-            }
-            active_chain.push(Self::program_yield_entry(
-                frame,
-                snapshot_frames.get(index + 1),
-            ));
-        }
-    }
-
-    fn fallback_dispatch_id(
-        &self,
-        state: &ActiveChainAssemblyState,
-        raw_events: &[CaptureEvent],
-    ) -> Option<DispatchId> {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find_map(|ctx| {
-                let dispatch = state.dispatches.get(&ctx.dispatch_id)?;
-                if Self::is_visible_dispatch(dispatch) {
-                    Some(ctx.dispatch_id)
-                } else {
-                    None
-                }
-            })
-            .or_else(|| {
-                raw_events.iter().rev().find_map(|event| {
-                    let dispatch_id = Self::dispatch_id_for_event(event)?;
-                    let dispatch = state.dispatches.get(&dispatch_id)?;
-                    if Self::is_visible_dispatch(dispatch) {
-                        Some(dispatch_id)
-                    } else {
-                        None
-                    }
-                })
-            })
-    }
-
-    fn dispatch_id_for_event(event: &CaptureEvent) -> Option<DispatchId> {
-        match event {
-            CaptureEvent::DispatchStarted { dispatch_id, .. }
-            | CaptureEvent::Delegated { dispatch_id, .. }
-            | CaptureEvent::Passed { dispatch_id, .. }
-            | CaptureEvent::HandlerCompleted { dispatch_id, .. }
-            | CaptureEvent::Resumed { dispatch_id, .. }
-            | CaptureEvent::Transferred { dispatch_id, .. } => Some(*dispatch_id),
-            _ => None,
-        }
-    }
-
-    fn snapshot_frames_for_dispatch(&self, dispatch_id: DispatchId) -> Vec<ActiveChainFrameState> {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-            .map(|dispatch_ctx| {
-                dispatch_ctx
-                    .k_user
-                    .frames_snapshot
-                    .iter()
-                    .filter_map(|frame| {
-                        let Frame::Program {
-                            stream,
-                            metadata: Some(metadata),
-                        } = frame
-                        else {
-                            return None;
-                        };
-
-                        let line = Self::stream_debug_location(stream)
-                            .map(|location| location.source_line)
-                            .unwrap_or(metadata.source_line);
-                        Some(ActiveChainFrameState {
-                            frame_id: metadata.frame_id as FrameId,
-                            function_name: metadata.function_name.clone(),
-                            source_file: metadata.source_file.clone(),
-                            source_line: line,
-                            sub_program_repr: Self::program_call_repr(metadata)
-                                .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn push_effect_yield_entry(
-        chain: &mut Vec<ActiveChainEntry>,
-        dispatch: &ActiveChainDispatchState,
-        frame: Option<&ActiveChainFrameState>,
-    ) {
-        let function_name = dispatch.function_name.clone().unwrap_or_else(|| {
-            frame
-                .map(|snapshot| snapshot.function_name.clone())
-                .unwrap_or_else(|| MISSING_UNKNOWN.to_string())
-        });
-        let source_file = dispatch.source_file.clone().unwrap_or_else(|| {
-            frame
-                .map(|snapshot| snapshot.source_file.clone())
-                .unwrap_or_else(|| MISSING_UNKNOWN.to_string())
-        });
-        let source_line = dispatch
-            .source_line
-            .unwrap_or_else(|| frame.map_or(0, |snapshot| snapshot.source_line));
-        chain.push(ActiveChainEntry::EffectYield {
-            function_name,
-            source_file,
-            source_line,
-            effect_repr: dispatch.effect_repr.clone(),
-            handler_stack: dispatch.handler_stack.clone(),
-            result: dispatch.result.clone(),
-        });
-    }
-
-    fn program_yield_entry(
-        frame: &ActiveChainFrameState,
-        next_frame: Option<&ActiveChainFrameState>,
-    ) -> ActiveChainEntry {
-        let inferred_sub_program = next_frame.map(|next| format!("{}()", next.function_name));
-        let sub_program_repr = if frame.sub_program_repr == MISSING_SUB_PROGRAM {
-            inferred_sub_program.unwrap_or_else(|| frame.sub_program_repr.clone())
-        } else {
-            frame.sub_program_repr.clone()
-        };
-        ActiveChainEntry::ProgramYield {
-            function_name: frame.function_name.clone(),
-            source_file: frame.source_file.clone(),
-            source_line: frame.source_line,
-            sub_program_repr,
-        }
-    }
-
-    fn dedup_adjacent(&self, entries: Vec<ActiveChainEntry>) -> Vec<ActiveChainEntry> {
-        let mut deduped = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let is_duplicate = deduped
-                .last()
-                .is_some_and(|prev| Self::is_adjacent_duplicate(prev, &entry));
-            if !is_duplicate {
-                deduped.push(entry);
-            }
-        }
-        deduped
-    }
-
-    fn is_adjacent_duplicate(lhs: &ActiveChainEntry, rhs: &ActiveChainEntry) -> bool {
-        match (lhs, rhs) {
-            (
-                ActiveChainEntry::ProgramYield {
-                    function_name: lhs_function_name,
-                    source_file: lhs_source_file,
-                    source_line: lhs_source_line,
-                    sub_program_repr: lhs_sub_program_repr,
-                },
-                ActiveChainEntry::ProgramYield {
-                    function_name: rhs_function_name,
-                    source_file: rhs_source_file,
-                    source_line: rhs_source_line,
-                    sub_program_repr: rhs_sub_program_repr,
-                },
-            ) => {
-                lhs_function_name == rhs_function_name
-                    && lhs_source_file == rhs_source_file
-                    && lhs_source_line == rhs_source_line
-                    && lhs_sub_program_repr == rhs_sub_program_repr
-            }
-            (
-                ActiveChainEntry::EffectYield {
-                    function_name: lhs_function_name,
-                    source_file: lhs_source_file,
-                    source_line: lhs_source_line,
-                    effect_repr: lhs_effect_repr,
-                    handler_stack: lhs_handler_stack,
-                    result: lhs_result,
-                },
-                ActiveChainEntry::EffectYield {
-                    function_name: rhs_function_name,
-                    source_file: rhs_source_file,
-                    source_line: rhs_source_line,
-                    effect_repr: rhs_effect_repr,
-                    handler_stack: rhs_handler_stack,
-                    result: rhs_result,
-                },
-            ) => {
-                lhs_function_name == rhs_function_name
-                    && lhs_source_file == rhs_source_file
-                    && lhs_source_line == rhs_source_line
-                    && lhs_effect_repr == rhs_effect_repr
-                    && lhs_handler_stack == rhs_handler_stack
-                    && lhs_result == rhs_result
-            }
-            (
-                ActiveChainEntry::ExceptionSite {
-                    function_name: lhs_function_name,
-                    source_file: lhs_source_file,
-                    source_line: lhs_source_line,
-                    exception_type: lhs_exception_type,
-                    message: lhs_message,
-                },
-                ActiveChainEntry::ExceptionSite {
-                    function_name: rhs_function_name,
-                    source_file: rhs_source_file,
-                    source_line: rhs_source_line,
-                    exception_type: rhs_exception_type,
-                    message: rhs_message,
-                },
-            ) => {
-                lhs_function_name == rhs_function_name
-                    && lhs_source_file == rhs_source_file
-                    && lhs_source_line == rhs_source_line
-                    && lhs_exception_type == rhs_exception_type
-                    && lhs_message == rhs_message
-            }
-            _ => false,
-        }
-    }
-
-    fn inject_context(
-        &self,
-        mut active_chain: Vec<ActiveChainEntry>,
-        exception: &PyException,
-    ) -> Vec<ActiveChainEntry> {
-        let context_entries = Self::context_entries_from_exception(exception);
-        let has_context_entries = !context_entries.is_empty();
-        for data in context_entries {
-            active_chain.push(ActiveChainEntry::ContextEntry { data });
-        }
-
-        let exception_site = Self::exception_site(exception);
-        let exception_function_name = match &exception_site {
-            ActiveChainEntry::ExceptionSite { function_name, .. } => function_name.as_str(),
-            _ => "",
-        };
-        let exception_function_is_visible = active_chain.iter().any(|entry| match entry {
-            ActiveChainEntry::ProgramYield { function_name, .. }
-            | ActiveChainEntry::EffectYield { function_name, .. }
-            | ActiveChainEntry::ExceptionSite { function_name, .. } => {
-                function_name == exception_function_name
-            }
-            ActiveChainEntry::ContextEntry { .. } => false,
-        });
-
-        let suppress_exception_site = !has_context_entries
-            && active_chain
-                .iter()
-                .rev()
-                .find(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
-                .is_some_and(|entry| {
-                    matches!(
-                        entry,
-                        ActiveChainEntry::EffectYield {
-                            result: EffectResult::Threw { .. },
-                            ..
-                        }
-                    ) && !exception_function_is_visible
-                });
-        if !suppress_exception_site {
-            active_chain.push(exception_site);
-        }
-        active_chain
-    }
-
-    fn is_visible_dispatch(dispatch: &ActiveChainDispatchState) -> bool {
-        !dispatch.is_execution_context_effect
+        self.trace_state.assemble_active_chain(
+            exception,
+            &self.segments,
+            self.current_segment,
+            self.dispatch_state.contexts(),
+        )
     }
 
     pub fn step(&mut self) -> StepEvent {
-        self.step_counter += 1;
+        self.debug.advance_step();
 
-        if self.trace_enabled {
+        if self.debug.trace_enabled {
             self.record_trace_entry();
         }
 
@@ -2037,175 +714,42 @@ impl VM {
             self.debug_step_exit(&result);
         }
 
-        if self.trace_enabled {
+        if self.debug.trace_enabled {
             self.record_trace_exit(&result);
         }
 
         result
     }
 
-    fn format_do_ctrl(yielded: &DoCtrl, verbosity: ModeFormatVerbosity) -> &'static str {
-        let formatted = match yielded {
-            DoCtrl::Pure { .. } => "HandleYield(Pure)",
-            DoCtrl::Map { .. } => "HandleYield(Map)",
-            DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
-            DoCtrl::Perform { .. } => "HandleYield(Perform)",
-            DoCtrl::Resume { .. } => "HandleYield(Resume)",
-            DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
-            DoCtrl::TransferThrow { .. } => "HandleYield(TransferThrow)",
-            DoCtrl::ResumeThrow { .. } => "HandleYield(ResumeThrow)",
-            DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
-            DoCtrl::WithIntercept { .. } => "HandleYield(WithIntercept)",
-            DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
-            DoCtrl::Pass { .. } => "HandleYield(Pass)",
-            DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
-            DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
-            DoCtrl::GetTraceback { .. } => "HandleYield(GetTraceback)",
-            DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
-            DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
-            DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-            DoCtrl::Apply { .. } => "HandleYield(Apply)",
-            DoCtrl::Expand { .. } => "HandleYield(Expand)",
-            DoCtrl::ASTStream { .. } => "HandleYield(ASTStream)",
-            DoCtrl::Eval { .. } => "HandleYield(Eval)",
-            DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
-            DoCtrl::GetTrace => "HandleYield(GetTrace)",
-        };
-        match verbosity {
-            ModeFormatVerbosity::Compact | ModeFormatVerbosity::Verbose => formatted,
-        }
-    }
-
-    fn format_mode(&self, verbosity: ModeFormatVerbosity) -> &'static str {
-        match &self.mode {
-            Mode::Deliver(_) => "Deliver",
-            Mode::Throw(_) => "Throw",
-            Mode::HandleYield(yielded) => Self::format_do_ctrl(yielded, verbosity),
-            Mode::Return(_) => "Return",
-        }
-    }
-
-    fn mode_kind(&self) -> &'static str {
-        self.format_mode(ModeFormatVerbosity::Compact)
-    }
-
-    fn pending_kind(&self) -> &'static str {
-        self.pending_python
-            .as_ref()
-            .map(|p| match p {
-                PendingPython::EvalExpr { .. } => "EvalExpr",
-                PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
-                PendingPython::ExpandReturn { .. } => "ExpandReturn",
-                PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
-                PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
-                PendingPython::AsyncEscape => "AsyncEscape",
-            })
-            .unwrap_or("None")
-    }
-
-    fn result_kind(result: &StepEvent) -> String {
-        match result {
-            StepEvent::Continue => "Continue".to_string(),
-            StepEvent::Done(_) => "Done".to_string(),
-            StepEvent::Error(e) => format!("Error({e})"),
-            StepEvent::NeedsPython(call) => {
-                let call_kind = match call {
-                    PythonCall::EvalExpr { .. } => "EvalExpr",
-                    PythonCall::CallFunc { .. } => "CallFunc",
-                    PythonCall::GenNext => "GenNext",
-                    PythonCall::GenSend { .. } => "GenSend",
-                    PythonCall::GenThrow { .. } => "GenThrow",
-                    PythonCall::CallAsync { .. } => "CallAsync",
-                };
-                format!("NeedsPython({call_kind})")
-            }
-        }
-    }
-
     fn record_trace_entry(&mut self) {
-        let mode = self.mode_kind().to_string();
-        let pending = self.pending_kind().to_string();
-        self.trace_events.push(TraceEvent {
-            step: self.step_counter,
-            event: "enter".to_string(),
-            mode,
-            pending,
-            dispatch_depth: self.dispatch_stack.len(),
-            result: None,
-        });
+        self.debug.record_trace_entry(
+            &self.mode,
+            &self.pending_python,
+            self.dispatch_state.depth(),
+        );
     }
 
     fn record_trace_exit(&mut self, result: &StepEvent) {
-        let mode = self.mode_kind().to_string();
-        let pending = self.pending_kind().to_string();
-        self.trace_events.push(TraceEvent {
-            step: self.step_counter,
-            event: "exit".to_string(),
-            mode,
-            pending,
-            dispatch_depth: self.dispatch_stack.len(),
-            result: Some(Self::result_kind(result)),
-        });
+        self.debug.record_trace_exit(
+            &self.mode,
+            &self.pending_python,
+            self.dispatch_state.depth(),
+            result,
+        );
     }
 
     fn debug_step_entry(&self) {
-        let mode_kind = self.format_mode(ModeFormatVerbosity::Verbose);
-
-        let seg_info = self
-            .current_segment
-            .and_then(|id| self.segments.get(id))
-            .map(|s| format!("seg={:?} frames={}", self.current_segment, s.frames.len()))
-            .unwrap_or_else(|| "seg=None".to_string());
-
-        let pending = self.pending_kind();
-
-        eprintln!(
-            "[step {}] mode={} {} dispatch_depth={} pending={}",
-            self.step_counter,
-            mode_kind,
-            seg_info,
-            self.dispatch_stack.len(),
-            pending
+        self.debug.debug_step_entry(
+            &self.mode,
+            self.current_segment,
+            &self.segments,
+            self.dispatch_state.depth(),
+            &self.pending_python,
         );
-
-        if self.debug.level == DebugLevel::Trace && self.debug.show_frames {
-            if let Some(seg) = self.current_segment.and_then(|id| self.segments.get(id)) {
-                for (i, frame) in seg.frames.iter().enumerate() {
-                    let frame_kind = match frame {
-                        Frame::RustReturn { .. } => "RustReturn",
-                        Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)",
-                        Frame::Program { .. } => "Program",
-                    };
-                    eprintln!("  frame[{}]: {}", i, frame_kind);
-                }
-            }
-        }
     }
 
     fn debug_step_exit(&self, result: &StepEvent) {
-        let result_kind = match result {
-            StepEvent::Continue => "Continue",
-            StepEvent::Done(_) => "Done",
-            StepEvent::Error(e) => {
-                eprintln!("[step {}] -> Error: {}", self.step_counter, e);
-                return;
-            }
-            StepEvent::NeedsPython(call) => {
-                let call_kind = match call {
-                    PythonCall::EvalExpr { .. } => "EvalExpr",
-                    PythonCall::CallFunc { .. } => "CallFunc",
-                    PythonCall::GenNext => "GenNext",
-                    PythonCall::GenSend { .. } => "GenSend",
-                    PythonCall::GenThrow { .. } => "GenThrow",
-                    PythonCall::CallAsync { .. } => "CallAsync",
-                };
-                eprintln!("[step {}] -> NeedsPython({})", self.step_counter, call_kind);
-                return;
-            }
-        };
-        if self.debug.level == DebugLevel::Trace {
-            eprintln!("[step {}] -> {}", self.step_counter, result_kind);
-        }
+        self.debug.debug_step_exit(result);
     }
 
     fn step_deliver_or_throw(&mut self) -> StepEvent {
@@ -2272,26 +816,20 @@ impl VM {
 
                 match mode {
                     Mode::Deliver(value) => {
-                        if let Some(metadata) = self.interceptor_call_metadata.remove(&cb) {
+                        if let Some(metadata) = self.interceptor_state.take_call_metadata(cb) {
                             self.maybe_emit_frame_exited(&metadata);
                         }
-                        if self.interceptor_eval_callbacks.remove(&cb) {
-                            self.interceptor_eval_depth =
-                                self.interceptor_eval_depth.saturating_sub(1);
-                        }
-                        self.interceptor_callbacks.remove(&cb);
+                        self.interceptor_state.unregister_eval_callback(cb);
+                        self.interceptor_state.unregister_callback(cb);
                         self.mode = callback(value, self);
                         StepEvent::Continue
                     }
                     Mode::Throw(exc) => {
-                        if let Some(metadata) = self.interceptor_call_metadata.remove(&cb) {
+                        if let Some(metadata) = self.interceptor_state.take_call_metadata(cb) {
                             self.maybe_emit_frame_exited(&metadata);
                         }
-                        if self.interceptor_eval_callbacks.remove(&cb) {
-                            self.interceptor_eval_depth =
-                                self.interceptor_eval_depth.saturating_sub(1);
-                        }
-                        if let Some(marker) = self.interceptor_callbacks.remove(&cb) {
+                        self.interceptor_state.unregister_eval_callback(cb);
+                        if let Some(marker) = self.interceptor_state.unregister_callback(cb) {
                             self.pop_interceptor_skip(marker);
                         }
                         self.mode = Mode::Throw(exc);
@@ -2331,14 +869,9 @@ impl VM {
             }
             ASTStreamStep::Throw(exc) => {
                 if let Some(original) = self.active_error_dispatch_original_exception() {
-                    Self::set_exception_cause(&exc, &original);
+                    TraceState::set_exception_cause(&exc, &original);
                 }
-                if let Some(dispatch_id) = self
-                    .dispatch_stack
-                    .last()
-                    .filter(|ctx| !ctx.completed)
-                    .map(|ctx| ctx.dispatch_id)
-                {
+                if let Some(dispatch_id) = self.dispatch_state.active_top_dispatch_id() {
                     self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &exc);
                     self.mark_dispatch_threw(dispatch_id);
                 }
@@ -2363,8 +896,8 @@ impl VM {
                 };
                 seg.push_frame(Frame::Program { stream, metadata });
                 let top = self
-                    .dispatch_stack
-                    .last()
+                    .dispatch_state
+                    .top()
                     .expect("RustProgramContinuation: handler always runs inside dispatch");
                 let marker = top
                     .handler_chain
@@ -2395,9 +928,6 @@ impl VM {
         stream: ASTStreamRef,
         metadata: Option<CallMetadata>,
     ) -> Mode {
-        // Terminal DoCtrl variants (Transfer, TransferThrow, Pass) transfer control
-        // elsewhere — the handler is done and no value flows back. Do NOT re-push
-        // the Program frame for those. Resume and ResumeThrow are non-terminal.
         let is_terminal = matches!(
             &yielded,
             DoCtrl::Transfer { .. } | DoCtrl::TransferThrow { .. } | DoCtrl::Pass { .. }
@@ -2417,56 +947,26 @@ impl VM {
     }
 
     fn current_interceptor_chain(&self) -> Vec<Marker> {
-        self.current_scope_chain()
-            .into_iter()
-            .filter(|marker| self.interceptors.contains_key(marker))
-            .collect()
+        self.interceptor_state
+            .current_chain(&self.current_scope_chain())
     }
 
     fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
-        let Some(dispatch_id) = self.current_active_handler_dispatch_id() else {
-            return true;
-        };
-        let Some(dispatch_ctx) = self
-            .dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-        else {
-            debug_assert!(false, "active dispatch_id not found on stack");
-            return false;
-        };
-        let Some(handler_marker) = dispatch_ctx
-            .handler_chain
-            .get(dispatch_ctx.handler_idx)
-            .copied()
-        else {
-            debug_assert!(false, "handler_idx out of bounds");
-            return false;
-        };
-        let Some(entry) = self.handlers.get(&handler_marker) else {
-            debug_assert!(false, "handler marker not in registry");
-            return false;
-        };
-        let Some(prompt_seg) = self.segments.get(entry.prompt_seg_id) else {
-            debug_assert!(false, "prompt segment missing");
-            return false;
-        };
-        prompt_seg.scope_chain.contains(&interceptor_marker)
+        self.interceptor_state.visible_to_active_handler(
+            interceptor_marker,
+            self.dispatch_state.contexts(),
+            self.current_segment,
+            &self.segments,
+            &self.handlers,
+        )
     }
 
     fn is_interceptor_skipped(&self, marker: Marker) -> bool {
-        self.interceptor_skip_stack.contains(&marker)
+        self.interceptor_state.is_skipped(marker)
     }
 
     fn pop_interceptor_skip(&mut self, marker: Marker) {
-        if let Some(pos) = self
-            .interceptor_skip_stack
-            .iter()
-            .rposition(|active| *active == marker)
-        {
-            self.interceptor_skip_stack.remove(pos);
-        }
+        self.interceptor_state.pop_skip(marker);
     }
 
     fn should_apply_interceptor(
@@ -2474,16 +974,7 @@ impl VM {
         entry: &InterceptorEntry,
         yielded_obj: &Py<PyAny>,
     ) -> Result<bool, PyException> {
-        let is_match = Python::attach(|py| {
-            yielded_obj
-                .bind(py)
-                .is_instance(entry.types.bind(py))
-                .map_err(PyException::from)
-        })?;
-        Ok(match entry.mode {
-            InterceptMode::Include => is_match,
-            InterceptMode::Exclude => !is_match,
-        })
+        InterceptorState::should_apply(entry, yielded_obj)
     }
 
     fn classify_interceptor_result_object(
@@ -2521,7 +1012,7 @@ impl VM {
                 continue;
             }
 
-            let Some(entry) = self.interceptors.get(&marker).cloned() else {
+            let Some(entry) = self.interceptor_state.get_entry(marker) else {
                 continue;
             };
 
@@ -2586,24 +1077,24 @@ impl VM {
             )
         }));
 
-        self.interceptor_callbacks.insert(cb, marker);
-        self.interceptor_skip_stack.push(marker);
+        self.interceptor_state.register_callback(cb, marker);
+        self.interceptor_state.push_skip(marker);
 
         if self.current_segment.is_none() {
             self.pop_interceptor_skip(marker);
-            self.interceptor_callbacks.remove(&cb);
+            self.interceptor_state.unregister_callback(cb);
             self.callbacks.remove(&cb);
             return Mode::Throw(PyException::runtime_error(
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         }
         self.maybe_emit_frame_entered(&interceptor_meta);
-        self.interceptor_call_metadata
-            .insert(cb, interceptor_meta.clone());
+        self.interceptor_state
+            .set_call_metadata(cb, interceptor_meta.clone());
         let Some(seg) = self.current_segment_mut() else {
-            self.interceptor_call_metadata.remove(&cb);
+            self.interceptor_state.take_call_metadata(cb);
             self.pop_interceptor_skip(marker);
-            self.interceptor_callbacks.remove(&cb);
+            self.interceptor_state.unregister_callback(cb);
             self.callbacks.remove(&cb);
             return Mode::Throw(PyException::runtime_error(
                 "current_segment_mut() returned None while invoking interceptor",
@@ -2624,35 +1115,7 @@ impl VM {
         interceptor_callable: &Py<PyAny>,
         yielded_obj: &Py<PyAny>,
     ) -> Result<CallArg, PyException> {
-        Python::attach(|py| {
-            let callable = interceptor_callable.bind(py);
-            let is_do_callable = callable.is_instance_of::<DoeffGeneratorFn>()
-                || callable
-                    .getattr("_doeff_generator_factory")
-                    .is_ok_and(|factory| factory.is_instance_of::<DoeffGeneratorFn>());
-
-            // @do callables are expanded as DoCtrl::Expand and evaluate expression arguments.
-            // Wrap the yielded object in Pure(...) so interceptor functions receive the original
-            // DoExpr value (not the evaluated effect result).
-            if is_do_callable {
-                let quoted = Bound::new(
-                    py,
-                    PyClassInitializer::from(PyDoExprBase)
-                        .add_subclass(PyDoCtrlBase {
-                            tag: DoExprTag::Pure as u8,
-                        })
-                        .add_subclass(PyPure {
-                            value: yielded_obj.clone_ref(py),
-                        }),
-                )
-                .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                .into_any()
-                .unbind();
-                return Ok(CallArg::Expr(PyShared::new(quoted)));
-            }
-
-            Ok(CallArg::Value(Value::Python(yielded_obj.clone_ref(py))))
-        })
+        InterceptorState::interceptor_call_arg(interceptor_callable, yielded_obj)
     }
 
     fn handle_interceptor_apply_result(
@@ -2673,20 +1136,8 @@ impl VM {
             ));
         };
 
-        let (doctrl_tag, is_effect_base, is_doexpr) = Python::attach(|py| {
-            let bound = result_obj.bind(py);
-            let doctrl_tag = bound
-                .extract::<PyRef<'_, PyDoCtrlBase>>()
-                .ok()
-                .and_then(|base| DoExprTag::try_from(base.tag).ok());
-            (
-                doctrl_tag,
-                bound.is_instance_of::<PyEffectBase>(),
-                bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<DoeffGenerator>(),
-            )
-        });
-        let is_direct_expr =
-            is_effect_base || doctrl_tag.is_some_and(|tag| tag != DoExprTag::Expand);
+        let (is_direct_expr, is_doexpr) =
+            InterceptorState::classify_result_shape(&result_obj);
 
         if is_direct_expr {
             let transformed = match self.classify_interceptor_result_object(
@@ -2723,16 +1174,13 @@ impl VM {
                     next_idx,
                 )
             }));
-            self.interceptor_callbacks.insert(cb, marker);
-            self.interceptor_eval_callbacks.insert(cb);
-            self.interceptor_eval_depth = self.interceptor_eval_depth.saturating_add(1);
+            self.interceptor_state.register_callback(cb, marker);
+            self.interceptor_state.register_eval_callback(cb);
 
             let Some(seg) = self.current_segment_mut() else {
                 self.pop_interceptor_skip(marker);
-                self.interceptor_callbacks.remove(&cb);
-                if self.interceptor_eval_callbacks.remove(&cb) {
-                    self.interceptor_eval_depth = self.interceptor_eval_depth.saturating_sub(1);
-                }
+                self.interceptor_state.unregister_callback(cb);
+                self.interceptor_state.unregister_eval_callback(cb);
                 self.callbacks.remove(&cb);
                 return Mode::Throw(PyException::runtime_error(
                     "current_segment_mut() returned None while evaluating interceptor result",
@@ -2772,23 +1220,20 @@ impl VM {
             ));
         };
 
-        let transformed = match self.classify_interceptor_result_object(
-            result_obj,
-            &original_obj,
-            original_yielded,
-        ) {
-            Ok(expr) => expr,
-            Err(exc) => {
-                self.pop_interceptor_skip(marker);
-                return Mode::Throw(exc);
-            }
-        };
+        let transformed =
+            match self.classify_interceptor_result_object(result_obj, &original_obj, original_yielded)
+            {
+                Ok(expr) => expr,
+                Err(exc) => {
+                    self.pop_interceptor_skip(marker);
+                    return Mode::Throw(exc);
+                }
+            };
         self.pop_interceptor_skip(marker);
         self.continue_interceptor_chain_mode(transformed, stream, metadata, chain, next_idx)
     }
 
     fn step_handle_yield(&mut self) -> StepEvent {
-        // Take mode by move — eliminates DoCtrl clone containing Py<PyAny> values (D1 Phase 1).
         let yielded = match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
             Mode::HandleYield(y) => y,
             other => {
@@ -2797,7 +1242,6 @@ impl VM {
             }
         };
 
-        // Spec: Drop completed dispatches before inspecting handler context.
         self.lazy_pop_completed();
         match yielded {
             DoCtrl::Pure { value } => self.handle_yield_pure(value),
@@ -3441,14 +1885,9 @@ impl VM {
 
     fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
         if handler_return {
-            if let Some(dispatch_id) = self
-                .dispatch_stack
-                .last()
-                .filter(|ctx| !ctx.completed)
-                .map(|ctx| ctx.dispatch_id)
-            {
+            if let Some(dispatch_id) = self.dispatch_state.active_top_dispatch_id() {
                 if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
-                    Self::set_exception_cause(&exception, &original);
+                    TraceState::set_exception_cause(&exception, &original);
                 }
                 self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &exception);
                 self.mark_dispatch_threw(dispatch_id);
@@ -3492,7 +1931,7 @@ impl VM {
                         site = GenErrorSite::StepUserGeneratorConverted;
                     } else {
                         if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
-                            Self::set_exception_cause(&exception, &original);
+                            TraceState::set_exception_cause(&exception, &original);
                         }
                         self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &exception);
                         self.mark_dispatch_threw(dispatch_id);
@@ -3573,43 +2012,16 @@ impl VM {
     }
 
     pub fn current_scope_chain(&self) -> Vec<Marker> {
-        self.current_segment
-            .and_then(|id| self.segments.get(id))
-            .map(|seg| seg.scope_chain.clone())
-            .unwrap_or_default()
+        DispatchState::current_scope_chain(self.current_segment, &self.segments)
     }
 
     pub fn lazy_pop_completed(&mut self) {
-        while let Some(top) = self.dispatch_stack.last() {
-            if top.completed {
-                self.dispatch_stack.pop();
-            } else {
-                break;
-            }
-        }
+        self.dispatch_state.lazy_pop_completed();
     }
 
-    /// Top-only busy boundary: handlers at indices 0..=handler_idx in the topmost
-    /// non-completed dispatch are excluded from the visible set.
     pub fn visible_handlers(&self, scope_chain: &[Marker]) -> Vec<Marker> {
-        let Some(top) = self.dispatch_stack.last() else {
-            return scope_chain.to_vec();
-        };
-
-        if top.completed || self.consumed_cont_ids.contains(&top.k_user.cont_id) {
-            return scope_chain.to_vec();
-        }
-
-        let busy: HashSet<Marker> = top.handler_chain[..=top.handler_idx]
-            .iter()
-            .copied()
-            .collect();
-
-        scope_chain
-            .iter()
-            .copied()
-            .filter(|marker| !busy.contains(marker))
-            .collect()
+        self.dispatch_state
+            .visible_handlers(scope_chain, &self.consumed_cont_ids)
     }
 
     pub fn find_matching_handler(
@@ -3617,19 +2029,7 @@ impl VM {
         handler_chain: &[Marker],
         effect: &DispatchEffect,
     ) -> Result<(usize, Marker, HandlerEntry), VMError> {
-        for (idx, &marker) in handler_chain.iter().enumerate() {
-            let Some(entry) = self.handlers.get(&marker) else {
-                return Err(VMError::internal(format!(
-                    "find_matching_handler: missing handler marker {} at index {}",
-                    marker.raw(),
-                    idx
-                )));
-            };
-            if entry.handler.can_handle(effect)? {
-                return Ok((idx, marker, entry.clone()));
-            }
-        }
-        Err(VMError::no_matching_handler(effect.clone()))
+        DispatchState::find_matching_handler(&self.handlers, handler_chain, effect)
     }
 
     pub fn start_dispatch(&mut self, effect: DispatchEffect) -> Result<StepEvent, VMError> {
@@ -3696,7 +2096,7 @@ impl VM {
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.current_segment = Some(handler_seg_id);
 
-        self.dispatch_stack.push(DispatchContext {
+        self.dispatch_state.push_dispatch(DispatchContext {
             dispatch_id,
             effect: effect.clone(),
             is_execution_context_effect,
@@ -3711,28 +2111,28 @@ impl VM {
 
         let (handler_name, handler_kind, handler_source_file, handler_source_line) =
             Self::handler_trace_info(&handler);
-        let effect_site = Self::effect_site_from_continuation(&k_user);
-        self.capture_log.push(CaptureEvent::DispatchStarted {
+        let effect_site = TraceState::effect_site_from_continuation(&k_user);
+        self.trace_state.emit_dispatch_started(
             dispatch_id,
-            effect_repr: Self::effect_repr(&effect),
+            Self::effect_repr(&effect),
             is_execution_context_effect,
-            creation_site: Self::effect_creation_site_from_continuation(&k_user),
+            Self::effect_creation_site_from_continuation(&k_user),
             handler_name,
             handler_kind,
             handler_source_file,
             handler_source_line,
             handler_chain_snapshot,
-            effect_frame_id: effect_site.as_ref().map(|(frame_id, _, _, _)| *frame_id),
-            effect_function_name: effect_site
+            effect_site.as_ref().map(|(frame_id, _, _, _)| *frame_id),
+            effect_site
                 .as_ref()
                 .map(|(_, function_name, _, _)| function_name.clone()),
-            effect_source_file: effect_site
+            effect_site
                 .as_ref()
                 .map(|(_, _, source_file, _)| source_file.clone()),
-            effect_source_line: effect_site
+            effect_site
                 .as_ref()
                 .map(|(_, _, _, source_line)| *source_line),
-        });
+        );
 
         if handler.py_identity().is_some() {
             self.register_continuation(k_user.clone());
@@ -3742,117 +2142,69 @@ impl VM {
     }
 
     fn check_dispatch_completion(&mut self, k: &Continuation) {
-        if let Some(dispatch_id) = k.dispatch_id {
-            if let Some(top) = self.dispatch_stack.last_mut() {
-                if top.dispatch_id == dispatch_id
-                    && top.k_user.cont_id == k.cont_id
-                    && top.k_user.parent.is_none()
-                {
-                    top.completed = true;
-                }
-            }
-        }
+        self.dispatch_state.check_dispatch_completion(k);
     }
 
     fn error_dispatch_for_continuation(
         &self,
         k: &Continuation,
     ) -> Option<(DispatchId, PyException, bool)> {
-        let dispatch_id = k.dispatch_id?;
-        let ctx = self
-            .dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)?;
-        let original = ctx.original_exception.clone()?;
-        let mut cursor = Some(ctx.k_user.clone());
-        while let Some(current) = cursor {
-            if current.cont_id == k.cont_id {
-                return Some((dispatch_id, original, current.parent.is_none()));
-            }
-            cursor = current.parent.as_ref().map(|parent| (**parent).clone());
-        }
-        None
+        self.dispatch_state.error_dispatch_for_continuation(k)
     }
 
     fn active_dispatch_handler_is_python(&self, dispatch_id: DispatchId) -> bool {
-        self.dispatch_stack
-            .last()
-            .filter(|ctx| ctx.dispatch_id == dispatch_id)
-            .and_then(|ctx| ctx.handler_chain.get(ctx.handler_idx))
-            .and_then(|marker| self.handlers.get(marker))
-            .is_some_and(|entry| entry.handler.py_identity().is_some())
+        self.dispatch_state
+            .active_dispatch_handler_is_python(dispatch_id, &self.handlers)
     }
 
     fn mark_dispatch_threw(&mut self, dispatch_id: DispatchId) {
-        self.mark_dispatch_completed(dispatch_id);
+        self.dispatch_state
+            .mark_dispatch_threw(dispatch_id, &mut self.consumed_cont_ids);
     }
 
     fn mark_dispatch_completed(&mut self, dispatch_id: DispatchId) {
-        if let Some(ctx) = self
-            .dispatch_stack
-            .iter_mut()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-        {
-            ctx.completed = true;
-            self.consumed_cont_ids.insert(ctx.k_user.cont_id);
-        }
+        self.dispatch_state
+            .mark_dispatch_completed(dispatch_id, &mut self.consumed_cont_ids);
     }
 
     fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
-        self.capture_log.iter().rev().any(|event| match event {
-            CaptureEvent::HandlerCompleted {
-                dispatch_id: event_dispatch_id,
-                action:
-                    HandlerAction::Resumed { .. }
-                    | HandlerAction::Transferred { .. }
-                    | HandlerAction::Returned { .. }
-                    | HandlerAction::Threw { .. },
-                ..
-            } => *event_dispatch_id == dispatch_id,
-            _ => false,
-        })
+        self.dispatch_state
+            .dispatch_has_terminal_handler_action(dispatch_id, self.trace_state.events())
     }
 
     fn finalize_active_dispatches_as_threw(&mut self, exception: &PyException) {
         let exception_repr = Self::exception_repr(exception);
-        for idx in 0..self.dispatch_stack.len() {
-            let (dispatch_id, cont_id, completed) = {
-                let ctx = &self.dispatch_stack[idx];
-                (ctx.dispatch_id, ctx.k_user.cont_id, ctx.completed)
+        for idx in 0..self.dispatch_state.depth() {
+            let Some(ctx) = self.dispatch_state.get(idx) else {
+                continue;
             };
+            let dispatch_id = ctx.dispatch_id;
+            let completed = ctx.completed;
             if completed {
                 continue;
             }
             if self.dispatch_has_terminal_handler_action(dispatch_id) {
-                if let Some(ctx) = self.dispatch_stack.get_mut(idx) {
-                    ctx.completed = true;
-                }
-                self.consumed_cont_ids.insert(cont_id);
+                self.dispatch_state
+                    .mark_completed_at(idx, &mut self.consumed_cont_ids);
                 continue;
             }
             let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
             else {
-                if let Some(ctx) = self.dispatch_stack.get_mut(idx) {
-                    ctx.completed = true;
-                }
-                self.consumed_cont_ids.insert(cont_id);
+                self.dispatch_state
+                    .mark_completed_at(idx, &mut self.consumed_cont_ids);
                 continue;
             };
-            self.capture_log.push(CaptureEvent::HandlerCompleted {
+            self.trace_state.emit_handler_completed(
                 dispatch_id,
                 handler_name,
                 handler_index,
-                action: HandlerAction::Threw {
+                HandlerAction::Threw {
                     exception_repr: exception_repr.clone(),
                 },
-            });
-            if let Some(ctx) = self.dispatch_stack.get_mut(idx) {
-                ctx.completed = true;
-            }
-            self.consumed_cont_ids.insert(cont_id);
+            );
+            self.dispatch_state
+                .mark_completed_at(idx, &mut self.consumed_cont_ids);
         }
     }
 
@@ -3860,7 +2212,6 @@ impl VM {
         self.handlers.insert(marker, entry);
     }
 
-    /// Remove a handler by its marker. Returns true if the handler existed.
     pub fn remove_handler(&mut self, marker: Marker) -> bool {
         self.handlers.remove(&marker).is_some()
     }
@@ -3880,12 +2231,12 @@ impl VM {
                 self.current_handler_identity_for_dispatch(dispatch_id)
             {
                 let value_repr = Self::value_repr(value);
-                self.capture_log.push(CaptureEvent::HandlerCompleted {
+                self.trace_state.emit_handler_completed(
                     dispatch_id,
-                    handler_name: handler_name.clone(),
+                    handler_name.clone(),
                     handler_index,
-                    action: kind.handler_action(value_repr.clone()),
-                });
+                    kind.handler_action(value_repr.clone()),
+                );
                 self.maybe_emit_resume_event(
                     dispatch_id,
                     handler_name,
@@ -4032,14 +2383,14 @@ impl VM {
             if let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
             {
-                self.capture_log.push(CaptureEvent::HandlerCompleted {
+                self.trace_state.emit_handler_completed(
                     dispatch_id,
                     handler_name,
                     handler_index,
-                    action: HandlerAction::Threw {
+                    HandlerAction::Threw {
                         exception_repr: Self::exception_repr(&exception),
                     },
-                });
+                );
             }
         }
         if terminal_dispatch_completion {
@@ -4088,45 +2439,33 @@ impl VM {
         program: Py<PyAny>,
         explicit_py_identity: Option<PyShared>,
     ) -> StepEvent {
-        let handler_marker = Marker::fresh();
-        let outside_seg_id = match self.current_segment {
-            Some(id) => id,
-            None => {
-                return StepEvent::Error(VMError::internal("no current segment for WithHandler"))
-            }
+        let plan = match DispatchState::prepare_with_handler(
+            handler,
+            explicit_py_identity,
+            self.current_segment,
+            &self.segments,
+        ) {
+            Ok(plan) => plan,
+            Err(err) => return StepEvent::Error(err),
         };
-        let outside_scope = self
-            .segments
-            .get(outside_seg_id)
-            .map(|s| s.scope_chain.clone())
-            .unwrap_or_default();
 
         let prompt_seg = Segment::new_prompt(
-            handler_marker,
-            Some(outside_seg_id),
-            outside_scope.clone(),
-            handler_marker,
+            plan.handler_marker,
+            Some(plan.outside_seg_id),
+            plan.outside_scope.clone(),
+            plan.handler_marker,
         );
         let prompt_seg_id = self.alloc_segment(prompt_seg);
 
-        let py_identity = explicit_py_identity.or_else(|| handler.py_identity());
-        match py_identity {
-            Some(identity) => {
-                self.handlers.insert(
-                    handler_marker,
-                    HandlerEntry::with_identity(handler, prompt_seg_id, identity),
-                );
-            }
-            None => {
-                self.handlers
-                    .insert(handler_marker, HandlerEntry::new(handler, prompt_seg_id));
-            }
-        }
+        let entry = match plan.py_identity {
+            Some(identity) => HandlerEntry::with_identity(plan.handler, prompt_seg_id, identity),
+            None => HandlerEntry::new(plan.handler, prompt_seg_id),
+        };
+        self.handlers.insert(plan.handler_marker, entry);
 
-        let mut body_scope = vec![handler_marker];
-        body_scope.extend(outside_scope);
-
-        let body_seg = Segment::new(handler_marker, Some(prompt_seg_id), body_scope);
+        let mut body_scope = vec![plan.handler_marker];
+        body_scope.extend(plan.outside_scope);
+        let body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id), body_scope);
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
@@ -4144,33 +2483,17 @@ impl VM {
         mode: InterceptMode,
         metadata: CallMetadata,
     ) -> StepEvent {
-        let interceptor_marker = Marker::fresh();
-        let outside_seg_id = match self.current_segment {
-            Some(id) => id,
-            None => {
-                return StepEvent::Error(VMError::internal("no current segment for WithIntercept"));
-            }
+        let body_seg = match self.interceptor_state.prepare_with_intercept(
+            interceptor,
+            types,
+            mode,
+            metadata,
+            self.current_segment,
+            &self.segments,
+        ) {
+            Ok(segment) => segment,
+            Err(err) => return StepEvent::Error(err),
         };
-        let outside_scope = self
-            .segments
-            .get(outside_seg_id)
-            .map(|s| s.scope_chain.clone())
-            .unwrap_or_default();
-
-        self.interceptors.insert(
-            interceptor_marker,
-            InterceptorEntry {
-                interceptor,
-                types,
-                mode,
-                metadata,
-            },
-        );
-
-        let mut body_scope = vec![interceptor_marker];
-        body_scope.extend(outside_scope);
-
-        let body_seg = Segment::new(interceptor_marker, Some(outside_seg_id), body_scope);
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
@@ -4227,13 +2550,13 @@ impl VM {
                     to_handler_source_line: to_source_line,
                 },
             };
-            self.capture_log.push(event);
+            self.trace_state.emit_capture(event);
         }
     }
 
     fn handle_forward(&mut self, kind: ForwardKind, effect: DispatchEffect) -> StepEvent {
         let (handler_chain, start_idx, from_idx, dispatch_id, parent_k_user) =
-            match self.dispatch_stack.last() {
+            match self.dispatch_state.top() {
                 Some(top) => (
                     top.handler_chain.clone(),
                     top.handler_idx + 1,
@@ -4248,13 +2571,10 @@ impl VM {
                 None => return StepEvent::Error(VMError::internal(kind.outside_dispatch_error())),
             };
 
-        // Capture inner handler segment so outer handler return flows back as the
-        // result of Delegate/Pass. Per spec this preserves caller = Some(inner_seg_id).
         let inner_seg_id = self.current_segment;
 
         match kind {
             ForwardKind::Delegate => {
-                // Delegate is non-terminal: keep a parent chain to the old continuation.
                 let Some(mut k_new) = self.capture_continuation(Some(dispatch_id)) else {
                     return StepEvent::Error(VMError::internal(
                         "Delegate called without current segment",
@@ -4267,12 +2587,11 @@ impl VM {
                 };
                 k_new.parent = Some(Arc::new(parent_k_user));
                 self.clear_segment_frames(inner_seg_id);
-                if let Some(top) = self.dispatch_stack.last_mut() {
+                if let Some(top) = self.dispatch_state.top_mut() {
                     top.k_user = k_new;
                 }
             }
             ForwardKind::Pass => {
-                // Pass is terminal for the current handler; clear frames so values pass through.
                 self.clear_segment_frames(inner_seg_id);
             }
         }
@@ -4304,7 +2623,7 @@ impl VM {
                     marker,
                 );
                 let k_user = {
-                    let top = self.dispatch_stack.last_mut().unwrap();
+                    let top = self.dispatch_state.top_mut().unwrap();
                     top.handler_idx = idx;
                     top.supports_error_context_conversion = supports_error_context_conversion;
                     top.effect = effect.clone();
@@ -4324,13 +2643,7 @@ impl VM {
             }
         }
 
-        if let Some((dispatch_id, original_exception)) =
-            self.dispatch_stack.last().and_then(|ctx| {
-                ctx.original_exception
-                    .clone()
-                    .map(|exc| (ctx.dispatch_id, exc))
-            })
-        {
+        if let Some((dispatch_id, original_exception)) = self.dispatch_state.top_original_exception() {
             self.mark_dispatch_completed(dispatch_id);
             self.mode = Mode::Throw(original_exception);
             return StepEvent::Continue;
@@ -4347,23 +2660,18 @@ impl VM {
         self.handle_forward(ForwardKind::Pass, effect)
     }
 
-    /// Handle handler return (explicit or implicit).
-    ///
-    /// Per SPEC-008: sets Mode::Deliver(value) and lets the natural caller chain
-    /// walk deliver the value back. Does NOT explicitly jump to prompt_seg_id.
-    /// If the handler's caller is the prompt boundary, marks dispatch completed.
     fn handle_handler_return(&mut self, value: Value) -> StepEvent {
-        // Transfer paths may complete dispatches before stream return reaches here.
-        // Drop completed entries so handler-return bookkeeping does not bind to stale state.
         self.lazy_pop_completed();
 
         if let Value::Python(obj) = &value {
             let should_eval = Python::attach(|py| {
                 let bound = obj.bind(py);
-                bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<PyEffectBase>()
+                bound.is_instance_of::<PyDoExprBase>()
+                    || bound.is_instance_of::<DoeffGenerator>()
+                    || bound.is_instance_of::<PyEffectBase>()
             });
 
-            if should_eval && self.interceptor_eval_depth == 0 {
+            if should_eval && self.interceptor_state.is_eval_idle() {
                 let handlers = self.current_visible_handlers();
                 let expr = Python::attach(|py| PyShared::new(obj.clone_ref(py)));
                 let cb = self.register_callback(Box::new(|resolved, vm| {
@@ -4386,7 +2694,7 @@ impl VM {
             }
         }
 
-        let Some(top_snapshot) = self.dispatch_stack.last().cloned() else {
+        let Some(top_snapshot) = self.dispatch_state.top_cloned() else {
             self.mode = Mode::Deliver(value);
             return StepEvent::Continue;
         };
@@ -4398,14 +2706,14 @@ impl VM {
             return StepEvent::Continue;
         };
         let value_repr = Self::value_repr(&value);
-        self.capture_log.push(CaptureEvent::HandlerCompleted {
-            dispatch_id: top_snapshot.dispatch_id,
-            handler_name: handler_name.clone(),
+        self.trace_state.emit_handler_completed(
+            top_snapshot.dispatch_id,
+            handler_name.clone(),
             handler_index,
-            action: HandlerAction::Returned {
+            HandlerAction::Returned {
                 value_repr: value_repr.clone(),
             },
-        });
+        );
         self.maybe_emit_resume_event(
             top_snapshot.dispatch_id,
             handler_name,
@@ -4431,7 +2739,7 @@ impl VM {
         };
 
         let original_exception = {
-            let Some(top) = self.dispatch_stack.last_mut() else {
+            let Some(top) = self.dispatch_state.top_mut() else {
                 return StepEvent::Error(VMError::internal("Return outside of dispatch"));
             };
 
@@ -4455,8 +2763,6 @@ impl VM {
             return StepEvent::Continue;
         }
 
-        // D10: Spec says Mode::Deliver, not Mode::Return + explicit segment jump.
-        // Natural caller-chain walking handles segment transitions.
         self.mode = Mode::Deliver(value);
         StepEvent::Continue
     }
@@ -4539,7 +2845,7 @@ impl VM {
     }
 
     fn handle_get_continuation(&mut self) -> StepEvent {
-        let Some(top) = self.dispatch_stack.last() else {
+        let Some(top) = self.dispatch_state.top() else {
             return StepEvent::Error(VMError::internal(
                 "GetContinuation called outside of dispatch context",
             ));
@@ -4551,7 +2857,7 @@ impl VM {
     }
 
     fn handle_get_handlers(&mut self) -> StepEvent {
-        let Some(top) = self.dispatch_stack.last() else {
+        let Some(top) = self.dispatch_state.top() else {
             return StepEvent::Error(VMError::internal(
                 "GetHandlers called outside of dispatch context",
             ));
@@ -4568,43 +2874,13 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn collect_traceback(continuation: &Continuation) -> Vec<TraceHop> {
-        let mut hops = Vec::new();
-        let mut current: Option<&Continuation> = Some(continuation);
-
-        while let Some(cont) = current {
-            let mut frames = Vec::new();
-            for frame in cont.frames_snapshot.iter() {
-                if let Frame::Program {
-                    stream,
-                    metadata: Some(metadata),
-                } = frame
-                {
-                    let (source_file, source_line) = match Self::stream_debug_location(stream) {
-                        Some(location) => (location.source_file, location.source_line),
-                        None => (metadata.source_file.clone(), metadata.source_line),
-                    };
-                    frames.push(TraceFrame {
-                        func_name: metadata.function_name.clone(),
-                        source_file,
-                        source_line,
-                    });
-                }
-            }
-            hops.push(TraceHop { frames });
-            current = cont.parent.as_deref();
-        }
-
-        hops
-    }
-
     fn handle_get_traceback(&mut self, continuation: Continuation) -> StepEvent {
-        let Some(_top) = self.dispatch_stack.last() else {
+        let Some(_top) = self.dispatch_state.top() else {
             return StepEvent::Error(VMError::internal(
                 "GetTraceback called outside of dispatch context",
             ));
         };
-        let hops = Self::collect_traceback(&continuation);
+        let hops = TraceState::collect_traceback(&continuation);
         self.mode = Mode::Deliver(Value::Traceback(hops));
         StepEvent::Continue
     }
@@ -4691,2350 +2967,5 @@ impl Default for VM {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ast_stream::{ASTStream, ASTStreamStep};
-    use crate::frame::CallMetadata;
-    use std::sync::{Arc, Mutex};
-
-    fn make_dummy_continuation() -> Continuation {
-        Continuation {
-            cont_id: ContId::fresh(),
-            segment_id: SegmentId::from_index(0),
-            frames_snapshot: std::sync::Arc::new(Vec::new()),
-            scope_chain: std::sync::Arc::new(Vec::new()),
-            marker: Marker::fresh(),
-            dispatch_id: None,
-            started: true,
-            program: None,
-            handlers: Vec::new(),
-            handler_identities: Vec::new(),
-            metadata: None,
-            parent: None,
-        }
-    }
-
-    #[derive(Debug)]
-    struct DummyProgramStream;
-
-    impl ASTStream for DummyProgramStream {
-        fn resume(&mut self, _value: Value, _store: &mut RustStore) -> ASTStreamStep {
-            ASTStreamStep::Return(Value::Unit)
-        }
-
-        fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
-            ASTStreamStep::Throw(exc)
-        }
-    }
-
-    fn make_program_frame(function_name: &str, source_file: &str, source_line: u32) -> Frame {
-        let metadata = CallMetadata::new(
-            function_name.to_string(),
-            source_file.to_string(),
-            source_line,
-            None,
-            None,
-        );
-        let stream: Arc<Mutex<Box<dyn ASTStream>>> = Arc::new(Mutex::new(Box::new(
-            DummyProgramStream,
-        )
-            as Box<dyn ASTStream>));
-        Frame::program(stream, Some(metadata))
-    }
-
-    #[test]
-    fn test_vm_creation() {
-        let vm = VM::new();
-        assert!(vm.current_segment.is_none());
-        assert!(vm.dispatch_stack.is_empty());
-        assert!(vm.handlers.is_empty());
-    }
-
-    #[test]
-    fn test_rust_store_operations() {
-        let mut store = RustStore::new();
-
-        store.put("key".to_string(), Value::Int(42));
-        assert_eq!(store.get("key").unwrap().as_int(), Some(42));
-
-        store.tell(Value::String("log message".to_string()));
-        assert_eq!(store.logs().len(), 1);
-    }
-
-    #[test]
-    fn test_vm_alloc_segment() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
-        let seg_id = vm.alloc_segment(seg);
-
-        assert!(vm.segments.get(seg_id).is_some());
-    }
-
-    #[test]
-    fn test_vm_step_return_no_caller() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
-        let seg_id = vm.alloc_segment(seg);
-
-        vm.current_segment = Some(seg_id);
-        vm.mode = Mode::Return(Value::Int(42));
-
-        let event = vm.step();
-        assert!(matches!(event, StepEvent::Done(Value::Int(42))));
-    }
-
-    #[test]
-    fn test_vm_step_return_with_caller() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-
-        let caller_seg = Segment::new(marker, None, vec![]);
-        let caller_id = vm.alloc_segment(caller_seg);
-
-        let child_seg = Segment::new(marker, Some(caller_id), vec![]);
-        let child_id = vm.alloc_segment(child_seg);
-
-        vm.current_segment = Some(child_id);
-        vm.mode = Mode::Return(Value::Int(99));
-
-        let event = vm.step();
-        assert!(matches!(event, StepEvent::Continue));
-        assert_eq!(vm.current_segment, Some(caller_id));
-        assert!(vm.mode.is_deliver());
-    }
-
-    #[test]
-    fn test_vm_one_shot_tracking() {
-        let mut vm = VM::new();
-        let cont_id = ContId::fresh();
-
-        assert!(!vm.is_one_shot_consumed(cont_id));
-        vm.mark_one_shot_consumed(cont_id);
-        assert!(vm.is_one_shot_consumed(cont_id));
-    }
-
-    #[test]
-    fn test_vm_register_callback() {
-        let mut vm = VM::new();
-        let cb_id = vm.register_callback(Box::new(|v, _| Mode::Deliver(v)));
-
-        assert!(vm.callbacks.contains_key(&cb_id));
-    }
-
-    #[test]
-    fn test_visible_handlers_no_dispatch() {
-        let vm = VM::new();
-        let m1 = Marker::fresh();
-        let m2 = Marker::fresh();
-        let scope = vec![m1, m2];
-
-        let visible = vm.visible_handlers(&scope);
-        assert_eq!(visible, scope);
-    }
-
-    #[test]
-    fn test_visible_handlers_with_busy_boundary() {
-        let mut vm = VM::new();
-        let m1 = Marker::fresh();
-        let m2 = Marker::fresh();
-        let m3 = Marker::fresh();
-        let k_user = make_dummy_continuation();
-
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get {
-                key: "x".to_string(),
-            },
-            is_execution_context_effect: false,
-            handler_chain: vec![m1, m2, m3],
-            handler_idx: 1,
-            supports_error_context_conversion: false,
-            k_user: k_user.clone(),
-
-            prompt_seg_id: SegmentId::from_index(0),
-
-            completed: false,
-            original_exception: None,
-        });
-
-        let visible = vm.visible_handlers(&vec![m1, m2, m3]);
-        assert_eq!(visible, vec![m3]);
-    }
-
-    #[test]
-    fn test_visible_handlers_completed_dispatch() {
-        let mut vm = VM::new();
-        let m1 = Marker::fresh();
-        let m2 = Marker::fresh();
-        let k_user = make_dummy_continuation();
-
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get {
-                key: "x".to_string(),
-            },
-            is_execution_context_effect: false,
-            handler_chain: vec![m1, m2],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user: k_user.clone(),
-
-            prompt_seg_id: SegmentId::from_index(0),
-
-            completed: true,
-            original_exception: None,
-        });
-
-        let visible = vm.visible_handlers(&vec![m1, m2]);
-        assert_eq!(visible, vec![m1, m2]);
-    }
-
-    #[test]
-    fn test_lazy_pop_completed() {
-        let mut vm = VM::new();
-        let k_user_1 = make_dummy_continuation();
-        let k_user_2 = make_dummy_continuation();
-        let k_user_3 = make_dummy_continuation();
-
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get {
-                key: "x".to_string(),
-            },
-            is_execution_context_effect: false,
-            handler_chain: vec![],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user: k_user_1.clone(),
-
-            prompt_seg_id: SegmentId::from_index(0),
-
-            completed: true,
-            original_exception: None,
-        });
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get {
-                key: "y".to_string(),
-            },
-            is_execution_context_effect: false,
-            handler_chain: vec![],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user: k_user_2.clone(),
-
-            prompt_seg_id: SegmentId::from_index(0),
-
-            completed: true,
-            original_exception: None,
-        });
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get {
-                key: "z".to_string(),
-            },
-            is_execution_context_effect: false,
-            handler_chain: vec![],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user: k_user_3.clone(),
-
-            prompt_seg_id: SegmentId::from_index(0),
-
-            completed: false,
-            original_exception: None,
-        });
-
-        vm.lazy_pop_completed();
-        assert_eq!(vm.dispatch_stack.len(), 3);
-
-        vm.dispatch_stack.last_mut().unwrap().completed = true;
-        vm.lazy_pop_completed();
-        assert_eq!(vm.dispatch_stack.len(), 0);
-    }
-
-    #[test]
-    fn test_find_matching_handler() {
-        let mut vm = VM::new();
-        let m1 = Marker::fresh();
-        let m2 = Marker::fresh();
-        let prompt_seg_id = SegmentId::from_index(0);
-
-        vm.install_handler(
-            m1,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
-        vm.install_handler(
-            m2,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
-
-        let get_effect = Effect::Get {
-            key: "x".to_string(),
-        };
-        let result = vm.find_matching_handler(&vec![m1, m2], &get_effect);
-        assert!(result.is_ok());
-        let (idx, marker, _entry) = result.unwrap();
-        assert_eq!(idx, 1);
-        assert_eq!(marker, m2);
-
-        let ask_effect = Effect::Ask {
-            key: "y".to_string(),
-        };
-        let result = vm.find_matching_handler(&vec![m1, m2], &ask_effect);
-        assert!(result.is_ok());
-        let (idx, marker, _entry) = result.unwrap();
-        assert_eq!(idx, 0);
-        assert_eq!(marker, m1);
-    }
-
-    #[test]
-    fn test_find_matching_handler_none_found() {
-        let vm = VM::new();
-        let m1 = Marker::fresh();
-        let get_effect = Effect::Get {
-            key: "x".to_string(),
-        };
-
-        let result = vm.find_matching_handler(&vec![m1], &get_effect);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_find_matching_handler_propagates_can_handle_parse_error() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let prompt_seg_id = SegmentId::from_index(0);
-
-            vm.install_handler(
-                marker,
-                HandlerEntry::new(
-                    std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
-                    prompt_seg_id,
-                ),
-            );
-
-            let locals = pyo3::types::PyDict::new(py);
-            locals
-                .set_item("Ask", py.get_type::<crate::effect::PyAsk>())
-                .unwrap();
-            py.run(c"effect = Ask(key=[])\n", Some(&locals), Some(&locals))
-                .unwrap();
-            let effect_obj = locals.get_item("effect").unwrap().unwrap().unbind();
-            let effect = Effect::from_shared(PyShared::new(effect_obj));
-
-            let result = vm.find_matching_handler(&vec![marker], &effect);
-            match result {
-                Err(VMError::InternalError { message }) => {
-                    assert!(message.contains("ReaderHandler can_handle failed to parse effect"));
-                    assert!(message.contains("Ask key is not hashable"));
-                }
-                other => panic!("expected can_handle parse error, got {:?}", other),
-            }
-        });
-    }
-
-    #[test]
-    fn test_start_dispatch_get_effect() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-
-        let prompt_seg = Segment::new(marker, None, vec![]);
-        let prompt_seg_id = vm.alloc_segment(prompt_seg);
-
-        let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
-        let body_seg_id = vm.alloc_segment(body_seg);
-        vm.current_segment = Some(body_seg_id);
-
-        vm.install_handler(
-            marker,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
-
-        vm.rust_store.put("counter".to_string(), Value::Int(42));
-
-        let result = vm.start_dispatch(Effect::Get {
-            key: "counter".to_string(),
-        });
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), StepEvent::Continue));
-        assert_eq!(vm.dispatch_stack.len(), 1);
-        // Handler yields Resume primitive; step through to process it
-        let event = vm.step();
-        assert!(matches!(event, StepEvent::Continue));
-        assert!(vm.dispatch_stack[0].completed);
-    }
-
-    #[test]
-    fn test_dispatch_completion_marking() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-
-        let prompt_seg = Segment::new(marker, None, vec![]);
-        let prompt_seg_id = vm.alloc_segment(prompt_seg);
-
-        let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
-        let body_seg_id = vm.alloc_segment(body_seg);
-        vm.current_segment = Some(body_seg_id);
-
-        vm.install_handler(
-            marker,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
-
-        let _ = vm.start_dispatch(Effect::Get {
-            key: "x".to_string(),
-        });
-        // Handler yields Resume; step through to mark dispatch complete
-        let _ = vm.step();
-        assert!(vm.dispatch_stack[0].completed);
-    }
-
-    #[test]
-    fn test_start_dispatch_records_effect_creation_site_from_continuation_frame() {
-        Python::attach(|py| {
-            use crate::frame::Frame;
-            use pyo3::types::PyModule;
-            use std::sync::Arc;
-
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-
-            let prompt_seg = Segment::new(marker, None, vec![]);
-            let prompt_seg_id = vm.alloc_segment(prompt_seg);
-
-            let module = PyModule::from_code(
-                py,
-                c"def target_gen():\n    yield 'value'\n\ng = target_gen()\nnext(g)\n\ndef get_frame(_obj):\n    return g.gi_frame\n\nwrapper = object()\nLINE = g.gi_frame.f_lineno\n",
-                c"/tmp/user_program.py",
-                c"_vm_creation_site_test",
-            )
-            .expect("failed to create test module");
-            let wrapper = module.getattr("wrapper").expect("missing wrapper").unbind();
-            let get_frame = module
-                .getattr("get_frame")
-                .expect("missing get_frame")
-                .unbind();
-            let line: u32 = module
-                .getattr("LINE")
-                .expect("missing LINE")
-                .extract()
-                .expect("LINE must be int");
-
-            let mut body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
-            let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
-                PyShared::new(wrapper),
-                PyShared::new(get_frame),
-            )) as Box<dyn ASTStream>));
-            body_seg.push_frame(Frame::Program {
-                stream,
-                metadata: Some(CallMetadata::new(
-                    "parent".to_string(),
-                    "/tmp/user_program.py".to_string(),
-                    777,
-                    None,
-                    None,
-                )),
-            });
-            let body_seg_id = vm.alloc_segment(body_seg);
-            vm.current_segment = Some(body_seg_id);
-
-            vm.install_handler(
-                marker,
-                HandlerEntry::new(
-                    Arc::new(crate::scheduler::SchedulerHandler::new()),
-                    prompt_seg_id,
-                ),
-            );
-
-            let spawn = Py::new(py, PySpawn::create(py, py.None(), None, None, None, None))
-                .expect("failed to create SpawnEffect");
-            let effect_obj = spawn.into_any();
-
-            let result = vm.start_dispatch(Effect::Python(PyShared::new(effect_obj)));
-            assert!(result.is_ok());
-
-            let creation_site = vm.capture_log.iter().find_map(|event| {
-                if let CaptureEvent::DispatchStarted { creation_site, .. } = event {
-                    creation_site.clone()
-                } else {
-                    None
-                }
-            });
-
-            let site = creation_site.expect("dispatch should record effect creation site");
-            assert_eq!(site.function_name, "parent");
-            assert_eq!(site.source_file, "/tmp/user_program.py");
-            assert_eq!(site.source_line, line);
-        });
-    }
-
-    #[test]
-    fn test_stream_debug_location_uses_get_frame_callback_result() {
-        Python::attach(|py| {
-            use pyo3::types::PyModule;
-            use std::sync::Arc;
-
-            let module = PyModule::from_code(
-                py,
-                c"def target_gen():\n    yield 'value'\n\ng = target_gen()\nnext(g)\n\ndef get_frame(_obj):\n    return g.gi_frame\n\nwrapper = object()\nLINE = g.gi_frame.f_lineno\n",
-                c"_vm_get_frame_callback_test.py",
-                c"_vm_get_frame_callback_test",
-            )
-            .expect("failed to create test module");
-            let wrapper = module.getattr("wrapper").expect("missing wrapper").unbind();
-            let get_frame = module
-                .getattr("get_frame")
-                .expect("missing get_frame")
-                .unbind();
-            let line: u32 = module
-                .getattr("LINE")
-                .expect("missing LINE")
-                .extract()
-                .expect("LINE must be int");
-
-            let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
-                PyShared::new(wrapper),
-                PyShared::new(get_frame),
-            )) as Box<dyn ASTStream>));
-            let observed = VM::stream_debug_location(&stream).expect("expected stream location");
-            assert_eq!(observed.source_line, line);
-        });
-    }
-
-    #[test]
-    fn test_vm_proto_runtime_uses_get_frame_callback_instead_of_gi_frame_probe() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
-        let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
-        let runtime_src = &src[..runtime_boundary];
-        let inner_attr = ["__doeff_", "inner__"].concat();
-        assert!(
-            runtime_src.contains("debug_location()")
-                && runtime_src.contains("stream_debug_location"),
-            "VM-PROTO-001: VM must resolve live locations via ASTStream::debug_location()"
-        );
-        assert!(
-            !runtime_src.contains("getattr(\"gi_frame\")"),
-            "VM-PROTO-001: direct gi_frame access in runtime vm.rs is forbidden"
-        );
-        assert!(
-            !runtime_src.contains("import(\"doeff."),
-            "VM-PROTO-001: vm core must not import doeff.* modules"
-        );
-        assert!(
-            !runtime_src.contains(&inner_attr),
-            "VM-PROTO-001: vm core must not walk inner-generator link chains"
-        );
-    }
-
-    #[test]
-    fn test_vm_proto_007_runtime_enforces_c1_c6_c7_constraints() {
-        let vm_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
-        let vm_runtime_boundary = vm_src
-            .find("\n#[cfg(test)]\nmod tests")
-            .unwrap_or(vm_src.len());
-        let vm_runtime_src = &vm_src[..vm_runtime_boundary];
-
-        let pyvm_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
-        let pyvm_runtime_src = pyvm_src.split("#[cfg(test)]").next().unwrap_or(pyvm_src);
-
-        for (file_name, runtime_src) in [("vm.rs", vm_runtime_src), ("pyvm.rs", pyvm_runtime_src)] {
-            assert!(
-                !runtime_src.contains(".setattr(\"__doeff_"),
-                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not set __doeff_* attributes"
-            );
-            assert!(
-                !runtime_src.contains(".getattr(\"__doeff_"),
-                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not read __doeff_* attributes"
-            );
-            assert!(
-                !runtime_src.contains(".hasattr(\"__doeff_"),
-                "VM-PROTO-007 C1 FAIL: {file_name} runtime must not probe __doeff_* attributes"
-            );
-            assert!(
-                !runtime_src.contains("import(\"doeff."),
-                "VM-PROTO-007 C6 FAIL: {file_name} runtime must not import doeff.* modules"
-            );
-            assert!(
-                !runtime_src.contains("CallMetadata::anonymous()")
-                    && !runtime_src.contains("crate::frame::CallMetadata::anonymous()"),
-                "VM-PROTO-007 C7 FAIL: {file_name} runtime must not use anonymous callback metadata"
-            );
-        }
-
-        assert!(
-            !vm_runtime_src.contains("getattr(\"__code__\")")
-                && !vm_runtime_src.contains("getattr(\"__name__\")"),
-            "VM-PROTO-007 C7 FAIL: vm.rs runtime must not probe __code__/__name__"
-        );
-        assert!(
-            !pyvm_runtime_src.contains("PyModule::from_code("),
-            "VM-PROTO-007 C7 FAIL: pyvm.rs runtime must not synthesize modules via PyModule::from_code"
-        );
-    }
-
-    #[test]
-    fn test_vm_proto_frame_push_sites_extract_doeff_generator() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
-        let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
-        let runtime_src = &src[..runtime_boundary];
-        let extraction_calls = runtime_src.matches("extract_doeff_generator(").count();
-        assert!(
-            extraction_calls >= 2,
-            "VM-PROTO-001: expected at least 2 DoeffGenerator extraction sites in vm.rs, got {extraction_calls}"
-        );
-        assert!(
-            runtime_src.contains("PendingPython::ExpandReturn")
-                && runtime_src.contains("ExpandReturn: expected DoeffGenerator"),
-            "VM-PROTO-001: ExpandReturn must enforce DoeffGenerator results explicitly"
-        );
-        assert!(
-            runtime_src.contains("PendingPython::StepUserGenerator {")
-                && runtime_src.contains("stream")
-                && !runtime_src.contains("get_frame,"),
-            "VM-PROTO-001: StepUserGenerator pending state must carry stream handle"
-        );
-    }
-
-    #[test]
-    fn test_resume_is_not_terminal() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
-        let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
-        let runtime_src = &src[..runtime_boundary];
-        let is_terminal_start = runtime_src
-            .find("let is_terminal = matches!(")
-            .expect("apply_stream_step must define is_terminal");
-        let is_terminal_block = &runtime_src[is_terminal_start..];
-        let block_end = is_terminal_block
-            .find("if !is_terminal")
-            .expect("is_terminal block must guard Program frame push");
-        let is_terminal_match = &is_terminal_block[..block_end];
-
-        assert!(
-            !is_terminal_match.contains("DoCtrl::Resume { .. }"),
-            "Resume must be non-terminal in apply_stream_step"
-        );
-    }
-
-    #[test]
-    fn test_handle_resume_call_resume_semantics() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-
-        let caller_seg = Segment::new(marker, None, vec![marker]);
-        let caller_id = vm.alloc_segment(caller_seg);
-        vm.current_segment = Some(caller_id);
-
-        let k = vm.capture_continuation(None).unwrap();
-
-        let event = vm.handle_resume(k, Value::Int(42));
-        assert!(matches!(event, StepEvent::Continue));
-
-        let new_seg_id = vm.current_segment.unwrap();
-        let new_seg = vm.segments.get(new_seg_id).unwrap();
-        assert_eq!(new_seg.caller, Some(caller_id));
-    }
-
-    #[test]
-    fn test_handle_transfer_tail_semantics() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
-
-        let k = vm.capture_continuation(None).unwrap();
-
-        let event = vm.handle_transfer(k, Value::Int(99));
-        assert!(matches!(event, StepEvent::Continue));
-
-        let new_seg_id = vm.current_segment.unwrap();
-        let new_seg = vm.segments.get(new_seg_id).unwrap();
-        assert!(new_seg.caller.is_none());
-    }
-
-    #[test]
-    fn test_one_shot_violation_resume() {
-        Python::attach(|_py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-
-            let seg = Segment::new(marker, None, vec![marker]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let k = vm.capture_continuation(None).unwrap();
-
-            let _ = vm.handle_resume(k.clone(), Value::Int(1));
-            let event = vm.handle_resume(k, Value::Int(2));
-
-            assert!(matches!(event, StepEvent::Continue));
-            assert!(
-                vm.mode.is_throw(),
-                "One-shot violation should set Mode::Throw"
-            );
-        });
-    }
-
-    #[test]
-    fn test_one_shot_violation_transfer() {
-        Python::attach(|_py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-
-            let seg = Segment::new(marker, None, vec![marker]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let k = vm.capture_continuation(None).unwrap();
-
-            let _ = vm.handle_transfer(k.clone(), Value::Int(1));
-            let event = vm.handle_transfer(k, Value::Int(2));
-
-            assert!(matches!(event, StepEvent::Continue));
-            assert!(
-                vm.mode.is_throw(),
-                "One-shot violation should set Mode::Throw"
-            );
-        });
-    }
-
-    #[test]
-    fn test_handle_get_continuation() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
-
-        let k_user = make_dummy_continuation();
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get {
-                key: "x".to_string(),
-            },
-            is_execution_context_effect: false,
-            handler_chain: vec![marker],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user: k_user.clone(),
-
-            prompt_seg_id: SegmentId::from_index(0),
-
-            completed: false,
-            original_exception: None,
-        });
-
-        let event = vm.handle_get_continuation();
-        assert!(matches!(event, StepEvent::Continue));
-        assert!(matches!(vm.mode, Mode::Deliver(Value::Continuation(_))));
-    }
-
-    #[test]
-    fn test_handle_get_continuation_no_dispatch() {
-        let mut vm = VM::new();
-        let event = vm.handle_get_continuation();
-        assert!(matches!(
-            event,
-            StepEvent::Error(VMError::InternalError { .. })
-        ));
-    }
-
-    #[test]
-    fn test_handle_delegate_no_dispatch() {
-        let mut vm = VM::new();
-        let event = vm.handle_delegate(Effect::get("dummy"));
-        assert!(matches!(
-            event,
-            StepEvent::Error(VMError::InternalError { .. })
-        ));
-    }
-
-    #[test]
-    fn test_handle_delegate_links_previous_k_as_parent() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
-
-        let original_k_user = make_dummy_continuation();
-        let original_cont_id = original_k_user.cont_id;
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id: DispatchId::fresh(),
-            effect: Effect::get("x"),
-            is_execution_context_effect: false,
-            handler_chain: vec![marker],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user: original_k_user,
-            prompt_seg_id: seg_id,
-            completed: false,
-            original_exception: None,
-        });
-
-        let event = vm.handle_delegate(Effect::get("x"));
-        assert!(matches!(event, StepEvent::Error(_)));
-
-        let top = vm
-            .dispatch_stack
-            .last()
-            .expect("dispatch context must exist");
-        let parent = top
-            .k_user
-            .parent
-            .as_ref()
-            .expect("delegate must set parent");
-        assert_ne!(top.k_user.cont_id, original_cont_id);
-        assert_eq!(parent.cont_id, original_cont_id);
-    }
-
-    #[test]
-    fn test_handle_pass_no_dispatch() {
-        let mut vm = VM::new();
-        let event = vm.handle_pass(Effect::get("dummy"));
-        assert!(matches!(
-            event,
-            StepEvent::Error(VMError::InternalError { .. })
-        ));
-    }
-
-    #[test]
-    fn test_rust_store_clone() {
-        let mut store = RustStore::new();
-        store.put("key".to_string(), Value::Int(42));
-        store.tell(Value::String("log".to_string()));
-        store
-            .env
-            .insert("env_key".to_string().into(), Value::Bool(true));
-
-        let cloned = store.clone();
-        assert_eq!(cloned.get("key").unwrap().as_int(), Some(42));
-        assert_eq!(cloned.logs().len(), 1);
-        assert_eq!(cloned.ask("env_key").unwrap().as_bool(), Some(true));
-
-        // Verify independence
-        store.put("key".to_string(), Value::Int(99));
-        assert_eq!(cloned.get("key").unwrap().as_int(), Some(42));
-    }
-
-    #[test]
-    fn test_handle_get_handlers() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-
-        let seg = Segment::new(marker, None, vec![marker]);
-        let prompt_seg_id = vm.alloc_segment(seg);
-
-        vm.install_handler(
-            marker,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
-
-        let handler_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
-        let handler_seg_id = vm.alloc_segment(handler_seg);
-        vm.current_segment = Some(handler_seg_id);
-
-        // G8: GetHandlers requires dispatch context
-        let k_user = make_dummy_continuation();
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get {
-                key: "x".to_string(),
-            },
-            is_execution_context_effect: false,
-            handler_chain: vec![marker],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user,
-            prompt_seg_id,
-            completed: false,
-            original_exception: None,
-        });
-
-        let event = vm.handle_get_handlers();
-        assert!(matches!(event, StepEvent::Continue));
-        match &vm.mode {
-            Mode::Deliver(Value::Handlers(h)) => {
-                assert_eq!(h.len(), 1);
-                assert_eq!(h[0].handler_name(), "StateHandler");
-            }
-            _ => panic!("Expected Deliver(Handlers)"),
-        }
-    }
-
-    #[test]
-    fn test_handle_get_handlers_no_dispatch_errors() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
-
-        let event = vm.handle_get_handlers();
-        assert!(
-            matches!(event, StepEvent::Error(_)),
-            "G8: GetHandlers without dispatch must error"
-        );
-    }
-
-    #[test]
-    fn test_collect_traceback_preserves_frame_and_hop_ordering_without_filtering() {
-        let mut parent = make_dummy_continuation();
-        parent.frames_snapshot = Arc::new(vec![
-            make_program_frame("parent_outer", "user.py", 10),
-            make_program_frame("parent_internal", "/tmp/doeff/internal.py", 20),
-        ]);
-
-        let mut child = make_dummy_continuation();
-        child.frames_snapshot = Arc::new(vec![
-            make_program_frame("child_outer", "handler.py", 30),
-            make_program_frame("child_inner", "handler.py", 31),
-        ]);
-        child.parent = Some(Arc::new(parent));
-
-        let hops = VM::collect_traceback(&child);
-        assert_eq!(hops.len(), 2);
-
-        let hop0_names: Vec<_> = hops[0]
-            .frames
-            .iter()
-            .map(|f| f.func_name.as_str())
-            .collect();
-        assert_eq!(hop0_names, vec!["child_outer", "child_inner"]);
-
-        let hop1_names: Vec<_> = hops[1]
-            .frames
-            .iter()
-            .map(|f| f.func_name.as_str())
-            .collect();
-        assert_eq!(hop1_names, vec!["parent_outer", "parent_internal"]);
-        assert_eq!(hops[1].frames[1].source_file, "/tmp/doeff/internal.py");
-    }
-
-    #[test]
-    fn test_handle_get_traceback_requires_dispatch_context() {
-        let mut vm = VM::new();
-        let event = vm.handle_get_traceback(make_dummy_continuation());
-        assert!(matches!(
-            event,
-            StepEvent::Error(VMError::InternalError { .. })
-        ));
-    }
-
-    #[test]
-    fn test_step_handle_yield_routes_get_traceback() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
-
-        let k_user = make_dummy_continuation();
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id: DispatchId::fresh(),
-            effect: Effect::get("x"),
-            is_execution_context_effect: false,
-            handler_chain: vec![marker],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user: k_user.clone(),
-            prompt_seg_id: seg_id,
-            completed: false,
-            original_exception: None,
-        });
-
-        let mut query_continuation = make_dummy_continuation();
-        query_continuation.frames_snapshot =
-            Arc::new(vec![make_program_frame("query_frame", "query.py", 55)]);
-        vm.mode = Mode::HandleYield(DoCtrl::GetTraceback {
-            continuation: query_continuation,
-        });
-
-        let event = vm.step_handle_yield();
-        assert!(matches!(event, StepEvent::Continue));
-        match &vm.mode {
-            Mode::Deliver(Value::Traceback(hops)) => {
-                assert_eq!(hops.len(), 1);
-                assert_eq!(hops[0].frames.len(), 1);
-                assert_eq!(hops[0].frames[0].func_name, "query_frame");
-            }
-            other => panic!("expected Deliver(Traceback), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_continuation_registry_cleanup_on_consume() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
-
-        let k = vm.capture_continuation(None).unwrap();
-        let cont_id = k.cont_id;
-        vm.register_continuation(k);
-
-        assert!(vm.lookup_continuation(cont_id).is_some());
-        assert_eq!(vm.continuation_registry.len(), 1);
-
-        vm.mark_one_shot_consumed(cont_id);
-
-        assert!(vm.lookup_continuation(cont_id).is_none());
-        assert_eq!(vm.continuation_registry.len(), 0);
-        assert!(vm.is_one_shot_consumed(cont_id));
-    }
-
-    #[test]
-    fn test_remove_handler() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-        let prompt_seg_id = SegmentId::from_index(0);
-
-        vm.install_handler(
-            marker,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
-        assert!(vm.handlers.contains_key(&marker));
-        assert_eq!(vm.handlers.len(), 1);
-
-        let removed = vm.remove_handler(marker);
-        assert!(removed);
-        assert!(!vm.handlers.contains_key(&marker));
-        assert_eq!(vm.handlers.len(), 0);
-
-        // Removing again returns false
-        let removed_again = vm.remove_handler(marker);
-        assert!(!removed_again);
-    }
-
-    #[test]
-    fn test_remove_handler_preserves_others() {
-        let mut vm = VM::new();
-        let m1 = Marker::fresh();
-        let m2 = Marker::fresh();
-        let prompt_seg_id = SegmentId::from_index(0);
-
-        vm.install_handler(
-            m1,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
-        vm.install_handler(
-            m2,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::WriterHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
-        assert_eq!(vm.handlers.len(), 2);
-
-        vm.remove_handler(m1);
-        assert_eq!(vm.handlers.len(), 1);
-        assert!(!vm.handlers.contains_key(&m1));
-        assert!(vm.handlers.contains_key(&m2));
-    }
-
-    #[test]
-    fn test_rust_store_modify() {
-        let mut store = RustStore::new();
-        store.put("x".to_string(), Value::Int(10));
-
-        let old = store.modify("x", |v| {
-            let n = v.as_int().unwrap();
-            Value::Int(n * 2)
-        });
-        assert_eq!(old.unwrap().as_int(), Some(10));
-        assert_eq!(store.get("x").unwrap().as_int(), Some(20));
-    }
-
-    #[test]
-    fn test_rust_store_modify_missing_key() {
-        let mut store = RustStore::new();
-        let old = store.modify("missing", |v| v.clone());
-        assert!(old.is_none());
-    }
-
-    #[test]
-    fn test_rust_store_clear_logs() {
-        let mut store = RustStore::new();
-        store.tell(Value::String("a".to_string()));
-        store.tell(Value::String("b".to_string()));
-        assert_eq!(store.logs().len(), 2);
-
-        store.clear_logs();
-        assert_eq!(store.logs().len(), 0);
-    }
-
-    // === Spec Gap TDD Tests (Phase 14) ===
-
-    /// G9: Spec says clear_logs returns Vec<Value> via std::mem::take.
-    /// Impl returns nothing (void). Test that drained values are returned.
-    #[test]
-    fn test_gap9_clear_logs_returns_drained_values() {
-        let mut store = RustStore::new();
-        store.tell(Value::String("a".to_string()));
-        store.tell(Value::String("b".to_string()));
-
-        let drained: Vec<Value> = store.clear_logs();
-        assert_eq!(drained.len(), 2);
-        assert_eq!(drained[0].as_str(), Some("a"));
-        assert_eq!(drained[1].as_str(), Some("b"));
-        assert_eq!(store.logs().len(), 0);
-    }
-
-    /// G10: Spec says modify takes f: FnOnce(&Value) -> Value (borrow).
-    /// Test that the modifier receives a reference, not ownership.
-    #[test]
-    fn test_gap10_modify_closure_takes_reference() {
-        let mut store = RustStore::new();
-        store.put("x".to_string(), Value::Int(10));
-
-        // Spec: modifier takes &Value (borrow), returns Value
-        let old = store.modify("x", |v: &Value| {
-            let n = v.as_int().unwrap();
-            Value::Int(n * 2)
-        });
-        assert_eq!(old.unwrap().as_int(), Some(10));
-        assert_eq!(store.get("x").unwrap().as_int(), Some(20));
-    }
-
-    /// G11: Spec defines with_local for Reader environment scoping.
-    /// Test that bindings are applied, closure runs, and old values restored.
-    #[test]
-    fn test_gap11_with_local_scoped_bindings() {
-        let mut store = RustStore::new();
-        store
-            .env
-            .insert("db".to_string().into(), Value::String("prod".to_string()));
-        store.env.insert(
-            "host".to_string().into(),
-            Value::String("localhost".to_string()),
-        );
-
-        let result = store.with_local(
-            HashMap::from([
-                ("db".to_string(), Value::String("test".to_string())),
-                ("temp".to_string(), Value::Int(42)),
-            ]),
-            |s| {
-                assert_eq!(s.ask("db").unwrap().as_str(), Some("test"));
-                assert_eq!(s.ask("temp").unwrap().as_int(), Some(42));
-                assert_eq!(s.ask("host").unwrap().as_str(), Some("localhost"));
-                "done"
-            },
-        );
-        assert_eq!(result, "done");
-        // After with_local, old bindings restored, temp removed
-        assert_eq!(store.ask("db").unwrap().as_str(), Some("prod"));
-        assert!(store.ask("temp").is_none());
-        assert_eq!(store.ask("host").unwrap().as_str(), Some("localhost"));
-    }
-
-    /// G12: DispatchContext should not have callsite_cont_id field.
-    /// Spec says use k_user.cont_id directly.
-    /// This test verifies dispatch completion works via k_user.cont_id.
-    #[test]
-    fn test_gap12_dispatch_completion_via_k_user() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
-
-        let k_user = make_dummy_continuation();
-        let k_cont_id = k_user.cont_id;
-        let dispatch_id = DispatchId::fresh();
-
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id,
-            effect: Effect::Get {
-                key: "x".to_string(),
-            },
-            is_execution_context_effect: false,
-            handler_chain: vec![marker],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user: Continuation {
-                dispatch_id: Some(dispatch_id),
-                cont_id: k_cont_id,
-                ..make_dummy_continuation()
-            },
-            prompt_seg_id: seg_id,
-            completed: false,
-            original_exception: None,
-        });
-
-        // Verify completion check works through k_user.cont_id
-        let k = Continuation {
-            cont_id: k_cont_id,
-            dispatch_id: Some(dispatch_id),
-            ..make_dummy_continuation()
-        };
-        vm.check_dispatch_completion(&k);
-        assert!(vm.dispatch_stack.last().unwrap().completed);
-    }
-
-    /// G13: Delegate should take Effect (not Option<Effect>).
-    /// This test verifies Delegate works with a direct Effect value.
-    #[test]
-    fn test_gap13_delegate_takes_non_optional_effect() {
-        use crate::step::DoCtrl;
-        // Spec: Delegate { effect: Effect }
-        let prim = DoCtrl::Delegate {
-            effect: Effect::Get {
-                key: "x".to_string(),
-            },
-        };
-        match prim {
-            DoCtrl::Delegate { effect } => {
-                assert_eq!(effect.type_name(), "Get");
-            }
-            _ => panic!("expected Delegate"),
-        }
-    }
-
-    /// G14: Spec says Effect has `type_name()`, not `type_name()`.
-    #[test]
-    fn test_gap14_type_name_name_method() {
-        let get = Effect::get("x");
-        assert_eq!(get.type_name(), "Get");
-
-        let put = Effect::put("y", 42i64);
-        assert_eq!(put.type_name(), "Put");
-
-        let ask = Effect::ask("env");
-        assert_eq!(ask.type_name(), "Ask");
-
-        let tell = Effect::tell("msg");
-        assert_eq!(tell.type_name(), "Tell");
-    }
-
-    /// G15: WithHandler should emit EvalExpr, not CallFunc.
-    /// We can't construct Py<PyAny> in Rust-only tests, so we verify
-    /// this via the Python integration tests. This test serves as a
-    /// documentation marker that handle_with_handler must use
-    /// PythonCall::EvalExpr { expr } per spec.
-    #[test]
-    fn test_gap15_with_handler_eval_expr_marker() {
-        // Spec requires handle_with_handler to emit:
-        //   PythonCall::EvalExpr { expr: body }
-        // NOT:
-        //   PythonCall::CallFunc { func: body, args: vec![] }
-        //
-        // Verified by code inspection + Python integration tests.
-        // EvalExpr starts from DoExpr directly at VM entry.
-        assert!(
-            true,
-            "See handle_with_handler implementation for spec compliance"
-        );
-    }
-
-    /// G16: lazy_pop_completed runs before GetHandlers.
-    /// G8: After pop leaves empty stack, GetHandlers errors (spec: no dispatch = error).
-    #[test]
-    fn test_gap16_lazy_pop_before_get_handlers() {
-        use crate::step::DoCtrl;
-
-        let mut vm = VM::new();
-
-        let m1 = Marker::fresh();
-        let seg = Segment::new(m1, None, vec![m1]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.install_handler(
-            m1,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                seg_id,
-            ),
-        );
-        vm.current_segment = Some(seg_id);
-
-        let k_user = make_dummy_continuation();
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get {
-                key: "x".to_string(),
-            },
-            is_execution_context_effect: false,
-            handler_chain: vec![],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user: k_user.clone(),
-            prompt_seg_id: SegmentId::from_index(0),
-            completed: true,
-            original_exception: None,
-        });
-
-        vm.mode = Mode::HandleYield(DoCtrl::GetHandlers);
-        let event = vm.step_handle_yield();
-
-        assert!(
-            vm.dispatch_stack.is_empty(),
-            "Completed dispatch should have been popped before GetHandlers runs"
-        );
-
-        assert!(
-            matches!(event, StepEvent::Error(_)),
-            "G8: GetHandlers with no dispatch must error, got {:?}",
-            std::mem::discriminant(&event)
-        );
-    }
-
-    // ==========================================================
-    // Spec-Gap TDD Tests — Phase 2 (G1-G5 from SPEC-008 audit)
-    // ==========================================================
-
-    /// G1: Uncaught exception must preserve the original PyException.
-    /// Spec: VMError should carry the PyException, not discard it as a generic string.
-    #[test]
-    fn test_g1_uncaught_exception_preserves_pyexception() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let exc_type = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            let exc_value = py
-                .eval(c"RuntimeError('test uncaught')", None, None)
-                .unwrap()
-                .unbind()
-                .into_any();
-            let py_exc = PyException::new(exc_type, exc_value, None);
-            vm.mode = Mode::Throw(py_exc);
-
-            let event = vm.step();
-
-            // The error variant must carry the exception, not be a generic string.
-            // VMError::UncaughtException { exception: PyException } is the desired variant.
-            match &event {
-                StepEvent::Error(err) => {
-                    let msg = err.to_string();
-                    assert!(
-                        !msg.contains("internal error: uncaught exception"),
-                        "G1 FAIL: Got generic InternalError(\"{}\"). \
-                         Expected a VMError variant that preserves the PyException.",
-                        msg
-                    );
-                }
-                other => panic!(
-                    "G1: Expected StepEvent::Error, got {:?}",
-                    std::mem::discriminant(other)
-                ),
-            }
-        });
-    }
-
-    /// G3: Segments must be freed when no longer reachable.
-    /// After step_return completes a child segment and returns to parent,
-    /// the child segment should be freed from the arena.
-    #[test]
-    fn test_g3_segment_freed_after_return() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-
-        // Create parent segment
-        let parent_seg = Segment::new(marker, None, vec![]);
-        let parent_id = vm.alloc_segment(parent_seg);
-
-        // Create child segment with parent as caller
-        let child_seg = Segment::new(marker, Some(parent_id), vec![]);
-        let child_id = vm.alloc_segment(child_seg);
-
-        vm.current_segment = Some(child_id);
-        vm.mode = Mode::Return(Value::Int(42));
-
-        // Before step: both segments exist
-        assert!(vm.segments.get(parent_id).is_some());
-        assert!(vm.segments.get(child_id).is_some());
-        assert_eq!(vm.segments.len(), 2);
-
-        // step_return: child returns to parent
-        let event = vm.step();
-        assert!(matches!(event, StepEvent::Continue));
-        assert_eq!(vm.current_segment, Some(parent_id));
-
-        // DESIRED: child segment should be freed
-        assert!(
-            vm.segments.get(child_id).is_none(),
-            "G3 REGRESSION: Child segment was NOT freed after return. Arena len={}",
-            vm.segments.len()
-        );
-    }
-
-    /// G4a: Resume on a consumed continuation → Mode::Throw (catchable), not StepEvent::Error.
-    #[test]
-    fn test_g4a_resume_one_shot_violation_is_throwable() {
-        Python::attach(|_py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-
-            let seg = Segment::new(marker, None, vec![marker]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let k = vm.capture_continuation(None).unwrap();
-            let _ = vm.handle_resume(k.clone(), Value::Int(1));
-            let event = vm.handle_resume(k, Value::Int(2));
-
-            assert!(
-                matches!(event, StepEvent::Continue),
-                "G4a: expected Continue, got Error"
-            );
-            assert!(
-                vm.mode.is_throw(),
-                "G4a: expected Mode::Throw after one-shot violation"
-            );
-        });
-    }
-
-    /// G4b: Resume on unstarted continuation → Mode::Throw (catchable), not StepEvent::Error.
-    #[test]
-    fn test_g4b_resume_unstarted_is_throwable() {
-        Python::attach(|_py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-
-            let seg = Segment::new(marker, None, vec![marker]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let mut k = make_dummy_continuation();
-            k.started = false;
-
-            let event = vm.handle_resume(k, Value::Int(1));
-
-            assert!(
-                matches!(event, StepEvent::Continue),
-                "G4b: expected Continue, got Error"
-            );
-            assert!(
-                vm.mode.is_throw(),
-                "G4b: expected Mode::Throw for unstarted Resume"
-            );
-        });
-    }
-
-    /// G4c: Transfer on consumed continuation → Mode::Throw (catchable).
-    #[test]
-    fn test_g4c_transfer_one_shot_violation_is_throwable() {
-        Python::attach(|_py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-
-            let seg = Segment::new(marker, None, vec![marker]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let k = vm.capture_continuation(None).unwrap();
-            let _ = vm.handle_transfer(k.clone(), Value::Int(1));
-            let event = vm.handle_transfer(k, Value::Int(2));
-
-            assert!(
-                matches!(event, StepEvent::Continue),
-                "G4c: expected Continue, got Error"
-            );
-            assert!(
-                vm.mode.is_throw(),
-                "G4c: expected Mode::Throw after transfer one-shot"
-            );
-        });
-    }
-
-    #[test]
-    fn test_g8_pending_python_missing_is_runtime_error() {
-        let mut vm = VM::new();
-        vm.receive_python_result(PyCallOutcome::Value(Value::Unit));
-        assert!(
-            matches!(vm.mode, Mode::Throw(PyException::RuntimeError { .. })),
-            "G8 FAIL: missing pending_python must throw runtime error"
-        );
-    }
-
-    #[test]
-    fn test_g10_resume_continuation_preserves_handler_identity() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let id_obj = pyo3::types::PyDict::new(py).into_any().unbind();
-            let handler = std::sync::Arc::new(crate::handler::StateHandlerFactory);
-            let program = PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any());
-
-            let k = Continuation::create_unstarted_with_identities(
-                program,
-                vec![handler],
-                vec![Some(PyShared::new(id_obj.clone_ref(py)))],
-            );
-
-            let event = vm.handle_resume_continuation(k, Value::Unit);
-            assert!(matches!(
-                event,
-                StepEvent::NeedsPython(PythonCall::EvalExpr { .. })
-            ));
-
-            let seg_id = vm.current_segment.expect("missing current segment");
-            let seg = vm.segments.get(seg_id).expect("missing segment");
-            let marker = *seg.scope_chain.first().expect("missing handler marker");
-            let entry = vm.handlers.get(&marker).expect("missing handler entry");
-            let identity = entry
-                .py_identity
-                .as_ref()
-                .expect("G10 FAIL: continuation rehydration dropped handler identity");
-            assert!(
-                identity.bind(py).is(&id_obj.bind(py)),
-                "G10 FAIL: preserved identity does not match original"
-            );
-        });
-    }
-
-    /// G5/G6 TDD: Tests the full VM dispatch cycle with a handler that returns
-    /// NeedsPython from resume(). This exercises the critical path where the
-    /// second Python call result must be properly propagated back to the handler.
-    ///
-    /// The DoubleCallHandlerFactory handler does:
-    ///   start() → NeedsPython(call1)
-    ///   resume(result1) → NeedsPython(call2)   ← THIS is the critical path
-    ///   resume(result2) → Yield(Resume { value: result1 + result2 })
-    #[test]
-    fn test_needs_python_from_resume_propagates_correctly() {
-        use pyo3::Python;
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-
-            // Set up handler and segments
-            let prompt_seg = Segment::new(marker, None, vec![]);
-            let prompt_seg_id = vm.alloc_segment(prompt_seg);
-
-            let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
-            let body_seg_id = vm.alloc_segment(body_seg);
-            vm.current_segment = Some(body_seg_id);
-
-            vm.install_handler(
-                marker,
-                HandlerEntry::new(
-                    std::sync::Arc::new(crate::handler::DoubleCallHandlerFactory),
-                    prompt_seg_id,
-                ),
-            );
-
-            // Create a dummy Python modifier (won't actually be called — we feed results manually)
-            let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
-
-            // Step 1: start_dispatch sends Modify effect
-            let result = vm.start_dispatch(Effect::Modify {
-                key: "key".to_string(),
-                modifier: PyShared::new(modifier),
-            });
-            assert!(result.is_ok());
-            let event1 = result.unwrap();
-
-            // Should get NeedsPython for first call
-            assert!(
-                matches!(event1, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
-                "Expected NeedsPython for first call, got {:?}",
-                std::mem::discriminant(&event1)
-            );
-
-            // Step 2: Feed first Python result (100)
-            vm.receive_python_result(PyCallOutcome::Value(Value::Int(100)));
-
-            // After first resume(), handler returns NeedsPython again.
-            // The VM must surface this as a NeedsPython event, not silently lose it.
-            // With the fix, the frame is re-pushed and mode is set to Deliver(100),
-            // so stepping delivers 100 to the re-pushed frame, which calls resume(),
-            // which returns NeedsPython(call2).
-            let event2 = vm.step();
-            assert!(
-                matches!(event2, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
-                "Expected NeedsPython for SECOND call (from resume), got {:?}",
-                std::mem::discriminant(&event2)
-            );
-
-            // Step 3: Feed second Python result (200)
-            vm.receive_python_result(PyCallOutcome::Value(Value::Int(200)));
-
-            // After second resume(), handler yields Resume { value: 100 + 200 = 300 }
-            // step() delivers 200 to the re-pushed RustProgram frame, resume() returns
-            // Yield(Resume), which sets mode to HandleYield. This is a Continue.
-            let event3 = vm.step();
-            assert!(
-                matches!(event3, StepEvent::Continue),
-                "Expected Continue after Yield(Resume), got {:?}",
-                std::mem::discriminant(&event3)
-            );
-
-            // Step 4: Process the HandleYield(Resume) primitive.
-            // This calls handle_resume(k, 300) → marks dispatch complete.
-            let event4 = vm.step();
-            assert!(
-                matches!(event4, StepEvent::Continue),
-                "Expected Continue after handle_resume, got {:?}",
-                std::mem::discriminant(&event4)
-            );
-
-            // Verify dispatch was completed with combined value
-            assert!(
-                vm.dispatch_stack
-                    .last()
-                    .map(|d| d.completed)
-                    .unwrap_or(false),
-                "Dispatch should be marked complete"
-            );
-        });
-    }
-
-    // === SPEC-009 Gap TDD Tests ===
-
-    /// G3: Modify handler must resume caller with new_value (modifier result), not old_value.
-    #[test]
-    fn test_s009_g3_modify_resumes_with_new_value() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-
-            let prompt_seg = Segment::new(marker, None, vec![]);
-            let prompt_seg_id = vm.alloc_segment(prompt_seg);
-
-            let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
-            let body_seg_id = vm.alloc_segment(body_seg);
-            vm.current_segment = Some(body_seg_id);
-
-            vm.install_handler(
-                marker,
-                HandlerEntry::new(
-                    std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                    prompt_seg_id,
-                ),
-            );
-
-            vm.rust_store.put("x".to_string(), Value::Int(5));
-
-            let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            let result = vm.start_dispatch(Effect::Modify {
-                key: "x".to_string(),
-                modifier: PyShared::new(modifier),
-            });
-            assert!(result.is_ok());
-            let event = result.unwrap();
-            assert!(matches!(
-                event,
-                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
-            ));
-
-            // Feed modifier result: 5 * 10 = 50
-            vm.receive_python_result(PyCallOutcome::Value(Value::Int(50)));
-
-            // Step to process the resume
-            let event2 = vm.step();
-            assert!(matches!(event2, StepEvent::Continue));
-
-            // The mode should be HandleYield with Resume primitive
-            // SPEC-008 L1271: Modify returns OLD value (read-then-modify).
-            // The resume value should be 5 (old_value), NOT 50 (new_value).
-            match &vm.mode {
-                Mode::HandleYield(DoCtrl::Resume { value, .. }) => {
-                    assert_eq!(
-                        value.as_int(),
-                        Some(5),
-                        "G3 FAIL: Modify resumed with {} instead of 5 (old_value). \
-                         SPEC-008 L1271: Modify is read-then-modify, returns old value.",
-                        value.as_int().unwrap_or(-1)
-                    );
-                }
-                other => panic!(
-                    "G3: Expected HandleYield(Resume), got {:?}",
-                    std::mem::discriminant(other)
-                ),
-            }
-        });
-    }
-
-    /// D10: handle_handler_return must use Mode::Deliver (not Mode::Return)
-    /// and must NOT explicitly jump current_segment to prompt_seg_id.
-    #[test]
-    fn test_d10_handler_return_uses_deliver_not_return() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-
-        let prompt_seg = Segment::new(marker, None, vec![marker]);
-        let prompt_seg_id = vm.alloc_segment(prompt_seg);
-
-        let handler_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
-        let handler_seg_id = vm.alloc_segment(handler_seg);
-        vm.current_segment = Some(handler_seg_id);
-
-        vm.install_handler(
-            marker,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
-
-        let dispatch_id = DispatchId::fresh();
-        let k_user = Continuation {
-            cont_id: ContId::fresh(),
-            segment_id: prompt_seg_id,
-            frames_snapshot: std::sync::Arc::new(Vec::new()),
-            scope_chain: std::sync::Arc::new(vec![marker]),
-            marker,
-            dispatch_id: Some(dispatch_id),
-            started: true,
-            program: None,
-            handlers: Vec::new(),
-            handler_identities: Vec::new(),
-            metadata: None,
-            parent: None,
-        };
-
-        vm.dispatch_stack.push(DispatchContext {
-            dispatch_id,
-            effect: Effect::Get {
-                key: "x".to_string(),
-            },
-            is_execution_context_effect: false,
-            handler_chain: vec![marker],
-            handler_idx: 0,
-            supports_error_context_conversion: false,
-            k_user,
-            prompt_seg_id,
-            completed: false,
-            original_exception: None,
-        });
-
-        let event = vm.handle_handler_return(Value::Int(42));
-        assert!(matches!(event, StepEvent::Continue));
-
-        // D10: Mode must be Deliver, NOT Return
-        assert!(
-            matches!(vm.mode, Mode::Deliver(Value::Int(42))),
-            "D10 REGRESSION: handle_handler_return must use Mode::Deliver, got {:?}",
-            std::mem::discriminant(&vm.mode)
-        );
-
-        // D10: current_segment must NOT have jumped to prompt_seg_id
-        assert_eq!(
-            vm.current_segment,
-            Some(handler_seg_id),
-            "D10 REGRESSION: handle_handler_return must not explicitly jump current_segment"
-        );
-    }
-
-    // ==========================================================
-    // R9-A: DoCtrl::Apply — direct Python call dispatch tests
-    // ==========================================================
-
-    #[test]
-    fn test_apply_return_delivers_value_without_pushing_frame() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            let metadata = CallMetadata::new(
-                "test_apply".to_string(),
-                "test.py".to_string(),
-                1,
-                None,
-                None,
-            );
-
-            vm.mode = Mode::HandleYield(DoCtrl::Apply {
-                f: CallArg::Value(Value::Python(dummy_f)),
-                args: vec![],
-                kwargs: vec![],
-                metadata,
-            });
-
-            let event = vm.step_handle_yield();
-            assert!(matches!(
-                event,
-                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
-            ));
-            assert!(matches!(
-                vm.pending_python,
-                Some(PendingPython::CallFuncReturn { .. })
-            ));
-
-            vm.receive_python_result(PyCallOutcome::Value(Value::Int(7)));
-            assert!(matches!(vm.mode, Mode::Deliver(Value::Int(7))));
-            let seg = vm.segments.get(seg_id).expect("segment missing");
-            assert!(
-                seg.frames.is_empty(),
-                "Apply must not push a PythonGenerator frame"
-            );
-        });
-    }
-
-    #[test]
-    fn test_expand_requires_doeff_generator_or_errors() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let dummy_factory = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            let metadata = CallMetadata::new(
-                "test_expand".to_string(),
-                "test.py".to_string(),
-                1,
-                None,
-                None,
-            );
-
-            vm.mode = Mode::HandleYield(DoCtrl::Expand {
-                factory: CallArg::Value(Value::Python(dummy_factory)),
-                args: vec![],
-                kwargs: vec![],
-                metadata: metadata.clone(),
-            });
-
-            let event = vm.step_handle_yield();
-            assert!(matches!(
-                event,
-                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
-            ));
-            assert!(matches!(
-                vm.pending_python,
-                Some(PendingPython::ExpandReturn {
-                    metadata: Some(_),
-                    ..
-                })
-            ));
-
-            vm.receive_python_result(PyCallOutcome::Value(Value::Int(1)));
-            match &vm.mode {
-                Mode::Throw(PyException::TypeError { message }) => {
-                    assert!(message.contains("ExpandReturn: expected DoeffGenerator"));
-                }
-                other => panic!("expected Expand type error, got {:?}", other),
-            }
-            let seg = vm.segments.get(seg_id).expect("segment missing");
-            assert!(
-                seg.frames.is_empty(),
-                "Expand must not push a frame when return is invalid"
-            );
-        });
-    }
-
-    #[test]
-    fn test_expand_success_routes_through_aststream_doctrl() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let dummy_factory = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            let metadata = CallMetadata::new(
-                "test_expand".to_string(),
-                "test.py".to_string(),
-                1,
-                None,
-                None,
-            );
-
-            vm.mode = Mode::HandleYield(DoCtrl::Expand {
-                factory: CallArg::Value(Value::Python(dummy_factory)),
-                args: vec![],
-                kwargs: vec![],
-                metadata,
-            });
-            let event = vm.step_handle_yield();
-            assert!(matches!(
-                event,
-                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
-            ));
-
-            let locals = PyDict::new(py);
-            py.run(
-                c"def _gen():\n    yield 1\n\nraw = _gen()\n\ndef _get_frame(g):\n    return g.gi_frame\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .expect("failed to construct test generator");
-            let raw = locals
-                .get_item("raw")
-                .expect("locals lookup failed")
-                .expect("raw generator missing")
-                .unbind();
-            let get_frame = locals
-                .get_item("_get_frame")
-                .expect("locals lookup failed")
-                .expect("get_frame missing")
-                .unbind();
-            let kwargs = PyDict::new(py);
-            kwargs.set_item("generator", raw.bind(py)).unwrap();
-            kwargs.set_item("function_name", "test_gen").unwrap();
-            kwargs.set_item("source_file", "test_gen.py").unwrap();
-            kwargs.set_item("source_line", 99).unwrap();
-            kwargs.set_item("get_frame", get_frame.bind(py)).unwrap();
-            let wrapped = py
-                .get_type::<DoeffGenerator>()
-                .call((), Some(&kwargs))
-                .expect("failed to wrap DoeffGenerator")
-                .unbind();
-
-            vm.receive_python_result(PyCallOutcome::Value(Value::Python(wrapped)));
-            assert!(
-                matches!(vm.mode, Mode::HandleYield(DoCtrl::ASTStream { .. })),
-                "Expand success must route through DoCtrl::ASTStream, got {:?}",
-                std::mem::discriminant(&vm.mode)
-            );
-
-            let event = vm.step_handle_yield();
-            assert!(matches!(event, StepEvent::Continue));
-            let seg = vm.segments.get(seg_id).expect("segment missing");
-            assert_eq!(
-                seg.frames.len(),
-                1,
-                "ASTStream handling must push a Program frame before stepping"
-            );
-            assert!(matches!(seg.frames[0], Frame::Program { .. }));
-        });
-    }
-
-    /// R9-A: Apply with empty args/kwargs still dispatches via CallFunc.
-    #[test]
-    fn test_r9a_apply_empty_args_yields_call_func() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            let metadata = CallMetadata::new(
-                "test_thunk".to_string(),
-                "test.py".to_string(),
-                1,
-                None,
-                None,
-            );
-
-            vm.mode = Mode::HandleYield(DoCtrl::Apply {
-                f: CallArg::Value(Value::Python(dummy_f)),
-                args: vec![],
-                kwargs: vec![],
-                metadata: metadata.clone(),
-            });
-
-            let event = vm.step_handle_yield();
-
-            assert!(
-                matches!(event, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
-                "R9-A: empty args must yield CallFunc, got {:?}",
-                std::mem::discriminant(&event)
-            );
-
-            match &vm.pending_python {
-                Some(PendingPython::CallFuncReturn { metadata: Some(m) }) => {
-                    assert_eq!(m.function_name, "test_thunk");
-                }
-                other => panic!(
-                    "R9-A: pending_python must be CallFuncReturn with metadata, got {:?}",
-                    other
-                ),
-            }
-        });
-    }
-
-    /// R9-A: Apply with non-empty args → CallFunc.
-    /// Spec: "Kernel call (with args): Apply { f: kernel, args, kwargs, metadata }
-    ///        → driver calls kernel(*args, **kwargs), gets result, pushes frame."
-    #[test]
-    fn test_r9a_apply_with_args_yields_call_func() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            let metadata = CallMetadata::new(
-                "test_kernel".to_string(),
-                "test.py".to_string(),
-                10,
-                None,
-                None,
-            );
-
-            vm.mode = Mode::HandleYield(DoCtrl::Apply {
-                f: CallArg::Value(Value::Python(dummy_f)),
-                args: vec![
-                    CallArg::Value(Value::Int(42)),
-                    CallArg::Value(Value::String("hello".to_string())),
-                ],
-                kwargs: vec![],
-                metadata,
-            });
-
-            let event = vm.step_handle_yield();
-
-            match event {
-                StepEvent::NeedsPython(PythonCall::CallFunc { args, .. }) => {
-                    assert_eq!(args.len(), 2);
-                    assert_eq!(args[0].as_int(), Some(42));
-                    match &args[1] {
-                        Value::String(s) => assert_eq!(s, "hello"),
-                        other => panic!("R9-A: expected String arg, got {:?}", other),
-                    }
-                }
-                other => panic!(
-                    "R9-A: non-empty args must yield CallFunc, got {:?}",
-                    std::mem::discriminant(&other)
-                ),
-            }
-        });
-    }
-
-    /// R9-A: Apply with kwargs preserves them as separate field in CallFunc.
-    /// Spec: driver calls f(*args, **kwargs) — keyword semantics are preserved.
-    #[test]
-    fn test_r9a_apply_kwargs_preserved_separately() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            let metadata = CallMetadata::new(
-                "test_kwargs".to_string(),
-                "test.py".to_string(),
-                20,
-                None,
-                None,
-            );
-
-            vm.mode = Mode::HandleYield(DoCtrl::Apply {
-                f: CallArg::Value(Value::Python(dummy_f)),
-                args: vec![CallArg::Value(Value::Int(1))],
-                kwargs: vec![
-                    ("key1".to_string(), CallArg::Value(Value::Int(2))),
-                    (
-                        "key2".to_string(),
-                        CallArg::Value(Value::String("val".to_string())),
-                    ),
-                ],
-                metadata,
-            });
-
-            let event = vm.step_handle_yield();
-
-            match event {
-                StepEvent::NeedsPython(PythonCall::CallFunc { args, kwargs, .. }) => {
-                    assert_eq!(args.len(), 1, "R9-A: positional args preserved separately");
-                    assert_eq!(args[0].as_int(), Some(1));
-
-                    assert_eq!(kwargs.len(), 2, "R9-A: kwargs preserved separately");
-                    assert_eq!(kwargs[0].0, "key1");
-                    assert_eq!(kwargs[0].1.as_int(), Some(2));
-                    assert_eq!(kwargs[1].0, "key2");
-                    match &kwargs[1].1 {
-                        Value::String(s) => assert_eq!(s, "val"),
-                        other => panic!("R9-A: expected String kwarg value, got {:?}", other),
-                    }
-                }
-                other => panic!(
-                    "R9-A: kwargs call must yield CallFunc, got {:?}",
-                    std::mem::discriminant(&other)
-                ),
-            }
-        });
-    }
-
-    /// R9-A: Apply with only kwargs (no positional args) still takes CallFunc path.
-    /// Empty args but non-empty kwargs → not DoThunk path.
-    #[test]
-    fn test_r9a_apply_kwargs_only_takes_callfunc_path() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            let metadata = CallMetadata::new(
-                "test_kwargs_only".to_string(),
-                "test.py".to_string(),
-                30,
-                None,
-                None,
-            );
-
-            vm.mode = Mode::HandleYield(DoCtrl::Apply {
-                f: CallArg::Value(Value::Python(dummy_f)),
-                args: vec![],
-                kwargs: vec![(
-                    "name".to_string(),
-                    CallArg::Value(Value::String("test".to_string())),
-                )],
-                metadata,
-            });
-
-            let event = vm.step_handle_yield();
-
-            assert!(
-                matches!(event, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
-                "R9-A: kwargs-only call must yield CallFunc (not EvalExpr), got {:?}",
-                std::mem::discriminant(&event)
-            );
-        });
-    }
-
-    // ==========================================================
-    // R9-H: DoCtrl::Eval — atomic Create + Resume tests
-    // ==========================================================
-
-    /// R9-H: Eval creates unstarted continuation and resumes it via handle_resume_continuation.
-    /// Result: NeedsPython(EvalExpr { expr }) because unstarted continuation
-    /// now evaluates DoExpr directly.
-    #[test]
-    fn test_r9h_eval_creates_and_resumes_continuation() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
-
-            vm.mode = Mode::HandleYield(DoCtrl::Eval {
-                expr: PyShared::new(dummy_expr),
-                handlers: vec![],
-                metadata: None,
-            });
-
-            let event = vm.step_handle_yield();
-
-            assert!(
-                matches!(event, StepEvent::NeedsPython(PythonCall::EvalExpr { .. })),
-                "R9-H: Eval must create unstarted continuation and yield EvalExpr, got {:?}",
-                std::mem::discriminant(&event)
-            );
-
-            assert!(
-                matches!(
-                    vm.pending_python,
-                    Some(PendingPython::EvalExpr { metadata: None })
-                ),
-                "R9-H: Eval continuation has no metadata (metadata comes from Call, not Eval)"
-            );
-        });
-    }
-
-    /// R9-H: Eval with handlers installs them on the continuation scope.
-    /// Handlers are installed as prompt+body segment pairs by handle_resume_continuation.
-    #[test]
-    fn test_r9h_eval_with_handlers_installs_scope() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
-
-            let handler = std::sync::Arc::new(crate::handler::StateHandlerFactory);
-
-            vm.mode = Mode::HandleYield(DoCtrl::Eval {
-                expr: PyShared::new(dummy_expr),
-                handlers: vec![handler],
-                metadata: None,
-            });
-
-            let event = vm.step_handle_yield();
-
-            assert!(
-                matches!(event, StepEvent::NeedsPython(PythonCall::EvalExpr { .. })),
-                "R9-H: Eval with handlers must still yield EvalExpr"
-            );
-
-            assert!(
-                !vm.handlers.is_empty(),
-                "R9-H: Eval with handlers must install handler entries"
-            );
-
-            assert_ne!(
-                vm.current_segment,
-                Some(seg_id),
-                "R9-H: Eval must change current_segment to the body segment of installed handlers"
-            );
-        });
-    }
-
-    #[test]
-    fn test_g1_vm_step_path_has_no_assume_attached_calls() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
-        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
-        assert!(
-            !runtime_src.contains("assume_attached()"),
-            "G1 FAIL: vm.rs step/runtime path still uses assume_attached"
-        );
-    }
-
-    #[test]
-    fn test_transfer_to_continuation_only_in_transfer_next_or() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/scheduler.rs"));
-        let test_boundary = src.find("#[cfg(test)]").unwrap_or(src.len());
-        let runtime_src = &src[..test_boundary];
-
-        let mut violations: Vec<String> = Vec::new();
-        let target_fn = "fn transfer_next_or";
-        let call_pattern = "transfer_to_continuation(";
-
-        let fn_start = runtime_src.find(target_fn);
-
-        for (line_no, line) in runtime_src.lines().enumerate() {
-            if !line.contains(call_pattern) {
-                continue;
-            }
-            let trimmed = line.trim();
-            if trimmed.starts_with("//") || trimmed.starts_with("fn ") {
-                continue;
-            }
-
-            let line_offset = runtime_src
-                .lines()
-                .take(line_no)
-                .map(|l| l.len() + 1)
-                .sum::<usize>();
-            let inside_transfer_next_or = match fn_start {
-                Some(start) => {
-                    if line_offset < start {
-                        false
-                    } else {
-                        let between = &runtime_src[start..line_offset];
-                        let next_fn = between[target_fn.len()..].find("\nfn ");
-                        next_fn.is_none()
-                    }
-                }
-                None => false,
-            };
-
-            if !inside_transfer_next_or {
-                violations.push(format!("  line {}: {}", line_no + 1, trimmed));
-            }
-        }
-
-        assert!(
-            violations.is_empty(),
-            "transfer_to_continuation (Transfer) must only be called from transfer_next_or. \
-             Found in other locations:\n{}",
-            violations.join("\n")
-        );
-    }
-
-    fn caller_chain_length(vm: &VM) -> usize {
-        let mut count: usize = 0;
-        let mut current = vm.current_segment;
-        while let Some(seg_id) = current {
-            count += 1;
-            current = vm.segments.get(seg_id).and_then(|s| s.caller);
-        }
-        count
-    }
-
-    #[test]
-    fn test_transfer_caller_chain_stays_bounded() {
-        let mut vm = VM::new();
-
-        let mut continuations: Vec<Continuation> = Vec::new();
-        for _ in 0..2 {
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![marker]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-            continuations.push(vm.capture_continuation(None).unwrap());
-        }
-
-        for round in 0..64 {
-            let target: &Continuation = &continuations[round % 2];
-            let event = vm.handle_transfer(target.clone(), Value::Int(round as i64));
-            assert!(matches!(event, StepEvent::Continue));
-
-            let chain_len = caller_chain_length(&vm);
-            assert!(
-                chain_len <= 2,
-                "Round {}: caller chain length is {} — Transfer should sever \
-                 the chain (caller: None), keeping it at 1.",
-                round,
-                chain_len
-            );
-
-            vm.consumed_cont_ids.clear();
-            continuations[round % 2] = vm.capture_continuation(None).unwrap();
-        }
-    }
-
-    #[test]
-    fn test_resume_caller_chain_grows_linearly() {
-        let mut vm = VM::new();
-
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
-        let k = vm.capture_continuation(None).unwrap();
-
-        for round in 0..64 {
-            let event = vm.handle_resume(k.clone(), Value::Int(round as i64));
-            assert!(matches!(event, StepEvent::Continue));
-            vm.consumed_cont_ids.clear();
-        }
-
-        let chain_len = caller_chain_length(&vm);
-        assert!(
-            chain_len >= 60,
-            "Resume caller chain length is {} after 64 resumes — \
-             Resume should chain segments via caller, growing linearly.",
-            chain_len
-        );
-    }
-}
+#[path = "vm_tests.rs"]
+mod vm_tests;
