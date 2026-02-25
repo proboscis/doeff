@@ -1650,16 +1650,26 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::Delegate => {
                 let _d: PyRef<'_, PyDelegate> = obj.extract()?;
-                let effect = vm.dispatch_state.top_effect_cloned().ok_or_else(|| {
+                let dispatch_id = vm.current_dispatch_id().ok_or_else(|| {
                     PyRuntimeError::new_err("Delegate called outside dispatch context")
                 })?;
+                let effect = vm
+                    .dispatch_state
+                    .effect_for_dispatch(dispatch_id)
+                    .ok_or_else(|| {
+                        PyRuntimeError::new_err("Delegate dispatch context not found")
+                    })?;
                 Ok(DoCtrl::Delegate { effect })
             }
             DoExprTag::Pass => {
                 let _p: PyRef<'_, PyPass> = obj.extract()?;
-                let effect = vm.dispatch_state.top_effect_cloned().ok_or_else(|| {
+                let dispatch_id = vm.current_dispatch_id().ok_or_else(|| {
                     PyRuntimeError::new_err("Pass called outside dispatch context")
                 })?;
+                let effect = vm
+                    .dispatch_state
+                    .effect_for_dispatch(dispatch_id)
+                    .ok_or_else(|| PyRuntimeError::new_err("Pass dispatch context not found"))?;
                 Ok(DoCtrl::Pass { effect })
             }
             DoExprTag::ResumeContinuation => {

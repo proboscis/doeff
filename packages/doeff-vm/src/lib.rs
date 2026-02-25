@@ -34,6 +34,7 @@ pub mod segment;
 mod step;
 mod interceptor_state;
 mod trace_state;
+mod vm_logging;
 pub mod value;
 mod vm;
 

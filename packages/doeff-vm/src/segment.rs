@@ -1,7 +1,7 @@
 //! Segment types for delimited continuations.
 
 use crate::frame::Frame;
-use crate::ids::{Marker, SegmentId};
+use crate::ids::{DispatchId, Marker, SegmentId};
 
 #[derive(Debug, Clone)]
 pub enum SegmentKind {
@@ -16,6 +16,7 @@ pub struct Segment {
     pub caller: Option<SegmentId>,
     pub scope_chain: Vec<Marker>,
     pub kind: SegmentKind,
+    pub dispatch_id: Option<DispatchId>,
 }
 
 impl Segment {
@@ -26,6 +27,7 @@ impl Segment {
             caller,
             scope_chain,
             kind: SegmentKind::Normal,
+            dispatch_id: None,
         }
     }
 
@@ -41,6 +43,7 @@ impl Segment {
             caller,
             scope_chain,
             kind: SegmentKind::PromptBoundary { handled_marker },
+            dispatch_id: None,
         }
     }
 

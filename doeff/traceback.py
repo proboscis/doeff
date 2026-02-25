@@ -377,9 +377,11 @@ else:
         def format_default(self) -> str:
             lines: list[str] = ["doeff Traceback (most recent call last):", ""]
             previous_handler_stack: tuple[HandlerStackEntry, ...] | None = None
+            previous_spawn_boundary: SpawnBoundary | None = None
             for entry in self.active_chain:
                 if isinstance(entry, ProgramYield):
                     previous_handler_stack = None
+                    previous_spawn_boundary = None
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )
@@ -396,6 +398,7 @@ else:
                     else:
                         stack_line = self._render_handler_stack(entry.handler_stack)
                     previous_handler_stack = entry.handler_stack
+                    previous_spawn_boundary = None
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )
@@ -407,16 +410,21 @@ else:
 
                 if isinstance(entry, SpawnBoundary):
                     previous_handler_stack = None
+                    if previous_spawn_boundary == entry:
+                        continue
+                    previous_spawn_boundary = entry
                     lines.append(self._format_spawn_boundary(entry))
                     lines.append("")
                     continue
 
                 if isinstance(entry, ContextEntry):
                     previous_handler_stack = None
+                    previous_spawn_boundary = None
                     continue
 
                 if isinstance(entry, ExceptionSite):
                     previous_handler_stack = None
+                    previous_spawn_boundary = None
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )
