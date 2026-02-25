@@ -12,6 +12,10 @@ keywords = ["algebraic-effects", "vm", "python", "continuations"]
 name = "doeff_vm"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+vm_debug_logs = []
+
 [dependencies]
 pyo3 = { version = "0.28", features = ["py-clone"] }
 

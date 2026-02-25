@@ -258,7 +258,7 @@ impl DebugState {
 
         let pending = self.pending_kind(pending_python);
 
-        eprintln!(
+        crate::vm_debug_log!(
             "[step {}] mode={} {} dispatch_depth={} pending={}",
             self.step_counter, mode_kind, seg_info, dispatch_depth, pending
         );
@@ -271,7 +271,7 @@ impl DebugState {
                         Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)",
                         Frame::Program { .. } => "Program",
                     };
-                    eprintln!("  frame[{}]: {}", i, frame_kind);
+                    crate::vm_debug_log!("  frame[{}]: {}", i, frame_kind);
                 }
             }
         }
@@ -282,7 +282,7 @@ impl DebugState {
             StepEvent::Continue => "Continue",
             StepEvent::Done(_) => "Done",
             StepEvent::Error(e) => {
-                eprintln!("[step {}] -> Error: {}", self.step_counter, e);
+                crate::vm_debug_log!("[step {}] -> Error: {}", self.step_counter, e);
                 return;
             }
             StepEvent::NeedsPython(call) => {
@@ -294,12 +294,12 @@ impl DebugState {
                     PythonCall::GenThrow { .. } => "GenThrow",
                     PythonCall::CallAsync { .. } => "CallAsync",
                 };
-                eprintln!("[step {}] -> NeedsPython({})", self.step_counter, call_kind);
+                crate::vm_debug_log!("[step {}] -> NeedsPython({})", self.step_counter, call_kind);
                 return;
             }
         };
         if self.config.level == DebugLevel::Trace {
-            eprintln!("[step {}] -> {}", self.step_counter, result_kind);
+            crate::vm_debug_log!("[step {}] -> {}", self.step_counter, result_kind);
         }
     }
 }
