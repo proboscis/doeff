@@ -256,15 +256,11 @@ impl DispatchState {
     pub(crate) fn mark_dispatch_threw(
         &mut self,
         dispatch_id: DispatchId,
-        _consumed_cont_ids: &mut HashSet<ContId>,
+        consumed_cont_ids: &mut HashSet<ContId>,
     ) {
-        if let Some(ctx) = self
-            .dispatch_stack
-            .iter_mut()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-        {
+        if let Some(ctx) = self.find_mut_by_dispatch_id(dispatch_id) {
             ctx.completed = true;
+            consumed_cont_ids.insert(ctx.k_user.cont_id);
         }
     }
 

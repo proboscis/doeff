@@ -912,10 +912,15 @@ impl VM {
                 if let Some(original) = self.active_error_dispatch_original_exception() {
                     TraceState::set_exception_cause(&exc, &original);
                 }
-                if let Some(dispatch_id) = self
-                    .current_segment_dispatch_id()
-                    .or_else(|| self.dispatch_state.active_top_dispatch_id())
-                {
+                let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
+                    let dispatch_id = self.current_dispatch_id()?;
+                    if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
+                        Some(dispatch_id)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(dispatch_id) = dispatch_id {
                     self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &exc);
                     self.mark_dispatch_threw(dispatch_id);
                 }
@@ -939,16 +944,22 @@ impl VM {
                     ));
                 };
                 seg.push_frame(Frame::Program { stream, metadata });
-                let top = self
-                    .dispatch_state
-                    .top()
-                    .expect("RustProgramContinuation: handler always runs inside dispatch");
-                let marker = top
+                let Some(dispatch_id) = self.current_dispatch_id() else {
+                    return StepEvent::Error(VMError::internal(
+                        "RustProgramContinuation outside dispatch",
+                    ));
+                };
+                let Some(ctx) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
+                    return StepEvent::Error(VMError::internal(
+                        "RustProgramContinuation: dispatch context not found",
+                    ));
+                };
+                let marker = ctx
                     .handler_chain
-                    .get(top.handler_idx)
+                    .get(ctx.handler_idx)
                     .copied()
                     .unwrap_or_else(Marker::fresh);
-                let k = top.k_user.clone();
+                let k = ctx.k_user.clone();
                 self.pending_python = Some(PendingPython::RustProgramContinuation { marker, k });
                 StepEvent::NeedsPython(call)
             }
@@ -1952,10 +1963,15 @@ impl VM {
 
     fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
         if handler_return {
-            if let Some(dispatch_id) = self
-                .current_segment_dispatch_id()
-                .or_else(|| self.dispatch_state.active_top_dispatch_id())
-            {
+            let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
+                let dispatch_id = self.current_dispatch_id()?;
+                if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
+                    Some(dispatch_id)
+                } else {
+                    None
+                }
+            });
+            if let Some(dispatch_id) = dispatch_id {
                 if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
                     TraceState::set_exception_cause(&exception, &original);
                 }
@@ -2343,7 +2359,9 @@ impl VM {
             ContinuationActivationKind::Resume => {
                 self.check_dispatch_completion(k);
             }
-            ContinuationActivationKind::Transfer => {}
+            ContinuationActivationKind::Transfer => {
+                self.check_dispatch_completion(k);
+            }
         }
     }
 
@@ -2411,8 +2429,9 @@ impl VM {
         let error_dispatch = self.error_dispatch_for_continuation(&k);
         self.record_continuation_activation(kind, &k, &value);
 
-        if let Some((_dispatch_id, original_exception, terminal)) = error_dispatch {
+        if let Some((dispatch_id, original_exception, terminal)) = error_dispatch {
             if terminal {
+                self.mark_dispatch_completed(dispatch_id);
                 let enriched_exception =
                     match Self::enrich_original_exception_with_context(original_exception, value) {
                         Ok(exception) => exception,
