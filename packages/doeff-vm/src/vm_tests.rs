@@ -257,9 +257,52 @@ fn test_lazy_pop_completed() {
     vm.lazy_pop_completed();
     assert_eq!(vm.dispatch_state.depth(), 3);
 
-    vm.dispatch_state.top_mut().unwrap().completed = true;
+    let top_dispatch_id = vm
+        .dispatch_state
+        .get(2)
+        .expect("expected top dispatch context")
+        .dispatch_id;
+    vm.dispatch_state
+        .find_mut_by_dispatch_id(top_dispatch_id)
+        .expect("expected top dispatch context by id")
+        .completed = true;
     vm.lazy_pop_completed();
     assert_eq!(vm.dispatch_state.depth(), 0);
+}
+
+#[test]
+fn test_current_segment_dispatch_id_ignores_completed_dispatch_context() {
+    let mut vm = VM::new();
+    let marker = Marker::fresh();
+    let dispatch_id = DispatchId::fresh();
+    let mut seg = Segment::new(marker, None, vec![marker]);
+    seg.dispatch_id = Some(dispatch_id);
+    let seg_id = vm.alloc_segment(seg);
+    vm.current_segment = Some(seg_id);
+
+    vm.dispatch_state.push_dispatch(DispatchContext {
+        dispatch_id,
+        effect: Effect::Get {
+            key: "x".to_string(),
+        },
+        is_execution_context_effect: false,
+        handler_chain: vec![marker],
+        handler_idx: 0,
+        supports_error_context_conversion: false,
+        k_user: Continuation {
+            dispatch_id: Some(dispatch_id),
+            ..make_dummy_continuation()
+        },
+        prompt_seg_id: seg_id,
+        completed: true,
+        original_exception: None,
+    });
+
+    assert!(
+        vm.current_segment_dispatch_id().is_none(),
+        "completed dispatch context must not be returned as current dispatch",
+    );
+    assert!(vm.current_dispatch_id().is_none());
 }
 
 #[test]
@@ -811,13 +854,16 @@ fn test_handle_delegate_links_previous_k_as_parent() {
     let event = vm.handle_delegate(Effect::get("x"));
     assert!(matches!(event, StepEvent::Error(_)));
 
-    let top = vm.dispatch_state.top().expect("dispatch context must exist");
-    let parent = top
+    let ctx = vm
+        .dispatch_state
+        .find_by_dispatch_id(dispatch_id)
+        .expect("dispatch context must exist");
+    let parent = ctx
         .k_user
         .parent
         .as_ref()
         .expect("delegate must set parent");
-    assert_ne!(top.k_user.cont_id, original_cont_id);
+    assert_ne!(ctx.k_user.cont_id, original_cont_id);
     assert_eq!(parent.cont_id, original_cont_id);
 }
 
@@ -1222,7 +1268,80 @@ fn test_gap12_dispatch_completion_via_k_user() {
         ..make_dummy_continuation()
     };
     vm.check_dispatch_completion(&k);
-    assert!(vm.dispatch_state.top().unwrap().completed);
+    assert!(
+        vm.dispatch_state
+            .find_by_dispatch_id(dispatch_id)
+            .expect("dispatch context should exist")
+            .completed
+    );
+}
+
+#[test]
+fn test_terminal_error_resume_marks_only_target_dispatch_completed() {
+    let mut vm = VM::new();
+    let marker = Marker::fresh();
+    let seg = Segment::new(marker, None, vec![marker]);
+    let seg_id = vm.alloc_segment(seg);
+    vm.current_segment = Some(seg_id);
+
+    let outer_dispatch_id = DispatchId::fresh();
+    let outer_k = Continuation {
+        dispatch_id: Some(outer_dispatch_id),
+        ..make_dummy_continuation()
+    };
+    vm.dispatch_state.push_dispatch(DispatchContext {
+        dispatch_id: outer_dispatch_id,
+        effect: Effect::Get {
+            key: "outer".to_string(),
+        },
+        is_execution_context_effect: false,
+        handler_chain: vec![marker],
+        handler_idx: 0,
+        supports_error_context_conversion: false,
+        k_user: outer_k.clone(),
+        prompt_seg_id: seg_id,
+        completed: false,
+        original_exception: None,
+    });
+
+    let inner_dispatch_id = DispatchId::fresh();
+    let inner_k = Continuation {
+        dispatch_id: Some(inner_dispatch_id),
+        ..make_dummy_continuation()
+    };
+    vm.dispatch_state.push_dispatch(DispatchContext {
+        dispatch_id: inner_dispatch_id,
+        effect: Effect::Get {
+            key: "inner".to_string(),
+        },
+        is_execution_context_effect: false,
+        handler_chain: vec![marker],
+        handler_idx: 0,
+        supports_error_context_conversion: false,
+        k_user: inner_k.clone(),
+        prompt_seg_id: seg_id,
+        completed: false,
+        original_exception: Some(PyException::runtime_error("original failure")),
+    });
+
+    let event = vm.handle_resume(inner_k, Value::String("context".to_string()));
+    assert!(matches!(event, StepEvent::Continue));
+    assert!(matches!(vm.mode, Mode::Throw(_)));
+
+    assert!(
+        vm.dispatch_state
+            .find_by_dispatch_id(inner_dispatch_id)
+            .expect("inner dispatch should exist")
+            .completed,
+        "terminal error dispatch must be completed",
+    );
+    assert!(
+        !vm.dispatch_state
+            .find_by_dispatch_id(outer_dispatch_id)
+            .expect("outer dispatch should exist")
+            .completed,
+        "outer dispatch must remain active",
+    );
 }
 
 /// G13: Delegate should take Effect (not Option<Effect>).
@@ -1585,6 +1704,11 @@ fn test_needs_python_from_resume_propagates_correctly() {
         });
         assert!(result.is_ok());
         let event1 = result.unwrap();
+        let dispatch_id = vm
+            .dispatch_state
+            .get(0)
+            .expect("dispatch context must exist")
+            .dispatch_id;
 
         // Should get NeedsPython for first call
         assert!(
@@ -1633,11 +1757,98 @@ fn test_needs_python_from_resume_propagates_correctly() {
         // Verify dispatch was completed with combined value
         assert!(
             vm.dispatch_state
-                .top()
+                .find_by_dispatch_id(dispatch_id)
                 .map(|d| d.completed)
                 .unwrap_or(false),
             "Dispatch should be marked complete"
         );
+    });
+}
+
+#[test]
+fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
+    Python::attach(|py| {
+        let mut vm = VM::new();
+
+        let outer_marker = Marker::fresh();
+        let inner_marker = Marker::fresh();
+
+        let outer_dispatch_id = DispatchId::fresh();
+        let mut outer_seg = Segment::new(outer_marker, None, vec![outer_marker, inner_marker]);
+        outer_seg.dispatch_id = Some(outer_dispatch_id);
+        let seg_id = vm.alloc_segment(outer_seg);
+        vm.current_segment = Some(seg_id);
+
+        let outer_k = Continuation {
+            dispatch_id: Some(outer_dispatch_id),
+            ..make_dummy_continuation()
+        };
+        vm.dispatch_state.push_dispatch(DispatchContext {
+            dispatch_id: outer_dispatch_id,
+            effect: Effect::Get {
+                key: "outer".to_string(),
+            },
+            is_execution_context_effect: false,
+            handler_chain: vec![outer_marker],
+            handler_idx: 0,
+            supports_error_context_conversion: false,
+            k_user: outer_k.clone(),
+            prompt_seg_id: seg_id,
+            completed: false,
+            original_exception: None,
+        });
+
+        let inner_dispatch_id = DispatchId::fresh();
+        let inner_k = Continuation {
+            dispatch_id: Some(inner_dispatch_id),
+            ..make_dummy_continuation()
+        };
+        vm.dispatch_state.push_dispatch(DispatchContext {
+            dispatch_id: inner_dispatch_id,
+            effect: Effect::Get {
+                key: "inner".to_string(),
+            },
+            is_execution_context_effect: false,
+            handler_chain: vec![inner_marker],
+            handler_idx: 0,
+            supports_error_context_conversion: false,
+            k_user: inner_k.clone(),
+            prompt_seg_id: seg_id,
+            completed: false,
+            original_exception: None,
+        });
+
+        let stream: ASTStreamRef = Arc::new(Mutex::new(
+            Box::new(DummyProgramStream) as Box<dyn ASTStream>,
+        ));
+        let call = PythonCall::CallFunc {
+            func: PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any()),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+        };
+        let event = vm.apply_stream_step(ASTStreamStep::NeedsPython(call), stream, None);
+        assert!(matches!(
+            event,
+            StepEvent::NeedsPython(PythonCall::CallFunc { .. })
+        ));
+
+        match vm.pending_python.as_ref() {
+            Some(PendingPython::RustProgramContinuation { marker, k }) => {
+                assert_eq!(
+                    *marker, outer_marker,
+                    "needs-python continuation must use current segment dispatch context",
+                );
+                assert_eq!(
+                    k.cont_id, outer_k.cont_id,
+                    "needs-python continuation must target current dispatch continuation",
+                );
+                assert_ne!(k.cont_id, inner_k.cont_id);
+            }
+            other => panic!(
+                "expected RustProgramContinuation pending state, got {:?}",
+                other
+            ),
+        }
     });
 }
 

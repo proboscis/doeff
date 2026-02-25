@@ -39,18 +39,6 @@ impl DispatchState {
         &self.dispatch_stack
     }
 
-    pub(crate) fn top(&self) -> Option<&DispatchContext> {
-        self.dispatch_stack.last()
-    }
-
-    pub(crate) fn top_mut(&mut self) -> Option<&mut DispatchContext> {
-        self.dispatch_stack.last_mut()
-    }
-
-    pub(crate) fn top_cloned(&self) -> Option<DispatchContext> {
-        self.dispatch_stack.last().cloned()
-    }
-
     pub(crate) fn get(&self, idx: usize) -> Option<&DispatchContext> {
         self.dispatch_stack.get(idx)
     }
@@ -61,19 +49,6 @@ impl DispatchState {
 
     pub(crate) fn push_dispatch(&mut self, ctx: DispatchContext) {
         self.dispatch_stack.push(ctx);
-    }
-
-    pub(crate) fn active_top_dispatch_id(&self) -> Option<DispatchId> {
-        self.top().filter(|ctx| !ctx.completed).map(|ctx| ctx.dispatch_id)
-    }
-
-    pub(crate) fn top_effect_cloned(&self) -> Option<DispatchEffect> {
-        self.top().map(|ctx| ctx.effect.clone())
-    }
-
-    pub(crate) fn top_original_exception(&self) -> Option<(DispatchId, PyException)> {
-        self.top()
-            .and_then(|ctx| ctx.original_exception.clone().map(|exc| (ctx.dispatch_id, exc)))
     }
 
     pub(crate) fn find_by_dispatch_id(&self, dispatch_id: DispatchId) -> Option<&DispatchContext> {
