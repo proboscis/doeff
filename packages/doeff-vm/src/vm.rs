@@ -2171,6 +2171,25 @@ impl VM {
     }
 
     fn check_dispatch_completion(&mut self, k: &Continuation) {
+        if let Some(dispatch_id) = k.dispatch_id {
+            let is_python_handler = self
+                .dispatch_state
+                .find_by_dispatch_id(dispatch_id)
+                .and_then(|ctx| ctx.handler_chain.get(ctx.handler_idx))
+                .and_then(|marker| self.handlers.get(marker))
+                .is_some_and(|entry| entry.handler.py_identity().is_some());
+            if self.dispatch_state.depth() == 1
+                && is_python_handler
+                && self
+                    .dispatch_state
+                    .find_by_dispatch_id(dispatch_id)
+                    .is_some_and(|ctx| {
+                        ctx.k_user.cont_id == k.cont_id && ctx.k_user.parent.is_none()
+                    })
+            {
+                return;
+            }
+        }
         self.dispatch_state.check_dispatch_completion(k);
     }
 
@@ -2179,11 +2198,6 @@ impl VM {
         k: &Continuation,
     ) -> Option<(DispatchId, PyException, bool)> {
         self.dispatch_state.error_dispatch_for_continuation(k)
-    }
-
-    fn active_dispatch_handler_is_python(&self, dispatch_id: DispatchId) -> bool {
-        self.dispatch_state
-            .active_dispatch_handler_is_python(dispatch_id, &self.handlers)
     }
 
     fn mark_dispatch_threw(&mut self, dispatch_id: DispatchId) {
@@ -2286,23 +2300,11 @@ impl VM {
         match kind {
             ContinuationActivationKind::Resume => {
                 if had_error_dispatch {
-                    if let Some(dispatch_id) = k.dispatch_id {
-                        if !self.active_dispatch_handler_is_python(dispatch_id) {
-                            self.check_dispatch_completion(k);
-                        }
-                    } else {
-                        self.check_dispatch_completion(k);
-                    }
+                    self.check_dispatch_completion(k);
                     return;
                 }
 
-                if let Some(dispatch_id) = k.dispatch_id {
-                    if !self.active_dispatch_handler_is_python(dispatch_id) {
-                        self.check_dispatch_completion(k);
-                    }
-                } else {
-                    self.check_dispatch_completion(k);
-                }
+                self.check_dispatch_completion(k);
             }
             ContinuationActivationKind::Transfer => {
                 self.check_dispatch_completion(k);
@@ -2373,13 +2375,7 @@ impl VM {
     }
 
     fn check_dispatch_completion_for_non_terminal_throw(&mut self, k: &Continuation) {
-        if let Some(dispatch_id) = k.dispatch_id {
-            if !self.active_dispatch_handler_is_python(dispatch_id) {
-                self.check_dispatch_completion(k);
-            }
-        } else {
-            self.check_dispatch_completion(k);
-        }
+        self.check_dispatch_completion(k);
     }
 
     fn activate_throw_continuation(
