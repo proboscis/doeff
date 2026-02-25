@@ -1785,6 +1785,7 @@ fn test_apply_return_delivers_value_without_pushing_frame() {
             args: vec![],
             kwargs: vec![],
             metadata,
+            evaluate_result: false,
         });
 
         let event = vm.step_handle_yield();
@@ -1803,6 +1804,97 @@ fn test_apply_return_delivers_value_without_pushing_frame() {
         assert!(
             seg.frames.is_empty(),
             "Apply must not push a PythonGenerator frame"
+        );
+    });
+}
+
+#[test]
+fn test_apply_return_reenters_handle_yield_when_evaluate_result_true() {
+    Python::attach(|py| {
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![]);
+        let seg_id = vm.alloc_segment(seg);
+        vm.current_segment = Some(seg_id);
+
+        let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
+        let metadata = CallMetadata::new(
+            "test_apply_eval_true".to_string(),
+            "test.py".to_string(),
+            1,
+            None,
+            None,
+        );
+
+        vm.mode = Mode::HandleYield(DoCtrl::Apply {
+            f: CallArg::Value(Value::Python(dummy_f)),
+            args: vec![],
+            kwargs: vec![],
+            metadata,
+            evaluate_result: true,
+        });
+
+        let event = vm.step_handle_yield();
+        assert!(matches!(
+            event,
+            StepEvent::NeedsPython(PythonCall::CallFunc { .. })
+        ));
+
+        let pure = py.get_type::<crate::pyvm::PyPure>().call1((7i64,)).unwrap().unbind();
+        vm.receive_python_result(PyCallOutcome::Value(Value::Python(pure)));
+
+        match &vm.mode {
+            Mode::HandleYield(DoCtrl::Pure {
+                value: Value::Int(value),
+            }) => {
+                assert_eq!(*value, 7);
+            }
+            other => panic!(
+                "evaluate_result=true should re-enter HandleYield(Pure), got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
+    });
+}
+
+#[test]
+fn test_apply_return_preserves_doexpr_value_when_evaluate_result_false() {
+    Python::attach(|py| {
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![]);
+        let seg_id = vm.alloc_segment(seg);
+        vm.current_segment = Some(seg_id);
+
+        let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
+        let metadata = CallMetadata::new(
+            "test_apply_eval_false".to_string(),
+            "test.py".to_string(),
+            1,
+            None,
+            None,
+        );
+
+        vm.mode = Mode::HandleYield(DoCtrl::Apply {
+            f: CallArg::Value(Value::Python(dummy_f)),
+            args: vec![],
+            kwargs: vec![],
+            metadata,
+            evaluate_result: false,
+        });
+
+        let event = vm.step_handle_yield();
+        assert!(matches!(
+            event,
+            StepEvent::NeedsPython(PythonCall::CallFunc { .. })
+        ));
+
+        let pure = py.get_type::<crate::pyvm::PyPure>().call1((9i64,)).unwrap().unbind();
+        vm.receive_python_result(PyCallOutcome::Value(Value::Python(pure)));
+
+        assert!(
+            matches!(vm.mode, Mode::Deliver(Value::Python(_))),
+            "evaluate_result=false should preserve Python DoExpr as value"
         );
     });
 }
@@ -1962,6 +2054,7 @@ fn test_r9a_apply_empty_args_yields_call_func() {
             args: vec![],
             kwargs: vec![],
             metadata: metadata.clone(),
+            evaluate_result: false,
         });
 
         let event = vm.step_handle_yield();
@@ -1973,7 +2066,10 @@ fn test_r9a_apply_empty_args_yields_call_func() {
         );
 
         match &vm.pending_python {
-            Some(PendingPython::CallFuncReturn { metadata: Some(m) }) => {
+            Some(PendingPython::CallFuncReturn {
+                metadata: Some(m),
+                ..
+            }) => {
                 assert_eq!(m.function_name, "test_thunk");
             }
             other => panic!(
@@ -2013,6 +2109,7 @@ fn test_r9a_apply_with_args_yields_call_func() {
             ],
             kwargs: vec![],
             metadata,
+            evaluate_result: false,
         });
 
         let event = vm.step_handle_yield();
@@ -2065,6 +2162,7 @@ fn test_r9a_apply_kwargs_preserved_separately() {
                 ),
             ],
             metadata,
+            evaluate_result: false,
         });
 
         let event = vm.step_handle_yield();
@@ -2119,6 +2217,7 @@ fn test_r9a_apply_kwargs_only_takes_callfunc_path() {
                 CallArg::Value(Value::String("test".to_string())),
             )],
             metadata,
+            evaluate_result: false,
         });
 
         let event = vm.step_handle_yield();

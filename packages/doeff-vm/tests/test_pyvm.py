@@ -1533,6 +1533,10 @@ def test_tag_on_concrete_instances():
 
     apply = Apply(lambda x: x, [1], {}, meta)
     assert apply.tag == TAG_APPLY
+    assert apply.evaluate_result is True
+
+    apply_no_eval = Apply(lambda x: x, [1], {}, meta, False)
+    assert apply_no_eval.evaluate_result is False
 
     expand = Expand(lambda x: x, [1], {}, meta)
     assert expand.tag == TAG_EXPAND

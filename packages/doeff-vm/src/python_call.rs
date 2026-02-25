@@ -39,6 +39,7 @@ pub enum PendingPython {
     },
     CallFuncReturn {
         metadata: Option<CallMetadata>,
+        evaluate_result: bool,
     },
     StepUserGenerator {
         stream: ASTStreamRef,
