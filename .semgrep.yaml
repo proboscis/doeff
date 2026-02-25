@@ -258,8 +258,73 @@ rules:
         - "**/doeff/effects/semaphore.py"
         - "**/doeff/effects/future.py"
         - "**/doeff/effects/result.py"
-        - "**/doeff/effects/trace.py"
-        - "**/doeff/effects/callstack.py"
+
+  # ---------------------------------------------------------------------------
+  # VM DECOMPOSITION ENFORCEMENT (VM-DECOMPOSE-002)
+  # ---------------------------------------------------------------------------
+
+  - id: vm-decompose-no-impl-vm-outside-vm-rs
+    patterns:
+      - pattern: |
+          impl VM {
+              ...
+          }
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+      exclude:
+        - "**/packages/doeff-vm/src/vm.rs"
+    message: |
+      BANNED: `impl VM` blocks are only allowed in vm.rs.
+      Extracted sub-structs must define methods on their own type
+      (e.g., `impl InterceptorState`), not on VM.
+      VM orchestrates by calling sub-struct methods, not by owning the logic.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-decomposition
+      issue: VM-DECOMPOSE-002
+      principle: SRP, composition-over-inheritance
+
+  - id: vm-decompose-no-use-super-wildcard
+    pattern: use super::*;
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/debug_state.rs"
+        - "**/packages/doeff-vm/src/trace_state.rs"
+        - "**/packages/doeff-vm/src/interceptor_state.rs"
+        - "**/packages/doeff-vm/src/dispatch_state.rs"
+    message: |
+      BANNED: `use super::*` hides dependencies and defeats decomposition.
+      Use explicit imports: `use super::{SpecificType, AnotherType};`
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-decomposition
+      issue: VM-DECOMPOSE-002
+      principle: explicit-dependencies
+
+  - id: vm-decompose-no-pub-fields-on-substructs
+    patterns:
+      - pattern-regex: "\\bpub\\s+[A-Za-z_][A-Za-z0-9_]*\\s*:"
+      - pattern-not-regex: "\\bpub\\s*\\(\\s*crate\\s*\\)\\s+[A-Za-z_][A-Za-z0-9_]*\\s*:"
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/interceptor_state.rs"
+        - "**/packages/doeff-vm/src/dispatch_state.rs"
+        - "**/packages/doeff-vm/src/trace_state.rs"
+        - "**/packages/doeff-vm/src/debug_state.rs"
+    message: |
+      BANNED: Sub-struct fields must not be `pub`. Use `pub(crate)` or private
+      with accessor methods. Public fields break encapsulation and allow
+      bypassing the sub-struct's interface.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-decomposition
+      issue: VM-DECOMPOSE-002
+      principle: ISP, encapsulation
 
   - id: doeff-no-python-task-id-extraction
     patterns:
