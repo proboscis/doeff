@@ -2066,6 +2066,7 @@ impl VM {
             DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
             DoCtrl::Apply { .. } => "HandleYield(Apply)",
             DoCtrl::Expand { .. } => "HandleYield(Expand)",
+            DoCtrl::ASTStream { .. } => "HandleYield(ASTStream)",
             DoCtrl::Eval { .. } => "HandleYield(Eval)",
             DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
             DoCtrl::GetTrace => "HandleYield(GetTrace)",
@@ -2625,11 +2626,10 @@ impl VM {
     ) -> Result<CallArg, PyException> {
         Python::attach(|py| {
             let callable = interceptor_callable.bind(py);
-            let is_do_callable =
-                callable.is_instance_of::<DoeffGeneratorFn>()
-                    || callable
-                        .getattr("_doeff_generator_factory")
-                        .is_ok_and(|factory| factory.is_instance_of::<DoeffGeneratorFn>());
+            let is_do_callable = callable.is_instance_of::<DoeffGeneratorFn>()
+                || callable
+                    .getattr("_doeff_generator_factory")
+                    .is_ok_and(|factory| factory.is_instance_of::<DoeffGeneratorFn>());
 
             // @do callables are expanded as DoCtrl::Expand and evaluate expression arguments.
             // Wrap the yielded object in Pure(...) so interceptor functions receive the original
@@ -2682,10 +2682,11 @@ impl VM {
             (
                 doctrl_tag,
                 bound.is_instance_of::<PyEffectBase>(),
-                bound.is_instance_of::<PyDoExprBase>(),
+                bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<DoeffGenerator>(),
             )
         });
-        let is_direct_expr = is_effect_base || doctrl_tag.is_some_and(|tag| tag != DoExprTag::Expand);
+        let is_direct_expr =
+            is_effect_base || doctrl_tag.is_some_and(|tag| tag != DoExprTag::Expand);
 
         if is_direct_expr {
             let transformed = match self.classify_interceptor_result_object(
@@ -2771,15 +2772,17 @@ impl VM {
             ));
         };
 
-        let transformed =
-            match self.classify_interceptor_result_object(result_obj, &original_obj, original_yielded)
-            {
-                Ok(expr) => expr,
-                Err(exc) => {
-                    self.pop_interceptor_skip(marker);
-                    return Mode::Throw(exc);
-                }
-            };
+        let transformed = match self.classify_interceptor_result_object(
+            result_obj,
+            &original_obj,
+            original_yielded,
+        ) {
+            Ok(expr) => expr,
+            Err(exc) => {
+                self.pop_interceptor_skip(marker);
+                return Mode::Throw(exc);
+            }
+        };
         self.pop_interceptor_skip(marker);
         self.continue_interceptor_chain_mode(transformed, stream, metadata, chain, next_idx)
     }
@@ -2868,6 +2871,9 @@ impl VM {
                 kwargs,
                 metadata,
             } => self.handle_yield_expand(factory, args, kwargs, metadata),
+            DoCtrl::ASTStream { stream, metadata } => {
+                self.handle_yield_ast_stream(stream, metadata)
+            }
             DoCtrl::Eval {
                 expr,
                 handlers,
@@ -3158,6 +3164,25 @@ impl VM {
         })
     }
 
+    fn handle_yield_ast_stream(
+        &mut self,
+        stream: ASTStreamRef,
+        metadata: Option<CallMetadata>,
+    ) -> StepEvent {
+        if let Some(ref m) = metadata {
+            self.maybe_emit_frame_entered(m);
+        }
+        let Some(seg) = self.current_segment_mut() else {
+            self.mode = Mode::Throw(PyException::runtime_error(
+                "current_segment_mut() returned None in handle_yield_ast_stream",
+            ));
+            return StepEvent::Continue;
+        };
+        seg.push_frame(Frame::Program { stream, metadata });
+        self.mode = Mode::Deliver(Value::Unit);
+        StepEvent::Continue
+    }
+
     fn handle_yield_eval(
         &mut self,
         expr: PyShared,
@@ -3381,8 +3406,7 @@ impl VM {
                         seg.push_frame(Frame::RustReturn {
                             cb: handler_return_cb,
                         });
-                        seg.push_frame(Frame::Program { stream, metadata });
-                        self.mode = Mode::Deliver(Value::Unit);
+                        self.mode = Mode::HandleYield(DoCtrl::ASTStream { stream, metadata });
                     }
                     Err(exception) => {
                         self.mode = Mode::Throw(exception);
@@ -3400,18 +3424,7 @@ impl VM {
             Value::Python(generator) => {
                 match Self::extract_doeff_generator(generator, metadata, "ExpandReturn") {
                     Ok((stream, metadata)) => {
-                        if let Some(ref m) = metadata {
-                            self.maybe_emit_frame_entered(m);
-                        }
-                        let Some(seg) = self.current_segment_mut() else {
-                            self.mode = Mode::Throw(PyException::runtime_error(
-                                "current_segment_mut() returned None in receive_python_result \
-                             ExpandReturn(program)",
-                            ));
-                            return;
-                        };
-                        seg.push_frame(Frame::Program { stream, metadata });
-                        self.mode = Mode::Deliver(Value::Unit);
+                        self.mode = Mode::HandleYield(DoCtrl::ASTStream { stream, metadata });
                     }
                     Err(exception) => {
                         self.mode = Mode::Throw(exception);
@@ -6539,6 +6552,84 @@ mod tests {
                 seg.frames.is_empty(),
                 "Expand must not push a frame when return is invalid"
             );
+        });
+    }
+
+    #[test]
+    fn test_expand_success_routes_through_aststream_doctrl() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_factory = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let metadata = CallMetadata::new(
+                "test_expand".to_string(),
+                "test.py".to_string(),
+                1,
+                None,
+                None,
+            );
+
+            vm.mode = Mode::HandleYield(DoCtrl::Expand {
+                factory: CallArg::Value(Value::Python(dummy_factory)),
+                args: vec![],
+                kwargs: vec![],
+                metadata,
+            });
+            let event = vm.step_handle_yield();
+            assert!(matches!(
+                event,
+                StepEvent::NeedsPython(PythonCall::CallFunc { .. })
+            ));
+
+            let locals = PyDict::new(py);
+            py.run(
+                c"def _gen():\n    yield 1\n\nraw = _gen()\n\ndef _get_frame(g):\n    return g.gi_frame\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .expect("failed to construct test generator");
+            let raw = locals
+                .get_item("raw")
+                .expect("locals lookup failed")
+                .expect("raw generator missing")
+                .unbind();
+            let get_frame = locals
+                .get_item("_get_frame")
+                .expect("locals lookup failed")
+                .expect("get_frame missing")
+                .unbind();
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("generator", raw.bind(py)).unwrap();
+            kwargs.set_item("function_name", "test_gen").unwrap();
+            kwargs.set_item("source_file", "test_gen.py").unwrap();
+            kwargs.set_item("source_line", 99).unwrap();
+            kwargs.set_item("get_frame", get_frame.bind(py)).unwrap();
+            let wrapped = py
+                .get_type::<DoeffGenerator>()
+                .call((), Some(&kwargs))
+                .expect("failed to wrap DoeffGenerator")
+                .unbind();
+
+            vm.receive_python_result(PyCallOutcome::Value(Value::Python(wrapped)));
+            assert!(
+                matches!(vm.mode, Mode::HandleYield(DoCtrl::ASTStream { .. })),
+                "Expand success must route through DoCtrl::ASTStream, got {:?}",
+                std::mem::discriminant(&vm.mode)
+            );
+
+            let event = vm.step_handle_yield();
+            assert!(matches!(event, StepEvent::Continue));
+            let seg = vm.segments.get(seg_id).expect("segment missing");
+            assert_eq!(
+                seg.frames.len(),
+                1,
+                "ASTStream handling must push a Program frame before stepping"
+            );
+            assert!(matches!(seg.frames[0], Frame::Program { .. }));
         });
     }
 
