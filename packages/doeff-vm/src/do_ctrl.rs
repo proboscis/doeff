@@ -2,6 +2,7 @@
 
 use pyo3::prelude::*;
 
+use crate::ast_stream::ASTStreamRef;
 use crate::continuation::Continuation;
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
@@ -102,6 +103,10 @@ pub enum DoCtrl {
         args: Vec<CallArg>,
         kwargs: Vec<(String, CallArg)>,
         metadata: CallMetadata,
+    },
+    ASTStream {
+        stream: ASTStreamRef,
+        metadata: Option<CallMetadata>,
     },
     Eval {
         expr: PyShared,
@@ -239,6 +244,10 @@ impl DoCtrl {
                 factory: factory.clone(),
                 args: args.clone(),
                 kwargs: kwargs.clone(),
+                metadata: metadata.clone(),
+            },
+            DoCtrl::ASTStream { stream, metadata } => DoCtrl::ASTStream {
+                stream: stream.clone(),
                 metadata: metadata.clone(),
             },
             DoCtrl::Eval {

@@ -1,18 +1,18 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
+use crate::ast_stream::{ASTStream, PythonGeneratorStream};
 use crate::do_ctrl::{CallArg, DoCtrl, InterceptMode};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
     dispatch_from_shared, dispatch_ref_as_python, PyAcquireSemaphore, PyAsk, PyCancelEffect,
-    PyCompletePromise,
-    PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyExecutionContext, PyFailPromise,
-    PyGather, PyGet, PyGetExecutionContext, PyLocal, PyModify, PyProgramCallFrame,
-    PyProgramCallStack, PyProgramTrace, PyPut, PyPythonAsyncioAwaitEffect, PyRace,
-    PyReleaseSemaphore, PyResultSafeEffect, PySpawn, PyTaskCompleted, PyTell,
+    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore,
+    PyExecutionContext, PyFailPromise, PyGather, PyGet, PyGetExecutionContext, PyLocal, PyModify,
+    PyProgramCallFrame, PyProgramCallStack, PyProgramTrace, PyPut, PyPythonAsyncioAwaitEffect,
+    PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn, PyTaskCompleted, PyTell,
 };
 
 // ---------------------------------------------------------------------------
@@ -1112,7 +1112,9 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 .into_any()
                 .unbind(),
             ),
-            DoCtrl::Perform { effect } => dispatch_ref_as_python(effect).map(|value| value.clone_ref(py)),
+            DoCtrl::Perform { effect } => {
+                dispatch_ref_as_python(effect).map(|value| value.clone_ref(py))
+            }
             DoCtrl::Resume {
                 continuation,
                 value,
@@ -1439,6 +1441,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                     .unbind(),
                 )
             }
+            DoCtrl::ASTStream { .. } => None,
             DoCtrl::Eval { expr, handlers, .. } => {
                 let list = PyList::empty(py);
                 for handler in handlers {
@@ -1496,6 +1499,62 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
         };
 
         Ok(obj)
+    })
+}
+
+fn merged_metadata_from_doeff(
+    inherited: Option<CallMetadata>,
+    function_name: String,
+    source_file: String,
+    source_line: u32,
+) -> Option<CallMetadata> {
+    match inherited {
+        Some(metadata) => Some(metadata),
+        None => Some(CallMetadata::new(
+            function_name,
+            source_file,
+            source_line,
+            None,
+            None,
+        )),
+    }
+}
+
+fn classify_doeff_generator_as_aststream(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+    inherited_metadata: Option<CallMetadata>,
+    context: &str,
+) -> PyResult<DoCtrl> {
+    let wrapped: PyRef<'_, DoeffGenerator> = obj.extract().map_err(|_| {
+        let ty = obj
+            .get_type()
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string());
+        PyTypeError::new_err(format!("{context}: expected DoeffGenerator, got {ty}"))
+    })?;
+
+    if !wrapped.get_frame.bind(py).is_callable() {
+        return Err(PyTypeError::new_err(format!(
+            "{context}: DoeffGenerator.get_frame must be callable"
+        )));
+    }
+
+    let stream: Arc<Mutex<Box<dyn ASTStream>>> =
+        Arc::new(Mutex::new(Box::new(PythonGeneratorStream::new(
+            PyShared::new(wrapped.generator.clone_ref(py)),
+            PyShared::new(wrapped.get_frame.clone_ref(py)),
+        )) as Box<dyn ASTStream>));
+
+    Ok(DoCtrl::ASTStream {
+        stream,
+        metadata: merged_metadata_from_doeff(
+            inherited_metadata,
+            wrapped.factory_function_name().to_string(),
+            wrapped.factory_source_file().to_string(),
+            wrapped.factory_source_line(),
+        ),
     })
 }
 
@@ -1614,7 +1673,9 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::Resume => {
                 let r: PyRef<'_, PyResume> = obj.extract()?;
                 let k_pyobj = r.continuation.bind(py).cast::<PyK>().map_err(|_| {
-                    PyTypeError::new_err("Resume.continuation must be K (opaque continuation handle)")
+                    PyTypeError::new_err(
+                        "Resume.continuation must be K (opaque continuation handle)",
+                    )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
                 let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
@@ -1653,7 +1714,9 @@ pub(crate) fn classify_yielded_bound(
                     .dispatch_stack
                     .last()
                     .map(|ctx| ctx.effect.clone())
-                    .ok_or_else(|| PyRuntimeError::new_err("Delegate called outside dispatch context"))?;
+                    .ok_or_else(|| {
+                        PyRuntimeError::new_err("Delegate called outside dispatch context")
+                    })?;
                 Ok(DoCtrl::Delegate { effect })
             }
             DoExprTag::Pass => {
@@ -1662,7 +1725,9 @@ pub(crate) fn classify_yielded_bound(
                     .dispatch_stack
                     .last()
                     .map(|ctx| ctx.effect.clone())
-                    .ok_or_else(|| PyRuntimeError::new_err("Pass called outside dispatch context"))?;
+                    .ok_or_else(|| {
+                        PyRuntimeError::new_err("Pass called outside dispatch context")
+                    })?;
                 Ok(DoCtrl::Pass { effect })
             }
             DoExprTag::ResumeContinuation => {
@@ -1751,10 +1816,14 @@ pub(crate) fn classify_yielded_bound(
         };
     }
 
+    if obj.is_instance_of::<DoeffGenerator>() {
+        return classify_doeff_generator_as_aststream(py, obj, None, "yielded value");
+    }
+
     if obj.is_instance_of::<PyDoExprBase>() {
-        let to_generator = obj
-            .getattr("to_generator")
-            .map_err(|_| PyTypeError::new_err("DoExpr object is missing callable to_generator()"))?;
+        let to_generator = obj.getattr("to_generator").map_err(|_| {
+            PyTypeError::new_err("DoExpr object is missing callable to_generator()")
+        })?;
         if !to_generator.is_callable() {
             return Err(PyTypeError::new_err("DoExpr.to_generator must be callable"));
         }
@@ -1763,18 +1832,20 @@ pub(crate) fn classify_yielded_bound(
             .name()
             .map(|n| n.to_string())
             .unwrap_or_else(|_| "DoExpr".to_string());
-        return Ok(DoCtrl::Expand {
-            factory: CallArg::Value(Value::Python(to_generator.unbind())),
-            args: vec![],
-            kwargs: vec![],
-            metadata: CallMetadata::new(
-                format!("{ty_name}.to_generator"),
-                "<doexpr>".to_string(),
-                0,
-                None,
-                Some(PyShared::new(obj.clone().unbind())),
-            ),
-        });
+        let generated = to_generator.call0()?;
+        let metadata = CallMetadata::new(
+            format!("{ty_name}.to_generator"),
+            "<doexpr>".to_string(),
+            0,
+            None,
+            Some(PyShared::new(obj.clone().unbind())),
+        );
+        return classify_doeff_generator_as_aststream(
+            py,
+            generated.as_any(),
+            Some(metadata),
+            "DoExpr.to_generator",
+        );
     }
 
     // Fallback: bare effect -> auto-lift to Perform (R14-C)
@@ -2304,7 +2375,9 @@ impl PyWithIntercept {
         let types = types.unwrap_or_else(|| PyTuple::empty(py).into_any().unbind());
         let types_bound = types.bind(py);
         if !types_bound.is_instance_of::<PyTuple>() {
-            return Err(PyTypeError::new_err("WithIntercept.types must be tuple[type, ...]"));
+            return Err(PyTypeError::new_err(
+                "WithIntercept.types must be tuple[type, ...]",
+            ));
         }
         for item in types_bound.try_iter()? {
             let item = item?;
@@ -3391,6 +3464,48 @@ mod tests {
             assert!(
                 yielded.is_err(),
                 "R12-A: raw generators must be rejected (no VM base class), got {:?}",
+                yielded
+            );
+        });
+    }
+
+    #[test]
+    fn test_classify_doeff_generator_promotes_to_aststream_doctrl() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"def make_gen():\n    yield 1\nraw = make_gen()\n\ndef get_frame(g):\n    return g.gi_frame\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+
+            let raw = locals
+                .get_item("raw")
+                .expect("locals.get_item failed")
+                .expect("raw generator missing")
+                .unbind();
+            let get_frame = locals
+                .get_item("get_frame")
+                .expect("locals.get_item failed")
+                .expect("get_frame missing")
+                .unbind();
+            let kwargs = pyo3::types::PyDict::new(py);
+            kwargs.set_item("generator", raw.bind(py)).unwrap();
+            kwargs.set_item("function_name", "make_gen").unwrap();
+            kwargs.set_item("source_file", "sample.py").unwrap();
+            kwargs.set_item("source_line", 10).unwrap();
+            kwargs.set_item("get_frame", get_frame.bind(py)).unwrap();
+            let wrapped = py
+                .get_type::<DoeffGenerator>()
+                .call((), Some(&kwargs))
+                .expect("DoeffGenerator construction failed");
+
+            let yielded = pyvm.classify_yielded(py, &wrapped).unwrap();
+            assert!(
+                matches!(yielded, DoCtrl::ASTStream { .. }),
+                "DoeffGenerator must classify to DoCtrl::ASTStream, got {:?}",
                 yielded
             );
         });
