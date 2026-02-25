@@ -913,7 +913,7 @@ impl VM {
                     TraceState::set_exception_cause(&exc, &original);
                 }
                 let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
-                    let dispatch_id = self.current_dispatch_id()?;
+                    let dispatch_id = self.current_segment_dispatch_id_any()?;
                     if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
                         Some(dispatch_id)
                     } else {
@@ -1964,7 +1964,7 @@ impl VM {
     fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
         if handler_return {
             let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
-                let dispatch_id = self.current_dispatch_id()?;
+                let dispatch_id = self.current_segment_dispatch_id_any()?;
                 if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
                     Some(dispatch_id)
                 } else {
@@ -2011,9 +2011,36 @@ impl VM {
             }
             PyCallOutcome::GenError(exception) => {
                 let mut site = GenErrorSite::StepUserGeneratorDirect;
+                if let Some(dispatch_id) = self.current_segment_dispatch_id_any().and_then(|id| {
+                    let completed = self
+                        .dispatch_state
+                        .find_by_dispatch_id(id)
+                        .is_some_and(|ctx| ctx.completed);
+                    if completed && self.dispatch_uses_user_continuation_stream(id, &stream) {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                }) {
+                    site = GenErrorSite::StepUserGeneratorConverted;
+                    if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
+                        TraceState::set_exception_cause(&exception, &original);
+                    }
+                    self.mode = self.mode_after_generror(site, exception, false);
+                    return;
+                }
                 let active_dispatch_id = self.current_active_handler_dispatch_id();
-                if let Some(dispatch_id) =
-                    active_dispatch_id.or_else(|| self.current_segment_dispatch_id())
+                let fallback_active_handler_dispatch = || {
+                    let dispatch_id = self.current_segment_dispatch_id_any()?;
+                    if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
+                        Some(dispatch_id)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(dispatch_id) = active_dispatch_id
+                    .or_else(|| self.current_segment_dispatch_id())
+                    .or_else(fallback_active_handler_dispatch)
                 {
                     if self.dispatch_uses_user_continuation_stream(dispatch_id, &stream) {
                         site = GenErrorSite::StepUserGeneratorConverted;
@@ -2104,6 +2131,24 @@ impl VM {
     }
 
     fn current_segment_dispatch_id(&self) -> Option<DispatchId> {
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            let seg = self.segments.get(seg_id)?;
+            if let Some(dispatch_id) = seg.dispatch_id {
+                if self
+                    .dispatch_state
+                    .find_by_dispatch_id(dispatch_id)
+                    .is_some_and(|ctx| !ctx.completed)
+                {
+                    return Some(dispatch_id);
+                }
+            }
+            cursor = seg.caller;
+        }
+        None
+    }
+
+    fn current_segment_dispatch_id_any(&self) -> Option<DispatchId> {
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
             let seg = self.segments.get(seg_id)?;

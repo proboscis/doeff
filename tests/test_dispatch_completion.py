@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from doeff import (
@@ -9,6 +8,7 @@ from doeff import (
     CachePut,
     Delegate,
     EffectGenerator,
+    Modify,
     Pass,
     Resume,
     Transfer,
@@ -20,6 +20,7 @@ from doeff import (
 )
 from doeff.effects.base import EffectBase
 from doeff.effects.cache import CacheGetEffect, CachePutEffect
+from doeff.rust_vm import GetExecutionContext
 
 
 def _with_handlers(program: Any, *handlers: Any) -> Any:
@@ -220,7 +221,7 @@ def test_inner_handler_resumes_then_raises_in_nested_dispatch() -> None:
 
 
 def test_transfer_completes_dispatch_for_subsequent_effects() -> None:
-    """Blocker A regression guard: Transfer must complete dispatch context."""
+    """Blocker A guard: Transfer dispatches must not accumulate stranded contexts."""
 
     @dataclass(frozen=True, kw_only=True)
     class TransferPing(EffectBase):
@@ -233,15 +234,18 @@ def test_transfer_completes_dispatch_for_subsequent_effects() -> None:
         yield Transfer(k, effect.value)
 
     @do
-    def program() -> EffectGenerator[tuple[str, str]]:
-        first = yield TransferPing(value="first")
-        second = yield TransferPing(value="second")
-        return first, second
+    def program() -> EffectGenerator[tuple[int, ...]]:
+        values: list[int] = []
+        for i in range(8):
+            values.append((yield TransferPing(value=i)))
+        return tuple(values)
 
     wrapped = _with_handlers(program(), transfer_handler)
-    result = run(wrapped, handlers=default_handlers())
+    result = run(wrapped, handlers=default_handlers(), trace=True)
     assert _is_ok(result), result.error
-    assert result.value == ("first", "second")
+    assert result.value == tuple(range(8))
+    trace = list(result.trace)
+    assert max(row["dispatch_depth"] for row in trace) == 1
 
 
 def test_thrown_dispatch_consumes_continuation_and_rejects_late_resume() -> None:
@@ -276,32 +280,65 @@ def test_thrown_dispatch_consumes_continuation_and_rejects_late_resume() -> None
 
 
 def test_terminal_error_dispatch_does_not_strand_followup_dispatch() -> None:
-    """Blocker C regression guard: terminal error path must still complete dispatch."""
+    """Blocker C guard: repeated terminal error dispatches must not leak dispatch depth."""
+
+    seen_execution_context: list[int] = []
+
+    def observe_execution_context(effect: object, k: object):
+        if isinstance(effect, GetExecutionContext):
+            seen_execution_context.append(1)
+            context = yield Delegate()
+            return (yield Resume(k, context))
+        yield Pass()
 
     @do
     def failing_program() -> EffectGenerator[None]:
         raise ValueError("terminal failure")
 
     @do
-    def program() -> EffectGenerator[tuple[bool, str]]:
-        first = yield Try(failing_program())
+    def program() -> EffectGenerator[tuple[list[bool], str]]:
+        failures: list[bool] = []
+        for _ in range(6):
+            attempt = yield Try(failing_program())
+            failures.append(attempt.is_err())
         second = yield Greet(name="after-error")
-        return first.is_err(), second
+        return failures, second
 
-    wrapped = _with_handlers(program(), greet_handler)
-    result = run(wrapped, handlers=default_handlers())
+    wrapped = _with_handlers(program(), observe_execution_context, greet_handler)
+    result = run(wrapped, handlers=default_handlers(), trace=True)
     assert _is_ok(result), result.error
-    assert result.value == (True, "hello after-error")
+    failures, greeting = result.value
+    assert failures == [True] * 6
+    assert greeting == "hello after-error"
+    assert len(seen_execution_context) == 6
+    trace = list(result.trace)
+    assert max(row["dispatch_depth"] for row in trace) <= 2
 
 
-def test_rust_program_continuation_uses_dispatch_id_lookup_source_guard() -> None:
-    """Minor D guard: RustProgramContinuation context lookup must not use stack top()."""
+def test_rust_program_continuation_path_runs_under_nested_dispatch() -> None:
+    """Minor D runtime guard: nested dispatch can drive RustProgramContinuation path safely."""
 
-    root = Path(__file__).resolve().parents[1]
-    vm_src = (root / "packages" / "doeff-vm" / "src" / "vm.rs").read_text(encoding="utf-8")
+    @dataclass(frozen=True, kw_only=True)
+    class NestedModify(EffectBase):
+        delta: int
 
-    assert "RustProgramContinuation: handler always runs inside dispatch" not in vm_src
-    assert ".top()" not in vm_src.partition("NeedsPython rust continuation")[2].split(
-        "StepEvent::NeedsPython(call)"
-    )[0]
-    assert "RustProgramContinuation: dispatch context not found" in vm_src
+    def nested_modify_handler(effect: object, k: object):
+        if not isinstance(effect, NestedModify):
+            yield Pass()
+            return
+        old = yield Modify("counter", lambda value: value + effect.delta)
+        return (yield Resume(k, old))
+
+    @do
+    def program() -> EffectGenerator[tuple[int, int]]:
+        first_old = yield NestedModify(delta=1)
+        second_old = yield NestedModify(delta=2)
+        return first_old, second_old
+
+    wrapped = _with_handlers(program(), nested_modify_handler)
+    result = run(wrapped, handlers=default_handlers(), store={"counter": 0}, trace=True)
+    assert _is_ok(result), result.error
+    assert result.value == (0, 1)
+    trace = list(result.trace)
+    assert any(row["result"] == "NeedsPython(CallFunc)" for row in trace)
+    assert max(row["dispatch_depth"] for row in trace) >= 2
