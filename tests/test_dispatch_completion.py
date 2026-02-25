@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from doeff import (
@@ -10,6 +11,8 @@ from doeff import (
     EffectGenerator,
     Pass,
     Resume,
+    Transfer,
+    Try,
     WithHandler,
     default_handlers,
     do,
@@ -214,3 +217,91 @@ def test_inner_handler_resumes_then_raises_in_nested_dispatch() -> None:
     assert _is_err(result)
     assert isinstance(result.error, RuntimeError)
     assert "inner post-resume boom" in str(result.error)
+
+
+def test_transfer_completes_dispatch_for_subsequent_effects() -> None:
+    """Blocker A regression guard: Transfer must complete dispatch context."""
+
+    @dataclass(frozen=True, kw_only=True)
+    class TransferPing(EffectBase):
+        value: str
+
+    def transfer_handler(effect: object, k: object):
+        if not isinstance(effect, TransferPing):
+            yield Pass()
+            return
+        yield Transfer(k, effect.value)
+
+    @do
+    def program() -> EffectGenerator[tuple[str, str]]:
+        first = yield TransferPing(value="first")
+        second = yield TransferPing(value="second")
+        return first, second
+
+    wrapped = _with_handlers(program(), transfer_handler)
+    result = run(wrapped, handlers=default_handlers())
+    assert _is_ok(result), result.error
+    assert result.value == ("first", "second")
+
+
+def test_thrown_dispatch_consumes_continuation_and_rejects_late_resume() -> None:
+    """Blocker B regression guard: thrown dispatch must consume its continuation."""
+
+    captured: dict[str, object] = {}
+
+    @dataclass(frozen=True, kw_only=True)
+    class ThrowAndCapture(EffectBase):
+        tag: str = "boom"
+
+    def throwing_handler(effect: object, k: object):
+        if not isinstance(effect, ThrowAndCapture):
+            yield Pass()
+            return
+        captured["k"] = k
+        raise RuntimeError("handler exploded")
+
+    @do
+    def program() -> EffectGenerator[tuple[object, object]]:
+        first = yield Try(ThrowAndCapture())
+        late = yield Try(Resume(captured["k"], "late-resume"))
+        return first, late
+
+    wrapped = _with_handlers(program(), throwing_handler)
+    result = run(wrapped, handlers=default_handlers())
+    assert _is_ok(result), result.error
+    first, late = result.value
+    assert first.is_err()
+    assert late.is_err()
+    assert "one-shot violation" in str(late.error)
+
+
+def test_terminal_error_dispatch_does_not_strand_followup_dispatch() -> None:
+    """Blocker C regression guard: terminal error path must still complete dispatch."""
+
+    @do
+    def failing_program() -> EffectGenerator[None]:
+        raise ValueError("terminal failure")
+
+    @do
+    def program() -> EffectGenerator[tuple[bool, str]]:
+        first = yield Try(failing_program())
+        second = yield Greet(name="after-error")
+        return first.is_err(), second
+
+    wrapped = _with_handlers(program(), greet_handler)
+    result = run(wrapped, handlers=default_handlers())
+    assert _is_ok(result), result.error
+    assert result.value == (True, "hello after-error")
+
+
+def test_rust_program_continuation_uses_dispatch_id_lookup_source_guard() -> None:
+    """Minor D guard: RustProgramContinuation context lookup must not use stack top()."""
+
+    root = Path(__file__).resolve().parents[1]
+    vm_src = (root / "packages" / "doeff-vm" / "src" / "vm.rs").read_text(encoding="utf-8")
+
+    assert "RustProgramContinuation: handler always runs inside dispatch" not in vm_src
+    assert ".top()" not in vm_src.partition("NeedsPython rust continuation")[2].split(
+        "StepEvent::NeedsPython(call)"
+    )[0]
+    assert "RustProgramContinuation: dispatch context not found" in vm_src
