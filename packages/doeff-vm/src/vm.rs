@@ -1107,6 +1107,7 @@ impl VM {
             args: vec![interceptor_arg],
             kwargs: vec![],
             metadata: interceptor_meta,
+            evaluate_result: false,
         })
     }
 
@@ -1307,7 +1308,8 @@ impl VM {
                 args,
                 kwargs,
                 metadata,
-            } => self.handle_yield_apply(f, args, kwargs, metadata),
+                evaluate_result,
+            } => self.handle_yield_apply(f, args, kwargs, metadata, evaluate_result),
             // PendingPython::ExpandReturn is set in handle_yield_expand.
             DoCtrl::Expand {
                 factory,
@@ -1453,6 +1455,7 @@ impl VM {
         args: Vec<CallArg>,
         kwargs: Vec<(String, CallArg)>,
         metadata: CallMetadata,
+        evaluate_result: bool,
     ) -> StepEvent {
         if let CallArg::Expr(expr) = &f {
             let expr = expr.clone();
@@ -1464,6 +1467,7 @@ impl VM {
                         args,
                         kwargs,
                         metadata,
+                        evaluate_result,
                     })
                 }),
             );
@@ -1480,6 +1484,7 @@ impl VM {
                         args,
                         kwargs,
                         metadata,
+                        evaluate_result,
                     })
                 }),
             );
@@ -1496,6 +1501,7 @@ impl VM {
                         args,
                         kwargs,
                         metadata,
+                        evaluate_result,
                     })
                 }),
             );
@@ -1519,6 +1525,7 @@ impl VM {
 
         self.pending_python = Some(PendingPython::CallFuncReturn {
             metadata: Some(metadata),
+            evaluate_result,
         });
         StepEvent::NeedsPython(PythonCall::CallFunc {
             func,
@@ -1753,9 +1760,10 @@ impl VM {
             PendingPython::EvalExpr { metadata } => {
                 self.receive_eval_expr_result(metadata, outcome)
             }
-            PendingPython::CallFuncReturn { metadata } => {
-                self.receive_call_func_result(metadata, outcome)
-            }
+            PendingPython::CallFuncReturn {
+                metadata,
+                evaluate_result,
+            } => self.receive_call_func_result(metadata, evaluate_result, outcome),
             PendingPython::ExpandReturn {
                 metadata,
                 handler_return,
@@ -1791,11 +1799,26 @@ impl VM {
     fn receive_call_func_result(
         &mut self,
         _metadata: Option<CallMetadata>,
+        evaluate_result: bool,
         outcome: PyCallOutcome,
     ) {
         match outcome {
             PyCallOutcome::Value(value) => {
-                self.mode = Mode::Deliver(value);
+                if evaluate_result {
+                    match self.classify_apply_result_as_doctrl(&value) {
+                        Ok(Some(doctrl)) => {
+                            self.mode = Mode::HandleYield(doctrl);
+                        }
+                        Ok(None) => {
+                            self.mode = Mode::Deliver(value);
+                        }
+                        Err(exception) => {
+                            self.mode = Mode::Throw(exception);
+                        }
+                    }
+                } else {
+                    self.mode = Mode::Deliver(value);
+                }
             }
             PyCallOutcome::GenError(exception) => {
                 self.mode =
@@ -1805,6 +1828,23 @@ impl VM {
                 self.receive_unexpected_outcome();
             }
         }
+    }
+
+    fn classify_apply_result_as_doctrl(&self, value: &Value) -> Result<Option<DoCtrl>, PyException> {
+        let Value::Python(result_obj) = value else {
+            return Ok(None);
+        };
+
+        Python::attach(|py| {
+            let result_bound = result_obj.bind(py);
+            let is_expression_like = result_bound.is_instance_of::<PyDoExprBase>()
+                || result_bound.is_instance_of::<DoeffGenerator>()
+                || result_bound.is_instance_of::<PyEffectBase>();
+            if !is_expression_like {
+                return Ok(None);
+            }
+            classify_yielded_for_vm(self, py, result_bound).map(Some)
+        })
     }
 
     fn receive_expand_result(
@@ -2792,6 +2832,7 @@ impl VM {
                 args: vec![CallArg::Value(value)],
                 kwargs: vec![],
                 metadata: mapper_meta.clone(),
+                evaluate_result: false,
             })
         }));
 
