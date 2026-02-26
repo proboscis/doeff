@@ -9,7 +9,6 @@ use crate::dispatch::DispatchContext;
 use crate::doeff_generator::DoeffGenerator;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
-use crate::handler::HandlerEntry;
 use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase};
@@ -26,12 +25,23 @@ impl InterceptorState {
         self.interceptors.clear();
     }
 
-    pub(crate) fn current_chain(&self, scope_chain: &[Marker]) -> Vec<Marker> {
-        scope_chain
-            .iter()
-            .copied()
-            .filter(|marker| self.interceptors.contains_key(marker))
-            .collect()
+    pub(crate) fn current_chain(
+        &self,
+        current_segment: Option<SegmentId>,
+        segments: &SegmentArena,
+    ) -> Vec<Marker> {
+        let mut chain = Vec::new();
+        let mut cursor = current_segment;
+        while let Some(seg_id) = cursor {
+            let Some(seg) = segments.get(seg_id) else {
+                break;
+            };
+            if self.interceptors.contains_key(&seg.marker) {
+                chain.push(seg.marker);
+            }
+            cursor = seg.caller;
+        }
+        chain
     }
 
     pub(crate) fn visible_to_active_handler(
@@ -40,7 +50,6 @@ impl InterceptorState {
         dispatch_stack: &[DispatchContext],
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
-        handlers: &HashMap<Marker, HandlerEntry>,
     ) -> bool {
         let Some(top) = dispatch_stack.last() else {
             return true;
@@ -63,16 +72,32 @@ impl InterceptorState {
             return true;
         }
 
-        let Some(entry) = handlers.get(&handler_marker) else {
-            debug_assert!(false, "handler marker not in registry");
-            return false;
+        let Some(prompt_seg_id) = seg.caller else {
+            return true;
         };
-        let Some(prompt_seg) = segments.get(entry.prompt_seg_id) else {
-            debug_assert!(false, "prompt segment missing");
-            return false;
+        let Some(prompt_seg) = segments.get(prompt_seg_id) else {
+            return true;
         };
+        if !matches!(
+            prompt_seg.kind,
+            crate::segment::SegmentKind::PromptBoundary { .. }
+        ) {
+            return true;
+        }
 
-        prompt_seg.scope_chain.contains(&interceptor_marker)
+        let mut cursor = prompt_seg.caller;
+        while let Some(seg_id) = cursor {
+            let Some(candidate) = segments.get(seg_id) else {
+                break;
+            };
+            if candidate.marker == interceptor_marker
+                && self.interceptors.contains_key(&interceptor_marker)
+            {
+                return true;
+            }
+            cursor = candidate.caller;
+        }
+        false
     }
 
     pub(crate) fn is_skipped(seg: &Segment, marker: Marker) -> bool {
@@ -164,13 +189,10 @@ impl InterceptorState {
         let outside_seg = segments.get(outside_seg_id).ok_or_else(|| {
             VMError::invalid_segment("current segment not found for WithIntercept")
         })?;
-        let outside_scope = outside_seg.scope_chain.clone();
 
         self.insert(interceptor_marker, interceptor, metadata);
 
-        let mut body_scope = vec![interceptor_marker];
-        body_scope.extend(outside_scope);
-        let mut body_seg = Segment::new(interceptor_marker, Some(outside_seg_id), body_scope);
+        let mut body_seg = Segment::new(interceptor_marker, Some(outside_seg_id));
         // Inherit guard state — see `copy_interceptor_guard_state` doc for why
         // these fields must be copied rather than derived from frames.
         body_seg.interceptor_eval_depth = outside_seg.interceptor_eval_depth;

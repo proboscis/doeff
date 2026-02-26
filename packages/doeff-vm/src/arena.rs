@@ -42,6 +42,13 @@ impl SegmentArena {
         self.segments.get_mut(id.index()).and_then(|s| s.as_mut())
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (SegmentId, &Segment)> {
+        self.segments.iter().enumerate().filter_map(|(idx, slot)| {
+            slot.as_ref()
+                .map(|segment| (SegmentId::from_index(idx), segment))
+        })
+    }
+
     /// Rewire children that currently point at `old_parent` so they point to `new_parent`.
     ///
     /// This keeps caller chains valid when a completed parent segment is freed while
@@ -93,11 +100,11 @@ mod tests {
         let mut arena = SegmentArena::new();
 
         let marker1 = Marker::fresh();
-        let seg1 = Segment::new(marker1, None, vec![]);
+        let seg1 = Segment::new(marker1, None);
         let id1 = arena.alloc(seg1);
 
         let marker2 = Marker::fresh();
-        let seg2 = Segment::new(marker2, None, vec![]);
+        let seg2 = Segment::new(marker2, None);
         let id2 = arena.alloc(seg2);
 
         assert_ne!(id1, id2);
@@ -112,7 +119,7 @@ mod tests {
         let mut arena = SegmentArena::new();
 
         let marker1 = Marker::fresh();
-        let seg1 = Segment::new(marker1, None, vec![]);
+        let seg1 = Segment::new(marker1, None);
         let id1 = arena.alloc(seg1);
 
         assert_eq!(arena.len(), 1);
@@ -122,7 +129,7 @@ mod tests {
         assert!(arena.get(id1).is_none());
 
         let marker2 = Marker::fresh();
-        let seg2 = Segment::new(marker2, None, vec![]);
+        let seg2 = Segment::new(marker2, None);
         let id2 = arena.alloc(seg2);
 
         assert_eq!(id1, id2);
@@ -137,7 +144,7 @@ mod tests {
         let mut arena = SegmentArena::new();
 
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let id = arena.alloc(seg);
 
         {
@@ -155,11 +162,11 @@ mod tests {
         let mut arena = SegmentArena::new();
         let marker = Marker::fresh();
 
-        let parent = arena.alloc(Segment::new(marker, None, vec![]));
-        let caller = arena.alloc(Segment::new(marker, None, vec![]));
-        let child_a = arena.alloc(Segment::new(marker, Some(parent), vec![]));
-        let child_b = arena.alloc(Segment::new(marker, Some(parent), vec![]));
-        let unrelated = arena.alloc(Segment::new(marker, Some(caller), vec![]));
+        let parent = arena.alloc(Segment::new(marker, None));
+        let caller = arena.alloc(Segment::new(marker, None));
+        let child_a = arena.alloc(Segment::new(marker, Some(parent)));
+        let child_b = arena.alloc(Segment::new(marker, Some(parent)));
+        let unrelated = arena.alloc(Segment::new(marker, Some(caller)));
 
         let rewired = arena.reparent_children(parent, Some(caller));
         assert_eq!(rewired, 2);
