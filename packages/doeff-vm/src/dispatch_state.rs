@@ -68,18 +68,12 @@ impl DispatchState {
             .find(|ctx| ctx.dispatch_id == dispatch_id)
     }
 
-    pub(crate) fn effect_for_dispatch(
-        &self,
-        dispatch_id: DispatchId,
-    ) -> Option<DispatchEffect> {
+    pub(crate) fn effect_for_dispatch(&self, dispatch_id: DispatchId) -> Option<DispatchEffect> {
         self.find_by_dispatch_id(dispatch_id)
             .map(|ctx| ctx.effect.clone())
     }
 
-    pub(crate) fn dispatch_is_execution_context_effect(
-        &self,
-        dispatch_id: DispatchId,
-    ) -> bool {
+    pub(crate) fn dispatch_is_execution_context_effect(&self, dispatch_id: DispatchId) -> bool {
         self.find_by_dispatch_id(dispatch_id)
             .is_some_and(|ctx| ctx.is_execution_context_effect)
     }
