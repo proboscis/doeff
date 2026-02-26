@@ -264,9 +264,10 @@ Metadata is extracted by the **driver** (with GIL) during `classify_yielded`, th
 passed to the VM as part of the `Call` primitive.
 
 **`Eval(expr, handlers)`** — scoped evaluation. Evaluates a DoExpr in a **fresh
-handler scope** with the explicit handler chain. Exists because handlers run in a
-different scope than the callsite (busy boundary). The KPC handler uses `Eval` to
-resolve args with the callsite's full handler chain, not the handler's own chain.
+handler scope** with the explicit handler chain. Used when evaluation must occur
+under a different handler configuration than the current scope. [SPEC-VM-016]
+Handlers are re-entrant by default — `Eval`'s purpose is scoped handler
+installation, not busy boundary avoidance.
 
 **`Map(source, f)` / `FlatMap(source, f)`** — composition nodes. Replace
 `DerivedProgram` (which was a DoThunk wrapping a generator). `Map` evaluates
@@ -1007,15 +1008,17 @@ CODE-ATTENTION:
 4. [REVERSED BY Rev 12 — see SPEC-KPC-001] **Default KPC handler resolves sequentially** using `Eval(expr, handlers)`
    per arg. `Eval` is a DoCtrl that creates an unstarted continuation
    with the given handler chain and evaluates the DoExpr within it. The caller
-   is suspended and resumed with the result. No busy boundary issues because
-   `Eval` uses explicit handlers, not `visible_handlers`.
+   is suspended and resumed with the result. `Eval` uses explicit handlers
+   for scoped handler installation. [SPEC-VM-016] Handlers are re-entrant
+   by default — no busy boundary concept.
 
 5. [REVERSED BY Rev 12 — see SPEC-KPC-001] **Arg resolution uses `Eval`, NOT direct effect yield or `Delegate`.**
-   Direct effect yield would hit the busy boundary (KPC handler excluded from
-   `visible_handlers`), breaking nested `@do` calls in args. `Delegate`
+   `Eval` creates a fresh scope with an explicit handler chain, suitable for
+   multi-arg resolution where each arg evaluates independently. `Delegate`
    advances within the same dispatch context — incompatible with multi-arg
-   resolution. `Eval` creates a fresh scope with the full handler chain
-   (captured via `GetHandlers` before the dispatch made anything busy).
+   resolution. [SPEC-VM-016] With re-entrant handlers, direct effect yield
+   is no longer blocked by busy exclusion, but `Eval` remains preferred for
+   explicit scoping.
 
 6. [REVERSED BY Rev 12 — see SPEC-KPC-001] **Sequential vs concurrent resolution is the handler's choice.** The default
    KPC handler uses `Eval` per-arg (sequential). A concurrent variant wraps
@@ -1330,7 +1333,8 @@ no silent coercion, no deferred errors.
 
 ## References
 
-- SPEC-008: Rust VM internals (handler stacking, busy boundary, visible_handlers)
+- SPEC-008: Rust VM internals (handler stacking, re-entrant dispatch, visible_handlers)
+- SPEC-VM-016: Re-entrant Handler Dispatch (Koka Semantics)
 - SPEC-009: Public API (Rev 8)
 - SPEC-EFF-005: Concurrency effects
 - `doeff/program.py`: Current _AutoUnwrapStrategy, _build_auto_unwrap_strategy,

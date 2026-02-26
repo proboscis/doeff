@@ -139,22 +139,23 @@ A is not involved                       A transforms, resumes k_user
 | B (outer, handling handler) | Receives K_new (opaque). Resumes K_new with the handled value. Does not know about k_user. |
 | VM | Creates K_new from A's state. Swaps DispatchContext.k_user. Routes values correctly. |
 
-### Scope behavior (already correct)
+### Scope behavior [SPEC-VM-016]
 
-The VM's `visible_handlers()` already excludes the current handler via busy-marker filtering:
+The VM's `visible_handlers()` returns the full scope chain — handlers are **re-entrant by default** (SPEC-VM-016):
 
 ```rust
-// vm.rs visible_handlers()
-let busy: HashSet<Marker> = top.handler_chain[..=top.handler_idx]
-    .iter().copied().collect();
-scope_chain.iter().filter(|m| !busy.contains(m)).collect()
+// vm.rs visible_handlers() [SPEC-VM-016]
+fn visible_handlers(&self, scope_chain: &[Marker]) -> Vec<Marker> {
+    scope_chain.to_vec()  // no busy filtering
+}
 ```
 
 This means:
-- `yield effect` inside a handler body → dispatches **without** the current handler (Koka prompt-level equivalent)
-- `yield Delegate()` → uses DispatchContext.handler_chain with handler_idx+1 (explicit skip)
+- `yield effect` inside a handler body → dispatches through the **full handler chain**, including the current handler (re-entrant)
+- `yield Delegate()` → uses DispatchContext.handler_chain with handler_idx+1 (explicit skip, unchanged)
+- `yield Mask([EffType], body)` → effects of `EffType` in `body` skip the innermost handler (opt-in)
 
-Both mechanisms are already in place. No scope changes needed.
+Handler skipping is opt-in via `Mask` (SPEC-VM-016 §3), not implicit via busy exclusion.
 
 ## VM Implementation
 
