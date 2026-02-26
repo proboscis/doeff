@@ -2910,7 +2910,7 @@ mod tests {
         use crate::segment::Segment;
 
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![marker]);
+        let seg = Segment::new(marker, None);
         let seg_id = SegmentId::from_index(0);
         Continuation::capture(&seg, seg_id, None)
     }
@@ -4913,7 +4913,7 @@ mod tests {
         use crate::ids::Marker;
         use crate::segment::Segment;
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = crate::ids::SegmentId::from_index(0);
         let cont = Continuation::capture(&seg, seg_id, None);
 

@@ -23,7 +23,6 @@ use crate::effect::{
 };
 use crate::error::VMError;
 use crate::frame::CallMetadata;
-use crate::ids::SegmentId;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr, PyResultOk};
@@ -102,35 +101,6 @@ pub type ASTStreamFactoryRef = Arc<dyn ASTStreamFactory + Send + Sync>;
 
 /// Shared reference to a running Rust handler program (cloneable for continuations).
 pub type ASTStreamProgramRef = Arc<Mutex<Box<dyn ASTStreamProgram + Send>>>;
-
-#[derive(Debug, Clone)]
-pub struct HandlerEntry {
-    pub handler: HandlerRef,
-    pub prompt_seg_id: SegmentId,
-    pub py_identity: Option<PyShared>,
-}
-
-impl HandlerEntry {
-    pub fn new(handler: HandlerRef, prompt_seg_id: SegmentId) -> Self {
-        HandlerEntry {
-            handler,
-            prompt_seg_id,
-            py_identity: None,
-        }
-    }
-
-    pub fn with_identity(
-        handler: HandlerRef,
-        prompt_seg_id: SegmentId,
-        py_identity: PyShared,
-    ) -> Self {
-        HandlerEntry {
-            handler,
-            prompt_seg_id,
-            py_identity: Some(py_identity),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct RustProgramInvocation {
@@ -1204,6 +1174,7 @@ impl HandlerInvoke for LazyLocalScopeFactory {
             line: None,
         }
     }
+
 }
 
 #[derive(Debug)]
@@ -1706,7 +1677,7 @@ impl LazyAskHandlerProgram {
         continuation: Continuation,
     ) -> ASTStreamStep {
         self.phase = LazyAskPhase::AwaitDelegate { key, continuation };
-        ASTStreamStep::Yield(DoCtrl::Perform { effect })
+        ASTStreamStep::Yield(DoCtrl::Delegate { effect })
     }
 
     fn begin_create_then_acquire_phase(
@@ -2684,19 +2655,9 @@ mod tests {
 
     fn make_test_continuation() -> Continuation {
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = SegmentId::from_index(0);
+        let seg = Segment::new(marker, None);
+        let seg_id = crate::ids::SegmentId::from_index(0);
         Continuation::capture(&seg, seg_id, None)
-    }
-
-    #[test]
-    fn test_handler_entry_creation() {
-        let handler: Handler = Arc::new(StateHandlerFactory);
-        let prompt_seg_id = SegmentId::from_index(5);
-        let entry = HandlerEntry::new(handler, prompt_seg_id);
-
-        assert_eq!(entry.prompt_seg_id, prompt_seg_id);
-        assert_eq!(entry.handler.handler_name(), "StateHandler");
     }
 
     #[test]

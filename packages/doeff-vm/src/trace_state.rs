@@ -15,8 +15,9 @@ use crate::continuation::Continuation;
 use crate::dispatch::DispatchContext;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
 use crate::frame::{CallMetadata, Frame};
-use crate::handler::{Handler, HandlerEntry};
+use crate::handler::Handler;
 use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::py_shared::PyShared;
 use crate::step::PyException;
 use crate::value::Value;
 
@@ -214,12 +215,12 @@ impl TraceState {
     }
 
     fn marker_handler_trace_info(
-        handlers: &HashMap<Marker, HandlerEntry>,
+        handlers: &HashMap<Marker, (Handler, Option<PyShared>)>,
         marker: Marker,
     ) -> Option<(String, HandlerKind, Option<String>, Option<u32>)> {
         handlers
             .get(&marker)
-            .map(|entry| Self::handler_trace_info(&entry.handler))
+            .map(|(handler, _py_identity)| Self::handler_trace_info(handler))
     }
 
     pub(crate) fn assemble_trace(
@@ -227,7 +228,7 @@ impl TraceState {
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[DispatchContext],
-        handlers: &HashMap<Marker, HandlerEntry>,
+        handlers: &HashMap<Marker, (Handler, Option<PyShared>)>,
         effect_repr: impl Fn(&crate::effect::DispatchEffect) -> String,
     ) -> Vec<TraceEntry> {
         let mut trace: Vec<TraceEntry> = Vec::new();
@@ -412,7 +413,7 @@ impl TraceState {
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[DispatchContext],
-        handlers: &HashMap<Marker, HandlerEntry>,
+        handlers: &HashMap<Marker, (Handler, Option<PyShared>)>,
         effect_repr: impl Fn(&crate::effect::DispatchEffect) -> String,
     ) {
         let mut seg_id = current_segment;
@@ -829,8 +830,13 @@ impl TraceState {
         dispatch_stack: &[DispatchContext],
     ) -> Vec<ActiveChainEntry> {
         let raw_events = self.collect_raw_events();
-        let entries =
-            self.events_to_entries(&raw_events, segments, current_segment, dispatch_stack);
+        let entries = self.events_to_entries(
+            &raw_events,
+            segments,
+            current_segment,
+            dispatch_stack,
+            exception,
+        );
         let entries = Self::dedup_adjacent(entries);
         Self::inject_context(entries, exception)
     }
@@ -875,13 +881,64 @@ impl TraceState {
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[DispatchContext],
+        exception: &PyException,
     ) -> Vec<ActiveChainEntry> {
         let mut state = ActiveChainAssemblyState::new();
         for event in raw_events {
             self.apply_active_chain_event(&mut state, event);
         }
         self.merge_live_frame_state(&mut state, segments, current_segment, dispatch_stack);
+        Self::finalize_unresolved_dispatches_as_threw(&mut state, exception);
         self.entries_from_active_chain_state(&state, raw_events, dispatch_stack)
+    }
+
+    fn exception_repr(exception: &PyException) -> String {
+        match exception {
+            PyException::Materialized {
+                exc_type: _,
+                exc_value,
+                exc_tb: _,
+            } => Python::attach(|py| {
+                exc_value
+                    .bind(py)
+                    .repr()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|_| MISSING_EXCEPTION.to_string())
+            }),
+            PyException::RuntimeError { message } => format!("RuntimeError({message:?})"),
+            PyException::TypeError { message } => format!("TypeError({message:?})"),
+        }
+    }
+
+    fn finalize_unresolved_dispatches_as_threw(
+        state: &mut ActiveChainAssemblyState,
+        exception: &PyException,
+    ) {
+        let exception_repr = Self::exception_repr(exception);
+        for dispatch in state.dispatches.values_mut() {
+            if !matches!(dispatch.result, EffectResult::Active) {
+                continue;
+            }
+            let handler_name = if let Some(active_entry) = dispatch
+                .handler_stack
+                .iter_mut()
+                .find(|entry| entry.status == HandlerStatus::Active)
+            {
+                active_entry.status = HandlerStatus::Threw;
+                active_entry.handler_name.clone()
+            } else if let Some(last_entry) = dispatch.handler_stack.last_mut() {
+                if last_entry.status == HandlerStatus::Pending {
+                    last_entry.status = HandlerStatus::Threw;
+                }
+                last_entry.handler_name.clone()
+            } else {
+                MISSING_UNKNOWN.to_string()
+            };
+            dispatch.result = EffectResult::Threw {
+                handler_name,
+                exception_repr: exception_repr.clone(),
+            };
+        }
     }
 
     fn apply_active_chain_event(&self, state: &mut ActiveChainAssemblyState, event: &CaptureEvent) {
