@@ -274,6 +274,110 @@ fn test_visible_handlers_completed_dispatch() {
 }
 
 #[test]
+fn test_outer_handler_clause_cannot_see_below_prompt_handlers() {
+    let mut vm = VM::new();
+    let root_marker = Marker::fresh();
+    let outer_marker = Marker::fresh();
+    let inner_marker = Marker::fresh();
+    let handler_clause_marker = Marker::fresh();
+
+    let root = vm.alloc_segment(Segment::new(root_marker, None));
+    let outer_prompt = vm.alloc_segment(Segment::new_prompt(
+        outer_marker,
+        Some(root),
+        outer_marker,
+        Arc::new(crate::handler::StateHandlerFactory),
+        None,
+        None,
+    ));
+    let outer_body = vm.alloc_segment(Segment::new(outer_marker, Some(outer_prompt)));
+    let inner_prompt = vm.alloc_segment(Segment::new_prompt(
+        inner_marker,
+        Some(outer_body),
+        inner_marker,
+        Arc::new(crate::handler::ReaderHandlerFactory),
+        None,
+        None,
+    ));
+    let inner_body = vm.alloc_segment(Segment::new(inner_marker, Some(inner_prompt)));
+    let handler_clause = vm.alloc_segment(Segment::new(handler_clause_marker, Some(outer_prompt)));
+
+    vm.current_segment = Some(inner_body);
+    let body_visible = vm.current_handler_chain();
+    assert_eq!(body_visible.len(), 2);
+
+    vm.current_segment = Some(handler_clause);
+    let clause_visible = vm.current_handler_chain();
+    assert_eq!(clause_visible.len(), 1);
+    assert_eq!(clause_visible[0].marker, outer_marker);
+    assert!(clause_visible
+        .iter()
+        .all(|entry| entry.marker != inner_marker));
+}
+
+#[test]
+fn test_own_dispatch_prompt_excluded_from_fresh_dispatch() {
+    // Koka/OCaml semantics: when a handler clause yields a fresh effect,
+    // the handler's own prompt is excluded, preventing self-dispatch.
+    // Only the IMMEDIATE dispatch's prompt is excluded — outer dispatches
+    // remain visible.
+    let mut vm = VM::new();
+    let root_marker = Marker::fresh();
+    let outer_marker = Marker::fresh();
+    let inner_marker = Marker::fresh();
+
+    let root = vm.alloc_segment(Segment::new(root_marker, None));
+    let outer_prompt = vm.alloc_segment(Segment::new_prompt(
+        outer_marker,
+        Some(root),
+        outer_marker,
+        Arc::new(crate::handler::StateHandlerFactory),
+        None,
+        None,
+    ));
+    let outer_body = vm.alloc_segment(Segment::new(outer_marker, Some(outer_prompt)));
+    let inner_prompt = vm.alloc_segment(Segment::new_prompt(
+        inner_marker,
+        Some(outer_body),
+        inner_marker,
+        Arc::new(crate::handler::ReaderHandlerFactory),
+        None,
+        None,
+    ));
+
+    let handler_seg = vm.alloc_segment(Segment::new(inner_marker, Some(inner_prompt)));
+    let dispatch_id = DispatchId::fresh();
+    vm.segments
+        .get_mut(handler_seg)
+        .expect("handler segment must exist")
+        .dispatch_id = Some(dispatch_id);
+
+    vm.dispatch_state.push_dispatch(DispatchContext {
+        dispatch_id,
+        effect: Effect::get("x"),
+        is_execution_context_effect: false,
+        handler_chain: vec![inner_marker, outer_marker],
+        handler_idx: 0,
+        supports_error_context_conversion: false,
+        k_user: make_dummy_continuation(),
+        prompt_seg_id: inner_prompt,
+        completed: false,
+        original_exception: None,
+    });
+
+    vm.current_segment = Some(handler_seg);
+
+    // Raw chain (no filtering) sees both handlers.
+    let raw_chain = vm.handlers_in_caller_chain(handler_seg);
+    assert_eq!(raw_chain.len(), 2);
+
+    // Dispatch-filtered chain excludes own dispatch's prompt (inner_prompt).
+    let filtered = vm.handlers_in_caller_chain_excluding_own_dispatch(handler_seg);
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].marker, outer_marker);
+}
+
+#[test]
 fn test_lazy_pop_completed() {
     let mut vm = VM::new();
     let k_user_1 = make_dummy_continuation();
