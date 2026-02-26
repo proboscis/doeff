@@ -316,18 +316,23 @@ fn test_outer_handler_clause_cannot_see_below_prompt_handlers() {
 }
 
 #[test]
-fn test_active_dispatch_prompt_remains_visible_for_reentrant_dispatch() {
+fn test_own_dispatch_prompt_excluded_from_handler_clause_dispatch() {
+    // Koka semantics: when a handler clause dispatches a fresh effect,
+    // its own dispatch's prompt is excluded from the handler chain.
+    // This prevents infinite self-recursion.
     let mut vm = VM::new();
     let root_marker = Marker::fresh();
     let outer_marker = Marker::fresh();
     let inner_marker = Marker::fresh();
 
+    // Build chain: root -> outer_prompt(ReaderHandler) -> outer_body -> inner_prompt(ReaderHandler) -> handler_seg
+    // Both prompts use ReaderHandler so Ask effects match either.
     let root = vm.alloc_segment(Segment::new(root_marker, None));
     let outer_prompt = vm.alloc_segment(Segment::new_prompt(
         outer_marker,
         Some(root),
         outer_marker,
-        Arc::new(crate::handler::StateHandlerFactory),
+        Arc::new(crate::handler::ReaderHandlerFactory),
         None,
         None,
     ));
@@ -363,21 +368,23 @@ fn test_active_dispatch_prompt_remains_visible_for_reentrant_dispatch() {
 
     vm.current_segment = Some(handler_seg);
 
-    // Caller-chain lookup still includes active dispatch prompt boundaries.
+    // Raw caller-chain lookup still includes all prompts (no filtering).
     let chain = vm.handlers_in_caller_chain(handler_seg);
     assert_eq!(chain.len(), 2);
     assert_eq!(chain[0].marker, inner_marker);
 
-    // Re-entrant dispatch from the handler clause can match the same handler.
+    // start_dispatch excludes the own dispatch's prompt (inner_prompt).
+    // The Ask effect skips inner and matches outer instead.
     let depth_before = vm.dispatch_state.depth();
     let event = vm.start_dispatch(Effect::ask("mode"));
     assert!(event.is_ok());
     assert_eq!(vm.dispatch_state.depth(), depth_before + 1);
-    let reentrant_ctx = vm
+    let dispatch_ctx = vm
         .dispatch_state
         .get(depth_before)
-        .expect("re-entrant dispatch context must be pushed");
-    assert_eq!(reentrant_ctx.prompt_seg_id, inner_prompt);
+        .expect("dispatch context must be pushed");
+    // The dispatch should match the OUTER prompt, not the inner (excluded) one.
+    assert_eq!(dispatch_ctx.prompt_seg_id, outer_prompt);
 }
 
 #[test]

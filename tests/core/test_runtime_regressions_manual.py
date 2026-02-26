@@ -699,21 +699,24 @@ class Ping(EffectBase):
         self.label = label
 
 
-def test_reentrant_handler_effect_in_body_matches_same_handler() -> None:
-    """After removing busy filtering, an effect yielded inside a handler body
-    can be dispatched to the same handler (re-entrant / Koka-style)."""
+def test_reentrant_handler_resumed_body_matches_same_handler() -> None:
+    """Koka-style re-entrancy: when a handler resumes its continuation, the
+    resumed body can yield effects that match the SAME handler. The handler
+    is reinstated for the resumed continuation (not for the handler clause)."""
+
+    calls: list[str] = []
 
     def counting_handler(effect, k):
-        if isinstance(effect, Ping) and effect.label == "inner":
-            return (yield Resume(k, "handled-inner"))
-        if isinstance(effect, Ping) and effect.label == "outer":
-            inner_result = yield Ping("inner")
-            return (yield Resume(k, f"outer({inner_result})"))
+        if isinstance(effect, Ping):
+            calls.append(effect.label)
+            return (yield Resume(k, f"handled-{effect.label}"))
         yield Delegate()
 
     @do
     def body():
-        return (yield Ping("outer"))
+        first = yield Ping("first")
+        second = yield Ping("second")
+        return f"{first},{second}"
 
     @do
     def program():
@@ -721,7 +724,8 @@ def test_reentrant_handler_effect_in_body_matches_same_handler() -> None:
 
     result = run(program(), handlers=default_handlers())
     assert result.is_ok()
-    assert result.value == "outer(handled-inner)"
+    assert result.value == "handled-first,handled-second"
+    assert calls == ["first", "second"]
 
 
 def test_handler_clause_cannot_see_below_prompt_handlers() -> None:
