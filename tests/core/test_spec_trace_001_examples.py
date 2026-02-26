@@ -205,8 +205,7 @@ def test_example_2_custom_handler_with_withhandler() -> None:
     assert tokens
     assert _token_has_handler_name(tokens[0], "rate_limiter"), rate_limit_stack
     assert any(
-        _token_has_handler_name(token, "auth_handler") and token.endswith("·")
-        for token in tokens
+        _token_has_handler_name(token, "auth_handler") and token.endswith("·") for token in tokens
     )
     _assert_default_handlers_visible(rate_limit_stack)
     assert "Ask('token')" not in rendered
@@ -264,8 +263,8 @@ def test_example_4_missing_env_key() -> None:
         effect_fragment="Ask(",
         detail_fragment="database_url",
     )
-    assert "LazyAskHandler✗" in stack_line
-    assert "ReaderHandler·" in stack_line
+    assert "LazyAskHandler⇆" in stack_line
+    assert "ReaderHandler✗" in stack_line
     assert "MissingEnvKeyError" in rendered
     assert "database_url" in rendered
 

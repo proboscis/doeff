@@ -316,11 +316,7 @@ fn test_outer_handler_clause_cannot_see_below_prompt_handlers() {
 }
 
 #[test]
-fn test_own_dispatch_prompt_excluded_from_fresh_dispatch() {
-    // Koka/OCaml semantics: when a handler clause yields a fresh effect,
-    // the handler's own prompt is excluded, preventing self-dispatch.
-    // Only the IMMEDIATE dispatch's prompt is excluded — outer dispatches
-    // remain visible.
+fn test_active_dispatch_prompt_remains_visible_for_reentrant_dispatch() {
     let mut vm = VM::new();
     let root_marker = Marker::fresh();
     let outer_marker = Marker::fresh();
@@ -367,14 +363,21 @@ fn test_own_dispatch_prompt_excluded_from_fresh_dispatch() {
 
     vm.current_segment = Some(handler_seg);
 
-    // Raw chain (no filtering) sees both handlers.
-    let raw_chain = vm.handlers_in_caller_chain(handler_seg);
-    assert_eq!(raw_chain.len(), 2);
+    // Caller-chain lookup still includes active dispatch prompt boundaries.
+    let chain = vm.handlers_in_caller_chain(handler_seg);
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0].marker, inner_marker);
 
-    // Dispatch-filtered chain excludes own dispatch's prompt (inner_prompt).
-    let filtered = vm.handlers_in_caller_chain_excluding_own_dispatch(handler_seg);
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].marker, outer_marker);
+    // Re-entrant dispatch from the handler clause can match the same handler.
+    let depth_before = vm.dispatch_state.depth();
+    let event = vm.start_dispatch(Effect::ask("mode"));
+    assert!(event.is_ok());
+    assert_eq!(vm.dispatch_state.depth(), depth_before + 1);
+    let reentrant_ctx = vm
+        .dispatch_state
+        .get(depth_before)
+        .expect("re-entrant dispatch context must be pushed");
+    assert_eq!(reentrant_ctx.prompt_seg_id, inner_prompt);
 }
 
 #[test]
