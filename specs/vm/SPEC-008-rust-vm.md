@@ -3848,7 +3848,7 @@ impl VM {
         // Get current scope_chain
         let scope_chain = self.current_scope_chain();
 
-        // Compute visible handlers (top-only busy exclusion)
+        // Compute visible handlers (re-entrant — no busy exclusion) [SPEC-VM-016]
         let handler_chain = self.visible_handlers(&scope_chain);
 
         if handler_chain.is_empty() {
@@ -4016,31 +4016,16 @@ impl VM {
         Err(VMError::UnhandledEffect(effect.clone()))
     }
     
-    /// Compute visible handlers (TOP-ONLY busy exclusion).
-    /// 
-    /// Only the current (topmost non-completed) dispatch creates a busy boundary.
-    /// Visibility is computed from the CURRENT scope_chain so handlers installed
-    /// inside a handler remain visible unless they are busy.
+    /// Compute visible handlers (re-entrant — no busy exclusion).
+    ///
+    /// [SPEC-VM-016] Handlers are re-entrant by default. The full scope_chain
+    /// is returned unchanged. Effects yielded during handler execution dispatch
+    /// through the complete handler chain, including the currently-handling handler.
+    ///
+    /// Handler skipping is opt-in via Mask(effect_types, body) DoCtrl.
+    /// See SPEC-VM-016 §3 for mask semantics.
     fn visible_handlers(&self, scope_chain: &[Marker]) -> Vec<Marker> {
-        let Some(top) = self.dispatch_stack.last() else {
-            return scope_chain.to_vec();
-        };
-        
-        if top.completed {
-            return scope_chain.to_vec();
-        }
-        
-        // Busy = handlers at indices 0..=handler_idx in top dispatch
-        // Visible = current scope_chain minus busy handlers (preserve order)
-        let busy: HashSet<Marker> = top.handler_chain[..=top.handler_idx]
-            .iter()
-            .copied()
-            .collect();
-        scope_chain
-            .iter()
-            .copied()
-            .filter(|marker| !busy.contains(marker))
-            .collect()
+        scope_chain.to_vec()
     }
     
     /// [Q13] Lazy cleanup of completed dispatch contexts.
@@ -4708,18 +4693,19 @@ Completion check requires BOTH:
 Resume, Transfer, and Return all mark completion when they resolve k_user.
 ```
 
-### INV-8: Busy Boundary (Top-Only)
+### INV-8: Re-entrant Handler Dispatch [SPEC-VM-016]
 
 ```
-Only the topmost non-completed dispatch creates a busy boundary.
-Busy handlers = top.handler_chain[0..=top.handler_idx]
-Visible handlers = current scope_chain minus busy handlers (preserve order)
+Handlers are re-entrant by default. visible_handlers() returns the
+full scope_chain without filtering. Effects yielded during handler
+execution dispatch through the complete handler chain, including the
+currently-handling handler.
 
-This is MORE PERMISSIVE than union-all. Nested dispatches can see
-handlers that are busy in outer dispatches, which matches algebraic
-effect semantics (handlers are in scope based on their installation
-point, not based on what's currently executing). Handlers installed
-inside a handler remain visible unless they are busy.
+Handler skipping is opt-in via Mask(effect_types, body) DoCtrl.
+Mask records are segment-local and consulted during dispatch to skip
+the specified handler for the specified effect types.
+
+See SPEC-VM-016 for full semantics.
 ```
 
 ### INV-9: All Effects Go Through Dispatch
@@ -4858,8 +4844,8 @@ Rust program handlers mirror this protocol in Rust:
 Legacy specs SPEC-006 and SPEC-007 are deprecated. This spec (008) is authoritative.
 Key differences and decisions in 008:
 
-- Busy boundary is **top-only**: only the topmost non-completed dispatch excludes
-  busy handlers; nested dispatch does not consider older frames.
+- [SPEC-VM-016] Handlers are **re-entrant by default**: no busy exclusion.
+  Handler skipping is opt-in via `Mask(effect_types, body)` DoCtrl.
 - `Delegate` and `Pass` are the two forwarding primitives; yielding a raw effect starts a new
   dispatch (does not forward). [R15-A]
 - `yield Pass(effect)` is terminal pass-through; it does not return to the handler.
