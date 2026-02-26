@@ -5,6 +5,8 @@ import pytest
 
 from doeff import (
     Ask,
+    Delegate,
+    EffectBase,
     Err,
     Gather,
     Get,
@@ -13,8 +15,10 @@ from doeff import (
     Ok,
     Program,
     Put,
+    Resume,
     Spawn,
     Try,
+    WithHandler,
     async_run,
     default_async_handlers,
     default_handlers,
@@ -682,3 +686,71 @@ def test_scheduler_task_completed_uses_single_result_payload() -> None:
 
     with pytest.raises(TypeError):
         _ = TaskCompleted(task_id=task_id, error=ValueError("x"))
+
+
+# ---------------------------------------------------------------------------
+# VM-REENTRANT-001: Re-entrant handler semantics (no busy filtering)
+# ---------------------------------------------------------------------------
+
+
+class Ping(EffectBase):
+    def __init__(self, label: str) -> None:
+        super().__init__()
+        self.label = label
+
+
+def test_reentrant_handler_effect_in_body_matches_same_handler() -> None:
+    """After removing busy filtering, an effect yielded inside a handler body
+    can be dispatched to the same handler (re-entrant / Koka-style)."""
+
+    def counting_handler(effect, k):
+        if isinstance(effect, Ping) and effect.label == "inner":
+            return (yield Resume(k, "handled-inner"))
+        if isinstance(effect, Ping) and effect.label == "outer":
+            inner_result = yield Ping("inner")
+            return (yield Resume(k, f"outer({inner_result})"))
+        yield Delegate()
+
+    @do
+    def body():
+        return (yield Ping("outer"))
+
+    @do
+    def program():
+        return (yield WithHandler(counting_handler, body()))
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok()
+    assert result.value == "outer(handled-inner)"
+
+
+def test_handler_clause_cannot_see_below_prompt_handlers() -> None:
+    """A handler installed via WithHandler should NOT see handlers installed
+    *below* its prompt boundary (i.e., in the outer/caller scope only)."""
+
+    seen_effects: list[str] = []
+
+    def inner_handler(effect, k):
+        if isinstance(effect, Ping) and effect.label == "from-inner":
+            seen_effects.append("inner-handled")
+            return (yield Resume(k, "inner"))
+        yield Delegate()
+
+    def outer_handler(effect, k):
+        if isinstance(effect, Ping):
+            seen_effects.append("outer-handled")
+            return (yield Resume(k, "outer"))
+        yield Delegate()
+
+    @do
+    def body():
+        return (yield Ping("from-inner"))
+
+    @do
+    def program():
+        return (yield WithHandler(outer_handler, WithHandler(inner_handler, body())))
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok()
+    assert result.value == "inner"
+    assert seen_effects == ["inner-handled"]

@@ -29,8 +29,14 @@ pub struct Segment {
     pub marker: Marker,
     pub frames: Vec<Frame>,
     pub caller: Option<SegmentId>,
-    pub handler_lookup_anchor: Option<SegmentId>,
-    pub handler_lookup_anchor_marker: Option<Marker>,
+    /// Segment where the original effect was yielded.
+    /// Handler lookup starts from this segment instead of self,
+    /// preserving nested handler visibility when multi-step Rust handlers
+    /// cause the caller chain to drift during sub-dispatches.
+    pub lookup_origin: Option<SegmentId>,
+    /// Marker of the lookup_origin segment at capture time,
+    /// used to detect stale segment IDs after arena recycling.
+    pub lookup_origin_marker: Option<Marker>,
     pub kind: SegmentKind,
     pub dispatch_id: Option<DispatchId>,
     pub mode: Mode,
@@ -46,8 +52,8 @@ impl Segment {
             marker,
             frames: Vec::new(),
             caller,
-            handler_lookup_anchor: None,
-            handler_lookup_anchor_marker: None,
+            lookup_origin: None,
+            lookup_origin_marker: None,
             kind: SegmentKind::Normal,
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
@@ -70,8 +76,8 @@ impl Segment {
             marker,
             frames: Vec::new(),
             caller,
-            handler_lookup_anchor: None,
-            handler_lookup_anchor_marker: None,
+            lookup_origin: None,
+            lookup_origin_marker: None,
             kind: SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,
