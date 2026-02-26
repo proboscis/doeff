@@ -201,6 +201,8 @@ impl InterceptorState {
         let mut body_scope = vec![interceptor_marker];
         body_scope.extend(outside_scope);
         let mut body_seg = Segment::new(interceptor_marker, Some(outside_seg_id), body_scope);
+        // Inherit guard state — see `copy_interceptor_guard_state` doc for why
+        // these fields must be copied rather than derived from frames.
         body_seg.interceptor_eval_depth = outside_seg.interceptor_eval_depth;
         body_seg.interceptor_skip_stack = outside_seg.interceptor_skip_stack.clone();
         Ok(body_seg)

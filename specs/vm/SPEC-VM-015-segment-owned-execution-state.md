@@ -535,9 +535,29 @@ When resuming a continuation, the spec says `mode = Deliver(value)`. But what ab
 
 When a continuation is captured mid-Python-call (pending_python is Some), should the continuation snapshot include it? The current design says yes. But if the Python call is in-flight, capturing it might not make sense. Need to verify whether capture ever happens with `pending_python = Some(...)`.
 
-### Q3: `interceptor_eval_callbacks` Location
+### Q3: `interceptor_eval_callbacks` Location — RESOLVED
 
-`InterceptorState::interceptor_eval_callbacks` is a `HashSet<CallbackId>` that tracks which callbacks are interceptor eval callbacks. It's a VM-wide registry (callback IDs are unique). Keeping it on `InterceptorState` (not Segment) seems correct, but the `register_eval_callback` method currently also increments `interceptor_eval_depth` — this coupling needs to be split (registry stays on InterceptorState, depth increment goes to current segment).
+`InterceptorState::interceptor_eval_callbacks` is a `HashSet<CallbackId>` that tracks which callbacks are interceptor eval callbacks. It's a VM-wide registry (callback IDs are unique). Keeping it on `InterceptorState` (not Segment) is correct. The `register_eval_callback` method currently also increments `interceptor_eval_depth` — this coupling is split: registry stays on InterceptorState, depth increment goes to current segment.
+
+### Q4: Can `interceptor_eval_depth` and `interceptor_skip_stack` Be Derived from Frames? — RESOLVED: NO
+
+**Investigation conclusion (VM-SCOPE-001):** Both fields are intentional inherited guard state and cannot be derived from the current segment's frame stack or from the VM-global `interceptor_callbacks` / `interceptor_eval_callbacks` maps.
+
+**Hypotheses tested:**
+- `interceptor_skip_stack`: marker is in skip stack IFF there exists a `Frame::RustReturn { cb }` on the current segment where `interceptor_callbacks[cb] == marker`
+- `interceptor_eval_depth`: count of `Frame::RustReturn { cb }` frames where `cb ∈ interceptor_eval_callbacks`
+
+**Why both hypotheses are false:**
+
+1. **Child segments start with empty frames.** New handler segments (dispatch at prompt boundaries, `start_dispatch`) and new interceptor body segments (`prepare_with_intercept`) have no frames, yet they run within the parent's interceptor invocation context and must inherit the guard state. Frame-based derivation yields "no skips, depth 0" which is incorrect.
+
+2. **Delegate/Pass clears frames.** `clear_segment_frames` wipes the inner segment's frame stack during forwarding, but guard state must survive so the next handler segment inherits correct interceptor context via `copy_interceptor_guard_state`.
+
+3. **Global callback maps are unstable across run boundaries.** `InterceptorState::clear_for_run()` clears `interceptor_callbacks` and `interceptor_eval_callbacks`. Continuations captured in one run and resumed in another would find empty maps, making derivation produce incorrect results.
+
+4. **Performance.** `is_interceptor_eval_idle()` is checked on every `handle_handler_return` call. Current O(1) field check would become O(depth) frame scan with hash lookups — measurable overhead on deep stacks.
+
+**Conclusion:** These fields are semantic guard context that spans segment topology changes, not redundant caches of frame-derivable information. They must be explicitly stored and inherited. See `copy_interceptor_guard_state` doc comment in `vm.rs` for the implementation-level rationale.
 
 ---
 
