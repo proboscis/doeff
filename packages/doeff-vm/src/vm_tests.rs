@@ -20,8 +20,6 @@ fn make_dummy_continuation() -> Continuation {
         program: None,
         handlers: Vec::new(),
         handler_identities: Vec::new(),
-        handler_lookup_anchor: None,
-        handler_lookup_anchor_marker: None,
         metadata: None,
         parent: None,
     }
@@ -213,6 +211,100 @@ fn test_visible_handlers_with_busy_boundary() {
 
     let visible = vm.current_visible_handlers();
     assert_eq!(visible.len(), 3);
+}
+
+#[test]
+fn test_start_dispatch_allows_reentrant_handler_match() {
+    let mut vm = VM::new();
+    let marker = Marker::fresh();
+
+    let prompt_seg = Segment::new(marker, None);
+    let prompt_seg_id = vm.alloc_segment(prompt_seg);
+    assert!(vm.install_handler_on_segment(
+        marker,
+        prompt_seg_id,
+        Arc::new(crate::handler::StateHandlerFactory),
+        None
+    ));
+
+    let handler_seg = Segment::new(marker, Some(prompt_seg_id));
+    let handler_seg_id = vm.alloc_segment(handler_seg);
+    vm.current_segment = Some(handler_seg_id);
+
+    vm.dispatch_state.push_dispatch(DispatchContext {
+        dispatch_id: DispatchId::fresh(),
+        effect: Effect::Get {
+            key: "outer".to_string(),
+        },
+        is_execution_context_effect: false,
+        handler_chain: vec![marker],
+        handler_idx: 0,
+        supports_error_context_conversion: false,
+        k_user: make_dummy_continuation(),
+        prompt_seg_id,
+        completed: false,
+        original_exception: None,
+    });
+
+    let result = vm.start_dispatch(Effect::Get {
+        key: "inner".to_string(),
+    });
+    assert!(result.is_ok());
+    assert!(matches!(result.unwrap(), StepEvent::Continue));
+    assert_eq!(vm.dispatch_state.depth(), 2);
+
+    let top_ctx = vm
+        .dispatch_state
+        .get(1)
+        .expect("expected nested dispatch context");
+    assert_eq!(top_ctx.handler_idx, 0);
+    assert_eq!(top_ctx.handler_chain, vec![marker]);
+}
+
+#[test]
+fn test_handler_clause_cannot_see_below_prompt_handlers() {
+    let mut vm = VM::new();
+    let outer_marker = Marker::fresh();
+    let inner_marker = Marker::fresh();
+    let root_marker = Marker::fresh();
+
+    let root = vm.alloc_segment(Segment::new(root_marker, None));
+    let outer_prompt = vm.alloc_segment(Segment::new_prompt(
+        outer_marker,
+        Some(root),
+        outer_marker,
+        Arc::new(crate::handler::ReaderHandlerFactory),
+        None,
+        None,
+    ));
+    let outer_body = vm.alloc_segment(Segment::new(outer_marker, Some(outer_prompt)));
+    let inner_prompt = vm.alloc_segment(Segment::new_prompt(
+        inner_marker,
+        Some(outer_body),
+        inner_marker,
+        Arc::new(crate::handler::StateHandlerFactory),
+        None,
+        None,
+    ));
+    let inner_body = vm.alloc_segment(Segment::new(inner_marker, Some(inner_prompt)));
+    vm.current_segment = Some(inner_body);
+
+    let result = vm.start_dispatch(Effect::Ask {
+        key: "config".to_string(),
+    });
+    assert!(result.is_ok());
+    assert!(matches!(result.unwrap(), StepEvent::Continue));
+
+    let visible_chain = vm.current_handler_chain();
+    assert_eq!(
+        visible_chain.len(),
+        1,
+        "handler clause must not see below-prompt handlers",
+    );
+    assert_eq!(
+        visible_chain[0].marker, outer_marker,
+        "only outer prompt handler should remain visible in clause execution",
+    );
 }
 
 #[test]
@@ -2072,8 +2164,6 @@ fn test_d10_handler_return_uses_deliver_not_return() {
         program: None,
         handlers: Vec::new(),
         handler_identities: Vec::new(),
-        handler_lookup_anchor: None,
-        handler_lookup_anchor_marker: None,
         metadata: None,
         parent: None,
     };
