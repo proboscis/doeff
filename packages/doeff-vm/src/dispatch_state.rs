@@ -1,14 +1,13 @@
 //! Dispatch-domain state and helper logic for VM composition.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use crate::arena::SegmentArena;
 use crate::capture::{CaptureEvent, HandlerAction};
 use crate::continuation::Continuation;
 use crate::dispatch::DispatchContext;
 use crate::effect::DispatchEffect;
 use crate::error::VMError;
-use crate::handler::{Handler, HandlerEntry};
+use crate::handler::Handler;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::py_shared::PyShared;
 use crate::step::PyException;
@@ -21,7 +20,6 @@ pub(crate) struct DispatchState {
 pub(crate) struct WithHandlerPlan {
     pub(crate) handler_marker: Marker,
     pub(crate) outside_seg_id: SegmentId,
-    pub(crate) outside_scope: Vec<Marker>,
     pub(crate) handler: Handler,
     pub(crate) py_identity: Option<PyShared>,
 }
@@ -96,16 +94,6 @@ impl DispatchState {
         self.dispatch_stack.iter_mut().skip(start)
     }
 
-    pub(crate) fn current_scope_chain(
-        current_segment: Option<SegmentId>,
-        segments: &SegmentArena,
-    ) -> Vec<Marker> {
-        current_segment
-            .and_then(|id| segments.get(id))
-            .map(|seg| seg.scope_chain.clone())
-            .unwrap_or_default()
-    }
-
     pub(crate) fn lazy_pop_completed(&mut self) {
         while let Some(top) = self.dispatch_stack.last() {
             if top.completed {
@@ -116,56 +104,18 @@ impl DispatchState {
         }
     }
 
-    pub(crate) fn visible_handlers(
-        &self,
-        scope_chain: &[Marker],
-        consumed_cont_ids: &HashSet<ContId>,
-    ) -> Vec<Marker> {
-        let Some(top) = self.dispatch_stack.last() else {
-            return scope_chain.to_vec();
-        };
-
-        if top.completed || consumed_cont_ids.contains(&top.k_user.cont_id) {
-            return scope_chain.to_vec();
-        }
-
-        let busy: HashSet<Marker> = top.handler_chain[..=top.handler_idx]
-            .iter()
-            .copied()
-            .collect();
-
-        scope_chain
-            .iter()
-            .copied()
-            .filter(|marker| !busy.contains(marker))
-            .collect()
-    }
-
-    pub(crate) fn find_matching_handler(
-        handlers: &HashMap<Marker, HandlerEntry>,
-        handler_chain: &[Marker],
-        effect: &DispatchEffect,
-    ) -> Result<(usize, Marker, HandlerEntry), VMError> {
-        for (idx, &marker) in handler_chain.iter().enumerate() {
-            let Some(entry) = handlers.get(&marker) else {
-                return Err(VMError::internal(format!(
-                    "find_matching_handler: missing handler marker {} at index {}",
-                    marker.raw(),
-                    idx
-                )));
-            };
-            if entry.handler.can_handle(effect)? {
-                return Ok((idx, marker, entry.clone()));
-            }
-        }
-        Err(VMError::no_matching_handler(effect.clone()))
-    }
-
     pub(crate) fn check_dispatch_completion(&mut self, k: &Continuation) {
         if let Some(dispatch_id) = k.dispatch_id {
             if let Some(ctx) = self.find_mut_by_dispatch_id(dispatch_id) {
-                if ctx.k_user.cont_id == k.cont_id && ctx.k_user.parent.is_none() {
-                    ctx.completed = true;
+                let mut cursor = Some(ctx.k_user.clone());
+                while let Some(current) = cursor {
+                    if current.cont_id == k.cont_id {
+                        if current.parent.is_none() {
+                            ctx.completed = true;
+                        }
+                        break;
+                    }
+                    cursor = current.parent.as_ref().map(|parent| (**parent).clone());
                 }
             }
         }
@@ -272,22 +222,16 @@ impl DispatchState {
         handler: Handler,
         explicit_py_identity: Option<PyShared>,
         current_segment: Option<SegmentId>,
-        segments: &SegmentArena,
     ) -> Result<WithHandlerPlan, VMError> {
         let handler_marker = Marker::fresh();
         let Some(outside_seg_id) = current_segment else {
             return Err(VMError::internal("no current segment for WithHandler"));
         };
-        let outside_scope = segments
-            .get(outside_seg_id)
-            .map(|s| s.scope_chain.clone())
-            .unwrap_or_default();
 
         let py_identity = explicit_py_identity.or_else(|| handler.py_identity());
         Ok(WithHandlerPlan {
             handler_marker,
             outside_seg_id,
-            outside_scope,
             handler,
             py_identity,
         })

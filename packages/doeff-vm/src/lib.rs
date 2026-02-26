@@ -57,7 +57,7 @@ pub use effect::{Effect, PyAsk, PyCancelEffect, PyGet, PyLocal, PyModify, PyPut,
 pub use error::VMError;
 pub use frame::Frame;
 pub use handler::{
-    Handler, HandlerDebugInfo, HandlerEntry, HandlerInvoke, HandlerRef, LazyAskHandlerFactory,
+    Handler, HandlerDebugInfo, HandlerInvoke, HandlerRef, LazyAskHandlerFactory,
     ReaderHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
 pub use ids::{ContId, DispatchId, Marker, RunnableId, SegmentId};

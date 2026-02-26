@@ -86,14 +86,15 @@ impl TryFrom<u8> for DoExprTag {
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    AwaitHandlerFactory, Handler, HandlerEntry, HandlerRef, LazyAskHandlerFactory, PythonHandler,
+    AwaitHandlerFactory, Handler, HandlerRef, LazyAskHandlerFactory, PythonHandler,
     ReaderHandlerFactory, ResultSafeHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerHandler;
-use crate::segment::Segment;
+#[allow(unused_imports)]
+use crate::segment::{Segment, SegmentKind};
 use crate::step::{Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent};
 use crate::value::Value;
 use crate::vm::VM;
@@ -656,34 +657,22 @@ impl PyVM {
 
         if state {
             let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let prompt_seg_id = self.vm.alloc_segment(seg);
-            self.vm.install_handler(
-                marker,
-                HandlerEntry::new(Arc::new(StateHandlerFactory), prompt_seg_id),
-            );
+            self.vm
+                .install_handler(marker, Arc::new(StateHandlerFactory), None);
             scoped_markers.push(marker);
         }
 
         if reader {
             let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let prompt_seg_id = self.vm.alloc_segment(seg);
-            self.vm.install_handler(
-                marker,
-                HandlerEntry::new(Arc::new(ReaderHandlerFactory), prompt_seg_id),
-            );
+            self.vm
+                .install_handler(marker, Arc::new(ReaderHandlerFactory), None);
             scoped_markers.push(marker);
         }
 
         if writer {
             let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let prompt_seg_id = self.vm.alloc_segment(seg);
-            self.vm.install_handler(
-                marker,
-                HandlerEntry::new(Arc::new(WriterHandlerFactory), prompt_seg_id),
-            );
+            self.vm
+                .install_handler(marker, Arc::new(WriterHandlerFactory), None);
             scoped_markers.push(marker);
         }
 
@@ -753,12 +742,9 @@ impl PyVM {
             )));
         }
 
+        let outside_seg_id = self.vm.instantiate_installed_handlers();
         let marker = Marker::fresh();
-        let installed_markers = self.vm.installed_handler_markers();
-        let mut scope_chain = vec![marker];
-        scope_chain.extend(installed_markers);
-
-        let seg = Segment::new(marker, None, scope_chain);
+        let seg = Segment::new(marker, outside_seg_id);
         let seg_id = self.vm.alloc_segment(seg);
         self.vm.current_segment = Some(seg_id);
         let Some(seg) = self.vm.current_segment_mut() else {
@@ -936,34 +922,22 @@ impl PyStdlib {
 
     pub fn install_state(&self, vm: &mut PyVM) {
         if let Some(marker) = self.state_marker {
-            let seg = Segment::new(marker, None, vec![]);
-            let prompt_seg_id = vm.vm.alloc_segment(seg);
-            vm.vm.install_handler(
-                marker,
-                HandlerEntry::new(Arc::new(StateHandlerFactory), prompt_seg_id),
-            );
+            vm.vm
+                .install_handler(marker, Arc::new(StateHandlerFactory), None);
         }
     }
 
     pub fn install_reader(&self, vm: &mut PyVM) {
         if let Some(marker) = self.reader_marker {
-            let seg = Segment::new(marker, None, vec![]);
-            let prompt_seg_id = vm.vm.alloc_segment(seg);
-            vm.vm.install_handler(
-                marker,
-                HandlerEntry::new(Arc::new(ReaderHandlerFactory), prompt_seg_id),
-            );
+            vm.vm
+                .install_handler(marker, Arc::new(ReaderHandlerFactory), None);
         }
     }
 
     pub fn install_writer(&self, vm: &mut PyVM) {
         if let Some(marker) = self.writer_marker {
-            let seg = Segment::new(marker, None, vec![]);
-            let prompt_seg_id = vm.vm.alloc_segment(seg);
-            vm.vm.install_handler(
-                marker,
-                HandlerEntry::new(Arc::new(WriterHandlerFactory), prompt_seg_id),
-            );
+            vm.vm
+                .install_handler(marker, Arc::new(WriterHandlerFactory), None);
         }
     }
 }
@@ -975,12 +949,8 @@ impl PySchedulerHandler {
             self.marker = Some(Marker::fresh());
         }
         if let Some(marker) = self.marker {
-            let seg = Segment::new(marker, None, vec![]);
-            let prompt_seg_id = vm.vm.alloc_segment(seg);
-            vm.vm.install_handler(
-                marker,
-                HandlerEntry::new(Arc::new(self.handler.clone()), prompt_seg_id),
-            );
+            vm.vm
+                .install_handler(marker, Arc::new(self.handler.clone()), None);
         }
     }
 }
@@ -3045,7 +3015,7 @@ mod tests {
             let mut pyvm = PyVM { vm: VM::new() };
 
             let root_marker = Marker::fresh();
-            let root_seg = Segment::new(root_marker, None, vec![]);
+            let root_seg = Segment::new(root_marker, None);
             let root_seg_id = pyvm.vm.alloc_segment(root_seg);
             pyvm.vm.current_segment = Some(root_seg_id);
 
@@ -3088,24 +3058,24 @@ mod tests {
 
             let body_seg_id = pyvm.vm.current_segment.expect("body segment missing");
             let body_seg = pyvm.vm.segments.get(body_seg_id).expect("segment missing");
-            let handler_marker = *body_seg
-                .scope_chain
-                .first()
-                .expect("handler marker missing on body scope");
-            let entry = pyvm
+            let prompt_seg_id = body_seg.caller.expect("handler prompt missing");
+            let prompt_seg = pyvm
                 .vm
-                .handlers
-                .get(&handler_marker)
-                .expect("handler entry missing");
-
-            let identity = entry
-                .py_identity
-                .as_ref()
-                .expect("G2 FAIL: rust sentinel identity was not preserved");
-            assert!(
-                identity.bind(py).is(&sentinel.bind(py)),
-                "G2 FAIL: preserved identity does not match original sentinel"
-            );
+                .segments
+                .get(prompt_seg_id)
+                .expect("prompt segment missing");
+            match &prompt_seg.kind {
+                SegmentKind::PromptBoundary {
+                    py_identity: Some(identity),
+                    ..
+                } => {
+                    assert!(
+                        identity.bind(py).is(&sentinel.bind(py)),
+                        "G2 FAIL: preserved identity does not match original sentinel"
+                    );
+                }
+                _ => panic!("G2 FAIL: rust sentinel identity was not preserved"),
+            }
         });
     }
 
@@ -3351,7 +3321,7 @@ mod tests {
         Python::attach(|py| {
             let mut pyvm = PyVM { vm: VM::new() };
             let marker = crate::ids::Marker::fresh();
-            let seg = crate::segment::Segment::new(marker, None, vec![marker]);
+            let seg = crate::segment::Segment::new(marker, None);
             let continuation = crate::continuation::Continuation::capture(
                 &seg,
                 crate::ids::SegmentId::from_index(0),
@@ -3728,7 +3698,7 @@ mod tests {
 
             // GetTraceback → DoCtrl::GetTraceback
             let marker = crate::ids::Marker::fresh();
-            let seg = crate::segment::Segment::new(marker, None, vec![marker]);
+            let seg = crate::segment::Segment::new(marker, None);
             let continuation = crate::continuation::Continuation::capture(
                 &seg,
                 crate::ids::SegmentId::from_index(0),
