@@ -1,13 +1,27 @@
 //! Segment types for delimited continuations.
 
 use crate::frame::Frame;
+use crate::handler::HandlerRef;
 use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::py_shared::PyShared;
 use crate::step::{Mode, PendingPython, PyException};
 
 #[derive(Debug, Clone)]
 pub enum SegmentKind {
     Normal,
-    PromptBoundary { handled_marker: Marker },
+    PromptBoundary {
+        handled_marker: Marker,
+        handler: HandlerRef,
+        return_clause: Option<PyShared>,
+        py_identity: Option<PyShared>,
+    },
+    MaskBoundary {
+        masked_effects: Vec<PyShared>,
+        behind: bool,
+    },
+    FinallyBoundary {
+        cleanup: PyShared,
+    },
 }
 
 #[derive(Debug)]
@@ -15,7 +29,8 @@ pub struct Segment {
     pub marker: Marker,
     pub frames: Vec<Frame>,
     pub caller: Option<SegmentId>,
-    pub scope_chain: Vec<Marker>,
+    pub handler_lookup_anchor: Option<SegmentId>,
+    pub handler_lookup_anchor_marker: Option<Marker>,
     pub kind: SegmentKind,
     pub dispatch_id: Option<DispatchId>,
     pub mode: Mode,
@@ -26,12 +41,13 @@ pub struct Segment {
 }
 
 impl Segment {
-    pub fn new(marker: Marker, caller: Option<SegmentId>, scope_chain: Vec<Marker>) -> Self {
+    pub fn new(marker: Marker, caller: Option<SegmentId>) -> Self {
         Segment {
             marker,
             frames: Vec::new(),
             caller,
-            scope_chain,
+            handler_lookup_anchor: None,
+            handler_lookup_anchor_marker: None,
             kind: SegmentKind::Normal,
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
@@ -45,15 +61,23 @@ impl Segment {
     pub fn new_prompt(
         marker: Marker,
         caller: Option<SegmentId>,
-        scope_chain: Vec<Marker>,
         handled_marker: Marker,
+        handler: HandlerRef,
+        return_clause: Option<PyShared>,
+        py_identity: Option<PyShared>,
     ) -> Self {
         Segment {
             marker,
             frames: Vec::new(),
             caller,
-            scope_chain,
-            kind: SegmentKind::PromptBoundary { handled_marker },
+            handler_lookup_anchor: None,
+            handler_lookup_anchor_marker: None,
+            kind: SegmentKind::PromptBoundary {
+                handled_marker,
+                handler,
+                return_clause,
+                py_identity,
+            },
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
@@ -85,8 +109,10 @@ impl Segment {
 
     pub fn handled_marker(&self) -> Option<Marker> {
         match &self.kind {
-            SegmentKind::PromptBoundary { handled_marker } => Some(*handled_marker),
-            SegmentKind::Normal => None,
+            SegmentKind::PromptBoundary { handled_marker, .. } => Some(*handled_marker),
+            SegmentKind::Normal
+            | SegmentKind::MaskBoundary { .. }
+            | SegmentKind::FinallyBoundary { .. } => None,
         }
     }
 }
@@ -98,7 +124,7 @@ mod tests {
     #[test]
     fn test_segment_creation() {
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         assert_eq!(seg.marker, marker);
         assert!(seg.caller.is_none());
         assert!(!seg.is_prompt_boundary());
@@ -109,7 +135,14 @@ mod tests {
     fn test_prompt_segment_creation() {
         let marker = Marker::fresh();
         let handled = Marker::fresh();
-        let seg = Segment::new_prompt(marker, None, vec![handled], handled);
+        let seg = Segment::new_prompt(
+            marker,
+            None,
+            handled,
+            std::sync::Arc::new(crate::handler::StateHandlerFactory),
+            None,
+            None,
+        );
         assert!(seg.is_prompt_boundary());
         assert_eq!(seg.handled_marker(), Some(handled));
     }
@@ -117,7 +150,7 @@ mod tests {
     #[test]
     fn test_segment_frame_push_pop_o1() {
         let marker = Marker::fresh();
-        let mut seg = Segment::new(marker, None, vec![]);
+        let mut seg = Segment::new(marker, None);
 
         seg.push_frame(Frame::FlatMapBindResult);
         seg.push_frame(Frame::HandlerDispatch {

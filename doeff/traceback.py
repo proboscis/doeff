@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import linecache
+import logging
 import sysconfig
 import time
 from dataclasses import dataclass, field
@@ -72,6 +73,8 @@ else:
         coerce_active_chain_entries,
         coerce_trace_entries,
     )
+
+    _logger = logging.getLogger(__name__)
 
     if TYPE_CHECKING:
         from types import TracebackType
@@ -251,8 +254,13 @@ else:
             if not isinstance(entry, TraceDispatch):
                 continue
 
+            # Keep rendering resilient when a dispatch is still marked active.
+            # In exception paths this is projected as a delegated frame below.
             if entry.action == "active" and not allow_active:
-                raise ValueError("project_trace() encountered active dispatch in exception context")
+                _logger.warning(
+                    "project_trace() encountered active dispatch in exception context; "
+                    "projecting as delegated",
+                )
 
             chain = list(entry.delegation_chain)
             if not chain:
@@ -361,7 +369,7 @@ else:
                 return f"✗ {result.handler_name} raised {result.exception_repr}"
             if isinstance(result, EffectResultTransferred):
                 return f"⇢ {result.handler_name} transferred to {result.target_repr}"
-            return "… active"
+            return "⇢ active"
 
         @staticmethod
         def _format_spawn_boundary(boundary: SpawnBoundary) -> str:

@@ -122,14 +122,19 @@ lint-packages:
 # Testing
 # =============================================================================
 
+PYTEST_MEM_GUARD_MB ?= 8192
+PYTEST_MEM_GUARD_POLL_INTERVAL ?= 1.0
+PYTEST_MEMORY_ENV := PYTEST_MEM_GUARD_MB=$(PYTEST_MEM_GUARD_MB) \
+	PYTEST_MEM_GUARD_POLL_INTERVAL=$(PYTEST_MEM_GUARD_POLL_INTERVAL)
+
 test:
-	uv run pytest -n auto
+	$(PYTEST_MEMORY_ENV) uv run pytest
 
 test-unit:
-	uv run pytest -n auto -m "not e2e and not slow"
+	$(PYTEST_MEMORY_ENV) uv run pytest -m "not e2e and not slow"
 
 test-e2e:
-	uv run pytest -m "e2e"
+	$(PYTEST_MEMORY_ENV) uv run pytest -m "e2e"
 
 # Run tests in all subpackages that have tests/ directories
 test-packages:

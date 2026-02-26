@@ -16,7 +16,7 @@ use crate::value::Value;
 
 /// Capturable continuation with frozen frame snapshot.
 ///
-/// Contains Arc snapshots of frames and scope_chain at capture time.
+/// Contains Arc snapshots of frames at capture time.
 /// Resume materializes this snapshot into a new execution segment.
 ///
 /// Continuations can be in two states:
@@ -30,8 +30,9 @@ use crate::value::Value;
 pub struct Continuation {
     pub cont_id: ContId,
     pub segment_id: SegmentId,
+    pub handler_lookup_anchor: Option<SegmentId>,
+    pub handler_lookup_anchor_marker: Option<Marker>,
     pub frames_snapshot: Arc<Vec<Frame>>,
-    pub scope_chain: Arc<Vec<Marker>>,
     pub marker: Marker,
     pub dispatch_id: Option<DispatchId>,
     pub mode: Box<Mode>,
@@ -71,8 +72,11 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id,
+            handler_lookup_anchor: segment.handler_lookup_anchor.or(Some(segment_id)),
+            handler_lookup_anchor_marker: segment
+                .handler_lookup_anchor_marker
+                .or(Some(segment.marker)),
             frames_snapshot: Arc::new(segment.frames.clone()),
-            scope_chain: Arc::new(segment.scope_chain.clone()),
             marker: segment.marker,
             dispatch_id,
             mode: Box::new(segment.mode.clone()),
@@ -98,8 +102,11 @@ impl Continuation {
         Continuation {
             cont_id,
             segment_id,
+            handler_lookup_anchor: segment.handler_lookup_anchor.or(Some(segment_id)),
+            handler_lookup_anchor_marker: segment
+                .handler_lookup_anchor_marker
+                .or(Some(segment.marker)),
             frames_snapshot: Arc::new(segment.frames.clone()),
-            scope_chain: Arc::new(segment.scope_chain.clone()),
             marker: segment.marker,
             dispatch_id,
             mode: Box::new(segment.mode.clone()),
@@ -129,8 +136,9 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
+            handler_lookup_anchor: None,
+            handler_lookup_anchor_marker: None,
             frames_snapshot: Arc::new(Vec::new()),
-            scope_chain: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
             mode: Box::new(Mode::Deliver(Value::Unit)),
@@ -169,8 +177,9 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
+            handler_lookup_anchor: None,
+            handler_lookup_anchor_marker: None,
             frames_snapshot: Arc::new(Vec::new()),
-            scope_chain: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
             mode: Box::new(Mode::Deliver(Value::Unit)),
@@ -223,7 +232,7 @@ mod tests {
 
     fn make_test_segment() -> (Segment, SegmentId) {
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![marker]);
+        let seg = Segment::new(marker, None);
         let seg_id = SegmentId::from_index(0);
         (seg, seg_id)
     }
@@ -237,7 +246,6 @@ mod tests {
         assert!(cont.dispatch_id.is_none());
         assert_eq!(cont.marker, seg.marker);
         assert!(cont.frames_snapshot.is_empty());
-        assert_eq!(cont.scope_chain.len(), 1);
         assert!(cont.is_started());
         assert!(cont.program.is_none());
         assert!(cont.handlers.is_empty());
@@ -256,7 +264,7 @@ mod tests {
     #[test]
     fn test_continuation_snapshot_is_independent() {
         let marker = Marker::fresh();
-        let mut seg = Segment::new(marker, None, vec![marker]);
+        let mut seg = Segment::new(marker, None);
         let seg_id = SegmentId::from_index(0);
 
         seg.push_frame(Frame::FlatMapBindResult);
