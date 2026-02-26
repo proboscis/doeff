@@ -1,7 +1,27 @@
 # SPEC: WithIntercept — Cross-Cutting Effect Observation
 
-**Status**: Draft (Revision 3)  
+**Status**: DEPRECATED — Superseded by SPEC-VM-016 R2 (Override Handler Pattern)  
 **Date**: 2026-02-25
+
+---
+
+## DEPRECATION NOTICE
+
+**This spec is superseded.** The `WithIntercept` DoCtrl primitive and all associated VM machinery (`InterceptorState`, `InterceptBoundary` segments, `interceptor_eval_depth`, `interceptor_skip_stack`) are removed in SPEC-008 R17.
+
+**Replacement**: The override handler pattern (SPEC-VM-016 R2 §4) provides strictly more powerful interception semantics:
+
+- **Type-specific interception**: Override handler catches the effect, observes/transforms it, re-performs under `MaskBehind` to delegate to the outer handler.
+- **Catch-all observation**: Catch-all handler (can_handle → true for all effects) + `Delegate()` to forward to outer handlers.
+- **Cross-cutting observation of handler-emitted effects**: Override handler installed outside the default handler stack observes effects yielded by inner handlers during their execution.
+
+The specific motivating use case from this spec — observing effects emitted by handlers above an observer in the stack — is solved by the override pattern because the override handler is installed as the innermost handler for the observed effect type, catching effects before the original handler.
+
+**Historical context**: This spec is retained for historical reference. The analysis in "Why Intercept cannot be an Effect" (§Design Rationale) remains valid for the old continuation model. The override pattern avoids the problem entirely by using standard handler semantics (handler + mask) instead of a separate interception mechanism.
+
+See: SPEC-008 R17 (R17-F), SPEC-VM-016 R2 (§4.3)
+
+---
 
 ### Revision 3 Changelog
 
