@@ -8,6 +8,8 @@ fn make_dummy_continuation() -> Continuation {
     Continuation {
         cont_id: ContId::fresh(),
         segment_id: SegmentId::from_index(0),
+        lookup_origin: None,
+        lookup_origin_marker: None,
         frames_snapshot: std::sync::Arc::new(Vec::new()),
         marker: Marker::fresh(),
         dispatch_id: None,
@@ -20,8 +22,6 @@ fn make_dummy_continuation() -> Continuation {
         program: None,
         handlers: Vec::new(),
         handler_identities: Vec::new(),
-        handler_lookup_anchor: None,
-        handler_lookup_anchor_marker: None,
         metadata: None,
         parent: None,
     }
@@ -2060,6 +2060,8 @@ fn test_d10_handler_return_uses_deliver_not_return() {
     let k_user = Continuation {
         cont_id: ContId::fresh(),
         segment_id: prompt_seg_id,
+        lookup_origin: None,
+        lookup_origin_marker: None,
         frames_snapshot: std::sync::Arc::new(Vec::new()),
         marker,
         dispatch_id: Some(dispatch_id),
@@ -2072,8 +2074,6 @@ fn test_d10_handler_return_uses_deliver_not_return() {
         program: None,
         handlers: Vec::new(),
         handler_identities: Vec::new(),
-        handler_lookup_anchor: None,
-        handler_lookup_anchor_marker: None,
         metadata: None,
         parent: None,
     };

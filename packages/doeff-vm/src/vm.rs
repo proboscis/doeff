@@ -411,18 +411,16 @@ impl VM {
         let mut chain = Vec::new();
         let mut cursor = Some(start_seg_id);
         if let Some(start_seg) = self.segments.get(start_seg_id) {
-            if let Some(anchor) = start_seg.handler_lookup_anchor {
-                let anchor_is_live = match start_seg.handler_lookup_anchor_marker {
+            if let Some(origin) = start_seg.lookup_origin {
+                let origin_is_live = match start_seg.lookup_origin_marker {
                     Some(expected_marker) => self
                         .segments
-                        .get(anchor)
+                        .get(origin)
                         .is_some_and(|seg| seg.marker == expected_marker),
-                    None => self.segments.get(anchor).is_some(),
+                    None => self.segments.get(origin).is_some(),
                 };
-                if anchor_is_live {
-                    // Handler segments execute outside the effect site prompt chain.
-                    // Anchor lookup at the effect site to preserve nested visibility.
-                    cursor = Some(anchor);
+                if origin_is_live {
+                    cursor = Some(origin);
                 }
             }
         }
@@ -454,19 +452,6 @@ impl VM {
             return Vec::new();
         };
         self.handlers_in_caller_chain(seg_id)
-    }
-
-    fn active_busy_markers(&self) -> HashSet<Marker> {
-        let mut busy = HashSet::new();
-        for ctx in self.dispatch_state.contexts() {
-            if ctx.completed {
-                continue;
-            }
-            if let Some(marker) = ctx.handler_chain.get(ctx.handler_idx) {
-                busy.insert(*marker);
-            }
-        }
-        busy
     }
 
     fn prompt_boundary_handler_lookup(&self) -> HashMap<Marker, (Handler, Option<PyShared>)> {
@@ -2707,7 +2692,6 @@ impl VM {
             .current_segment
             .ok_or_else(|| VMError::internal("no current segment during dispatch"))?;
         let handler_chain = self.handlers_in_caller_chain(seg_id);
-        let busy_markers = self.active_busy_markers();
 
         if handler_chain.is_empty() {
             if let Some(original) = original_exception.clone() {
@@ -2719,9 +2703,6 @@ impl VM {
 
         let mut selected: Option<(usize, HandlerChainEntry)> = None;
         for (idx, entry) in handler_chain.iter().enumerate() {
-            if busy_markers.contains(&entry.marker) {
-                continue;
-            }
             if entry.handler.can_handle(&effect)? {
                 selected = Some((idx, entry.clone()));
                 break;
@@ -2763,9 +2744,9 @@ impl VM {
         let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
 
         let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-        handler_seg.handler_lookup_anchor = current_seg.handler_lookup_anchor.or(Some(seg_id));
-        handler_seg.handler_lookup_anchor_marker = current_seg
-            .handler_lookup_anchor_marker
+        handler_seg.lookup_origin = current_seg.lookup_origin.or(Some(seg_id));
+        handler_seg.lookup_origin_marker = current_seg
+            .lookup_origin_marker
             .or(Some(current_seg.marker));
         handler_seg.dispatch_id = Some(dispatch_id);
         self.copy_interceptor_guard_state(Some(seg_id), &mut handler_seg);
@@ -3012,8 +2993,8 @@ impl VM {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
             caller,
-            handler_lookup_anchor: k.handler_lookup_anchor.or(Some(k.segment_id)),
-            handler_lookup_anchor_marker: k.handler_lookup_anchor_marker.or(Some(k.marker)),
+            lookup_origin: k.lookup_origin.or(Some(k.segment_id)),
+            lookup_origin_marker: k.lookup_origin_marker.or(Some(k.marker)),
             kind: SegmentKind::Normal,
             dispatch_id,
             mode: k.mode.as_ref().clone(),
@@ -3145,8 +3126,8 @@ impl VM {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
             caller: self.current_segment,
-            handler_lookup_anchor: k.handler_lookup_anchor.or(Some(k.segment_id)),
-            handler_lookup_anchor_marker: k.handler_lookup_anchor_marker.or(Some(k.marker)),
+            lookup_origin: k.lookup_origin.or(Some(k.segment_id)),
+            lookup_origin_marker: k.lookup_origin_marker.or(Some(k.marker)),
             kind: SegmentKind::Normal,
             dispatch_id,
             mode: k.mode.as_ref().clone(),
@@ -3394,19 +3375,19 @@ impl VM {
                     ctx.k_user.clone()
                 };
 
-                let (inner_anchor, inner_anchor_marker) = inner_seg_id
+                let (inner_origin, inner_origin_marker) = inner_seg_id
                     .and_then(|seg_id| {
                         self.segments.get(seg_id).map(|seg| {
                             (
-                                seg.handler_lookup_anchor.or(Some(seg_id)),
-                                seg.handler_lookup_anchor_marker.or(Some(seg.marker)),
+                                seg.lookup_origin.or(Some(seg_id)),
+                                seg.lookup_origin_marker.or(Some(seg.marker)),
                             )
                         })
                     })
                     .unwrap_or((None, None));
                 let mut handler_seg = Segment::new(marker, inner_seg_id);
-                handler_seg.handler_lookup_anchor = inner_anchor;
-                handler_seg.handler_lookup_anchor_marker = inner_anchor_marker;
+                handler_seg.lookup_origin = inner_origin;
+                handler_seg.lookup_origin_marker = inner_origin_marker;
                 handler_seg.dispatch_id = Some(dispatch_id);
                 self.copy_interceptor_guard_state(inner_seg_id, &mut handler_seg);
                 let handler_seg_id = self.alloc_segment(handler_seg);
