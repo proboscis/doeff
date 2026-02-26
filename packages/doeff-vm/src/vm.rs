@@ -362,6 +362,28 @@ impl VM {
             .expect("current segment not found in arena")
     }
 
+    /// Copy interceptor guard state from a source segment to a child segment.
+    ///
+    /// **Why inheritance is required (not derivable from frames):**
+    ///
+    /// `interceptor_eval_depth` and `interceptor_skip_stack` are *dynamic guard
+    /// context* that spans segment topology changes. They cannot be derived from
+    /// the child segment's local frame stack because:
+    ///
+    /// 1. **Child segments start with empty frames.** A new handler segment
+    ///    (created during dispatch at prompt boundaries) or a new interceptor body
+    ///    segment (created by `prepare_with_intercept`) has no frames, yet it runs
+    ///    within the parent's interceptor invocation context and must inherit the
+    ///    guard state to prevent re-entrancy and double-evaluation.
+    ///
+    /// 2. **Delegate/pass clears frames.** `clear_segment_frames` wipes the inner
+    ///    segment's frame stack during forwarding, but guard state must survive so
+    ///    the next handler segment inherits the correct interceptor context.
+    ///
+    /// 3. **Global callback maps are unstable.** `interceptor_state` maps are
+    ///    cleared on run boundaries, so deriving guard state from
+    ///    `interceptor_callbacks` / `interceptor_eval_callbacks` would break across
+    ///    continuation capture/resume spanning different runs.
     #[inline]
     fn copy_interceptor_guard_state(
         &self,

@@ -253,3 +253,160 @@ def test_three_level_nested_structural_isolation() -> None:
     result = run(wrapped, handlers=default_handlers())
     assert _is_ok(result), result.error
     assert result.value == ("L1<L2<L3>>", "L2<L3>", "L3")
+
+
+def test_interceptor_guard_survives_dispatch_prompt_hop() -> None:
+    seen: list[str] = []
+
+    @dataclass(frozen=True, kw_only=True)
+    class HopPing(EffectBase):
+        label: str
+
+    @dataclass(frozen=True, kw_only=True)
+    class HopInner(EffectBase):
+        label: str
+
+    def hop_ping_handler(effect: object, k: object):
+        if not isinstance(effect, HopPing):
+            yield Pass()
+            return
+        inner = yield HopInner(label=f"{effect.label}:inner")
+        return (yield Resume(k, f"hop:{inner}"))
+
+    def hop_inner_handler(effect: object, k: object):
+        if not isinstance(effect, HopInner):
+            yield Pass()
+            return
+        return (yield Resume(k, f"inner:{effect.label}"))
+
+    def interceptor(expr: object):
+        @do
+        def effectful() -> EffectGenerator[object]:
+            if isinstance(expr, HopPing):
+                seen.append(f"ping:{expr.label}")
+                if expr.label == "root":
+                    _ = yield HopPing(label="observer-hop")
+            if isinstance(expr, HopInner):
+                seen.append(f"inner:{expr.label}")
+            return expr
+
+        return effectful()
+
+    @do
+    def program() -> EffectGenerator[str]:
+        return (yield HopPing(label="root"))
+
+    wrapped = _with_handlers(
+        WithIntercept(interceptor, program(), (HopPing, HopInner), "include"),
+        hop_ping_handler,
+        hop_inner_handler,
+    )
+    result = run(wrapped, handlers=default_handlers())
+    assert _is_ok(result), result.error
+    assert result.value == "hop:inner:root:inner"
+    assert seen == ["ping:root"]
+
+
+def test_interceptor_guard_survives_delegate_pass() -> None:
+    seen: list[str] = []
+
+    @dataclass(frozen=True, kw_only=True)
+    class PassPing(EffectBase):
+        label: str
+
+    def inner_pass_handler(effect: object, k: object):
+        if not isinstance(effect, PassPing):
+            yield Pass()
+            return
+        yield Pass()
+
+    def outer_pass_handler(effect: object, k: object):
+        if not isinstance(effect, PassPing):
+            yield Pass()
+            return
+        return (yield Resume(k, f"outer:{effect.label}"))
+
+    def interceptor(expr: object):
+        @do
+        def effectful() -> EffectGenerator[object]:
+            if isinstance(expr, PassPing):
+                seen.append(expr.label)
+                if expr.label == "root":
+                    _ = yield PassPing(label="observer-pass")
+            return expr
+
+        return effectful()
+
+    @do
+    def program() -> EffectGenerator[str]:
+        return (yield PassPing(label="root"))
+
+    wrapped = _with_handlers(
+        WithIntercept(interceptor, program(), (PassPing,), "include"),
+        inner_pass_handler,
+        outer_pass_handler,
+    )
+    result = run(wrapped, handlers=default_handlers())
+    assert _is_ok(result), result.error
+    assert result.value == "outer:root"
+    assert seen == ["root"]
+
+
+def test_effectful_interceptor_no_double_eval_during_dispatch() -> None:
+    seen_value_types: list[str] = []
+    probe_is_ok: list[bool] = []
+    expected_pure_type = type(Pure("probe")).__name__
+    intercept_count: dict[str, int] = {"value": 0}
+
+    @dataclass(frozen=True, kw_only=True)
+    class EvalPing(EffectBase):
+        label: str
+
+    @dataclass(frozen=True, kw_only=True)
+    class EvalProbe(EffectBase):
+        label: str
+
+    def eval_ping_handler(effect: object, k: object):
+        if not isinstance(effect, EvalPing):
+            yield Pass()
+            return
+        return (yield Resume(k, f"handled:{effect.label}"))
+
+    def eval_probe_handler(effect: object, k: object):
+        if not isinstance(effect, EvalProbe):
+            yield Pass()
+            return
+        return Pure(f"probe:{effect.label}")
+
+    def interceptor(expr: object):
+        @do
+        def effectful() -> EffectGenerator[object]:
+            if not isinstance(expr, EvalPing):
+                return expr
+            intercept_count["value"] += 1
+            if intercept_count["value"] == 1:
+                probe_result = yield Try(EvalProbe(label="inner"))
+                probe_is_ok.append(bool(probe_result.is_ok()))
+                if probe_result.is_ok():
+                    seen_value_types.append(type(probe_result.value).__name__)
+                return Pure(expr)
+            return expr
+
+        return effectful()
+
+    @do
+    def program() -> EffectGenerator[str]:
+        deferred = yield EvalPing(label="x")
+        return (yield deferred)
+
+    wrapped = _with_handlers(
+        WithIntercept(interceptor, program(), (EvalPing,), "include"),
+        eval_ping_handler,
+        eval_probe_handler,
+    )
+    result = run(wrapped, handlers=default_handlers())
+    assert _is_ok(result), result.error
+    assert result.value == "handled:x"
+    assert probe_is_ok == [True]
+    assert seen_value_types == [expected_pure_type]
+    assert intercept_count["value"] == 2
