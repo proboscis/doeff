@@ -2965,6 +2965,21 @@ impl VM {
             })
     }
 
+    fn continuation_caller_segment(&self, k: &Continuation) -> Option<SegmentId> {
+        self.segments.get(k.segment_id).and_then(|source_seg| source_seg.caller)
+    }
+
+    fn activation_caller_segment(
+        &self,
+        kind: ContinuationActivationKind,
+        k: &Continuation,
+    ) -> Option<SegmentId> {
+        match kind {
+            ContinuationActivationKind::Resume => kind.caller_segment(self.current_segment),
+            ContinuationActivationKind::Transfer => self.continuation_caller_segment(k),
+        }
+    }
+
     fn enter_continuation_segment_with_dispatch(
         &mut self,
         k: &Continuation,
@@ -3023,10 +3038,7 @@ impl VM {
                         Ok(exception) => exception,
                         Err(effect_err) => effect_err,
                     };
-                let caller = kind
-                    .caller_segment(self.current_segment)
-                    .and_then(|seg_id| self.segments.get(seg_id))
-                    .and_then(|seg| seg.caller);
+                let caller = self.activation_caller_segment(kind, &k);
                 self.enter_continuation_segment_with_dispatch(&k, caller, None);
                 self.current_seg_mut().mode = Mode::Throw(enriched_exception);
                 return StepEvent::Continue;
@@ -3034,7 +3046,7 @@ impl VM {
         }
         self.check_dispatch_completion_after_activation(kind, &k);
 
-        self.enter_continuation_segment(&k, kind.caller_segment(self.current_segment));
+        self.enter_continuation_segment(&k, self.activation_caller_segment(kind, &k));
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }
@@ -3102,10 +3114,13 @@ impl VM {
         }
 
         let dispatch_id: Option<DispatchId> = None;
+        let caller = self
+            .continuation_caller_segment(&k)
+            .or(self.current_segment);
         let exec_seg = Segment {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
-            caller: self.current_segment,
+            caller,
             kind: SegmentKind::Normal,
             dispatch_id,
             mode: k.mode.as_ref().clone(),
@@ -3565,11 +3580,16 @@ impl VM {
     }
 
     fn handle_get_handlers(&mut self) -> StepEvent {
-        if self.current_dispatch_id().is_none() {
+        let Some(dispatch_id) = self.current_dispatch_id() else {
             return StepEvent::Error(VMError::internal("GetHandlers outside dispatch"));
-        }
+        };
+        let Some(ctx) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
+            return StepEvent::Error(VMError::internal(
+                "GetHandlers called with missing dispatch context",
+            ));
+        };
         let handlers = self
-            .current_handler_chain()
+            .handlers_in_caller_chain(ctx.k_user.segment_id)
             .into_iter()
             .map(|entry| entry.handler)
             .collect::<Vec<_>>();
