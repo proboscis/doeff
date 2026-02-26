@@ -1,6 +1,14 @@
 # SPEC-VM-015: Segment-Owned Execution State
 
-## Status: Draft
+## Status: Draft (Partially Superseded by SPEC-008 R17)
+
+> **R17 alignment note**: SPEC-008 R17 introduces architectural changes that supersede parts of this spec:
+> - `scope_chain` is removed from Segment — handler lookup walks the caller chain instead (R17-B)
+> - `InterceptorState`, `interceptor_eval_depth`, `interceptor_skip_stack` are removed — `WithIntercept` is superseded by the override handler pattern (R17-F)
+> - New `SegmentKind` variants added: `MaskBoundary`, `FinallyBoundary` (R17-C)
+> - `finally_cleanups: Vec<DoExpr>` added to Segment (R17-E)
+>
+> The **core principle** of this spec remains valid: all execution-local state is owned by Segment, not by VM globals. The interceptor-specific sections (§4.3, §5 interceptor transitions, Q3, Q4) are historical.
 
 ## 1. Overview
 
