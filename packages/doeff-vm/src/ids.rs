@@ -2,7 +2,7 @@
 //!
 //! All IDs are lightweight Copy types using newtype pattern for type safety.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Unique identifier for prompts/handlers.
 ///
@@ -33,13 +33,6 @@ pub struct DispatchId(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RunnableId(pub u64);
 
-/// Unique identifier for callbacks stored in VM's callback table.
-///
-/// Callbacks are stored separately from Frames to allow Frame to be Clone.
-/// The callback is consumed when executed.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct CallbackId(pub u32);
-
 /// Unique identifier for spawned tasks.
 ///
 /// Tasks are managed by the scheduler which maintains its own internal counter.
@@ -57,7 +50,6 @@ static MARKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CONT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DISPATCH_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static RUNNABLE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-static CALLBACK_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 impl Marker {
     /// Create a fresh unique Marker.
@@ -131,16 +123,6 @@ impl SegmentId {
     }
 }
 
-impl CallbackId {
-    pub fn fresh() -> Self {
-        CallbackId(CALLBACK_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
-    }
-
-    pub fn raw(&self) -> u32 {
-        self.0
-    }
-}
-
 impl TaskId {
     /// Get the raw value.
     pub fn raw(&self) -> u64 {
@@ -187,13 +169,6 @@ mod tests {
     fn test_segment_id_index_roundtrip() {
         let id = SegmentId::from_index(42);
         assert_eq!(id.index(), 42);
-    }
-
-    #[test]
-    fn test_callback_id_fresh_is_unique() {
-        let c1 = CallbackId::fresh();
-        let c2 = CallbackId::fresh();
-        assert_ne!(c1, c2);
     }
 
     #[test]

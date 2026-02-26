@@ -259,13 +259,12 @@ mod tests {
         let mut seg = Segment::new(marker, None, vec![marker]);
         let seg_id = SegmentId::from_index(0);
 
-        use crate::ids::CallbackId;
-        seg.push_frame(Frame::rust_return(CallbackId::fresh()));
+        seg.push_frame(Frame::FlatMapBindResult);
 
         let cont = Continuation::capture(&seg, seg_id, None);
         assert_eq!(cont.frames_snapshot.len(), 1);
 
-        seg.push_frame(Frame::rust_return(CallbackId::fresh()));
+        seg.push_frame(Frame::FlatMapBindResult);
         assert_eq!(cont.frames_snapshot.len(), 1);
         assert_eq!(seg.frame_count(), 2);
     }

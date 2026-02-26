@@ -3077,7 +3077,10 @@ mod tests {
             .into_any();
 
             let yielded = pyvm.classify_yielded(py, &with_handler).unwrap();
-            let seg = pyvm.vm.current_segment_mut().expect("current segment missing");
+            let seg = pyvm
+                .vm
+                .current_segment_mut()
+                .expect("current segment missing");
             seg.mode = Mode::HandleYield(yielded);
 
             let event = pyvm.vm.step();

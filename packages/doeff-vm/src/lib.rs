@@ -13,9 +13,9 @@ pub mod arena;
 pub mod ast_stream;
 pub mod capture;
 pub mod continuation;
-mod dispatch_state;
 mod debug_state;
 pub mod dispatch;
+mod dispatch_state;
 pub mod do_ctrl;
 pub mod doeff_generator;
 pub mod driver;
@@ -24,6 +24,7 @@ pub mod error;
 pub mod frame;
 mod handler;
 pub mod ids;
+mod interceptor_state;
 pub mod py_key;
 pub mod py_shared;
 pub mod python_call;
@@ -32,11 +33,10 @@ pub mod rust_store;
 pub mod scheduler;
 pub mod segment;
 mod step;
-mod interceptor_state;
 mod trace_state;
-mod vm_logging;
 pub mod value;
 mod vm;
+mod vm_logging;
 
 // Re-exports for convenience
 pub use arena::SegmentArena;
@@ -60,7 +60,7 @@ pub use handler::{
     Handler, HandlerDebugInfo, HandlerEntry, HandlerInvoke, HandlerRef, LazyAskHandlerFactory,
     ReaderHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
-pub use ids::{CallbackId, ContId, DispatchId, Marker, RunnableId, SegmentId};
+pub use ids::{ContId, DispatchId, Marker, RunnableId, SegmentId};
 pub use py_key::HashedPyKey;
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 pub use pyvm::{DoExprTag, PyStdlib, PyVM};
@@ -68,4 +68,4 @@ pub use rust_store::RustStore;
 pub use segment::{Segment, SegmentKind};
 pub use step::PyException;
 pub use value::Value;
-pub use vm::{Callback, VM};
+pub use vm::VM;
