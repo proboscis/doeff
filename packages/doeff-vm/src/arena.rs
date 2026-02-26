@@ -59,7 +59,7 @@ impl SegmentArena {
         new_parent: Option<SegmentId>,
     ) -> usize {
         let mut rewired = 0usize;
-        for slot in &mut self.segments {
+        for (idx, slot) in self.segments.iter_mut().enumerate() {
             let Some(segment) = slot.as_mut() else {
                 continue;
             };

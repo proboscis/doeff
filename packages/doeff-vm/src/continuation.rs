@@ -30,8 +30,6 @@ use crate::value::Value;
 pub struct Continuation {
     pub cont_id: ContId,
     pub segment_id: SegmentId,
-    pub handler_lookup_anchor: Option<SegmentId>,
-    pub handler_lookup_anchor_marker: Option<Marker>,
     pub frames_snapshot: Arc<Vec<Frame>>,
     pub marker: Marker,
     pub dispatch_id: Option<DispatchId>,
@@ -72,10 +70,6 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id,
-            handler_lookup_anchor: segment.handler_lookup_anchor.or(Some(segment_id)),
-            handler_lookup_anchor_marker: segment
-                .handler_lookup_anchor_marker
-                .or(Some(segment.marker)),
             frames_snapshot: Arc::new(segment.frames.clone()),
             marker: segment.marker,
             dispatch_id,
@@ -102,10 +96,6 @@ impl Continuation {
         Continuation {
             cont_id,
             segment_id,
-            handler_lookup_anchor: segment.handler_lookup_anchor.or(Some(segment_id)),
-            handler_lookup_anchor_marker: segment
-                .handler_lookup_anchor_marker
-                .or(Some(segment.marker)),
             frames_snapshot: Arc::new(segment.frames.clone()),
             marker: segment.marker,
             dispatch_id,
@@ -136,8 +126,6 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
-            handler_lookup_anchor: None,
-            handler_lookup_anchor_marker: None,
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
@@ -177,8 +165,6 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
-            handler_lookup_anchor: None,
-            handler_lookup_anchor_marker: None,
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,

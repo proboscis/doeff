@@ -20,8 +20,6 @@ fn make_dummy_continuation() -> Continuation {
         program: None,
         handlers: Vec::new(),
         handler_identities: Vec::new(),
-        handler_lookup_anchor: None,
-        handler_lookup_anchor_marker: None,
         metadata: None,
         parent: None,
     }
@@ -158,7 +156,7 @@ fn test_visible_handlers_no_dispatch() {
 }
 
 #[test]
-fn test_visible_handlers_with_busy_boundary() {
+fn test_all_handlers_visible_including_reentrant() {
     let mut vm = VM::new();
     let m1 = Marker::fresh();
     let m2 = Marker::fresh();
@@ -212,7 +210,46 @@ fn test_visible_handlers_with_busy_boundary() {
     });
 
     let visible = vm.current_visible_handlers();
-    assert_eq!(visible.len(), 3);
+    assert_eq!(visible.len(), 3, "re-entrant: all handlers visible even when dispatch is active");
+}
+
+#[test]
+fn test_handler_in_body_not_visible_from_outer_handler_clause() {
+    let mut vm = VM::new();
+    let m_outer = Marker::fresh();
+    let m_inner = Marker::fresh();
+
+    let root = vm.alloc_segment(Segment::new(m_outer, None));
+    let p_outer = vm.alloc_segment(Segment::new_prompt(
+        m_outer,
+        Some(root),
+        m_outer,
+        Arc::new(crate::handler::StateHandlerFactory),
+        None,
+        None,
+    ));
+    let body_outer = vm.alloc_segment(Segment::new(m_outer, Some(p_outer)));
+
+    // p_inner is installed inside body_outer — below body_outer in the tree.
+    let p_inner = vm.alloc_segment(Segment::new_prompt(
+        m_inner,
+        Some(body_outer),
+        m_inner,
+        Arc::new(crate::handler::WriterHandlerFactory),
+        None,
+        None,
+    ));
+    let body_inner = vm.alloc_segment(Segment::new(m_inner, Some(p_inner)));
+
+    // handler_seg is the outer handler clause: caller = p_outer (its own prompt boundary).
+    // Its caller chain is handler_seg → p_outer → root, which does NOT include p_inner.
+    let handler_seg = vm.alloc_segment(Segment::new(m_outer, Some(p_outer)));
+    vm.current_segment = Some(handler_seg);
+
+    let chain = vm.handlers_in_caller_chain(handler_seg);
+    assert_eq!(chain.len(), 1, "handler clause must not see below-prompt handlers (INV-4/INV-6)");
+
+    let _ = body_inner;
 }
 
 #[test]
@@ -2072,8 +2109,6 @@ fn test_d10_handler_return_uses_deliver_not_return() {
         program: None,
         handlers: Vec::new(),
         handler_identities: Vec::new(),
-        handler_lookup_anchor: None,
-        handler_lookup_anchor_marker: None,
         metadata: None,
         parent: None,
     };
