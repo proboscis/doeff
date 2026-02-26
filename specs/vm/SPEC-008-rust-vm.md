@@ -1,6 +1,20 @@
 # SPEC-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 16)
+## Status: Draft (Revision 17)
+
+### Revision 17 Changelog
+
+Changes from Rev 16. OCaml-style handler-on-segment model; scope_chain elimination; mask/finally primitives.
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R17-A** | Handler-on-Segment | **Handlers move from `VM.handlers` HashMap onto PromptBoundary segments.** `HandlerEntry` struct removed. `PromptBoundary` gains `handler: HandlerRef`, `return_clause: Option<ReturnClauseFn>`, and `py_identity: Option<PyShared>`. Handler lookup walks the segment caller chain instead of reading a HashMap. The `VM.handlers: HashMap<Marker, HandlerEntry>` field is deleted. |
+| **R17-B** | scope_chain eliminated | **Handler lookup walks segment caller chain instead of reading `scope_chain` Vec.** `Segment.scope_chain` field removed. `Continuation` no longer captures `scope_chain`. Handler search starts from `current_segment` and follows `caller` links, inspecting `PromptBoundary` segments. This mirrors OCaml 5 fiber handler resolution. |
+| **R17-C** | New SegmentKind variants | **`MaskBoundary` (for mask/mask-behind) and `FinallyBoundary` (continuation-scoped cleanup) added to `SegmentKind`.** `MaskBoundary { masked_effects, behind }` records effect types to skip during handler walk. `FinallyBoundary { cleanup }` registers a cleanup DoExpr that runs when the continuation resolves. |
+| **R17-D** | return(x) clause | **`PromptBoundary` gains optional `return_clause` that transforms the handled body's return value.** Without it, identity (`return x → x`) is implicit. The return clause is a Python callable invoked when the body returns normally. |
+| **R17-E** | Finally DoCtrl | **`Finally(cleanup: DoExpr)` registers continuation-scoped cleanup.** Cleanup runs when the continuation resolves (return, throw, or abandon). Cleanup is a DoExpr (not a Python lambda) because it may need to perform effects. Cleanup travels with captured continuations. Stored in `Segment.finally_cleanups` (LIFO stack). |
+| **R17-F** | WithIntercept removed | **`WithIntercept` superseded by override handler pattern (handler + mask behind).** `InterceptorState` deleted. R16-D WithIntercept redesign is superseded. See SPEC-VM-016 R2 for the override pattern. |
+| **R17-G** | Mask/MaskBehind DoCtrl | **`Mask(effect_types, body)` creates `MaskBoundary` segment.** During handler walk (caller chain traversal), when a `MaskBoundary` is encountered for effect type E, the next `PromptBoundary` handling E is skipped. `MaskBehind` variant skips the handler "behind" (used in override handler desugaring). |
 
 ### Revision 16 Changelog
 
@@ -11,7 +25,7 @@ Changes from Rev 15. ASTStream as DoExpr; Expand unification; WithIntercept rede
 | **R16-A** | DoExpr hierarchy | **ASTStream is a DoExpr.** An ASTStream (streaming program) is promoted to a DoExpr variant. `Eval` can process both static DoExpr nodes (Pure, Map, FlatMap, etc.) and streaming ASTStream programs uniformly. This unifies the two evaluation paths. |
 | **R16-B** | Expand unification | **`Expand(f, args)` = `Eval(Apply(f, args))`.** `Apply(f, args)` calls `f`, which returns a DoExpr (possibly an ASTStream). `Eval` evaluates the result. The separate `Expand` node is no longer semantically necessary — it becomes sugar for `Eval(Apply(...))`. The VM no longer needs to distinguish Apply-vs-Expand at the call site. |
 | **R16-C** | Macro expansion model | **Program invocation is macro expansion.** `Apply(f, args)` = expand macro `f` with inputs `args`, producing IR (DoExpr). `Eval` = evaluate the produced IR. `@do` generators are lazy macros: they produce IR nodes incrementally (one DoCtrl per yield) via ASTStream. Static callables produce IR in one shot. Both go through the same `Eval(Apply(...))` path. |
-| **R16-D** | WithIntercept redesign | **`WithIntercept(f, expr)` — interceptor is `Effect -> DoExpr`.** `f` is any callable that takes an effect and returns DoExpr. Interceptor invocation is `Eval(Apply(f, [effect]))`. No type filtering at VM level (moved to Python-side wrapper). No `is_do_callable` sniffing. `types`, `mode` removed from DoCtrl variant. See SPEC-WITH-INTERCEPT Rev 3. |
+| **R16-D** | WithIntercept redesign | **[R17-F SUPERSEDED — WithIntercept removed in R17. Superseded by override handler pattern (handler + mask behind). See SPEC-VM-016 R2.]** ~~`WithIntercept(f, expr)` — interceptor is `Effect -> DoExpr`. `f` is any callable that takes an effect and returns DoExpr. Interceptor invocation is `Eval(Apply(f, [effect]))`. No type filtering at VM level (moved to Python-side wrapper). No `is_do_callable` sniffing. `types`, `mode` removed from DoCtrl variant. See SPEC-WITH-INTERCEPT Rev 3.~~ |
 | **R16-E** | `interceptor_call_arg` deleted | **VM-INTERCEPT-003 resolved.** The `interceptor_call_arg` function that probed for `DoeffGeneratorFn` to decide Apply-vs-Expand calling convention is eliminated. All callables are invoked uniformly via `Apply`. |
 
 ### Revision 15 Changelog
@@ -150,9 +164,9 @@ This spec defines a **Rust-based VM** for doeff's algebraic effects system, with
 │    │ marker │       │ PyGen  │       │ dispatch_  │            │
 │    │ frames │◄─────►│ RustProg│      │ stack      │            │
 │    │ caller │       │ RustCb │       │            │            │
-│    │ scope  │       └────────┘       │ visible_   │            │
-│    └────────┘                        │ handlers() │            │
-│        │                             └────────────┘            │
+│    │ kind   │       └────────┘       │ caller     │            │
+│    │ finally│                        │ chain walk │            │
+│    └────────┘                        └────────────┘            │
 │        │              Primitives                                │
 │        │             ┌─────────────────────────────┐           │
 │        └────────────►│ Resume, Transfer, Delegate  │           │
@@ -183,7 +197,7 @@ This spec defines a **Rust-based VM** for doeff's algebraic effects system, with
 **Decision**: Rust manages the frame stack; Python generators are leaf nodes.
 
 **Rationale**:
-- Rust controls continuation structure (segments, caller links, scope_chain)
+- Rust controls continuation structure (segments, caller links, handler walk via caller chain [R17-B])
 - Python generators handle user code execution
 - Frame switching is Rust-native (fast)
 - Python calls happen at frame boundaries (GIL acquired/released cleanly)
@@ -373,7 +387,7 @@ to `run()` or `WithHandler`, at `id()` level.
 **Rationale**:
 - Users expect `state in (yield GetHandlers())` to work
 - Handler identity matters for patterns like "am I inside this handler?"
-- The `HandlerEntry` struct gains a `py_identity: Option<PyShared>` field
+- [R17-A] `py_identity: Option<PyShared>` now lives on `SegmentKind::PromptBoundary` (was on `HandlerEntry` before R17)
 
 ### ADR-11: Store/Env Initialization and Extraction [R8-E]
 
@@ -423,8 +437,9 @@ Segment is a Rust struct representing a delimited continuation frame:
 - Frames (K) - Vec of Rust Frame enums (mutable during execution)
 - Caller link (Option<SegmentId>)
 - Marker (handler identity this segment belongs to)
-- scope_chain (Vec<Marker>) - evidence vector snapshot
-- kind (Normal or PromptBoundary)
+- Handler walk via segment caller chain — PromptBoundary segments carry handlers directly
+- kind (Normal, PromptBoundary, MaskBoundary, or FinallyBoundary)
+- finally_cleanups (Vec<DoExpr>) - LIFO cleanup stack for continuation-scoped cleanup
 
 ### Principle 2: Three Distinct Contexts
 
@@ -591,14 +606,42 @@ pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send + Sync>;
 
 ```rust
 /// Segment kind - distinguishes prompt boundaries from normal segments.
+/// [R17-A] PromptBoundary now carries handler data directly (no separate HandlerEntry).
+/// [R17-C] MaskBoundary and FinallyBoundary added.
 #[derive(Debug, Clone)]
 pub enum SegmentKind {
     /// Normal segment (user code, handler execution)
     Normal,
-    /// Prompt boundary segment (created by WithHandler)
+    /// Prompt boundary segment (created by WithHandler).
+    /// [R17-A] Handler data lives here — no VM.handlers HashMap lookup needed.
     PromptBoundary {
         /// Which handler this prompt delimits
         handled_marker: Marker,
+        /// [R17-A] The handler implementation, moved from HandlerEntry.
+        handler: HandlerRef,
+        /// [R17-D] Optional return clause — transforms the handled body's return value.
+        /// When None, identity (return x → x) is implicit.
+        return_clause: Option<ReturnClauseFn>,
+        /// [R17-A] Original Python object passed by the user.
+        /// Returned by GetHandlers to preserve id()-level identity (ADR-10).
+        py_identity: Option<PyShared>,
+    },
+    /// [R17-C] Mask boundary segment (created by Mask/MaskBehind DoCtrl).
+    /// During handler walk, when a MaskBoundary is encountered for effect type E,
+    /// the next PromptBoundary handling E is skipped.
+    MaskBoundary {
+        /// Effect types to mask (Python type objects)
+        masked_effects: Vec<Py<PyType>>,
+        /// false = Mask (skip next matching handler ahead in walk)
+        /// true = MaskBehind (skip handler "behind" — used in override pattern)
+        behind: bool,
+    },
+    /// [R17-C] Finally boundary segment (created by Finally DoCtrl).
+    /// Cleanup runs when the continuation resolves (return, throw, or abandon).
+    FinallyBoundary {
+        /// Cleanup DoExpr to run on continuation resolution.
+        /// DoExpr (not Python lambda) because cleanup may perform effects.
+        cleanup: DoExpr,
     },
 }
 
@@ -606,6 +649,10 @@ pub enum SegmentKind {
 /// 
 /// Represents a continuation delimited by a prompt (marker).
 /// Frames are mutable during execution; captured via Arc snapshot.
+///
+/// [R17-B] scope_chain removed. Handler lookup walks segment.caller chain
+/// inspecting PromptBoundary segments directly.
+/// [R17-E] finally_cleanups added for continuation-scoped cleanup.
 #[derive(Debug)]
 pub struct Segment {
     /// Handler identity this segment belongs to
@@ -617,36 +664,49 @@ pub struct Segment {
     /// Caller link - who to return value to
     pub caller: Option<SegmentId>,
     
-    /// Evidence vector - handlers in scope [innermost, ..., outermost]
-    pub scope_chain: Vec<Marker>,
+    /// [R17-B] scope_chain REMOVED. Handler lookup walks caller chain instead.
+    // pub scope_chain: Vec<Marker>,  // DELETED in R17
     
-    /// Segment kind (Normal or PromptBoundary)
+    /// Segment kind (Normal, PromptBoundary, MaskBoundary, or FinallyBoundary)
     pub kind: SegmentKind,
+    
+    /// [R17-E] LIFO cleanup stack for continuation-scoped cleanup.
+    /// Cleanups are DoExpr nodes that run when the continuation resolves
+    /// (return, throw, or abandon). Registered via Finally DoCtrl.
+    pub finally_cleanups: Vec<DoExpr>,
 }
 
 impl Segment {
-    pub fn new(marker: Marker, caller: Option<SegmentId>, scope_chain: Vec<Marker>) -> Self {
+    pub fn new(marker: Marker, caller: Option<SegmentId>) -> Self {
         Segment {
             marker,
             frames: Vec::new(),
             caller,
-            scope_chain,
             kind: SegmentKind::Normal,
+            finally_cleanups: Vec::new(),
         }
     }
     
+    /// [R17-A] Create prompt boundary with handler data on the segment.
     pub fn new_prompt(
         marker: Marker, 
         caller: Option<SegmentId>, 
-        scope_chain: Vec<Marker>,
         handled_marker: Marker,
+        handler: HandlerRef,
+        return_clause: Option<ReturnClauseFn>,
+        py_identity: Option<PyShared>,
     ) -> Self {
         Segment {
             marker,
             frames: Vec::new(),
             caller,
-            scope_chain,
-            kind: SegmentKind::PromptBoundary { handled_marker },
+            kind: SegmentKind::PromptBoundary {
+                handled_marker,
+                handler,
+                return_clause,
+                py_identity,
+            },
+            finally_cleanups: Vec::new(),
         }
     }
     
@@ -666,8 +726,8 @@ impl Segment {
     
     pub fn handled_marker(&self) -> Option<Marker> {
         match &self.kind {
-            SegmentKind::PromptBoundary { handled_marker } => Some(*handled_marker),
-            SegmentKind::Normal => None,
+            SegmentKind::PromptBoundary { handled_marker, .. } => Some(*handled_marker),
+            _ => None,
         }
     }
 }
@@ -679,8 +739,13 @@ impl Segment {
 /// Captured or created continuation (subject to one-shot check).
 /// 
 /// Two kinds:
-/// - Captured (started=true): frames_snapshot/scope_chain/marker/dispatch_id are valid
+/// - Captured (started=true): frames_snapshot/marker/dispatch_id are valid
 /// - Created (started=false): program/handlers are valid; frames_snapshot is empty
+///
+/// [R17-B] scope_chain removed. Handler lookup walks the segment caller chain
+/// at resume time — the caller link on the materialized segment provides the
+/// handler ordering implicitly.
+/// [R17-E] finally_cleanups travels with captured continuations.
 #[derive(Debug, Clone)]
 pub struct Continuation {
     /// Unique identifier for one-shot tracking
@@ -693,17 +758,17 @@ pub struct Continuation {
     /// Frozen frames at capture time (captured only)
     pub frames_snapshot: Arc<Vec<Frame>>,
     
-    /// Frozen scope_chain at capture time (captured only)
-    pub scope_chain: Arc<Vec<Marker>>,
+    /// [R17-B] scope_chain REMOVED. Handler ordering is recovered from
+    /// the segment caller chain at resume time.
+    // pub scope_chain: Arc<Vec<Marker>>,  // DELETED in R17
     
     /// Handler marker this continuation belongs to (captured only).
     /// 
-    /// SEMANTICS: This is the innermost handler at capture time (scope_chain[0]).
-    /// Used primarily for debugging/tracing. The authoritative handler info
-    /// is in scope_chain, not marker alone.
+    /// SEMANTICS: This is the handler marker of the segment at capture time.
+    /// Used primarily for debugging/tracing.
     /// 
-    /// When Resume materializes, new segment gets marker = k.marker,
-    /// but scope_chain is what actually determines which handlers are in scope.
+    /// When Resume materializes, new segment gets marker = k.marker.
+    /// Handler lookup walks the caller chain from the materialized segment.
     pub marker: Marker,
     
     /// Which dispatch created this (for completion detection).
@@ -725,9 +790,14 @@ pub struct Continuation {
     /// [Q1] Preserved Rust handler sentinel identities (ADR-14).
     /// When a captured continuation round-trips through Python (via PyContinuation),
     /// Rust sentinel identity (pointer equality) would be lost. This field stores
-    /// the original `Option<PyShared>` py_identity from each HandlerEntry in scope
+    /// the original `Option<PyShared>` py_identity from each handler in scope
     /// at capture time, allowing faithful restoration on resume.
     pub handler_identities: Vec<Option<PyShared>>,
+    
+    /// [R17-E] Continuation-scoped cleanups that travel with the continuation.
+    /// When the continuation resolves (return, throw, or abandon), these
+    /// cleanup DoExprs are executed in LIFO order.
+    pub finally_cleanups: Arc<Vec<DoExpr>>,
 }
 
 impl Continuation {
@@ -741,12 +811,13 @@ impl Continuation {
             cont_id: ContId::fresh(),
             segment_id,
             frames_snapshot: Arc::new(segment.frames.clone()),
-            scope_chain: Arc::new(segment.scope_chain.clone()),
             marker: segment.marker,
             dispatch_id,
             started: true,
             program: None,
             handlers: Vec::new(),
+            handler_identities: Vec::new(),
+            finally_cleanups: Arc::new(segment.finally_cleanups.clone()),
         }
     }
     
@@ -756,12 +827,13 @@ impl Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId(0),  // unused when started=false
             frames_snapshot: Arc::new(Vec::new()),
-            scope_chain: Arc::new(Vec::new()),
             marker: Marker(0),  // ignored when started=false
             dispatch_id: None,
             started: false,
             program: Some(program),
             handlers,
+            handler_identities: Vec::new(),
+            finally_cleanups: Arc::new(Vec::new()),
         }
     }
 }
@@ -1005,12 +1077,16 @@ pub enum DoExprTag {
     Eval        = 8,
     // ...
     Pass        = 19,   // [R15-A] terminal pass-through (old Delegate semantics)
+    Mask        = 20,   // [R17-G] mask effect types within body
+    MaskBehind  = 21,   // [R17-G] mask handler "behind" (override pattern)
+    Finally     = 22,   // [R17-E] register continuation-scoped cleanup
     GetHandlers = 9,
     GetCallStack = 10,
     GetContinuation = 11,
     CreateContinuation = 12,
     ResumeContinuation = 13,
     PythonAsyncSyntaxEscape = 14,
+    Perform     = 15,   // [R14-B] explicit effect dispatch
 
     // === Effect (handler-dispatched) ===
     // All effects share a single tag value. The VM doesn't distinguish
@@ -1084,6 +1160,29 @@ pub struct PyCall {
     #[pyo3(get)] pub metadata: PyObject,  // CallMetadata
 }
 // super = PyDoCtrlBase { tag: DoExprTag::Call as u8 }
+
+// [R17-G] Mask DoCtrl — mask effect types within body
+#[pyclass(frozen, extends=PyDoCtrlBase, name = "Mask")]
+pub struct PyMask {
+    #[pyo3(get)] pub effect_types: Vec<PyObject>,  // Python type objects to mask
+    #[pyo3(get)] pub body: PyObject,                // DoExpr body to run under mask
+}
+// super = PyDoCtrlBase { tag: DoExprTag::Mask as u8 }
+
+// [R17-G] MaskBehind DoCtrl — mask handler "behind" (override pattern)
+#[pyclass(frozen, extends=PyDoCtrlBase, name = "MaskBehind")]
+pub struct PyMaskBehind {
+    #[pyo3(get)] pub effect_types: Vec<PyObject>,  // Python type objects to mask
+    #[pyo3(get)] pub body: PyObject,                // DoExpr body to run under mask
+}
+// super = PyDoCtrlBase { tag: DoExprTag::MaskBehind as u8 }
+
+// [R17-E] Finally DoCtrl — register continuation-scoped cleanup
+#[pyclass(frozen, extends=PyDoCtrlBase, name = "Finally")]
+pub struct PyFinally {
+    #[pyo3(get)] pub cleanup: PyObject,  // DoExpr cleanup to run on continuation resolution
+}
+// super = PyDoCtrlBase { tag: DoExprTag::Finally as u8 }
 
 // [R13-D] DoThunk types deleted — no PyPureProgram, PyDerivedProgram, etc.
 // Pure(value) replaces them.
@@ -1238,6 +1337,26 @@ pub struct Transfer {
     #[pyo3(get)] pub continuation: PyObject,  // K instance
     #[pyo3(get)] pub value: PyObject,
 }
+
+/// [R17-G] Mask effect types within body — composition primitive (usable anywhere).
+#[pyclass]
+pub struct Mask {
+    #[pyo3(get)] pub effect_types: Vec<PyObject>,  // Python type objects
+    #[pyo3(get)] pub body: PyObject,                // DoExpr
+}
+
+/// [R17-G] Mask handler "behind" — composition primitive for override pattern.
+#[pyclass]
+pub struct MaskBehind {
+    #[pyo3(get)] pub effect_types: Vec<PyObject>,  // Python type objects
+    #[pyo3(get)] pub body: PyObject,                // DoExpr
+}
+
+/// [R17-E] Register continuation-scoped cleanup — composition primitive.
+#[pyclass]
+pub struct Finally {
+    #[pyo3(get)] pub cleanup: PyObject,  // DoExpr cleanup
+}
 ```
 
 FFI conversions for VM-internal types:
@@ -1379,11 +1498,17 @@ pub struct KpcHandlerProgram { // [SUPERSEDED BY R15-A / SPEC-KPC-001]
 }
 ```
 
-### Handler Entry with Identity Preservation [R8-D]
+### Handler Entry with Identity Preservation [R8-D] [R17-A SUPERSEDED]
+
+> **[R17-A SUPERSEDED]** `HandlerEntry` struct removed in R17. Handler data
+> (`handler`, `py_identity`) now lives directly on `SegmentKind::PromptBoundary`.
+> `prompt_seg_id` is implicit (it IS the PromptBoundary segment). The code
+> below is retained for historical reference only.
 
 ```rust
-/// Entry in the handler table, linking a Handler to its prompt segment
+/// [R17-A SUPERSEDED] Entry in the handler table, linking a Handler to its prompt segment
 /// and preserving the original Python object for GetHandlers.
+/// In R17, these fields moved to SegmentKind::PromptBoundary.
 #[derive(Debug, Clone)]
 pub struct HandlerEntry {
     pub handler: Handler,
@@ -1730,7 +1855,7 @@ pub enum PendingPython {
     /// [R8-H] RustProgram handler needs Python callback (e.g., Modify calling modifier function).
     /// The handler's RustHandlerProgram is suspended; result feeds back via resume().
     RustProgramContinuation {
-        /// Handler marker (to locate handler in scope_chain)
+        /// Handler marker (to locate handler via caller chain walk [R17-B])
         marker: Marker,
         /// Continuation from the dispatch context
         k: Continuation,
@@ -1865,7 +1990,7 @@ The VM state is organized into three layers with clear separation of concerns:
 
 Layer 1 fields are defined directly in the VM struct (see "VM Struct" below).
 They include: `segments`, `free_segments`, `dispatch_stack`, `callbacks`, 
-`consumed_cont_ids`, `handlers`.
+`consumed_cont_ids`. [R17-A] `handlers` HashMap removed — handler data lives on PromptBoundary segments.
 
 These structures maintain VM invariants and must NOT be accessible or 
 modifiable by user code directly.
@@ -2039,9 +2164,10 @@ pub struct VM {
     /// One-shot tracking for continuations
     consumed_cont_ids: HashSet<ContId>,
     
-    /// Handler registry: marker -> HandlerEntry
-    /// NOTE: Includes prompt_seg_id to avoid linear search
-    handlers: HashMap<Marker, HandlerEntry>,
+    /// [R17-A] REMOVED: handlers HashMap deleted.
+    /// Handler data now lives directly on PromptBoundary segments.
+    /// Handler lookup walks the segment caller chain instead.
+    // handlers: HashMap<Marker, HandlerEntry>,  // DELETED in R17
 
     /// [Q6] Continuation registry for Python-side K lookup.
     /// Maps ContId to Continuation so that PyContinuation objects (exposed to
@@ -2083,23 +2209,22 @@ pub struct VM {
     continuation_registry: HashMap<ContId, Continuation>,
 }
 
-/// Handler registry entry.
-/// 
-/// Includes prompt_seg_id to avoid linear search during dispatch.
-/// Created by WithHandler, looked up by start_dispatch.
-#[derive(Debug, Clone)]
-pub struct HandlerEntry {
-    /// The handler implementation
-    pub handler: Handler,
-    
-    /// Prompt segment for this handler (set at WithHandler time)
-    /// Abandon/return goes here. No search needed.
-    pub prompt_seg_id: SegmentId,
-    
-    /// [D8] Original Python object passed by the user.
-    /// Returned by GetHandlers to preserve id()-level identity.
-    pub py_identity: Option<PyShared>,
-}
+/// [R17-A SUPERSEDED] Handler registry entry — REMOVED in R17.
+/// Handler data now lives directly on PromptBoundary segments.
+/// `handler`, `prompt_seg_id`, and `py_identity` are fields of
+/// `SegmentKind::PromptBoundary`. No separate registry needed.
+///
+/// Retained below for historical reference only:
+///
+/// ```rust
+/// // [R17-A SUPERSEDED]
+/// #[derive(Debug, Clone)]
+/// pub struct HandlerEntry {
+///     pub handler: Handler,
+///     pub prompt_seg_id: SegmentId,
+///     pub py_identity: Option<PyShared>,
+/// }
+/// ```
 ```
 
 ### Debug Mode (Step Tracing)
@@ -2594,8 +2719,8 @@ impl VM {
             // === [R8-H] RustProgramContinuation: RustProgram handler's Python call returned ===
             (PendingPython::RustProgramContinuation { marker, k }, PyCallOutcome::Value(result)) => {
                 // Feed result back to the RustHandlerProgram via resume()
-                // The handler program is located via marker in the scope_chain
-                // and resumed with the Python call result as a Value
+                // [R17-B] The handler program is located via marker by walking the
+                // caller chain and resumed with the Python call result as a Value
                 self.mode = Mode::Deliver(result);
             }
             (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::GenError(e)) => {
@@ -3750,6 +3875,44 @@ pub enum DoCtrl {
     /// Walks current segment + caller chain (innermost frame first).
     /// Analogous to GetHandlers (structural VM inspection, not an effect).
     GetCallStack,
+
+    /// [R14-B] Perform(effect) - Explicit effect dispatch.
+    /// The only control instruction that requests handler dispatch.
+    /// Source-level `yield effect` lowers to `yield Perform(effect)`.
+    Perform {
+        effect: Py<PyAny>,
+    },
+
+    /// [R17-G] Mask(effect_types, body) - Create MaskBoundary segment.
+    /// During handler walk (caller chain traversal), when a MaskBoundary is
+    /// encountered for effect type E, the next PromptBoundary handling E is skipped.
+    /// Used to prevent re-entrant dispatch to the same handler.
+    Mask {
+        /// Effect types to mask (Python type objects)
+        effect_types: Vec<Py<PyType>>,
+        /// DoExpr body to run within the mask scope
+        body: Py<PyAny>,
+    },
+
+    /// [R17-G] MaskBehind(effect_types, body) - Like Mask but skips the handler
+    /// "behind" the current one. Used in the override handler desugaring:
+    /// a new handler + mask-behind makes the old handler invisible to the new one.
+    MaskBehind {
+        /// Effect types to mask behind
+        effect_types: Vec<Py<PyType>>,
+        /// DoExpr body to run within the mask scope
+        body: Py<PyAny>,
+    },
+
+    /// [R17-E] Finally(cleanup) - Register continuation-scoped cleanup.
+    /// `cleanup` is a DoExpr (not a Python lambda) because it may perform effects.
+    /// Cleanup runs when the continuation resolves: normal return, exception,
+    /// or abandonment. Cleanup is appended to `Segment.finally_cleanups` (LIFO)
+    /// and travels with captured continuations.
+    Finally {
+        /// Cleanup DoExpr to execute on continuation resolution
+        cleanup: DoExpr,
+    },
 }
 ```
 
@@ -3778,49 +3941,41 @@ impl VM {
     ///        ^
     ///        |
     ///   prompt_seg           <- handler boundary (abandon returns here)
-    ///        ^                  kind = PromptBoundary { handled_marker }
-    ///        |
+    ///        ^                  kind = PromptBoundary { handled_marker, handler, ... }
+    ///        |                  [R17-A] handler data lives on the segment
     ///   body_seg             <- body program runs here
-    ///                           scope_chain = [handler_marker] ++ outside.scope_chain
+    ///                           caller = prompt_seg (handler discoverable via caller chain)
     ///
     /// Returns: PythonCall to start body program (caller returns NeedsPython)
     fn handle_with_handler(&mut self, handler: Handler, expr: Py<PyAny>) -> PythonCall {
         let handler_marker = Marker::fresh();
         let outside_seg_id = self.current_segment;
-        let outside_scope = self.segments[outside_seg_id.index()].scope_chain.clone();
         
-        // 1. Create prompt segment (handler boundary)
-        //    scope_chain = outside's scope (handler NOT in scope at prompt level)
+        // 1. [R17-A] Create prompt segment with handler data directly on it.
+        //    No separate handlers HashMap needed.
         let prompt_seg = Segment::new_prompt(
             handler_marker,
             Some(outside_seg_id),  // returns to outside
-            outside_scope.clone(),
             handler_marker,
+            handler.into(),        // [R17-A] handler on segment
+            None,                  // [R17-D] no return_clause by default
+            None,                  // py_identity (set by run() wrapper if needed)
         );
         let prompt_seg_id = self.alloc_segment(prompt_seg);
         
-        // 2. Register handler WITH prompt_seg_id (no search needed later)
-        self.handlers.insert(handler_marker, HandlerEntry {
-            handler,
-            prompt_seg_id,
-        });
+        // [R17-A] No handlers.insert() — handler lives on PromptBoundary segment.
         
-        // 3. Create body segment with handler in scope
-        //    scope_chain = [handler_marker] ++ outside_scope (innermost first)
-        let mut body_scope = vec![handler_marker];
-        body_scope.extend(outside_scope);
-        
+        // 2. Create body segment — handler is discoverable via caller chain walk [R17-B]
         let body_seg = Segment::new(
             handler_marker,
             Some(prompt_seg_id),  // returns to PROMPT, not outside
-            body_scope,
         );
         let body_seg_id = self.alloc_segment(body_seg);
         
-        // 4. Switch to body segment
+        // 3. Switch to body segment
         self.current_segment = body_seg_id;
         
-        // 5. Return PythonCall to evaluate body DoExpr [R13-E]
+        // 4. Return PythonCall to evaluate body DoExpr [R13-E]
         PythonCall::EvalDoExpr { expr }
     }
 }
@@ -3845,24 +4000,11 @@ impl VM {
         // Lazy pop completed dispatch contexts
         self.lazy_pop_completed();
 
-        // Get current scope_chain
-        let scope_chain = self.current_scope_chain();
-
-        // Compute visible handlers (re-entrant — no busy exclusion) [SPEC-VM-016]
-        let handler_chain = self.visible_handlers(&scope_chain);
-
-        if handler_chain.is_empty() {
-            return Err(VMError::unhandled_effect_opaque());
-        }
-
-        // Find first handler that can handle this effect [R11-D]
-        // can_handle() receives &Bound<'_, PyAny> — handler does isinstance
+        // [R17-B] Walk caller chain to find matching handler on PromptBoundary segments.
+        // No scope_chain or handlers HashMap — handler data is on the segments.
         let effect_bound = effect.bind(py);
-        let (handler_idx, handler_marker, entry) =
-            self.find_matching_handler(py, &handler_chain, effect_bound)?;
-
-        let prompt_seg_id = entry.prompt_seg_id;
-        let handler = entry.handler.clone();
+        let (prompt_seg_id, handler_marker, handler) =
+            self.find_matching_handler_by_walk(py, self.current_segment, effect_bound)?;
 
         let dispatch_id = DispatchId::fresh();
 
@@ -3874,8 +4016,8 @@ impl VM {
         self.dispatch_stack.push(DispatchContext {
             dispatch_id,
             effect: effect.clone_ref(py),  // Py<PyAny> — opaque
-            handler_chain: handler_chain.clone(),
-            handler_idx,
+            handler_chain: Vec::new(),  // [R17-B] handler chain derived from caller walk
+            handler_idx: 0,
             k_user: k_user.clone(),
             prompt_seg_id,
             completed: false,
@@ -3885,7 +4027,6 @@ impl VM {
         let handler_seg = Segment::new(
             handler_marker,
             Some(prompt_seg_id),
-            scope_chain,
         );
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.current_segment = handler_seg_id;
@@ -3997,35 +4138,64 @@ impl VM {
         StepEvent::Continue
     }
     
-    /// Find first handler in chain that can handle the effect.
-    /// 
-    /// Returns (index, marker, entry) - index is the position in handler_chain.
-    /// This index is CRITICAL for busy boundary computation.
-    fn find_matching_handler(
-        &self, 
-        handler_chain: &[Marker], 
-        effect: &Effect
-    ) -> Result<(usize, Marker, HandlerEntry), VMError> {
-        for (idx, &marker) in handler_chain.iter().enumerate() {
-            if let Some(entry) = self.handlers.get(&marker) {
-                if entry.handler.can_handle(effect) {
-                    return Ok((idx, marker, entry.clone()));
-                }
-            }
-        }
-        Err(VMError::UnhandledEffect(effect.clone()))
-    }
+    /// [R17-A SUPERSEDED] find_matching_handler via HashMap is replaced by
+    /// find_matching_handler_by_walk which traverses the segment caller chain.
+    /// See find_matching_handler_by_walk above.
+    ///
+    /// The old HashMap-based lookup is retained below for historical reference:
+    /// ```rust
+    /// // [R17-A SUPERSEDED]
+    /// fn find_matching_handler(
+    ///     &self, handler_chain: &[Marker], effect: &Effect
+    /// ) -> Result<(usize, Marker, HandlerEntry), VMError> {
+    ///     for (idx, &marker) in handler_chain.iter().enumerate() {
+    ///         if let Some(entry) = self.handlers.get(&marker) {
+    ///             if entry.handler.can_handle(effect) { return Ok((idx, marker, entry.clone())); }
+    ///         }
+    ///     }
+    ///     Err(VMError::UnhandledEffect(effect.clone()))
+    /// }
+    /// ```
     
-    /// Compute visible handlers (re-entrant — no busy exclusion).
+    /// [R17-B] Find matching handler by walking the segment caller chain.
     ///
-    /// [SPEC-VM-016] Handlers are re-entrant by default. The full scope_chain
-    /// is returned unchanged. Effects yielded during handler execution dispatch
-    /// through the complete handler chain, including the currently-handling handler.
+    /// Starts from `start_seg` and follows `caller` links. At each
+    /// PromptBoundary segment, checks if the handler can handle the effect.
+    /// MaskBoundary segments are consulted to skip masked handlers [R17-G].
     ///
-    /// Handler skipping is opt-in via Mask(effect_types, body) DoCtrl.
-    /// See SPEC-VM-016 §3 for mask semantics.
-    fn visible_handlers(&self, scope_chain: &[Marker]) -> Vec<Marker> {
-        scope_chain.to_vec()
+    /// [SPEC-VM-016] Handlers are re-entrant by default. All PromptBoundary
+    /// segments in the caller chain are candidates. Handler skipping is
+    /// opt-in via MaskBoundary segments.
+    ///
+    /// Returns (prompt_seg_id, handler_marker, handler) on success.
+    fn find_matching_handler_by_walk(
+        &self,
+        py: Python<'_>,
+        start_seg: SegmentId,
+        effect: &Bound<'_, PyAny>,
+    ) -> Result<(SegmentId, Marker, Handler), VMError> {
+        let mut seg_id = Some(start_seg);
+        let mut masked_skip_count: HashMap</* effect_type */(), usize> = HashMap::new();
+        while let Some(id) = seg_id {
+            let seg = &self.segments[id.index()];
+            match &seg.kind {
+                SegmentKind::PromptBoundary { handled_marker, handler, .. } => {
+                    if handler.can_handle(py, effect) {
+                        // [R17-G] Check mask state — skip if masked
+                        // (simplified: full mask logic checks masked_skip_count)
+                        return Ok((id, *handled_marker, handler.clone()));
+                    }
+                }
+                SegmentKind::MaskBoundary { masked_effects, behind } => {
+                    // [R17-G] Record that next matching handler(s) should be skipped
+                    // for masked effect types. Full implementation checks isinstance.
+                    let _ = (masked_effects, behind); // mask bookkeeping
+                }
+                _ => {}
+            }
+            seg_id = seg.caller;
+        }
+        Err(VMError::unhandled_effect_opaque())
     }
     
     /// [Q13] Lazy cleanup of completed dispatch contexts.
@@ -4044,13 +4214,8 @@ impl VM {
         }
     }
     
-    fn current_scope_chain(&self) -> Vec<Marker> {
-        self.segments[self.current_segment.index()].scope_chain.clone()
-    }
-    
-    // NOTE: find_prompt_seg_for_marker is REMOVED.
-    // prompt_seg_id is now stored in HandlerEntry at WithHandler time.
-    // No linear search needed - O(1) lookup via handlers.get(marker).
+    // [R17-B] current_scope_chain() REMOVED. Handler lookup walks caller chain directly.
+    // [R17-A] find_prompt_seg_for_marker is also unnecessary — handler data is on segments.
 }
 ```
 
@@ -4095,12 +4260,13 @@ impl VM {
         
         // Materialize continuation into new execution segment
         // (shallow clone of frames, Frame is small)
+        // [R17-B] No scope_chain — handler lookup walks caller chain.
         let exec_seg = Segment {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
             caller: Some(self.current_segment),  // call-resume: returns here
-            scope_chain: (*k.scope_chain).clone(),
             kind: SegmentKind::Normal,
+            finally_cleanups: (*k.finally_cleanups).clone(),  // [R17-E]
         };
         let exec_seg_id = self.alloc_segment(exec_seg);
         
@@ -4141,12 +4307,13 @@ impl VM {
         }
         
         // Materialize continuation
+        // [R17-B] No scope_chain — handler lookup walks caller chain.
         let exec_seg = Segment {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
             caller: None,  // tail-transfer: no return
-            scope_chain: (*k.scope_chain).clone(),
             kind: SegmentKind::Normal,
+            finally_cleanups: (*k.finally_cleanups).clone(),  // [R17-E]
         };
         let exec_seg_id = self.alloc_segment(exec_seg);
         
@@ -4183,36 +4350,32 @@ impl VM {
         };
         
         // Install handlers (outermost first, so innermost ends up closest to program)
+        // [R17-A] Handler data goes on PromptBoundary segments directly.
+        // [R17-B] No scope_chain — caller chain provides handler ordering.
         let mut outside_seg_id = self.current_segment;
-        let mut outside_scope = self.segments[outside_seg_id.index()].scope_chain.clone();
         
         for handler in k.handlers.iter().rev() {
             let handler_marker = Marker::fresh();
+            // [R17-A] Prompt segment carries handler directly
             let prompt_seg = Segment::new_prompt(
                 handler_marker,
                 Some(outside_seg_id),
-                outside_scope.clone(),
                 handler_marker,
+                handler.clone().into(),  // [R17-A] handler on segment
+                None,                    // [R17-D] no return_clause
+                None,                    // py_identity
             );
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             
-            self.handlers.insert(handler_marker, HandlerEntry {
-                handler: handler.clone(),
-                prompt_seg_id,
-            });
-            
-            let mut body_scope = vec![handler_marker];
-            body_scope.extend(outside_scope);
+            // [R17-A] No handlers.insert() — handler lives on segment.
             
             let body_seg = Segment::new(
                 handler_marker,
                 Some(prompt_seg_id),
-                body_scope,
             );
             let body_seg_id = self.alloc_segment(body_seg);
             
             outside_seg_id = body_seg_id;
-            outside_scope = self.segments[body_seg_id.index()].scope_chain.clone();
         }
         
         self.current_segment = outside_seg_id;
@@ -4283,16 +4446,16 @@ impl VM {
                     ));
                     return StepEvent::Continue;
                 };
-                // Return full handler_chain from callsite scope (innermost first)
+                // [R17-B] Walk caller chain from callsite to collect handlers
+                // from PromptBoundary segments (innermost first).
                 let mut handlers = Vec::new();
-                for marker in top.handler_chain.iter() {
-                    let Some(entry) = self.handlers.get(marker) else {
-                        self.mode = Mode::Throw(PyException::runtime_error(
-                            "GetHandlers: missing handler entry"
-                        ));
-                        return StepEvent::Continue;
-                    };
-                    handlers.push(entry.handler.clone());
+                let mut seg_id = Some(top.k_user.segment_id);
+                while let Some(id) = seg_id {
+                    let seg = &self.segments[id.index()];
+                    if let SegmentKind::PromptBoundary { handler, .. } = &seg.kind {
+                        handlers.push(handler.clone());
+                    }
+                    seg_id = seg.caller;
                 }
                 self.mode = Mode::Deliver(Value::Handlers(handlers));
                 StepEvent::Continue
@@ -4365,6 +4528,64 @@ impl VM {
                 // Evaluate source DoExpr, call binder(result), evaluate binder's return DoExpr.
                 self.pending_python = Some(PendingPython::FlatMapPending { binder });
                 self.eval_do_expr(source)
+            }
+            DoCtrl::Perform { effect } => {
+                // [R14-B] Explicit effect dispatch — the only path for effect resolution.
+                match self.start_dispatch(py, effect) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        self.mode = Mode::Throw(PyException::runtime_error(
+                            format!("Unhandled effect: {:?}", e)
+                        ));
+                        StepEvent::Continue
+                    }
+                }
+            }
+            DoCtrl::Mask { effect_types, body } => {
+                // [R17-G] Create MaskBoundary segment, then run body within it.
+                let mask_seg = Segment {
+                    marker: Marker::fresh(),
+                    frames: Vec::new(),
+                    caller: Some(self.current_segment),
+                    kind: SegmentKind::MaskBoundary {
+                        masked_effects: effect_types,
+                        behind: false,
+                    },
+                    finally_cleanups: Vec::new(),
+                };
+                let mask_seg_id = self.alloc_segment(mask_seg);
+                let body_seg = Segment::new(Marker::fresh(), Some(mask_seg_id));
+                let body_seg_id = self.alloc_segment(body_seg);
+                self.current_segment = body_seg_id;
+                self.pending_python = Some(PendingPython::EvalDoExprFrame { metadata: None });
+                StepEvent::NeedsPython(PythonCall::EvalDoExpr { expr: body })
+            }
+            DoCtrl::MaskBehind { effect_types, body } => {
+                // [R17-G] Same as Mask but with behind=true (override pattern).
+                let mask_seg = Segment {
+                    marker: Marker::fresh(),
+                    frames: Vec::new(),
+                    caller: Some(self.current_segment),
+                    kind: SegmentKind::MaskBoundary {
+                        masked_effects: effect_types,
+                        behind: true,
+                    },
+                    finally_cleanups: Vec::new(),
+                };
+                let mask_seg_id = self.alloc_segment(mask_seg);
+                let body_seg = Segment::new(Marker::fresh(), Some(mask_seg_id));
+                let body_seg_id = self.alloc_segment(body_seg);
+                self.current_segment = body_seg_id;
+                self.pending_python = Some(PendingPython::EvalDoExprFrame { metadata: None });
+                StepEvent::NeedsPython(PythonCall::EvalDoExpr { expr: body })
+            }
+            DoCtrl::Finally { cleanup } => {
+                // [R17-E] Register cleanup on current segment's finally_cleanups stack.
+                // Cleanup runs when the continuation resolves (LIFO order).
+                let seg = &mut self.segments[self.current_segment.index()];
+                seg.finally_cleanups.push(cleanup);
+                self.mode = Mode::Deliver(Value::Unit);
+                StepEvent::Continue
             }
             _ => {
                 self.mode = Mode::Throw(PyException::not_implemented(
@@ -4462,37 +4683,28 @@ impl VM {
         let original_k_user = top.k_user.clone();
         top.k_user = k_new;  // Outer handler sees K_new, not original k_user
         
-        // Advance handler_idx to find next handler
-        let handler_chain = &top.handler_chain;
-        let start_idx = top.handler_idx + 1;
+        // [R17-B] Walk caller chain from inner_seg to find next matching handler
+        // on PromptBoundary segments (no scope_chain or handlers HashMap).
+        let (prompt_seg_id, handler_marker, handler) =
+            self.find_matching_handler_by_walk(py, inner_seg_id, &effect)?;
         
-        for idx in start_idx..handler_chain.len() {
-            let marker = handler_chain[idx];
-            if let Some(entry) = self.handlers.get(&marker) {
-                if entry.handler.can_handle(&effect) {
-                    top.handler_idx = idx;
-                    top.effect = effect.clone();
-                    
-                    let handler = entry.handler.clone();
-                    let scope_chain = self.current_scope_chain();
-                    let handler_seg = Segment::new(
-                        marker,
-                        Some(inner_seg_id),
-                        scope_chain,
-                    );
-                    let handler_seg_id = self.alloc_segment(handler_seg);
-                    self.current_segment = handler_seg_id;
-                    
-                    // Outer handler receives K_new (already swapped above)
-                    return self.invoke_handler(handler, &effect, top.k_user.clone());
-                }
-            }
-        }
+        top.effect = effect.clone();
         
-        self.mode = Mode::Throw(PyException::runtime_error(
-            format!("Delegate: no outer handler for effect {:?}", effect)
-        ));
-        StepEvent::Continue
+        let handler_seg = Segment::new(
+            handler_marker,
+            Some(prompt_seg_id),
+        );
+        let handler_seg_id = self.alloc_segment(handler_seg);
+        self.current_segment = handler_seg_id;
+        
+        // Outer handler receives K_new (already swapped above)
+        return self.invoke_handler(handler, &effect, top.k_user.clone());
+        
+        // If find_matching_handler_by_walk fails:
+        // self.mode = Mode::Throw(PyException::runtime_error(
+        //     format!("Delegate: no outer handler for effect {:?}", effect)
+        // ));
+        // StepEvent::Continue
     }
     
     /// Handle Pass (terminal pass-through): old Delegate semantics. [R15-A]
@@ -4510,36 +4722,27 @@ impl VM {
             seg.frames.clear();
         }
         
-        let handler_chain = &top.handler_chain;
-        let start_idx = top.handler_idx + 1;
+        // [R17-B] Walk caller chain from inner_seg to find next matching handler
+        let (prompt_seg_id, handler_marker, handler) =
+            self.find_matching_handler_by_walk(py, inner_seg_id, &effect)?;
         
-        for idx in start_idx..handler_chain.len() {
-            let marker = handler_chain[idx];
-            if let Some(entry) = self.handlers.get(&marker) {
-                if entry.handler.can_handle(&effect) {
-                    top.handler_idx = idx;
-                    top.effect = effect.clone();
-                    
-                    let handler = entry.handler.clone();
-                    let scope_chain = self.current_scope_chain();
-                    let handler_seg = Segment::new(
-                        marker,
-                        Some(inner_seg_id),
-                        scope_chain,
-                    );
-                    let handler_seg_id = self.alloc_segment(handler_seg);
-                    self.current_segment = handler_seg_id;
-                    
-                    // k_user unchanged — outer handler resumes original callsite
-                    return self.invoke_handler(handler, &effect, top.k_user.clone());
-                }
-            }
-        }
+        top.effect = effect.clone();
         
-        self.mode = Mode::Throw(PyException::runtime_error(
-            format!("Pass: no outer handler for effect {:?}", effect)
-        ));
-        StepEvent::Continue
+        let handler_seg = Segment::new(
+            handler_marker,
+            Some(prompt_seg_id),
+        );
+        let handler_seg_id = self.alloc_segment(handler_seg);
+        self.current_segment = handler_seg_id;
+        
+        // k_user unchanged — outer handler resumes original callsite
+        return self.invoke_handler(handler, &effect, top.k_user.clone());
+        
+        // If find_matching_handler_by_walk fails:
+        // self.mode = Mode::Throw(PyException::runtime_error(
+        //     format!("Pass: no outer handler for effect {:?}", effect)
+        // ));
+        // StepEvent::Continue
     }
 }
 ```
@@ -4565,7 +4768,7 @@ impl VM {
     
     fn free_segment(&mut self, id: SegmentId) {
         self.segments[id.0 as usize] = Segment::new(
-            Marker(0), None, Vec::new()
+            Marker(0), None,  // [R17-B] no scope_chain arg
         );
         self.free_segments.push(id);
     }
@@ -4642,33 +4845,35 @@ after yielding terminal Delegate) is a runtime error.
 Multi-shot continuations are not supported. All continuations are one-shot only.
 ```
 
-### INV-4: Scope Chain in Segment
+### INV-4: Handler Resolution via Caller Chain [R17-B]
 
 ```
-Each Segment carries its own scope_chain.
-Switching segments automatically restores scope.
-No separate "current scope_chain" in VM state.
+[R17-B] scope_chain removed. Handler resolution walks the segment caller chain.
+Each PromptBoundary segment carries its handler directly (R17-A).
+Switching segments implicitly changes the handler resolution path.
+No separate "current scope_chain" or handlers HashMap in VM state.
+MaskBoundary segments in the caller chain cause handler skipping (R17-G).
 ```
 
-### INV-5: WithHandler Structure
+### INV-5: WithHandler Structure [R17-A]
 
 ```
 WithHandler(h, body) at current_segment creates:
 
   prompt_seg:
     marker = handler_marker
-    kind = PromptBoundary { handled_marker: handler_marker }
+    kind = PromptBoundary { handled_marker, handler, return_clause, py_identity }
     caller = current_segment (outside)
-    scope_chain = outside.scope_chain  // handler NOT in scope
+    [R17-A] handler data lives directly on the PromptBoundary segment
 
   body_seg:
     marker = handler_marker
     kind = Normal
     caller = prompt_seg_id
-    scope_chain = [handler_marker] ++ outside.scope_chain  // handler IN scope
+    [R17-B] handler is discoverable by walking caller chain to prompt_seg
 ```
 
-### INV-6: Handler Execution Structure
+### INV-6: Handler Execution Structure [R17-B]
 
 ```
 start_dispatch creates:
@@ -4677,7 +4882,7 @@ start_dispatch creates:
     marker = handler_marker
     kind = Normal
     caller = prompt_seg_id  // root handler return goes to prompt, not callsite
-    scope_chain = callsite.scope_chain  // same scope as effect callsite
+    [R17-B] handler scope is implicit from caller chain position
 ```
 
 ### INV-7: Dispatch ID Assignment
@@ -4693,17 +4898,19 @@ Completion check requires BOTH:
 Resume, Transfer, and Return all mark completion when they resolve k_user.
 ```
 
-### INV-8: Re-entrant Handler Dispatch [SPEC-VM-016]
+### INV-8: Re-entrant Handler Dispatch [SPEC-VM-016] [R17-B] [R17-G]
 
 ```
-Handlers are re-entrant by default. visible_handlers() returns the
-full scope_chain without filtering. Effects yielded during handler
-execution dispatch through the complete handler chain, including the
-currently-handling handler.
+Handlers are re-entrant by default. The caller chain walk visits all
+PromptBoundary segments without filtering. Effects yielded during handler
+execution dispatch through the complete caller chain, including the
+currently-handling handler's PromptBoundary.
 
-Handler skipping is opt-in via Mask(effect_types, body) DoCtrl.
-Mask records are segment-local and consulted during dispatch to skip
-the specified handler for the specified effect types.
+Handler skipping is opt-in via MaskBoundary segments [R17-G].
+Mask(effect_types, body) DoCtrl creates a MaskBoundary segment in the
+caller chain. During handler walk, the MaskBoundary causes the next
+matching PromptBoundary to be skipped for the specified effect types.
+MaskBehind skips the handler "behind" (used in override pattern).
 
 See SPEC-VM-016 for full semantics.
 ```
@@ -4751,18 +4958,18 @@ This allows multiple Continuations to share frames via Arc while
 each execution gets its own mutable working copy.
 ```
 
-### INV-12: Continuation Kinds
+### INV-12: Continuation Kinds [R17-B] [R17-E]
 
 ```
 Continuation has two kinds:
 
   started=true  (captured):
-    - frames_snapshot/scope_chain/marker/dispatch_id are valid
+    - frames_snapshot/marker/dispatch_id/finally_cleanups are valid [R17-B: no scope_chain]
     - program=None, handlers=[]
 
   started=false (created):
     - program/handlers are valid
-    - frames_snapshot empty, scope_chain empty, dispatch_id=None
+    - frames_snapshot empty, dispatch_id=None, finally_cleanups empty [R17-B: no scope_chain]
 ```
 
 ### INV-13: Step Event Classification
