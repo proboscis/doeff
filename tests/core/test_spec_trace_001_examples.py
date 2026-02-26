@@ -263,8 +263,8 @@ def test_example_4_missing_env_key() -> None:
         effect_fragment="Ask(",
         detail_fragment="database_url",
     )
-    assert "LazyAskHandler⇆" in stack_line
-    assert "ReaderHandler✗" in stack_line
+    assert "LazyAskHandler✗" in stack_line
+    assert "ReaderHandler·" in stack_line
     assert "MissingEnvKeyError" in rendered
     assert "database_url" in rendered
 

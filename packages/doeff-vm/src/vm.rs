@@ -2715,7 +2715,23 @@ impl VM {
         let seg_id = self
             .current_segment
             .ok_or_else(|| VMError::internal("no current segment during dispatch"))?;
-        let handler_chain = self.handlers_in_caller_chain(seg_id);
+
+        // Koka/OCaml semantics: exclude the prompt belonging to the current segment's
+        // own active dispatch. This prevents handler clauses from self-dispatching to
+        // their own handler (which would cause infinite recursion). Only the IMMEDIATE
+        // dispatch's prompt is excluded — outer dispatch prompts remain visible so
+        // nested handlers can find each other.
+        let exclude_prompt: Option<SegmentId> = self
+            .segments
+            .get(seg_id)
+            .and_then(|seg| seg.dispatch_id)
+            .and_then(|did| self.dispatch_state.find_by_dispatch_id(did))
+            .filter(|ctx| !ctx.completed)
+            .map(|ctx| ctx.prompt_seg_id);
+        let mut handler_chain = self.handlers_in_caller_chain(seg_id);
+        if let Some(excluded) = exclude_prompt {
+            handler_chain.retain(|entry| entry.prompt_seg_id != excluded);
+        }
 
         if handler_chain.is_empty() {
             if let Some(original) = original_exception.clone() {
@@ -3072,9 +3088,23 @@ impl VM {
                 return StepEvent::Continue;
             }
         }
+        // For Transfer: capture prompt_seg_id BEFORE dispatch completion cleans it up.
+        // Transfer's caller_segment() returns None, so without this the new segment
+        // would have no caller and the handler chain walk would find nothing.
+        let transfer_caller = if kind.is_transferred() {
+            k.dispatch_id
+                .and_then(|did| self.dispatch_state.find_by_dispatch_id(did))
+                .map(|ctx| ctx.prompt_seg_id)
+        } else {
+            None
+        };
         self.check_dispatch_completion_after_activation(kind, &k);
 
-        self.enter_continuation_segment(&k, kind.caller_segment(self.current_segment));
+        let caller = match kind {
+            ContinuationActivationKind::Resume => self.current_segment,
+            ContinuationActivationKind::Transfer => transfer_caller,
+        };
+        self.enter_continuation_segment(&k, caller);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }
