@@ -26,6 +26,7 @@ use crate::frame::CallMetadata;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr, PyResultOk};
+use crate::segment::ScopeStore;
 use crate::step::{DoCtrl, PyException, PythonCall};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -39,9 +40,12 @@ pub trait ASTStreamProgram: std::fmt::Debug + Send {
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
+        scope: &mut ScopeStore,
     ) -> ASTStreamStep;
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep;
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep;
+    fn resume(&mut self, value: Value, store: &mut RustStore, scope: &mut ScopeStore)
+    -> ASTStreamStep;
+    fn throw(&mut self, exc: PyException, store: &mut RustStore, scope: &mut ScopeStore)
+    -> ASTStreamStep;
 }
 
 /// Factory for Rust handler programs. Each dispatch creates a fresh instance.
@@ -615,6 +619,7 @@ impl ASTStreamProgram for AwaitHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_await_python_effect(&obj) {
@@ -652,7 +657,12 @@ impl ASTStreamProgram for AwaitHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         if let Some(continuation) = self.pending_k.take() {
             return ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
@@ -662,7 +672,12 @@ impl ASTStreamProgram for AwaitHandlerProgram {
         ASTStreamStep::Return(value)
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         if let Some(continuation) = self.pending_k.take() {
             return ASTStreamStep::Yield(DoCtrl::TransferThrow {
                 continuation,
@@ -674,12 +689,22 @@ impl ASTStreamProgram for AwaitHandlerProgram {
 }
 
 impl ASTStream for AwaitHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::resume(self, value, store)
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store, scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::throw(self, exc, store)
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store, scope)
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -818,6 +843,7 @@ impl ASTStreamProgram for StateHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         #[cfg(test)]
         if let Effect::Get { key } = effect.clone() {
@@ -901,7 +927,12 @@ impl ASTStreamProgram for StateHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         if self.pending_key.is_none() {
             // Terminal case (Get/Put): handler is done, pass through return value
             return ASTStreamStep::Return(value);
@@ -918,18 +949,33 @@ impl ASTStreamProgram for StateHandlerProgram {
         })
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Throw(exc)
     }
 }
 
 impl ASTStream for StateHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::resume(self, value, store)
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store, scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::throw(self, exc, store)
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store, scope)
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -948,8 +994,11 @@ impl ASTStream for StateHandlerProgram {
 
 #[derive(Debug, Clone)]
 struct LazyCacheEntry {
-    source_id: usize,
     value: Value,
+    /// Scope depth (`scope.scope_bindings.len()`) when this entry was cached.
+    /// Used to evict entries whose resolution depended on Local overrides
+    /// when those scopes are popped.
+    scope_depth: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -960,10 +1009,8 @@ struct LazySemaphoreEntry {
 
 #[derive(Debug, Default)]
 struct LazyAskState {
-    cache: HashMap<HashedPyKey, LazyCacheEntry>,
+    cache: HashMap<(HashedPyKey, usize), LazyCacheEntry>,
     semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
-    scope_cache: Vec<HashMap<HashedPyKey, LazyCacheEntry>>,
-    scope_semaphores: Vec<HashMap<HashedPyKey, LazySemaphoreEntry>>,
 }
 
 #[derive(Clone)]
@@ -1096,444 +1143,14 @@ impl HandlerInvoke for LazyAskHandlerFactory {
     }
 }
 
-#[derive(Debug, Default)]
-struct LazyLocalScopeState {
-    cache: HashMap<HashedPyKey, LazyCacheEntry>,
-    semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
-}
-
-#[derive(Debug, Clone)]
-struct LazyLocalScopeFactory {
-    overrides: Arc<HashMap<HashedPyKey, Value>>,
-    scope_state: Arc<Mutex<LazyLocalScopeState>>,
-}
-
-impl LazyLocalScopeFactory {
-    fn new(overrides: HashMap<HashedPyKey, Value>) -> Self {
-        LazyLocalScopeFactory {
-            overrides: Arc::new(overrides),
-            scope_state: Arc::new(Mutex::new(LazyLocalScopeState::default())),
-        }
-    }
-}
-
-impl ASTStreamFactory for LazyLocalScopeFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        #[cfg(test)]
-        if matches!(effect, Effect::Ask { .. }) {
-            return Ok(true);
-        }
-
-        let Some(obj) = dispatch_ref_as_python(effect) else {
-            return Ok(false);
-        };
-
-        parse_reader_python_effect(obj)
-            .map(|parsed| parsed.is_some())
-            .map_err(|msg| {
-                VMError::internal(format!(
-                    "LazyLocalScopeHandler can_handle failed to parse reader effect: {msg}"
-                ))
-            })
-    }
-
-    fn create_program(&self) -> ASTStreamProgramRef {
-        Arc::new(Mutex::new(Box::new(LazyLocalScopeProgram::new(
-            self.overrides.clone(),
-            self.scope_state.clone(),
-        ))))
-    }
-
-    fn handler_name(&self) -> &'static str {
-        "LazyLocalScopeHandler"
-    }
-}
-
-impl HandlerInvoke for LazyLocalScopeFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as ASTStreamFactory>::can_handle(self, effect)
-    }
-
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
-        rust_program_expand_expr(
-            Arc::new(self.clone()),
-            effect,
-            k,
-            metadata_from_debug_info(self.handler_debug_info()),
-        )
-    }
-
-    fn handler_name(&self) -> &str {
-        <Self as ASTStreamFactory>::handler_name(self)
-    }
-
-    fn handler_debug_info(&self) -> HandlerDebugInfo {
-        HandlerDebugInfo {
-            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
-    }
-
-}
-
-#[derive(Debug)]
-enum LazyLocalScopePhase {
-    Idle,
-    AwaitAcquire {
-        key: HashedPyKey,
-        continuation: Continuation,
-        expr: PyShared,
-        source_id: usize,
-        semaphore: Option<Value>,
-    },
-    AwaitCache {
-        key: HashedPyKey,
-        continuation: Continuation,
-        expr: PyShared,
-        source_id: usize,
-        semaphore: Value,
-    },
-    AwaitEval {
-        key: HashedPyKey,
-        continuation: Continuation,
-        source_id: usize,
-        semaphore: Value,
-    },
-    AwaitRelease {
-        continuation: Continuation,
-        outcome: Result<Value, PyException>,
-    },
-}
-
-#[derive(Debug)]
-struct LazyLocalScopeProgram {
-    phase: LazyLocalScopePhase,
-    overrides: Arc<HashMap<HashedPyKey, Value>>,
-    scope_state: Arc<Mutex<LazyLocalScopeState>>,
-}
-
-impl LazyLocalScopeProgram {
-    fn new(
-        overrides: Arc<HashMap<HashedPyKey, Value>>,
-        scope_state: Arc<Mutex<LazyLocalScopeState>>,
-    ) -> Self {
-        LazyLocalScopeProgram {
-            phase: LazyLocalScopePhase::Idle,
-            overrides,
-            scope_state,
-        }
-    }
-
-    fn yield_perform(effect: Result<DispatchEffect, PyException>) -> ASTStreamStep {
-        match effect {
-            Ok(effect) => ASTStreamStep::Yield(DoCtrl::Perform { effect }),
-            Err(exc) => ASTStreamStep::Throw(exc),
-        }
-    }
-
-    fn transfer_throw(continuation: Continuation, exception: PyException) -> ASTStreamStep {
-        ASTStreamStep::Yield(DoCtrl::TransferThrow {
-            continuation,
-            exception,
-        })
-    }
-
-    fn local_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
-        let state = self
-            .scope_state
-            .lock()
-            .expect("LazyLocalScope lock poisoned");
-        let entry = state.cache.get(key)?;
-        if entry.source_id == source_id {
-            return Some(entry.value.clone());
-        }
-        None
-    }
-
-    fn local_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value) {
-        let mut state = self
-            .scope_state
-            .lock()
-            .expect("LazyLocalScope lock poisoned");
-        state.cache.insert(key, LazyCacheEntry { source_id, value });
-    }
-
-    fn local_semaphore_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
-        let state = self
-            .scope_state
-            .lock()
-            .expect("LazyLocalScope lock poisoned");
-        let entry = state.semaphores.get(key)?;
-        if entry.source_id == source_id {
-            return Some(entry.semaphore.clone());
-        }
-        None
-    }
-
-    fn local_semaphore_put(&self, key: HashedPyKey, source_id: usize, semaphore: Value) {
-        let mut state = self
-            .scope_state
-            .lock()
-            .expect("LazyLocalScope lock poisoned");
-        state.semaphores.insert(
-            key,
-            LazySemaphoreEntry {
-                source_id,
-                semaphore,
-            },
-        );
-    }
-
-    fn begin_create_then_acquire_phase(
-        &mut self,
-        key: HashedPyKey,
-        continuation: Continuation,
-        expr: PyShared,
-        source_id: usize,
-    ) -> ASTStreamStep {
-        self.phase = LazyLocalScopePhase::AwaitAcquire {
-            key,
-            continuation,
-            expr,
-            source_id,
-            semaphore: None,
-        };
-        Self::yield_perform(lazy_ask_create_semaphore_effect())
-    }
-
-    fn begin_acquire_phase(
-        &mut self,
-        key: HashedPyKey,
-        continuation: Continuation,
-        expr: PyShared,
-        source_id: usize,
-        semaphore: Value,
-    ) -> ASTStreamStep {
-        let effect = lazy_ask_acquire_semaphore_effect(&semaphore);
-        self.phase = LazyLocalScopePhase::AwaitAcquire {
-            key,
-            continuation,
-            expr,
-            source_id,
-            semaphore: Some(semaphore),
-        };
-        Self::yield_perform(effect)
-    }
-
-    fn begin_release_phase(
-        &mut self,
-        continuation: Continuation,
-        outcome: Result<Value, PyException>,
-        semaphore: Value,
-    ) -> ASTStreamStep {
-        self.phase = LazyLocalScopePhase::AwaitRelease {
-            continuation,
-            outcome,
-        };
-        Self::yield_perform(lazy_ask_release_semaphore_effect(&semaphore))
-    }
-
-    fn handle_override_ask(
-        &mut self,
-        key: HashedPyKey,
-        continuation: Continuation,
-        value: Value,
-    ) -> ASTStreamStep {
-        let Some(expr) = as_lazy_eval_expr(&value) else {
-            return ASTStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value,
-            });
-        };
-
-        let source_id = lazy_source_id(&value).unwrap_or_default();
-
-        if let Some(cached) = self.local_cache_get(&key, source_id) {
-            return ASTStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value: cached,
-            });
-        }
-
-        if let Some(semaphore) = self.local_semaphore_get(&key, source_id) {
-            return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
-        }
-
-        self.begin_create_then_acquire_phase(key, continuation, expr, source_id)
-    }
-
-    fn handle_ask(
-        &mut self,
-        key: HashedPyKey,
-        continuation: Continuation,
-        effect: DispatchEffect,
-    ) -> ASTStreamStep {
-        let Some(value) = self.overrides.get(&key).cloned() else {
-            return ASTStreamStep::Yield(DoCtrl::Pass { effect });
-        };
-
-        self.handle_override_ask(key, continuation, value)
-    }
-}
-
-impl ASTStreamProgram for LazyLocalScopeProgram {
-    fn start(
-        &mut self,
-        _py: Python<'_>,
-        effect: DispatchEffect,
-        k: Continuation,
-        _store: &mut RustStore,
-    ) -> ASTStreamStep {
-        #[cfg(test)]
-        if let Effect::Ask { key } = effect.clone() {
-            let key = HashedPyKey::from_test_string(key);
-            return self.handle_ask(key, k, effect);
-        }
-
-        if let Some(obj) = dispatch_into_python(effect.clone()) {
-            return match parse_reader_python_effect(&obj) {
-                Ok(Some(key)) => self.handle_ask(key, k, dispatch_from_shared(obj)),
-                Ok(None) => ASTStreamStep::Yield(DoCtrl::Pass {
-                    effect: dispatch_from_shared(obj),
-                }),
-                Err(msg) => ASTStreamStep::Throw(PyException::type_error(format!(
-                    "failed to parse lazy local Ask effect: {msg}"
-                ))),
-            };
-        }
-
-        #[cfg(test)]
-        {
-            return ASTStreamStep::Yield(DoCtrl::Pass { effect });
-        }
-
-        #[cfg(not(test))]
-        unreachable!("runtime Effect is always Python")
-    }
-
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
-        match std::mem::replace(&mut self.phase, LazyLocalScopePhase::Idle) {
-            LazyLocalScopePhase::AwaitAcquire {
-                key,
-                continuation,
-                expr,
-                source_id,
-                semaphore,
-            } => {
-                let Some(semaphore) = semaphore else {
-                    let semaphore = match value {
-                        Value::Python(_) => value,
-                        _ => {
-                            return ASTStreamStep::Throw(PyException::type_error(
-                                "CreateSemaphore must return a semaphore handle".to_string(),
-                            ));
-                        }
-                    };
-                    self.local_semaphore_put(key.clone(), source_id, semaphore.clone());
-                    return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
-                };
-
-                if let Some(cached) = self.local_cache_get(&key, source_id) {
-                    return self.begin_release_phase(continuation, Ok(cached), semaphore);
-                }
-
-                self.phase = LazyLocalScopePhase::AwaitCache {
-                    key,
-                    continuation,
-                    expr,
-                    source_id,
-                    semaphore,
-                };
-                ASTStreamStep::Yield(DoCtrl::GetHandlers)
-            }
-            LazyLocalScopePhase::AwaitCache {
-                key,
-                continuation,
-                expr,
-                source_id,
-                semaphore,
-            } => {
-                let handlers = match value {
-                    Value::Handlers(handlers) => handlers,
-                    _ => {
-                        return ASTStreamStep::Throw(PyException::type_error(
-                            "lazy local scope expected handlers from GetHandlers".to_string(),
-                        ));
-                    }
-                };
-
-                self.phase = LazyLocalScopePhase::AwaitEval {
-                    key,
-                    continuation,
-                    source_id,
-                    semaphore,
-                };
-                ASTStreamStep::Yield(DoCtrl::Eval {
-                    expr,
-                    handlers,
-                    metadata: None,
-                })
-            }
-            LazyLocalScopePhase::AwaitEval {
-                key,
-                continuation,
-                source_id,
-                semaphore,
-            } => {
-                self.local_cache_put(key, source_id, value.clone());
-                self.begin_release_phase(continuation, Ok(value), semaphore)
-            }
-            LazyLocalScopePhase::AwaitRelease {
-                continuation,
-                outcome,
-            } => match outcome {
-                Ok(value) => ASTStreamStep::Yield(DoCtrl::Resume {
-                    continuation,
-                    value,
-                }),
-                Err(exception) => Self::transfer_throw(continuation, exception),
-            },
-            LazyLocalScopePhase::Idle => ASTStreamStep::Return(value),
-        }
-    }
-
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
-        match std::mem::replace(&mut self.phase, LazyLocalScopePhase::Idle) {
-            LazyLocalScopePhase::AwaitAcquire { continuation, .. } => {
-                Self::transfer_throw(continuation, exc)
-            }
-            LazyLocalScopePhase::AwaitCache {
-                continuation,
-                semaphore,
-                ..
-            } => self.begin_release_phase(continuation, Err(exc), semaphore),
-            LazyLocalScopePhase::AwaitEval {
-                continuation,
-                semaphore,
-                ..
-            } => self.begin_release_phase(continuation, Err(exc), semaphore),
-            LazyLocalScopePhase::AwaitRelease { continuation, .. } => {
-                Self::transfer_throw(continuation, exc)
-            }
-            LazyLocalScopePhase::Idle => ASTStreamStep::Throw(exc),
-        }
-    }
-}
-
 #[derive(Debug)]
 enum LazyAskPhase {
     Idle,
     AwaitLocalHandlers {
         continuation: Continuation,
-        scope: LazyLocalScopeFactory,
         sub_program: PyShared,
     },
     AwaitLocalEval {
-        continuation: Continuation,
-    },
-    AwaitDelegate {
-        key: HashedPyKey,
         continuation: Continuation,
     },
     AwaitAcquire {
@@ -1581,7 +1198,6 @@ impl LazyAskHandlerProgram {
             LazyAskPhase::Idle => "Idle",
             LazyAskPhase::AwaitLocalHandlers { .. } => "AwaitLocalHandlers",
             LazyAskPhase::AwaitLocalEval { .. } => "AwaitLocalEval",
-            LazyAskPhase::AwaitDelegate { .. } => "AwaitDelegate",
             LazyAskPhase::AwaitAcquire { .. } => "AwaitAcquire",
             LazyAskPhase::AwaitCache { .. } => "AwaitCache",
             LazyAskPhase::AwaitEval { .. } => "AwaitEval",
@@ -1603,53 +1219,23 @@ impl LazyAskHandlerProgram {
         })
     }
 
-    fn activate_scope_cache(&self) {
-        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        state.scope_cache.push(HashMap::new());
-        state.scope_semaphores.push(HashMap::new());
-    }
-
-    fn deactivate_scope_cache(&self) {
-        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        state.scope_cache.pop();
-        state.scope_semaphores.pop();
-    }
-
     fn lazy_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
         let state = self.state.lock().expect("LazyAsk lock poisoned");
-        if let Some(scope_cache) = state.scope_cache.last() {
-            if let Some(entry) = scope_cache.get(key) {
-                if entry.source_id == source_id {
-                    return Some(entry.value.clone());
-                }
-            }
-        }
-        let entry = state.cache.get(key)?;
-        if entry.source_id == source_id {
-            return Some(entry.value.clone());
-        }
-        None
+        state.cache.get(&(key.clone(), source_id)).map(|e| e.value.clone())
     }
 
-    fn lazy_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value) {
+    fn lazy_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value, scope_depth: usize) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        let entry = LazyCacheEntry { source_id, value };
-        if let Some(scope_cache) = state.scope_cache.last_mut() {
-            scope_cache.insert(key, entry);
-        } else {
-            state.cache.insert(key, entry);
-        }
+        state.cache.insert((key, source_id), LazyCacheEntry { value, scope_depth });
+    }
+
+    fn invalidate_scope_cache(&self, current_depth: usize) {
+        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
+        state.cache.retain(|_, entry| entry.scope_depth <= current_depth);
     }
 
     fn lazy_semaphore_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
         let state = self.state.lock().expect("LazyAsk lock poisoned");
-        if let Some(scope_semaphores) = state.scope_semaphores.last() {
-            if let Some(entry) = scope_semaphores.get(key) {
-                if entry.source_id == source_id {
-                    return Some(entry.semaphore.clone());
-                }
-            }
-        }
         let entry = state.semaphores.get(key)?;
         if entry.source_id == source_id {
             return Some(entry.semaphore.clone());
@@ -1659,25 +1245,42 @@ impl LazyAskHandlerProgram {
 
     fn lazy_semaphore_put(&self, key: HashedPyKey, source_id: usize, semaphore: Value) {
         let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        let entry = LazySemaphoreEntry {
-            source_id,
-            semaphore,
-        };
-        if let Some(scope_semaphores) = state.scope_semaphores.last_mut() {
-            scope_semaphores.insert(key, entry);
-        } else {
-            state.semaphores.insert(key, entry);
-        }
+        state.semaphores.insert(
+            key,
+            LazySemaphoreEntry {
+                source_id,
+                semaphore,
+            },
+        );
     }
 
-    fn begin_delegate_phase(
+    fn handle_ask_value(
         &mut self,
-        effect: DispatchEffect,
         key: HashedPyKey,
         continuation: Continuation,
+        value: Value,
     ) -> ASTStreamStep {
-        self.phase = LazyAskPhase::AwaitDelegate { key, continuation };
-        ASTStreamStep::Yield(DoCtrl::Delegate { effect })
+        let Some(expr) = as_lazy_eval_expr(&value) else {
+            return ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            });
+        };
+
+        let source_id = lazy_source_id(&value).unwrap_or_default();
+
+        if let Some(cached) = self.lazy_cache_get(&key, source_id) {
+            return ASTStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value: cached,
+            });
+        }
+
+        if let Some(semaphore) = self.lazy_semaphore_get(&key, source_id) {
+            return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
+        }
+
+        self.begin_create_then_acquire_phase(key, continuation, expr, source_id)
     }
 
     fn begin_create_then_acquire_phase(
@@ -1729,34 +1332,6 @@ impl LazyAskHandlerProgram {
         Self::yield_perform(lazy_ask_release_semaphore_effect(&semaphore))
     }
 
-    fn handle_delegated_ask_value(
-        &mut self,
-        key: HashedPyKey,
-        continuation: Continuation,
-        value: Value,
-    ) -> ASTStreamStep {
-        let Some(expr) = as_lazy_eval_expr(&value) else {
-            return ASTStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value,
-            });
-        };
-
-        let source_id = lazy_source_id(&value).unwrap_or_default();
-
-        if let Some(cached) = self.lazy_cache_get(&key, source_id) {
-            return ASTStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value: cached,
-            });
-        }
-
-        if let Some(semaphore) = self.lazy_semaphore_get(&key, source_id) {
-            return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
-        }
-
-        self.begin_create_then_acquire_phase(key, continuation, expr, source_id)
-    }
 }
 
 impl ASTStreamProgram for LazyAskHandlerProgram {
@@ -1765,12 +1340,17 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
-        _store: &mut RustStore,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
             let hashed_key = HashedPyKey::from_test_string(key);
-            let Some(value) = _store.ask(&hashed_key).cloned() else {
+            let Some(value) = scope
+                .lookup(&hashed_key)
+                .or_else(|| store.env.get(&hashed_key))
+                .cloned()
+            else {
                 return ASTStreamStep::Throw(missing_env_key_error(&hashed_key));
             };
             return ASTStreamStep::Yield(DoCtrl::Resume {
@@ -1782,11 +1362,9 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             match parse_local_python_effect(&obj) {
                 Ok(Some(local_effect)) => {
-                    let scope = LazyLocalScopeFactory::new(local_effect.overrides);
-                    self.activate_scope_cache();
+                    scope.scope_bindings.push(Arc::new(local_effect.overrides));
                     self.phase = LazyAskPhase::AwaitLocalHandlers {
                         continuation: k,
-                        scope,
                         sub_program: local_effect.sub_program,
                     };
                     return ASTStreamStep::Yield(DoCtrl::GetHandlers);
@@ -1800,7 +1378,16 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
             }
 
             return match parse_reader_python_effect(&obj) {
-                Ok(Some(key)) => self.begin_delegate_phase(dispatch_from_shared(obj), key, k),
+                Ok(Some(key)) => {
+                    let Some(value) = scope
+                        .lookup(&key)
+                        .or_else(|| store.env.get(&key))
+                        .cloned()
+                    else {
+                        return ASTStreamStep::Throw(missing_env_key_error(&key));
+                    };
+                    self.handle_ask_value(key, k, value)
+                }
                 Ok(None) => ASTStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
@@ -1819,14 +1406,18 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
             LazyAskPhase::AwaitLocalHandlers {
                 continuation,
-                scope,
                 sub_program,
             } => {
-                let mut handlers = match value {
+                let handlers = match value {
                     Value::Handlers(handlers) => handlers,
                     _ => {
                         return ASTStreamStep::Throw(PyException::type_error(
@@ -1834,7 +1425,6 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
                         ));
                     }
                 };
-                handlers.insert(0, Arc::new(scope.clone()));
                 self.phase = LazyAskPhase::AwaitLocalEval { continuation };
                 ASTStreamStep::Yield(DoCtrl::Eval {
                     expr: sub_program,
@@ -1843,14 +1433,12 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
                 })
             }
             LazyAskPhase::AwaitLocalEval { continuation } => {
-                self.deactivate_scope_cache();
+                scope.scope_bindings.pop();
+                self.invalidate_scope_cache(scope.scope_bindings.len());
                 ASTStreamStep::Yield(DoCtrl::Resume {
                     continuation,
                     value,
                 })
-            }
-            LazyAskPhase::AwaitDelegate { key, continuation } => {
-                self.handle_delegated_ask_value(key, continuation, value)
             }
             LazyAskPhase::AwaitAcquire {
                 key,
@@ -1919,7 +1507,7 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
                 source_id,
                 semaphore,
             } => {
-                self.lazy_cache_put(key, source_id, value.clone());
+                self.lazy_cache_put(key, source_id, value.clone(), scope.scope_bindings.len());
                 self.begin_release_phase(continuation, Ok(value), semaphore)
             }
             LazyAskPhase::AwaitRelease {
@@ -1936,14 +1524,17 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
             LazyAskPhase::AwaitLocalHandlers { continuation, .. }
             | LazyAskPhase::AwaitLocalEval { continuation } => {
-                self.deactivate_scope_cache();
-                Self::transfer_throw(continuation, exc)
-            }
-            LazyAskPhase::AwaitDelegate { continuation, .. } => {
+                scope.scope_bindings.pop();
+                self.invalidate_scope_cache(scope.scope_bindings.len());
                 Self::transfer_throw(continuation, exc)
             }
             LazyAskPhase::AwaitAcquire { continuation, .. } => {
@@ -1968,12 +1559,22 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
 }
 
 impl ASTStream for LazyAskHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::resume(self, value, store)
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store, scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::throw(self, exc, store)
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store, scope)
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -2073,7 +1674,7 @@ impl ReaderHandlerProgram {
         continuation: Continuation,
         store: &mut RustStore,
     ) -> ASTStreamStep {
-        let Some(value) = store.ask(&key).cloned() else {
+        let Some(value) = store.env.get(&key).cloned() else {
             return ASTStreamStep::Throw(missing_env_key_error(&key));
         };
 
@@ -2095,6 +1696,7 @@ impl ASTStreamProgram for ReaderHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
@@ -2122,25 +1724,45 @@ impl ASTStreamProgram for ReaderHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         if false {
             unreachable!("ReaderHandler never yields mid-handling");
         }
         ASTStreamStep::Return(value)
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Throw(exc)
     }
 }
 
 impl ASTStream for ReaderHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::resume(self, value, store)
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store, scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::throw(self, exc, store)
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store, scope)
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -2232,6 +1854,7 @@ impl ASTStreamProgram for WriterHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         #[cfg(test)]
         if let Effect::Tell { message } = effect.clone() {
@@ -2269,25 +1892,45 @@ impl ASTStreamProgram for WriterHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         if false {
             unreachable!("WriterHandler never yields mid-handling");
         }
         ASTStreamStep::Return(value)
     }
 
-    fn throw(&mut self, exc: PyException, _: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Throw(exc)
     }
 }
 
 impl ASTStream for WriterHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::resume(self, value, store)
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store, scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::throw(self, exc, store)
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store, scope)
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -2418,6 +2061,7 @@ impl ASTStreamProgram for ResultSafeHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_result_safe_python_effect(&obj) {
@@ -2446,7 +2090,12 @@ impl ASTStreamProgram for ResultSafeHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
             ResultSafePhase::AwaitHandlers {
                 continuation,
@@ -2472,7 +2121,12 @@ impl ASTStreamProgram for ResultSafeHandlerProgram {
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
             ResultSafePhase::AwaitHandlers { continuation, .. }
             | ResultSafePhase::AwaitEval { continuation } => self.finish_err(continuation, exc),
@@ -2482,12 +2136,22 @@ impl ASTStreamProgram for ResultSafeHandlerProgram {
 }
 
 impl ASTStream for ResultSafeHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::resume(self, value, store)
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store, scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::throw(self, exc, store)
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store, scope)
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -2593,6 +2257,7 @@ impl ASTStreamProgram for DoubleCallHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         match effect {
             Effect::Modify { modifier, .. } => {
@@ -2611,7 +2276,12 @@ impl ASTStreamProgram for DoubleCallHandlerProgram {
         }
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, DoubleCallPhase::Done) {
             DoubleCallPhase::AwaitingFirstResult { k, modifier } => {
                 // Got first result. Now do a SECOND Python call: modifier(first_result).
@@ -2639,7 +2309,12 @@ impl ASTStreamProgram for DoubleCallHandlerProgram {
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Throw(exc)
     }
 }
@@ -2649,7 +2324,7 @@ mod tests {
     use super::*;
     use crate::ast_stream::{ASTStream, ASTStreamStep};
     use crate::ids::Marker;
-    use crate::segment::Segment;
+    use crate::segment::{ScopeStore, Segment};
     use pyo3::types::PyDictMethods;
     use pyo3::{IntoPyObject, Python};
 
@@ -2670,6 +2345,7 @@ mod tests {
     #[test]
     fn test_await_ast_stream_resume_sequence() {
         let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
         let mut program = AwaitHandlerProgram::new();
         let continuation = make_test_continuation();
         let continuation_id = continuation.cont_id;
@@ -2679,7 +2355,12 @@ mod tests {
         assert_eq!(location.function_name, "AwaitHandler");
         assert_eq!(location.phase.as_deref(), Some("AwaitBridgeResult"));
 
-        let step = ASTStream::resume(&mut program, Value::Int(12), &mut store);
+        let step = ASTStream::resume(
+            &mut program,
+            Value::Int(12),
+            &mut store,
+            &mut scope,
+        );
         match step {
             ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
@@ -2698,6 +2379,7 @@ mod tests {
     #[test]
     fn test_state_ast_stream_modify_resume_sequence() {
         let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
         store.put("count".to_string(), Value::Int(5));
 
         let mut program = StateHandlerProgram::new();
@@ -2711,7 +2393,12 @@ mod tests {
         assert_eq!(location.function_name, "StateHandler");
         assert_eq!(location.phase.as_deref(), Some("ModifyApply"));
 
-        let step = ASTStream::resume(&mut program, Value::Int(8), &mut store);
+        let step = ASTStream::resume(
+            &mut program,
+            Value::Int(8),
+            &mut store,
+            &mut scope,
+        );
         match step {
             ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
@@ -2731,32 +2418,45 @@ mod tests {
     #[test]
     fn test_reader_ast_stream_throw_sequence() {
         let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
         let mut program = ReaderHandlerProgram;
 
         let location = ASTStream::debug_location(&program).expect("reader debug location");
         assert_eq!(location.function_name, "ReaderHandler");
         assert_eq!(location.phase.as_deref(), Some("AskApply"));
 
-        let step = ASTStream::throw(&mut program, PyException::runtime_error("boom"), &mut store);
+        let step = ASTStream::throw(
+            &mut program,
+            PyException::runtime_error("boom"),
+            &mut store,
+            &mut scope,
+        );
         assert!(matches!(step, ASTStreamStep::Throw(_)));
     }
 
     #[test]
     fn test_writer_ast_stream_throw_sequence() {
         let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
         let mut program = WriterHandlerProgram;
 
         let location = ASTStream::debug_location(&program).expect("writer debug location");
         assert_eq!(location.function_name, "WriterHandler");
         assert_eq!(location.phase.as_deref(), Some("TellApply"));
 
-        let step = ASTStream::throw(&mut program, PyException::runtime_error("boom"), &mut store);
+        let step = ASTStream::throw(
+            &mut program,
+            PyException::runtime_error("boom"),
+            &mut store,
+            &mut scope,
+        );
         assert!(matches!(step, ASTStreamStep::Throw(_)));
     }
 
     #[test]
     fn test_lazy_ask_ast_stream_release_sequence() {
         let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
         let mut program = LazyAskHandlerProgram::new(Arc::new(Mutex::new(LazyAskState::default())));
         let continuation = make_test_continuation();
         let continuation_id = continuation.cont_id;
@@ -2769,7 +2469,12 @@ mod tests {
         assert_eq!(location.function_name, "LazyAskHandler");
         assert_eq!(location.phase.as_deref(), Some("AwaitRelease"));
 
-        let step = ASTStream::resume(&mut program, Value::Unit, &mut store);
+        let step = ASTStream::resume(
+            &mut program,
+            Value::Unit,
+            &mut store,
+            &mut scope,
+        );
         match step {
             ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
@@ -2786,6 +2491,7 @@ mod tests {
     fn test_result_safe_ast_stream_handlers_to_eval_sequence() {
         Python::attach(|py| {
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
             let mut program = ResultSafeHandlerProgram::new();
             let continuation = make_test_continuation();
             let sub_program =
@@ -2799,7 +2505,12 @@ mod tests {
             assert_eq!(location.function_name, "ResultSafeHandler");
             assert_eq!(location.phase.as_deref(), Some("AwaitHandlers"));
 
-            let step = ASTStream::resume(&mut program, Value::Handlers(vec![]), &mut store);
+            let step = ASTStream::resume(
+                &mut program,
+                Value::Handlers(vec![]),
+                &mut store,
+                &mut scope,
+            );
             assert!(matches!(step, ASTStreamStep::Yield(DoCtrl::Eval { .. })));
 
             let location = ASTStream::debug_location(&program).expect("result safe debug location");
@@ -2847,6 +2558,7 @@ mod tests {
     fn test_state_factory_get() {
         Python::attach(|py| {
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
             store.put("key".to_string(), Value::Int(42));
             let k = make_test_continuation();
             let program_ref = StateHandlerFactory.create_program();
@@ -2859,6 +2571,7 @@ mod tests {
                     },
                     k,
                     &mut store,
+                    &mut scope,
                 )
             };
             match step {
@@ -2877,6 +2590,7 @@ mod tests {
     fn test_state_factory_put() {
         Python::attach(|py| {
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
             let program_ref = StateHandlerFactory.create_program();
             let step = {
@@ -2889,6 +2603,7 @@ mod tests {
                     },
                     k,
                     &mut store,
+                    &mut scope,
                 )
             };
             assert!(matches!(
@@ -2907,6 +2622,7 @@ mod tests {
         use pyo3::Python;
         Python::attach(|py| {
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
             store.put("key".to_string(), Value::Int(10));
             let k = make_test_continuation();
             let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
@@ -2921,6 +2637,7 @@ mod tests {
                     },
                     k,
                     &mut store,
+                    &mut scope,
                 )
             };
             match step {
@@ -2938,6 +2655,7 @@ mod tests {
         use pyo3::Python;
         Python::attach(|py| {
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
             store.put("key".to_string(), Value::Int(10));
             let k = make_test_continuation();
             let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
@@ -2953,12 +2671,13 @@ mod tests {
                     },
                     k,
                     &mut store,
+                    &mut scope,
                 );
             }
             // resume with new value
             let step = {
                 let mut guard = program_ref.lock().unwrap();
-                guard.resume(Value::Int(20), &mut store)
+                guard.resume(Value::Int(20), &mut store, &mut scope)
             };
             match step {
                 ASTStreamStep::Yield(DoCtrl::Resume { value, .. }) => {
@@ -3000,6 +2719,7 @@ mod tests {
     fn test_reader_factory_ask() {
         Python::attach(|py| {
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
             store.set_env_str("config", Value::String("value".to_string()));
             let k = make_test_continuation();
             let program_ref = ReaderHandlerFactory.create_program();
@@ -3012,6 +2732,7 @@ mod tests {
                     },
                     k,
                     &mut store,
+                    &mut scope,
                 )
             };
             match step {
@@ -3053,6 +2774,7 @@ mod tests {
     fn test_writer_factory_tell() {
         Python::attach(|py| {
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
             let program_ref = WriterHandlerFactory.create_program();
             let step = {
@@ -3064,6 +2786,7 @@ mod tests {
                     },
                     k,
                     &mut store,
+                    &mut scope,
                 )
             };
             assert!(matches!(
@@ -3107,6 +2830,7 @@ mod tests {
     fn test_result_safe_handler_wraps_return_and_exception() {
         Python::attach(|py| {
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
 
             let locals = pyo3::types::PyDict::new(py);
@@ -3128,7 +2852,13 @@ mod tests {
             let ok_program = ResultSafeHandlerFactory.create_program();
             let start_step = {
                 let mut guard = ok_program.lock().unwrap();
-                guard.start(py, effect.clone(), k.clone(), &mut store)
+                guard.start(
+                    py,
+                    effect.clone(),
+                    k.clone(),
+                    &mut store,
+                    &mut scope,
+                )
             };
             assert!(matches!(
                 start_step,
@@ -3137,7 +2867,7 @@ mod tests {
 
             let await_eval_step = {
                 let mut guard = ok_program.lock().unwrap();
-                guard.resume(Value::Handlers(vec![]), &mut store)
+                guard.resume(Value::Handlers(vec![]), &mut store, &mut scope)
             };
             assert!(matches!(
                 await_eval_step,
@@ -3146,7 +2876,7 @@ mod tests {
 
             let ok_step = {
                 let mut guard = ok_program.lock().unwrap();
-                guard.resume(Value::Int(42), &mut store)
+                guard.resume(Value::Int(42), &mut store, &mut scope)
             };
             match ok_step {
                 ASTStreamStep::Yield(DoCtrl::Resume {
@@ -3165,12 +2895,22 @@ mod tests {
             let err_program = ResultSafeHandlerFactory.create_program();
             let _ = {
                 let mut guard = err_program.lock().unwrap();
-                guard.start(py, effect, k, &mut store)
+                guard.start(
+                    py,
+                    effect,
+                    k,
+                    &mut store,
+                    &mut scope,
+                )
             };
 
             let err_step = {
                 let mut guard = err_program.lock().unwrap();
-                guard.throw(PyException::runtime_error("boom"), &mut store)
+                guard.throw(
+                    PyException::runtime_error("boom"),
+                    &mut store,
+                    &mut scope,
+                )
             };
 
             match err_step {
@@ -3199,6 +2939,7 @@ mod tests {
         use pyo3::Python;
         Python::attach(|py| {
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
             let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
 
@@ -3215,6 +2956,7 @@ mod tests {
                     },
                     k,
                     &mut store,
+                    &mut scope,
                 )
             };
             assert!(matches!(
@@ -3225,7 +2967,7 @@ mod tests {
             // Step 2: first resume() returns NeedsPython AGAIN (the critical path)
             let step2 = {
                 let mut guard = program_ref.lock().unwrap();
-                guard.resume(Value::Int(100), &mut store)
+                guard.resume(Value::Int(100), &mut store, &mut scope)
             };
             assert!(
                 matches!(
@@ -3238,7 +2980,7 @@ mod tests {
             // Step 3: second resume() yields Resume with combined result
             let step3 = {
                 let mut guard = program_ref.lock().unwrap();
-                guard.resume(Value::Int(200), &mut store)
+                guard.resume(Value::Int(200), &mut store, &mut scope)
             };
             match step3 {
                 ASTStreamStep::Yield(DoCtrl::Resume { value, .. }) => {

@@ -1,10 +1,51 @@
 //! Segment types for delimited continuations.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::frame::Frame;
 use crate::handler::HandlerRef;
 use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::step::{Mode, PendingPython, PyException};
+use crate::value::Value;
+
+/// Per-segment scope state (the "S" in CESK).
+/// Stack of binding maps: Local pushes a layer, completion pops it.
+/// Ask resolution walks top-down, falls back to `RustStore.env`.
+///
+/// Layers are Arc-wrapped for GIL-free cloning (binding values may be
+/// `Value::Python` which cannot be deep-cloned without the GIL).
+#[derive(Debug, Clone, Default)]
+pub struct ScopeStore {
+    pub scope_bindings: Vec<Arc<HashMap<HashedPyKey, Value>>>,
+}
+
+impl ScopeStore {
+    pub fn new() -> Self {
+        ScopeStore {
+            scope_bindings: Vec::new(),
+        }
+    }
+
+    pub fn push_scope(&mut self, bindings: HashMap<HashedPyKey, Value>) {
+        self.scope_bindings.push(Arc::new(bindings));
+    }
+
+    pub fn pop_scope(&mut self) -> Option<Arc<HashMap<HashedPyKey, Value>>> {
+        self.scope_bindings.pop()
+    }
+
+    pub fn lookup(&self, key: &HashedPyKey) -> Option<&Value> {
+        for layer in self.scope_bindings.iter().rev() {
+            if let Some(value) = layer.get(key) {
+                return Some(value);
+            }
+        }
+        None
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum SegmentKind {
@@ -29,14 +70,7 @@ pub struct Segment {
     pub marker: Marker,
     pub frames: Vec<Frame>,
     pub caller: Option<SegmentId>,
-    /// Segment where the original effect was yielded.
-    /// Handler lookup starts from this segment instead of self,
-    /// preserving nested handler visibility when multi-step Rust handlers
-    /// cause the caller chain to drift during sub-dispatches.
-    pub lookup_origin: Option<SegmentId>,
-    /// Marker of the lookup_origin segment at capture time,
-    /// used to detect stale segment IDs after arena recycling.
-    pub lookup_origin_marker: Option<Marker>,
+    pub scope_store: ScopeStore,
     pub kind: SegmentKind,
     pub dispatch_id: Option<DispatchId>,
     pub mode: Mode,
@@ -52,8 +86,7 @@ impl Segment {
             marker,
             frames: Vec::new(),
             caller,
-            lookup_origin: None,
-            lookup_origin_marker: None,
+            scope_store: ScopeStore::default(),
             kind: SegmentKind::Normal,
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
@@ -76,8 +109,7 @@ impl Segment {
             marker,
             frames: Vec::new(),
             caller,
-            lookup_origin: None,
-            lookup_origin_marker: None,
+            scope_store: ScopeStore::default(),
             kind: SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,

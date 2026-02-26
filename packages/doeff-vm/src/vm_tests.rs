@@ -1,6 +1,7 @@
 use super::*;
 use crate::ast_stream::{ASTStream, ASTStreamStep};
 use crate::frame::CallMetadata;
+use crate::segment::ScopeStore;
 use crate::trace_state::TraceState;
 use std::sync::{Arc, Mutex};
 
@@ -8,8 +9,6 @@ fn make_dummy_continuation() -> Continuation {
     Continuation {
         cont_id: ContId::fresh(),
         segment_id: SegmentId::from_index(0),
-        lookup_origin: None,
-        lookup_origin_marker: None,
         frames_snapshot: std::sync::Arc::new(Vec::new()),
         marker: Marker::fresh(),
         dispatch_id: None,
@@ -18,6 +17,7 @@ fn make_dummy_continuation() -> Continuation {
         pending_error_context: None,
         interceptor_eval_depth: 0,
         interceptor_skip_stack: Vec::new(),
+        scope_store: ScopeStore::default(),
         started: true,
         program: None,
         handlers: Vec::new(),
@@ -31,11 +31,21 @@ fn make_dummy_continuation() -> Continuation {
 struct DummyProgramStream;
 
 impl ASTStream for DummyProgramStream {
-    fn resume(&mut self, _value: Value, _store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        _value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Return(Value::Unit)
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Throw(exc)
     }
 }
@@ -1008,7 +1018,7 @@ fn test_rust_store_clone() {
     let cloned = store.clone();
     assert_eq!(cloned.get("key").unwrap().as_int(), Some(42));
     assert_eq!(cloned.logs().len(), 1);
-    assert_eq!(cloned.ask("env_key").unwrap().as_bool(), Some(true));
+    assert_eq!(cloned.ask_str("env_key").unwrap().as_bool(), Some(true));
 
     // Verify independence
     store.put("key".to_string(), Value::Int(99));
@@ -1321,17 +1331,17 @@ fn test_gap11_with_local_scoped_bindings() {
             ("temp".to_string(), Value::Int(42)),
         ]),
         |s| {
-            assert_eq!(s.ask("db").unwrap().as_str(), Some("test"));
-            assert_eq!(s.ask("temp").unwrap().as_int(), Some(42));
-            assert_eq!(s.ask("host").unwrap().as_str(), Some("localhost"));
+            assert_eq!(s.ask_str("db").unwrap().as_str(), Some("test"));
+            assert_eq!(s.ask_str("temp").unwrap().as_int(), Some(42));
+            assert_eq!(s.ask_str("host").unwrap().as_str(), Some("localhost"));
             "done"
         },
     );
     assert_eq!(result, "done");
     // After with_local, old bindings restored, temp removed
-    assert_eq!(store.ask("db").unwrap().as_str(), Some("prod"));
-    assert!(store.ask("temp").is_none());
-    assert_eq!(store.ask("host").unwrap().as_str(), Some("localhost"));
+    assert_eq!(store.ask_str("db").unwrap().as_str(), Some("prod"));
+    assert!(store.ask_str("temp").is_none());
+    assert_eq!(store.ask_str("host").unwrap().as_str(), Some("localhost"));
 }
 
 /// G12: DispatchContext should not have callsite_cont_id field.
@@ -2060,8 +2070,6 @@ fn test_d10_handler_return_uses_deliver_not_return() {
     let k_user = Continuation {
         cont_id: ContId::fresh(),
         segment_id: prompt_seg_id,
-        lookup_origin: None,
-        lookup_origin_marker: None,
         frames_snapshot: std::sync::Arc::new(Vec::new()),
         marker,
         dispatch_id: Some(dispatch_id),
@@ -2070,6 +2078,7 @@ fn test_d10_handler_return_uses_deliver_not_return() {
         pending_error_context: None,
         interceptor_eval_depth: 0,
         interceptor_skip_stack: Vec::new(),
+        scope_store: ScopeStore::default(),
         started: true,
         program: None,
         handlers: Vec::new(),

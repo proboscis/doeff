@@ -76,11 +76,6 @@ impl RustStore {
         self.state.insert(key, value);
     }
 
-    pub fn ask(&self, key: impl Into<HashedPyKey>) -> Option<&Value> {
-        let key = key.into();
-        self.env.get(&key)
-    }
-
     #[cfg(test)]
     pub fn ask_str(&self, key: &str) -> Option<&Value> {
         self.env.get(&HashedPyKey::from_test_string(key))
