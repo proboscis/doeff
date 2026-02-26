@@ -34,7 +34,7 @@ use crate::interceptor_state::InterceptorState;
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::pyvm::{classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase};
-use crate::segment::{Segment, SegmentKind};
+use crate::segment::{ScopeStore, Segment, SegmentKind};
 use crate::trace_state::TraceState;
 use crate::value::Value;
 
@@ -49,17 +49,27 @@ struct RustProgramStream {
 }
 
 impl ASTStream for RustProgramStream {
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         Python::attach(|_py| {
             let mut guard = self.program.lock().expect("Rust program lock poisoned");
-            guard.resume(value, store)
+            guard.resume(value, store, scope)
         })
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         Python::attach(|_py| {
             let mut guard = self.program.lock().expect("Rust program lock poisoned");
-            guard.throw(exc, store)
+            guard.throw(exc, store, scope)
         })
     }
 }
@@ -410,20 +420,6 @@ impl VM {
     fn handlers_in_caller_chain(&self, start_seg_id: SegmentId) -> Vec<HandlerChainEntry> {
         let mut chain = Vec::new();
         let mut cursor = Some(start_seg_id);
-        if let Some(start_seg) = self.segments.get(start_seg_id) {
-            if let Some(origin) = start_seg.lookup_origin {
-                let origin_is_live = match start_seg.lookup_origin_marker {
-                    Some(expected_marker) => self
-                        .segments
-                        .get(origin)
-                        .is_some_and(|seg| seg.marker == expected_marker),
-                    None => self.segments.get(origin).is_some(),
-                };
-                if origin_is_live {
-                    cursor = Some(origin);
-                }
-            }
-        }
         while let Some(seg_id) = cursor {
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
@@ -565,6 +561,16 @@ impl VM {
             .factory
             .create_program_for_run(self.current_run_token());
         let stream = rust_program_as_stream(program.clone());
+        let seg_id = self
+            .current_segment
+            .expect("invoke_rust_program requires current segment");
+        let mut scope = std::mem::take(
+            &mut self
+                .segments
+                .get_mut(seg_id)
+                .expect("current segment not found")
+                .scope_store,
+        );
         let step = {
             let mut guard = program.lock().expect("Rust program lock poisoned");
             Python::attach(|py| {
@@ -573,9 +579,14 @@ impl VM {
                     *invocation.effect,
                     invocation.continuation,
                     &mut self.rust_store,
+                    &mut scope,
                 )
             })
         };
+        self.segments
+            .get_mut(seg_id)
+            .expect("current segment not found")
+            .scope_store = scope;
         self.apply_stream_step(step, stream, None)
     }
 
@@ -1078,14 +1089,27 @@ impl VM {
 
         match frame {
             Frame::Program { stream, metadata } => {
+                let mut scope = std::mem::take(
+                    &mut self
+                        .segments
+                        .get_mut(seg_id)
+                        .expect("segment not found")
+                        .scope_store,
+                );
                 let step = {
                     let mut guard = stream.lock().expect("ASTStream lock poisoned");
                     match mode {
-                        Mode::Deliver(value) => guard.resume(value, &mut self.rust_store),
-                        Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store),
+                        Mode::Deliver(value) => {
+                            guard.resume(value, &mut self.rust_store, &mut scope)
+                        }
+                        Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store, &mut scope),
                         _ => unreachable!(),
                     }
                 };
+                self.segments
+                    .get_mut(seg_id)
+                    .expect("segment not found")
+                    .scope_store = scope;
                 self.apply_stream_step(step, stream, metadata)
             }
             Frame::InterceptorApply(cont) => self.step_interceptor_apply_frame(*cont, mode),
@@ -2744,10 +2768,7 @@ impl VM {
         let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
 
         let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-        handler_seg.lookup_origin = current_seg.lookup_origin.or(Some(seg_id));
-        handler_seg.lookup_origin_marker = current_seg
-            .lookup_origin_marker
-            .or(Some(current_seg.marker));
+        handler_seg.scope_store = current_seg.scope_store.clone();
         handler_seg.dispatch_id = Some(dispatch_id);
         self.copy_interceptor_guard_state(Some(seg_id), &mut handler_seg);
         let handler_seg_id = self.alloc_segment(handler_seg);
@@ -2993,8 +3014,7 @@ impl VM {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
             caller,
-            lookup_origin: k.lookup_origin.or(Some(k.segment_id)),
-            lookup_origin_marker: k.lookup_origin_marker.or(Some(k.marker)),
+            scope_store: k.scope_store.clone(),
             kind: SegmentKind::Normal,
             dispatch_id,
             mode: k.mode.as_ref().clone(),
@@ -3126,8 +3146,7 @@ impl VM {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
             caller: self.current_segment,
-            lookup_origin: k.lookup_origin.or(Some(k.segment_id)),
-            lookup_origin_marker: k.lookup_origin_marker.or(Some(k.marker)),
+            scope_store: k.scope_store.clone(),
             kind: SegmentKind::Normal,
             dispatch_id,
             mode: k.mode.as_ref().clone(),
@@ -3195,6 +3214,9 @@ impl VM {
         self.track_run_handler(&plan.handler);
 
         let mut body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
+        if let Some(src) = self.segments.get(plan.outside_seg_id) {
+            body_seg.scope_store = src.scope_store.clone();
+        }
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut body_seg);
         let body_seg_id = self.alloc_segment(body_seg);
 
@@ -3375,19 +3397,15 @@ impl VM {
                     ctx.k_user.clone()
                 };
 
-                let (inner_origin, inner_origin_marker) = inner_seg_id
+                let inner_scope_store = inner_seg_id
                     .and_then(|seg_id| {
-                        self.segments.get(seg_id).map(|seg| {
-                            (
-                                seg.lookup_origin.or(Some(seg_id)),
-                                seg.lookup_origin_marker.or(Some(seg.marker)),
-                            )
-                        })
+                        self.segments
+                            .get(seg_id)
+                            .map(|seg| seg.scope_store.clone())
                     })
-                    .unwrap_or((None, None));
+                    .unwrap_or_default();
                 let mut handler_seg = Segment::new(marker, inner_seg_id);
-                handler_seg.lookup_origin = inner_origin;
-                handler_seg.lookup_origin_marker = inner_origin_marker;
+                handler_seg.scope_store = inner_scope_store;
                 handler_seg.dispatch_id = Some(dispatch_id);
                 self.copy_interceptor_guard_state(inner_seg_id, &mut handler_seg);
                 let handler_seg_id = self.alloc_segment(handler_seg);
@@ -3675,6 +3693,11 @@ impl VM {
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             self.track_run_handler(handler);
             let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
+            if let Some(outside_id) = outside_seg_id {
+                if let Some(outside) = self.segments.get(outside_id) {
+                    body_seg.scope_store = outside.scope_store.clone();
+                }
+            }
             self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
             let body_seg_id = self.alloc_segment(body_seg);
 

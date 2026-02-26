@@ -10,7 +10,7 @@ use crate::frame::Frame;
 use crate::handler::Handler;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::py_shared::PyShared;
-use crate::segment::Segment;
+use crate::segment::{ScopeStore, Segment};
 use crate::step::{Mode, PendingPython, PyException};
 use crate::value::Value;
 
@@ -30,8 +30,6 @@ use crate::value::Value;
 pub struct Continuation {
     pub cont_id: ContId,
     pub segment_id: SegmentId,
-    pub lookup_origin: Option<SegmentId>,
-    pub lookup_origin_marker: Option<Marker>,
     pub frames_snapshot: Arc<Vec<Frame>>,
     pub marker: Marker,
     pub dispatch_id: Option<DispatchId>,
@@ -40,6 +38,7 @@ pub struct Continuation {
     pub pending_error_context: Option<PyException>,
     pub interceptor_eval_depth: usize,
     pub interceptor_skip_stack: Vec<Marker>,
+    pub scope_store: ScopeStore,
 
     /// Whether this continuation is already started.
     /// started=true  => captured continuation (from running code)
@@ -72,8 +71,6 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id,
-            lookup_origin: segment.lookup_origin.or(Some(segment_id)),
-            lookup_origin_marker: segment.lookup_origin_marker.or(Some(segment.marker)),
             frames_snapshot: Arc::new(segment.frames.clone()),
             marker: segment.marker,
             dispatch_id,
@@ -82,6 +79,7 @@ impl Continuation {
             pending_error_context: segment.pending_error_context.clone(),
             interceptor_eval_depth: segment.interceptor_eval_depth,
             interceptor_skip_stack: segment.interceptor_skip_stack.clone(),
+            scope_store: segment.scope_store.clone(),
             started: true,
             program: None,
             handlers: Vec::new(),
@@ -100,8 +98,6 @@ impl Continuation {
         Continuation {
             cont_id,
             segment_id,
-            lookup_origin: segment.lookup_origin.or(Some(segment_id)),
-            lookup_origin_marker: segment.lookup_origin_marker.or(Some(segment.marker)),
             frames_snapshot: Arc::new(segment.frames.clone()),
             marker: segment.marker,
             dispatch_id,
@@ -110,6 +106,7 @@ impl Continuation {
             pending_error_context: segment.pending_error_context.clone(),
             interceptor_eval_depth: segment.interceptor_eval_depth,
             interceptor_skip_stack: segment.interceptor_skip_stack.clone(),
+            scope_store: segment.scope_store.clone(),
             started: true,
             program: None,
             handlers: Vec::new(),
@@ -132,8 +129,6 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
-            lookup_origin: None,
-            lookup_origin_marker: None,
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
@@ -142,6 +137,7 @@ impl Continuation {
             pending_error_context: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
+            scope_store: ScopeStore::default(),
             started: false,
             program: Some(expr),
             handlers,
@@ -173,8 +169,6 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
-            lookup_origin: None,
-            lookup_origin_marker: None,
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
@@ -183,6 +177,7 @@ impl Continuation {
             pending_error_context: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
+            scope_store: ScopeStore::default(),
             started: false,
             program: Some(expr),
             handlers,

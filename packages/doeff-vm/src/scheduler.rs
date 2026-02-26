@@ -33,6 +33,7 @@ use crate::handler::{
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
+use crate::segment::ScopeStore;
 use crate::step::{DoCtrl, PyException};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -2373,6 +2374,7 @@ impl ASTStreamProgram for SchedulerProgram {
         effect: DispatchEffect,
         k_user: Continuation,
         store: &mut RustStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         {
             let mut state = self.state.lock().expect("Scheduler lock poisoned");
@@ -2529,7 +2531,12 @@ impl ASTStreamProgram for SchedulerProgram {
         }
     }
 
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
             SchedulerPhase::SpawnAwaitTraceback { k_user, effect } => {
                 let traceback = match value {
@@ -2740,7 +2747,12 @@ impl ASTStreamProgram for SchedulerProgram {
         }
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
             SchedulerPhase::Driving {
                 owner,
@@ -2755,12 +2767,22 @@ impl ASTStreamProgram for SchedulerProgram {
 }
 
 impl ASTStream for SchedulerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::resume(self, value, store)
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::resume(self, value, store, scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::throw(self, exc, store)
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
+        <Self as ASTStreamProgram>::throw(self, exc, store, scope)
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -3216,6 +3238,7 @@ mod tests {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state);
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
             let k_user = make_test_continuation();
             let k_user_id = k_user.cont_id;
             let spawn_program = py.None().into_pyobject(py).unwrap().unbind().into_any();
@@ -3242,13 +3265,23 @@ mod tests {
                     source_line: 321,
                 }],
             }];
-            let step = ASTStream::resume(&mut program, Value::Traceback(traceback), &mut store);
+            let step = ASTStream::resume(
+                &mut program,
+                Value::Traceback(traceback),
+                &mut store,
+                &mut scope,
+            );
             assert!(matches!(step, ASTStreamStep::Yield(DoCtrl::GetHandlers)));
 
             let location = ASTStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.phase.as_deref(), Some("SpawnAwaitHandlers"));
 
-            let step = ASTStream::resume(&mut program, Value::Handlers(vec![]), &mut store);
+            let step = ASTStream::resume(
+                &mut program,
+                Value::Handlers(vec![]),
+                &mut store,
+                &mut scope,
+            );
             assert!(matches!(
                 step,
                 ASTStreamStep::Yield(DoCtrl::CreateContinuation { .. })
@@ -3262,6 +3295,7 @@ mod tests {
                 &mut program,
                 Value::Continuation(created_continuation),
                 &mut store,
+                &mut scope,
             );
 
             match step {
@@ -3293,6 +3327,7 @@ mod tests {
         let state = Arc::new(Mutex::new(SchedulerState::new()));
         let mut program = SchedulerProgram::new(state.clone());
         let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
 
         let caller_k = make_test_continuation();
         let spawned_k = make_test_continuation();
@@ -3326,6 +3361,7 @@ mod tests {
             &mut program,
             Value::Continuation(spawned_k.clone()),
             &mut store,
+            &mut scope,
         );
         assert!(
             step_targets_cont_id(&step, spawned_k.cont_id),
@@ -3364,6 +3400,7 @@ mod tests {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
 
             let waiter_k = make_test_continuation();
             let idle_k = make_test_continuation();
@@ -3413,8 +3450,14 @@ mod tests {
                     .unbind(),
             );
 
-            let step =
-                ASTStreamProgram::start(&mut program, py, complete, idle_k.clone(), &mut store);
+            let step = ASTStreamProgram::start(
+                &mut program,
+                py,
+                complete,
+                idle_k.clone(),
+                &mut store,
+                &mut scope,
+            );
             assert!(
                 step_targets_cont_id(&step, waiter_k.cont_id),
                 "higher-priority waiter must run first after promise completion, got {:?}",
@@ -3488,6 +3531,7 @@ mod tests {
         let state = Arc::new(Mutex::new(SchedulerState::new()));
         let mut program = SchedulerProgram::new(state.clone());
         let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
 
         let waiter_k = make_test_continuation();
         let running_k = make_test_continuation();
@@ -3536,7 +3580,12 @@ mod tests {
             running_task,
         };
 
-        let step = ASTStream::resume(&mut program, Value::Int(55), &mut store);
+        let step = ASTStream::resume(
+            &mut program,
+            Value::Int(55),
+            &mut store,
+            &mut scope,
+        );
         match step {
             ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
@@ -3587,6 +3636,7 @@ mod tests {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
 
             let normal_k = make_test_continuation();
             let idle_driver_k = make_test_continuation();
@@ -3641,6 +3691,7 @@ mod tests {
                 complete,
                 idle_driver_k.clone(),
                 &mut store,
+                &mut scope,
             );
             assert!(
                 step_targets_cont_id(&first_step, normal_k.cont_id),
@@ -3653,7 +3704,12 @@ mod tests {
                 if k_user.cont_id == idle_driver_k.cont_id
             ));
 
-            let second_step = ASTStream::resume(&mut program, Value::Unit, &mut store);
+            let second_step = ASTStream::resume(
+                &mut program,
+                Value::Unit,
+                &mut store,
+                &mut scope,
+            );
             assert!(
                 step_targets_cont_id(&second_step, idle_driver_k.cont_id),
                 "IDLE driver should resume after NORMAL task hands control back, got {:?}",
@@ -3680,6 +3736,7 @@ mod tests {
             let mut driving_program = SchedulerProgram::new(shared_state.clone());
             let mut resolver_program = SchedulerProgram::new(shared_state.clone());
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
 
             let waiter_k = make_test_continuation();
             let running_k = make_test_continuation();
@@ -3748,6 +3805,7 @@ mod tests {
                 complete,
                 resolver_k.clone(),
                 &mut store,
+                &mut scope,
             );
 
             let dequeue_step = {
@@ -3767,7 +3825,12 @@ mod tests {
                     .expect("mark waiting task done");
             }
 
-            let stale_step = ASTStream::resume(&mut driving_program, Value::Unit, &mut store);
+            let stale_step = ASTStream::resume(
+                &mut driving_program,
+                Value::Unit,
+                &mut store,
+                &mut scope,
+            );
 
             let mut waiter_activation_count = 0;
             if step_targets_cont_id(&resolver_step, waiter_k.cont_id) {
@@ -3801,6 +3864,7 @@ mod tests {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
 
             let idle_k = make_test_continuation();
             let normal_k = make_test_continuation();
@@ -3883,8 +3947,14 @@ mod tests {
                     .expect("None must convert")
                     .unbind(),
             );
-            let first_step =
-                ASTStreamProgram::start(&mut program, py, wake_normal, idle_k.clone(), &mut store);
+            let first_step = ASTStreamProgram::start(
+                &mut program,
+                py,
+                wake_normal,
+                idle_k.clone(),
+                &mut store,
+                &mut scope,
+            );
             assert!(
                 step_targets_cont_id(&first_step, normal_k.cont_id),
                 "first promise completion should preempt IDLE and run NORMAL, got {:?}",
@@ -3904,8 +3974,14 @@ mod tests {
                     .expect("None must convert")
                     .unbind(),
             );
-            let second_step =
-                ASTStreamProgram::start(&mut program, py, wake_high, normal_k.clone(), &mut store);
+            let second_step = ASTStreamProgram::start(
+                &mut program,
+                py,
+                wake_high,
+                normal_k.clone(),
+                &mut store,
+                &mut scope,
+            );
             assert!(
                 step_targets_cont_id(&second_step, normal_k.cont_id),
                 "nested preemption must be blocked while transfer is active, got {:?}",
@@ -3936,6 +4012,7 @@ mod tests {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
 
             let waiter_k = make_test_continuation();
             let idle_k = make_test_continuation();
@@ -3987,7 +4064,14 @@ mod tests {
                 .into_any();
             let fail = make_fail_promise_effect(py, promise_obj, error_obj);
 
-            let step = ASTStreamProgram::start(&mut program, py, fail, idle_k.clone(), &mut store);
+            let step = ASTStreamProgram::start(
+                &mut program,
+                py,
+                fail,
+                idle_k.clone(),
+                &mut store,
+                &mut scope,
+            );
             assert!(
                 matches!(
                     &step,
@@ -4025,6 +4109,7 @@ mod tests {
         let state = Arc::new(Mutex::new(SchedulerState::new()));
         let mut program = SchedulerProgram::new(state.clone());
         let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
 
         let caller_k = make_test_continuation();
         let spawned_k = make_test_continuation();
@@ -4054,7 +4139,12 @@ mod tests {
             spawn_site: None,
         };
 
-        let step = ASTStream::resume(&mut program, Value::Continuation(spawned_k), &mut store);
+        let step = ASTStream::resume(
+            &mut program,
+            Value::Continuation(spawned_k),
+            &mut store,
+            &mut scope,
+        );
         assert!(
             step_targets_cont_id(&step, caller_k.cont_id),
             "same-priority spawn should resume caller immediately, got {:?}",
@@ -4074,6 +4164,7 @@ mod tests {
         let state = Arc::new(Mutex::new(SchedulerState::new()));
         let mut program = SchedulerProgram::new(state.clone());
         let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
 
         let caller_k = make_test_continuation();
         let spawned_k = make_test_continuation();
@@ -4103,7 +4194,12 @@ mod tests {
             spawn_site: None,
         };
 
-        let step = ASTStream::resume(&mut program, Value::Continuation(spawned_k), &mut store);
+        let step = ASTStream::resume(
+            &mut program,
+            Value::Continuation(spawned_k),
+            &mut store,
+            &mut scope,
+        );
         assert!(
             step_targets_cont_id(&step, caller_k.cont_id),
             "lower-priority spawn should resume caller immediately, got {:?}",
