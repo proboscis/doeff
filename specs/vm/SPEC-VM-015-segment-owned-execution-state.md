@@ -344,12 +344,12 @@ Similarly for the other 4 fields. The exact accessor pattern will be determined 
 3. Set `self.mode` for the new dispatch
 
 **After (segment-owned)**:
-1. Create handler segment with fresh execution state:
+1. Create handler segment with execution state:
    - `mode: Mode::Deliver(Value::Unit)` (or appropriate initial mode)
    - `pending_python: None`
    - `pending_error_context: original_exception` (if applicable)
-   - `interceptor_eval_depth: 0`
-   - `interceptor_skip_stack: vec![]`
+   - `interceptor_eval_depth` ← **inherited from parent segment** (re-entrancy guard must be visible)
+   - `interceptor_skip_stack` ← **inherited from parent segment** (skip markers must be visible)
 2. Set `self.current_segment` to the new handler segment
 3. Set `self.current_seg_mut().mode` for the dispatch
 
@@ -401,17 +401,19 @@ Same as Resume (§5.4) except `caller` is set to `None` (severing the caller cha
 
 When an interceptor callback is invoked:
 1. Create body segment (already happens via `prepare_with_intercept`)
-2. Body segment gets fresh execution state:
+2. Body segment gets execution state:
    - `mode`: set by the interceptor eval setup
    - `pending_python: None`
    - `pending_error_context: None`
-   - `interceptor_eval_depth: 0` (fresh — outer depth doesn't leak)
-   - `interceptor_skip_stack: vec![]` (fresh — outer skips don't leak)
+   - `interceptor_eval_depth` ← **inherited from parent segment** (guards against recursive interceptor evaluation)
+   - `interceptor_skip_stack` ← **inherited from parent segment** (prevents re-entrant interceptor invocation)
 3. Set `self.current_segment` to the body segment
+
+Interceptor guard state is inherited by value (copied, not aliased). The child sees the parent's active guards so it won't re-enter a skipped interceptor. But the child's modifications (push/pop) do not affect the parent — isolation is preserved. This matches the OCaml fiber model where dynamic guard state travels with the continuation context.
 
 ### 5.7 WithHandler Body Entry
 
-Same pattern as §5.6 — body segment gets fresh interceptor state while inheriting the parent's mode (since `WithHandler` doesn't change what's being computed, just what handlers are visible).
+Body segment inherits the parent's interceptor guard state (`interceptor_eval_depth`, `interceptor_skip_stack`) by copy. Transient state (`pending_python`, `pending_error_context`) is fresh. `mode` is inherited since `WithHandler` doesn't change what's being computed, just what handlers are visible.
 
 ### 5.8 Segment Deallocation
 
@@ -441,9 +443,14 @@ When a nested context completes and `current_segment` returns to the parent, the
 
 `Continuation::capture()` captures ALL execution-local state from the segment. `resume()` restores ALL of it (with `mode` overridden by the resume value). No execution-local state is "forgotten" across capture/resume.
 
-### INV-6: Fresh State on New Contexts
+### INV-6: Appropriate State on New Contexts
 
-Newly created segments for dispatch handlers, interceptor bodies, and continuation resumes start with appropriate fresh/initialized execution-local state. They do not inherit the parent's transient state (pending_python, pending_error_context, interceptor depth/skips) unless explicitly specified.
+Newly created segments start with state appropriate to their role:
+- **Transient state** (`pending_python`, `pending_error_context`): always **fresh** (None). These are in-flight call state that doesn't carry across context boundaries.
+- **Interceptor guard state** (`interceptor_eval_depth`, `interceptor_skip_stack`): **inherited from parent** by value copy. Guards must be visible to child contexts to prevent re-entrancy, but child modifications must not affect the parent (copy, not alias).
+- **mode**: set by the creating operation (e.g., `Deliver(value)` on resume, initial mode on dispatch).
+
+Continuation resumes restore all 5 fields from the snapshot, with `mode` overridden by the resume value.
 
 ---
 
