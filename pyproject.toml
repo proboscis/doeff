@@ -73,6 +73,7 @@ doeff-time = { workspace = true }
 doeff-events = { workspace = true }
 
 [tool.pytest.ini_options]
+addopts = "-n auto"
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
