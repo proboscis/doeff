@@ -22,8 +22,6 @@ pub(crate) struct InterceptorState {
     interceptor_callbacks: HashMap<CallbackId, Marker>,
     interceptor_call_metadata: HashMap<CallbackId, CallMetadata>,
     interceptor_eval_callbacks: HashSet<CallbackId>,
-    interceptor_eval_depth: usize,
-    interceptor_skip_stack: Vec<Marker>,
 }
 
 impl InterceptorState {
@@ -32,8 +30,6 @@ impl InterceptorState {
         self.interceptor_callbacks.clear();
         self.interceptor_call_metadata.clear();
         self.interceptor_eval_callbacks.clear();
-        self.interceptor_eval_depth = 0;
-        self.interceptor_skip_stack.clear();
     }
 
     pub(crate) fn current_chain(&self, scope_chain: &[Marker]) -> Vec<Marker> {
@@ -85,22 +81,22 @@ impl InterceptorState {
         prompt_seg.scope_chain.contains(&interceptor_marker)
     }
 
-    pub(crate) fn is_skipped(&self, marker: Marker) -> bool {
-        self.interceptor_skip_stack.contains(&marker)
+    pub(crate) fn is_skipped(seg: &Segment, marker: Marker) -> bool {
+        seg.interceptor_skip_stack.contains(&marker)
     }
 
-    pub(crate) fn pop_skip(&mut self, marker: Marker) {
-        if let Some(pos) = self
+    pub(crate) fn pop_skip(seg: &mut Segment, marker: Marker) {
+        if let Some(pos) = seg
             .interceptor_skip_stack
             .iter()
             .rposition(|active| *active == marker)
         {
-            self.interceptor_skip_stack.remove(pos);
+            seg.interceptor_skip_stack.remove(pos);
         }
     }
 
-    pub(crate) fn push_skip(&mut self, marker: Marker) {
-        self.interceptor_skip_stack.push(marker);
+    pub(crate) fn push_skip(seg: &mut Segment, marker: Marker) {
+        seg.interceptor_skip_stack.push(marker);
     }
 
     pub(crate) fn classify_result_shape(result_obj: &Py<PyAny>) -> (bool, bool) {
@@ -176,29 +172,12 @@ impl InterceptorState {
         self.interceptor_call_metadata.remove(&cb)
     }
 
-    pub(crate) fn increment_eval_depth(&mut self) {
-        self.interceptor_eval_depth = self.interceptor_eval_depth.saturating_add(1);
-    }
-
-    pub(crate) fn decrement_eval_depth(&mut self) {
-        self.interceptor_eval_depth = self.interceptor_eval_depth.saturating_sub(1);
-    }
-
-    pub(crate) fn is_eval_idle(&self) -> bool {
-        self.interceptor_eval_depth == 0
-    }
-
     pub(crate) fn register_eval_callback(&mut self, cb: CallbackId) {
         self.interceptor_eval_callbacks.insert(cb);
-        self.increment_eval_depth();
     }
 
     pub(crate) fn unregister_eval_callback(&mut self, cb: CallbackId) -> bool {
-        let removed = self.interceptor_eval_callbacks.remove(&cb);
-        if removed {
-            self.decrement_eval_depth();
-        }
-        removed
+        self.interceptor_eval_callbacks.remove(&cb)
     }
 
     pub(crate) fn prepare_with_intercept(
@@ -212,19 +191,18 @@ impl InterceptorState {
         let Some(outside_seg_id) = current_segment else {
             return Err(VMError::internal("no current segment for WithIntercept"));
         };
-        let outside_scope = segments
-            .get(outside_seg_id)
-            .map(|s| s.scope_chain.clone())
-            .unwrap_or_default();
+        let outside_seg = segments.get(outside_seg_id).ok_or_else(|| {
+            VMError::invalid_segment("current segment not found for WithIntercept")
+        })?;
+        let outside_scope = outside_seg.scope_chain.clone();
 
         self.insert(interceptor_marker, interceptor, metadata);
 
         let mut body_scope = vec![interceptor_marker];
         body_scope.extend(outside_scope);
-        Ok(Segment::new(
-            interceptor_marker,
-            Some(outside_seg_id),
-            body_scope,
-        ))
+        let mut body_seg = Segment::new(interceptor_marker, Some(outside_seg_id), body_scope);
+        body_seg.interceptor_eval_depth = outside_seg.interceptor_eval_depth;
+        body_seg.interceptor_skip_stack = outside_seg.interceptor_skip_stack.clone();
+        Ok(body_seg)
     }
 }

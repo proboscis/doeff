@@ -2,6 +2,7 @@
 
 use crate::frame::Frame;
 use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::step::{Mode, PendingPython, PyException};
 
 #[derive(Debug, Clone)]
 pub enum SegmentKind {
@@ -17,6 +18,11 @@ pub struct Segment {
     pub scope_chain: Vec<Marker>,
     pub kind: SegmentKind,
     pub dispatch_id: Option<DispatchId>,
+    pub mode: Mode,
+    pub pending_python: Option<PendingPython>,
+    pub pending_error_context: Option<PyException>,
+    pub interceptor_eval_depth: usize,
+    pub interceptor_skip_stack: Vec<Marker>,
 }
 
 impl Segment {
@@ -28,6 +34,11 @@ impl Segment {
             scope_chain,
             kind: SegmentKind::Normal,
             dispatch_id: None,
+            mode: Mode::Deliver(crate::value::Value::Unit),
+            pending_python: None,
+            pending_error_context: None,
+            interceptor_eval_depth: 0,
+            interceptor_skip_stack: Vec::new(),
         }
     }
 
@@ -44,6 +55,11 @@ impl Segment {
             scope_chain,
             kind: SegmentKind::PromptBoundary { handled_marker },
             dispatch_id: None,
+            mode: Mode::Deliver(crate::value::Value::Unit),
+            pending_python: None,
+            pending_error_context: None,
+            interceptor_eval_depth: 0,
+            interceptor_skip_stack: Vec::new(),
         }
     }
 

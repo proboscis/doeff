@@ -12,6 +12,11 @@ fn make_dummy_continuation() -> Continuation {
         scope_chain: std::sync::Arc::new(Vec::new()),
         marker: Marker::fresh(),
         dispatch_id: None,
+        mode: Box::new(Mode::Deliver(Value::Unit)),
+        pending_python: None,
+        pending_error_context: None,
+        interceptor_eval_depth: 0,
+        interceptor_skip_stack: Vec::new(),
         started: true,
         program: None,
         handlers: Vec::new(),
@@ -86,7 +91,7 @@ fn test_vm_step_return_no_caller() {
     let seg_id = vm.alloc_segment(seg);
 
     vm.current_segment = Some(seg_id);
-    vm.mode = Mode::Return(Value::Int(42));
+    vm.current_seg_mut().mode = Mode::Return(Value::Int(42));
 
     let event = vm.step();
     assert!(matches!(event, StepEvent::Done(Value::Int(42))));
@@ -104,12 +109,12 @@ fn test_vm_step_return_with_caller() {
     let child_id = vm.alloc_segment(child_seg);
 
     vm.current_segment = Some(child_id);
-    vm.mode = Mode::Return(Value::Int(99));
+    vm.current_seg_mut().mode = Mode::Return(Value::Int(99));
 
     let event = vm.step();
     assert!(matches!(event, StepEvent::Continue));
     assert_eq!(vm.current_segment, Some(caller_id));
-    assert!(vm.mode.is_deliver());
+    assert!(vm.current_seg().mode.is_deliver());
 }
 
 #[test]
@@ -737,7 +742,7 @@ fn test_one_shot_violation_resume() {
 
         assert!(matches!(event, StepEvent::Continue));
         assert!(
-            vm.mode.is_throw(),
+            vm.current_seg().mode.is_throw(),
             "One-shot violation should set Mode::Throw"
         );
     });
@@ -760,7 +765,7 @@ fn test_one_shot_violation_transfer() {
 
         assert!(matches!(event, StepEvent::Continue));
         assert!(
-            vm.mode.is_throw(),
+            vm.current_seg().mode.is_throw(),
             "One-shot violation should set Mode::Throw"
         );
     });
@@ -800,7 +805,7 @@ fn test_handle_get_continuation() {
 
     let event = vm.handle_get_continuation();
     assert!(matches!(event, StepEvent::Continue));
-    assert!(matches!(vm.mode, Mode::Deliver(Value::Continuation(_))));
+    assert!(matches!(&vm.current_seg().mode, Mode::Deliver(Value::Continuation(_))));
 }
 
 #[test]
@@ -940,7 +945,7 @@ fn test_handle_get_handlers() {
 
     let event = vm.handle_get_handlers();
     assert!(matches!(event, StepEvent::Continue));
-    match &vm.mode {
+    match &vm.current_seg().mode {
         Mode::Deliver(Value::Handlers(h)) => {
             assert_eq!(h.len(), 1);
             assert_eq!(h[0].handler_name(), "StateHandler");
@@ -1038,13 +1043,13 @@ fn test_step_handle_yield_routes_get_traceback() {
     let mut query_continuation = make_dummy_continuation();
     query_continuation.frames_snapshot =
         Arc::new(vec![make_program_frame("query_frame", "query.py", 55)]);
-    vm.mode = Mode::HandleYield(DoCtrl::GetTraceback {
+    vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::GetTraceback {
         continuation: query_continuation,
     });
 
     let event = vm.step_handle_yield();
     assert!(matches!(event, StepEvent::Continue));
-    match &vm.mode {
+    match &vm.current_seg().mode {
         Mode::Deliver(Value::Traceback(hops)) => {
             assert_eq!(hops.len(), 1);
             assert_eq!(hops[0].frames.len(), 1);
@@ -1326,7 +1331,7 @@ fn test_terminal_error_resume_marks_only_target_dispatch_completed() {
 
     let event = vm.handle_resume(inner_k, Value::String("context".to_string()));
     assert!(matches!(event, StepEvent::Continue));
-    assert!(matches!(vm.mode, Mode::Throw(_)));
+    assert!(matches!(&vm.current_seg().mode, Mode::Throw(_)));
 
     assert!(
         vm.dispatch_state
@@ -1435,7 +1440,7 @@ fn test_gap16_lazy_pop_before_get_handlers() {
         original_exception: None,
     });
 
-    vm.mode = Mode::HandleYield(DoCtrl::GetHandlers);
+    vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::GetHandlers);
     let event = vm.step_handle_yield();
 
     assert!(
@@ -1473,7 +1478,7 @@ fn test_g1_uncaught_exception_preserves_pyexception() {
             .unbind()
             .into_any();
         let py_exc = PyException::new(exc_type, exc_value, None);
-        vm.mode = Mode::Throw(py_exc);
+        vm.current_seg_mut().mode = Mode::Throw(py_exc);
 
         let event = vm.step();
 
@@ -1514,7 +1519,7 @@ fn test_g3_segment_freed_after_return() {
     let child_id = vm.alloc_segment(child_seg);
 
     vm.current_segment = Some(child_id);
-    vm.mode = Mode::Return(Value::Int(42));
+    vm.current_seg_mut().mode = Mode::Return(Value::Int(42));
 
     // Before step: both segments exist
     assert!(vm.segments.get(parent_id).is_some());
@@ -1554,7 +1559,7 @@ fn test_g4a_resume_one_shot_violation_is_throwable() {
             "G4a: expected Continue, got Error"
         );
         assert!(
-            vm.mode.is_throw(),
+            vm.current_seg().mode.is_throw(),
             "G4a: expected Mode::Throw after one-shot violation"
         );
     });
@@ -1581,7 +1586,7 @@ fn test_g4b_resume_unstarted_is_throwable() {
             "G4b: expected Continue, got Error"
         );
         assert!(
-            vm.mode.is_throw(),
+            vm.current_seg().mode.is_throw(),
             "G4b: expected Mode::Throw for unstarted Resume"
         );
     });
@@ -1607,7 +1612,7 @@ fn test_g4c_transfer_one_shot_violation_is_throwable() {
             "G4c: expected Continue, got Error"
         );
         assert!(
-            vm.mode.is_throw(),
+            vm.current_seg().mode.is_throw(),
             "G4c: expected Mode::Throw after transfer one-shot"
         );
     });
@@ -1616,9 +1621,12 @@ fn test_g4c_transfer_one_shot_violation_is_throwable() {
 #[test]
 fn test_g8_pending_python_missing_is_runtime_error() {
     let mut vm = VM::new();
+    let marker = Marker::fresh();
+    let seg_id = vm.alloc_segment(Segment::new(marker, None, vec![marker]));
+    vm.current_segment = Some(seg_id);
     vm.receive_python_result(PyCallOutcome::Value(Value::Unit));
     assert!(
-        matches!(vm.mode, Mode::Throw(PyException::RuntimeError { .. })),
+        matches!(&vm.current_seg().mode, Mode::Throw(PyException::RuntimeError { .. })),
         "G8 FAIL: missing pending_python must throw runtime error"
     );
 }
@@ -1832,7 +1840,7 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
             StepEvent::NeedsPython(PythonCall::CallFunc { .. })
         ));
 
-        match vm.pending_python.as_ref() {
+        match vm.current_seg().pending_python.as_ref() {
             Some(PendingPython::RustProgramContinuation { marker, k }) => {
                 assert_eq!(
                     *marker, outer_marker,
@@ -1900,7 +1908,7 @@ fn test_s009_g3_modify_resumes_with_new_value() {
         // The mode should be HandleYield with Resume primitive
         // SPEC-008 L1271: Modify returns OLD value (read-then-modify).
         // The resume value should be 5 (old_value), NOT 50 (new_value).
-        match &vm.mode {
+        match &vm.current_seg().mode {
             Mode::HandleYield(DoCtrl::Resume { value, .. }) => {
                 assert_eq!(
                     value.as_int(),
@@ -1948,6 +1956,11 @@ fn test_d10_handler_return_uses_deliver_not_return() {
         scope_chain: std::sync::Arc::new(vec![marker]),
         marker,
         dispatch_id: Some(dispatch_id),
+        mode: Box::new(Mode::Deliver(Value::Unit)),
+        pending_python: None,
+        pending_error_context: None,
+        interceptor_eval_depth: 0,
+        interceptor_skip_stack: Vec::new(),
         started: true,
         program: None,
         handlers: Vec::new(),
@@ -1976,9 +1989,9 @@ fn test_d10_handler_return_uses_deliver_not_return() {
 
     // D10: Mode must be Deliver, NOT Return
     assert!(
-        matches!(vm.mode, Mode::Deliver(Value::Int(42))),
+        matches!(&vm.current_seg().mode, Mode::Deliver(Value::Int(42))),
         "D10 REGRESSION: handle_handler_return must use Mode::Deliver, got {:?}",
-        std::mem::discriminant(&vm.mode)
+        std::mem::discriminant(&vm.current_seg().mode)
     );
 
     // D10: current_segment must NOT have jumped to prompt_seg_id
@@ -2011,7 +2024,7 @@ fn test_apply_return_delivers_value_without_pushing_frame() {
             None,
         );
 
-        vm.mode = Mode::HandleYield(DoCtrl::Apply {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
             f: CallArg::Value(Value::Python(dummy_f)),
             args: vec![],
             kwargs: vec![],
@@ -2025,12 +2038,12 @@ fn test_apply_return_delivers_value_without_pushing_frame() {
             StepEvent::NeedsPython(PythonCall::CallFunc { .. })
         ));
         assert!(matches!(
-            vm.pending_python,
+            vm.current_seg().pending_python.as_ref(),
             Some(PendingPython::CallFuncReturn { .. })
         ));
 
         vm.receive_python_result(PyCallOutcome::Value(Value::Int(7)));
-        assert!(matches!(vm.mode, Mode::Deliver(Value::Int(7))));
+        assert!(matches!(&vm.current_seg().mode, Mode::Deliver(Value::Int(7))));
         let seg = vm.segments.get(seg_id).expect("segment missing");
         assert!(
             seg.frames.is_empty(),
@@ -2057,7 +2070,7 @@ fn test_apply_return_reenters_handle_yield_when_evaluate_result_true() {
             None,
         );
 
-        vm.mode = Mode::HandleYield(DoCtrl::Apply {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
             f: CallArg::Value(Value::Python(dummy_f)),
             args: vec![],
             kwargs: vec![],
@@ -2074,7 +2087,7 @@ fn test_apply_return_reenters_handle_yield_when_evaluate_result_true() {
         let pure = py.get_type::<crate::pyvm::PyPure>().call1((7i64,)).unwrap().unbind();
         vm.receive_python_result(PyCallOutcome::Value(Value::Python(pure)));
 
-        match &vm.mode {
+        match &vm.current_seg().mode {
             Mode::HandleYield(DoCtrl::Pure {
                 value: Value::Int(value),
             }) => {
@@ -2106,7 +2119,7 @@ fn test_apply_return_preserves_doexpr_value_when_evaluate_result_false() {
             None,
         );
 
-        vm.mode = Mode::HandleYield(DoCtrl::Apply {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
             f: CallArg::Value(Value::Python(dummy_f)),
             args: vec![],
             kwargs: vec![],
@@ -2124,7 +2137,7 @@ fn test_apply_return_preserves_doexpr_value_when_evaluate_result_false() {
         vm.receive_python_result(PyCallOutcome::Value(Value::Python(pure)));
 
         assert!(
-            matches!(vm.mode, Mode::Deliver(Value::Python(_))),
+            matches!(&vm.current_seg().mode, Mode::Deliver(Value::Python(_))),
             "evaluate_result=false should preserve Python DoExpr as value"
         );
     });
@@ -2148,7 +2161,7 @@ fn test_expand_requires_doeff_generator_or_errors() {
             None,
         );
 
-        vm.mode = Mode::HandleYield(DoCtrl::Expand {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Expand {
             factory: CallArg::Value(Value::Python(dummy_factory)),
             args: vec![],
             kwargs: vec![],
@@ -2161,7 +2174,7 @@ fn test_expand_requires_doeff_generator_or_errors() {
             StepEvent::NeedsPython(PythonCall::CallFunc { .. })
         ));
         assert!(matches!(
-            vm.pending_python,
+            vm.current_seg().pending_python.as_ref(),
             Some(PendingPython::ExpandReturn {
                 metadata: Some(_),
                 ..
@@ -2169,7 +2182,7 @@ fn test_expand_requires_doeff_generator_or_errors() {
         ));
 
         vm.receive_python_result(PyCallOutcome::Value(Value::Int(1)));
-        match &vm.mode {
+        match &vm.current_seg().mode {
             Mode::Throw(PyException::TypeError { message }) => {
                 assert!(message.contains("ExpandReturn: expected DoeffGenerator"));
             }
@@ -2201,7 +2214,7 @@ fn test_expand_success_routes_through_aststream_doctrl() {
             None,
         );
 
-        vm.mode = Mode::HandleYield(DoCtrl::Expand {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Expand {
             factory: CallArg::Value(Value::Python(dummy_factory)),
             args: vec![],
             kwargs: vec![],
@@ -2244,9 +2257,9 @@ fn test_expand_success_routes_through_aststream_doctrl() {
 
         vm.receive_python_result(PyCallOutcome::Value(Value::Python(wrapped)));
         assert!(
-            matches!(vm.mode, Mode::HandleYield(DoCtrl::ASTStream { .. })),
+            matches!(&vm.current_seg().mode, Mode::HandleYield(DoCtrl::ASTStream { .. })),
             "Expand success must route through DoCtrl::ASTStream, got {:?}",
-            std::mem::discriminant(&vm.mode)
+            std::mem::discriminant(&vm.current_seg().mode)
         );
 
         let event = vm.step_handle_yield();
@@ -2280,7 +2293,7 @@ fn test_r9a_apply_empty_args_yields_call_func() {
             None,
         );
 
-        vm.mode = Mode::HandleYield(DoCtrl::Apply {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
             f: CallArg::Value(Value::Python(dummy_f)),
             args: vec![],
             kwargs: vec![],
@@ -2296,7 +2309,7 @@ fn test_r9a_apply_empty_args_yields_call_func() {
             std::mem::discriminant(&event)
         );
 
-        match &vm.pending_python {
+        match &vm.current_seg().pending_python {
             Some(PendingPython::CallFuncReturn {
                 metadata: Some(m),
                 ..
@@ -2332,7 +2345,7 @@ fn test_r9a_apply_with_args_yields_call_func() {
             None,
         );
 
-        vm.mode = Mode::HandleYield(DoCtrl::Apply {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
             f: CallArg::Value(Value::Python(dummy_f)),
             args: vec![
                 CallArg::Value(Value::Int(42)),
@@ -2382,7 +2395,7 @@ fn test_r9a_apply_kwargs_preserved_separately() {
             None,
         );
 
-        vm.mode = Mode::HandleYield(DoCtrl::Apply {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
             f: CallArg::Value(Value::Python(dummy_f)),
             args: vec![CallArg::Value(Value::Int(1))],
             kwargs: vec![
@@ -2440,7 +2453,7 @@ fn test_r9a_apply_kwargs_only_takes_callfunc_path() {
             None,
         );
 
-        vm.mode = Mode::HandleYield(DoCtrl::Apply {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
             f: CallArg::Value(Value::Python(dummy_f)),
             args: vec![],
             kwargs: vec![(
@@ -2479,7 +2492,7 @@ fn test_r9h_eval_creates_and_resumes_continuation() {
 
         let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
 
-        vm.mode = Mode::HandleYield(DoCtrl::Eval {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Eval {
             expr: PyShared::new(dummy_expr),
             handlers: vec![],
             metadata: None,
@@ -2495,7 +2508,7 @@ fn test_r9h_eval_creates_and_resumes_continuation() {
 
         assert!(
             matches!(
-                vm.pending_python,
+                vm.current_seg().pending_python.as_ref(),
                 Some(PendingPython::EvalExpr { metadata: None })
             ),
             "R9-H: Eval continuation has no metadata (metadata comes from Call, not Eval)"
@@ -2518,7 +2531,7 @@ fn test_r9h_eval_with_handlers_installs_scope() {
 
         let handler = std::sync::Arc::new(crate::handler::StateHandlerFactory);
 
-        vm.mode = Mode::HandleYield(DoCtrl::Eval {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Eval {
             expr: PyShared::new(dummy_expr),
             handlers: vec![handler],
             metadata: None,

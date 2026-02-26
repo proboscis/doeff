@@ -761,7 +761,12 @@ impl PyVM {
         let seg = Segment::new(marker, None, scope_chain);
         let seg_id = self.vm.alloc_segment(seg);
         self.vm.current_segment = Some(seg_id);
-        self.vm.mode = Mode::HandleYield(DoCtrl::Eval {
+        let Some(seg) = self.vm.current_segment_mut() else {
+            return Err(PyRuntimeError::new_err(
+                "start_with_expr: current segment missing after allocation",
+            ));
+        };
+        seg.mode = Mode::HandleYield(DoCtrl::Eval {
             expr: PyShared::new(expr),
             handlers: vec![],
             metadata: None,
@@ -837,7 +842,12 @@ impl PyVM {
     }
 
     fn pending_generator(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        match &self.vm.pending_python {
+        let Some(seg) = self.vm.current_segment_ref() else {
+            return Err(PyRuntimeError::new_err(
+                "GenNext/GenSend/GenThrow: no current segment",
+            ));
+        };
+        match &seg.pending_python {
             Some(PendingPython::StepUserGenerator { stream, .. }) => {
                 let guard = stream
                     .lock()
@@ -3067,7 +3077,8 @@ mod tests {
             .into_any();
 
             let yielded = pyvm.classify_yielded(py, &with_handler).unwrap();
-            pyvm.vm.mode = Mode::HandleYield(yielded);
+            let seg = pyvm.vm.current_segment_mut().expect("current segment missing");
+            seg.mode = Mode::HandleYield(yielded);
 
             let event = pyvm.vm.step();
             assert!(matches!(event, StepEvent::NeedsPython(_)));
