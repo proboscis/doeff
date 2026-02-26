@@ -1,6 +1,6 @@
 //! Interceptor-domain state and helper logic for VM composition.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use pyo3::prelude::*;
 
@@ -10,7 +10,7 @@ use crate::doeff_generator::DoeffGenerator;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::HandlerEntry;
-use crate::ids::{CallbackId, DispatchId, Marker, SegmentId};
+use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase};
 use crate::segment::Segment;
@@ -19,17 +19,11 @@ use crate::vm::InterceptorEntry;
 #[derive(Clone, Default)]
 pub(crate) struct InterceptorState {
     interceptors: HashMap<Marker, InterceptorEntry>,
-    interceptor_callbacks: HashMap<CallbackId, Marker>,
-    interceptor_call_metadata: HashMap<CallbackId, CallMetadata>,
-    interceptor_eval_callbacks: HashSet<CallbackId>,
 }
 
 impl InterceptorState {
     pub(crate) fn clear_for_run(&mut self) {
         self.interceptors.clear();
-        self.interceptor_callbacks.clear();
-        self.interceptor_call_metadata.clear();
-        self.interceptor_eval_callbacks.clear();
     }
 
     pub(crate) fn current_chain(&self, scope_chain: &[Marker]) -> Vec<Marker> {
@@ -154,30 +148,6 @@ impl InterceptorState {
 
     pub(crate) fn get_entry(&self, marker: Marker) -> Option<InterceptorEntry> {
         self.interceptors.get(&marker).cloned()
-    }
-
-    pub(crate) fn register_callback(&mut self, cb: CallbackId, marker: Marker) {
-        self.interceptor_callbacks.insert(cb, marker);
-    }
-
-    pub(crate) fn unregister_callback(&mut self, cb: CallbackId) -> Option<Marker> {
-        self.interceptor_callbacks.remove(&cb)
-    }
-
-    pub(crate) fn set_call_metadata(&mut self, cb: CallbackId, metadata: CallMetadata) {
-        self.interceptor_call_metadata.insert(cb, metadata);
-    }
-
-    pub(crate) fn take_call_metadata(&mut self, cb: CallbackId) -> Option<CallMetadata> {
-        self.interceptor_call_metadata.remove(&cb)
-    }
-
-    pub(crate) fn register_eval_callback(&mut self, cb: CallbackId) {
-        self.interceptor_eval_callbacks.insert(cb);
-    }
-
-    pub(crate) fn unregister_eval_callback(&mut self, cb: CallbackId) -> bool {
-        self.interceptor_eval_callbacks.remove(&cb)
     }
 
     pub(crate) fn prepare_with_intercept(

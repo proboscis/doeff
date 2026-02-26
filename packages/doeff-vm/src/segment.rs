@@ -94,7 +94,6 @@ impl Segment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ids::CallbackId;
 
     #[test]
     fn test_segment_creation() {
@@ -120,33 +119,22 @@ mod tests {
         let marker = Marker::fresh();
         let mut seg = Segment::new(marker, None, vec![]);
 
-        let cb1 = CallbackId::fresh();
-        let cb2 = CallbackId::fresh();
-        let cb3 = CallbackId::fresh();
-
-        seg.push_frame(Frame::rust_return(cb1));
-        seg.push_frame(Frame::rust_return(cb2));
-        seg.push_frame(Frame::rust_return(cb3));
+        seg.push_frame(Frame::FlatMapBindResult);
+        seg.push_frame(Frame::HandlerDispatch {
+            dispatch_id: DispatchId::fresh(),
+        });
+        seg.push_frame(Frame::InterceptBodyReturn { marker });
 
         assert_eq!(seg.frame_count(), 3);
 
-        // Pop should return frames in LIFO order (cb3 first)
+        // Pop should return frames in LIFO order.
         let f3 = seg.pop_frame().unwrap();
         let f2 = seg.pop_frame().unwrap();
         let f1 = seg.pop_frame().unwrap();
 
-        match (f3, f2, f1) {
-            (
-                Frame::RustReturn { cb: id3 },
-                Frame::RustReturn { cb: id2 },
-                Frame::RustReturn { cb: id1 },
-            ) => {
-                assert_eq!(id3, cb3);
-                assert_eq!(id2, cb2);
-                assert_eq!(id1, cb1);
-            }
-            _ => panic!("Expected RustReturn frames"),
-        }
+        assert!(matches!(f3, Frame::InterceptBodyReturn { .. }));
+        assert!(matches!(f2, Frame::HandlerDispatch { .. }));
+        assert!(matches!(f1, Frame::FlatMapBindResult));
 
         assert!(!seg.has_frames());
         assert!(seg.pop_frame().is_none());
