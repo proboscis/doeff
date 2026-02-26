@@ -1,9 +1,11 @@
 //! Frame types for the continuation stack.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use crate::ast_stream::ASTStreamRef;
-use crate::ids::CallbackId;
+use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::ids::{DispatchId, Marker};
 use crate::py_shared::PyShared;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
@@ -62,29 +64,92 @@ impl CallMetadata {
 /// A frame in the continuation stack.
 ///
 /// Frames must be Clone to allow continuation capture (Arc snapshots).
-/// Rust callbacks are stored in a separate table and referenced by CallbackId.
+#[derive(Debug, Clone)]
+pub struct InterceptorContinuation {
+    pub marker: Marker,
+    pub original_yielded: DoCtrl,
+    pub original_obj: PyShared,
+    pub emitter_stream: ASTStreamRef,
+    pub emitter_metadata: Option<CallMetadata>,
+    pub chain: Arc<Vec<Marker>>,
+    pub next_idx: usize,
+    pub interceptor_metadata: Option<CallMetadata>,
+}
+
+#[derive(Debug, Clone)]
+pub enum EvalReturnContinuation {
+    ApplyResolveFunction {
+        args: Vec<CallArg>,
+        kwargs: Vec<(String, CallArg)>,
+        metadata: CallMetadata,
+        evaluate_result: bool,
+    },
+    ApplyResolveArg {
+        f: CallArg,
+        args: Vec<CallArg>,
+        kwargs: Vec<(String, CallArg)>,
+        arg_idx: usize,
+        metadata: CallMetadata,
+        evaluate_result: bool,
+    },
+    ApplyResolveKwarg {
+        f: CallArg,
+        args: Vec<CallArg>,
+        kwargs: Vec<(String, CallArg)>,
+        kwarg_idx: usize,
+        metadata: CallMetadata,
+        evaluate_result: bool,
+    },
+    ExpandResolveFactory {
+        args: Vec<CallArg>,
+        kwargs: Vec<(String, CallArg)>,
+        metadata: CallMetadata,
+    },
+    ExpandResolveArg {
+        factory: CallArg,
+        args: Vec<CallArg>,
+        kwargs: Vec<(String, CallArg)>,
+        arg_idx: usize,
+        metadata: CallMetadata,
+    },
+    ExpandResolveKwarg {
+        factory: CallArg,
+        args: Vec<CallArg>,
+        kwargs: Vec<(String, CallArg)>,
+        kwarg_idx: usize,
+        metadata: CallMetadata,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub enum Frame {
-    RustReturn {
-        cb: CallbackId,
-    },
     Program {
         stream: ASTStreamRef,
         metadata: Option<CallMetadata>,
     },
+    InterceptorApply(Box<InterceptorContinuation>),
+    InterceptorEval(Box<InterceptorContinuation>),
+    HandlerDispatch {
+        dispatch_id: DispatchId,
+    },
+    EvalReturn(Box<EvalReturnContinuation>),
+    MapReturn {
+        mapper: PyShared,
+        mapper_meta: CallMetadata,
+    },
+    FlatMapBindResult,
+    FlatMapBindSource {
+        binder: PyShared,
+        binder_meta: CallMetadata,
+    },
+    InterceptBodyReturn {
+        marker: Marker,
+    },
 }
 
 impl Frame {
-    pub fn rust_return(cb: CallbackId) -> Self {
-        Frame::RustReturn { cb }
-    }
-
     pub fn program(stream: ASTStreamRef, metadata: Option<CallMetadata>) -> Self {
         Frame::Program { stream, metadata }
-    }
-
-    pub fn is_rust(&self) -> bool {
-        matches!(self, Frame::RustReturn { .. })
     }
 
     pub fn is_program(&self) -> bool {
@@ -105,31 +170,40 @@ impl Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast_stream::{ASTStream, ASTStreamStep};
+    use crate::rust_store::RustStore;
+    use crate::value::Value;
 
-    #[test]
-    fn test_frame_rust_return() {
-        let cb_id = CallbackId::fresh();
-        let frame = Frame::rust_return(cb_id);
-        assert!(frame.is_rust());
-        assert!(!frame.is_program());
+    #[derive(Debug)]
+    struct DummyStream;
+
+    impl ASTStream for DummyStream {
+        fn resume(&mut self, _value: Value, _store: &mut RustStore) -> ASTStreamStep {
+            ASTStreamStep::Return(Value::Unit)
+        }
+
+        fn throw(
+            &mut self,
+            exc: crate::driver::PyException,
+            _store: &mut RustStore,
+        ) -> ASTStreamStep {
+            ASTStreamStep::Throw(exc)
+        }
     }
 
     #[test]
     fn test_frame_is_clone() {
-        let cb_id = CallbackId::fresh();
-        let frame = Frame::rust_return(cb_id);
+        let frame = Frame::FlatMapBindResult;
         let _cloned = frame.clone();
     }
 
-    /// G13: Frame::RustReturn uses `cb` field name per spec.
     #[test]
-    fn test_frame_rust_return_field_is_cb() {
-        let cb_id = CallbackId::fresh();
-        let frame = Frame::RustReturn { cb: cb_id };
-        match frame {
-            Frame::RustReturn { cb } => assert_eq!(cb, cb_id),
-            _ => panic!("Expected RustReturn"),
-        }
+    fn test_program_frame_is_program() {
+        let stream = std::sync::Arc::new(std::sync::Mutex::new(
+            Box::new(DummyStream) as Box<dyn ASTStream>
+        ));
+        let frame = Frame::program(stream, None);
+        assert!(frame.is_program());
     }
 
     #[test]

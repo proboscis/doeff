@@ -47,10 +47,9 @@ fn make_program_frame(function_name: &str, source_file: &str, source_line: u32) 
         None,
         None,
     );
-    let stream: Arc<Mutex<Box<dyn ASTStream>>> = Arc::new(Mutex::new(Box::new(
-        DummyProgramStream,
-    )
-        as Box<dyn ASTStream>));
+    let stream: Arc<Mutex<Box<dyn ASTStream>>> = Arc::new(Mutex::new(
+        Box::new(DummyProgramStream) as Box<dyn ASTStream>
+    ));
     Frame::program(stream, Some(metadata))
 }
 
@@ -125,14 +124,6 @@ fn test_vm_one_shot_tracking() {
     assert!(!vm.is_one_shot_consumed(cont_id));
     vm.mark_one_shot_consumed(cont_id);
     assert!(vm.is_one_shot_consumed(cont_id));
-}
-
-#[test]
-fn test_vm_register_callback() {
-    let mut vm = VM::new();
-    let cb_id = vm.register_callback(Box::new(|v, _| Mode::Deliver(v)));
-
-    assert!(vm.callbacks.contains_key(&cb_id));
 }
 
 #[test]
@@ -580,8 +571,7 @@ fn test_vm_proto_runtime_uses_get_frame_callback_instead_of_gi_frame_probe() {
     let runtime_src = &src[..runtime_boundary];
     let inner_attr = ["__doeff_", "inner__"].concat();
     assert!(
-        runtime_src.contains("debug_location()")
-            && runtime_src.contains("stream_debug_location"),
+        runtime_src.contains("debug_location()") && runtime_src.contains("stream_debug_location"),
         "VM-PROTO-001: VM must resolve live locations via ASTStream::debug_location()"
     );
     assert!(
@@ -805,7 +795,10 @@ fn test_handle_get_continuation() {
 
     let event = vm.handle_get_continuation();
     assert!(matches!(event, StepEvent::Continue));
-    assert!(matches!(&vm.current_seg().mode, Mode::Deliver(Value::Continuation(_))));
+    assert!(matches!(
+        &vm.current_seg().mode,
+        Mode::Deliver(Value::Continuation(_))
+    ));
 }
 
 #[test]
@@ -1626,7 +1619,10 @@ fn test_g8_pending_python_missing_is_runtime_error() {
     vm.current_segment = Some(seg_id);
     vm.receive_python_result(PyCallOutcome::Value(Value::Unit));
     assert!(
-        matches!(&vm.current_seg().mode, Mode::Throw(PyException::RuntimeError { .. })),
+        matches!(
+            &vm.current_seg().mode,
+            Mode::Throw(PyException::RuntimeError { .. })
+        ),
         "G8 FAIL: missing pending_python must throw runtime error"
     );
 }
@@ -1827,7 +1823,7 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
         });
 
         let stream: ASTStreamRef = Arc::new(Mutex::new(
-            Box::new(DummyProgramStream) as Box<dyn ASTStream>,
+            Box::new(DummyProgramStream) as Box<dyn ASTStream>
         ));
         let call = PythonCall::CallFunc {
             func: PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any()),
@@ -2043,7 +2039,10 @@ fn test_apply_return_delivers_value_without_pushing_frame() {
         ));
 
         vm.receive_python_result(PyCallOutcome::Value(Value::Int(7)));
-        assert!(matches!(&vm.current_seg().mode, Mode::Deliver(Value::Int(7))));
+        assert!(matches!(
+            &vm.current_seg().mode,
+            Mode::Deliver(Value::Int(7))
+        ));
         let seg = vm.segments.get(seg_id).expect("segment missing");
         assert!(
             seg.frames.is_empty(),
@@ -2084,7 +2083,11 @@ fn test_apply_return_reenters_handle_yield_when_evaluate_result_true() {
             StepEvent::NeedsPython(PythonCall::CallFunc { .. })
         ));
 
-        let pure = py.get_type::<crate::pyvm::PyPure>().call1((7i64,)).unwrap().unbind();
+        let pure = py
+            .get_type::<crate::pyvm::PyPure>()
+            .call1((7i64,))
+            .unwrap()
+            .unbind();
         vm.receive_python_result(PyCallOutcome::Value(Value::Python(pure)));
 
         match &vm.current_seg().mode {
@@ -2133,7 +2136,11 @@ fn test_apply_return_preserves_doexpr_value_when_evaluate_result_false() {
             StepEvent::NeedsPython(PythonCall::CallFunc { .. })
         ));
 
-        let pure = py.get_type::<crate::pyvm::PyPure>().call1((9i64,)).unwrap().unbind();
+        let pure = py
+            .get_type::<crate::pyvm::PyPure>()
+            .call1((9i64,))
+            .unwrap()
+            .unbind();
         vm.receive_python_result(PyCallOutcome::Value(Value::Python(pure)));
 
         assert!(
@@ -2257,7 +2264,10 @@ fn test_expand_success_routes_through_aststream_doctrl() {
 
         vm.receive_python_result(PyCallOutcome::Value(Value::Python(wrapped)));
         assert!(
-            matches!(&vm.current_seg().mode, Mode::HandleYield(DoCtrl::ASTStream { .. })),
+            matches!(
+                &vm.current_seg().mode,
+                Mode::HandleYield(DoCtrl::ASTStream { .. })
+            ),
             "Expand success must route through DoCtrl::ASTStream, got {:?}",
             std::mem::discriminant(&vm.current_seg().mode)
         );
@@ -2311,8 +2321,7 @@ fn test_r9a_apply_empty_args_yields_call_func() {
 
         match &vm.current_seg().pending_python {
             Some(PendingPython::CallFuncReturn {
-                metadata: Some(m),
-                ..
+                metadata: Some(m), ..
             }) => {
                 assert_eq!(m.function_name, "test_thunk");
             }
