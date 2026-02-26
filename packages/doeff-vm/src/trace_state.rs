@@ -829,7 +829,8 @@ impl TraceState {
         dispatch_stack: &[DispatchContext],
     ) -> Vec<ActiveChainEntry> {
         let raw_events = self.collect_raw_events();
-        let entries = self.events_to_entries(&raw_events, segments, current_segment, dispatch_stack);
+        let entries =
+            self.events_to_entries(&raw_events, segments, current_segment, dispatch_stack);
         let entries = Self::dedup_adjacent(entries);
         Self::inject_context(entries, exception)
     }
@@ -925,8 +926,10 @@ impl TraceState {
                 if let Some(frame_id) = effect_frame_id {
                     if visible_effect {
                         state.frame_dispatch.insert(*frame_id, *dispatch_id);
-                        if let Some(frame) =
-                            state.frame_stack.iter_mut().find(|f| f.frame_id == *frame_id)
+                        if let Some(frame) = state
+                            .frame_stack
+                            .iter_mut()
+                            .find(|f| f.frame_id == *frame_id)
                         {
                             if let Some(line) = effect_source_line {
                                 frame.source_line = *line;
@@ -1080,7 +1083,11 @@ impl TraceState {
     ) {
         self.merge_frame_lines_from_segments(&mut state.frame_stack, segments, current_segment);
         let (frame_stack, dispatches) = (&mut state.frame_stack, &state.dispatches);
-        self.merge_frame_lines_from_visible_dispatch_snapshot(frame_stack, dispatches, dispatch_stack);
+        self.merge_frame_lines_from_visible_dispatch_snapshot(
+            frame_stack,
+            dispatches,
+            dispatch_stack,
+        );
     }
 
     fn merge_frame_lines_from_segments(
@@ -1179,7 +1186,12 @@ impl TraceState {
     ) -> Vec<ActiveChainEntry> {
         let mut active_chain = self.entries_from_frame_stack(state);
         if active_chain.is_empty() {
-            self.fallback_entries_when_chain_empty(state, raw_events, dispatch_stack, &mut active_chain);
+            self.fallback_entries_when_chain_empty(
+                state,
+                raw_events,
+                dispatch_stack,
+                &mut active_chain,
+            );
         }
         active_chain
     }
@@ -1189,7 +1201,8 @@ impl TraceState {
         for (index, frame) in state.frame_stack.iter().enumerate() {
             let dispatch_id = state.frame_dispatch.get(&frame.frame_id).copied();
             let dispatch = dispatch_id.and_then(|id| state.dispatches.get(&id));
-            if let Some(dispatch) = dispatch.filter(|dispatch| Self::is_visible_dispatch(dispatch)) {
+            if let Some(dispatch) = dispatch.filter(|dispatch| Self::is_visible_dispatch(dispatch))
+            {
                 Self::push_effect_yield_entry(&mut active_chain, dispatch, Some(frame));
                 continue;
             }
@@ -1499,5 +1512,4 @@ impl TraceState {
     fn is_visible_dispatch(dispatch: &ActiveChainDispatchState) -> bool {
         !dispatch.is_execution_context_effect
     }
-
 }

@@ -94,7 +94,7 @@ impl Segment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ids::CallbackId;
+    use crate::ids::DispatchId;
 
     #[test]
     fn test_segment_creation() {
@@ -120,32 +120,32 @@ mod tests {
         let marker = Marker::fresh();
         let mut seg = Segment::new(marker, None, vec![]);
 
-        let cb1 = CallbackId::fresh();
-        let cb2 = CallbackId::fresh();
-        let cb3 = CallbackId::fresh();
+        let d1 = Some(DispatchId::fresh());
+        let d2 = Some(DispatchId::fresh());
+        let d3 = Some(DispatchId::fresh());
 
-        seg.push_frame(Frame::rust_return(cb1));
-        seg.push_frame(Frame::rust_return(cb2));
-        seg.push_frame(Frame::rust_return(cb3));
+        seg.push_frame(Frame::HandlerDispatch { dispatch_id: d1 });
+        seg.push_frame(Frame::HandlerDispatch { dispatch_id: d2 });
+        seg.push_frame(Frame::HandlerDispatch { dispatch_id: d3 });
 
         assert_eq!(seg.frame_count(), 3);
 
-        // Pop should return frames in LIFO order (cb3 first)
+        // Pop should return frames in LIFO order (d3 first)
         let f3 = seg.pop_frame().unwrap();
         let f2 = seg.pop_frame().unwrap();
         let f1 = seg.pop_frame().unwrap();
 
         match (f3, f2, f1) {
             (
-                Frame::RustReturn { cb: id3 },
-                Frame::RustReturn { cb: id2 },
-                Frame::RustReturn { cb: id1 },
+                Frame::HandlerDispatch { dispatch_id: id3 },
+                Frame::HandlerDispatch { dispatch_id: id2 },
+                Frame::HandlerDispatch { dispatch_id: id1 },
             ) => {
-                assert_eq!(id3, cb3);
-                assert_eq!(id2, cb2);
-                assert_eq!(id1, cb1);
+                assert_eq!(id3, d3);
+                assert_eq!(id2, d2);
+                assert_eq!(id1, d1);
             }
-            _ => panic!("Expected RustReturn frames"),
+            _ => panic!("Expected HandlerDispatch frames"),
         }
 
         assert!(!seg.has_frames());
