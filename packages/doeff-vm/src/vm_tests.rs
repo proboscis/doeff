@@ -9,7 +9,6 @@ fn make_dummy_continuation() -> Continuation {
         cont_id: ContId::fresh(),
         segment_id: SegmentId::from_index(0),
         frames_snapshot: std::sync::Arc::new(Vec::new()),
-        scope_chain: std::sync::Arc::new(Vec::new()),
         marker: Marker::fresh(),
         dispatch_id: None,
         mode: Box::new(Mode::Deliver(Value::Unit)),
@@ -21,6 +20,8 @@ fn make_dummy_continuation() -> Continuation {
         program: None,
         handlers: Vec::new(),
         handler_identities: Vec::new(),
+        handler_lookup_anchor: None,
+        handler_lookup_anchor_marker: None,
         metadata: None,
         parent: None,
     }
@@ -58,7 +59,7 @@ fn test_vm_creation() {
     let vm = VM::new();
     assert!(vm.current_segment.is_none());
     assert!(vm.dispatch_state.is_empty());
-    assert!(vm.handlers.is_empty());
+    assert!(vm.installed_handler_markers().is_empty());
 }
 
 #[test]
@@ -76,7 +77,7 @@ fn test_rust_store_operations() {
 fn test_vm_alloc_segment() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
-    let seg = Segment::new(marker, None, vec![]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
 
     assert!(vm.segments.get(seg_id).is_some());
@@ -86,7 +87,7 @@ fn test_vm_alloc_segment() {
 fn test_vm_step_return_no_caller() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
-    let seg = Segment::new(marker, None, vec![]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
 
     vm.current_segment = Some(seg_id);
@@ -101,10 +102,10 @@ fn test_vm_step_return_with_caller() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
 
-    let caller_seg = Segment::new(marker, None, vec![]);
+    let caller_seg = Segment::new(marker, None);
     let caller_id = vm.alloc_segment(caller_seg);
 
-    let child_seg = Segment::new(marker, Some(caller_id), vec![]);
+    let child_seg = Segment::new(marker, Some(caller_id));
     let child_id = vm.alloc_segment(child_seg);
 
     vm.current_segment = Some(child_id);
@@ -128,13 +129,32 @@ fn test_vm_one_shot_tracking() {
 
 #[test]
 fn test_visible_handlers_no_dispatch() {
-    let vm = VM::new();
+    let mut vm = VM::new();
     let m1 = Marker::fresh();
     let m2 = Marker::fresh();
-    let scope = vec![m1, m2];
+    let root = vm.alloc_segment(Segment::new(m1, None));
+    let prompt_1 = vm.alloc_segment(Segment::new_prompt(
+        m1,
+        Some(root),
+        m1,
+        Arc::new(crate::handler::StateHandlerFactory),
+        None,
+        None,
+    ));
+    let body_1 = vm.alloc_segment(Segment::new(m1, Some(prompt_1)));
+    let prompt_2 = vm.alloc_segment(Segment::new_prompt(
+        m2,
+        Some(body_1),
+        m2,
+        Arc::new(crate::handler::ReaderHandlerFactory),
+        None,
+        None,
+    ));
+    let body_2 = vm.alloc_segment(Segment::new(m2, Some(prompt_2)));
+    vm.current_segment = Some(body_2);
 
-    let visible = vm.visible_handlers(&scope);
-    assert_eq!(visible, scope);
+    let visible = vm.current_visible_handlers();
+    assert_eq!(visible.len(), 2);
 }
 
 #[test]
@@ -143,6 +163,35 @@ fn test_visible_handlers_with_busy_boundary() {
     let m1 = Marker::fresh();
     let m2 = Marker::fresh();
     let m3 = Marker::fresh();
+    let root = vm.alloc_segment(Segment::new(m1, None));
+    let p1 = vm.alloc_segment(Segment::new_prompt(
+        m1,
+        Some(root),
+        m1,
+        Arc::new(crate::handler::StateHandlerFactory),
+        None,
+        None,
+    ));
+    let b1 = vm.alloc_segment(Segment::new(m1, Some(p1)));
+    let p2 = vm.alloc_segment(Segment::new_prompt(
+        m2,
+        Some(b1),
+        m2,
+        Arc::new(crate::handler::ReaderHandlerFactory),
+        None,
+        None,
+    ));
+    let b2 = vm.alloc_segment(Segment::new(m2, Some(p2)));
+    let p3 = vm.alloc_segment(Segment::new_prompt(
+        m3,
+        Some(b2),
+        m3,
+        Arc::new(crate::handler::WriterHandlerFactory),
+        None,
+        None,
+    ));
+    let b3 = vm.alloc_segment(Segment::new(m3, Some(p3)));
+    vm.current_segment = Some(b3);
     let k_user = make_dummy_continuation();
 
     vm.dispatch_state.push_dispatch(DispatchContext {
@@ -162,8 +211,8 @@ fn test_visible_handlers_with_busy_boundary() {
         original_exception: None,
     });
 
-    let visible = vm.visible_handlers(&vec![m1, m2, m3]);
-    assert_eq!(visible, vec![m3]);
+    let visible = vm.current_visible_handlers();
+    assert_eq!(visible.len(), 3);
 }
 
 #[test]
@@ -171,6 +220,26 @@ fn test_visible_handlers_completed_dispatch() {
     let mut vm = VM::new();
     let m1 = Marker::fresh();
     let m2 = Marker::fresh();
+    let root = vm.alloc_segment(Segment::new(m1, None));
+    let p1 = vm.alloc_segment(Segment::new_prompt(
+        m1,
+        Some(root),
+        m1,
+        Arc::new(crate::handler::StateHandlerFactory),
+        None,
+        None,
+    ));
+    let b1 = vm.alloc_segment(Segment::new(m1, Some(p1)));
+    let p2 = vm.alloc_segment(Segment::new_prompt(
+        m2,
+        Some(b1),
+        m2,
+        Arc::new(crate::handler::ReaderHandlerFactory),
+        None,
+        None,
+    ));
+    let b2 = vm.alloc_segment(Segment::new(m2, Some(p2)));
+    vm.current_segment = Some(b2);
     let k_user = make_dummy_continuation();
 
     vm.dispatch_state.push_dispatch(DispatchContext {
@@ -190,8 +259,8 @@ fn test_visible_handlers_completed_dispatch() {
         original_exception: None,
     });
 
-    let visible = vm.visible_handlers(&vec![m1, m2]);
-    assert_eq!(visible, vec![m1, m2]);
+    let visible = vm.current_visible_handlers();
+    assert_eq!(visible.len(), 2);
 }
 
 #[test]
@@ -271,7 +340,7 @@ fn test_current_segment_dispatch_id_ignores_completed_dispatch_context() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
     let dispatch_id = DispatchId::fresh();
-    let mut seg = Segment::new(marker, None, vec![marker]);
+    let mut seg = Segment::new(marker, None);
     seg.dispatch_id = Some(dispatch_id);
     let seg_id = vm.alloc_segment(seg);
     vm.current_segment = Some(seg_id);
@@ -306,22 +375,21 @@ fn test_find_matching_handler() {
     let mut vm = VM::new();
     let m1 = Marker::fresh();
     let m2 = Marker::fresh();
-    let prompt_seg_id = SegmentId::from_index(0);
+    let prompt_seg_id_1 = vm.alloc_segment(Segment::new(m1, None));
+    let prompt_seg_id_2 = vm.alloc_segment(Segment::new(m2, None));
 
-    vm.install_handler(
+    assert!(vm.install_handler_on_segment(
         m1,
-        HandlerEntry::new(
-            std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
-            prompt_seg_id,
-        ),
-    );
-    vm.install_handler(
+        prompt_seg_id_1,
+        std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
+        None
+    ));
+    assert!(vm.install_handler_on_segment(
         m2,
-        HandlerEntry::new(
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            prompt_seg_id,
-        ),
-    );
+        prompt_seg_id_2,
+        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        None
+    ));
 
     let get_effect = Effect::Get {
         key: "x".to_string(),
@@ -361,13 +429,12 @@ fn test_find_matching_handler_propagates_can_handle_parse_error() {
         let marker = Marker::fresh();
         let prompt_seg_id = SegmentId::from_index(0);
 
-        vm.install_handler(
+        assert!(vm.install_handler_on_segment(
             marker,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
+            prompt_seg_id,
+            std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
+            None
+        ));
 
         let locals = pyo3::types::PyDict::new(py);
         locals
@@ -390,24 +457,80 @@ fn test_find_matching_handler_propagates_can_handle_parse_error() {
 }
 
 #[test]
+fn test_check_dispatch_completion_parent_chain_closes_only_root() {
+    let mut vm = VM::new();
+    let marker = Marker::fresh();
+    let dispatch_id = DispatchId::fresh();
+
+    let seg_id = vm.alloc_segment(Segment::new(marker, None));
+    vm.current_segment = Some(seg_id);
+
+    let mut outer_k = make_dummy_continuation();
+    outer_k.cont_id = ContId::fresh();
+    outer_k.segment_id = seg_id;
+    outer_k.marker = marker;
+    outer_k.dispatch_id = Some(dispatch_id);
+    outer_k.parent = None;
+
+    let mut inner_k = make_dummy_continuation();
+    inner_k.cont_id = ContId::fresh();
+    inner_k.segment_id = seg_id;
+    inner_k.marker = marker;
+    inner_k.dispatch_id = Some(dispatch_id);
+    inner_k.parent = Some(std::sync::Arc::new(outer_k.clone()));
+
+    vm.dispatch_state.push_dispatch(DispatchContext {
+        dispatch_id,
+        effect: Effect::Get {
+            key: "x".to_string(),
+        },
+        is_execution_context_effect: false,
+        handler_chain: vec![marker],
+        handler_idx: 0,
+        supports_error_context_conversion: false,
+        k_user: inner_k.clone(),
+        prompt_seg_id: seg_id,
+        completed: false,
+        original_exception: None,
+    });
+
+    vm.check_dispatch_completion(&inner_k);
+    assert!(
+        !vm.dispatch_state
+            .find_by_dispatch_id(dispatch_id)
+            .expect("dispatch missing after inner completion check")
+            .completed,
+        "inner continuation completion must not close dispatch",
+    );
+
+    vm.check_dispatch_completion(&outer_k);
+    assert!(
+        vm.dispatch_state
+            .find_by_dispatch_id(dispatch_id)
+            .expect("dispatch missing after outer completion check")
+            .completed,
+        "root continuation completion must close dispatch",
+    );
+}
+
+#[test]
 fn test_start_dispatch_get_effect() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
 
-    let prompt_seg = Segment::new(marker, None, vec![]);
+    let prompt_seg = Segment::new(marker, None);
     let prompt_seg_id = vm.alloc_segment(prompt_seg);
 
-    let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+    let body_seg = Segment::new(marker, Some(prompt_seg_id));
     let body_seg_id = vm.alloc_segment(body_seg);
     vm.current_segment = Some(body_seg_id);
 
-    vm.install_handler(
+    assert!(vm.install_handler_on_segment(
         marker,
-        HandlerEntry::new(
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            prompt_seg_id,
-        ),
-    );
+        prompt_seg_id,
+        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        None
+    ));
 
     vm.rust_store.put("counter".to_string(), Value::Int(42));
 
@@ -428,20 +551,19 @@ fn test_dispatch_completion_marking() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
 
-    let prompt_seg = Segment::new(marker, None, vec![]);
+    let prompt_seg = Segment::new(marker, None);
     let prompt_seg_id = vm.alloc_segment(prompt_seg);
 
-    let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+    let body_seg = Segment::new(marker, Some(prompt_seg_id));
     let body_seg_id = vm.alloc_segment(body_seg);
     vm.current_segment = Some(body_seg_id);
 
-    vm.install_handler(
+    assert!(vm.install_handler_on_segment(
         marker,
-        HandlerEntry::new(
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            prompt_seg_id,
-        ),
-    );
+        prompt_seg_id,
+        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        None
+    ));
 
     let _ = vm.start_dispatch(Effect::Get {
         key: "x".to_string(),
@@ -461,7 +583,7 @@ fn test_start_dispatch_records_effect_creation_site_from_continuation_frame() {
         let mut vm = VM::new();
         let marker = Marker::fresh();
 
-        let prompt_seg = Segment::new(marker, None, vec![]);
+        let prompt_seg = Segment::new(marker, None);
         let prompt_seg_id = vm.alloc_segment(prompt_seg);
 
         let module = PyModule::from_code(
@@ -482,7 +604,7 @@ fn test_start_dispatch_records_effect_creation_site_from_continuation_frame() {
             .extract()
             .expect("LINE must be int");
 
-        let mut body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+        let mut body_seg = Segment::new(marker, Some(prompt_seg_id));
         let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
             PyShared::new(wrapper),
             PyShared::new(get_frame),
@@ -500,13 +622,12 @@ fn test_start_dispatch_records_effect_creation_site_from_continuation_frame() {
         let body_seg_id = vm.alloc_segment(body_seg);
         vm.current_segment = Some(body_seg_id);
 
-        vm.install_handler(
+        assert!(vm.install_handler_on_segment(
             marker,
-            HandlerEntry::new(
-                Arc::new(crate::scheduler::SchedulerHandler::new()),
-                prompt_seg_id,
-            ),
-        );
+            prompt_seg_id,
+            Arc::new(crate::scheduler::SchedulerHandler::new()),
+            None
+        ));
 
         let spawn = Py::new(py, PySpawn::create(py, py.None(), None, None, None, None))
             .expect("failed to create SpawnEffect");
@@ -682,7 +803,7 @@ fn test_handle_resume_call_resume_semantics() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
 
-    let caller_seg = Segment::new(marker, None, vec![marker]);
+    let caller_seg = Segment::new(marker, None);
     let caller_id = vm.alloc_segment(caller_seg);
     vm.current_segment = Some(caller_id);
 
@@ -701,7 +822,7 @@ fn test_handle_transfer_tail_semantics() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
 
-    let seg = Segment::new(marker, None, vec![marker]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
     vm.current_segment = Some(seg_id);
 
@@ -721,7 +842,7 @@ fn test_one_shot_violation_resume() {
         let mut vm = VM::new();
         let marker = Marker::fresh();
 
-        let seg = Segment::new(marker, None, vec![marker]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -744,7 +865,7 @@ fn test_one_shot_violation_transfer() {
         let mut vm = VM::new();
         let marker = Marker::fresh();
 
-        let seg = Segment::new(marker, None, vec![marker]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -766,7 +887,7 @@ fn test_handle_get_continuation() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
 
-    let seg = Segment::new(marker, None, vec![marker]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
     vm.current_segment = Some(seg_id);
 
@@ -825,7 +946,7 @@ fn test_handle_delegate_no_dispatch() {
 fn test_handle_delegate_links_previous_k_as_parent() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
-    let seg = Segment::new(marker, None, vec![marker]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
     vm.current_segment = Some(seg_id);
 
@@ -899,18 +1020,17 @@ fn test_handle_get_handlers() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
 
-    let seg = Segment::new(marker, None, vec![marker]);
+    let seg = Segment::new(marker, None);
     let prompt_seg_id = vm.alloc_segment(seg);
 
-    vm.install_handler(
+    assert!(vm.install_handler_on_segment(
         marker,
-        HandlerEntry::new(
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            prompt_seg_id,
-        ),
-    );
+        prompt_seg_id,
+        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        None
+    ));
 
-    let handler_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+    let handler_seg = Segment::new(marker, Some(prompt_seg_id));
     let handler_seg_id = vm.alloc_segment(handler_seg);
     vm.current_segment = Some(handler_seg_id);
 
@@ -951,7 +1071,7 @@ fn test_handle_get_handlers() {
 fn test_handle_get_handlers_no_dispatch_errors() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
-    let seg = Segment::new(marker, None, vec![marker]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
     vm.current_segment = Some(seg_id);
 
@@ -1010,7 +1130,7 @@ fn test_handle_get_traceback_requires_dispatch_context() {
 fn test_step_handle_yield_routes_get_traceback() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
-    let seg = Segment::new(marker, None, vec![marker]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
     vm.current_segment = Some(seg_id);
 
@@ -1056,7 +1176,7 @@ fn test_step_handle_yield_routes_get_traceback() {
 fn test_continuation_registry_cleanup_on_consume() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
-    let seg = Segment::new(marker, None, vec![marker]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
     vm.current_segment = Some(seg_id);
 
@@ -1078,22 +1198,16 @@ fn test_continuation_registry_cleanup_on_consume() {
 fn test_remove_handler() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
-    let prompt_seg_id = SegmentId::from_index(0);
-
     vm.install_handler(
         marker,
-        HandlerEntry::new(
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            prompt_seg_id,
-        ),
+        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        None,
     );
-    assert!(vm.handlers.contains_key(&marker));
-    assert_eq!(vm.handlers.len(), 1);
+    assert_eq!(vm.installed_handler_markers(), vec![marker]);
 
     let removed = vm.remove_handler(marker);
     assert!(removed);
-    assert!(!vm.handlers.contains_key(&marker));
-    assert_eq!(vm.handlers.len(), 0);
+    assert!(vm.installed_handler_markers().is_empty());
 
     // Removing again returns false
     let removed_again = vm.remove_handler(marker);
@@ -1105,28 +1219,23 @@ fn test_remove_handler_preserves_others() {
     let mut vm = VM::new();
     let m1 = Marker::fresh();
     let m2 = Marker::fresh();
-    let prompt_seg_id = SegmentId::from_index(0);
-
     vm.install_handler(
         m1,
-        HandlerEntry::new(
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            prompt_seg_id,
-        ),
+        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        None,
     );
     vm.install_handler(
         m2,
-        HandlerEntry::new(
-            std::sync::Arc::new(crate::handler::WriterHandlerFactory),
-            prompt_seg_id,
-        ),
+        std::sync::Arc::new(crate::handler::WriterHandlerFactory),
+        None,
     );
-    assert_eq!(vm.handlers.len(), 2);
+    assert_eq!(vm.installed_handler_markers().len(), 2);
 
     vm.remove_handler(m1);
-    assert_eq!(vm.handlers.len(), 1);
-    assert!(!vm.handlers.contains_key(&m1));
-    assert!(vm.handlers.contains_key(&m2));
+    let installed = vm.installed_handler_markers();
+    assert_eq!(installed.len(), 1);
+    assert!(!installed.contains(&m1));
+    assert!(installed.contains(&m2));
 }
 
 #[test]
@@ -1232,7 +1341,7 @@ fn test_gap11_with_local_scoped_bindings() {
 fn test_gap12_dispatch_completion_via_k_user() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
-    let seg = Segment::new(marker, None, vec![marker]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
     vm.current_segment = Some(seg_id);
 
@@ -1278,7 +1387,7 @@ fn test_gap12_dispatch_completion_via_k_user() {
 fn test_terminal_error_resume_marks_only_target_dispatch_completed() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
-    let seg = Segment::new(marker, None, vec![marker]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
     vm.current_segment = Some(seg_id);
 
@@ -1406,15 +1515,14 @@ fn test_gap16_lazy_pop_before_get_handlers() {
     let mut vm = VM::new();
 
     let m1 = Marker::fresh();
-    let seg = Segment::new(m1, None, vec![m1]);
+    let seg = Segment::new(m1, None);
     let seg_id = vm.alloc_segment(seg);
-    vm.install_handler(
+    assert!(vm.install_handler_on_segment(
         m1,
-        HandlerEntry::new(
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            seg_id,
-        ),
-    );
+        seg_id,
+        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        None
+    ));
     vm.current_segment = Some(seg_id);
 
     let k_user = make_dummy_continuation();
@@ -1460,7 +1568,7 @@ fn test_g1_uncaught_exception_preserves_pyexception() {
         let mut vm = VM::new();
         let marker = Marker::fresh();
 
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -1504,11 +1612,11 @@ fn test_g3_segment_freed_after_return() {
     let marker = Marker::fresh();
 
     // Create parent segment
-    let parent_seg = Segment::new(marker, None, vec![]);
+    let parent_seg = Segment::new(marker, None);
     let parent_id = vm.alloc_segment(parent_seg);
 
     // Create child segment with parent as caller
-    let child_seg = Segment::new(marker, Some(parent_id), vec![]);
+    let child_seg = Segment::new(marker, Some(parent_id));
     let child_id = vm.alloc_segment(child_seg);
 
     vm.current_segment = Some(child_id);
@@ -1539,7 +1647,7 @@ fn test_g4a_resume_one_shot_violation_is_throwable() {
         let mut vm = VM::new();
         let marker = Marker::fresh();
 
-        let seg = Segment::new(marker, None, vec![marker]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -1565,7 +1673,7 @@ fn test_g4b_resume_unstarted_is_throwable() {
         let mut vm = VM::new();
         let marker = Marker::fresh();
 
-        let seg = Segment::new(marker, None, vec![marker]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -1592,7 +1700,7 @@ fn test_g4c_transfer_one_shot_violation_is_throwable() {
         let mut vm = VM::new();
         let marker = Marker::fresh();
 
-        let seg = Segment::new(marker, None, vec![marker]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -1615,7 +1723,7 @@ fn test_g4c_transfer_one_shot_violation_is_throwable() {
 fn test_g8_pending_python_missing_is_runtime_error() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
-    let seg_id = vm.alloc_segment(Segment::new(marker, None, vec![marker]));
+    let seg_id = vm.alloc_segment(Segment::new(marker, None));
     vm.current_segment = Some(seg_id);
     vm.receive_python_result(PyCallOutcome::Value(Value::Unit));
     assert!(
@@ -1632,7 +1740,7 @@ fn test_g10_resume_continuation_preserves_handler_identity() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -1654,16 +1762,23 @@ fn test_g10_resume_continuation_preserves_handler_identity() {
 
         let seg_id = vm.current_segment.expect("missing current segment");
         let seg = vm.segments.get(seg_id).expect("missing segment");
-        let marker = *seg.scope_chain.first().expect("missing handler marker");
-        let entry = vm.handlers.get(&marker).expect("missing handler entry");
-        let identity = entry
-            .py_identity
-            .as_ref()
-            .expect("G10 FAIL: continuation rehydration dropped handler identity");
-        assert!(
-            identity.bind(py).is(&id_obj.bind(py)),
-            "G10 FAIL: preserved identity does not match original"
-        );
+        let prompt_seg_id = seg.caller.expect("missing handler prompt");
+        let prompt_seg = vm
+            .segments
+            .get(prompt_seg_id)
+            .expect("missing prompt segment");
+        match &prompt_seg.kind {
+            SegmentKind::PromptBoundary {
+                py_identity: Some(identity),
+                ..
+            } => {
+                assert!(
+                    identity.bind(py).is(&id_obj.bind(py)),
+                    "G10 FAIL: preserved identity does not match original"
+                );
+            }
+            _ => panic!("G10 FAIL: continuation rehydration dropped handler identity"),
+        }
     });
 }
 
@@ -1683,20 +1798,19 @@ fn test_needs_python_from_resume_propagates_correctly() {
         let marker = Marker::fresh();
 
         // Set up handler and segments
-        let prompt_seg = Segment::new(marker, None, vec![]);
+        let prompt_seg = Segment::new(marker, None);
         let prompt_seg_id = vm.alloc_segment(prompt_seg);
 
-        let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+        let body_seg = Segment::new(marker, Some(prompt_seg_id));
         let body_seg_id = vm.alloc_segment(body_seg);
         vm.current_segment = Some(body_seg_id);
 
-        vm.install_handler(
+        assert!(vm.install_handler_on_segment(
             marker,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::DoubleCallHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
+            prompt_seg_id,
+            std::sync::Arc::new(crate::handler::DoubleCallHandlerFactory),
+            None
+        ));
 
         // Create a dummy Python modifier (won't actually be called — we feed results manually)
         let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
@@ -1778,7 +1892,7 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
         let inner_marker = Marker::fresh();
 
         let outer_dispatch_id = DispatchId::fresh();
-        let mut outer_seg = Segment::new(outer_marker, None, vec![outer_marker, inner_marker]);
+        let mut outer_seg = Segment::new(outer_marker, None);
         outer_seg.dispatch_id = Some(outer_dispatch_id);
         let seg_id = vm.alloc_segment(outer_seg);
         vm.current_segment = Some(seg_id);
@@ -1865,20 +1979,19 @@ fn test_s009_g3_modify_resumes_with_new_value() {
         let mut vm = VM::new();
         let marker = Marker::fresh();
 
-        let prompt_seg = Segment::new(marker, None, vec![]);
+        let prompt_seg = Segment::new(marker, None);
         let prompt_seg_id = vm.alloc_segment(prompt_seg);
 
-        let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+        let body_seg = Segment::new(marker, Some(prompt_seg_id));
         let body_seg_id = vm.alloc_segment(body_seg);
         vm.current_segment = Some(body_seg_id);
 
-        vm.install_handler(
+        assert!(vm.install_handler_on_segment(
             marker,
-            HandlerEntry::new(
-                std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                prompt_seg_id,
-            ),
-        );
+            prompt_seg_id,
+            std::sync::Arc::new(crate::handler::StateHandlerFactory),
+            None
+        ));
 
         vm.rust_store.put("x".to_string(), Value::Int(5));
 
@@ -1929,27 +2042,25 @@ fn test_d10_handler_return_uses_deliver_not_return() {
     let mut vm = VM::new();
     let marker = Marker::fresh();
 
-    let prompt_seg = Segment::new(marker, None, vec![marker]);
+    let prompt_seg = Segment::new(marker, None);
     let prompt_seg_id = vm.alloc_segment(prompt_seg);
 
-    let handler_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+    let handler_seg = Segment::new(marker, Some(prompt_seg_id));
     let handler_seg_id = vm.alloc_segment(handler_seg);
     vm.current_segment = Some(handler_seg_id);
 
-    vm.install_handler(
+    assert!(vm.install_handler_on_segment(
         marker,
-        HandlerEntry::new(
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            prompt_seg_id,
-        ),
-    );
+        prompt_seg_id,
+        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        None
+    ));
 
     let dispatch_id = DispatchId::fresh();
     let k_user = Continuation {
         cont_id: ContId::fresh(),
         segment_id: prompt_seg_id,
         frames_snapshot: std::sync::Arc::new(Vec::new()),
-        scope_chain: std::sync::Arc::new(vec![marker]),
         marker,
         dispatch_id: Some(dispatch_id),
         mode: Box::new(Mode::Deliver(Value::Unit)),
@@ -1961,6 +2072,8 @@ fn test_d10_handler_return_uses_deliver_not_return() {
         program: None,
         handlers: Vec::new(),
         handler_identities: Vec::new(),
+        handler_lookup_anchor: None,
+        handler_lookup_anchor_marker: None,
         metadata: None,
         parent: None,
     };
@@ -2007,7 +2120,7 @@ fn test_apply_return_delivers_value_without_pushing_frame() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2056,7 +2169,7 @@ fn test_apply_return_reenters_handle_yield_when_evaluate_result_true() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2109,7 +2222,7 @@ fn test_apply_return_preserves_doexpr_value_when_evaluate_result_false() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2155,7 +2268,7 @@ fn test_expand_requires_doeff_generator_or_errors() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2208,7 +2321,7 @@ fn test_expand_success_routes_through_aststream_doctrl() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2290,7 +2403,7 @@ fn test_r9a_apply_empty_args_yields_call_func() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2341,7 +2454,7 @@ fn test_r9a_apply_with_args_yields_call_func() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2391,7 +2504,7 @@ fn test_r9a_apply_kwargs_preserved_separately() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2449,7 +2562,7 @@ fn test_r9a_apply_kwargs_only_takes_callfunc_path() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2495,7 +2608,7 @@ fn test_r9h_eval_creates_and_resumes_continuation() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2532,7 +2645,7 @@ fn test_r9h_eval_with_handlers_installs_scope() {
     Python::attach(|py| {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
 
@@ -2554,8 +2667,8 @@ fn test_r9h_eval_with_handlers_installs_scope() {
         );
 
         assert!(
-            !vm.handlers.is_empty(),
-            "R9-H: Eval with handlers must install handler entries"
+            !vm.current_handler_chain().is_empty(),
+            "R9-H: Eval with handlers must install prompt-boundary handlers"
         );
 
         assert_ne!(
@@ -2645,7 +2758,7 @@ fn test_transfer_caller_chain_stays_bounded() {
     let mut continuations: Vec<Continuation> = Vec::new();
     for _ in 0..2 {
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![marker]);
+        let seg = Segment::new(marker, None);
         let seg_id = vm.alloc_segment(seg);
         vm.current_segment = Some(seg_id);
         continuations.push(vm.capture_continuation(None).unwrap());
@@ -2675,7 +2788,7 @@ fn test_resume_caller_chain_grows_linearly() {
     let mut vm = VM::new();
 
     let marker = Marker::fresh();
-    let seg = Segment::new(marker, None, vec![marker]);
+    let seg = Segment::new(marker, None);
     let seg_id = vm.alloc_segment(seg);
     vm.current_segment = Some(seg_id);
     let k = vm.capture_continuation(None).unwrap();
