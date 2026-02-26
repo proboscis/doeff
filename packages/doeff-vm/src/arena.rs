@@ -143,8 +143,7 @@ mod tests {
         {
             let seg_mut = arena.get_mut(id).unwrap();
             use crate::frame::Frame;
-            use crate::ids::CallbackId;
-            seg_mut.push_frame(Frame::rust_return(CallbackId::fresh()));
+            seg_mut.push_frame(Frame::HandlerDispatch { dispatch_id: None });
         }
 
         let seg_ref = arena.get(id).unwrap();
@@ -166,6 +165,9 @@ mod tests {
         assert_eq!(rewired, 2);
         assert_eq!(arena.get(child_a).and_then(|seg| seg.caller), Some(caller));
         assert_eq!(arena.get(child_b).and_then(|seg| seg.caller), Some(caller));
-        assert_eq!(arena.get(unrelated).and_then(|seg| seg.caller), Some(caller));
+        assert_eq!(
+            arena.get(unrelated).and_then(|seg| seg.caller),
+            Some(caller)
+        );
     }
 }

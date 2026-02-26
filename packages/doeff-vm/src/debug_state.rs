@@ -119,10 +119,7 @@ impl DebugState {
         Self::truncate_repr(repr)
     }
 
-    pub(crate) fn format_do_ctrl(
-        yielded: &DoCtrl,
-        verbosity: ModeFormatVerbosity,
-    ) -> &'static str {
+    pub(crate) fn format_do_ctrl(yielded: &DoCtrl, verbosity: ModeFormatVerbosity) -> &'static str {
         let formatted = match yielded {
             DoCtrl::Pure { .. } => "HandleYield(Pure)",
             DoCtrl::Map { .. } => "HandleYield(Map)",
@@ -154,11 +151,7 @@ impl DebugState {
         }
     }
 
-    pub(crate) fn format_mode(
-        &self,
-        mode: &Mode,
-        verbosity: ModeFormatVerbosity,
-    ) -> &'static str {
+    pub(crate) fn format_mode(&self, mode: &Mode, verbosity: ModeFormatVerbosity) -> &'static str {
         match mode {
             Mode::Deliver(_) => "Deliver",
             Mode::Throw(_) => "Throw",
@@ -260,16 +253,26 @@ impl DebugState {
 
         crate::vm_debug_log!(
             "[step {}] mode={} {} dispatch_depth={} pending={}",
-            self.step_counter, mode_kind, seg_info, dispatch_depth, pending
+            self.step_counter,
+            mode_kind,
+            seg_info,
+            dispatch_depth,
+            pending
         );
 
         if self.config.level == DebugLevel::Trace && self.config.show_frames {
             if let Some(seg) = current_segment.and_then(|id| segments.get(id)) {
                 for (i, frame) in seg.frames.iter().enumerate() {
                     let frame_kind = match frame {
-                        Frame::RustReturn { .. } => "RustReturn",
                         Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)",
                         Frame::Program { .. } => "Program",
+                        Frame::InterceptorApply(..) => "InterceptorApply",
+                        Frame::InterceptorEval(..) => "InterceptorEval",
+                        Frame::EvalReturn { .. } => "EvalReturn",
+                        Frame::HandlerDispatch { .. } => "HandlerDispatch",
+                        Frame::MapReturn { .. } => "MapReturn",
+                        Frame::FlatMapBindResult => "FlatMapBindResult",
+                        Frame::FlatMapBindSource { .. } => "FlatMapBindSource",
                     };
                     crate::vm_debug_log!("  frame[{}]: {}", i, frame_kind);
                 }
