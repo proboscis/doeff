@@ -20,5 +20,15 @@ Pytest with strict asyncio mode powers the suite, so mark coroutines with `@pyte
 ## Task Management
 When a request is provided, always use the Task tool (TaskCreate) to break the request into concrete todo items before starting work. Mark each task as `in_progress` when you begin it and `completed` when done. This ensures progress is visible and nothing is missed.
 
+## Orch Run Management (CRITICAL)
+When using `orch` to manage agent runs, **NEVER stop a run that is in `wait` or `blocked` state**. These states mean the agent is alive and waiting for user input — use `orch send <RUN_REF> "message"` to communicate with it. Stopping a waiting run kills the session, loses all agent context, and forces a costly restart. Only use `orch stop` on runs that are clearly stale (hours of no progress with `running` state) or confirmed dead (`unknown`/`failed`). When in doubt, use `orch capture` to check the agent's output before deciding.
+
+| Run State | Action |
+|-----------|--------|
+| `wait` / `blocked` | `orch send` — NEVER `orch stop` |
+| `running` | Leave alone or `orch send` if guidance needed |
+| `failed` / `unknown` | OK to `orch stop` + `orch continue` |
+| `done` / `cancel` | Already terminated |
+
 ## Commit & Pull Request Guidelines
 Recent history favors concise, imperative summaries (for example, `Fix cache invalidation` or `Add Gemini structured support`). Reference related issues in the body, note behavioral risks, and list validation commands you ran. Pull requests should describe the effect on core `doeff/` APIs versus optional `packages/` integrations, attach screenshots or traces when diagnostics change, and mention follow-up work in a checklist so maintainers can track it.

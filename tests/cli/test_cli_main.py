@@ -8,6 +8,8 @@ import pytest
 
 from doeff import __main__ as cli
 
+pytestmark = pytest.mark.cli
+
 
 @pytest.mark.usefixtures("capsys")
 def test_main_json_error_includes_traceback(capsys):

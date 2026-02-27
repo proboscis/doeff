@@ -61,6 +61,8 @@ def test_spawn_wait_basic() -> None:
     assert result.value == "done"
 
 
+@pytest.mark.stress
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_many_task_switches_no_crash() -> None:
     task_count = 64
@@ -85,6 +87,8 @@ async def test_many_task_switches_no_crash() -> None:
     assert result.value == "completed"
 
 
+@pytest.mark.stress
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_many_concurrent_tasks_with_error_propagation() -> None:
     """Stress test: many tasks doing many yields, one crashes mid-execution.
