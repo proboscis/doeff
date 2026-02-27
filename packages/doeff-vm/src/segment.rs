@@ -1,10 +1,15 @@
 //! Segment types for delimited continuations.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::frame::Frame;
 use crate::handler::HandlerRef;
 use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::step::{Mode, PendingPython, PyException};
+use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub enum SegmentKind {
@@ -24,13 +29,18 @@ pub enum SegmentKind {
     },
 }
 
+/// Per-segment scope state used by Local/Ask resolution.
+#[derive(Debug, Clone, Default)]
+pub struct ScopeStore {
+    pub scope_bindings: Vec<Arc<HashMap<HashedPyKey, Value>>>,
+}
+
 #[derive(Debug)]
 pub struct Segment {
     pub marker: Marker,
     pub frames: Vec<Frame>,
     pub caller: Option<SegmentId>,
-    pub handler_lookup_anchor: Option<SegmentId>,
-    pub handler_lookup_anchor_marker: Option<Marker>,
+    pub scope_store: ScopeStore,
     pub kind: SegmentKind,
     pub dispatch_id: Option<DispatchId>,
     pub mode: Mode,
@@ -46,8 +56,7 @@ impl Segment {
             marker,
             frames: Vec::new(),
             caller,
-            handler_lookup_anchor: None,
-            handler_lookup_anchor_marker: None,
+            scope_store: ScopeStore::default(),
             kind: SegmentKind::Normal,
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
@@ -70,8 +79,7 @@ impl Segment {
             marker,
             frames: Vec::new(),
             caller,
-            handler_lookup_anchor: None,
-            handler_lookup_anchor_marker: None,
+            scope_store: ScopeStore::default(),
             kind: SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,

@@ -12,6 +12,9 @@ pub struct DispatchContext {
     pub is_execution_context_effect: bool,
     pub handler_chain: Vec<Marker>,
     pub handler_idx: usize,
+    /// Segment currently executing the active handler clause (ctx.handler_idx).
+    /// Used to scope self-dispatch exclusion to handler clause execution only.
+    pub active_handler_seg_id: SegmentId,
     pub supports_error_context_conversion: bool,
     pub k_user: Continuation,
     pub prompt_seg_id: SegmentId,
