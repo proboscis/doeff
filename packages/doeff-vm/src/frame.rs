@@ -1,10 +1,9 @@
 //! Frame types for the continuation stack.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use crate::ast_stream::ASTStreamRef;
-use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::do_ctrl::CallArg;
 use crate::ids::{DispatchId, Marker};
 use crate::py_shared::PyShared;
 
@@ -61,21 +60,6 @@ impl CallMetadata {
     }
 }
 
-/// A frame in the continuation stack.
-///
-/// Frames must be Clone to allow continuation capture (Arc snapshots).
-#[derive(Debug, Clone)]
-pub struct InterceptorContinuation {
-    pub marker: Marker,
-    pub original_yielded: DoCtrl,
-    pub original_obj: PyShared,
-    pub emitter_stream: ASTStreamRef,
-    pub emitter_metadata: Option<CallMetadata>,
-    pub chain: Arc<Vec<Marker>>,
-    pub next_idx: usize,
-    pub interceptor_metadata: Option<CallMetadata>,
-}
-
 #[derive(Debug, Clone)]
 pub enum EvalReturnContinuation {
     ApplyResolveFunction {
@@ -127,8 +111,6 @@ pub enum Frame {
         stream: ASTStreamRef,
         metadata: Option<CallMetadata>,
     },
-    InterceptorApply(Box<InterceptorContinuation>),
-    InterceptorEval(Box<InterceptorContinuation>),
     HandlerDispatch {
         dispatch_id: DispatchId,
     },

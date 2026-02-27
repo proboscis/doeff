@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
 use crate::ast_stream::{ASTStream, PythonGeneratorStream};
 use crate::do_ctrl::{CallArg, DoCtrl};
@@ -47,7 +47,8 @@ pub enum DoExprTag {
     GetTrace = 18,
     Pass = 19,
     GetTraceback = 20,
-    WithIntercept = 21,
+    Mask = 21,
+    MaskBehind = 22,
     Effect = 128,
     Unknown = 255,
 }
@@ -76,7 +77,8 @@ impl TryFrom<u8> for DoExprTag {
             18 => Ok(DoExprTag::GetTrace),
             19 => Ok(DoExprTag::Pass),
             20 => Ok(DoExprTag::GetTraceback),
-            21 => Ok(DoExprTag::WithIntercept),
+            21 => Ok(DoExprTag::Mask),
+            22 => Ok(DoExprTag::MaskBehind),
             128 => Ok(DoExprTag::Effect),
             255 => Ok(DoExprTag::Unknown),
             other => Err(other),
@@ -1121,30 +1123,52 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                     .unbind(),
                 )
             }
-            DoCtrl::WithIntercept {
-                interceptor,
-                expr,
-                metadata,
-            } => Some(
-                Bound::new(
-                    py,
-                    PyClassInitializer::from(PyDoExprBase)
-                        .add_subclass(PyDoCtrlBase {
-                            tag: DoExprTag::WithIntercept as u8,
-                        })
-                        .add_subclass(PyWithIntercept {
-                            f: interceptor.clone_ref(py),
-                            expr: expr.clone_ref(py),
-                            meta: metadata
-                                .as_ref()
-                                .map(|meta| call_metadata_to_dict(py, meta))
-                                .transpose()?,
-                        }),
+            DoCtrl::Mask { effect_types, body } => {
+                let list = PyList::empty(py);
+                for effect_type in effect_types {
+                    list.append(effect_type.bind(py))
+                        .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                }
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::Mask as u8,
+                            })
+                            .add_subclass(PyMask {
+                                effect_types: list.into_any().unbind(),
+                                body: body.clone_ref(py),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
                 )
-                .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                .into_any()
-                .unbind(),
-            ),
+            }
+            DoCtrl::MaskBehind { effect_types, body } => {
+                let list = PyList::empty(py);
+                for effect_type in effect_types {
+                    list.append(effect_type.bind(py))
+                        .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                }
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::MaskBehind as u8,
+                            })
+                            .add_subclass(PyMaskBehind {
+                                effect_types: list.into_any().unbind(),
+                                body: body.clone_ref(py),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
             DoCtrl::Delegate { .. } => Some(
                 Bound::new(
                     py,
@@ -1484,6 +1508,28 @@ fn classify_doeff_generator_as_aststream(
     })
 }
 
+fn extract_mask_effect_types(
+    effect_types: &Bound<'_, PyAny>,
+    context: &str,
+) -> PyResult<Vec<PyShared>> {
+    let mut extracted = Vec::new();
+    for item in effect_types.try_iter()? {
+        let item = item?;
+        if !item.is_instance_of::<PyType>() {
+            let ty_name = item
+                .get_type()
+                .name()
+                .map(|name| name.to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            return Err(PyTypeError::new_err(format!(
+                "{context}.effect_types must contain only Python type objects, got {ty_name}"
+            )));
+        }
+        extracted.push(PyShared::new(item.unbind()));
+    }
+    Ok(extracted)
+}
+
 pub(crate) fn classify_yielded_bound(
     vm: &VM,
     py: Python<'_>,
@@ -1511,12 +1557,22 @@ pub(crate) fn classify_yielded_bound(
                     py_identity,
                 })
             }
-            DoExprTag::WithIntercept => {
-                let wi: PyRef<'_, PyWithIntercept> = obj.extract()?;
-                Ok(DoCtrl::WithIntercept {
-                    interceptor: PyShared::new(wi.f.clone_ref(py)),
-                    expr: wi.expr.clone_ref(py),
-                    metadata: call_metadata_from_optional_meta(py, &wi.meta, "WithIntercept")?,
+            DoExprTag::Mask => {
+                let mask: PyRef<'_, PyMask> = obj.extract()?;
+                let effect_types =
+                    extract_mask_effect_types(mask.effect_types.bind(py).as_any(), "Mask")?;
+                Ok(DoCtrl::Mask {
+                    effect_types,
+                    body: mask.body.clone_ref(py),
+                })
+            }
+            DoExprTag::MaskBehind => {
+                let mask: PyRef<'_, PyMaskBehind> = obj.extract()?;
+                let effect_types =
+                    extract_mask_effect_types(mask.effect_types.bind(py).as_any(), "MaskBehind")?;
+                Ok(DoCtrl::MaskBehind {
+                    effect_types,
+                    body: mask.body.clone_ref(py),
                 })
             }
             DoExprTag::Pure => {
@@ -2284,49 +2340,94 @@ impl PyWithHandler {
     }
 }
 
-#[pyclass(name = "WithIntercept", extends=PyDoCtrlBase)]
-pub struct PyWithIntercept {
+fn normalize_mask_effect_types_obj(
+    py: Python<'_>,
+    effect_types: &Bound<'_, PyAny>,
+    context: &str,
+) -> PyResult<Py<PyAny>> {
+    let iter = effect_types.try_iter().map_err(|_| {
+        PyTypeError::new_err(format!(
+            "{context}.effect_types must be an iterable of type objects"
+        ))
+    })?;
+    let normalized = PyList::empty(py);
+    for item in iter {
+        let item = item?;
+        if !item.is_instance_of::<PyType>() {
+            return Err(PyTypeError::new_err(format!(
+                "{context}.effect_types must contain only Python type objects"
+            )));
+        }
+        normalized.append(item)?;
+    }
+    Ok(normalized.into_any().unbind())
+}
+
+#[pyclass(name = "Mask", extends=PyDoCtrlBase)]
+pub struct PyMask {
     #[pyo3(get)]
-    pub f: Py<PyAny>,
+    pub effect_types: Py<PyAny>,
     #[pyo3(get)]
-    pub expr: Py<PyAny>,
-    #[pyo3(get)]
-    pub meta: Option<Py<PyAny>>,
+    pub body: Py<PyAny>,
 }
 
 #[pymethods]
-impl PyWithIntercept {
+impl PyMask {
     #[new]
-    #[pyo3(signature = (f, expr, meta=None))]
+    #[pyo3(signature = (effect_types, body))]
     fn new(
         py: Python<'_>,
-        f: Py<PyAny>,
-        expr: Py<PyAny>,
-        meta: Option<Py<PyAny>>,
+        effect_types: Py<PyAny>,
+        body: Py<PyAny>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        if !f.bind(py).is_callable() {
-            return Err(PyTypeError::new_err("WithIntercept.f must be callable"));
+        let normalized_effect_types =
+            normalize_mask_effect_types_obj(py, effect_types.bind(py).as_any(), "Mask")?;
+        let body = lift_effect_to_perform_expr(py, body)?;
+        if !body.bind(py).is_instance_of::<PyDoExprBase>() {
+            return Err(PyTypeError::new_err("Mask.body must be DoExpr"));
         }
-
-        if let Some(meta_obj) = meta.as_ref() {
-            let meta_bound = meta_obj.bind(py);
-            if !meta_bound.is_instance_of::<PyDict>() {
-                return Err(PyTypeError::new_err(
-                    "WithIntercept.meta must be dict with function_name/source_file/source_line",
-                ));
-            }
-        }
-        let expr = lift_effect_to_perform_expr(py, expr)?;
-        let expr_obj = expr.bind(py);
-        if !expr_obj.is_instance_of::<PyDoExprBase>() {
-            return Err(PyTypeError::new_err("WithIntercept.expr must be DoExpr"));
-        }
-
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
-                tag: DoExprTag::WithIntercept as u8,
+                tag: DoExprTag::Mask as u8,
             })
-            .add_subclass(PyWithIntercept { f, expr, meta }))
+            .add_subclass(PyMask {
+                effect_types: normalized_effect_types,
+                body,
+            }))
+    }
+}
+
+#[pyclass(name = "MaskBehind", extends=PyDoCtrlBase)]
+pub struct PyMaskBehind {
+    #[pyo3(get)]
+    pub effect_types: Py<PyAny>,
+    #[pyo3(get)]
+    pub body: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyMaskBehind {
+    #[new]
+    #[pyo3(signature = (effect_types, body))]
+    fn new(
+        py: Python<'_>,
+        effect_types: Py<PyAny>,
+        body: Py<PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let normalized_effect_types =
+            normalize_mask_effect_types_obj(py, effect_types.bind(py).as_any(), "MaskBehind")?;
+        let body = lift_effect_to_perform_expr(py, body)?;
+        if !body.bind(py).is_instance_of::<PyDoExprBase>() {
+            return Err(PyTypeError::new_err("MaskBehind.body must be DoExpr"));
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::MaskBehind as u8,
+            })
+            .add_subclass(PyMaskBehind {
+                effect_types: normalized_effect_types,
+                body,
+            }))
     }
 }
 
@@ -4070,7 +4171,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTraceFrame>()?;
     m.add_class::<PyTraceHop>()?;
     m.add_class::<PyWithHandler>()?;
-    m.add_class::<PyWithIntercept>()?;
+    m.add_class::<PyMask>()?;
+    m.add_class::<PyMaskBehind>()?;
     m.add_class::<PyPure>()?;
     m.add_class::<PyApply>()?;
     m.add_class::<PyExpand>()?;
@@ -4176,7 +4278,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_GET_CONTINUATION", DoExprTag::GetContinuation as u8)?;
     m.add("TAG_GET_HANDLERS", DoExprTag::GetHandlers as u8)?;
     m.add("TAG_GET_TRACEBACK", DoExprTag::GetTraceback as u8)?;
-    m.add("TAG_WITH_INTERCEPT", DoExprTag::WithIntercept as u8)?;
+    m.add("TAG_MASK", DoExprTag::Mask as u8)?;
+    m.add("TAG_MASK_BEHIND", DoExprTag::MaskBehind as u8)?;
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
     m.add("TAG_GET_TRACE", DoExprTag::GetTrace as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;

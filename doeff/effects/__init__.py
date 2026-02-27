@@ -53,7 +53,6 @@ from .graph import (
     graph,
 )
 from .graph import capture as capture_graph
-from .intercept import Intercept
 from .promise import (
     CompletePromise,
     CompletePromiseEffect,
@@ -83,10 +82,10 @@ from .semaphore import (
     release_semaphore,
 )
 from .spawn import (
-    Future,
     PRIORITY_HIGH,
     PRIORITY_IDLE,
     PRIORITY_NORMAL,
+    Future,
     Promise,
     Spawn,
     SpawnEffect,
@@ -128,6 +127,9 @@ capture = capture_graph
 
 
 __all__ = [
+    "PRIORITY_HIGH",
+    "PRIORITY_IDLE",
+    "PRIORITY_NORMAL",
     "AcquireSemaphore",
     "AcquireSemaphoreEffect",
     "Annotate",
@@ -168,22 +170,18 @@ __all__ = [
     "GraphCaptureEffect",
     "GraphSnapshotEffect",
     "GraphStepEffect",
-    "Intercept",
     "Listen",
     "Local",
     "LocalEffect",
     "Log",
     "Modify",
-    "Promise",
     "ProgramCallFrame",
     "ProgramCallFrameEffect",
     "ProgramCallStack",
     "ProgramCallStackEffect",
     "ProgramTrace",
     "ProgramTraceEffect",
-    "PRIORITY_HIGH",
-    "PRIORITY_IDLE",
-    "PRIORITY_NORMAL",
+    "Promise",
     "Pure",
     "PureEffect",
     "Put",

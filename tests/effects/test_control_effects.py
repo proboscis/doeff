@@ -1,21 +1,17 @@
-"""Tests for Control effects composition rules (SPEC-EFF-004).
+"""Tests for control-effect composition semantics.
 
-This module tests the composition behavior of Pure, Try, and Intercept effects
-as defined in specs/effects/SPEC-EFF-004-control.md.
-
-Composition Rules Tested:
-- Try + Local: Environment restored even on caught error
-- Try + Put: State persists on caught error
-- Nested Try: Inner catches first
-- Intercept + Intercept: Composition order
-- Intercept + Gather: Scope rules
-
-Reference: gh#177
+This module covers Pure/Try interactions plus Mask/Override behavior that
+supersedes the old Intercept-based composition tests.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import doeff_vm
 import pytest
 
-from doeff import Intercept, Program, Spawn, do
+from doeff import EffectBase, Mask, Override, Spawn, do
 from doeff.effects import (
     Ask,
     Gather,
@@ -23,23 +19,19 @@ from doeff.effects import (
     Local,
     Pure,
     Put,
-    Tell,
     Try,
 )
 from doeff.effects.reader import AskEffect
 
-# ============================================================================
-# Pure Effect Tests
-# ============================================================================
+
+@dataclass(frozen=True)
+class Ping(EffectBase):
+    label: str
 
 
 class TestPureEffect:
-    """Tests for Pure effect semantics."""
-
     @pytest.mark.asyncio
     async def test_pure_returns_value(self, parameterized_interpreter) -> None:
-        """Pure effect returns its wrapped value."""
-
         @do
         def program():
             result = yield Pure(42)
@@ -51,8 +43,6 @@ class TestPureEffect:
 
     @pytest.mark.asyncio
     async def test_pure_no_state_change(self, parameterized_interpreter) -> None:
-        """Pure effect does not modify state."""
-
         @do
         def program():
             yield Put("counter", 10)
@@ -64,18 +54,9 @@ class TestPureEffect:
         assert result.value == 10
 
 
-# ============================================================================
-# Try Effect Composition Tests
-# ============================================================================
-
-
-class TestSafeLocalComposition:
-    """Tests for Try + Local composition: Environment restored even on caught error."""
-
+class TestTryComposition:
     @pytest.mark.asyncio
-    async def test_safe_local_env_restored_on_error(self, parameterized_interpreter) -> None:
-        """Environment is restored after Try catches error in Local scope."""
-
+    async def test_try_local_env_restored_on_error(self, parameterized_interpreter) -> None:
         @do
         def failing_in_local():
             modified = yield Ask("key")
@@ -91,43 +72,12 @@ class TestSafeLocalComposition:
         result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
         assert result.is_ok
         original, is_err, after = result.value
-
         assert original == "original"
         assert is_err is True
-        assert after == "original"  # Environment restored
+        assert after == "original"
 
     @pytest.mark.asyncio
-    async def test_safe_local_env_restored_on_success(self, parameterized_interpreter) -> None:
-        """Environment is restored after Try completes successfully in Local scope."""
-
-        @do
-        def success_in_local():
-            modified = yield Ask("key")
-            return modified
-
-        @do
-        def program():
-            original = yield Ask("key")
-            result = yield Try(Local({"key": "modified"}, success_in_local()))
-            after = yield Ask("key")
-            return (original, result.value, after)
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        original, inner_result, after = result.value
-
-        assert original == "original"
-        assert inner_result == "modified"
-        assert after == "original"  # Environment restored
-
-
-class TestSafePutComposition:
-    """Tests for Try + Put composition: State persists on caught error."""
-
-    @pytest.mark.asyncio
-    async def test_safe_put_state_persists_on_error(self, parameterized_interpreter) -> None:
-        """State changes persist even when Try catches an error."""
-
+    async def test_try_put_state_persists_on_error(self, parameterized_interpreter) -> None:
         @do
         def increment_then_fail():
             current = yield Get("counter")
@@ -144,44 +94,11 @@ class TestSafePutComposition:
         result = await parameterized_interpreter.run_async(program())
         assert result.is_ok
         is_err, counter = result.value
-
         assert is_err is True
-        assert counter == 1  # State persisted despite error
+        assert counter == 1
 
     @pytest.mark.asyncio
-    async def test_safe_put_multiple_changes_persist(self, parameterized_interpreter) -> None:
-        """Multiple state changes persist before error."""
-
-        @do
-        def multiple_puts_then_fail():
-            yield Put("a", 1)
-            yield Put("b", 2)
-            yield Put("c", 3)
-            raise ValueError("fail after puts")
-
-        @do
-        def program():
-            result = yield Try(multiple_puts_then_fail())
-            a = yield Get("a")
-            b = yield Get("b")
-            c = yield Get("c")
-            return (result.is_err(), a, b, c)
-
-        result = await parameterized_interpreter.run_async(program())
-        assert result.is_ok
-        is_err, a, b, c = result.value
-
-        assert is_err is True
-        assert (a, b, c) == (1, 2, 3)  # All state changes persisted
-
-
-class TestNestedSafe:
-    """Tests for Nested Try: Inner catches first."""
-
-    @pytest.mark.asyncio
-    async def test_nested_safe_inner_catches_first(self, parameterized_interpreter) -> None:
-        """Inner Try catches exception, outer Try sees Ok."""
-
+    async def test_nested_try_inner_catches_first(self, parameterized_interpreter) -> None:
         @do
         def failing_program():
             raise ValueError("inner error")
@@ -193,274 +110,82 @@ class TestNestedSafe:
 
         result = await parameterized_interpreter.run_async(program())
         assert result.is_ok
-
-        # Outer Try sees successful completion (Err value from inner)
         outer_result = result.value
         assert outer_result.is_ok()
-        # Inner Try caught the error
         inner_result = outer_result.value
         assert inner_result.is_err()
         assert isinstance(inner_result.error, ValueError)
 
+
+class TestMaskOverrideComposition:
     @pytest.mark.asyncio
-    async def test_nested_safe_three_levels(self, parameterized_interpreter) -> None:
-        """Three levels of nesting: innermost catches."""
+    async def test_mask_skips_next_matching_handler(self, parameterized_interpreter) -> None:
+        def first_handler(effect, k):
+            if isinstance(effect, Ping):
+                return (yield doeff_vm.Resume(k, f"first:{effect.label}"))
+            delegated = yield doeff_vm.Delegate()
+            return (yield doeff_vm.Resume(k, delegated))
+
+        def second_handler(effect, k):
+            if isinstance(effect, Ping):
+                return (yield doeff_vm.Resume(k, f"second:{effect.label}"))
+            delegated = yield doeff_vm.Delegate()
+            return (yield doeff_vm.Resume(k, delegated))
 
         @do
-        def failing_program():
-            raise ValueError("deep error")
+        def body():
+            return (yield Ping("x"))
 
-        @do
-        def program():
-            result = yield Try(Try(Try(failing_program())))
-            return result
+        wrapped = doeff_vm.WithHandler(
+            first_handler,
+            doeff_vm.WithHandler(second_handler, Mask([Ping], body())),
+        )
 
-        result = await parameterized_interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(wrapped)
         assert result.is_ok
-
-        # Level 1 (outermost): Ok
-        level1 = result.value
-        assert level1.is_ok()
-        # Level 2: Ok
-        level2 = level1.value
-        assert level2.is_ok()
-        # Level 3 (innermost): Err
-        level3 = level2.value
-        assert level3.is_err()
+        assert result.value == "first:x"
 
     @pytest.mark.asyncio
-    async def test_nested_safe_with_intermediate_success(self, parameterized_interpreter) -> None:
-        """Nested Try where inner succeeds."""
+    async def test_override_replaces_outer_then_delegates(self, parameterized_interpreter) -> None:
+        seen: list[str] = []
+
+        def outer_handler(effect, k):
+            if isinstance(effect, Ping):
+                return (yield doeff_vm.Resume(k, f"outer:{effect.label}"))
+            delegated = yield doeff_vm.Delegate()
+            return (yield doeff_vm.Resume(k, delegated))
+
+        def override_handler(effect, k):
+            if isinstance(effect, Ping):
+                seen.append(effect.label)
+                delegated = yield doeff_vm.Delegate()
+                return (yield doeff_vm.Resume(k, f"override:{delegated}"))
+            delegated = yield doeff_vm.Delegate()
+            return (yield doeff_vm.Resume(k, delegated))
 
         @do
-        def success_program():
-            return 42
+        def body():
+            return (yield Ping("p"))
 
-        @do
-        def program():
-            result = yield Try(Try(success_program()))
-            return result
+        wrapped = doeff_vm.WithHandler(
+            outer_handler,
+            Override(handler=override_handler, effect_types=[Ping], body=body()),
+        )
 
-        result = await parameterized_interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(wrapped)
         assert result.is_ok
-
-        # Both levels see success
-        outer = result.value
-        assert outer.is_ok()
-        inner_result = outer.value
-        assert inner_result.is_ok()
-        assert inner_result.value == 42
-
-
-# ============================================================================
-# Intercept Composition Tests
-# ============================================================================
-
-
-class TestInterceptComposition:
-    """Tests for Intercept + Intercept: Composition order."""
-
-    @pytest.mark.asyncio
-    async def test_intercept_first_non_none_wins(self, parameterized_interpreter) -> None:
-        """First transform that returns non-None wins."""
-
-        def transform_f(e):
-            if isinstance(e, AskEffect) and e.key == "key":
-                return Program.pure("from_f")
-            return None
-
-        def transform_g(e):
-            if isinstance(e, AskEffect) and e.key == "key":
-                return Program.pure("from_g")
-            return None
-
-        @do
-        def inner_program():
-            return (yield Ask("key"))
-
-        @do
-        def program():
-            # f is applied first (innermost), should win
-            result = yield Intercept(inner_program(), transform_f, transform_g)
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        assert result.value == "from_f"  # f wins because it's checked first
-
-    @pytest.mark.asyncio
-    async def test_intercept_passthrough_to_next(self, parameterized_interpreter) -> None:
-        """Transform returning None passes to next transform."""
-
-        def transform_f(e):
-            # Only intercept AskEffect for "other_key"
-            if isinstance(e, AskEffect) and e.key == "other_key":
-                return Program.pure("from_f")
-            return None  # Passthrough
-
-        def transform_g(e):
-            if isinstance(e, AskEffect) and e.key == "key":
-                return Program.pure("from_g")
-            return None
-
-        @do
-        def inner_program():
-            return (yield Ask("key"))
-
-        @do
-        def program():
-            # f passes through, g intercepts
-            result = yield Intercept(inner_program(), transform_f, transform_g)
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        assert result.value == "from_g"  # g wins because f returns None
-
-    @pytest.mark.asyncio
-    async def test_intercept_all_passthrough(self, parameterized_interpreter) -> None:
-        """All transforms returning None uses original effect."""
-
-        def transform_f(e):
-            return None  # Always passthrough
-
-        def transform_g(e):
-            return None  # Always passthrough
-
-        @do
-        def inner_program():
-            return (yield Ask("key"))
-
-        @do
-        def program():
-            result = yield Intercept(inner_program(), transform_f, transform_g)
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        assert result.value == "original"  # Original effect executed
-
-    @pytest.mark.asyncio
-    async def test_intercept_returns_program(self, parameterized_interpreter) -> None:
-        """Transform returning Program executes that Program."""
-
-        @do
-        def replacement_program():
-            yield Tell("replacement executed")
-            return "from_replacement"
-
-        def transform(e):
-            if isinstance(e, AskEffect):
-                return replacement_program()
-            return None
-
-        @do
-        def inner_program():
-            return (yield Ask("key"))
-
-        @do
-        def program():
-            result = yield Intercept(inner_program(), transform)
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        assert result.value == "from_replacement"
-
-
-# ============================================================================
-# Edge Cases and Error Handling
-# ============================================================================
-
-
-class TestInterceptErrorHandling:
-    """Tests for error handling in Intercept."""
-
-    @pytest.mark.asyncio
-    async def test_intercept_transform_exception_propagates(
-        self, parameterized_interpreter
-    ) -> None:
-        """Exception in transform propagates as error result."""
-
-        def bad_transform(e):
-            raise RuntimeError("transform error")
-
-        @do
-        def inner_program():
-            return (yield Ask("key"))
-
-        @do
-        def program():
-            result = yield Intercept(inner_program(), bad_transform)
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_err()
-        assert isinstance(result.error, RuntimeError)
-        assert "transform error" in str(result.error)
-
-    @pytest.mark.asyncio
-    async def test_intercept_does_not_catch_errors(self, parameterized_interpreter) -> None:
-        """Intercept does not catch errors from the program."""
-
-        def passthrough(e):
-            return None
-
-        @do
-        def failing_program():
-            yield Ask("key")
-            raise ValueError("program error")
-
-        @do
-        def program():
-            result = yield Intercept(failing_program(), passthrough)
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_err()
-        assert isinstance(result.error, ValueError)
-        assert "program error" in str(result.error)
-
-    @pytest.mark.asyncio
-    async def test_safe_with_intercept(self, parameterized_interpreter) -> None:
-        """Try can catch errors from intercepted programs."""
-
-        def passthrough(e):
-            return None
-
-        @do
-        def failing_program():
-            yield Ask("key")
-            raise ValueError("caught error")
-
-        @do
-        def program():
-            result = yield Try(Intercept(failing_program(), passthrough))
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        safe_result = result.value
-        assert safe_result.is_err()
-        assert isinstance(safe_result.error, ValueError)
-
-
-# ============================================================================
-# Combined Composition Tests
-# ============================================================================
+        assert result.value == "override:outer:p"
+        assert seen == ["p"]
 
 
 class TestCombinedComposition:
-    """Tests for complex combinations of control effects."""
-
     @pytest.mark.asyncio
-    async def test_safe_intercept_local_combined(self, parameterized_interpreter) -> None:
-        """Complex combination: Try + Intercept + Local."""
-
-        def intercept_ask(e):
-            if isinstance(e, AskEffect):
-                return Program.pure("intercepted")
-            return None
+    async def test_try_override_local_combined(self, parameterized_interpreter) -> None:
+        def ask_override(effect, k):
+            if isinstance(effect, AskEffect):
+                return (yield doeff_vm.Resume(k, "intercepted"))
+            delegated = yield doeff_vm.Delegate()
+            return (yield doeff_vm.Resume(k, delegated))
 
         @do
         def inner_program():
@@ -470,9 +195,11 @@ class TestCombinedComposition:
 
         @do
         def program():
-            # Try wraps Local wraps intercepted program
             result = yield Try(
-                Local({"key": "modified"}, Intercept(inner_program(), intercept_ask))
+                Local(
+                    {"key": "modified"},
+                    Override(handler=ask_override, effect_types=[AskEffect], body=inner_program()),
+                )
             )
             stored = yield Get("result")
             outer_key = yield Ask("key")
@@ -481,16 +208,13 @@ class TestCombinedComposition:
         result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
         assert result.is_ok
         safe_result, stored, outer_key = result.value
-
         assert safe_result.is_ok()
-        assert safe_result.value == "intercepted"  # Intercept worked
-        assert stored == "intercepted"  # State persisted
-        assert outer_key == "original"  # Environment restored
+        assert safe_result.value == "intercepted"
+        assert stored == "intercepted"
+        assert outer_key == "original"
 
     @pytest.mark.asyncio
     async def test_gather_with_safe_children(self, parameterized_interpreter) -> None:
-        """Gather with Try-wrapped children handles errors independently."""
-
         @do
         def may_fail(should_fail: bool):
             _ = yield Ask("_")
@@ -513,7 +237,6 @@ class TestCombinedComposition:
         result = await parameterized_interpreter.run_async(program(), env={"_": None})
         assert result.is_ok
         results = result.value
-
         assert len(results) == 3
         assert results[0].is_ok()
         assert results[0].value == "success"

@@ -640,7 +640,7 @@ impl ASTStreamProgram for AwaitHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
-    _scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_await_python_effect(&obj) {
@@ -678,7 +678,12 @@ impl ASTStreamProgram for AwaitHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         if let Some(continuation) = self.pending_k.take() {
             return ASTStreamStep::Yield(DoCtrl::Resume {
                 continuation,
@@ -688,7 +693,12 @@ impl ASTStreamProgram for AwaitHandlerProgram {
         ASTStreamStep::Return(value)
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         if let Some(continuation) = self.pending_k.take() {
             return ASTStreamStep::Yield(DoCtrl::TransferThrow {
                 continuation,
@@ -700,11 +710,21 @@ impl ASTStreamProgram for AwaitHandlerProgram {
 }
 
 impl ASTStream for AwaitHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -844,7 +864,7 @@ impl ASTStreamProgram for StateHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
-    _scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         #[cfg(test)]
         if let Effect::Get { key } = effect.clone() {
@@ -928,7 +948,12 @@ impl ASTStreamProgram for StateHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         if self.pending_key.is_none() {
             // Terminal case (Get/Put): handler is done, pass through return value
             return ASTStreamStep::Return(value);
@@ -945,17 +970,32 @@ impl ASTStreamProgram for StateHandlerProgram {
         })
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Throw(exc)
     }
 }
 
 impl ASTStream for StateHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -1593,11 +1633,21 @@ impl ASTStreamProgram for LazyAskHandlerProgram {
 }
 
 impl ASTStream for LazyAskHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -1754,24 +1804,44 @@ impl ASTStreamProgram for ReaderHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         if false {
             unreachable!("ReaderHandler never yields mid-handling");
         }
         ASTStreamStep::Return(value)
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Throw(exc)
     }
 }
 
 impl ASTStream for ReaderHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -1864,7 +1934,7 @@ impl ASTStreamProgram for WriterHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
-    _scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         #[cfg(test)]
         if let Effect::Tell { message } = effect.clone() {
@@ -1925,11 +1995,21 @@ impl ASTStreamProgram for WriterHandlerProgram {
 }
 
 impl ASTStream for WriterHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -2061,7 +2141,7 @@ impl ASTStreamProgram for ResultSafeHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
-    _scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_result_safe_python_effect(&obj) {
@@ -2090,7 +2170,12 @@ impl ASTStreamProgram for ResultSafeHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
             ResultSafePhase::AwaitHandlers {
                 continuation,
@@ -2116,7 +2201,12 @@ impl ASTStreamProgram for ResultSafeHandlerProgram {
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
             ResultSafePhase::AwaitHandlers { continuation, .. }
             | ResultSafePhase::AwaitEval { continuation } => self.finish_err(continuation, exc),
@@ -2126,11 +2216,21 @@ impl ASTStreamProgram for ResultSafeHandlerProgram {
 }
 
 impl ASTStream for ResultSafeHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         <Self as ASTStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -2237,7 +2337,7 @@ impl ASTStreamProgram for DoubleCallHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
-    _scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> ASTStreamStep {
         match effect {
             Effect::Modify { modifier, .. } => {
@@ -2256,7 +2356,12 @@ impl ASTStreamProgram for DoubleCallHandlerProgram {
         }
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         match std::mem::replace(&mut self.phase, DoubleCallPhase::Done) {
             DoubleCallPhase::AwaitingFirstResult { k, modifier } => {
                 // Got first result. Now do a SECOND Python call: modifier(first_result).
@@ -2284,7 +2389,12 @@ impl ASTStreamProgram for DoubleCallHandlerProgram {
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore, _scope: &mut ScopeStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Throw(exc)
     }
 }
@@ -2385,7 +2495,12 @@ mod tests {
         assert_eq!(location.function_name, "ReaderHandler");
         assert_eq!(location.phase.as_deref(), Some("AskApply"));
 
-        let step = ASTStream::throw(&mut program, PyException::runtime_error("boom"), &mut store, &mut scope);
+        let step = ASTStream::throw(
+            &mut program,
+            PyException::runtime_error("boom"),
+            &mut store,
+            &mut scope,
+        );
         assert!(matches!(step, ASTStreamStep::Throw(_)));
     }
 
@@ -2399,7 +2514,12 @@ mod tests {
         assert_eq!(location.function_name, "WriterHandler");
         assert_eq!(location.phase.as_deref(), Some("TellApply"));
 
-        let step = ASTStream::throw(&mut program, PyException::runtime_error("boom"), &mut store, &mut scope);
+        let step = ASTStream::throw(
+            &mut program,
+            PyException::runtime_error("boom"),
+            &mut store,
+            &mut scope,
+        );
         assert!(matches!(step, ASTStreamStep::Throw(_)));
     }
 
@@ -2436,7 +2556,7 @@ mod tests {
     fn test_result_safe_ast_stream_handlers_to_eval_sequence() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             let mut program = ResultSafeHandlerProgram::new();
             let continuation = make_test_continuation();
             let sub_program =
@@ -2450,7 +2570,12 @@ mod tests {
             assert_eq!(location.function_name, "ResultSafeHandler");
             assert_eq!(location.phase.as_deref(), Some("AwaitHandlers"));
 
-            let step = ASTStream::resume(&mut program, Value::Handlers(vec![]), &mut store, &mut scope);
+            let step = ASTStream::resume(
+                &mut program,
+                Value::Handlers(vec![]),
+                &mut store,
+                &mut scope,
+            );
             assert!(matches!(step, ASTStreamStep::Yield(DoCtrl::Eval { .. })));
 
             let location = ASTStream::debug_location(&program).expect("result safe debug location");
@@ -2498,7 +2623,7 @@ mod tests {
     fn test_state_factory_get() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             store.put("key".to_string(), Value::Int(42));
             let k = make_test_continuation();
             let program_ref = StateHandlerFactory.create_program();
@@ -2530,7 +2655,7 @@ mod tests {
     fn test_state_factory_put() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
             let program_ref = StateHandlerFactory.create_program();
             let step = {
@@ -2562,7 +2687,7 @@ mod tests {
         use pyo3::Python;
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             store.put("key".to_string(), Value::Int(10));
             let k = make_test_continuation();
             let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
@@ -2595,7 +2720,7 @@ mod tests {
         use pyo3::Python;
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             store.put("key".to_string(), Value::Int(10));
             let k = make_test_continuation();
             let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
@@ -2659,7 +2784,7 @@ mod tests {
     fn test_reader_factory_ask() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             store.set_env_str("config", Value::String("value".to_string()));
             let k = make_test_continuation();
             let program_ref = ReaderHandlerFactory.create_program();
@@ -2714,7 +2839,7 @@ mod tests {
     fn test_writer_factory_tell() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
             let program_ref = WriterHandlerFactory.create_program();
             let step = {
@@ -2770,7 +2895,7 @@ mod tests {
     fn test_result_safe_handler_wraps_return_and_exception() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
 
             let locals = pyo3::types::PyDict::new(py);
@@ -2863,7 +2988,7 @@ mod tests {
         use pyo3::Python;
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
             let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
 

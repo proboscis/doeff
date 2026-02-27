@@ -24,7 +24,6 @@ pub mod error;
 pub mod frame;
 mod handler;
 pub mod ids;
-mod interceptor_state;
 pub mod py_key;
 pub mod py_shared;
 pub mod python_call;
