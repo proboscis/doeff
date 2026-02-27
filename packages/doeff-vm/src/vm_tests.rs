@@ -251,6 +251,7 @@ fn test_start_dispatch_allows_reentrant_handler_match() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: handler_seg_id,
         supports_error_context_conversion: false,
         k_user: make_dummy_continuation(),
         prompt_seg_id,
