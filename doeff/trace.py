@@ -370,18 +370,28 @@ def coerce_active_chain_entries(entries: list[Any] | tuple[Any, ...]) -> list[Ac
     coerced = [coerce_active_chain_entry(entry) for entry in entries]
     active_chain: list[ActiveChainEntry] = []
     context_boundaries: list[SpawnBoundary] = []
+    seen_context_boundary_tasks: set[int] = set()
 
     for entry in coerced:
         if isinstance(entry, ContextEntry):
             payload = entry.data
             if isinstance(payload, dict) and payload.get("kind") == "spawn_boundary":
-                context_boundaries.append(_coerce_spawn_boundary_entry(payload))
+                boundary = _coerce_spawn_boundary_entry(payload)
+                if boundary.task_id in seen_context_boundary_tasks:
+                    continue
+                seen_context_boundary_tasks.add(boundary.task_id)
+                context_boundaries.append(boundary)
             else:
                 active_chain.append(entry)
             continue
         active_chain.append(entry)
 
     for boundary in context_boundaries:
+        if any(
+            isinstance(item, SpawnBoundary) and item.task_id == boundary.task_id
+            for item in active_chain
+        ):
+            continue
         insert_idx = next(
             (index for index, item in enumerate(active_chain) if isinstance(item, ExceptionSite)),
             len(active_chain),

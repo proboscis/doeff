@@ -1,6 +1,6 @@
 //! Dispatch-domain state and helper logic for VM composition.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::capture::{CaptureEvent, HandlerAction};
 use crate::continuation::Continuation;
@@ -15,6 +15,7 @@ use crate::step::PyException;
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DispatchState {
     dispatch_stack: Vec<DispatchContext>,
+    dispatch_index: HashMap<DispatchId, usize>,
 }
 
 pub(crate) struct WithHandlerPlan {
@@ -46,24 +47,22 @@ impl DispatchState {
     }
 
     pub(crate) fn push_dispatch(&mut self, ctx: DispatchContext) {
+        self.dispatch_index
+            .insert(ctx.dispatch_id, self.dispatch_stack.len());
         self.dispatch_stack.push(ctx);
     }
 
     pub(crate) fn find_by_dispatch_id(&self, dispatch_id: DispatchId) -> Option<&DispatchContext> {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
+        let idx = *self.dispatch_index.get(&dispatch_id)?;
+        self.dispatch_stack.get(idx)
     }
 
     pub(crate) fn find_mut_by_dispatch_id(
         &mut self,
         dispatch_id: DispatchId,
     ) -> Option<&mut DispatchContext> {
-        self.dispatch_stack
-            .iter_mut()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
+        let idx = *self.dispatch_index.get(&dispatch_id)?;
+        self.dispatch_stack.get_mut(idx)
     }
 
     pub(crate) fn effect_for_dispatch(&self, dispatch_id: DispatchId) -> Option<DispatchEffect> {
@@ -97,7 +96,11 @@ impl DispatchState {
     pub(crate) fn lazy_pop_completed(&mut self) {
         while let Some(top) = self.dispatch_stack.last() {
             if top.completed {
-                self.dispatch_stack.pop();
+                let popped = self
+                    .dispatch_stack
+                    .pop()
+                    .expect("dispatch_stack.last() returned Some but pop failed");
+                self.dispatch_index.remove(&popped.dispatch_id);
             } else {
                 break;
             }
