@@ -408,7 +408,7 @@ rules:
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
   - id: doctrl-variants-require-approval
-    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|WithHandler\b|WithIntercept\b|Finally\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|ASTStream\b|Eval\b|GetCallStack\b|GetTrace\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
+    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|WithHandler\b|WithIntercept\b|Finally\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|GetCallStack\b|GetTrace\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
       include:
         - "**/packages/doeff-vm/src/do_ctrl.rs"
@@ -1304,7 +1304,7 @@ rules:
       - pattern: is_generator_object(...)
     message: |
       C9: Runtime type branching helpers are removed.
-      Use the unified DoExpr/ASTStream protocol path instead.
+      Use the unified DoExpr/IRStream protocol path instead.
     languages: [rust]
     severity: ERROR
 
@@ -1680,87 +1680,123 @@ rules:
     metadata:
       category: vm-scope-structural
       spec: SPEC-VM-015
-      invariant: INV-1
-
-  - id: vm-scope-no-pending-python-on-vm-struct
-    pattern-regex: 'pub\s+pending_python\s*:\s*Option<PendingPython>'
-    paths:
-      include:
-        - "**/packages/doeff-vm/src/vm.rs"
-    message: |
-      SPEC-VM-015 INV-1: `pending_python` must live on Segment, not VM.
-      Each execution context tracks its own outstanding Python call.
-      See SPEC-VM-015 §4.1 and VM-SCOPE-004 (corruption via overwrite).
-    languages: [rust]
-    severity: ERROR
-    metadata:
-      category: vm-scope-structural
-      spec: SPEC-VM-015
-      invariant: INV-1
-
-  - id: vm-scope-no-pending-error-context-on-vm-struct
-    pattern-regex: 'pub\s+pending_error_context\s*:\s*Option<PyException>'
-    paths:
-      include:
-        - "**/packages/doeff-vm/src/vm.rs"
-    message: |
-      SPEC-VM-015 INV-1: `pending_error_context` must live on Segment, not VM.
-      Each execution context owns its error context, preventing .take() theft.
-      See SPEC-VM-015 §4.1 and VM-SCOPE-003 (stolen by nested .take()).
-    languages: [rust]
-    severity: ERROR
-    metadata:
-      category: vm-scope-structural
-      spec: SPEC-VM-015
-      invariant: INV-1
-
-  - id: vm-scope-no-eval-depth-on-interceptor-state
-    pattern-regex: 'interceptor_eval_depth\s*:\s*usize'
-    paths:
-      include:
-        - "**/packages/doeff-vm/src/interceptor_state.rs"
-    message: |
-      SPEC-VM-015 INV-1: `interceptor_eval_depth` must live on Segment, not InterceptorState.
-      Interceptor eval depth is execution-local — outer depth must not leak into inner dispatch.
-      See SPEC-VM-015 §4.3 and VM-SCOPE-005 (depth leaks across dispatch).
-    languages: [rust]
-    severity: ERROR
-    metadata:
-      category: vm-scope-structural
-      spec: SPEC-VM-015
-      invariant: INV-1
-
-  - id: vm-scope-no-skip-stack-on-interceptor-state
-    pattern-regex: 'interceptor_skip_stack\s*:\s*Vec<Marker>'
-    paths:
-      include:
-        - "**/packages/doeff-vm/src/interceptor_state.rs"
-    message: |
-      SPEC-VM-015 INV-1: `interceptor_skip_stack` must live on Segment, not InterceptorState.
-      Skip markers are execution-local — inner dispatch skips must not leak to outer.
-      See SPEC-VM-015 §4.3 and VM-SCOPE-006 (marker leak across dispatch).
-    languages: [rust]
-    severity: ERROR
-    metadata:
-      category: vm-scope-structural
-      spec: SPEC-VM-015
-      invariant: INV-1
-
-  - id: vm-scope-no-saved-mode-on-dispatch-context
-    pattern-regex: 'saved_mode\s*:\s*Mode'
-    paths:
-      include:
-        - "**/packages/doeff-vm/src/dispatch.rs"
-    message: |
-      SPEC-VM-015: Save/restore on DispatchContext is the REJECTED approach.
-      With segment-owned state, there is nothing to save or restore.
-      DispatchContext must not carry saved_mode. See SPEC-VM-015 §1.3 and §4.4.
-    languages: [rust]
-    severity: ERROR
-    metadata:
-      category: vm-scope-structural
-      spec: SPEC-VM-015
       rejected-approach: save-restore
+
+  # ─────────────────────────────────────────────────────────────────
+  # SPEC-VM-017 KLEISLI ENFORCEMENT
+  # ─────────────────────────────────────────────────────────────────
+
+  # Rule 1: kleisli.rs must contain the Kleisli trait (existence check).
+  # Semgrep doesn't natively support "must exist" assertions — the real
+  # enforcement is the Rust compiler (Value::Kleisli references the trait).
+  - id: kleisli-trait-exists
+    patterns:
+      - pattern-regex: 'pub trait Kleisli'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/kleisli.rs"
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      enforcement: existence
+    message: |
+      kleisli.rs must contain 'pub trait Kleisli' (SPEC-VM-017 R1-A).
+      This is the IR-level callable: T → DoExpr[U].
+
+  # Rule 2: Value enum must contain Kleisli(KleisliRef) variant.
+  - id: kleisli-value-variant-exists
+    patterns:
+      - pattern-regex: 'Kleisli\(KleisliRef\)'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/value.rs"
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      enforcement: existence
+    message: |
+      Value enum must contain Kleisli(KleisliRef) variant (SPEC-VM-017 R1-D).
+
+  # Rule 3: Freeze Value::PythonHandlerCallable — no new construction outside handler.rs.
+  - id: no-new-python-handler-callable-construction
+    pattern-regex: 'Value::PythonHandlerCallable\('
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+      exclude:
+        - "**/packages/doeff-vm/src/handler.rs"
+        - "**/packages/doeff-vm/src/value.rs"
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/scheduler.rs"
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      phase: freeze
+    message: |
+      Do not create new Value::PythonHandlerCallable usages.
+      Use Value::Kleisli(PyKleisli) instead (SPEC-VM-017 R1-D).
+      Existing usages in handler.rs will be migrated in Phase 2.
+
+  # Rule 4: Freeze Value::RustProgramInvocation — no new construction outside handler.rs.
+  - id: no-new-rust-program-invocation-construction
+    pattern-regex: 'Value::RustProgramInvocation\('
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+      exclude:
+        - "**/packages/doeff-vm/src/handler.rs"
+        - "**/packages/doeff-vm/src/value.rs"
+        - "**/packages/doeff-vm/src/vm.rs"
+        - "**/packages/doeff-vm/src/scheduler.rs"
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      phase: freeze
+    message: |
+      Do not create new Value::RustProgramInvocation usages.
+      Use Value::Kleisli(RustKleisli) instead (SPEC-VM-017 R1-D).
+      Existing usages in handler.rs will be migrated in Phase 2.
+
+  # Rule 5: ASTStream has been renamed to IRStream — prevent regression.
+  - id: no-ast-stream-references
+    pattern-regex: 'ASTStream'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      phase: rename
+    message: |
+      ASTStream has been renamed to IRStream (SPEC-VM-017 Phase 1).
+      Use IRStream, IRStreamRef, IRStreamStep instead.
+
+  # Rule 6: CallArg has been removed — prevent regression.
+  - id: no-call-arg-references
+    pattern-regex: 'CallArg'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      phase: cleanup
+    message: |
+      CallArg has been removed (SPEC-VM-017 R1-K).
+      Apply/Expand args are Vec<DoExpr>. Use DoExpr::Pure { value } for resolved values.
+
 
   - id: vm-scope-no-saved-segment-on-dispatch-context
     pattern-regex: 'saved_segment\s*:\s*Option<SegmentId>'

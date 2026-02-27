@@ -13,19 +13,19 @@ use crate::segment::ScopeStore;
 use crate::value::Value;
 use crate::vm::RustStore;
 
-pub trait ASTStream: fmt::Debug + Send {
+pub trait IRStream: fmt::Debug + Send {
     fn resume(
         &mut self,
         value: Value,
         store: &mut RustStore,
         scope: &mut ScopeStore,
-    ) -> ASTStreamStep;
+    ) -> IRStreamStep;
     fn throw(
         &mut self,
         exc: PyException,
         store: &mut RustStore,
         scope: &mut ScopeStore,
-    ) -> ASTStreamStep;
+    ) -> IRStreamStep;
     fn debug_location(&self) -> Option<StreamLocation> {
         None
     }
@@ -34,10 +34,10 @@ pub trait ASTStream: fmt::Debug + Send {
     }
 }
 
-pub type ASTStreamRef = Arc<Mutex<Box<dyn ASTStream>>>;
+pub type IRStreamRef = Arc<Mutex<Box<dyn IRStream>>>;
 
 #[derive(Debug)]
-pub enum ASTStreamStep {
+pub enum IRStreamStep {
     Yield(DoCtrl),
     Return(Value),
     Throw(PyException),
@@ -99,18 +99,18 @@ impl PythonGeneratorStream {
     }
 }
 
-impl ASTStream for PythonGeneratorStream {
+impl IRStream for PythonGeneratorStream {
     fn resume(
         &mut self,
         value: Value,
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         if self.started {
-            ASTStreamStep::NeedsPython(PythonCall::GenSend { value })
+            IRStreamStep::NeedsPython(PythonCall::GenSend { value })
         } else {
             self.started = true;
-            ASTStreamStep::NeedsPython(PythonCall::GenNext)
+            IRStreamStep::NeedsPython(PythonCall::GenNext)
         }
     }
 
@@ -119,9 +119,9 @@ impl ASTStream for PythonGeneratorStream {
         exc: PyException,
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         self.started = true;
-        ASTStreamStep::NeedsPython(PythonCall::GenThrow { exc })
+        IRStreamStep::NeedsPython(PythonCall::GenThrow { exc })
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -169,13 +169,13 @@ mod tests {
             let step1 = stream.resume(Value::Unit, &mut store, &mut scope);
             assert!(matches!(
                 step1,
-                ASTStreamStep::NeedsPython(PythonCall::GenNext)
+                IRStreamStep::NeedsPython(PythonCall::GenNext)
             ));
 
             let step2 = stream.resume(Value::Int(7), &mut store, &mut scope);
             assert!(matches!(
                 step2,
-                ASTStreamStep::NeedsPython(PythonCall::GenSend {
+                IRStreamStep::NeedsPython(PythonCall::GenSend {
                     value: Value::Int(7)
                 })
             ));
@@ -211,7 +211,7 @@ mod tests {
             let step = stream.throw(PyException::runtime_error("boom"), &mut store, &mut scope);
             assert!(matches!(
                 step,
-                ASTStreamStep::NeedsPython(PythonCall::GenThrow { .. })
+                IRStreamStep::NeedsPython(PythonCall::GenThrow { .. })
             ));
         });
     }
