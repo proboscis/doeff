@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from doeff import (
     Apply,
     Finally,
@@ -11,6 +13,7 @@ from doeff import (
     Pure,
     Put,
     Resume,
+    Transfer,
     Try,
     WithHandler,
     default_handlers,
@@ -121,6 +124,63 @@ def test_finally_travels_with_resumed_continuation() -> None:
     assert result.value == ("handled:x", True)
 
 
+def test_finally_travels_with_transferred_continuation() -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class Ping(EffectBase):
+        label: str
+
+    def ping_handler(effect: object, k: object):
+        if isinstance(effect, Ping):
+            yield Transfer(k, f"handled:{effect.label}")
+        yield Pass()
+
+    @do
+    def program():
+        yield Put("cleaned", False)
+        yield Finally(Put("cleaned", True))
+        value = yield Ping(label="x")
+        return value
+
+    @do
+    def wrapper():
+        value = yield WithHandler(ping_handler, program())
+        cleaned = yield Get("cleaned")
+        return value, cleaned
+
+    result = run(wrapper(), handlers=default_handlers(), store={})
+    assert result.value == ("handled:x", True)
+
+
+def test_abandoned_continuation_with_finally_logs_warning(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class Ping(EffectBase):
+        label: str
+
+    def abandon_handler(effect: object, k: object):
+        if isinstance(effect, Ping):
+            return "abandoned"
+        yield Pass()
+
+    @do
+    def program():
+        yield Finally(Put("cleaned", True))
+        _ = yield Ping(label="x")
+        return "unreachable"
+
+    result = run(
+        WithHandler(abandon_handler, program()),
+        handlers=default_handlers(),
+        store={},
+    )
+    assert result.value == "abandoned"
+
+    captured = capfd.readouterr()
+    assert "warning: continuation" in captured.err
+    assert "Finally cleanup" in captured.err
+
+
 def test_cleanup_exception_does_not_swallow_original_exception() -> None:
     def cleanup_raises() -> None:
         raise RuntimeError("cleanup exploded")
@@ -138,3 +198,5 @@ def test_cleanup_exception_does_not_swallow_original_exception() -> None:
     assert result.value.is_err()
     assert isinstance(result.value.error, ValueError)
     assert "original boom" in str(result.value.error)
+    assert isinstance(result.value.error.__context__, RuntimeError)
+    assert "cleanup exploded" in str(result.value.error.__context__)
