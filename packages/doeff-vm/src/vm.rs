@@ -3076,17 +3076,6 @@ impl VM {
         self.segments.get(k.segment_id).and_then(|source_seg| source_seg.caller)
     }
 
-    fn activation_caller_segment(
-        &self,
-        kind: ContinuationActivationKind,
-        k: &Continuation,
-    ) -> Option<SegmentId> {
-        match kind {
-            ContinuationActivationKind::Resume => kind.caller_segment(self.current_segment),
-            ContinuationActivationKind::Transfer => self.continuation_caller_segment(k),
-        }
-    }
-
     fn enter_continuation_segment_with_dispatch(
         &mut self,
         k: &Continuation,
