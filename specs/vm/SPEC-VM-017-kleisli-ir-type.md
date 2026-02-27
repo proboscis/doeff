@@ -1,6 +1,6 @@
 # SPEC-VM-017: Kleisli Arrow as IR-Level Callable
 
-## Status: Draft (Revision 1)
+## Status: Draft (Revision 2)
 
 ### Motivation
 
@@ -42,7 +42,7 @@ introduces the IR-level equivalent.
 /// computations" — the same concept as FlatMap's binder.
 pub trait Kleisli: Debug + Send + Sync {
     /// Apply the arrow to arguments, producing a DoExpr to evaluate.
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError>;
+    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoExpr, VMError>;
 
     /// Debug metadata for tracing/error reporting.
     fn debug_info(&self) -> KleisliDebugInfo;
@@ -56,22 +56,41 @@ pub trait Kleisli: Debug + Send + Sync {
 pub type KleisliRef = Arc<dyn Kleisli>;
 ```
 
-### R1-B: `PyKleisli` — Python-backed implementation
+### R1-B: `PyKleisli` — Python-backed implementation (`#[pyclass]`)
+
+`PyKleisli` is a **`#[pyclass]`** — a Rust struct exposed to Python via PyO3. This is the
+critical design choice: `@do` directly returns a `PyKleisli` instance, and the VM natively
+recognizes it as `Value::Kleisli`. No intermediate wrapping layer.
 
 ```rust
 /// Wraps a Python callable as a Kleisli arrow.
 ///
+/// This is a #[pyclass] — constructible from Python. The @do decorator
+/// returns PyKleisli instances directly, making them first-class IR values.
+///
 /// When applied:
 /// - If the callable returns a DoExpr → return it directly
-/// - If the callable returns a generator → wrap as DoCtrl::ASTStream (IRStream)
+/// - If the callable returns a generator → wrap as DoExpr::ASTStream (IRStream)
 /// - Both produce DoExpr, which the VM evaluates uniformly.
+#[pyclass]
 pub struct PyKleisli {
     callable: Py<PyAny>,
     metadata: KleisliDebugInfo,
 }
 
+#[pymethods]
+impl PyKleisli {
+    #[new]
+    fn new(callable: Py<PyAny>, name: String, file: Option<String>, line: Option<u32>) -> Self {
+        PyKleisli {
+            callable,
+            metadata: KleisliDebugInfo { name, file, line },
+        }
+    }
+}
+
 impl Kleisli for PyKleisli {
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoExpr, VMError> {
         let py_args = values_to_py_tuple(py, &args)?;
         let result = self.callable.call1(py, py_args)?;
 
@@ -79,9 +98,9 @@ impl Kleisli for PyKleisli {
             // @do function path: result IS a DoExpr
             classify_yielded_bound(py, result.bind(py))
         } else if is_generator(py, &result) {
-            // Plain generator path: wrap as IRStream
+            // Plain generator path: wrap as IRStream (ASTStream)
             let stream = PythonGeneratorStream::new(result, ...);
-            Ok(DoCtrl::ASTStream { stream: Arc::new(Mutex::new(Box::new(stream))), metadata: ... })
+            Ok(DoExpr::ASTStream { stream: Arc::new(Mutex::new(Box::new(stream))), metadata: ... })
         } else {
             Err(VMError::type_error("Kleisli must return DoExpr or generator"))
         }
@@ -89,13 +108,25 @@ impl Kleisli for PyKleisli {
 }
 ```
 
+**Key property**: Because `PyKleisli` is `#[pyclass]`, `Value::from_pyobject` can detect it:
+
+```rust
+// In Value::from_pyobject:
+if let Ok(kleisli) = obj.extract::<PyRef<'_, PyKleisli>>() {
+    return Value::Kleisli(Arc::new(kleisli.clone()));
+}
+```
+
+This means `Pure(@do(f))` automatically produces `Pure(Value::Kleisli(...))` — no
+explicit conversion needed at the Python wrapper layer.
+
 ### R1-C: `RustKleisli` — Rust-backed implementation
 
 ```rust
 /// Wraps a Rust ASTStreamFactory as a Kleisli arrow.
 ///
 /// When applied, creates a Rust ASTStreamProgram and returns it as
-/// DoCtrl::ASTStream. Replaces the current RustProgramInvocation pattern
+/// DoExpr::ASTStream. Replaces the current RustProgramInvocation pattern
 /// where factory+effect+continuation are bundled together.
 pub struct RustKleisli {
     factory: ASTStreamFactoryRef,
@@ -103,7 +134,7 @@ pub struct RustKleisli {
 }
 
 impl Kleisli for RustKleisli {
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoExpr, VMError> {
         // args[0] = effect, args[1] = continuation (for handler Kleislis)
         let effect = extract_effect(&args[0])?;
         let continuation = extract_continuation(&args[1])?;
@@ -131,43 +162,52 @@ Replaces:
 
 ## §2 WithHandler Changes
 
-### R1-E: Handler field becomes DoExpr
+### R1-E: Handler field becomes direct `KleisliRef`
 
 ```rust
 // Before:
 WithHandler {
     handler: Handler,              // Arc<dyn HandlerInvoke> — Rust trait object
-    expr: Py<PyAny>,
+    expr: Py<PyAny>,               // body as opaque Python object
     return_clause: Option<PyShared>,
     py_identity: Option<PyShared>,
 }
 
 // After:
 WithHandler {
-    handler_expr: Py<PyAny>,       // DoExpr that evaluates to Value::Kleisli
-    body: Py<PyAny>,               // DoExpr — the computation to handle
+    handler: KleisliRef,           // direct Kleisli value, already resolved
+    body: DoExpr,                  // Rust-native IR expression
     return_clause: Option<PyShared>,
 }
 ```
 
-`handler_expr` is a DoExpr. The VM evaluates it once when entering the `WithHandler`
-scope, producing a `Value::Kleisli(...)`. The Kleisli value is stored in the
-`PromptBoundary` segment for later dispatch.
+**Design choice: `f: Kleisli` (direct value), not `f: Expr[Kleisli]`.**
+
+The handler is a direct `KleisliRef`, not a DoExpr that evaluates to one. Rationale:
+- Mirrors current design (`handler: Handler` is already a direct value)
+- No unnecessary eval step (99% of cases would just be `Pure(Kleisli)`)
+- Simpler VM — handler is immediately available at scope entry
+- No risk of handler_expr evaluation failing
+- No real use case for computed handlers that can't be expressed inside the handler body
+
+The body is `DoExpr` — Rust-native IR, not `Py<PyAny>`. The Python object is converted
+to DoExpr at IR construction time (in pyvm.rs `classify_yielded_bound`).
 
 `py_identity` moves into the Kleisli trait (`Kleisli::py_identity()`).
 
-### R1-F: Two-phase handler evaluation
+### R1-F: Handler dispatch (single-phase)
 
 ```
-Phase 1 — Scope entry:
-    handler: Value::Kleisli = eval(handler_expr)
-    store handler in PromptBoundary segment
-    begin evaluating body
+Scope entry:
+    handler: KleisliRef — already resolved, store in PromptBoundary segment
+    begin evaluating body (DoExpr)
 
-Phase 2 — Effect dispatch:
-    handler_body: DoCtrl = handler.apply([effect, continuation])
+Effect dispatch:
+    handler_body: DoExpr = handler.apply([effect, continuation])
     eval(handler_body)
 ```
+
+No two-phase evaluation needed. The handler is a direct value.
 
 ### R1-G: `can_handle` moves to dispatch policy
 
@@ -184,7 +224,9 @@ Options (to be decided in implementation):
 
 ## §3 WithIntercept Changes
 
-### R1-H: Interceptor field becomes DoExpr
+### R1-H: Interceptor field becomes direct `KleisliRef`
+
+Both `WithHandler` and `WithIntercept` use the same interface: `f: KleisliRef` (direct value).
 
 ```rust
 // Before:
@@ -196,35 +238,71 @@ WithIntercept {
 
 // After:
 WithIntercept {
-    interceptor_expr: Py<PyAny>,    // DoExpr that evaluates to a callable value
-    body: Py<PyAny>,                // DoExpr
+    interceptor: KleisliRef,        // direct Kleisli value, already resolved
+    body: DoExpr,                   // Rust-native IR expression
     metadata: Option<CallMetadata>,
 }
 ```
 
-Note: WithIntercept's `f(effect) → effect` is a pure function (not Kleisli) — it returns
-a value, not a computation. The interceptor callable evaluates to a regular `Value::Python`
-callable, not `Value::Kleisli`. The interceptor protocol (`Apply`, not `Expand`) is unchanged.
+**Unified interface**: Both IR nodes take `f: KleisliRef` + `body: DoExpr`.
 
-If future requirements need interceptors to produce computations, they would then become
-Kleisli arrows. But current semantics are synchronous value-returning.
+For interceptors, the Kleisli is `effect → DoExpr[effect]`. In the common (pure transform)
+case, `PyKleisli.apply()` returns `Pure(transformed_effect)`. If the interceptor is a `@do`
+function that yields effects, the DoExpr is evaluated normally — interceptors gain the
+ability to perform computations, not just pure transforms.
+
+**Construction**: `PyKleisli` extracted at IR construction time:
+
+```
+Python:  WithIntercept(interceptor=@do(f), expr=body)
+                                     ↓
+pyvm.rs: extract PyKleisli → KleisliRef, classify body → DoExpr
+                                     ↓
+WithIntercept { interceptor: kleisli_ref, body: doexpr, ... }
+```
 
 ---
 
 ## §4 `@do` Function Integration
 
-### R1-I: `@do` functions as Kleisli arrows
+### R1-I: `@do` returns `PyKleisli` directly
 
-A `@do` decorated function returns `KleisliProgram` (Python-side). When used as a handler:
+Since `PyKleisli` is a `#[pyclass]`, `@do` can return it directly:
 
-1. Python wrapper (`doeff/rust_vm.py`) wraps it in `PyKleisli`
-2. `handler_expr = Pure(Value::Kleisli(PyKleisli(kleisli_program)))`
-3. VM evaluates `handler_expr` → `Value::Kleisli(PyKleisli(...))`
-4. On dispatch: `PyKleisli.apply([effect, k])` calls the KleisliProgram
-5. KleisliProgram returns DoExpr → VM evaluates it
+```python
+# @do decorator (simplified)
+def do(func):
+    return PyKleisli(
+        callable=func,
+        name=func.__name__,
+        file=inspect.getfile(func),
+        line=inspect.getsourcelines(func)[1],
+    )
+```
 
-Plain generator functions follow the same path — `PyKleisli.apply()` detects the generator
-return and wraps it as `DoCtrl::ASTStream`.
+The return value is a `PyKleisli` instance — a Rust pyclass that the VM recognizes
+natively as `Value::Kleisli`. No intermediate `KleisliProgram` wrapper needed.
+
+### R1-I-2: WithHandler construction chain
+
+```
+Python:  WithHandler(handler=@do(my_handler), expr=body)
+                              ↓
+pyvm.rs: extract PyKleisli (#[pyclass]) → KleisliRef
+         classify body → DoExpr
+                              ↓
+WithHandler { handler: kleisli_ref, body: doexpr, ... }
+```
+
+The chain is: `@do(f)` → `PyKleisli(#[pyclass])` → `KleisliRef` → `WithHandler.handler`
+
+No wrapping layer, no `Pure(...)`. The handler is extracted at IR construction time.
+
+### R1-I-3: Plain generator handler backward compatibility
+
+Plain generator handlers (not `@do`) are also wrapped in `PyKleisli` at the Python
+wrapper layer (`doeff/rust_vm.py`). `PyKleisli.apply()` detects the generator return
+and wraps it as `DoCtrl::ASTStream`. Both paths converge to the same IR.
 
 ### R1-J: Annotation gate relaxed
 
@@ -264,35 +342,49 @@ phase — FlatMap works today and isn't blocking `@do` handler support.
 | `Value::PythonHandlerCallable(Py<PyAny>)` | `Value::Kleisli(Arc<PyKleisli>)` |
 | `Value::RustProgramInvocation(...)` | `Value::Kleisli(Arc<RustKleisli>)` |
 | `Handler = Arc<dyn HandlerInvoke>` | `KleisliRef = Arc<dyn Kleisli>` |
-| `PythonHandler` struct | `PyKleisli` struct |
+| `PythonHandler` struct | `PyKleisli` (`#[pyclass]`) |
 | `HandlerInvoke` trait | `Kleisli` trait |
 | `DoeffGeneratorFn` (as handler wrapper) | `PyKleisli` (wraps any Python callable) |
+| `KleisliProgram` (Python class) | `PyKleisli` (`#[pyclass]`, returned by `@do`) |
+| `ASTStream` (trait + DoExpr variant) | `IRStream` (produces IR/DoExpr nodes, not AST) |
+| `ASTStreamRef` | `IRStreamRef` |
+| `ASTStreamStep` | `IRStreamStep` |
+| `PythonGeneratorStream` | unchanged (implements `IRStream` instead of `ASTStream`) |
 
 ---
 
 ## §7 Migration Plan
 
-### Phase 1: Foundation
-1. Add characterization tests for current handler dispatch behavior
-2. Define `Kleisli` trait, `PyKleisli`, `RustKleisli` types
-3. Add `Value::Kleisli(KleisliRef)` variant
-4. VM `handle_yield_apply`/`handle_yield_expand` accept `Value::Kleisli`
+### Phase 1: Foundation + IRStream rename
+1. Rename `ASTStream` → `IRStream`, `ASTStreamRef` → `IRStreamRef`, `ASTStreamStep` → `IRStreamStep`
+2. Rename `DoExpr::ASTStream` variant → `DoExpr::IRStream`
+3. Rename `ast_stream.rs` → `ir_stream.rs`
+4. Add characterization tests for current handler dispatch behavior
+5. Define `Kleisli` trait, `KleisliDebugInfo`, `KleisliRef`
+6. Implement `PyKleisli` as `#[pyclass]` with `impl Kleisli`
+7. Implement `RustKleisli` with `impl Kleisli`
+8. Add `Value::Kleisli(KleisliRef)` variant
+9. `Value::from_pyobject` detects `PyKleisli` → `Value::Kleisli`
+10. VM `handle_yield_apply`/`handle_yield_expand` accept `Value::Kleisli`
 
-### Phase 2: Handler migration
-5. `PythonHandler` delegates to `PyKleisli` internally
-6. `WithHandler` Python wrapper coerces handlers to `PyKleisli`
-7. `@do` handlers work via `PyKleisli` path
+### Phase 2: `@do` returns `PyKleisli`
+8. `@do` decorator returns `PyKleisli` instance (replaces `KleisliProgram`)
+9. `PythonHandler` delegates to `PyKleisli` internally
+10. Plain generator handlers wrapped in `PyKleisli` at Python wrapper layer
+11. `@do` handlers work end-to-end via `PyKleisli` path
 
-### Phase 3: WithHandler IR change
-8. `WithHandler.handler` field changes from `Handler` to `DoExpr`
-9. VM implements two-phase evaluation (eval handler_expr → Kleisli, then dispatch)
-10. `handler_expr = Pure(Value::Kleisli(...))` is the common case
+### Phase 3: WithHandler + WithIntercept IR change
+12. `WithHandler.handler` field → `Expr[Kleisli]` (DoExpr evaluating to Value::Kleisli)
+13. `WithIntercept.interceptor` field → `Expr[Kleisli]` (same interface)
+14. VM implements two-phase evaluation for both
+15. `handler_expr = Pure(Value::Kleisli(@do(f)))` is the common case (auto via from_pyobject)
 
 ### Phase 4: Cleanup
-11. Remove `Value::PythonHandlerCallable`
-12. Remove `Value::RustProgramInvocation`
-13. Remove `HandlerInvoke` trait and `Handler` type alias
-14. Optionally: `FlatMap.binder` → `Value::Kleisli`, `Expand` lowered to Apply+Eval
+16. Remove `Value::PythonHandlerCallable`
+17. Remove `Value::RustProgramInvocation`
+18. Remove `HandlerInvoke` trait and `Handler` type alias
+19. Remove `KleisliProgram` (Python-side, replaced by `PyKleisli` pyclass)
+20. Optionally: `FlatMap.binder` → `Value::Kleisli`, `Expand` lowered to Apply+Eval
 
 ---
 
@@ -301,7 +393,7 @@ phase — FlatMap works today and isn't blocking `@do` handler support.
 | IR concept | Rust type | Python type |
 |-----------|-----------|-------------|
 | Kleisli arrow (trait) | `Kleisli` | — |
-| Python-backed Kleisli | `PyKleisli` | wraps `KleisliProgram` or plain callable |
+| Python-backed Kleisli | `PyKleisli` (`#[pyclass]`) | `@do(f)` returns this directly |
 | Rust-backed Kleisli | `RustKleisli` | — |
 | Kleisli as Value | `Value::Kleisli(KleisliRef)` | — |
 | Reference type | `KleisliRef = Arc<dyn Kleisli>` | — |
@@ -325,8 +417,5 @@ phase — FlatMap works today and isn't blocking `@do` handler support.
    Kleisli arrow (`x → DoExpr`) so return clauses can perform effects? Current implementation
    treats it as a plain `Apply` (value-returning).
 
-3. **IRStream naming**: `ASTStream` should be renamed to `IRStream` to match the actual
-   semantics (it produces IR/DoCtrl nodes, not AST). This is a separate cleanup.
-
-4. **CallArg naming**: `CallArg` should be renamed to `ValueOrExpr` to reflect its actual
-   semantics (either an already-resolved Value or an unevaluated DoExpr).
+3. **CallArg naming**: `CallArg` should be renamed to `ValueOrExpr` to reflect its actual
+    semantics (either an already-resolved Value or an unevaluated DoExpr).
