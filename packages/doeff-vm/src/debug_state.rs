@@ -142,7 +142,7 @@ impl DebugState {
             DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
             DoCtrl::Apply { .. } => "HandleYield(Apply)",
             DoCtrl::Expand { .. } => "HandleYield(Expand)",
-            DoCtrl::ASTStream { .. } => "HandleYield(ASTStream)",
+            DoCtrl::IRStream { .. } => "HandleYield(IRStream)",
             DoCtrl::Eval { .. } => "HandleYield(Eval)",
             DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
             DoCtrl::GetTrace => "HandleYield(GetTrace)",
