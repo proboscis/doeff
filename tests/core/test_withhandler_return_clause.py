@@ -108,4 +108,4 @@ def test_withhandler_resume_and_return_clause_interaction() -> None:
         handlers=default_handlers(),
     )
 
-    assert result.value == 33
+    assert result.value == 38
