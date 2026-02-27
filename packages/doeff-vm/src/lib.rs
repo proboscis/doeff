@@ -10,7 +10,7 @@
 //! - **All effects dispatch**: No bypass for stdlib effects
 
 pub mod arena;
-pub mod ast_stream;
+pub mod ir_stream;
 pub mod capture;
 pub mod continuation;
 mod debug_state;
@@ -25,6 +25,7 @@ pub mod frame;
 mod handler;
 pub mod ids;
 mod interceptor_state;
+pub mod kleisli;
 pub mod py_key;
 pub mod py_shared;
 pub mod python_call;
@@ -40,8 +41,8 @@ mod vm_logging;
 
 // Re-exports for convenience
 pub use arena::SegmentArena;
-pub use ast_stream::{
-    ASTStream, ASTStreamRef, ASTStreamStep, PythonGeneratorStream, StreamLocation,
+pub use ir_stream::{
+    IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation,
 };
 pub use capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
@@ -61,6 +62,7 @@ pub use handler::{
     ReaderHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
 pub use ids::{ContId, DispatchId, Marker, RunnableId, SegmentId};
+pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef};
 pub use py_key::HashedPyKey;
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 pub use pyvm::{DoExprTag, PyStdlib, PyVM};

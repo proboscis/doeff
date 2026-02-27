@@ -1777,3 +1777,107 @@ rules:
       category: vm-scope-structural
       spec: SPEC-VM-015
       rejected-approach: save-restore
+
+  # ---------------------------------------------------------------------------
+  # SPEC-VM-017 KLEISLI ENFORCEMENT
+  # ---------------------------------------------------------------------------
+
+  - id: kleisli-trait-exists
+    patterns:
+      - pattern-regex: 'pub trait Kleisli'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/kleisli.rs"
+    languages: [rust]
+    severity: INFO
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      enforcement: existence
+    message: |
+      kleisli.rs must contain 'pub trait Kleisli' (SPEC-VM-017 R1-A).
+      This is the IR-level callable: T -> DoExpr[U].
+
+  - id: kleisli-value-variant-exists
+    patterns:
+      - pattern-regex: 'Kleisli\(crate::kleisli::KleisliRef\)'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/value.rs"
+    languages: [rust]
+    severity: INFO
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      enforcement: existence
+    message: |
+      Value enum must contain Kleisli(KleisliRef) variant (SPEC-VM-017 R1-D).
+
+  - id: no-new-python-handler-callable-construction
+    pattern-regex: '(?:f|factory|value)\s*:\s*Value::PythonHandlerCallable\('
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+      exclude:
+        - "**/packages/doeff-vm/src/handler.rs"
+        - "**/packages/doeff-vm/src/value.rs"
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      phase: freeze
+    message: |
+      Do not create new Value::PythonHandlerCallable usages.
+      Use Value::Kleisli(PyKleisli) instead (SPEC-VM-017 R1-D).
+      Existing usages in handler.rs will be migrated in Phase 2.
+
+  - id: no-new-rust-program-invocation-construction
+    pattern-regex: '(?:f|factory|value)\s*:\s*Value::RustProgramInvocation\('
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+      exclude:
+        - "**/packages/doeff-vm/src/handler.rs"
+        - "**/packages/doeff-vm/src/scheduler.rs"
+        - "**/packages/doeff-vm/src/value.rs"
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      phase: freeze
+    message: |
+      Do not create new Value::RustProgramInvocation usages.
+      Use Value::Kleisli(RustKleisli) instead (SPEC-VM-017 R1-D).
+      Existing usages in handler.rs will be migrated in Phase 2.
+
+  - id: no-ast-stream-references
+    pattern-regex: 'ASTStream'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      phase: rename
+    message: |
+      ASTStream has been renamed to IRStream (SPEC-VM-017 Phase 1).
+      Use IRStream, IRStreamRef, IRStreamStep instead.
+
+  - id: no-call-arg-references
+    pattern-regex: 'CallArg'
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**"
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: vm-architecture
+      spec: SPEC-VM-017
+      phase: cleanup
+    message: |
+      CallArg has been removed (SPEC-VM-017 R1-K).
+      Apply/Expand args are Vec<DoExpr>. Use DoExpr::Pure { value } for resolved values.

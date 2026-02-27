@@ -384,8 +384,8 @@ class TestG20StoreContextSwitch:
 
 def _extract_impl_resume(source: str, struct_name: str) -> str | None:
     """Extract the resume() method body from an impl block for the given struct."""
-    # Find "impl ASTStreamProgram for <struct_name>"
-    impl_pattern = rf"impl\s+ASTStreamProgram\s+for\s+{struct_name}"
+    # Support both historical AST naming and current IR naming.
+    impl_pattern = rf"impl\s+(?:ASTStreamProgram|IRStreamProgram)\s+for\s+{struct_name}"
     m = re.search(impl_pattern, source)
     if m is None:
         return None
