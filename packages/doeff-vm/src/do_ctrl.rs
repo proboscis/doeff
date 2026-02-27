@@ -2,20 +2,14 @@
 
 use pyo3::prelude::*;
 
-use crate::ast_stream::ASTStreamRef;
 use crate::continuation::Continuation;
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
 use crate::handler::Handler;
+use crate::ir_stream::IRStreamRef;
 use crate::py_shared::PyShared;
 use crate::value::Value;
-
-#[derive(Debug, Clone)]
-pub enum CallArg {
-    Value(Value),
-    Expr(PyShared),
-}
 
 #[derive(Debug, Clone)]
 pub enum DoCtrl {
@@ -89,20 +83,20 @@ pub enum DoCtrl {
         action: Py<PyAny>,
     },
     Apply {
-        f: CallArg,
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
+        f: Box<DoCtrl>,
+        args: Vec<DoCtrl>,
+        kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
         evaluate_result: bool,
     },
     Expand {
-        factory: CallArg,
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
+        factory: Box<DoCtrl>,
+        args: Vec<DoCtrl>,
+        kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
     },
-    ASTStream {
-        stream: ASTStreamRef,
+    IRStream {
+        stream: IRStreamRef,
         metadata: Option<CallMetadata>,
     },
     Eval {
@@ -115,6 +109,19 @@ pub enum DoCtrl {
 }
 
 impl DoCtrl {
+    /// Returns the value if this is Pure, None otherwise.
+    pub fn as_pure_value(&self) -> Option<&Value> {
+        match self {
+            DoCtrl::Pure { value } => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Returns true if this DoCtrl is a Pure value (already resolved).
+    pub fn is_pure(&self) -> bool {
+        matches!(self, DoCtrl::Pure { .. })
+    }
+
     pub fn clone_ref(&self, py: Python<'_>) -> Self {
         match self {
             DoCtrl::Pure { value } => DoCtrl::Pure {
@@ -246,7 +253,7 @@ impl DoCtrl {
                 kwargs: kwargs.clone(),
                 metadata: metadata.clone(),
             },
-            DoCtrl::ASTStream { stream, metadata } => DoCtrl::ASTStream {
+            DoCtrl::IRStream { stream, metadata } => DoCtrl::IRStream {
                 stream: stream.clone(),
                 metadata: metadata.clone(),
             },

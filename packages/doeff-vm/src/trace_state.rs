@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
-use crate::ast_stream::{ASTStreamRef, StreamLocation};
+use crate::ir_stream::{IRStreamRef, StreamLocation};
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectCreationSite,
     EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry,
@@ -432,7 +432,7 @@ impl TraceState {
 
                 let current_line = stream
                     .lock()
-                    .expect("ASTStream lock poisoned")
+                    .expect("IRStream lock poisoned")
                     .debug_location()
                     .map(|location| location.source_line)
                     .unwrap_or(metadata.source_line);
@@ -499,8 +499,8 @@ impl TraceState {
         }
     }
 
-    pub(crate) fn stream_debug_location(stream: &ASTStreamRef) -> Option<StreamLocation> {
-        let guard = stream.lock().expect("ASTStream lock poisoned");
+    pub(crate) fn stream_debug_location(stream: &IRStreamRef) -> Option<StreamLocation> {
+        let guard = stream.lock().expect("IRStream lock poisoned");
         guard.debug_location()
     }
 
@@ -1206,7 +1206,7 @@ impl TraceState {
 
     fn upsert_frame_state_from_metadata(
         frame_stack: &mut Vec<ActiveChainFrameState>,
-        stream: &ASTStreamRef,
+        stream: &IRStreamRef,
         metadata: &CallMetadata,
     ) {
         let line = Self::stream_debug_location(stream)

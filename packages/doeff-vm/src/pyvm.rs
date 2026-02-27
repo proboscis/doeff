@@ -4,8 +4,8 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 
-use crate::ast_stream::{ASTStream, PythonGeneratorStream};
-use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::ir_stream::{IRStream, PythonGeneratorStream};
+use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
     dispatch_from_shared, dispatch_ref_as_python, PyAcquireSemaphore, PyAsk, PyCancelEffect,
@@ -171,11 +171,15 @@ fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool
     Ok(obj.is_instance_of::<PyEffectBase>())
 }
 
-fn classify_call_arg(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<CallArg> {
+fn classify_call_arg(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<DoCtrl> {
     if obj.is_instance_of::<PyDoExprBase>() || is_effect_base_like(py, obj)? {
-        Ok(CallArg::Expr(PyShared::new(obj.clone().unbind())))
+        Ok(DoCtrl::Eval {
+            expr: PyShared::new(obj.clone().unbind()),
+            handlers: vec![],
+            metadata: None,
+        })
     } else {
-        Ok(CallArg::Value(Value::from_pyobject(obj)))
+        Ok(DoCtrl::Pure { value: Value::from_pyobject(obj) })
     }
 }
 
@@ -839,7 +843,7 @@ impl PyVM {
             Some(PendingPython::StepUserGenerator { stream, .. }) => {
                 let guard = stream
                     .lock()
-                    .map_err(|_| PyRuntimeError::new_err("ASTStream lock poisoned"))?;
+                    .map_err(|_| PyRuntimeError::new_err("IRStream lock poisoned"))?;
                 let Some(generator) = guard.python_generator() else {
                     return Err(PyRuntimeError::new_err(
                         "GenNext/GenSend/GenThrow: pending stream is not PythonGeneratorStream",
@@ -971,10 +975,14 @@ fn call_metadata_to_dict(py: Python<'_>, metadata: &CallMetadata) -> PyResult<Py
     Ok(dict.into_any().unbind())
 }
 
-fn call_arg_to_pyobject(py: Python<'_>, arg: &CallArg) -> PyResult<Py<PyAny>> {
+fn doctrl_arg_to_pyobject(py: Python<'_>, arg: &DoCtrl) -> PyResult<Py<PyAny>> {
     match arg {
-        CallArg::Value(value) => Ok(value.to_pyobject(py)?.unbind()),
-        CallArg::Expr(expr) => Ok(expr.clone_ref(py)),
+        DoCtrl::Pure { value } => Ok(value.to_pyobject(py)?.unbind()),
+        DoCtrl::Eval { expr, .. } => Ok(expr.clone_ref(py)),
+        other => Err(PyRuntimeError::new_err(format!(
+            "unexpected DoCtrl variant in arg position: {:?}",
+            other
+        ))),
     }
 }
 
@@ -1322,13 +1330,13 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 let py_args = PyList::empty(py);
                 for arg in args {
                     py_args
-                        .append(call_arg_to_pyobject(py, arg)?.bind(py))
+                        .append(doctrl_arg_to_pyobject(py, arg)?.bind(py))
                         .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 }
                 let py_kwargs = PyDict::new(py);
                 for (key, value) in kwargs {
                     py_kwargs
-                        .set_item(key, call_arg_to_pyobject(py, value)?.bind(py))
+                        .set_item(key, doctrl_arg_to_pyobject(py, value)?.bind(py))
                         .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 }
                 Some(
@@ -1339,7 +1347,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                                 tag: DoExprTag::Apply as u8,
                             })
                             .add_subclass(PyApply {
-                                f: call_arg_to_pyobject(py, f)?,
+                                f: doctrl_arg_to_pyobject(py, f)?,
                                 args: py_args.into_any().unbind(),
                                 kwargs: py_kwargs.into_any().unbind(),
                                 meta: Some(call_metadata_to_dict(py, metadata)?),
@@ -1360,13 +1368,13 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 let py_args = PyList::empty(py);
                 for arg in args {
                     py_args
-                        .append(call_arg_to_pyobject(py, arg)?.bind(py))
+                        .append(doctrl_arg_to_pyobject(py, arg)?.bind(py))
                         .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 }
                 let py_kwargs = PyDict::new(py);
                 for (key, value) in kwargs {
                     py_kwargs
-                        .set_item(key, call_arg_to_pyobject(py, value)?.bind(py))
+                        .set_item(key, doctrl_arg_to_pyobject(py, value)?.bind(py))
                         .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                 }
                 Some(
@@ -1377,7 +1385,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                                 tag: DoExprTag::Expand as u8,
                             })
                             .add_subclass(PyExpand {
-                                factory: call_arg_to_pyobject(py, factory)?,
+                                factory: doctrl_arg_to_pyobject(py, factory)?,
                                 args: py_args.into_any().unbind(),
                                 kwargs: py_kwargs.into_any().unbind(),
                                 meta: Some(call_metadata_to_dict(py, metadata)?),
@@ -1388,7 +1396,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                     .unbind(),
                 )
             }
-            DoCtrl::ASTStream { .. } => None,
+            DoCtrl::IRStream { .. } => None,
             DoCtrl::Eval { expr, handlers, .. } => {
                 let list = PyList::empty(py);
                 for handler in handlers {
@@ -1488,13 +1496,13 @@ fn classify_doeff_generator_as_aststream(
         )));
     }
 
-    let stream: Arc<Mutex<Box<dyn ASTStream>>> =
+    let stream: Arc<Mutex<Box<dyn IRStream>>> =
         Arc::new(Mutex::new(Box::new(PythonGeneratorStream::new(
             PyShared::new(wrapped.generator.clone_ref(py)),
             PyShared::new(wrapped.get_frame.clone_ref(py)),
-        )) as Box<dyn ASTStream>));
+        )) as Box<dyn IRStream>));
 
-    Ok(DoCtrl::ASTStream {
+    Ok(DoCtrl::IRStream {
         stream,
         metadata: merged_metadata_from_doeff(
             inherited_metadata,
@@ -1571,7 +1579,7 @@ pub(crate) fn classify_yielded_bound(
                     kwargs.push((key, classify_call_arg(py, v.as_any())?));
                 }
                 Ok(DoCtrl::Apply {
-                    f,
+                    f: Box::new(f),
                     args,
                     kwargs,
                     metadata: call_metadata_from_pyapply(py, &a)?,
@@ -1593,7 +1601,7 @@ pub(crate) fn classify_yielded_bound(
                     kwargs.push((key, classify_call_arg(py, v.as_any())?));
                 }
                 Ok(DoCtrl::Expand {
-                    factory,
+                    factory: Box::new(factory),
                     args,
                     kwargs,
                     metadata: call_metadata_from_pyexpand(py, &e)?,
@@ -3497,8 +3505,8 @@ mod tests {
 
             let yielded = pyvm.classify_yielded(py, &wrapped).unwrap();
             assert!(
-                matches!(yielded, DoCtrl::ASTStream { .. }),
-                "DoeffGenerator must classify to DoCtrl::ASTStream, got {:?}",
+                matches!(yielded, DoCtrl::IRStream { .. }),
+                "DoeffGenerator must classify to DoCtrl::IRStream, got {:?}",
                 yielded
             );
         });
@@ -3862,7 +3870,7 @@ mod tests {
             let pyvm = PyVM { vm: VM::new() };
             let f = py.eval(c"lambda x: x", None, None).unwrap().unbind();
             let apply = DoCtrl::Apply {
-                f: CallArg::Value(Value::Python(f)),
+                f: Box::new(DoCtrl::Pure { value: Value::Python(f) }),
                 args: vec![],
                 kwargs: vec![],
                 metadata: CallMetadata::new(

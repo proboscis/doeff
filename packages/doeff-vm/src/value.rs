@@ -38,6 +38,7 @@ pub enum Value {
     Traceback(Vec<TraceHop>),
     ActiveChain(Vec<ActiveChainEntry>),
     List(Vec<Value>),
+    Kleisli(crate::kleisli::KleisliRef),
 }
 
 impl Value {
@@ -416,6 +417,7 @@ impl Value {
                 }
                 Ok(list.into_any())
             }
+            Value::Kleisli(_) => Ok(py.None().into_bound(py)),
         }
     }
 
@@ -514,6 +516,7 @@ impl Value {
             Value::Traceback(hops) => Value::Traceback(hops.clone()),
             Value::ActiveChain(entries) => Value::ActiveChain(entries.clone()),
             Value::List(items) => Value::List(items.iter().map(|v| v.clone_ref(py)).collect()),
+            Value::Kleisli(k) => Value::Kleisli(k.clone()),
         }
     }
 }
