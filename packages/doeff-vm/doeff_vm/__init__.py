@@ -142,6 +142,7 @@ Map = _ext.Map
 FlatMap = _ext.FlatMap
 Eval = _ext.Eval
 Perform = _ext.Perform
+Finally = _ext.Finally
 Resume = _ext.Resume
 Delegate = _ext.Delegate
 Pass = _ext.Pass
@@ -214,6 +215,7 @@ TAG_GET_CONTINUATION = _ext.TAG_GET_CONTINUATION
 TAG_GET_HANDLERS = _ext.TAG_GET_HANDLERS
 TAG_GET_TRACEBACK = _ext.TAG_GET_TRACEBACK
 TAG_WITH_INTERCEPT = _ext.TAG_WITH_INTERCEPT
+TAG_FINALLY = _ext.TAG_FINALLY
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
 TAG_GET_TRACE = _ext.TAG_GET_TRACE
 TAG_EVAL = _ext.TAG_EVAL
@@ -244,6 +246,7 @@ __all__ = [
     "Expand",
     "Eval",
     "Perform",
+    "Finally",
     "Map",
     "FlatMap",
     "DoCtrlBase",
@@ -329,6 +332,7 @@ __all__ = [
     "TAG_GET_HANDLERS",
     "TAG_GET_TRACEBACK",
     "TAG_WITH_INTERCEPT",
+    "TAG_FINALLY",
     "TAG_GET_CALL_STACK",
     "TAG_GET_TRACE",
     "TAG_EVAL",

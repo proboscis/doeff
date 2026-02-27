@@ -7,6 +7,7 @@ from doeff import (
     Ask,
     Eval,
     Expand,
+    Finally,
     Perform,
     Pure,
     ResumeContinuation,
@@ -22,6 +23,7 @@ def test_doctrl_exports_are_available() -> None:
     assert Expand is not None
     assert Eval is not None
     assert Perform is not None
+    assert Finally is not None
     assert ResumeContinuation is not None
 
 

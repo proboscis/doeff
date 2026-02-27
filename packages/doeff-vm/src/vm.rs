@@ -27,7 +27,9 @@ use crate::effect::{
 #[cfg(test)]
 use crate::effect::{Effect, PySpawn};
 use crate::error::VMError;
-use crate::frame::{CallMetadata, EvalReturnContinuation, Frame, InterceptorContinuation};
+use crate::frame::{
+    CallMetadata, EvalReturnContinuation, FinallyOutcome, Frame, InterceptorContinuation,
+};
 use crate::handler::{Handler, RustProgramInvocation};
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::interceptor_state::InterceptorState;
@@ -1083,8 +1085,22 @@ impl VM {
 
             if !segment.has_frames() {
                 let caller = segment.caller;
+                let kind = segment.kind.clone();
                 let mode =
                     std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit));
+                if let SegmentKind::FinallyBoundary { cleanup } = kind {
+                    return match mode {
+                        Mode::Deliver(value) => {
+                            self.begin_finally_cleanup(cleanup, FinallyOutcome::Deliver(value))
+                        }
+                        Mode::Throw(exc) => {
+                            self.begin_finally_cleanup(cleanup, FinallyOutcome::Throw(exc))
+                        }
+                        _ => StepEvent::Error(VMError::internal(
+                            "invalid mode while resolving FinallyBoundary",
+                        )),
+                    };
+                }
                 match mode {
                     Mode::Deliver(value) => {
                         // Don't free here — step_return reads the segment's caller.
@@ -1162,6 +1178,35 @@ impl VM {
         }
     }
 
+    fn begin_finally_cleanup(&mut self, cleanup: PyShared, original: FinallyOutcome) -> StepEvent {
+        let handlers = self.current_visible_handlers();
+        let seg = self.current_seg_mut();
+        seg.kind = SegmentKind::Normal;
+        seg.push_frame(Frame::EvalReturn(Box::new(EvalReturnContinuation::FinallyCleanup {
+            original,
+        })));
+        seg.mode = Mode::HandleYield(DoCtrl::Eval {
+            expr: cleanup,
+            handlers,
+            metadata: None,
+        });
+        StepEvent::Continue
+    }
+
+    fn mode_after_finally_cleanup(original: FinallyOutcome, cleanup_mode: Mode) -> Mode {
+        match original {
+            FinallyOutcome::Deliver(value) => match cleanup_mode {
+                Mode::Deliver(_) => Mode::Deliver(value),
+                Mode::Throw(cleanup_exception) => Mode::Throw(cleanup_exception),
+                _ => unreachable!(),
+            },
+            FinallyOutcome::Throw(original_exception) => match cleanup_mode {
+                Mode::Deliver(_) | Mode::Throw(_) => Mode::Throw(original_exception),
+                _ => unreachable!(),
+            },
+        }
+    }
+
     fn step_interceptor_apply_frame(
         &mut self,
         continuation: InterceptorContinuation,
@@ -1224,6 +1269,10 @@ impl VM {
         continuation: EvalReturnContinuation,
         mode: Mode,
     ) -> StepEvent {
+        if let EvalReturnContinuation::FinallyCleanup { original } = continuation {
+            self.current_seg_mut().mode = Self::mode_after_finally_cleanup(original, mode);
+            return StepEvent::Continue;
+        }
         match mode {
             Mode::Deliver(value) => {
                 self.current_seg_mut().mode =
@@ -1349,6 +1398,9 @@ impl VM {
                     kwargs,
                     metadata,
                 })
+            }
+            EvalReturnContinuation::FinallyCleanup { .. } => {
+                unreachable!("FinallyCleanup continuation is handled before value dispatch")
             }
         }
     }
@@ -1872,6 +1924,7 @@ impl VM {
                 expr,
                 metadata,
             } => self.handle_yield_with_intercept(interceptor, expr, metadata),
+            DoCtrl::Finally { cleanup } => self.handle_yield_finally(cleanup),
             DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
             DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
             DoCtrl::GetContinuation => self.handle_yield_get_continuation(),
@@ -1987,6 +2040,16 @@ impl VM {
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         self.handle_with_intercept(interceptor, expr, metadata)
+    }
+
+    fn handle_yield_finally(&mut self, cleanup: PyShared) -> StepEvent {
+        match self.register_finally_boundary(cleanup) {
+            Ok(()) => {
+                self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+                StepEvent::Continue
+            }
+            Err(err) => StepEvent::Error(err),
+        }
     }
 
     fn handle_yield_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
@@ -3076,6 +3139,61 @@ impl VM {
         self.segments.get(k.segment_id).and_then(|source_seg| source_seg.caller)
     }
 
+    fn continuation_finally_cleanups(&self, k: &Continuation) -> Vec<PyShared> {
+        let mut cleanups = Vec::new();
+        let mut cursor = self.continuation_caller_segment(k);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            match &seg.kind {
+                SegmentKind::FinallyBoundary { cleanup } => {
+                    cleanups.push(cleanup.clone());
+                    cursor = seg.caller;
+                }
+                _ => break,
+            }
+        }
+        cleanups
+    }
+
+    fn graft_continuation_finally_boundaries(
+        &mut self,
+        k: &Continuation,
+        caller: Option<SegmentId>,
+    ) -> Option<SegmentId> {
+        let cleanups = self.continuation_finally_cleanups(k);
+        if cleanups.is_empty() {
+            return caller;
+        }
+
+        let mut tail = caller;
+        for cleanup in cleanups.iter().rev() {
+            let mut finally_seg = Segment::new(k.marker, tail);
+            finally_seg.kind = SegmentKind::FinallyBoundary {
+                cleanup: cleanup.clone(),
+            };
+            finally_seg.scope_store = k.scope_store.clone();
+            let seg_id = self.alloc_segment(finally_seg);
+            tail = Some(seg_id);
+        }
+        tail
+    }
+
+    fn continuation_resume_caller(
+        &mut self,
+        kind: ContinuationActivationKind,
+        k: &Continuation,
+        caller: Option<SegmentId>,
+    ) -> Option<SegmentId> {
+        match kind {
+            ContinuationActivationKind::Resume => {
+                self.graft_continuation_finally_boundaries(k, caller)
+            }
+            ContinuationActivationKind::Transfer => caller,
+        }
+    }
+
     fn enter_continuation_segment_with_dispatch(
         &mut self,
         k: &Continuation,
@@ -3145,6 +3263,7 @@ impl VM {
                         .get(k.segment_id)
                         .and_then(|seg| seg.caller),
                 };
+                let caller = self.continuation_resume_caller(kind, &k, caller);
                 self.enter_continuation_segment_with_dispatch(&k, caller, None);
                 self.current_seg_mut().mode = Mode::Throw(enriched_exception);
                 return StepEvent::Continue;
@@ -3159,6 +3278,7 @@ impl VM {
                 .get(k.segment_id)
                 .and_then(|seg| seg.caller),
         };
+        let caller = self.continuation_resume_caller(kind, &k, caller);
         self.enter_continuation_segment(&k, caller);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
@@ -3338,6 +3458,80 @@ impl VM {
         StepEvent::NeedsPython(PythonCall::EvalExpr {
             expr: PyShared::new(program),
         })
+    }
+
+    fn register_finally_boundary(&mut self, cleanup: PyShared) -> Result<(), VMError> {
+        let current_seg_id = self
+            .current_segment
+            .ok_or_else(|| VMError::internal("Finally outside current segment"))?;
+        let (
+            marker,
+            caller,
+            dispatch_id,
+            scope_store,
+            interceptor_eval_depth,
+            interceptor_skip_stack,
+            outer_frames,
+        ) = {
+            let current_seg = self
+                .segments
+                .get_mut(current_seg_id)
+                .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
+            let marker = current_seg.marker;
+            let caller = current_seg.caller;
+            let dispatch_id = current_seg.dispatch_id;
+            let scope_store = current_seg.scope_store.clone();
+            let interceptor_eval_depth = current_seg.interceptor_eval_depth;
+            let interceptor_skip_stack = current_seg.interceptor_skip_stack.clone();
+
+            let mut frames = std::mem::take(&mut current_seg.frames);
+            let top_frame = frames.pop();
+            current_seg.frames = top_frame.into_iter().collect();
+
+            (
+                marker,
+                caller,
+                dispatch_id,
+                scope_store,
+                interceptor_eval_depth,
+                interceptor_skip_stack,
+                frames,
+            )
+        };
+
+        let caller = if outer_frames.is_empty() {
+            caller
+        } else {
+            let outer_seg = Segment {
+                marker,
+                frames: outer_frames,
+                caller,
+                scope_store: scope_store.clone(),
+                kind: SegmentKind::Normal,
+                dispatch_id,
+                mode: Mode::Deliver(Value::Unit),
+                pending_python: None,
+                pending_error_context: None,
+                interceptor_eval_depth,
+                interceptor_skip_stack: interceptor_skip_stack.clone(),
+            };
+            Some(self.alloc_segment(outer_seg))
+        };
+
+        let mut finally_seg = Segment::new(marker, caller);
+        finally_seg.kind = SegmentKind::FinallyBoundary { cleanup };
+        finally_seg.scope_store = scope_store;
+        finally_seg.dispatch_id = dispatch_id;
+        finally_seg.interceptor_eval_depth = interceptor_eval_depth;
+        finally_seg.interceptor_skip_stack = interceptor_skip_stack;
+        let finally_seg_id = self.alloc_segment(finally_seg);
+
+        let current_seg = self
+            .segments
+            .get_mut(current_seg_id)
+            .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
+        current_seg.caller = Some(finally_seg_id);
+        Ok(())
     }
 
     fn clear_segment_frames(&mut self, segment_id: Option<SegmentId>) {

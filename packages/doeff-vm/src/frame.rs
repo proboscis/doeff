@@ -7,6 +7,8 @@ use crate::ast_stream::ASTStreamRef;
 use crate::do_ctrl::{CallArg, DoCtrl};
 use crate::ids::{DispatchId, Marker};
 use crate::py_shared::PyShared;
+use crate::step::PyException;
+use crate::value::Value;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -119,6 +121,15 @@ pub enum EvalReturnContinuation {
         kwarg_idx: usize,
         metadata: CallMetadata,
     },
+    FinallyCleanup {
+        original: FinallyOutcome,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum FinallyOutcome {
+    Deliver(Value),
+    Throw(PyException),
 }
 
 #[derive(Debug, Clone)]

@@ -48,6 +48,7 @@ pub enum DoExprTag {
     Pass = 19,
     GetTraceback = 20,
     WithIntercept = 21,
+    Finally = 22,
     Effect = 128,
     Unknown = 255,
 }
@@ -77,6 +78,7 @@ impl TryFrom<u8> for DoExprTag {
             19 => Ok(DoExprTag::Pass),
             20 => Ok(DoExprTag::GetTraceback),
             21 => Ok(DoExprTag::WithIntercept),
+            22 => Ok(DoExprTag::Finally),
             128 => Ok(DoExprTag::Effect),
             255 => Ok(DoExprTag::Unknown),
             other => Err(other),
@@ -1145,6 +1147,21 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 .into_any()
                 .unbind(),
             ),
+            DoCtrl::Finally { cleanup } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::Finally as u8,
+                        })
+                        .add_subclass(PyFinally {
+                            cleanup: cleanup.clone_ref(py),
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
             DoCtrl::Delegate { .. } => Some(
                 Bound::new(
                     py,
@@ -1517,6 +1534,12 @@ pub(crate) fn classify_yielded_bound(
                     interceptor: PyShared::new(wi.f.clone_ref(py)),
                     expr: wi.expr.clone_ref(py),
                     metadata: call_metadata_from_optional_meta(py, &wi.meta, "WithIntercept")?,
+                })
+            }
+            DoExprTag::Finally => {
+                let f: PyRef<'_, PyFinally> = obj.extract()?;
+                Ok(DoCtrl::Finally {
+                    cleanup: PyShared::new(f.cleanup.clone_ref(py)),
                 })
             }
             DoExprTag::Pure => {
@@ -2327,6 +2350,28 @@ impl PyWithIntercept {
                 tag: DoExprTag::WithIntercept as u8,
             })
             .add_subclass(PyWithIntercept { f, expr, meta }))
+    }
+}
+
+#[pyclass(name = "Finally", extends=PyDoCtrlBase)]
+pub struct PyFinally {
+    #[pyo3(get)]
+    pub cleanup: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyFinally {
+    #[new]
+    fn new(py: Python<'_>, cleanup: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        let cleanup = lift_effect_to_perform_expr(py, cleanup)?;
+        if !cleanup.bind(py).is_instance_of::<PyDoExprBase>() {
+            return Err(PyTypeError::new_err("Finally.cleanup must be DoExpr"));
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Finally as u8,
+            })
+            .add_subclass(PyFinally { cleanup }))
     }
 }
 
@@ -4071,6 +4116,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTraceHop>()?;
     m.add_class::<PyWithHandler>()?;
     m.add_class::<PyWithIntercept>()?;
+    m.add_class::<PyFinally>()?;
     m.add_class::<PyPure>()?;
     m.add_class::<PyApply>()?;
     m.add_class::<PyExpand>()?;
@@ -4177,6 +4223,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_GET_HANDLERS", DoExprTag::GetHandlers as u8)?;
     m.add("TAG_GET_TRACEBACK", DoExprTag::GetTraceback as u8)?;
     m.add("TAG_WITH_INTERCEPT", DoExprTag::WithIntercept as u8)?;
+    m.add("TAG_FINALLY", DoExprTag::Finally as u8)?;
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
     m.add("TAG_GET_TRACE", DoExprTag::GetTrace as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;
