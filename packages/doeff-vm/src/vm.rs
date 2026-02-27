@@ -34,7 +34,7 @@ use crate::interceptor_state::InterceptorState;
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::pyvm::{classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase};
-use crate::segment::{Segment, SegmentKind};
+use crate::segment::{ScopeStore, Segment, SegmentKind};
 use crate::trace_state::TraceState;
 use crate::value::Value;
 
@@ -49,17 +49,27 @@ struct RustProgramStream {
 }
 
 impl ASTStream for RustProgramStream {
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         Python::attach(|_py| {
             let mut guard = self.program.lock().expect("Rust program lock poisoned");
-            guard.resume(value, store)
+            guard.resume(value, store, scope)
         })
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         Python::attach(|_py| {
             let mut guard = self.program.lock().expect("Rust program lock poisoned");
-            guard.throw(exc, store)
+            guard.throw(exc, store, scope)
         })
     }
 }
@@ -410,22 +420,6 @@ impl VM {
     fn handlers_in_caller_chain(&self, start_seg_id: SegmentId) -> Vec<HandlerChainEntry> {
         let mut chain = Vec::new();
         let mut cursor = Some(start_seg_id);
-        if let Some(start_seg) = self.segments.get(start_seg_id) {
-            if let Some(anchor) = start_seg.handler_lookup_anchor {
-                let anchor_is_live = match start_seg.handler_lookup_anchor_marker {
-                    Some(expected_marker) => self
-                        .segments
-                        .get(anchor)
-                        .is_some_and(|seg| seg.marker == expected_marker),
-                    None => self.segments.get(anchor).is_some(),
-                };
-                if anchor_is_live {
-                    // Handler segments execute outside the effect site prompt chain.
-                    // Anchor lookup at the effect site to preserve nested visibility.
-                    cursor = Some(anchor);
-                }
-            }
-        }
         while let Some(seg_id) = cursor {
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
@@ -449,24 +443,43 @@ impl VM {
         chain
     }
 
+    fn find_prompt_boundary_in_caller_chain(
+        &self,
+        start_seg_id: SegmentId,
+        marker: Marker,
+    ) -> Option<SegmentId> {
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let seg = self.segments.get(seg_id)?;
+            if let SegmentKind::PromptBoundary { handled_marker, .. } = &seg.kind {
+                if *handled_marker == marker {
+                    return Some(seg_id);
+                }
+            }
+            cursor = seg.caller;
+        }
+        None
+    }
+
+    fn same_effect_python_type(a: &DispatchEffect, b: &DispatchEffect) -> bool {
+        let Some(a_obj) = dispatch_ref_as_python(a) else {
+            return false;
+        };
+        let Some(b_obj) = dispatch_ref_as_python(b) else {
+            return false;
+        };
+        Python::attach(|py| {
+            let a_ty = a_obj.bind(py).get_type();
+            let b_ty = b_obj.bind(py).get_type();
+            a_ty.as_ptr() == b_ty.as_ptr()
+        })
+    }
+
     fn current_handler_chain(&self) -> Vec<HandlerChainEntry> {
         let Some(seg_id) = self.current_segment else {
             return Vec::new();
         };
         self.handlers_in_caller_chain(seg_id)
-    }
-
-    fn active_busy_markers(&self) -> HashSet<Marker> {
-        let mut busy = HashSet::new();
-        for ctx in self.dispatch_state.contexts() {
-            if ctx.completed {
-                continue;
-            }
-            if let Some(marker) = ctx.handler_chain.get(ctx.handler_idx) {
-                busy.insert(*marker);
-            }
-        }
-        busy
     }
 
     fn prompt_boundary_handler_lookup(&self) -> HashMap<Marker, (Handler, Option<PyShared>)> {
@@ -498,11 +511,13 @@ impl VM {
                 entry.py_identity.clone(),
             );
             self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
+            self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             self.track_run_handler(&entry.handler);
 
             let mut body_seg = Segment::new(entry.marker, Some(prompt_seg_id));
             self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
+            self.copy_scope_store_from(outside_seg_id, &mut body_seg);
             let body_seg_id = self.alloc_segment(body_seg);
             outside_seg_id = Some(body_seg_id);
         }
@@ -546,6 +561,17 @@ impl VM {
         child_seg.interceptor_skip_stack = source_seg.interceptor_skip_stack.clone();
     }
 
+    #[inline]
+    fn copy_scope_store_from(&self, source_seg_id: Option<SegmentId>, child_seg: &mut Segment) {
+        let Some(source_seg_id) = source_seg_id else {
+            return;
+        };
+        let Some(source_seg) = self.segments.get(source_seg_id) else {
+            return;
+        };
+        child_seg.scope_store = source_seg.scope_store.clone();
+    }
+
     /// Set mode to Throw with a RuntimeError and return Continue.
     fn throw_runtime_error(&mut self, message: &str) -> StepEvent {
         let Some(seg) = self.current_segment_mut() else {
@@ -576,18 +602,32 @@ impl VM {
     }
 
     fn invoke_rust_program(&mut self, invocation: RustProgramInvocation) -> StepEvent {
+        let Some(current_seg_id) = self.current_segment else {
+            return StepEvent::Error(VMError::internal(
+                "no current segment for rust program invocation",
+            ));
+        };
         let program = invocation
             .factory
             .create_program_for_run(self.current_run_token());
         let stream = rust_program_as_stream(program.clone());
+        let effect = *invocation.effect;
+        let continuation = invocation.continuation;
         let step = {
             let mut guard = program.lock().expect("Rust program lock poisoned");
+            let Some(seg) = self.segments.get_mut(current_seg_id) else {
+                return StepEvent::Error(VMError::invalid_segment(
+                    "segment missing for rust program invocation",
+                ));
+            };
+            let scope = &mut seg.scope_store;
             Python::attach(|py| {
                 guard.start(
                     py,
-                    *invocation.effect,
-                    invocation.continuation,
+                    effect,
+                    continuation,
                     &mut self.rust_store,
+                    scope,
                 )
             })
         };
@@ -752,16 +792,10 @@ impl VM {
         let Some(seg_id) = self.current_segment else {
             return false;
         };
-        let Some(seg) = self.segments.get(seg_id) else {
-            return false;
-        };
         let Some(ctx) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
             return false;
         };
-        let Some(active_marker) = ctx.handler_chain.get(ctx.handler_idx) else {
-            return false;
-        };
-        seg.marker == *active_marker
+        seg_id == ctx.active_handler_seg_id
     }
 
     fn current_active_handler_dispatch_id(&self) -> Option<DispatchId> {
@@ -1094,10 +1128,14 @@ impl VM {
         match frame {
             Frame::Program { stream, metadata } => {
                 let step = {
+                    let Some(seg) = self.segments.get_mut(seg_id) else {
+                        return StepEvent::Error(VMError::invalid_segment("segment not found"));
+                    };
+                    let scope = &mut seg.scope_store;
                     let mut guard = stream.lock().expect("ASTStream lock poisoned");
                     match mode {
-                        Mode::Deliver(value) => guard.resume(value, &mut self.rust_store),
-                        Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store),
+                        Mode::Deliver(value) => guard.resume(value, &mut self.rust_store, scope),
+                        Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store, scope),
                         _ => unreachable!(),
                     }
                 };
@@ -2706,8 +2744,45 @@ impl VM {
         let seg_id = self
             .current_segment
             .ok_or_else(|| VMError::internal("no current segment during dispatch"))?;
-        let handler_chain = self.handlers_in_caller_chain(seg_id);
-        let busy_markers = self.active_busy_markers();
+        // DEEP-HANDLER SELF-DISPATCH EXCLUSION (Koka/OCaml-style semantics):
+        //
+        // Handler clause code executes *above* its own prompt boundary. During that interval,
+        // dispatch must not re-select the currently active handler prompt, otherwise a handler
+        // that performs an effect matching itself can recurse indefinitely.
+        //
+        // We scope exclusion to "active handler execution segment" only, so normal user-code
+        // dispatch still sees the full caller-chain handlers.
+        //
+        // Python handlers remain permissive for cross-effect yields (different Python effect
+        // type), because user handlers frequently delegate across effect families in the same
+        // clause body; however same-effect Python re-dispatch is excluded to prevent loops.
+        //
+        // Scheduler/AST-stream paths rely on strict tail handoff (Transfer) and this exclusion
+        // together to keep dispatch/switch behavior bounded under heavy task churn.
+        let exclude_prompt = self.segments.get(seg_id).and_then(|seg| {
+            let dispatch_id = seg.dispatch_id?;
+            let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+            if ctx.completed {
+                return None;
+            }
+            if seg_id != ctx.active_handler_seg_id {
+                return None;
+            }
+            let active_marker = *ctx.handler_chain.get(ctx.handler_idx)?;
+            let active_is_python = self
+                .find_prompt_boundary_by_marker(active_marker)
+                .is_some_and(|(_prompt_seg_id, handler, _py_identity)| {
+                    handler.py_identity().is_some()
+                });
+            if active_is_python && !Self::same_effect_python_type(&effect, &ctx.effect) {
+                return None;
+            }
+            self.find_prompt_boundary_in_caller_chain(seg_id, active_marker)
+        });
+        let mut handler_chain = self.handlers_in_caller_chain(seg_id);
+        if let Some(excluded_prompt) = exclude_prompt {
+            handler_chain.retain(|entry| entry.prompt_seg_id != excluded_prompt);
+        }
 
         if handler_chain.is_empty() {
             if let Some(original) = original_exception.clone() {
@@ -2719,9 +2794,6 @@ impl VM {
 
         let mut selected: Option<(usize, HandlerChainEntry)> = None;
         for (idx, entry) in handler_chain.iter().enumerate() {
-            if busy_markers.contains(&entry.marker) {
-                continue;
-            }
             if entry.handler.can_handle(&effect)? {
                 selected = Some((idx, entry.clone()));
                 break;
@@ -2763,10 +2835,7 @@ impl VM {
         let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
 
         let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-        handler_seg.handler_lookup_anchor = current_seg.handler_lookup_anchor.or(Some(seg_id));
-        handler_seg.handler_lookup_anchor_marker = current_seg
-            .handler_lookup_anchor_marker
-            .or(Some(current_seg.marker));
+        handler_seg.scope_store = current_seg.scope_store.clone();
         handler_seg.dispatch_id = Some(dispatch_id);
         self.copy_interceptor_guard_state(Some(seg_id), &mut handler_seg);
         let handler_seg_id = self.alloc_segment(handler_seg);
@@ -2778,6 +2847,7 @@ impl VM {
             is_execution_context_effect,
             handler_chain: handler_chain.iter().map(|entry| entry.marker).collect(),
             handler_idx,
+            active_handler_seg_id: handler_seg_id,
             supports_error_context_conversion,
             k_user: k_user.clone(),
             prompt_seg_id,
@@ -3002,6 +3072,10 @@ impl VM {
             })
     }
 
+    fn continuation_caller_segment(&self, k: &Continuation) -> Option<SegmentId> {
+        self.segments.get(k.segment_id).and_then(|source_seg| source_seg.caller)
+    }
+
     fn enter_continuation_segment_with_dispatch(
         &mut self,
         k: &Continuation,
@@ -3012,8 +3086,7 @@ impl VM {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
             caller,
-            handler_lookup_anchor: k.handler_lookup_anchor.or(Some(k.segment_id)),
-            handler_lookup_anchor_marker: k.handler_lookup_anchor_marker.or(Some(k.marker)),
+            scope_store: k.scope_store.clone(),
             kind: SegmentKind::Normal,
             dispatch_id,
             mode: k.mode.as_ref().clone(),
@@ -3062,10 +3135,16 @@ impl VM {
                         Ok(exception) => exception,
                         Err(effect_err) => effect_err,
                     };
-                let caller = kind
-                    .caller_segment(self.current_segment)
-                    .and_then(|seg_id| self.segments.get(seg_id))
-                    .and_then(|seg| seg.caller);
+                let caller = match kind {
+                    ContinuationActivationKind::Resume => kind
+                        .caller_segment(self.current_segment)
+                        .and_then(|seg_id| self.segments.get(seg_id))
+                        .and_then(|seg| seg.caller),
+                    ContinuationActivationKind::Transfer => self
+                        .segments
+                        .get(k.segment_id)
+                        .and_then(|seg| seg.caller),
+                };
                 self.enter_continuation_segment_with_dispatch(&k, caller, None);
                 self.current_seg_mut().mode = Mode::Throw(enriched_exception);
                 return StepEvent::Continue;
@@ -3073,7 +3152,14 @@ impl VM {
         }
         self.check_dispatch_completion_after_activation(kind, &k);
 
-        self.enter_continuation_segment(&k, kind.caller_segment(self.current_segment));
+        let caller = match kind {
+            ContinuationActivationKind::Resume => kind.caller_segment(self.current_segment),
+            ContinuationActivationKind::Transfer => self
+                .segments
+                .get(k.segment_id)
+                .and_then(|seg| seg.caller),
+        };
+        self.enter_continuation_segment(&k, caller);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }
@@ -3141,12 +3227,14 @@ impl VM {
         }
 
         let dispatch_id: Option<DispatchId> = None;
+        let caller = self
+            .continuation_caller_segment(&k)
+            .or(self.current_segment);
         let exec_seg = Segment {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
-            caller: self.current_segment,
-            handler_lookup_anchor: k.handler_lookup_anchor.or(Some(k.segment_id)),
-            handler_lookup_anchor_marker: k.handler_lookup_anchor_marker.or(Some(k.marker)),
+            caller,
+            scope_store: k.scope_store.clone(),
             kind: SegmentKind::Normal,
             dispatch_id,
             mode: k.mode.as_ref().clone(),
@@ -3210,11 +3298,13 @@ impl VM {
             plan.py_identity.clone(),
         );
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
+        self.copy_scope_store_from(Some(plan.outside_seg_id), &mut prompt_seg);
         let prompt_seg_id = self.alloc_segment(prompt_seg);
         self.track_run_handler(&plan.handler);
 
         let mut body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut body_seg);
+        self.copy_scope_store_from(Some(plan.outside_seg_id), &mut body_seg);
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
@@ -3239,6 +3329,8 @@ impl VM {
             Ok(segment) => segment,
             Err(err) => return StepEvent::Error(err),
         };
+        let mut body_seg = body_seg;
+        self.copy_scope_store_from(self.current_segment, &mut body_seg);
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
@@ -3382,6 +3474,13 @@ impl VM {
                     idx,
                     marker,
                 );
+
+                let mut handler_seg = Segment::new(marker, inner_seg_id);
+                self.copy_scope_store_from(inner_seg_id, &mut handler_seg);
+                handler_seg.dispatch_id = Some(dispatch_id);
+                self.copy_interceptor_guard_state(inner_seg_id, &mut handler_seg);
+                let handler_seg_id = self.alloc_segment(handler_seg);
+
                 let k_user = {
                     let Some(ctx) = self.dispatch_state.find_mut_by_dispatch_id(dispatch_id) else {
                         return StepEvent::Error(VMError::internal(
@@ -3389,27 +3488,12 @@ impl VM {
                         ));
                     };
                     ctx.handler_idx = idx;
+                    ctx.active_handler_seg_id = handler_seg_id;
                     ctx.supports_error_context_conversion = supports_error_context_conversion;
                     ctx.effect = effect.clone();
                     ctx.k_user.clone()
                 };
 
-                let (inner_anchor, inner_anchor_marker) = inner_seg_id
-                    .and_then(|seg_id| {
-                        self.segments.get(seg_id).map(|seg| {
-                            (
-                                seg.handler_lookup_anchor.or(Some(seg_id)),
-                                seg.handler_lookup_anchor_marker.or(Some(seg.marker)),
-                            )
-                        })
-                    })
-                    .unwrap_or((None, None));
-                let mut handler_seg = Segment::new(marker, inner_seg_id);
-                handler_seg.handler_lookup_anchor = inner_anchor;
-                handler_seg.handler_lookup_anchor_marker = inner_anchor_marker;
-                handler_seg.dispatch_id = Some(dispatch_id);
-                self.copy_interceptor_guard_state(inner_seg_id, &mut handler_seg);
-                let handler_seg_id = self.alloc_segment(handler_seg);
                 self.current_segment = Some(handler_seg_id);
 
                 if py_identity.is_some() || handler.py_identity().is_some() {
@@ -3618,11 +3702,16 @@ impl VM {
     }
 
     fn handle_get_handlers(&mut self) -> StepEvent {
-        if self.current_dispatch_id().is_none() {
+        let Some(dispatch_id) = self.current_dispatch_id() else {
             return StepEvent::Error(VMError::internal("GetHandlers outside dispatch"));
-        }
+        };
+        let Some(ctx) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
+            return StepEvent::Error(VMError::internal(
+                "GetHandlers called with missing dispatch context",
+            ));
+        };
         let handlers = self
-            .current_handler_chain()
+            .handlers_in_caller_chain(ctx.k_user.segment_id)
             .into_iter()
             .map(|entry| entry.handler)
             .collect::<Vec<_>>();
@@ -3691,10 +3780,12 @@ impl VM {
                 py_identity.clone(),
             );
             self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
+            self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             self.track_run_handler(handler);
             let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
             self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
+            self.copy_scope_store_from(outside_seg_id, &mut body_seg);
             let body_seg_id = self.alloc_segment(body_seg);
 
             outside_seg_id = Some(body_seg_id);

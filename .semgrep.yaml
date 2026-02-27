@@ -364,24 +364,48 @@ rules:
 
   - id: scheduler-must-use-transfer-not-resume
     patterns:
-      - pattern: 'DoCtrl::Resume { continuation: $K, value: $V }'
+      - pattern: "DoCtrl::Resume { continuation: $K, value: $V }"
       - pattern-not-inside: |
-          fn resume_to_continuation(...) {
+          #[cfg(test)]
+          mod tests {
             ...
           }
     paths:
       include:
-        - "/packages/doeff-vm/src/scheduler.rs"
+        - "**/packages/doeff-vm/src/scheduler.rs"
     message: |
-      SPEC-SCHED-001 violation: scheduler must not use DoCtrl::Resume directly.
-      Use resume_to_continuation() which emits Resume, or transfer_to_continuation()
-      which emits Transfer. Direct DoCtrl::Resume in scheduler.rs bypasses the
-      Transfer/Resume split and risks unbounded segment chain growth.
+      SPEC-SCHED-001 violation: scheduler must tail-switch with DoCtrl::Transfer,
+      not DoCtrl::Resume. Scheduler continuation activation must not grow the
+      segment chain; use transfer_to_continuation()/throw_to_continuation paths.
+      (Test-only match assertions are excluded.)
     languages: [rust]
     severity: ERROR
     metadata:
       spec: SPEC-SCHED-001
       section: "§resume_task, Invariant S1"
+
+  - id: vm-no-segment-ruststore-scope-sync
+    pattern-either:
+      - pattern: $RUST.scope_bindings = $SEG.scope_store
+      - pattern: $RUST.scope_bindings = $SEG.scope_store.clone()
+      - pattern: $RUST.scope_bindings = $SEG.scope_store.scope_bindings
+      - pattern: $RUST.scope_bindings = $SEG.scope_store.scope_bindings.clone()
+      - pattern: $SEG.scope_store = $RUST.scope_bindings
+      - pattern: $SEG.scope_store = $RUST.scope_bindings.clone()
+      - pattern: $SEG.scope_store.scope_bindings = $RUST.scope_bindings
+      - pattern: $SEG.scope_store.scope_bindings = $RUST.scope_bindings.clone()
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**/*.rs"
+    message: |
+      CESK architecture violation: scope bindings must not be synchronized
+      between RustStore and Segment. Store ownership is single-source-of-truth
+      on Segment.scope_store only; remove dual-store sync code.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
   - id: doctrl-variants-require-approval
     pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|WithHandler\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|Eval\b|GetCallStack\b|GetTrace\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
