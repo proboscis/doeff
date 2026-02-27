@@ -278,6 +278,19 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffe
     })
 }
 
+fn is_state_python_effect_type(effect: &PyShared) -> bool {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        obj.is_instance_of::<PyGet>()
+            || obj.is_instance_of::<PyPut>()
+            || obj.is_instance_of::<PyModify>()
+    })
+}
+
+fn is_state_modify_python_effect_type(effect: &PyShared) -> bool {
+    Python::attach(|py| effect.bind(py).is_instance_of::<PyModify>())
+}
+
 fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<HashedPyKey>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
@@ -290,6 +303,41 @@ fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<HashedPyKey>, 
 
         Ok(None)
     })
+}
+
+fn is_reader_python_effect_type(effect: &PyShared) -> bool {
+    Python::attach(|py| effect.bind(py).is_instance_of::<PyAsk>())
+}
+
+pub(crate) fn try_fast_reader_resume_value(
+    effect: &DispatchEffect,
+    store: &RustStore,
+) -> Result<Option<Value>, PyException> {
+    #[cfg(test)]
+    if let Effect::Ask { key } = effect {
+        let key = HashedPyKey::from_test_string(key.clone());
+        let Some(value) = store.ask(&key).cloned() else {
+            return Err(missing_env_key_error(&key));
+        };
+        return Ok(Some(value));
+    }
+
+    let Some(obj) = dispatch_ref_as_python(effect) else {
+        return Ok(None);
+    };
+
+    match parse_reader_python_effect(obj) {
+        Ok(Some(key)) => {
+            let Some(value) = store.ask(&key).cloned() else {
+                return Err(missing_env_key_error(&key));
+            };
+            Ok(Some(value))
+        }
+        Ok(None) => Ok(None),
+        Err(msg) => Err(PyException::type_error(format!(
+            "failed to parse reader effect: {msg}"
+        ))),
+    }
 }
 
 #[derive(Debug)]
@@ -496,6 +544,10 @@ fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String
     })
 }
 
+fn is_writer_python_effect_type(effect: &PyShared) -> bool {
+    Python::attach(|py| effect.bind(py).is_instance_of::<PyTell>())
+}
+
 fn parse_await_python_effect(effect: &PyShared) -> Result<Option<Py<PyAny>>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
@@ -503,6 +555,14 @@ fn parse_await_python_effect(effect: &PyShared) -> Result<Option<Py<PyAny>>, Str
             return Ok(Some(await_effect.awaitable.clone_ref(py)));
         }
         Ok(None)
+    })
+}
+
+fn is_await_python_effect_type(effect: &PyShared) -> bool {
+    Python::attach(|py| {
+        effect
+            .bind(py)
+            .is_instance_of::<PyPythonAsyncioAwaitEffect>()
     })
 }
 
@@ -514,6 +574,10 @@ fn parse_result_safe_python_effect(effect: &PyShared) -> Result<Option<PyShared>
         }
         Ok(None)
     })
+}
+
+fn is_result_safe_python_effect_type(effect: &PyShared) -> bool {
+    Python::attach(|py| effect.bind(py).is_instance_of::<PyResultSafeEffect>())
 }
 
 fn get_sync_await_runner() -> Result<PyShared, String> {
@@ -544,13 +608,7 @@ impl ASTStreamFactory for AwaitHandlerFactory {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
-        parse_await_python_effect(obj)
-            .map(|parsed| parsed.is_some())
-            .map_err(|msg| {
-                VMError::internal(format!(
-                    "AwaitHandler can_handle failed to parse effect: {msg}"
-                ))
-            })
+        Ok(is_await_python_effect_type(obj))
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -712,14 +770,7 @@ impl ASTStreamFactory for StateHandlerFactory {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
-
-        parse_state_python_effect(obj)
-            .map(|parsed| parsed.is_some())
-            .map_err(|msg| {
-                VMError::internal(format!(
-                    "StateHandler can_handle failed to parse effect: {msg}"
-                ))
-            })
+        Ok(is_state_python_effect_type(obj))
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -742,21 +793,11 @@ impl HandlerInvoke for StateHandlerFactory {
             if matches!(&effect, Effect::Modify { .. }) {
                 true
             } else {
-                dispatch_ref_as_python(&effect).is_some_and(|obj| {
-                    matches!(
-                        parse_state_python_effect(obj),
-                        Ok(Some(ParsedStateEffect::Modify { .. }))
-                    )
-                })
+                dispatch_ref_as_python(&effect).is_some_and(is_state_modify_python_effect_type)
             }
             #[cfg(not(test))]
             {
-                dispatch_ref_as_python(&effect).is_some_and(|obj| {
-                    matches!(
-                        parse_state_python_effect(obj),
-                        Ok(Some(ParsedStateEffect::Modify { .. }))
-                    )
-                })
+                dispatch_ref_as_python(&effect).is_some_and(is_state_modify_python_effect_type)
             }
         };
 
@@ -1016,15 +1057,7 @@ impl ASTStreamFactory for LazyAskHandlerFactory {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
-
-        let is_reader = parse_reader_python_effect(obj)
-            .map(|parsed| parsed.is_some())
-            .map_err(|msg| {
-                VMError::internal(format!(
-                    "LazyAskHandler can_handle failed to parse reader effect: {msg}"
-                ))
-            })?;
-
+        let is_reader = is_reader_python_effect_type(obj);
         Ok(is_reader || is_local_python_effect(obj))
     }
 
@@ -1061,13 +1094,11 @@ impl HandlerInvoke for LazyAskHandlerFactory {
             if matches!(&effect, Effect::Ask { .. }) {
                 true
             } else {
-                dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
+                dispatch_ref_as_python(&effect).is_some_and(is_reader_python_effect_type)
             }
             #[cfg(not(test))]
             {
-                dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
+                dispatch_ref_as_python(&effect).is_some_and(is_reader_python_effect_type)
             }
         };
 
@@ -1174,7 +1205,6 @@ impl HandlerInvoke for LazyLocalScopeFactory {
             line: None,
         }
     }
-
 }
 
 #[derive(Debug)]
@@ -2003,14 +2033,7 @@ impl ASTStreamFactory for ReaderHandlerFactory {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
-
-        parse_reader_python_effect(obj)
-            .map(|parsed| parsed.is_some())
-            .map_err(|msg| {
-                VMError::internal(format!(
-                    "ReaderHandler can_handle failed to parse effect: {msg}"
-                ))
-            })
+        Ok(is_reader_python_effect_type(obj))
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -2033,13 +2056,11 @@ impl HandlerInvoke for ReaderHandlerFactory {
             if matches!(&effect, Effect::Ask { .. }) {
                 true
             } else {
-                dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
+                dispatch_ref_as_python(&effect).is_some_and(is_reader_python_effect_type)
             }
             #[cfg(not(test))]
             {
-                dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
+                dispatch_ref_as_python(&effect).is_some_and(is_reader_python_effect_type)
             }
         };
 
@@ -2170,14 +2191,7 @@ impl ASTStreamFactory for WriterHandlerFactory {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
-
-        parse_writer_python_effect(obj)
-            .map(|parsed| parsed.is_some())
-            .map_err(|msg| {
-                VMError::internal(format!(
-                    "WriterHandler can_handle failed to parse effect: {msg}"
-                ))
-            })
+        Ok(is_writer_python_effect_type(obj))
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {
@@ -2312,14 +2326,7 @@ impl ASTStreamFactory for ResultSafeHandlerFactory {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
-
-        parse_result_safe_python_effect(obj)
-            .map(|parsed| parsed.is_some())
-            .map_err(|msg| {
-                VMError::internal(format!(
-                    "ResultSafeHandler can_handle failed to parse effect: {msg}"
-                ))
-            })
+        Ok(is_result_safe_python_effect_type(obj))
     }
 
     fn create_program(&self) -> ASTStreamProgramRef {

@@ -28,7 +28,7 @@ use crate::effect::{
 use crate::effect::{Effect, PySpawn};
 use crate::error::VMError;
 use crate::frame::{CallMetadata, EvalReturnContinuation, Frame, InterceptorContinuation};
-use crate::handler::{Handler, RustProgramInvocation};
+use crate::handler::{try_fast_reader_resume_value, Handler, RustProgramInvocation};
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::interceptor_state::InterceptorState;
 use crate::py_shared::PyShared;
@@ -221,6 +221,12 @@ struct HandlerChainEntry {
     py_identity: Option<PyShared>,
 }
 
+#[derive(Clone)]
+struct HandlerChainCacheEntry {
+    start_marker: Marker,
+    chain: Vec<HandlerChainEntry>,
+}
+
 impl Default for DebugConfig {
     fn default() -> Self {
         DebugConfig {
@@ -267,6 +273,10 @@ pub struct VM {
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
     pub continuation_registry: HashMap<ContId, Continuation>,
+    handler_can_handle_cache: HashMap<(Marker, usize), bool>,
+    dispatch_selection_cache: HashMap<(SegmentId, usize), (usize, Marker)>,
+    handler_trace_snapshot_cache: HashMap<Marker, HandlerSnapshotEntry>,
+    handler_chain_cache: HashMap<SegmentId, HandlerChainCacheEntry>,
     pub active_run_token: Option<u64>,
 }
 
@@ -285,6 +295,10 @@ impl VM {
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
             continuation_registry: HashMap::new(),
+            handler_can_handle_cache: HashMap::new(),
+            dispatch_selection_cache: HashMap::new(),
+            handler_trace_snapshot_cache: HashMap::new(),
+            handler_chain_cache: HashMap::new(),
             active_run_token: None,
         }
     }
@@ -305,6 +319,10 @@ impl VM {
         self.trace_state.clear();
         self.interceptor_state.clear_for_run();
         self.run_handlers.clear();
+        self.handler_can_handle_cache.clear();
+        self.dispatch_selection_cache.clear();
+        self.handler_trace_snapshot_cache.clear();
+        self.handler_chain_cache.clear();
         token
     }
 
@@ -446,6 +464,53 @@ impl VM {
             }
             cursor = seg.caller;
         }
+        chain
+    }
+
+    fn cached_handler_chain_is_valid(
+        &self,
+        entry: &HandlerChainCacheEntry,
+        start_seg_id: SegmentId,
+    ) -> bool {
+        let Some(start_seg) = self.segments.get(start_seg_id) else {
+            return false;
+        };
+        if start_seg.marker != entry.start_marker {
+            return false;
+        }
+        entry.chain.iter().all(|cached| {
+            self.segments
+                .get(cached.prompt_seg_id)
+                .is_some_and(|seg| matches!(
+                    seg.kind,
+                    SegmentKind::PromptBoundary { handled_marker, .. } if handled_marker == cached.marker
+                ))
+        })
+    }
+
+    fn handlers_in_caller_chain_cached(
+        &mut self,
+        start_seg_id: SegmentId,
+    ) -> Vec<HandlerChainEntry> {
+        if let Some(cached) = self.handler_chain_cache.get(&start_seg_id) {
+            if self.cached_handler_chain_is_valid(cached, start_seg_id) {
+                return cached.chain.clone();
+            }
+        }
+
+        let chain = self.handlers_in_caller_chain(start_seg_id);
+        let start_marker = self
+            .segments
+            .get(start_seg_id)
+            .map(|seg| seg.marker)
+            .unwrap_or_else(Marker::fresh);
+        self.handler_chain_cache.insert(
+            start_seg_id,
+            HandlerChainCacheEntry {
+                start_marker,
+                chain: chain.clone(),
+            },
+        );
         chain
     }
 
@@ -693,6 +758,29 @@ impl VM {
         })
     }
 
+    fn effect_type_cache_key(effect: &DispatchEffect) -> Option<usize> {
+        let obj = dispatch_ref_as_python(effect)?;
+        Python::attach(|py| Some(obj.bind(py).get_type().as_ptr() as usize))
+    }
+
+    fn cached_can_handle(
+        &mut self,
+        entry: &HandlerChainEntry,
+        effect: &DispatchEffect,
+        effect_type_key: Option<usize>,
+    ) -> Result<bool, VMError> {
+        if let Some(type_key) = effect_type_key {
+            let cache_key = (entry.marker, type_key);
+            if let Some(cached) = self.handler_can_handle_cache.get(&cache_key) {
+                return Ok(*cached);
+            }
+            let can_handle = entry.handler.can_handle(effect)?;
+            self.handler_can_handle_cache.insert(cache_key, can_handle);
+            return Ok(can_handle);
+        }
+        entry.handler.can_handle(effect)
+    }
+
     fn dispatch_supports_error_context_conversion(&self, dispatch_id: DispatchId) -> bool {
         self.dispatch_state
             .dispatch_supports_error_context_conversion(dispatch_id)
@@ -716,6 +804,22 @@ impl VM {
             HandlerKind::RustBuiltin
         };
         (info.name, kind, info.file, info.line)
+    }
+
+    fn handler_snapshot_for_entry(&mut self, entry: &HandlerChainEntry) -> HandlerSnapshotEntry {
+        if let Some(snapshot) = self.handler_trace_snapshot_cache.get(&entry.marker) {
+            return snapshot.clone();
+        }
+        let (name, kind, file, line) = Self::handler_trace_info(&entry.handler);
+        let snapshot = HandlerSnapshotEntry {
+            handler_name: name,
+            handler_kind: kind,
+            source_file: file,
+            source_line: line,
+        };
+        self.handler_trace_snapshot_cache
+            .insert(entry.marker, snapshot.clone());
+        snapshot
     }
 
     fn marker_handler_trace_info(
@@ -744,6 +848,9 @@ impl VM {
             .find_by_dispatch_id(dispatch_id)?
             .clone();
         let marker = *ctx.handler_chain.get(ctx.handler_idx)?;
+        if let Some(snapshot) = self.handler_trace_snapshot_cache.get(&marker) {
+            return Some((ctx.handler_idx, snapshot.handler_name.clone()));
+        }
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
         Some((ctx.handler_idx, name))
     }
@@ -2706,8 +2813,9 @@ impl VM {
         let seg_id = self
             .current_segment
             .ok_or_else(|| VMError::internal("no current segment during dispatch"))?;
-        let handler_chain = self.handlers_in_caller_chain(seg_id);
+        let handler_chain = self.handlers_in_caller_chain_cached(seg_id);
         let busy_markers = self.active_busy_markers();
+        let effect_type_key = Self::effect_type_cache_key(&effect);
 
         if handler_chain.is_empty() {
             if let Some(original) = original_exception.clone() {
@@ -2718,13 +2826,31 @@ impl VM {
         }
 
         let mut selected: Option<(usize, HandlerChainEntry)> = None;
-        for (idx, entry) in handler_chain.iter().enumerate() {
-            if busy_markers.contains(&entry.marker) {
-                continue;
+        if busy_markers.is_empty() {
+            if let Some(type_key) = effect_type_key {
+                if let Some((cached_idx, cached_marker)) = self
+                    .dispatch_selection_cache
+                    .get(&(seg_id, type_key))
+                    .copied()
+                {
+                    if let Some(entry) = handler_chain.get(cached_idx) {
+                        if entry.marker == cached_marker {
+                            selected = Some((cached_idx, entry.clone()));
+                        }
+                    }
+                }
             }
-            if entry.handler.can_handle(&effect)? {
-                selected = Some((idx, entry.clone()));
-                break;
+        }
+
+        if selected.is_none() {
+            for (idx, entry) in handler_chain.iter().enumerate() {
+                if busy_markers.contains(&entry.marker) {
+                    continue;
+                }
+                if self.cached_can_handle(entry, &effect, effect_type_key)? {
+                    selected = Some((idx, entry.clone()));
+                    break;
+                }
             }
         }
         let (handler_idx, selected) = match selected {
@@ -2737,23 +2863,35 @@ impl VM {
                 return Err(VMError::no_matching_handler(effect));
             }
         };
+        if busy_markers.is_empty() {
+            if let Some(type_key) = effect_type_key {
+                self.dispatch_selection_cache
+                    .insert((seg_id, type_key), (handler_idx, selected.marker));
+            }
+        }
 
         let handler_marker = selected.marker;
         let prompt_seg_id = selected.prompt_seg_id;
         let handler = selected.handler.clone();
+
+        // Fast path for successful built-in Reader Ask: resume directly without
+        // materializing handler-dispatch frames/segments.
+        //
+        // On parse/missing-key errors we intentionally fall back to the normal
+        // dispatch path to preserve traceback fidelity for failure scenarios.
+        if handler.handler_name() == "ReaderHandler" && handler.py_identity().is_none() {
+            if let Ok(Some(value)) = try_fast_reader_resume_value(&effect, &self.rust_store) {
+                self.current_seg_mut().mode = Mode::Deliver(value);
+                return Ok(StepEvent::Continue);
+            }
+        }
+
         let dispatch_id = DispatchId::fresh();
         let is_execution_context_effect = Self::is_execution_context_effect(&effect);
         let supports_error_context_conversion = handler.supports_error_context_conversion();
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
         for entry in &handler_chain {
-            let (name, kind, file, line) =
-                Self::handler_trace_info(&entry.handler);
-            handler_chain_snapshot.push(HandlerSnapshotEntry {
-                handler_name: name,
-                handler_kind: kind,
-                source_file: file,
-                source_line: line,
-            });
+            handler_chain_snapshot.push(self.handler_snapshot_for_entry(entry));
         }
 
         let current_seg = self
@@ -2785,18 +2923,17 @@ impl VM {
             original_exception,
         });
 
-        let (handler_name, handler_kind, handler_source_file, handler_source_line) =
-            Self::handler_trace_info(&handler);
+        let selected_snapshot = self.handler_snapshot_for_entry(&selected);
         let effect_site = TraceState::effect_site_from_continuation(&k_user);
         self.trace_state.emit_dispatch_started(
             dispatch_id,
             Self::effect_repr(&effect),
             is_execution_context_effect,
             Self::effect_creation_site_from_continuation(&k_user),
-            handler_name,
-            handler_kind,
-            handler_source_file,
-            handler_source_line,
+            selected_snapshot.handler_name,
+            selected_snapshot.handler_kind,
+            selected_snapshot.source_file,
+            selected_snapshot.source_line,
             handler_chain_snapshot,
             effect_site.as_ref().map(|(frame_id, _, _, _)| *frame_id),
             effect_site
@@ -2810,8 +2947,22 @@ impl VM {
                 .map(|(_, _, _, source_line)| *source_line),
         );
 
-        if selected.py_identity.is_some() || handler.py_identity().is_some() {
+        if handler.py_identity().is_some() {
             self.register_continuation(k_user.clone());
+        }
+        if handler.handler_name() == "ReaderHandler" {
+            match try_fast_reader_resume_value(&effect, &self.rust_store) {
+                Ok(Some(value)) => {
+                    return Ok(self.handle_resume(k_user.clone(), value));
+                }
+                Ok(None) => {}
+                Err(exc) => {
+                    self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &exc);
+                    self.mark_dispatch_threw(dispatch_id);
+                    self.current_seg_mut().mode = Mode::Throw(exc);
+                    return Ok(StepEvent::Continue);
+                }
+            }
         }
         let ir_node = handler.invoke(effect, k_user);
         Ok(self.evaluate(ir_node))
@@ -2955,13 +3106,7 @@ impl VM {
                     handler_index,
                     kind.handler_action(value_repr.clone()),
                 );
-                self.maybe_emit_resume_event(
-                    dispatch_id,
-                    handler_name,
-                    value_repr,
-                    k,
-                    kind.is_transferred(),
-                );
+                let _ = (dispatch_id, handler_name, value_repr, k, kind);
             }
         }
     }
@@ -3326,7 +3471,7 @@ impl VM {
 
         let inner_seg_id = self.current_segment;
         let visible_chain = inner_seg_id
-            .map(|seg_id| self.handlers_in_caller_chain(seg_id))
+            .map(|seg_id| self.handlers_in_caller_chain_cached(seg_id))
             .unwrap_or_default();
 
         match kind {
@@ -3357,8 +3502,7 @@ impl VM {
 
         for idx in start_idx..handler_chain.len() {
             let marker = handler_chain[idx];
-            let Some(entry) = visible_chain.iter().find(|entry| entry.marker == marker)
-            else {
+            let Some(entry) = visible_chain.iter().find(|entry| entry.marker == marker) else {
                 return StepEvent::Error(VMError::internal(format!(
                     "{}: missing handler marker {} at index {}",
                     kind.missing_handler_context(),
