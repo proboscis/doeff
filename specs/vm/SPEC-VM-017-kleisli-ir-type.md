@@ -315,19 +315,68 @@ and plain handlers uniformly.
 
 ## §5 Expand / Apply Unification
 
-### R1-K: `Expand` as Kleisli application
+### R1-K: `CallArg` removal — Apply/Expand args are `DoExpr`
+
+`CallArg` is a wrapper enum:
+
+```rust
+// BEFORE:
+enum CallArg {
+    Value(Value),      // already resolved
+    Expr(PyShared),    // unevaluated Python object
+}
+
+Apply {
+    f: CallArg,
+    args: Vec<CallArg>,
+    kwargs: Vec<(String, CallArg)>,
+    ...
+}
+```
+
+This is redundant once everything is DoExpr:
+- `CallArg::Value(x)` → `DoExpr::Pure { value: x }`
+- `CallArg::Expr(e)` → a DoExpr (the expression itself)
+
+```rust
+// AFTER:
+Apply {
+    f: DoExpr,
+    args: Vec<DoExpr>,
+    kwargs: Vec<(String, DoExpr)>,
+    metadata: CallMetadata,
+    evaluate_result: bool,
+}
+
+Expand {
+    factory: DoExpr,
+    args: Vec<DoExpr>,
+    kwargs: Vec<(String, DoExpr)>,
+    metadata: CallMetadata,
+}
+```
+
+The VM's arg-resolution loop stays the same — evaluate each DoExpr in sequence, collecting
+Values. The fast-path for `DoExpr::Pure` is trivial (return the value immediately).
+
+Impact on `EvalReturnContinuation`:
+- `ApplyResolveFunction`, `ApplyResolveArg`, `ApplyResolveKwarg` — change `CallArg` → `DoExpr`
+- `ExpandResolveFactory`, `ExpandResolveArg`, `ExpandResolveKwarg` — same
+- The resolution logic stays identical, just operating on `DoExpr` instead of `CallArg`
+
+### R1-L: `Expand` as Kleisli application
 
 SPEC-008 R16-B already established: `Expand(f, args) = Eval(Apply(f, args))`.
 
 With `Value::Kleisli`, this becomes concrete:
-- `Expand(factory, args)` where `factory` is `Value::Kleisli(...)` →
-  call `kleisli.apply(args)` → get DoCtrl → eval
+- `Expand(factory, args)` where `factory` evaluates to `Value::Kleisli(...)` →
+  call `kleisli.apply(args)` → get DoExpr → eval
 - `Apply(f, args, evaluate_result=true)` → same semantics
 
 Long-term, `Expand` can be lowered to `Apply(kleisli, args, evaluate_result=true)` or
 removed entirely. Short-term, both can coexist for backward compatibility.
 
-### R1-L: FlatMap binder as Kleisli
+### R1-M: FlatMap binder as Kleisli
 
 `FlatMap.binder` is semantically a Kleisli arrow: `A → DoExpr[B]`. Long-term, the binder
 field should be `Value::Kleisli` instead of opaque `PyShared`. This is a later migration
@@ -346,6 +395,7 @@ phase — FlatMap works today and isn't blocking `@do` handler support.
 | `HandlerInvoke` trait | `Kleisli` trait |
 | `DoeffGeneratorFn` (as handler wrapper) | `PyKleisli` (wraps any Python callable) |
 | `KleisliProgram` (Python class) | `PyKleisli` (`#[pyclass]`, returned by `@do`) |
+| `CallArg` enum | Removed — `Apply`/`Expand` args are `Vec<DoExpr>` |
 | `ASTStream` (trait + DoExpr variant) | `IRStream` (produces IR/DoExpr nodes, not AST) |
 | `ASTStreamRef` | `IRStreamRef` |
 | `ASTStreamStep` | `IRStreamStep` |
@@ -355,17 +405,18 @@ phase — FlatMap works today and isn't blocking `@do` handler support.
 
 ## §7 Migration Plan
 
-### Phase 1: Foundation + IRStream rename
+### Phase 1: Foundation + IR cleanup
 1. Rename `ASTStream` → `IRStream`, `ASTStreamRef` → `IRStreamRef`, `ASTStreamStep` → `IRStreamStep`
 2. Rename `DoExpr::ASTStream` variant → `DoExpr::IRStream`
 3. Rename `ast_stream.rs` → `ir_stream.rs`
-4. Add characterization tests for current handler dispatch behavior
-5. Define `Kleisli` trait, `KleisliDebugInfo`, `KleisliRef`
-6. Implement `PyKleisli` as `#[pyclass]` with `impl Kleisli`
-7. Implement `RustKleisli` with `impl Kleisli`
-8. Add `Value::Kleisli(KleisliRef)` variant
-9. `Value::from_pyobject` detects `PyKleisli` → `Value::Kleisli`
-10. VM `handle_yield_apply`/`handle_yield_expand` accept `Value::Kleisli`
+4. Remove `CallArg` — Apply/Expand args become `DoExpr` (`Pure(value)` for resolved args)
+5. Add characterization tests for current handler dispatch behavior
+6. Define `Kleisli` trait, `KleisliDebugInfo`, `KleisliRef`
+7. Implement `PyKleisli` as `#[pyclass]` with `impl Kleisli`
+8. Implement `RustKleisli` with `impl Kleisli`
+9. Add `Value::Kleisli(KleisliRef)` variant
+10. `Value::from_pyobject` detects `PyKleisli` → `Value::Kleisli`
+11. VM `handle_yield_apply`/`handle_yield_expand` accept `Value::Kleisli`
 
 ### Phase 2: `@do` returns `PyKleisli`
 8. `@do` decorator returns `PyKleisli` instance (replaces `KleisliProgram`)
@@ -417,5 +468,5 @@ phase — FlatMap works today and isn't blocking `@do` handler support.
    Kleisli arrow (`x → DoExpr`) so return clauses can perform effects? Current implementation
    treats it as a plain `Apply` (value-returning).
 
-3. **CallArg naming**: `CallArg` should be renamed to `ValueOrExpr` to reflect its actual
-    semantics (either an already-resolved Value or an unevaluated DoExpr).
+3. ~~**CallArg naming**~~ — **RESOLVED**: `CallArg` removed entirely (Phase 1). `Apply`/`Expand`
+    args are `Vec<DoExpr>`. Already-resolved values use `DoExpr::Pure { value }`.
