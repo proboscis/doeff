@@ -328,6 +328,15 @@ async def async_run(
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
+def WithHandler(
+    handler: Any,
+    expr: Any,
+    return_clause: Any = None,
+) -> Any:
+    vm = _vm()
+    return vm.WithHandler(handler, expr, return_clause)
+
+
 def WithIntercept(
     f: Any,
     expr: Any,
@@ -367,7 +376,6 @@ def __getattr__(name: str) -> Any:
     if name in {
         "RunResult",
         "DoeffTracebackData",
-        "WithHandler",
         "Pure",
         "Apply",
         "Expand",
