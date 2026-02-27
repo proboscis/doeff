@@ -54,6 +54,7 @@ pub enum DoCtrl {
     WithHandler {
         handler: Handler,
         expr: Py<PyAny>,
+        return_clause: Option<PyShared>,
         py_identity: Option<PyShared>,
     },
     WithIntercept {
@@ -171,10 +172,12 @@ impl DoCtrl {
             DoCtrl::WithHandler {
                 handler,
                 expr,
+                return_clause,
                 py_identity,
             } => DoCtrl::WithHandler {
                 handler: handler.clone(),
                 expr: expr.clone_ref(py),
+                return_clause: return_clause.clone(),
                 py_identity: py_identity.clone(),
             },
             DoCtrl::WithIntercept {
