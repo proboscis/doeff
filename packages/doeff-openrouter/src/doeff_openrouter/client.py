@@ -235,9 +235,12 @@ def track_api_call(
     *,
     stream: bool = False,
     error: Exception | None = None,
+    timestamp: datetime | None = None,
 ) -> EffectGenerator[APICallMetadata]:
     """Track OpenRouter API call in logs, graph, and state."""
     end_time = time.time()
+    if timestamp is None:
+        timestamp = datetime.fromtimestamp(end_time, tz=timezone.utc)
     latency_ms = (end_time - start_time) * 1000
     sanitized_payload, prompt_text, prompt_images, prompt_messages = _prepare_prompt_details(
         request_payload
@@ -250,7 +253,7 @@ def track_api_call(
     metadata = APICallMetadata(
         operation=operation,
         model=model,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=timestamp,
         request_id=request_id,
         latency_ms=latency_ms,
         token_usage=token_usage,
