@@ -395,6 +395,7 @@ def track_api_call(
     start_time: float,
     error: Exception | None = None,
     api_payload: Any | None = None,
+    timestamp: datetime | None = None,
 ) -> EffectGenerator[APICallMetadata]:
     """Log and persist observability metadata for a Gemini API invocation.
 
@@ -402,6 +403,8 @@ def track_api_call(
     payload passed to the Google client while the log preview remains sanitized.
     """
     end_time = time.time()
+    if timestamp is None:
+        timestamp = datetime.fromtimestamp(end_time, tz=timezone.utc)
     latency_ms = (end_time - start_time) * 1000
 
     sanitized_payload, prompt_text, prompt_images = _prepare_request_payload(request_payload)
@@ -498,7 +501,7 @@ def track_api_call(
     metadata = APICallMetadata(
         operation=operation,
         model=model,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=timestamp,
         request_id=request_id,
         latency_ms=latency_ms,
         token_usage=token_usage,
