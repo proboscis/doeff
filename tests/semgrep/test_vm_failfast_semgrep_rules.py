@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.semgrep
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -23,7 +25,9 @@ def _semgrep_rule_ids(config: Path, target: str, *, cwd: Path) -> set[str]:
         check=False,
     )
     if completed.returncode not in {0, 1}:
-        raise AssertionError(f"semgrep failed:\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}")
+        raise AssertionError(
+            f"semgrep failed:\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+        )
 
     payload = json.loads(completed.stdout)
     return {result["check_id"] for result in payload.get("results", [])}
