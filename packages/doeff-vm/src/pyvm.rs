@@ -1093,6 +1093,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
             DoCtrl::WithHandler {
                 handler,
                 expr,
+                return_clause,
                 py_identity,
             } => {
                 let debug = handler.handler_debug_info();
@@ -1111,6 +1112,9 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             .add_subclass(PyWithHandler {
                                 handler: handler_obj,
                                 expr: expr.clone_ref(py),
+                                return_clause: return_clause
+                                    .as_ref()
+                                    .map(|clause| clause.clone_ref(py)),
                                 handler_name: Some(debug.name),
                                 handler_file: debug.file,
                                 handler_line: debug.line,
@@ -1508,6 +1512,10 @@ pub(crate) fn classify_yielded_bound(
                 Ok(DoCtrl::WithHandler {
                     handler,
                     expr: wh.expr.clone_ref(py),
+                    return_clause: wh
+                        .return_clause
+                        .as_ref()
+                        .map(|clause| PyShared::new(clause.clone_ref(py))),
                     py_identity,
                 })
             }
@@ -2225,6 +2233,8 @@ pub struct PyWithHandler {
     #[pyo3(get)]
     pub expr: Py<PyAny>,
     #[pyo3(get)]
+    pub return_clause: Option<Py<PyAny>>,
+    #[pyo3(get)]
     pub handler_name: Option<String>,
     #[pyo3(get)]
     pub handler_file: Option<String>,
@@ -2235,11 +2245,12 @@ pub struct PyWithHandler {
 #[pymethods]
 impl PyWithHandler {
     #[new]
-    #[pyo3(signature = (handler, expr, handler_name=None, handler_file=None, handler_line=None))]
+    #[pyo3(signature = (handler, expr, return_clause=None, handler_name=None, handler_file=None, handler_line=None))]
     fn new(
         py: Python<'_>,
         handler: Py<PyAny>,
         expr: Py<PyAny>,
+        return_clause: Option<Py<PyAny>>,
         handler_name: Option<String>,
         handler_file: Option<String>,
         handler_line: Option<u32>,
@@ -2269,6 +2280,11 @@ impl PyWithHandler {
         if !expr_obj.is_instance_of::<PyDoExprBase>() {
             return Err(PyTypeError::new_err("WithHandler.expr must be DoExpr"));
         }
+        if let Some(return_clause_obj) = return_clause.as_ref() {
+            if !return_clause_obj.bind(py).is_callable() {
+                return Err(PyTypeError::new_err("WithHandler.return_clause must be callable"));
+            }
+        }
 
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
@@ -2277,6 +2293,7 @@ impl PyWithHandler {
             .add_subclass(PyWithHandler {
                 handler,
                 expr,
+                return_clause,
                 handler_name,
                 handler_file,
                 handler_line,
@@ -2969,6 +2986,7 @@ impl NestingGenerator {
         let wh = PyWithHandler {
             handler,
             expr: inner,
+            return_clause: None,
             handler_name: None,
             handler_file: None,
             handler_line: None,
@@ -3038,6 +3056,7 @@ mod tests {
                     .add_subclass(PyWithHandler {
                         handler: sentinel.clone_ref(py),
                         expr: py.None().into_pyobject(py).unwrap().unbind().into_any(),
+                        return_clause: None,
                         handler_name: None,
                         handler_file: None,
                         handler_line: None,
@@ -3931,6 +3950,7 @@ fn run(
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
+                return_clause: None,
                 handler_name: None,
                 handler_file: None,
                 handler_line: None,
@@ -3992,6 +4012,7 @@ fn async_run<'py>(
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
+                return_clause: None,
                 handler_name: None,
                 handler_file: None,
                 handler_line: None,

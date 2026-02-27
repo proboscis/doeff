@@ -1865,8 +1865,9 @@ impl VM {
             DoCtrl::WithHandler {
                 handler,
                 expr,
+                return_clause,
                 py_identity,
-            } => self.handle_yield_with_handler(handler, expr, py_identity),
+            } => self.handle_yield_with_handler(handler, expr, return_clause, py_identity),
             DoCtrl::WithIntercept {
                 interceptor,
                 expr,
@@ -1975,9 +1976,10 @@ impl VM {
         &mut self,
         handler: Handler,
         expr: Py<PyAny>,
+        return_clause: Option<PyShared>,
         py_identity: Option<PyShared>,
     ) -> StepEvent {
-        self.handle_with_handler(handler, expr, py_identity)
+        self.handle_with_handler(handler, expr, return_clause, py_identity)
     }
 
     fn handle_yield_with_intercept(
@@ -2285,6 +2287,32 @@ impl VM {
         values
     }
 
+    fn take_prompt_return_clause(&mut self, prompt_seg_id: SegmentId) -> Option<PyShared> {
+        let prompt_seg = self.segments.get_mut(prompt_seg_id)?;
+        match &mut prompt_seg.kind {
+            SegmentKind::PromptBoundary { return_clause, .. } => return_clause.take(),
+            _ => None,
+        }
+    }
+
+    fn invoke_prompt_return_clause(&mut self, return_clause: PyShared, value: Value) -> StepEvent {
+        let callable = Python::attach(|py| return_clause.clone_ref(py));
+        self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
+            f: CallArg::Value(Value::Python(callable)),
+            args: vec![CallArg::Value(value)],
+            kwargs: vec![],
+            metadata: CallMetadata::new(
+                "WithHandler.return_clause".to_string(),
+                "<handler>".to_string(),
+                0,
+                None,
+                None,
+            ),
+            evaluate_result: true,
+        });
+        StepEvent::Continue
+    }
+
     fn step_return(&mut self) -> StepEvent {
         let value =
             match std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit)) {
@@ -2304,9 +2332,18 @@ impl VM {
 
         match caller {
             Some(caller_id) => {
+                if self.segments.get(caller_id).is_none() {
+                    return StepEvent::Error(VMError::invalid_segment(
+                        "caller segment not found in step_return",
+                    ));
+                }
+                let return_clause = self.take_prompt_return_clause(caller_id);
                 self.segments.reparent_children(seg_id, Some(caller_id));
                 self.current_segment = Some(caller_id);
                 self.segments.free(seg_id);
+                if let Some(return_clause) = return_clause {
+                    return self.invoke_prompt_return_clause(return_clause, value);
+                }
                 self.current_seg_mut().mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
@@ -3278,6 +3315,7 @@ impl VM {
         &mut self,
         handler: Handler,
         program: Py<PyAny>,
+        return_clause: Option<PyShared>,
         explicit_py_identity: Option<PyShared>,
     ) -> StepEvent {
         let plan = match DispatchState::prepare_with_handler(
@@ -3294,7 +3332,7 @@ impl VM {
             Some(plan.outside_seg_id),
             plan.handler_marker,
             plan.handler.clone(),
-            None,
+            return_clause,
             plan.py_identity.clone(),
         );
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
