@@ -333,9 +333,8 @@ impl PyVM {
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         self.start_with_expr(py, program)?;
 
+        let mut event = py.detach(|| self.run_rust_steps());
         loop {
-            let event = py.detach(|| self.run_rust_steps());
-
             match event {
                 StepEvent::Done(value) => {
                     let py_value = value.to_pyobject(py).map(|v| v.unbind());
@@ -349,6 +348,7 @@ impl PyVM {
                 StepEvent::NeedsPython(call) => {
                     let outcome = self.execute_python_call(py, call)?;
                     self.vm.receive_python_result(outcome);
+                    event = self.run_rust_steps_under_gil();
                 }
                 StepEvent::Continue => unreachable!("handled in run_rust_steps"),
             }
@@ -362,8 +362,8 @@ impl PyVM {
     ) -> PyResult<PyRunResult> {
         self.start_with_expr(py, program)?;
 
+        let mut event = py.detach(|| self.run_rust_steps());
         let (result, traceback_data) = loop {
-            let event = py.detach(|| self.run_rust_steps());
             match event {
                 StepEvent::Done(value) => match value.to_pyobject(py) {
                     Ok(v) => break (Ok(v.unbind()), None),
@@ -380,6 +380,7 @@ impl PyVM {
                 StepEvent::NeedsPython(call) => {
                     let outcome = self.execute_python_call(py, call)?;
                     self.vm.receive_python_result(outcome);
+                    event = self.run_rust_steps_under_gil();
                 }
                 StepEvent::Continue => unreachable!("handled in run_rust_steps"),
             }
@@ -761,6 +762,15 @@ impl PyVM {
     }
 
     fn run_rust_steps(&mut self) -> StepEvent {
+        loop {
+            match self.vm.step() {
+                StepEvent::Continue => continue,
+                other => return other,
+            }
+        }
+    }
+
+    fn run_rust_steps_under_gil(&mut self) -> StepEvent {
         loop {
             match self.vm.step() {
                 StepEvent::Continue => continue,
