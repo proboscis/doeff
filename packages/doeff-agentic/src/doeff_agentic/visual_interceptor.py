@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import doeff_vm
 from rich.console import Console
 
-from doeff import Intercept, Program, do, slog
+from doeff import EffectBase, Program, WithHandler, do, slog
 
 from .effects import (
     AgenticAbortSession,
@@ -211,7 +212,19 @@ def with_visual_logging(
 ) -> Program:
     """Wrap a program with visual effect logging for examples and debugging."""
     transform, _ = create_visual_interceptor(config)
-    return Intercept(program, transform)  # type: ignore[return-value]
+
+    def logging_handler(effect: Any, k: Any):
+        replacement = transform(effect)
+        if replacement is None:
+            delegated = yield doeff_vm.Delegate()
+            return (yield doeff_vm.Resume(k, delegated))
+        if isinstance(replacement, (Program, EffectBase)):
+            value = yield replacement
+        else:
+            value = replacement
+        return (yield doeff_vm.Resume(k, value))
+
+    return WithHandler(logging_handler, program)
 
 
 def visual_logging_console(
@@ -221,7 +234,18 @@ def visual_logging_console(
     transform, console = create_visual_interceptor(config)
 
     def wrapper(program: Program) -> Program:
-        return Intercept(program, transform)  # type: ignore[return-value]
+        def logging_handler(effect: Any, k: Any):
+            replacement = transform(effect)
+            if replacement is None:
+                delegated = yield doeff_vm.Delegate()
+                return (yield doeff_vm.Resume(k, delegated))
+            if isinstance(replacement, (Program, EffectBase)):
+                value = yield replacement
+            else:
+                value = replacement
+            return (yield doeff_vm.Resume(k, value))
+
+        return WithHandler(logging_handler, program)
 
     return wrapper, console
 

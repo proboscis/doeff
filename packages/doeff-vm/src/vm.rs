@@ -27,13 +27,12 @@ use crate::effect::{
 #[cfg(test)]
 use crate::effect::{Effect, PySpawn};
 use crate::error::VMError;
-use crate::frame::{CallMetadata, EvalReturnContinuation, Frame, InterceptorContinuation};
+use crate::frame::{CallMetadata, EvalReturnContinuation, Frame};
 use crate::handler::{Handler, RustProgramInvocation};
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
-use crate::interceptor_state::InterceptorState;
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::pyvm::{classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase};
+use crate::pyvm::{classify_yielded_for_vm, PyDoExprBase, PyEffectBase};
 use crate::segment::{ScopeStore, Segment, SegmentKind};
 use crate::trace_state::TraceState;
 use crate::value::Value;
@@ -211,12 +210,6 @@ impl ForwardKind {
 }
 
 #[derive(Clone)]
-pub struct InterceptorEntry {
-    pub(crate) interceptor: PyShared,
-    pub(crate) metadata: Option<CallMetadata>,
-}
-
-#[derive(Clone)]
 struct InstalledHandler {
     marker: Marker,
     handler: Handler,
@@ -270,7 +263,6 @@ pub struct VM {
     pub consumed_cont_ids: HashSet<ContId>,
     installed_handlers: Vec<InstalledHandler>,
     run_handlers: Vec<Handler>,
-    pub(crate) interceptor_state: InterceptorState,
     pub rust_store: RustStore,
     pub py_store: Option<PyStore>,
     pub current_segment: Option<SegmentId>,
@@ -288,7 +280,6 @@ impl VM {
             consumed_cont_ids: HashSet::new(),
             installed_handlers: Vec::new(),
             run_handlers: Vec::new(),
-            interceptor_state: InterceptorState::default(),
             rust_store: RustStore::new(),
             py_store: None,
             current_segment: None,
@@ -313,7 +304,6 @@ impl VM {
         let token = NEXT_RUN_TOKEN.fetch_add(1, Ordering::Relaxed);
         self.active_run_token = Some(token);
         self.trace_state.clear();
-        self.interceptor_state.clear_for_run();
         self.run_handlers.clear();
         token
     }
@@ -443,6 +433,97 @@ impl VM {
         chain
     }
 
+    fn effect_matches_mask_type(
+        effect: &DispatchEffect,
+        masked_type: &PyShared,
+    ) -> Result<bool, VMError> {
+        let Some(effect_obj) = dispatch_ref_as_python(effect) else {
+            return Ok(false);
+        };
+        Python::attach(|py| {
+            effect_obj
+                .bind(py)
+                .is_instance(masked_type.bind(py))
+                .map_err(|err| {
+                    VMError::python_error(format!("MaskBoundary type check failed: {err}"))
+                })
+        })
+    }
+
+    fn mask_boundary_matches_effect(
+        effect: &DispatchEffect,
+        masked_effects: &[PyShared],
+    ) -> Result<bool, VMError> {
+        for masked_type in masked_effects {
+            if Self::effect_matches_mask_type(effect, masked_type)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn handlers_in_caller_chain_for_effect(
+        &self,
+        start_seg_id: SegmentId,
+        effect: &DispatchEffect,
+    ) -> Result<Vec<HandlerChainEntry>, VMError> {
+        let mut chain = Vec::new();
+        let mut cursor = Some(start_seg_id);
+        let mut skip_next = 0usize;
+        let mut skip_behind = 0usize;
+
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+
+            match &seg.kind {
+                SegmentKind::MaskBoundary {
+                    masked_effects,
+                    behind,
+                } => {
+                    if Self::mask_boundary_matches_effect(effect, masked_effects)? {
+                        if *behind {
+                            skip_behind = skip_behind.saturating_add(1);
+                        } else {
+                            skip_next = skip_next.saturating_add(1);
+                        }
+                    }
+                }
+                SegmentKind::PromptBoundary {
+                    handled_marker,
+                    handler,
+                    py_identity,
+                    ..
+                } => {
+                    let handles_effect = handler.can_handle(effect)?;
+                    if handles_effect {
+                        if skip_next > 0 {
+                            skip_next -= 1;
+                            cursor = seg.caller;
+                            continue;
+                        }
+                        if skip_behind > 0 {
+                            skip_behind -= 1;
+                            skip_next = skip_next.saturating_add(1);
+                        }
+                    }
+
+                    chain.push(HandlerChainEntry {
+                        marker: *handled_marker,
+                        prompt_seg_id: seg_id,
+                        handler: handler.clone(),
+                        py_identity: py_identity.clone(),
+                    });
+                }
+                SegmentKind::Normal | SegmentKind::FinallyBoundary { .. } => {}
+            }
+            cursor = seg.caller;
+        }
+
+        Ok(chain)
+    }
+
     fn find_prompt_boundary_in_caller_chain(
         &self,
         start_seg_id: SegmentId,
@@ -510,55 +591,16 @@ impl VM {
                 None,
                 entry.py_identity.clone(),
             );
-            self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
             self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             self.track_run_handler(&entry.handler);
 
             let mut body_seg = Segment::new(entry.marker, Some(prompt_seg_id));
-            self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
             self.copy_scope_store_from(outside_seg_id, &mut body_seg);
             let body_seg_id = self.alloc_segment(body_seg);
             outside_seg_id = Some(body_seg_id);
         }
         outside_seg_id
-    }
-
-    /// Copy interceptor guard state from a source segment to a child segment.
-    ///
-    /// **Why inheritance is required (not derivable from frames):**
-    ///
-    /// `interceptor_eval_depth` and `interceptor_skip_stack` are *dynamic guard
-    /// context* that spans segment topology changes. They cannot be derived from
-    /// the child segment's local frame stack because:
-    ///
-    /// 1. **Child segments start with empty frames.** A new handler segment
-    ///    (created during dispatch at prompt boundaries) or a new interceptor body
-    ///    segment (created by `prepare_with_intercept`) has no frames, yet it runs
-    ///    within the parent's interceptor invocation context and must inherit the
-    ///    guard state to prevent re-entrancy and double-evaluation.
-    ///
-    /// 2. **Delegate/pass clears frames.** `clear_segment_frames` wipes the inner
-    ///    segment's frame stack during forwarding, but guard state must survive so
-    ///    the next handler segment inherits the correct interceptor context.
-    ///
-    /// 3. **Typed continuation frames are local.** Interceptor guard state must
-    ///    survive continuation capture/resume and segment topology rewrites even
-    ///    when relevant continuation frames are no longer present locally.
-    #[inline]
-    fn copy_interceptor_guard_state(
-        &self,
-        source_seg_id: Option<SegmentId>,
-        child_seg: &mut Segment,
-    ) {
-        let Some(source_seg_id) = source_seg_id else {
-            return;
-        };
-        let Some(source_seg) = self.segments.get(source_seg_id) else {
-            return;
-        };
-        child_seg.interceptor_eval_depth = source_seg.interceptor_eval_depth;
-        child_seg.interceptor_skip_stack = source_seg.interceptor_skip_stack.clone();
     }
 
     #[inline]
@@ -621,15 +663,7 @@ impl VM {
                 ));
             };
             let scope = &mut seg.scope_store;
-            Python::attach(|py| {
-                guard.start(
-                    py,
-                    effect,
-                    continuation,
-                    &mut self.rust_store,
-                    scope,
-                )
-            })
+            Python::attach(|py| guard.start(py, effect, continuation, &mut self.rust_store, scope))
         };
         self.apply_stream_step(step, stream, None)
     }
@@ -799,11 +833,18 @@ impl VM {
     }
 
     fn current_active_handler_dispatch_id(&self) -> Option<DispatchId> {
-        self.interceptor_state.current_active_handler_dispatch_id(
-            self.dispatch_state.contexts(),
-            self.current_segment,
-            &self.segments,
-        )
+        let top = self.dispatch_state.contexts().last()?;
+        if top.completed {
+            return None;
+        }
+        let marker = *top.handler_chain.get(top.handler_idx)?;
+        let seg_id = self.current_segment?;
+        let seg = self.segments.get(seg_id)?;
+        if seg.marker == marker {
+            Some(top.dispatch_id)
+        } else {
+            None
+        }
     }
 
     fn dispatch_uses_user_continuation_stream(
@@ -1141,8 +1182,6 @@ impl VM {
                 };
                 self.apply_stream_step(step, stream, metadata)
             }
-            Frame::InterceptorApply(cont) => self.step_interceptor_apply_frame(*cont, mode),
-            Frame::InterceptorEval(cont) => self.step_interceptor_eval_frame(*cont, mode),
             Frame::HandlerDispatch { dispatch_id } => {
                 self.step_handler_dispatch_frame(dispatch_id, mode)
             }
@@ -1159,51 +1198,6 @@ impl VM {
             Frame::InterceptBodyReturn { marker } => {
                 self.step_intercept_body_return_frame(marker, mode)
             }
-        }
-    }
-
-    fn step_interceptor_apply_frame(
-        &mut self,
-        continuation: InterceptorContinuation,
-        mode: Mode,
-    ) -> StepEvent {
-        if let Some(metadata) = continuation.interceptor_metadata.as_ref() {
-            self.maybe_emit_frame_exited(metadata);
-        }
-        match mode {
-            Mode::Deliver(value) => {
-                self.current_seg_mut().mode =
-                    self.handle_interceptor_apply_result(continuation, value);
-                StepEvent::Continue
-            }
-            Mode::Throw(exc) => {
-                self.pop_interceptor_skip(continuation.marker);
-                self.current_seg_mut().mode = Mode::Throw(exc);
-                StepEvent::Continue
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    fn step_interceptor_eval_frame(
-        &mut self,
-        continuation: InterceptorContinuation,
-        mode: Mode,
-    ) -> StepEvent {
-        let seg = self.current_seg_mut();
-        seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_sub(1);
-        match mode {
-            Mode::Deliver(value) => {
-                self.current_seg_mut().mode =
-                    self.handle_interceptor_eval_result(continuation, value);
-                StepEvent::Continue
-            }
-            Mode::Throw(exc) => {
-                self.pop_interceptor_skip(continuation.marker);
-                self.current_seg_mut().mode = Mode::Throw(exc);
-                StepEvent::Continue
-            }
-            _ => unreachable!(),
         }
     }
 
@@ -1512,9 +1506,7 @@ impl VM {
         stream: ASTStreamRef,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        let chain = Arc::new(self.current_interceptor_chain());
-        self.current_seg_mut().mode =
-            self.continue_interceptor_chain_mode(yielded, stream, metadata, chain, 0);
+        self.current_seg_mut().mode = self.finalize_stream_yield_mode(yielded, stream, metadata);
         StepEvent::Continue
     }
 
@@ -1540,286 +1532,6 @@ impl VM {
             }
         }
         Mode::HandleYield(yielded)
-    }
-
-    fn current_interceptor_chain(&self) -> Vec<Marker> {
-        self.interceptor_state
-            .current_chain(self.current_segment, &self.segments)
-    }
-
-    fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
-        self.interceptor_state.visible_to_active_handler(
-            interceptor_marker,
-            self.dispatch_state.contexts(),
-            self.current_segment,
-            &self.segments,
-        )
-    }
-
-    fn is_interceptor_skipped(&self, marker: Marker) -> bool {
-        InterceptorState::is_skipped(self.current_seg(), marker)
-    }
-
-    fn pop_interceptor_skip(&mut self, marker: Marker) {
-        let seg = self.current_seg_mut();
-        if InterceptorState::is_skipped(seg, marker) {
-            InterceptorState::pop_skip(seg, marker);
-        }
-    }
-
-    fn push_interceptor_skip(&mut self, marker: Marker) {
-        InterceptorState::push_skip(self.current_seg_mut(), marker);
-    }
-
-    fn is_interceptor_eval_idle(&self) -> bool {
-        self.current_seg().interceptor_eval_depth == 0
-    }
-
-    fn classify_interceptor_result_object(
-        &self,
-        result_obj: Py<PyAny>,
-        original_obj: &PyShared,
-        original_yielded: DoCtrl,
-    ) -> Result<DoCtrl, PyException> {
-        Python::attach(|py| {
-            if result_obj.bind(py).as_ptr() == original_obj.bind(py).as_ptr() {
-                return Ok(original_yielded);
-            }
-            classify_yielded_for_vm(self, py, result_obj.bind(py))
-        })
-    }
-
-    fn continue_interceptor_chain_mode(
-        &mut self,
-        yielded: DoCtrl,
-        stream: ASTStreamRef,
-        metadata: Option<CallMetadata>,
-        chain: Arc<Vec<Marker>>,
-        start_idx: usize,
-    ) -> Mode {
-        let current = yielded;
-        let mut idx = start_idx;
-
-        while idx < chain.len() {
-            let marker = chain[idx];
-            idx += 1;
-            if self.is_interceptor_skipped(marker) {
-                continue;
-            }
-            if !self.interceptor_visible_to_active_handler(marker) {
-                continue;
-            }
-
-            let Some(entry) = self.interceptor_state.get_entry(marker) else {
-                continue;
-            };
-
-            let yielded_obj = match doctrl_to_pyexpr_for_vm(&current) {
-                Ok(Some(obj)) => obj,
-                Ok(None) => continue,
-                Err(exc) => return Mode::Throw(exc),
-            };
-
-            return self.start_interceptor_invocation_mode(
-                marker,
-                entry,
-                current,
-                yielded_obj,
-                stream,
-                metadata,
-                chain,
-                idx,
-            );
-        }
-
-        self.finalize_stream_yield_mode(current, stream, metadata)
-    }
-
-    fn fallback_interceptor_metadata() -> CallMetadata {
-        CallMetadata::new(
-            "WithIntercept.interceptor".to_string(),
-            "<unknown>".to_string(),
-            0,
-            None,
-            None,
-        )
-    }
-
-    fn start_interceptor_invocation_mode(
-        &mut self,
-        marker: Marker,
-        entry: InterceptorEntry,
-        yielded: DoCtrl,
-        yielded_obj: Py<PyAny>,
-        stream: ASTStreamRef,
-        metadata: Option<CallMetadata>,
-        chain: Arc<Vec<Marker>>,
-        next_idx: usize,
-    ) -> Mode {
-        let interceptor_callable = entry.interceptor.into_inner();
-        let interceptor_meta = entry.metadata.clone();
-        let yielded_obj_for_continuation = Python::attach(|py| yielded_obj.clone_ref(py));
-        let apply_metadata = interceptor_meta
-            .clone()
-            .unwrap_or_else(Self::fallback_interceptor_metadata);
-        self.push_interceptor_skip(marker);
-
-        if self.current_segment.is_none() {
-            self.pop_interceptor_skip(marker);
-            return Mode::Throw(PyException::runtime_error(
-                "current_segment_mut() returned None while invoking interceptor",
-            ));
-        }
-        if let Some(meta) = interceptor_meta.as_ref() {
-            self.maybe_emit_frame_entered(meta);
-        }
-        let continuation = InterceptorContinuation {
-            marker,
-            original_yielded: yielded,
-            original_obj: PyShared::new(yielded_obj_for_continuation),
-            emitter_stream: stream,
-            emitter_metadata: metadata,
-            chain,
-            next_idx,
-            interceptor_metadata: interceptor_meta,
-        };
-        let Some(seg) = self.current_segment_mut() else {
-            self.pop_interceptor_skip(marker);
-            return Mode::Throw(PyException::runtime_error(
-                "current_segment_mut() returned None while invoking interceptor",
-            ));
-        };
-        seg.push_frame(Frame::InterceptorApply(Box::new(continuation)));
-
-        Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(interceptor_callable)),
-            args: vec![CallArg::Value(Value::Python(yielded_obj))],
-            kwargs: vec![],
-            metadata: apply_metadata,
-            evaluate_result: false,
-        })
-    }
-
-    fn handle_interceptor_apply_result(
-        &mut self,
-        continuation: InterceptorContinuation,
-        value: Value,
-    ) -> Mode {
-        let InterceptorContinuation {
-            marker,
-            original_yielded,
-            original_obj,
-            emitter_stream,
-            emitter_metadata,
-            chain,
-            next_idx,
-            ..
-        } = continuation;
-        let Value::Python(result_obj) = value else {
-            self.pop_interceptor_skip(marker);
-            return Mode::Throw(PyException::type_error(
-                "WithIntercept interceptor must return DoExpr",
-            ));
-        };
-
-        let (is_direct_expr, is_doexpr) = InterceptorState::classify_result_shape(&result_obj);
-
-        if is_direct_expr {
-            let transformed = match self.classify_interceptor_result_object(
-                result_obj,
-                &original_obj,
-                original_yielded,
-            ) {
-                Ok(expr) => expr,
-                Err(exc) => {
-                    self.pop_interceptor_skip(marker);
-                    return Mode::Throw(exc);
-                }
-            };
-            self.pop_interceptor_skip(marker);
-            return self.continue_interceptor_chain_mode(
-                transformed,
-                emitter_stream,
-                emitter_metadata,
-                chain,
-                next_idx,
-            );
-        }
-
-        if is_doexpr {
-            let Some(seg) = self.current_segment_mut() else {
-                self.pop_interceptor_skip(marker);
-                return Mode::Throw(PyException::runtime_error(
-                    "current_segment_mut() returned None while evaluating interceptor result",
-                ));
-            };
-            seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_add(1);
-            seg.push_frame(Frame::InterceptorEval(Box::new(InterceptorContinuation {
-                marker,
-                original_yielded,
-                original_obj,
-                emitter_stream,
-                emitter_metadata,
-                chain,
-                next_idx,
-                interceptor_metadata: None,
-            })));
-
-            let handlers = self.current_visible_handlers();
-            return Mode::HandleYield(DoCtrl::Eval {
-                expr: PyShared::new(result_obj),
-                handlers,
-                metadata: None,
-            });
-        }
-
-        self.pop_interceptor_skip(marker);
-        Mode::Throw(PyException::type_error(
-            "WithIntercept interceptor must return DoExpr",
-        ))
-    }
-
-    fn handle_interceptor_eval_result(
-        &mut self,
-        continuation: InterceptorContinuation,
-        value: Value,
-    ) -> Mode {
-        let InterceptorContinuation {
-            marker,
-            original_yielded,
-            original_obj,
-            emitter_stream,
-            emitter_metadata,
-            chain,
-            next_idx,
-            ..
-        } = continuation;
-        let Value::Python(result_obj) = value else {
-            self.pop_interceptor_skip(marker);
-            return Mode::Throw(PyException::type_error(
-                "WithIntercept effectful interceptor must resolve to DoExpr",
-            ));
-        };
-
-        let transformed = match self.classify_interceptor_result_object(
-            result_obj,
-            &original_obj,
-            original_yielded,
-        ) {
-            Ok(expr) => expr,
-            Err(exc) => {
-                self.pop_interceptor_skip(marker);
-                return Mode::Throw(exc);
-            }
-        };
-        self.pop_interceptor_skip(marker);
-        self.continue_interceptor_chain_mode(
-            transformed,
-            emitter_stream,
-            emitter_metadata,
-            chain,
-            next_idx,
-        )
     }
 
     fn step_handle_yield(&mut self) -> StepEvent {
@@ -1867,11 +1579,10 @@ impl VM {
                 expr,
                 py_identity,
             } => self.handle_yield_with_handler(handler, expr, py_identity),
-            DoCtrl::WithIntercept {
-                interceptor,
-                expr,
-                metadata,
-            } => self.handle_yield_with_intercept(interceptor, expr, metadata),
+            DoCtrl::Mask { effect_types, body } => self.handle_yield_mask(effect_types, body),
+            DoCtrl::MaskBehind { effect_types, body } => {
+                self.handle_yield_mask_behind(effect_types, body)
+            }
             DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
             DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
             DoCtrl::GetContinuation => self.handle_yield_get_continuation(),
@@ -1980,13 +1691,16 @@ impl VM {
         self.handle_with_handler(handler, expr, py_identity)
     }
 
-    fn handle_yield_with_intercept(
+    fn handle_yield_mask(&mut self, effect_types: Vec<PyShared>, body: Py<PyAny>) -> StepEvent {
+        self.handle_mask(effect_types, body, false)
+    }
+
+    fn handle_yield_mask_behind(
         &mut self,
-        interceptor: PyShared,
-        expr: Py<PyAny>,
-        metadata: Option<CallMetadata>,
+        effect_types: Vec<PyShared>,
+        body: Py<PyAny>,
     ) -> StepEvent {
-        self.handle_with_intercept(interceptor, expr, metadata)
+        self.handle_mask(effect_types, body, true)
     }
 
     fn handle_yield_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
@@ -2220,12 +1934,6 @@ impl VM {
                         Frame::Program {
                             metadata: Some(m), ..
                         } => stack.push(m.clone()),
-                        Frame::InterceptorApply(continuation)
-                        | Frame::InterceptorEval(continuation) => {
-                            if let Some(metadata) = continuation.emitter_metadata.as_ref() {
-                                stack.push(metadata.clone());
-                            }
-                        }
                         _ => {}
                     }
                 }
@@ -2779,12 +2487,15 @@ impl VM {
             }
             self.find_prompt_boundary_in_caller_chain(seg_id, active_marker)
         });
-        let mut handler_chain = self.handlers_in_caller_chain(seg_id);
+        let mut full_handler_chain = self.handlers_in_caller_chain(seg_id);
+        let mut dispatch_handler_chain =
+            self.handlers_in_caller_chain_for_effect(seg_id, &effect)?;
         if let Some(excluded_prompt) = exclude_prompt {
-            handler_chain.retain(|entry| entry.prompt_seg_id != excluded_prompt);
+            full_handler_chain.retain(|entry| entry.prompt_seg_id != excluded_prompt);
+            dispatch_handler_chain.retain(|entry| entry.prompt_seg_id != excluded_prompt);
         }
 
-        if handler_chain.is_empty() {
+        if dispatch_handler_chain.is_empty() {
             if let Some(original) = original_exception.clone() {
                 self.current_seg_mut().mode = Mode::Throw(original);
                 return Ok(StepEvent::Continue);
@@ -2792,14 +2503,14 @@ impl VM {
             return Err(VMError::unhandled_effect(effect));
         }
 
-        let mut selected: Option<(usize, HandlerChainEntry)> = None;
-        for (idx, entry) in handler_chain.iter().enumerate() {
+        let mut selected: Option<HandlerChainEntry> = None;
+        for entry in &dispatch_handler_chain {
             if entry.handler.can_handle(&effect)? {
-                selected = Some((idx, entry.clone()));
+                selected = Some(entry.clone());
                 break;
             }
         }
-        let (handler_idx, selected) = match selected {
+        let selected = match selected {
             Some(found) => found,
             None => {
                 if let Some(original) = original_exception.clone() {
@@ -2809,6 +2520,10 @@ impl VM {
                 return Err(VMError::no_matching_handler(effect));
             }
         };
+        let handler_idx = full_handler_chain
+            .iter()
+            .position(|entry| entry.prompt_seg_id == selected.prompt_seg_id)
+            .ok_or_else(|| VMError::internal("selected handler missing from full handler chain"))?;
 
         let handler_marker = selected.marker;
         let prompt_seg_id = selected.prompt_seg_id;
@@ -2817,9 +2532,8 @@ impl VM {
         let is_execution_context_effect = Self::is_execution_context_effect(&effect);
         let supports_error_context_conversion = handler.supports_error_context_conversion();
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
-        for entry in &handler_chain {
-            let (name, kind, file, line) =
-                Self::handler_trace_info(&entry.handler);
+        for entry in &full_handler_chain {
+            let (name, kind, file, line) = Self::handler_trace_info(&entry.handler);
             handler_chain_snapshot.push(HandlerSnapshotEntry {
                 handler_name: name,
                 handler_kind: kind,
@@ -2837,7 +2551,6 @@ impl VM {
         let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
         handler_seg.scope_store = current_seg.scope_store.clone();
         handler_seg.dispatch_id = Some(dispatch_id);
-        self.copy_interceptor_guard_state(Some(seg_id), &mut handler_seg);
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.current_segment = Some(handler_seg_id);
 
@@ -2845,7 +2558,10 @@ impl VM {
             dispatch_id,
             effect: effect.clone(),
             is_execution_context_effect,
-            handler_chain: handler_chain.iter().map(|entry| entry.marker).collect(),
+            handler_chain: full_handler_chain
+                .iter()
+                .map(|entry| entry.marker)
+                .collect(),
             handler_idx,
             active_handler_seg_id: handler_seg_id,
             supports_error_context_conversion,
@@ -3073,7 +2789,9 @@ impl VM {
     }
 
     fn continuation_caller_segment(&self, k: &Continuation) -> Option<SegmentId> {
-        self.segments.get(k.segment_id).and_then(|source_seg| source_seg.caller)
+        self.segments
+            .get(k.segment_id)
+            .and_then(|source_seg| source_seg.caller)
     }
 
     fn enter_continuation_segment_with_dispatch(
@@ -3095,8 +2813,6 @@ impl VM {
                 .as_ref()
                 .map(|pending| pending.as_ref().clone()),
             pending_error_context: k.pending_error_context.clone(),
-            interceptor_eval_depth: k.interceptor_eval_depth,
-            interceptor_skip_stack: k.interceptor_skip_stack.clone(),
         };
         let exec_seg_id = self.alloc_segment(exec_seg);
         self.current_segment = Some(exec_seg_id);
@@ -3140,10 +2856,9 @@ impl VM {
                         .caller_segment(self.current_segment)
                         .and_then(|seg_id| self.segments.get(seg_id))
                         .and_then(|seg| seg.caller),
-                    ContinuationActivationKind::Transfer => self
-                        .segments
-                        .get(k.segment_id)
-                        .and_then(|seg| seg.caller),
+                    ContinuationActivationKind::Transfer => {
+                        self.segments.get(k.segment_id).and_then(|seg| seg.caller)
+                    }
                 };
                 self.enter_continuation_segment_with_dispatch(&k, caller, None);
                 self.current_seg_mut().mode = Mode::Throw(enriched_exception);
@@ -3154,10 +2869,9 @@ impl VM {
 
         let caller = match kind {
             ContinuationActivationKind::Resume => kind.caller_segment(self.current_segment),
-            ContinuationActivationKind::Transfer => self
-                .segments
-                .get(k.segment_id)
-                .and_then(|seg| seg.caller),
+            ContinuationActivationKind::Transfer => {
+                self.segments.get(k.segment_id).and_then(|seg| seg.caller)
+            }
         };
         self.enter_continuation_segment(&k, caller);
         self.current_seg_mut().mode = Mode::Deliver(value);
@@ -3243,8 +2957,6 @@ impl VM {
                 .as_ref()
                 .map(|pending| pending.as_ref().clone()),
             pending_error_context: k.pending_error_context.clone(),
-            interceptor_eval_depth: k.interceptor_eval_depth,
-            interceptor_skip_stack: k.interceptor_skip_stack.clone(),
         };
         let exec_seg_id = self.alloc_segment(exec_seg);
 
@@ -3297,13 +3009,11 @@ impl VM {
             None,
             plan.py_identity.clone(),
         );
-        self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
         self.copy_scope_store_from(Some(plan.outside_seg_id), &mut prompt_seg);
         let prompt_seg_id = self.alloc_segment(prompt_seg);
         self.track_run_handler(&plan.handler);
 
         let mut body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
-        self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut body_seg);
         self.copy_scope_store_from(Some(plan.outside_seg_id), &mut body_seg);
         let body_seg_id = self.alloc_segment(body_seg);
 
@@ -3314,29 +3024,32 @@ impl VM {
         })
     }
 
-    fn handle_with_intercept(
+    fn handle_mask(
         &mut self,
-        interceptor: PyShared,
-        program: Py<PyAny>,
-        metadata: Option<CallMetadata>,
+        effect_types: Vec<PyShared>,
+        body: Py<PyAny>,
+        behind: bool,
     ) -> StepEvent {
-        let body_seg = match self.interceptor_state.prepare_with_intercept(
-            interceptor,
-            metadata,
-            self.current_segment,
-            &self.segments,
-        ) {
-            Ok(segment) => segment,
-            Err(err) => return StepEvent::Error(err),
+        let Some(outside_seg_id) = self.current_segment else {
+            return StepEvent::Error(VMError::internal("no current segment for Mask/MaskBehind"));
         };
-        let mut body_seg = body_seg;
-        self.copy_scope_store_from(self.current_segment, &mut body_seg);
+
+        let mut mask_seg = Segment::new(Marker::fresh(), Some(outside_seg_id));
+        mask_seg.kind = SegmentKind::MaskBoundary {
+            masked_effects: effect_types,
+            behind,
+        };
+        self.copy_scope_store_from(Some(outside_seg_id), &mut mask_seg);
+        let mask_seg_id = self.alloc_segment(mask_seg);
+
+        let mut body_seg = Segment::new(Marker::fresh(), Some(mask_seg_id));
+        self.copy_scope_store_from(Some(outside_seg_id), &mut body_seg);
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
         self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr { metadata: None });
         StepEvent::NeedsPython(PythonCall::EvalExpr {
-            expr: PyShared::new(program),
+            expr: PyShared::new(body),
         })
     }
 
@@ -3449,8 +3162,7 @@ impl VM {
 
         for idx in start_idx..handler_chain.len() {
             let marker = handler_chain[idx];
-            let Some(entry) = visible_chain.iter().find(|entry| entry.marker == marker)
-            else {
+            let Some(entry) = visible_chain.iter().find(|entry| entry.marker == marker) else {
                 return StepEvent::Error(VMError::internal(format!(
                     "{}: missing handler marker {} at index {}",
                     kind.missing_handler_context(),
@@ -3478,7 +3190,6 @@ impl VM {
                 let mut handler_seg = Segment::new(marker, inner_seg_id);
                 self.copy_scope_store_from(inner_seg_id, &mut handler_seg);
                 handler_seg.dispatch_id = Some(dispatch_id);
-                self.copy_interceptor_guard_state(inner_seg_id, &mut handler_seg);
                 let handler_seg_id = self.alloc_segment(handler_seg);
 
                 let k_user = {
@@ -3532,7 +3243,7 @@ impl VM {
                     || bound.is_instance_of::<PyEffectBase>()
             });
 
-            if should_eval && self.is_interceptor_eval_idle() {
+            if should_eval {
                 let handlers = self.current_visible_handlers();
                 let expr = Python::attach(|py| PyShared::new(obj.clone_ref(py)));
                 let marker = self.current_seg().marker;
@@ -3779,12 +3490,10 @@ impl VM {
                 None,
                 py_identity.clone(),
             );
-            self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
             self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             self.track_run_handler(handler);
             let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-            self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
             self.copy_scope_store_from(outside_seg_id, &mut body_seg);
             let body_seg_id = self.alloc_segment(body_seg);
 

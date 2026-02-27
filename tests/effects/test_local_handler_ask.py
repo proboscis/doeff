@@ -10,9 +10,9 @@ from doeff import (
     Ask,
     EffectBase,
     Local,
+    Override,
     Pass,
     Resume,
-    WithIntercept,
     async_run,
     default_async_handlers,
     default_handlers,
@@ -128,15 +128,16 @@ async def test_handler_ask_nested_local(parameterized_interpreter) -> None:
 
 
 @pytest.mark.asyncio
-async def test_handler_ask_with_intercept_and_local(parameterized_interpreter) -> None:
-    """WithIntercept must not break Local visibility for handler-emitted Ask."""
+async def test_handler_ask_with_override_and_local(parameterized_interpreter) -> None:
+    """Override must not break Local visibility for handler-emitted Ask."""
 
     @dataclass(frozen=True)
     class Ping(EffectBase):
         pass
 
-    def observer(effect):
-        return effect
+    def observer_handler(effect, k):
+        delegated = yield doeff_vm.Delegate()
+        return (yield doeff_vm.Resume(k, delegated))
 
     def ping_handler(effect, k):
         if not isinstance(effect, Ping):
@@ -149,11 +150,10 @@ async def test_handler_ask_with_intercept_and_local(parameterized_interpreter) -
     def body():
         return (yield Ping())
 
-    program = WithIntercept(
-        observer,
-        Local({"key": "intercepted_local"}, body()),
-        (),
-        "exclude",
+    program = Override(
+        handler=observer_handler,
+        effect_types=[Ping],
+        body=Local({"key": "intercepted_local"}, body()),
     )
     result = await _run_with_handlers(
         parameterized_interpreter.mode,

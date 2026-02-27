@@ -12,8 +12,16 @@ from typing import TypeVar, cast
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff import Effect, Program, RunResult, WithHandler, async_run, default_async_handlers
-from doeff.effects import AskEffect, GraphAnnotateEffect, GraphStepEffect, Intercept, Pure
+from doeff import (
+    Effect,
+    Override,
+    Program,
+    RunResult,
+    WithHandler,
+    async_run,
+    default_async_handlers,
+)
+from doeff.effects import AskEffect, GraphAnnotateEffect, GraphStepEffect
 from doeff_pinjected.effects import PinjectedResolve
 from doeff_pinjected.handlers import production_handlers
 
@@ -54,18 +62,24 @@ def _program_with_dependency_interception(
         return prog.intercept(_transform)
 
     # Compatibility fallback for runtimes where Program lacks `.intercept()`.
-    # Intercept(...) expects None for the "delegate unchanged" case.
-    def _compat_transform(effect: Effect) -> Effect | Program | None:
+    def _compat_override(effect, k):
+        import doeff_vm
+
         if isinstance(effect, AskEffect):
             ask_effect = cast(AskEffect, effect)
             key = ask_effect.key
             logger.debug(f"Resolving dependency for key: {key}")
-            return PinjectedResolve(key=key)
+            return (yield doeff_vm.Resume(k, PinjectedResolve(key=key)))
         if isinstance(effect, (GraphStepEffect, GraphAnnotateEffect)):
-            return Pure(None)
-        return None
+            return (yield doeff_vm.Resume(k, None))
+        delegated = yield doeff_vm.Delegate()
+        return (yield doeff_vm.Resume(k, delegated))
 
-    return Intercept(prog, _compat_transform)
+    return Override(
+        handler=_compat_override,
+        effect_types=[AskEffect, GraphStepEffect, GraphAnnotateEffect],
+        body=prog,
+    )
 
 
 def program_to_injected(prog: Program[T]) -> Injected[T]:

@@ -56,10 +56,13 @@ pub enum DoCtrl {
         expr: Py<PyAny>,
         py_identity: Option<PyShared>,
     },
-    WithIntercept {
-        interceptor: PyShared,
-        expr: Py<PyAny>,
-        metadata: Option<CallMetadata>,
+    Mask {
+        effect_types: Vec<PyShared>,
+        body: Py<PyAny>,
+    },
+    MaskBehind {
+        effect_types: Vec<PyShared>,
+        body: Py<PyAny>,
     },
     Delegate {
         effect: DispatchEffect,
@@ -174,14 +177,13 @@ impl DoCtrl {
                 expr: expr.clone_ref(py),
                 py_identity: py_identity.clone(),
             },
-            DoCtrl::WithIntercept {
-                interceptor,
-                expr,
-                metadata,
-            } => DoCtrl::WithIntercept {
-                interceptor: interceptor.clone(),
-                expr: expr.clone_ref(py),
-                metadata: metadata.clone(),
+            DoCtrl::Mask { effect_types, body } => DoCtrl::Mask {
+                effect_types: effect_types.clone(),
+                body: body.clone_ref(py),
+            },
+            DoCtrl::MaskBehind { effect_types, body } => DoCtrl::MaskBehind {
+                effect_types: effect_types.clone(),
+                body: body.clone_ref(py),
             },
             DoCtrl::Delegate { effect } => DoCtrl::Delegate {
                 effect: effect.clone(),
@@ -362,7 +364,7 @@ mod tests {
         let enum_body = doctrl_enum_body(src);
         let variant_count = count_top_level_variants(enum_body);
         assert_eq!(
-            variant_count, 24,
+            variant_count, 25,
             "DoCtrl variant count changed! New variants require explicit human approval."
         );
     }
