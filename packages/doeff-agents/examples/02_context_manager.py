@@ -111,10 +111,10 @@ def run_with_bracket(session_name: str, config: LaunchConfig):
     yield slog(step="start", session_name=session_name)
     
     # with_session is a bracket: Launch -> use -> Stop (always)
-    result = yield from with_session(
+    result = yield do(with_session)(
         session_name,
         config,
-        interactive_workflow,
+        interactive_workflow.original_generator,
     )
     
     yield slog(step="complete", interactions=result["interactions"])
@@ -145,7 +145,7 @@ def demonstrate_exception_safety(session_name: str, config: LaunchConfig):
         raise RuntimeError("Simulated error during processing!")
     
     try:
-        yield from with_session(session_name, config, raise_after_work)
+        _ = yield do(with_session)(session_name, config, raise_after_work)
     except RuntimeError as e:
         yield slog(step="caught", error=str(e))
         yield slog(step="cleanup", msg="Session was still cleaned up automatically!")
