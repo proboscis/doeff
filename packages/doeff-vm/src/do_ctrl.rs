@@ -61,6 +61,9 @@ pub enum DoCtrl {
         expr: Py<PyAny>,
         metadata: Option<CallMetadata>,
     },
+    Finally {
+        cleanup: PyShared,
+    },
     Delegate {
         effect: DispatchEffect,
     },
@@ -182,6 +185,9 @@ impl DoCtrl {
                 interceptor: interceptor.clone(),
                 expr: expr.clone_ref(py),
                 metadata: metadata.clone(),
+            },
+            DoCtrl::Finally { cleanup } => DoCtrl::Finally {
+                cleanup: cleanup.clone(),
             },
             DoCtrl::Delegate { effect } => DoCtrl::Delegate {
                 effect: effect.clone(),
@@ -362,7 +368,7 @@ mod tests {
         let enum_body = doctrl_enum_body(src);
         let variant_count = count_top_level_variants(enum_body);
         assert_eq!(
-            variant_count, 24,
+            variant_count, 25,
             "DoCtrl variant count changed! New variants require explicit human approval."
         );
     }

@@ -131,6 +131,7 @@ impl DebugState {
             DoCtrl::ResumeThrow { .. } => "HandleYield(ResumeThrow)",
             DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
             DoCtrl::WithIntercept { .. } => "HandleYield(WithIntercept)",
+            DoCtrl::Finally { .. } => "HandleYield(Finally)",
             DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
             DoCtrl::Pass { .. } => "HandleYield(Pass)",
             DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
