@@ -66,6 +66,11 @@ def test_nested_dispatch_scope_restores_outer_context() -> None:
         if not isinstance(effect, ScopePing):
             yield Pass()
             return
+        # Under re-entrant dispatch, this handler sees nested ScopePing effects too.
+        # Explicitly pass nested pings through so the base handler resolves them.
+        if effect.label.endswith(":inner"):
+            yield Pass()
+            return
         nested = yield ScopePing(label=f"{effect.label}:inner")
         return (yield Resume(k, f"{nested}|outer"))
 

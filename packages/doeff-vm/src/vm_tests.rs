@@ -8,6 +8,7 @@ fn make_dummy_continuation() -> Continuation {
     Continuation {
         cont_id: ContId::fresh(),
         segment_id: SegmentId::from_index(0),
+        scope_store: crate::segment::ScopeStore::default(),
         frames_snapshot: std::sync::Arc::new(Vec::new()),
         marker: Marker::fresh(),
         dispatch_id: None,
@@ -20,8 +21,6 @@ fn make_dummy_continuation() -> Continuation {
         program: None,
         handlers: Vec::new(),
         handler_identities: Vec::new(),
-        handler_lookup_anchor: None,
-        handler_lookup_anchor_marker: None,
         metadata: None,
         parent: None,
     }
@@ -31,11 +30,21 @@ fn make_dummy_continuation() -> Continuation {
 struct DummyProgramStream;
 
 impl ASTStream for DummyProgramStream {
-    fn resume(&mut self, _value: Value, _store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        _value: Value,
+        _store: &mut RustStore,
+        _scope: &mut crate::segment::ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Return(Value::Unit)
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut crate::segment::ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Throw(exc)
     }
 }
@@ -202,6 +211,7 @@ fn test_visible_handlers_with_busy_boundary() {
         is_execution_context_effect: false,
         handler_chain: vec![m1, m2, m3],
         handler_idx: 1,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
 
@@ -213,6 +223,101 @@ fn test_visible_handlers_with_busy_boundary() {
 
     let visible = vm.current_visible_handlers();
     assert_eq!(visible.len(), 3);
+}
+
+#[test]
+fn test_start_dispatch_allows_reentrant_handler_match() {
+    let mut vm = VM::new();
+    let marker = Marker::fresh();
+
+    let prompt_seg = Segment::new(marker, None);
+    let prompt_seg_id = vm.alloc_segment(prompt_seg);
+    assert!(vm.install_handler_on_segment(
+        marker,
+        prompt_seg_id,
+        Arc::new(crate::handler::StateHandlerFactory),
+        None
+    ));
+
+    let handler_seg = Segment::new(marker, Some(prompt_seg_id));
+    let handler_seg_id = vm.alloc_segment(handler_seg);
+    vm.current_segment = Some(handler_seg_id);
+
+    vm.dispatch_state.push_dispatch(DispatchContext {
+        dispatch_id: DispatchId::fresh(),
+        effect: Effect::Get {
+            key: "outer".to_string(),
+        },
+        is_execution_context_effect: false,
+        handler_chain: vec![marker],
+        handler_idx: 0,
+        active_handler_seg_id: handler_seg_id,
+        supports_error_context_conversion: false,
+        k_user: make_dummy_continuation(),
+        prompt_seg_id,
+        completed: false,
+        original_exception: None,
+    });
+
+    let result = vm.start_dispatch(Effect::Get {
+        key: "inner".to_string(),
+    });
+    assert!(result.is_ok());
+    assert!(matches!(result.unwrap(), StepEvent::Continue));
+    assert_eq!(vm.dispatch_state.depth(), 2);
+
+    let top_ctx = vm
+        .dispatch_state
+        .get(1)
+        .expect("expected nested dispatch context");
+    assert_eq!(top_ctx.handler_idx, 0);
+    assert_eq!(top_ctx.handler_chain, vec![marker]);
+}
+
+#[test]
+fn test_handler_clause_cannot_see_below_prompt_handlers() {
+    let mut vm = VM::new();
+    let outer_marker = Marker::fresh();
+    let inner_marker = Marker::fresh();
+    let root_marker = Marker::fresh();
+
+    let root = vm.alloc_segment(Segment::new(root_marker, None));
+    let outer_prompt = vm.alloc_segment(Segment::new_prompt(
+        outer_marker,
+        Some(root),
+        outer_marker,
+        Arc::new(crate::handler::ReaderHandlerFactory),
+        None,
+        None,
+    ));
+    let outer_body = vm.alloc_segment(Segment::new(outer_marker, Some(outer_prompt)));
+    let inner_prompt = vm.alloc_segment(Segment::new_prompt(
+        inner_marker,
+        Some(outer_body),
+        inner_marker,
+        Arc::new(crate::handler::StateHandlerFactory),
+        None,
+        None,
+    ));
+    let inner_body = vm.alloc_segment(Segment::new(inner_marker, Some(inner_prompt)));
+    vm.current_segment = Some(inner_body);
+
+    let result = vm.start_dispatch(Effect::Ask {
+        key: "config".to_string(),
+    });
+    assert!(result.is_ok());
+    assert!(matches!(result.unwrap(), StepEvent::Continue));
+
+    let visible_chain = vm.current_handler_chain();
+    assert_eq!(
+        visible_chain.len(),
+        1,
+        "handler clause must not see below-prompt handlers",
+    );
+    assert_eq!(
+        visible_chain[0].marker, outer_marker,
+        "only outer prompt handler should remain visible in clause execution",
+    );
 }
 
 #[test]
@@ -250,6 +355,7 @@ fn test_visible_handlers_completed_dispatch() {
         is_execution_context_effect: false,
         handler_chain: vec![m1, m2],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
 
@@ -278,6 +384,7 @@ fn test_lazy_pop_completed() {
         is_execution_context_effect: false,
         handler_chain: vec![],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user_1.clone(),
 
@@ -294,6 +401,7 @@ fn test_lazy_pop_completed() {
         is_execution_context_effect: false,
         handler_chain: vec![],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user_2.clone(),
 
@@ -310,6 +418,7 @@ fn test_lazy_pop_completed() {
         is_execution_context_effect: false,
         handler_chain: vec![],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user_3.clone(),
 
@@ -353,6 +462,7 @@ fn test_current_segment_dispatch_id_ignores_completed_dispatch_context() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: Continuation {
             dispatch_id: Some(dispatch_id),
@@ -487,6 +597,7 @@ fn test_check_dispatch_completion_parent_chain_closes_only_root() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: inner_k.clone(),
         prompt_seg_id: seg_id,
@@ -905,6 +1016,7 @@ fn test_handle_get_continuation() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
 
@@ -963,6 +1075,7 @@ fn test_handle_delegate_links_previous_k_as_parent() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: original_k_user,
         prompt_seg_id: seg_id,
@@ -1049,6 +1162,7 @@ fn test_handle_get_handlers() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user,
         prompt_seg_id,
@@ -1146,6 +1260,7 @@ fn test_step_handle_yield_routes_get_traceback() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
         prompt_seg_id: seg_id,
@@ -1357,6 +1472,7 @@ fn test_gap12_dispatch_completion_via_k_user() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: Continuation {
             dispatch_id: Some(dispatch_id),
@@ -1404,6 +1520,7 @@ fn test_terminal_error_resume_marks_only_target_dispatch_completed() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: outer_k.clone(),
         prompt_seg_id: seg_id,
@@ -1424,6 +1541,7 @@ fn test_terminal_error_resume_marks_only_target_dispatch_completed() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: inner_k.clone(),
         prompt_seg_id: seg_id,
@@ -1534,6 +1652,7 @@ fn test_gap16_lazy_pop_before_get_handlers() {
         is_execution_context_effect: false,
         handler_chain: vec![],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
         prompt_seg_id: SegmentId::from_index(0),
@@ -1909,6 +2028,7 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
             is_execution_context_effect: false,
             handler_chain: vec![outer_marker],
             handler_idx: 0,
+            active_handler_seg_id: SegmentId::from_index(0),
             supports_error_context_conversion: false,
             k_user: outer_k.clone(),
             prompt_seg_id: seg_id,
@@ -1929,6 +2049,7 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
             is_execution_context_effect: false,
             handler_chain: vec![inner_marker],
             handler_idx: 0,
+            active_handler_seg_id: SegmentId::from_index(0),
             supports_error_context_conversion: false,
             k_user: inner_k.clone(),
             prompt_seg_id: seg_id,
@@ -2060,6 +2181,7 @@ fn test_d10_handler_return_uses_deliver_not_return() {
     let k_user = Continuation {
         cont_id: ContId::fresh(),
         segment_id: prompt_seg_id,
+        scope_store: crate::segment::ScopeStore::default(),
         frames_snapshot: std::sync::Arc::new(Vec::new()),
         marker,
         dispatch_id: Some(dispatch_id),
@@ -2072,8 +2194,6 @@ fn test_d10_handler_return_uses_deliver_not_return() {
         program: None,
         handlers: Vec::new(),
         handler_identities: Vec::new(),
-        handler_lookup_anchor: None,
-        handler_lookup_anchor_marker: None,
         metadata: None,
         parent: None,
     };
@@ -2086,6 +2206,7 @@ fn test_d10_handler_return_uses_deliver_not_return() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user,
         prompt_seg_id,

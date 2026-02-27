@@ -10,7 +10,7 @@ use crate::frame::Frame;
 use crate::handler::Handler;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::py_shared::PyShared;
-use crate::segment::Segment;
+use crate::segment::{ScopeStore, Segment};
 use crate::step::{Mode, PendingPython, PyException};
 use crate::value::Value;
 
@@ -30,8 +30,7 @@ use crate::value::Value;
 pub struct Continuation {
     pub cont_id: ContId,
     pub segment_id: SegmentId,
-    pub handler_lookup_anchor: Option<SegmentId>,
-    pub handler_lookup_anchor_marker: Option<Marker>,
+    pub scope_store: ScopeStore,
     pub frames_snapshot: Arc<Vec<Frame>>,
     pub marker: Marker,
     pub dispatch_id: Option<DispatchId>,
@@ -72,10 +71,7 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id,
-            handler_lookup_anchor: segment.handler_lookup_anchor.or(Some(segment_id)),
-            handler_lookup_anchor_marker: segment
-                .handler_lookup_anchor_marker
-                .or(Some(segment.marker)),
+            scope_store: segment.scope_store.clone(),
             frames_snapshot: Arc::new(segment.frames.clone()),
             marker: segment.marker,
             dispatch_id,
@@ -102,10 +98,7 @@ impl Continuation {
         Continuation {
             cont_id,
             segment_id,
-            handler_lookup_anchor: segment.handler_lookup_anchor.or(Some(segment_id)),
-            handler_lookup_anchor_marker: segment
-                .handler_lookup_anchor_marker
-                .or(Some(segment.marker)),
+            scope_store: segment.scope_store.clone(),
             frames_snapshot: Arc::new(segment.frames.clone()),
             marker: segment.marker,
             dispatch_id,
@@ -136,8 +129,7 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
-            handler_lookup_anchor: None,
-            handler_lookup_anchor_marker: None,
+            scope_store: ScopeStore::default(),
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
@@ -177,8 +169,7 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
-            handler_lookup_anchor: None,
-            handler_lookup_anchor_marker: None,
+            scope_store: ScopeStore::default(),
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
