@@ -81,6 +81,9 @@ markers = [
     "e2e: tests that exercise external integrations and may require real API keys",
     "requires_opencode: tests that require a running OpenCode server",
     "slow: tests that take a long time to run",
+    "cli: tests for CLI functionality",
+    "semgrep: tests that invoke semgrep subprocess",
+    "stress: stress tests with high concurrency or iteration count",
 ]
 
 [tool.ruff]
