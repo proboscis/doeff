@@ -2295,6 +2295,61 @@ impl VM {
         }
     }
 
+    fn is_active_handler_return_to_prompt(&self, seg_id: SegmentId, prompt_seg_id: SegmentId) -> bool {
+        let Some(seg) = self.segments.get(seg_id) else {
+            return false;
+        };
+        let Some(dispatch_id) = seg.dispatch_id else {
+            return false;
+        };
+        let Some(ctx) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
+            return false;
+        };
+        ctx.active_handler_seg_id == seg_id && ctx.prompt_seg_id == prompt_seg_id
+    }
+
+    fn prompt_for_resume_return_to_active_handler(
+        &self,
+        seg_id: SegmentId,
+        caller_id: SegmentId,
+    ) -> Option<SegmentId> {
+        let caller_seg = self.segments.get(caller_id)?;
+        let dispatch_id = caller_seg.dispatch_id?;
+        let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+        if ctx.active_handler_seg_id != caller_id {
+            return None;
+        }
+        let seg = self.segments.get(seg_id)?;
+        if seg_id == caller_id || seg.marker != caller_seg.marker {
+            return None;
+        }
+        Some(ctx.prompt_seg_id)
+    }
+
+    fn return_clause_for_step_return(
+        &mut self,
+        seg_id: SegmentId,
+        caller_id: SegmentId,
+    ) -> Option<PyShared> {
+        // Resume path: continuation body returned into active handler clause.
+        // Apply return_clause before the value re-enters handler via Resume.
+        if let Some(prompt_seg_id) = self.prompt_for_resume_return_to_active_handler(seg_id, caller_id)
+        {
+            return self.take_prompt_return_clause(prompt_seg_id);
+        }
+
+        // Direct body completion path: body segment returns to prompt boundary.
+        let caller_is_prompt = self
+            .segments
+            .get(caller_id)
+            .is_some_and(|seg| matches!(seg.kind, SegmentKind::PromptBoundary { .. }));
+        let is_active = self.is_active_handler_return_to_prompt(seg_id, caller_id);
+        if caller_is_prompt && !is_active {
+            return self.take_prompt_return_clause(caller_id);
+        }
+        None
+    }
+
     fn invoke_prompt_return_clause(&mut self, return_clause: PyShared, value: Value) -> StepEvent {
         let callable = Python::attach(|py| return_clause.clone_ref(py));
         self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
@@ -2337,7 +2392,7 @@ impl VM {
                         "caller segment not found in step_return",
                     ));
                 }
-                let return_clause = self.take_prompt_return_clause(caller_id);
+                let return_clause = self.return_clause_for_step_return(seg_id, caller_id);
                 self.segments.reparent_children(seg_id, Some(caller_id));
                 self.current_segment = Some(caller_id);
                 self.segments.free(seg_id);
