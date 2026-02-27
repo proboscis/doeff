@@ -19,6 +19,7 @@ Example:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, TypeVar
@@ -35,6 +36,8 @@ InterpreterLike = str | Callable[..., Any] | None
 EnvLike = str | Program[dict[str, Any]] | Mapping[str, Any]
 KleisliLike = str | KleisliProgram[..., Any] | Callable[[Program[Any]], Program[Any]] | None
 TransformLike = str | Callable[[Program[Any]], Program[Any]]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -409,13 +412,13 @@ def _load_default_env(quiet: bool) -> str | None:
     doeff_config_file = Path.home() / ".doeff.py"
     if not doeff_config_file.exists():
         if not quiet:
-            print("[DOEFF][DISCOVERY] Warning: ~/.doeff.py not found", file=sys.stderr)
+            logger.debug("[DOEFF][DISCOVERY] Warning: ~/.doeff.py not found")
         return None
 
     spec = importlib.util.spec_from_file_location("_doeff_config", doeff_config_file)
     if not spec or not spec.loader:
         if not quiet:
-            print("[DOEFF][DISCOVERY] Warning: Unable to load ~/.doeff.py", file=sys.stderr)
+            logger.debug("[DOEFF][DISCOVERY] Warning: Unable to load ~/.doeff.py")
         return None
 
     config_module = importlib.util.module_from_spec(spec)
@@ -425,22 +428,16 @@ def _load_default_env(quiet: bool) -> str | None:
         spec.loader.exec_module(config_module)
     except Exception as exc:
         if not quiet:
-            print(f"[DOEFF][DISCOVERY] Error executing ~/.doeff.py: {exc}", file=sys.stderr)
+            logger.warning("[DOEFF][DISCOVERY] Error executing ~/.doeff.py: %s", exc)
         raise
 
     if hasattr(config_module, "__default_env__"):
         if not quiet:
-            print(
-                "[DOEFF][DISCOVERY] Successfully resolved __default_env__ from ~/.doeff.py",
-                file=sys.stderr,
-            )
+            logger.debug("[DOEFF][DISCOVERY] Successfully resolved __default_env__ from ~/.doeff.py")
         return "_doeff_config.__default_env__"
 
     if not quiet:
-        print(
-            "[DOEFF][DISCOVERY] Warning: ~/.doeff.py exists but __default_env__ not found",
-            file=sys.stderr,
-        )
+        logger.debug("[DOEFF][DISCOVERY] Warning: ~/.doeff.py exists but __default_env__ not found")
     return None
 
 
