@@ -8,6 +8,7 @@ fn make_dummy_continuation() -> Continuation {
     Continuation {
         cont_id: ContId::fresh(),
         segment_id: SegmentId::from_index(0),
+        scope_store: crate::segment::ScopeStore::default(),
         frames_snapshot: std::sync::Arc::new(Vec::new()),
         marker: Marker::fresh(),
         dispatch_id: None,
@@ -29,11 +30,21 @@ fn make_dummy_continuation() -> Continuation {
 struct DummyProgramStream;
 
 impl ASTStream for DummyProgramStream {
-    fn resume(&mut self, _value: Value, _store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        _value: Value,
+        _store: &mut RustStore,
+        _scope: &mut crate::segment::ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Return(Value::Unit)
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut crate::segment::ScopeStore,
+    ) -> ASTStreamStep {
         ASTStreamStep::Throw(exc)
     }
 }
@@ -200,6 +211,7 @@ fn test_visible_handlers_with_busy_boundary() {
         is_execution_context_effect: false,
         handler_chain: vec![m1, m2, m3],
         handler_idx: 1,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
 
@@ -342,6 +354,7 @@ fn test_visible_handlers_completed_dispatch() {
         is_execution_context_effect: false,
         handler_chain: vec![m1, m2],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
 
@@ -370,6 +383,7 @@ fn test_lazy_pop_completed() {
         is_execution_context_effect: false,
         handler_chain: vec![],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user_1.clone(),
 
@@ -386,6 +400,7 @@ fn test_lazy_pop_completed() {
         is_execution_context_effect: false,
         handler_chain: vec![],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user_2.clone(),
 
@@ -402,6 +417,7 @@ fn test_lazy_pop_completed() {
         is_execution_context_effect: false,
         handler_chain: vec![],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user_3.clone(),
 
@@ -445,6 +461,7 @@ fn test_current_segment_dispatch_id_ignores_completed_dispatch_context() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: Continuation {
             dispatch_id: Some(dispatch_id),
@@ -579,6 +596,7 @@ fn test_check_dispatch_completion_parent_chain_closes_only_root() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: inner_k.clone(),
         prompt_seg_id: seg_id,
@@ -997,6 +1015,7 @@ fn test_handle_get_continuation() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
 
@@ -1055,6 +1074,7 @@ fn test_handle_delegate_links_previous_k_as_parent() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: original_k_user,
         prompt_seg_id: seg_id,
@@ -1141,6 +1161,7 @@ fn test_handle_get_handlers() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user,
         prompt_seg_id,
@@ -1238,6 +1259,7 @@ fn test_step_handle_yield_routes_get_traceback() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
         prompt_seg_id: seg_id,
@@ -1449,6 +1471,7 @@ fn test_gap12_dispatch_completion_via_k_user() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: Continuation {
             dispatch_id: Some(dispatch_id),
@@ -1496,6 +1519,7 @@ fn test_terminal_error_resume_marks_only_target_dispatch_completed() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: outer_k.clone(),
         prompt_seg_id: seg_id,
@@ -1516,6 +1540,7 @@ fn test_terminal_error_resume_marks_only_target_dispatch_completed() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: inner_k.clone(),
         prompt_seg_id: seg_id,
@@ -1626,6 +1651,7 @@ fn test_gap16_lazy_pop_before_get_handlers() {
         is_execution_context_effect: false,
         handler_chain: vec![],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user: k_user.clone(),
         prompt_seg_id: SegmentId::from_index(0),
@@ -2001,6 +2027,7 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
             is_execution_context_effect: false,
             handler_chain: vec![outer_marker],
             handler_idx: 0,
+            active_handler_seg_id: SegmentId::from_index(0),
             supports_error_context_conversion: false,
             k_user: outer_k.clone(),
             prompt_seg_id: seg_id,
@@ -2021,6 +2048,7 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
             is_execution_context_effect: false,
             handler_chain: vec![inner_marker],
             handler_idx: 0,
+            active_handler_seg_id: SegmentId::from_index(0),
             supports_error_context_conversion: false,
             k_user: inner_k.clone(),
             prompt_seg_id: seg_id,
@@ -2152,6 +2180,7 @@ fn test_d10_handler_return_uses_deliver_not_return() {
     let k_user = Continuation {
         cont_id: ContId::fresh(),
         segment_id: prompt_seg_id,
+        scope_store: crate::segment::ScopeStore::default(),
         frames_snapshot: std::sync::Arc::new(Vec::new()),
         marker,
         dispatch_id: Some(dispatch_id),
@@ -2176,6 +2205,7 @@ fn test_d10_handler_return_uses_deliver_not_return() {
         is_execution_context_effect: false,
         handler_chain: vec![marker],
         handler_idx: 0,
+        active_handler_seg_id: SegmentId::from_index(0),
         supports_error_context_conversion: false,
         k_user,
         prompt_seg_id,

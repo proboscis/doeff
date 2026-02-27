@@ -172,13 +172,19 @@ mod tests {
     use super::*;
     use crate::ast_stream::{ASTStream, ASTStreamStep};
     use crate::rust_store::RustStore;
+    use crate::segment::ScopeStore;
     use crate::value::Value;
 
     #[derive(Debug)]
     struct DummyStream;
 
     impl ASTStream for DummyStream {
-        fn resume(&mut self, _value: Value, _store: &mut RustStore) -> ASTStreamStep {
+        fn resume(
+            &mut self,
+            _value: Value,
+            _store: &mut RustStore,
+            _scope: &mut ScopeStore,
+        ) -> ASTStreamStep {
             ASTStreamStep::Return(Value::Unit)
         }
 
@@ -186,6 +192,7 @@ mod tests {
             &mut self,
             exc: crate::driver::PyException,
             _store: &mut RustStore,
+            _scope: &mut ScopeStore,
         ) -> ASTStreamStep {
             ASTStreamStep::Throw(exc)
         }

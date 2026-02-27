@@ -9,12 +9,23 @@ use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
 use crate::py_shared::PyShared;
 use crate::python_call::PythonCall;
+use crate::segment::ScopeStore;
 use crate::value::Value;
 use crate::vm::RustStore;
 
 pub trait ASTStream: fmt::Debug + Send {
-    fn resume(&mut self, value: Value, store: &mut RustStore) -> ASTStreamStep;
-    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> ASTStreamStep;
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep;
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> ASTStreamStep;
     fn debug_location(&self) -> Option<StreamLocation> {
         None
     }
@@ -89,7 +100,12 @@ impl PythonGeneratorStream {
 }
 
 impl ASTStream for PythonGeneratorStream {
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> ASTStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         if self.started {
             ASTStreamStep::NeedsPython(PythonCall::GenSend { value })
         } else {
@@ -98,7 +114,12 @@ impl ASTStream for PythonGeneratorStream {
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> ASTStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> ASTStreamStep {
         self.started = true;
         ASTStreamStep::NeedsPython(PythonCall::GenThrow { exc })
     }
@@ -143,14 +164,15 @@ mod tests {
             let mut stream =
                 PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
             let mut store = RustStore::new();
+            let mut scope = ScopeStore::default();
 
-            let step1 = stream.resume(Value::Unit, &mut store);
+            let step1 = stream.resume(Value::Unit, &mut store, &mut scope);
             assert!(matches!(
                 step1,
                 ASTStreamStep::NeedsPython(PythonCall::GenNext)
             ));
 
-            let step2 = stream.resume(Value::Int(7), &mut store);
+            let step2 = stream.resume(Value::Int(7), &mut store, &mut scope);
             assert!(matches!(
                 step2,
                 ASTStreamStep::NeedsPython(PythonCall::GenSend {
@@ -185,7 +207,8 @@ mod tests {
             let mut stream =
                 PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
             let mut store = RustStore::new();
-            let step = stream.throw(PyException::runtime_error("boom"), &mut store);
+            let mut scope = ScopeStore::default();
+            let step = stream.throw(PyException::runtime_error("boom"), &mut store, &mut scope);
             assert!(matches!(
                 step,
                 ASTStreamStep::NeedsPython(PythonCall::GenThrow { .. })
