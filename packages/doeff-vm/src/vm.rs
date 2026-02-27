@@ -279,6 +279,7 @@ pub struct VM {
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
     pub continuation_registry: HashMap<ContId, Continuation>,
+    continuation_finally_registry: HashMap<ContId, Vec<PyShared>>,
     pub active_run_token: Option<u64>,
 }
 
@@ -297,6 +298,7 @@ impl VM {
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
             continuation_registry: HashMap::new(),
+            continuation_finally_registry: HashMap::new(),
             active_run_token: None,
         }
     }
@@ -332,7 +334,24 @@ impl VM {
         for handler in &self.run_handlers {
             handler.on_run_end(run_token);
         }
+        self.warn_abandoned_finally_continuations();
         self.run_handlers.clear();
+        self.continuation_registry.clear();
+        self.continuation_finally_registry.clear();
+        self.consumed_cont_ids.clear();
+    }
+
+    fn warn_abandoned_finally_continuations(&self) {
+        for (cont_id, cleanups) in &self.continuation_finally_registry {
+            if cleanups.is_empty() {
+                continue;
+            }
+            eprintln!(
+                "warning: continuation {} dropped without resumption; {} pending Finally cleanup(s) were abandoned",
+                cont_id.raw(),
+                cleanups.len()
+            );
+        }
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -1201,10 +1220,44 @@ impl VM {
                 _ => unreachable!(),
             },
             FinallyOutcome::Throw(original_exception) => match cleanup_mode {
-                Mode::Deliver(_) | Mode::Throw(_) => Mode::Throw(original_exception),
+                Mode::Deliver(_) => Mode::Throw(original_exception),
+                Mode::Throw(cleanup_exception) => {
+                    Self::chain_exception_context(&original_exception, &cleanup_exception);
+                    Mode::Throw(original_exception)
+                }
                 _ => unreachable!(),
             },
         }
+    }
+
+    fn same_materialized_exception(lhs: &PyException, rhs: &PyException) -> bool {
+        match (lhs, rhs) {
+            (
+                PyException::Materialized {
+                    exc_value: lhs_value,
+                    ..
+                },
+                PyException::Materialized {
+                    exc_value: rhs_value,
+                    ..
+                },
+            ) => Python::attach(|py| lhs_value.bind(py).as_ptr() == rhs_value.bind(py).as_ptr()),
+            _ => false,
+        }
+    }
+
+    fn chain_exception_context(original_exception: &PyException, cleanup_exception: &PyException) {
+        if Self::same_materialized_exception(original_exception, cleanup_exception) {
+            return;
+        }
+        let PyException::Materialized { exc_value, .. } = original_exception else {
+            return;
+        };
+        Python::attach(|py| {
+            let _ = exc_value
+                .bind(py)
+                .setattr("__context__", cleanup_exception.value_clone_ref(py));
+        });
     }
 
     fn step_interceptor_apply_frame(
@@ -2716,9 +2769,18 @@ impl VM {
     pub fn mark_one_shot_consumed(&mut self, cont_id: ContId) {
         self.consumed_cont_ids.insert(cont_id);
         self.continuation_registry.remove(&cont_id);
+        self.continuation_finally_registry.remove(&cont_id);
     }
 
     pub fn register_continuation(&mut self, k: Continuation) {
+        let finally_cleanups =
+            self.gather_finally_cleanups_from_caller(self.continuation_caller_segment(&k));
+        if finally_cleanups.is_empty() {
+            self.continuation_finally_registry.remove(&k.cont_id);
+        } else {
+            self.continuation_finally_registry
+                .insert(k.cont_id, finally_cleanups);
+        }
         self.continuation_registry.insert(k.cont_id, k);
     }
 
@@ -3139,9 +3201,8 @@ impl VM {
         self.segments.get(k.segment_id).and_then(|source_seg| source_seg.caller)
     }
 
-    fn continuation_finally_cleanups(&self, k: &Continuation) -> Vec<PyShared> {
+    fn gather_finally_cleanups_from_caller(&self, mut cursor: Option<SegmentId>) -> Vec<PyShared> {
         let mut cleanups = Vec::new();
-        let mut cursor = self.continuation_caller_segment(k);
         while let Some(seg_id) = cursor {
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
@@ -3155,6 +3216,13 @@ impl VM {
             }
         }
         cleanups
+    }
+
+    fn continuation_finally_cleanups(&self, k: &Continuation) -> Vec<PyShared> {
+        if let Some(cleanups) = self.continuation_finally_registry.get(&k.cont_id) {
+            return cleanups.clone();
+        }
+        self.gather_finally_cleanups_from_caller(self.continuation_caller_segment(k))
     }
 
     fn graft_continuation_finally_boundaries(
@@ -3187,10 +3255,9 @@ impl VM {
         caller: Option<SegmentId>,
     ) -> Option<SegmentId> {
         match kind {
-            ContinuationActivationKind::Resume => {
+            ContinuationActivationKind::Resume | ContinuationActivationKind::Transfer => {
                 self.graft_continuation_finally_boundaries(k, caller)
             }
-            ContinuationActivationKind::Transfer => caller,
         }
     }
 
