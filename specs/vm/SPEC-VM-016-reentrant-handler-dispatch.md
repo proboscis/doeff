@@ -1,6 +1,6 @@
-# SPEC-VM-016: Re-entrant Handler Dispatch (Koka Semantics)
+# SPEC-VM-016: Self-Excluding Handler Dispatch (OCaml Semantics)
 
-## Status: Draft (Revision 2)
+## Status: Draft (Revision 3)
 
 ### Revision 1 Changelog
 
@@ -24,36 +24,49 @@ Aligns mask model with SPEC-008 R17 segment architecture. Introduces MaskBoundar
 | **R2-C** | §4.3, §6.2 | **WithIntercept superseded.** Override handler pattern (handler + `MaskBehind`) replaces `WithIntercept` for all use cases. See SPEC-WITH-INTERCEPT deprecation notice. |
 | **R2-D** | §2 | **Handler-on-segment alignment.** References updated to match SPEC-008 R17 architecture (no `VM.handlers`, no `scope_chain`, handler walk via caller chain). |
 
+### Revision 3 Changelog
+
+**Adopts OCaml self-excluding semantics. Cancels Mask/MaskBehind/Override. WithIntercept restored.**
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R3-A** | §1, §2 | **Self-excluding dispatch (OCaml semantics).** Handler clause bodies run "above" their own prompt. Effects from handler code do NOT re-enter the same handler. Replaces Koka's re-entrant-by-default model. |
+| **R3-B** | §3, §4 | **Mask/MaskBehind/Override CANCELLED.** Not needed — self-excluding default already provides Koka's `override` behavior. Mask is only useful in Koka's re-entrant world. Sections retained for historical reference, marked as cancelled. |
+| **R3-C** | §4.3, §6.2 | **WithIntercept RESTORED.** Analysis showed mask/override cannot replace WithIntercept for the observation use case (intercepting effects from handler clause bodies). WithIntercept is an observer; mask/override are routers. Different capabilities. |
+| **R3-D** | §1.2 | **Theoretical basis updated.** References OCaml Multicore semantics (handler clause runs above prompt) and explains why Koka's model was rejected. |
+
 ---
 
 ## 1. Summary
 
-This spec replaces the doeff VM's "busy boundary" handler visibility model with **re-entrant handler dispatch**, following Koka's algebraic effect semantics (Koka book §3.4.7).
+This spec replaces the doeff VM's "busy boundary" handler visibility model with **self-excluding handler dispatch**, following OCaml Multicore's algebraic effect semantics.
 
-**Current model (WRONG):** When a handler is executing, it is marked "busy" and excluded from `visible_handlers()`. Effects yielded inside a handler body cannot reach the handler itself. This is an implicit, always-on mask that users cannot control.
+**Previous model (busy boundary):** When a handler is executing, it is marked "busy" and excluded from `visible_handlers()` via a HashSet computation over the dispatch stack. This was an ad-hoc implementation that happened to approximate the correct semantics.
 
-**Target model (THIS SPEC):** Handlers are re-entrant by default. An effect yielded during handler execution dispatches through the full caller chain, including the currently-handling handler's `PromptBoundary` segment. The programmer explicitly controls handler skipping via `Mask(effect_types, body)` and `MaskBehind(effect_types, body)` when needed.
+**Target model (THIS SPEC):** Handler clause bodies run "above" their own prompt — effects yielded during handler execution dispatch through the caller chain **excluding** the currently-handling handler's `PromptBoundary` segment. This is the OCaml Multicore model where the handler clause executes in the outer scope.
 
 ```
-Current (busy boundary):           Target (re-entrant):
+Previous (busy boundary):          Target (self-excluding):
 
   yield Perform(E)                   yield Perform(E)
     │                                  │
     ▼                                  ▼
   handler walk:                      handler walk:
-    caller chain MINUS busy            caller chain (all PromptBoundary segments)
+    caller chain MINUS busy set        caller chain, skip active handler's prompt
+    (HashSet computation)              (single SegmentId comparison)
     │                                  │
     ▼                                  ▼
-  handler H is excluded              handler H is included
-  (implicit mask)                    (re-entrant by default)
+  handler H is excluded              handler H is excluded
+  (correct but ad-hoc)              (correct, principled — OCaml semantics)
 
-                                   To skip H explicitly:
-                                     Mask([E], body)
-                                       → MaskBoundary segment in caller chain
-                                       → next PromptBoundary for E is skipped
-                                     MaskBehind([E], body)
-                                       → MaskBoundary { behind=true }
-                                       → handler BEHIND override is skipped
+                                   Handler clause code:
+                                     perform(E) → dispatches ABOVE prompt
+                                     → naturally reaches outer handler
+                                     → Koka's "override" behavior for free
+
+                                   Resumed body code (deep handler):
+                                     perform(E) → dispatches INSIDE prompt
+                                     → sees the handler (re-entrant via continuation)
 ```
 
 ### 1.1 Relationship to Existing Specs
@@ -66,101 +79,117 @@ Current (busy boundary):           Target (re-entrant):
 
 ### 1.2 Theoretical Basis
 
-In Koka's effect system (Leijen 2017, Koka book §3.4.7):
+In OCaml Multicore's effect system (Sivaramakrishnan et al., PLDI 2021 "Retrofitting Effect Handlers onto OCaml"):
 
-1. **Deep handlers** are the default: when a handled computation resumes, the resumed computation runs under the same handler. This means the handler is naturally re-entrant — a resumed computation can yield the same effect again and it will be handled by the same handler.
+1. **Handler clause bodies run above their own prompt.** When a handler catches an effect, the clause code executes on the original stack (above the handler). Effects performed by the clause code dispatch to handlers above the current one — the handler does NOT see itself.
 
-2. **`mask<eff>`** is an explicit primitive that masks (hides) the innermost handler for effect `eff` within its body. The effect passes through to the next handler in the chain. This is opt-in, not default.
+2. **Deep handlers reinstall around the continuation.** When `continue k v` resumes the captured computation, the handler is re-wrapped around the continuation. Effects from the resumed computation DO see the handler (re-entrant via continuation).
 
-3. **`override`** is sugar for installing a handler and then masking the effect behind it (`mask behind<eff>`), so the new handler replaces the previous one. In doeff, this desugars to `handler { clauses }(MaskBehind(eff_types, body))`.
+3. **No `mask` primitive needed.** Because handler clause bodies naturally exclude themselves, Koka's `override` behavior is the default. There is no need for `mask`/`mask behind` primitives to control self-dispatch.
 
-The doeff VM's current "busy boundary" implements the opposite: an implicit, always-on mask that cannot be disabled. This prevents legitimate use cases like:
-- A logging handler that logs its own internal operations
-- A state handler that reads its own state during state transitions
-- An error handler that performs error-producing operations during recovery
+The formal reduction rules (Xavier Leroy, "Control Structures" §10.5):
+```
+Deep handler:  handle D[perform v] with eret, eeff  →  eeff(v, λx. handle D[x] with eret, eeff)
+               ^^^^^^^                                  ^^^^                ^^^^^^^^^^^^^^^^^^^^^^^^
+               handler clause body runs WITHOUT          continuation k has handler RE-INSTALLED
+               handler in scope
+```
+
+**Why not Koka semantics (re-entrant by default)?**
+
+Koka's model requires `mask`/`override` primitives to escape self-reentrance. Analysis showed:
+- Most real Koka code uses `override` for transform-and-delegate patterns — i.e., most users want self-exclusion
+- The self-reentrant default (`<emit,emit|e>` duplicate labels) creates ugly types and accidental infinite loops
+- doeff's `WithIntercept` (observation of effects from handler clause bodies) **cannot** be replaced by mask/override — they are fundamentally different capabilities (observer vs router)
+- Adopting OCaml semantics keeps WithIntercept viable and gives override behavior for free
 
 ---
 
-## 2. Handler Visibility: Re-entrant by Default
+## 2. Handler Visibility: Self-Excluding (OCaml Semantics)
 
 > **SPEC-008 R17 alignment.** Handlers live on `PromptBoundary` segments. There is no `VM.handlers` map and no `scope_chain` array. Handler lookup walks the **caller chain** — the linked list of segments from the current segment upward through each segment's `caller` pointer. Each `PromptBoundary` encountered during the walk is a candidate handler. See SPEC-008 R17 §segment-kinds for the authoritative description.
 
-### 2.1 Handler Walk — Re-entrant
+### 2.1 Handler Walk — Self-Excluding
 
-Handler dispatch walks the caller chain from the current segment upward. Every `PromptBoundary` segment whose handler can match the effect is a candidate. **No busy exclusion** — the walk does not skip handlers that are currently executing.
+Handler dispatch walks the caller chain from the current segment upward. Every `PromptBoundary` segment whose handler can match the effect is a candidate, **except** the currently-active handler's own `PromptBoundary` segment (self-exclusion).
 
 ```
-handler_walk(current_seg, effect):
+handler_walk(current_seg, effect, active_handler_seg_id):
     seg = current_seg
     while seg is not None:
         match seg.kind:
             PromptBoundary { handler, .. }:
+                if seg.id == active_handler_seg_id:
+                    // Self-exclusion: skip the active handler's own prompt
+                    seg = seg.caller
+                    continue
                 if handler.can_handle(effect):
                     return seg          // found matching handler
-            MaskBoundary { .. }:
-                // see §3 for mask interaction
-                ...
         seg = seg.caller
     raise UnhandledEffect
 ```
 
-The entire busy-set computation from R1 is eliminated:
+The busy-set computation from R1 is eliminated and replaced by a single SegmentId comparison:
 - No `dispatch_stack.last()` check
 - No `HashSet<Marker>` busy set construction
 - No `scope_chain` filtering
 - No `VM.handlers` map lookup
+- Instead: `active_handler_seg_id` comparison during walk
 
 ### 2.2 `start_dispatch()` — Caller Chain Walk
 
 ```
 start_dispatch(effect):
     lazy_pop_completed()
-    matched_seg = handler_walk(current_segment(), effect)
+    active_seg = get_active_handler_seg_id()  // from current dispatch context, if any
+    matched_seg = handler_walk(current_segment(), effect, active_seg)
     // capture continuation, push dispatch context …
 ```
 
-The dispatch no longer constructs a `handler_chain` vector. The walk is a single traversal of the caller chain, stopping at the first matching `PromptBoundary` (subject to `MaskBoundary` skipping rules — see §3).
+The `active_handler_seg_id` is the SegmentId of the PromptBoundary whose handler clause is currently executing. When no handler clause is active (dispatching from body code), `active_seg` is None and all handlers are candidates.
 
 ### 2.3 `DispatchContext` — Revised
 
-With caller-chain-based dispatch, `DispatchContext` stores the matched segment rather than a handler chain index:
+`DispatchContext` stores the matched segment and tracks the active handler for self-exclusion:
 
 ```
 DispatchContext {
-    dispatch_id:    DispatchId,
-    effect:         Effect,
-    prompt_seg_id:  SegmentId,    // the PromptBoundary that matched
-    k_user:         Continuation,
-    completed:      bool,
+    dispatch_id:        DispatchId,
+    effect:             Effect,
+    prompt_seg_id:      SegmentId,          // the PromptBoundary that matched
+    active_handler_seg_id: SegmentId,       // for self-exclusion during nested dispatch
+    k_user:             Continuation,
+    handler_chain:      Vec<Marker>,        // implementation detail for completion tracking
+    handler_idx:        usize,
+    completed:          bool,
 }
 ```
 
 `Delegate` re-performs from the segment **above** `prompt_seg_id` in the caller chain — i.e., it resumes the handler walk from `prompt_seg_id.caller`, naturally skipping the current handler by position.
 
-### 2.4 Semantic Consequence: Self-Dispatch
+### 2.4 Semantic Consequence: Self-Exclusion
 
-With re-entrant handlers, an effect yielded inside a handler body CAN match the same handler:
+With self-excluding handlers, an effect yielded inside a handler body does NOT match the same handler:
 
 ```python
-def state_handler(effect, k):
-    if isinstance(effect, GetEffect):
-        # This yield Perform(Get(...)) will dispatch through
-        # the caller chain, including this handler's own
-        # PromptBoundary segment. If it handles Get, it recurses.
-        current = yield Get("some-key")  # re-entrant!
-        return (yield Resume(k, current))
+def logging_handler(effect, k):
+    if isinstance(effect, LogEffect):
+        # This Log goes to the OUTER handler, not this one.
+        # Handler clause body runs "above" its own prompt.
+        yield Log("handling: " + effect.msg)  # → outer Log handler
+        return (yield Resume(k, None))
     yield Delegate()
 ```
 
-This is **correct and intentional**. If the programmer wants to avoid self-dispatch, they use `Mask` (§3):
+This is **correct and intentional** (OCaml semantics). The handler naturally forwards to the outer handler without needing `Mask` or `override` — Koka's `override` behavior is the default.
+
+For the resumed body code (via `Resume(k, ...)`), the handler IS visible because deep handlers reinstall around the continuation:
 
 ```python
-def state_handler(effect, k):
-    if isinstance(effect, GetEffect):
-        # Mask Get effects in this body — they skip this handler
-        masked = Mask([GetEffect], Get("some-key"))
-        current = yield masked
-        return (yield Resume(k, current))
+def counting_handler(effect, k):
+    if isinstance(effect, LogEffect):
+        # After resume, if body performs Log again, THIS handler catches it
+        return (yield Resume(k, None))  # body sees this handler (deep)
     yield Delegate()
 ```
 
@@ -171,9 +200,11 @@ def state_handler(effect, k):
 
 ---
 
-## 3. Mask: Explicit Handler Skipping
+## 3. ~~Mask: Explicit Handler Skipping~~ (CANCELLED — R3)
 
-> **R2 rewrite.** The R1 mask-stack model (per-segment `MaskEntry` stack, `is_masked()` helper) is replaced by **MaskBoundary segments** — mask is now a segment kind, not metadata on an existing segment. This aligns with SPEC-008 R17's segment-based architecture.
+> **R3: CANCELLED.** Mask/MaskBehind are not needed. OCaml self-excluding semantics (§2) provide Koka's `override` behavior as the default. The mask primitive is only useful in Koka's re-entrant-by-default world where you need to escape self-dispatch. Since doeff uses self-excluding semantics, mask has no use case. This section is retained for historical reference only.
+
+> ~~**R2 rewrite.** The R1 mask-stack model (per-segment `MaskEntry` stack, `is_masked()` helper) is replaced by **MaskBoundary segments** — mask is now a segment kind, not metadata on an existing segment. This aligns with SPEC-008 R17's segment-based architecture.~~
 
 ### 3.1 `Mask` and `MaskBehind` DoCtrl Definitions
 
@@ -307,7 +338,7 @@ The key difference: Delegate/Pass skip by **position** (caller chain advancement
 
 ---
 
-## 4. Override Handler Pattern
+## 4. ~~Override Handler Pattern~~ (CANCELLED — R3)
 
 ### 4.1 Concept
 
@@ -365,51 +396,38 @@ overridden = WithHandler(
 
 With `MaskBehind`, the override handler is **not** skipped — it handles effects from `body` normally. The handler it *replaced* (the one behind it) is the one that gets masked. This ensures `body`'s effects go to the override, and the override decides what to forward.
 
-### 4.3 WithIntercept Supersession
+### 4.3 ~~WithIntercept Supersession~~ (REVERSED — R3)
 
-> **WithIntercept is superseded.** The override handler pattern (handler + `MaskBehind`) replaces `WithIntercept` for all use cases. See SPEC-WITH-INTERCEPT deprecation notice.
+> **R3: WithIntercept is RESTORED.** Analysis showed that mask/override CANNOT replace WithIntercept for the observation use case. The R2 claim that "every interceptor pattern decomposes into override + MaskBehind" is **incorrect**.
 
-The `WithIntercept` primitive allowed observing effects before handler dispatch. Every use case for interceptors can be expressed as an override handler:
+**Why WithIntercept cannot be replaced by mask/override:**
 
-**Use case: type-specific interception.** Observe a specific effect type without modifying accumulation.
+The critical use case is intercepting effects from handler clause bodies:
 
 ```
-Default handler stack: [in_memory_log_handler, handler_a, handler_b]
-Goal: observe log effects from handler_a and handler_b by printing,
-      while keeping the in_memory_log_handler's accumulation behavior.
+Handler stack: [writer(Log), handler_a(EffA), handler_b(EffB), body]
 
-Solution with override:
-  override log handler {
-      LogEffect(msg) → {
-          print(msg)                  // observe
-          yield Delegate()            // re-perform → goes to in_memory_log_handler
-          yield Resume(k, result)
-      }
-  }(body_with_handler_a_and_handler_b)
+handler_a's clause body performs Log → walks up → writer catches it
+handler_b's clause body performs Log → walks up → writer catches it
 
-Desugaring:
-  WithHandler(
-      observe_log_handler,
-      MaskBehind([LogEffect],
-          body_with_handler_a_and_handler_b
-      )
-  )
+User wants to observe these Log effects (print to stdout)
+while keeping writer's accumulation.
 ```
 
-The `MaskBehind` ensures that `handler_a` and `handler_b`'s log effects reach the override handler (not the outer `in_memory_log_handler`). The override handler prints and then delegates to the outer handler via `Delegate`, which re-performs from the override handler's position in the caller chain — reaching `in_memory_log_handler`.
+Neither mask nor override can intercept these Log effects because:
+- Handler clause bodies run **above** their own prompt (OCaml semantics)
+- Their effects dispatch to handlers above them in the caller chain
+- Any handler installed **below** them (between handler_b and body) cannot see effects from handler clause bodies above
 
-**Use case: catch-all observation.** Observe all effects regardless of type.
+**WithIntercept** is fundamentally an **observer** — it sees effects flowing through a section of the handler chain without handling them. mask/override are **routers** — they change which handler catches an effect. These are different capabilities:
 
-```python
-def catch_all_observer(effect, k):
-    """Observe every effect, then delegate."""
-    print(f"[trace] {effect}")
-    yield Delegate()
-```
+| Mechanism | Capability | Can intercept handler clause body effects? |
+|-----------|-----------|-------------------------------------------|
+| WithIntercept | Observer (sees effects in transit) | YES |
+| mask/override | Router (redirects effect dispatch) | NO |
+| Handler restructuring | Insert handler between layers | YES (but requires control of installation order) |
 
-No mask needed — a catch-all handler with `Delegate` naturally observes and forwards.
-
-**Why WithIntercept is unnecessary:** Every interceptor pattern decomposes into either (a) an override handler with `MaskBehind` for type-specific observation, or (b) a catch-all handler with `Delegate` for untyped observation. The override pattern is strictly more expressive because it composes with the standard handler walk, mask system, and continuation machinery.
+WithIntercept remains a first-class VM primitive. SPEC-WITH-INTERCEPT deprecation is **reversed**.
 
 ---
 
@@ -444,19 +462,18 @@ if top.completed {
 
 INV-8 "Busy Boundary (Top-Only)" is **superseded** by this spec. The invariant is replaced by:
 
-**INV-8 (Revised): Re-entrant Handler Dispatch**
+**INV-8 (Revised): Self-Excluding Handler Dispatch**
 ```
-Handlers are re-entrant by default. The handler walk traverses the
-caller chain without filtering. Effects yielded during handler
-execution dispatch through all PromptBoundary segments in the caller
-chain, including the currently-handling handler.
+Handler clause bodies run above their own prompt (OCaml semantics).
+The handler walk traverses the caller chain, skipping the active
+handler's own PromptBoundary segment (self-exclusion via
+active_handler_seg_id comparison).
 
-Handler skipping is opt-in via Mask/MaskBehind DoCtrl, which create
-MaskBoundary segments. During the handler walk, MaskBoundary segments
-cause the next (or behind) PromptBoundary for the masked effect types
-to be skipped.
+Effects yielded during handler execution dispatch to handlers ABOVE
+the current handler. Effects from resumed body code (via deep handler
+continuation reinstallation) see the handler normally.
 
-WithIntercept is superseded by the override handler pattern (§4.3).
+WithIntercept remains a first-class VM primitive for effect observation.
 
 See SPEC-VM-016 for semantics.
 ```
@@ -473,7 +490,7 @@ Re-entrant dispatch + deep handlers means: a resumed computation that yields the
 
 ### 6.2 Interceptors (`WithIntercept`)
 
-`WithIntercept` is **superseded** by the override handler pattern (§4.3). The override handler + `MaskBehind` combination covers all interceptor use cases with better composability and no special-case dispatch path. See SPEC-WITH-INTERCEPT deprecation notice for migration guidance.
+`WithIntercept` **remains a first-class VM primitive** (R3 reversal). The override pattern cannot replace WithIntercept for observing effects from handler clause bodies — see §4.3 for full analysis. WithIntercept's `InterceptorState`, `InterceptBoundary`, and related machinery are retained.
 
 ### 6.3 Scheduler Handler (`SPEC-SCHED-001`)
 
@@ -489,106 +506,80 @@ The cooperative scheduler handler handles `Spawn`, `Gather`, `Race`, etc. With r
 
 ### 7.1 Behavioral Change
 
-This is a **semantic change** — programs that relied on implicit busy exclusion may behave differently:
+This is a **refinement**, not a semantic change. The busy-boundary model happened to approximate self-excluding semantics. The new implementation is more principled (single SegmentId comparison vs HashSet computation) but produces the same observable behavior:
 
-| Scenario | Before (busy) | After (re-entrant) |
-|----------|---------------|---------------------|
-| Handler yields same effect type | Dispatches to outer handler | Dispatches to SAME handler (recursive) |
-| Handler yields different effect type | Dispatches normally | Dispatches normally (no change) |
-| Handler yields Delegate() | Skips current handler | Skips current handler (no change) |
-| Handler yields Pass(effect) | Skips current handler | Skips current handler (no change) |
+| Scenario | Before (busy boundary) | After (self-excluding) |
+|----------|------------------------|------------------------|
+| Handler yields same effect type | Dispatches to outer handler | Dispatches to outer handler (same) |
+| Handler yields different effect type | Dispatches normally | Dispatches normally (same) |
+| Handler yields Delegate() | Skips current handler | Skips current handler (same) |
+| Handler yields Pass(effect) | Skips current handler | Skips current handler (same) |
+| Body code resumes and yields | Handler catches it (deep) | Handler catches it (deep, same) |
 
-### 7.2 Breaking Case: Accidental Recursion
+### 7.2 No Breaking Changes
 
-Handlers that yield effects of their own type without explicit delegation will now recurse instead of forwarding to an outer handler. This is the correct semantic, but existing handlers may need `Mask` or `Delegate` to preserve behavior:
-
-```python
-# BEFORE: implicitly forwarded to outer handler (busy exclusion)
-def handler(effect, k):
-    if isinstance(effect, MyEffect):
-        result = yield MyEffect("inner")  # went to outer handler
-        return (yield Resume(k, result))
-
-# AFTER: must explicitly delegate if outer forwarding was intended
-def handler(effect, k):
-    if isinstance(effect, MyEffect):
-        result = yield Delegate()  # explicit forward to outer
-        return (yield Resume(k, result))
-```
+Self-excluding semantics match the previous busy-boundary behavior for all practical cases. No handler migration is needed.
 
 ### 7.3 Migration Checklist
 
-1. Audit all handler implementations for self-effect yields
-2. Add `Mask` or `Delegate` where outer forwarding was intended
-3. Test handler composition with nested `WithHandler` stacks
+1. ~~Audit all handler implementations for self-effect yields~~ Not needed — behavior unchanged
+2. ~~Add Mask or Delegate where outer forwarding was intended~~ Not needed — self-exclusion is default
+3. Verify handler composition with nested `WithHandler` stacks (regression testing)
 
 ---
 
 ## 8. Acceptance Criteria
 
 ### Core Semantics
-- [ ] Handler walk traverses caller chain without busy filtering
-- [ ] Busy set computation fully removed
-- [ ] Effects yielded during handler execution can match the executing handler
-- [ ] `DispatchContext` stores `prompt_seg_id` (no `handler_chain` vector)
-- [ ] `Delegate` re-performs from `prompt_seg_id.caller` in caller chain
+- [x] Handler walk traverses caller chain with self-exclusion (active_handler_seg_id comparison)
+- [x] Busy set computation fully removed (replaced by single SegmentId comparison)
+- [x] Effects yielded during handler execution dispatch to OUTER handlers (self-excluding)
+- [x] `DispatchContext` stores `prompt_seg_id` and `active_handler_seg_id`
+- [x] `Delegate` re-performs from `prompt_seg_id.caller` in caller chain
 
-### Mask Primitive — MaskBoundary Segments
-- [ ] `Mask` DoCtrl variant added to `DoCtrl` enum
-- [ ] `MaskBehind` DoCtrl variant added to `DoCtrl` enum
-- [ ] `Mask` Python class added as DoCtrl surface API
-- [ ] `MaskBehind` Python class added as DoCtrl surface API
-- [ ] `MaskBoundary` added as a `SegmentKind` with `masked_effects` and `behind` fields
-- [ ] `Mask(eff_types, body)` creates `MaskBoundary { behind: false }` segment as parent of body segment
-- [ ] `MaskBehind(eff_types, body)` creates `MaskBoundary { behind: true }` segment as parent of body segment
-- [ ] Handler walk skips next `PromptBoundary` for masked effects when encountering `MaskBoundary { behind: false }`
-- [ ] Handler walk defers skip to behind-handler when encountering `MaskBoundary { behind: true }`
-- [ ] Nested masks compose correctly (multiple `MaskBoundary` segments in caller chain)
-- [ ] `MaskBoundary` segments are naturally popped when body completes (standard segment lifecycle)
+### ~~Mask Primitive~~ (CANCELLED — R3)
+~~All mask/MaskBehind/MaskBoundary items cancelled. Not needed with OCaml self-excluding semantics.~~
 
-### WithIntercept Supersession
-- [ ] `WithIntercept` DoCtrl removed from VM dispatch path
-- [ ] Override handler + `MaskBehind` covers type-specific interception use case
-- [ ] Catch-all handler + `Delegate` covers untyped observation use case
-- [ ] SPEC-WITH-INTERCEPT deprecation notice references §4.3
+### WithIntercept (RESTORED — R3)
+- [x] `WithIntercept` remains in VM dispatch path (not superseded)
+- [x] InterceptorState, InterceptBoundary machinery retained
+- [x] SPEC-WITH-INTERCEPT deprecation reversed
 
 ### Spec Updates
-- [ ] SPEC-008 INV-8 revised to reference SPEC-VM-016
-- [ ] SPEC-008 handler walk pseudocode updated (caller chain, `MaskBoundary` interaction)
-- [ ] SPEC-VM-010 §Scope behavior revised (re-entrant, not busy-excluded)
+- [x] SPEC-008 INV-8 revised to reference SPEC-VM-016 (self-excluding)
+- [ ] SPEC-008 handler walk pseudocode updated (caller chain, self-exclusion)
+- [ ] SPEC-VM-010 §Scope behavior revised (self-excluding, not busy-excluded)
 - [ ] SPEC-TYPES-001 "busy boundary" references removed
 
 ### Testing
-- [ ] Test: handler yields same effect type → handled by same handler (re-entrant)
-- [ ] Test: `Mask([EffType], body)` → effect dispatches to outer handler (skips first `PromptBoundary`)
-- [ ] Test: `MaskBehind([EffType], body)` → effect dispatches to override handler, override re-perform skips outer handler
-- [ ] Test: nested Mask → each `MaskBoundary` independently effective
-- [ ] Test: Mask + Delegate → Delegate unaffected by Mask
-- [ ] Test: 3-level handler nesting → all handlers visible at all levels
-- [ ] Test: handler Resume → resumed computation sees same handler (deep handler)
-- [ ] Test: override handler pattern — observe log effects from inner handlers, outer handler accumulates
-- [ ] Test: `MaskBehind` in override desugaring — `handler { clauses }(MaskBehind(eff_types, body))` works correctly
-- [ ] Test: `WithIntercept` usage replaced by override pattern (no interceptor dispatch path exercised)
-- [ ] `cargo test --manifest-path packages/doeff-vm/Cargo.toml` — ALL pass
-- [ ] `uv run pytest -q` — ALL pass
+- [x] Test: handler yields same effect type → dispatches to outer handler (self-excluding)
+- [x] Test: 3-level handler nesting → handler clause body effects go to outer handlers
+- [x] Test: handler Resume → resumed computation sees same handler (deep handler)
+- [x] Test: WithIntercept continues to work for observation use case
+- [x] `cargo test --manifest-path packages/doeff-vm/Cargo.toml` — 220 passed
+- [x] `uv run pytest -q` — 754 passed
 
 ---
 
 ## 9. Open Questions
 
-1. **Mask lifetime**: Should Mask be scoped to a DoExpr body (as specified), or should there be a "mask until end of handler" variant? Koka only has body-scoped mask. (Unchanged from R1.)
+1. ~~**Mask lifetime**~~: RESOLVED (R3) — Mask cancelled. Not applicable.
 
-2. **MaskBoundary serialization**: If we add VM state serialization (for durable execution / SPEC-CORE-425), `MaskBoundary` segments need to be serializable. `masked_effects` contains Python type objects — how to serialize? (Unchanged from R1, updated terminology.)
+2. ~~**MaskBoundary serialization**~~: RESOLVED (R3) — MaskBoundary cancelled. Not applicable.
 
-3. **Performance**: The handler walk now traverses the caller chain and encounters `MaskBoundary` segments inline. Each `MaskBoundary` adds a set-union operation. For typical programs, the number of active `MaskBoundary` segments is very small (0–2). This is comparable to the R1 mask-stack approach and strictly better than the eliminated busy-set computation.
+3. **Performance**: The handler walk now uses a single `active_handler_seg_id` comparison instead of HashSet busy-set computation. This is strictly better than the previous model. No `MaskBoundary` segments to traverse (cancelled).
 
-4. **WithIntercept migration**: Existing code using `WithIntercept` needs migration to the override pattern. Should we provide a compatibility shim that desugars `WithIntercept` to override + `MaskBehind`, or remove it outright? (New in R2.)
+4. ~~**WithIntercept migration**~~: RESOLVED (R3) — WithIntercept stays. No migration needed.
+
+5. **DispatchContext cleanup** (New in R3): `DispatchContext` still carries `handler_chain: Vec<Marker>` for completion tracking. Consider whether this can be simplified now that mask/override are cancelled. Low priority — it works correctly.
 
 ---
 
 ## 10. References
 
-- Koka book §3.4.7 "Masking Effects" — https://koka-lang.github.io/koka/doc/book.html
+- Sivaramakrishnan et al. (2021). "Retrofitting Effect Handlers onto OCaml" (PLDI 2021)
+- Xavier Leroy, "Control Structures" §10.5 — handler clause reduction semantics
+- Koka book §3.4.7-§3.4.8 "Masking Effects" / "Overriding Handlers" — https://koka-lang.github.io/koka/doc/book.html (reference for why Koka model was rejected)
 - Leijen, D. (2017). "Type directed compilation of row-typed algebraic effects"
 - SPEC-008: Rust VM (§dispatch, §INV-8)
 - SPEC-VM-010: Non-terminal Delegate
