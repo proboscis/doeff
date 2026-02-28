@@ -34,7 +34,7 @@ WithIntercept(f, expr, types=None, mode=None)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `f` | `(effect) -> DoExpr` | *(required)* | Interceptor function. Receives matched effects, must return a `DoExpr` (typically the original effect unchanged, or a transformed replacement). |
+| `f` | `@do (effect: Effect) -> DoExpr` | *(required)* | Interceptor function. Receives matched effects, must return a `DoExpr` (typically the original effect unchanged, or a transformed replacement). |
 | `expr` | `DoExpr` | *(required)* | The scoped program to observe. All yields within this subtree are candidates for interception. |
 | `types` | `tuple[type, ...]` or `None` | `()` (empty tuple) | Effect or `DoCtrl` subclass types to filter on via `isinstance`. |
 | `mode` | `"include"` or `"exclude"` or `None` | `"include"` | How `types` is interpreted. See **Type Filtering** below. |
@@ -47,11 +47,12 @@ The simplest use: observe every effect in a scope without changing anything.
 
 ```python
 from dataclasses import dataclass
-from doeff import EffectBase, WithIntercept, do, EffectGenerator, run, default_handlers, Tell, WriterTellEffect
+from doeff import Effect, EffectBase, WithIntercept, do, EffectGenerator, run, default_handlers, Tell, WriterTellEffect
 
 observed: list[str] = []
 
-def log_all(effect):
+@do
+def log_all(effect: Effect):
     """Interceptor that records effects, then passes them through unchanged."""
     observed.append(repr(effect))
     return effect  # return the original effect — no transformation
@@ -80,7 +81,7 @@ When a handler inside the scope yields effects of its own, `WithIntercept` sees 
 ```python
 from dataclasses import dataclass
 from doeff import (
-    EffectBase, WithIntercept, WithHandler, Resume, Delegate,
+    Effect, EffectBase, WithIntercept, WithHandler, Resume, Delegate,
     do, EffectGenerator, run, default_handlers, Tell, WriterTellEffect,
 )
 
@@ -90,13 +91,15 @@ class Ping(EffectBase):
 
 seen: list[str] = []
 
-def observe_tells(effect):
+@do
+def observe_tells(effect: Effect):
     """Cross-cutting observer: sees Tell from ANY source."""
     if isinstance(effect, WriterTellEffect):
         seen.append(effect.value)
     return effect
 
-def ping_handler(effect, k):
+@do
+def ping_handler(effect: Effect, k: object):
     """Handler that internally yields a Tell when it handles a Ping."""
     if isinstance(effect, Ping):
         yield Tell(f"handler:{effect.label}")           # <- this Tell is visible!
@@ -178,13 +181,14 @@ The `isinstance` check applies to the yielded value, so subclass relationships w
 Type filtering works on `DoCtrl` types too, not just `Effect` subclasses. This lets you observe structural control flow — handler installations, resumptions, and delegations.
 
 ```python
-from doeff import WithIntercept, WithHandler, Resume, Delegate
+from doeff import Effect, WithIntercept, WithHandler, Resume, Delegate, do
 
 ctrl_log: list[str] = []
 
-def log_ctrl(ctrl):
-    ctrl_log.append(type(ctrl).__name__)
-    return ctrl
+@do
+def log_ctrl(effect: Effect):
+    ctrl_log.append(type(effect).__name__)
+    return effect
 
 # Observe only WithHandler and Resume control nodes
 observed = WithIntercept(
@@ -202,7 +206,10 @@ This is useful for debugging handler dispatch — you can see exactly when handl
 `f` can return a **different** effect than the one it received. The returned effect replaces the original in the dispatch pipeline.
 
 ```python
-def redact_tells(effect):
+from doeff import Effect, Tell, WithIntercept, WriterTellEffect, do
+
+@do
+def redact_tells(effect: Effect):
     """Replace Tell payloads with a redacted version."""
     if isinstance(effect, WriterTellEffect):
         return Tell("[REDACTED]")
@@ -223,7 +230,10 @@ After `redact_tells` runs, the handler stack sees `Tell("[REDACTED]")` instead o
 The interceptor `f` can itself yield effects. This makes it possible to perform logging, metrics collection, or other side effects during observation.
 
 ```python
-def audit_interceptor(effect):
+from doeff import Effect, Tell, do
+
+@do
+def audit_interceptor(effect: Effect):
     """Interceptor that emits its own Tell for each observed effect."""
     yield Tell(f"audit: saw {type(effect).__name__}")
     return effect  # pass through the original
@@ -243,9 +253,12 @@ When `audit_interceptor` sees a `Ping`, it yields a `Tell` (which goes through n
 When `f` yields effects, those yields **skip the interceptor that invoked f**. This prevents infinite loops and matches the semantics of handler re-entrancy.
 
 ```python
+from doeff import Effect, Tell, WithIntercept, do
+
 seen_by_f: list[str] = []
 
-def counting_interceptor(effect):
+@do
+def counting_interceptor(effect: Effect):
     """Yields a Tell, but that Tell does NOT re-enter this interceptor."""
     seen_by_f.append(repr(effect))
     yield Tell("from-interceptor")   # <- this Tell is NOT seen by counting_interceptor
@@ -266,15 +279,19 @@ Even though `counting_interceptor` matches all types and yields a `Tell`, that `
 Multiple `WithIntercept` layers compose naturally. Each layer's yields skip only its own interceptor — other layers still see them.
 
 ```python
+from doeff import Effect, Tell, WithIntercept, do
+
 inner_seen: list[str] = []
 outer_seen: list[str] = []
 
-def inner_observer(effect):
+@do
+def inner_observer(effect: Effect):
     inner_seen.append(f"inner:{effect}")
     yield Tell("from-inner-observer")  # outer sees this, inner does not
     return effect
 
-def outer_observer(effect):
+@do
+def outer_observer(effect: Effect):
     outer_seen.append(f"outer:{effect}")
     return effect
 
