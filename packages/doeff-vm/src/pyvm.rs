@@ -2,12 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
 pyo3::create_exception!(doeff_vm, UnhandledEffectError, PyTypeError);
 pyo3::create_exception!(doeff_vm, NoMatchingHandlerError, UnhandledEffectError);
 
-use crate::do_ctrl::DoCtrl;
+use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
     dispatch_from_shared, dispatch_ref_as_python, PyAcquireSemaphore, PyAsk, PyCancelEffect,
@@ -95,9 +95,7 @@ use crate::handler::{
     StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
-use crate::kleisli::{
-    DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli, RustKleisli,
-};
+use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli, RustKleisli};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerHandler;
@@ -256,6 +254,80 @@ fn lift_effect_to_perform_expr(py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<P
             }),
     )?;
     Ok(perform.into_any().unbind())
+}
+
+fn intercept_mode_from_str(mode: &str) -> PyResult<InterceptMode> {
+    InterceptMode::from_str(mode).ok_or_else(|| {
+        PyTypeError::new_err(format!(
+            "WithIntercept.mode must be 'include' or 'exclude', got '{mode}'"
+        ))
+    })
+}
+
+fn normalize_intercept_types_obj(
+    py: Python<'_>,
+    types: Option<Py<PyAny>>,
+) -> PyResult<Option<Py<PyAny>>> {
+    let Some(types_obj) = types else {
+        return Ok(None);
+    };
+    let types_bound = types_obj.bind(py);
+    let iter = types_bound.try_iter().map_err(|_| {
+        PyTypeError::new_err("WithIntercept.types must be an iterable of type objects")
+    })?;
+
+    let mut normalized = Vec::new();
+    for item in iter {
+        let item = item.map_err(|_| {
+            PyTypeError::new_err("WithIntercept.types must be an iterable of type objects")
+        })?;
+        if !item.is_instance_of::<PyType>() {
+            return Err(PyTypeError::new_err(
+                "WithIntercept.types must contain only Python type objects",
+            ));
+        }
+        normalized.push(item.unbind());
+    }
+
+    let tuple = PyTuple::new(py, normalized)?;
+    Ok(Some(tuple.into_any().unbind()))
+}
+
+fn intercept_types_from_pyobj(
+    py: Python<'_>,
+    types: &Option<Py<PyAny>>,
+) -> PyResult<Option<Vec<PyShared>>> {
+    let Some(types_obj) = types else {
+        return Ok(None);
+    };
+    let iter = types_obj.bind(py).try_iter().map_err(|_| {
+        PyTypeError::new_err("WithIntercept.types must be an iterable of type objects")
+    })?;
+
+    let mut normalized = Vec::new();
+    for item in iter {
+        let item = item.map_err(|_| {
+            PyTypeError::new_err("WithIntercept.types must be an iterable of type objects")
+        })?;
+        if !item.is_instance_of::<PyType>() {
+            return Err(PyTypeError::new_err(
+                "WithIntercept.types must contain only Python type objects",
+            ));
+        }
+        normalized.push(PyShared::new(item.unbind()));
+    }
+    Ok(Some(normalized))
+}
+
+fn intercept_types_to_pyobj(
+    py: Python<'_>,
+    types: &Option<Vec<PyShared>>,
+) -> PyResult<Option<Py<PyAny>>> {
+    let Some(types) = types else {
+        return Ok(None);
+    };
+    let tuple = PyTuple::new(py, types.iter().map(|item| item.clone_ref(py)))?;
+    Ok(Some(tuple.into_any().unbind()))
 }
 
 #[pyclass]
@@ -784,8 +856,7 @@ impl PyVM {
         if obj.is_instance_of::<DoeffGeneratorFn>() {
             let dgfn: PyRef<'_, DoeffGeneratorFn> = obj.extract()?;
             let callable_identity = dgfn.callable.clone_ref(py);
-            let kleisli =
-                DgfnKleisli::from_dgfn(py, obj.clone().unbind(), callable_identity)?;
+            let kleisli = DgfnKleisli::from_dgfn(py, obj.clone().unbind(), callable_identity)?;
             return Ok(Arc::new(kleisli));
         }
 
@@ -1248,6 +1319,8 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
             DoCtrl::WithIntercept {
                 interceptor,
                 body,
+                types,
+                mode,
                 metadata,
             } => {
                 let interceptor_obj = interceptor
@@ -1267,6 +1340,8 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             .add_subclass(PyWithIntercept {
                                 f: interceptor_obj,
                                 expr: body_obj,
+                                types: intercept_types_to_pyobj(py, types)?,
+                                mode: mode.as_str().to_string(),
                                 meta: metadata
                                     .as_ref()
                                     .map(|meta| call_metadata_to_dict(py, meta))
@@ -1668,12 +1743,15 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::WithIntercept => {
                 let wi: PyRef<'_, PyWithIntercept> = obj.extract()?;
-                let interceptor =
-                    PyVM::extract_kleisli_ref(py, wi.f.bind(py), "WithIntercept.f")?;
+                let interceptor = PyVM::extract_kleisli_ref(py, wi.f.bind(py), "WithIntercept.f")?;
                 let body = classify_yielded_bound(vm, py, wi.expr.bind(py))?;
+                let types = intercept_types_from_pyobj(py, &wi.types)?;
+                let mode = intercept_mode_from_str(&wi.mode)?;
                 Ok(DoCtrl::WithIntercept {
                     interceptor,
                     body: Box::new(body),
+                    types,
+                    mode,
                     metadata: call_metadata_from_optional_meta(py, &wi.meta, "WithIntercept")?,
                 })
             }
@@ -1843,8 +1921,7 @@ pub(crate) fn classify_yielded_bound(
                 let mut handler_identities = Vec::new();
                 for item in handlers_list.try_iter()? {
                     let item = item?;
-                    let kleisli =
-                        PyVM::extract_kleisli_ref(py, &item, "CreateContinuation")?;
+                    let kleisli = PyVM::extract_kleisli_ref(py, &item, "CreateContinuation")?;
                     let identity = kleisli
                         .py_identity()
                         .or_else(|| Some(PyShared::new(item.clone().unbind())));
@@ -2462,17 +2539,23 @@ pub struct PyWithIntercept {
     #[pyo3(get)]
     pub expr: Py<PyAny>,
     #[pyo3(get)]
+    pub types: Option<Py<PyAny>>,
+    #[pyo3(get)]
+    pub mode: String,
+    #[pyo3(get)]
     pub meta: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl PyWithIntercept {
     #[new]
-    #[pyo3(signature = (f, expr, meta=None))]
+    #[pyo3(signature = (f, expr, types=None, mode="include", meta=None))]
     fn new(
         py: Python<'_>,
         f: Py<PyAny>,
         expr: Py<PyAny>,
+        types: Option<Py<PyAny>>,
+        mode: &str,
         meta: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let f_obj = f.bind(py);
@@ -2486,6 +2569,9 @@ impl PyWithIntercept {
                 f_obj,
             ));
         }
+
+        let normalized_types = normalize_intercept_types_obj(py, types)?;
+        let mode = intercept_mode_from_str(mode)?;
 
         if let Some(meta_obj) = meta.as_ref() {
             let meta_bound = meta_obj.bind(py);
@@ -2505,7 +2591,13 @@ impl PyWithIntercept {
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::WithIntercept as u8,
             })
-            .add_subclass(PyWithIntercept { f, expr, meta }))
+            .add_subclass(PyWithIntercept {
+                f,
+                expr,
+                types: normalized_types,
+                mode: mode.as_str().to_string(),
+                meta,
+            }))
     }
 }
 
