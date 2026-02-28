@@ -9,7 +9,6 @@ Use regular Promise + CompletePromise/FailPromise effects for doeff-to-doeff com
 See SPEC-EFF-010-external-promise.md for full design documentation.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar

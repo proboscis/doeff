@@ -2,16 +2,11 @@
 Base effect class for doeff-conductor effects.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeVar
+from typing import TypeVar
 
-from doeff import EffectBase
-
-if TYPE_CHECKING:
-    from doeff import Effect, Program
+from doeff import Effect, EffectBase, Program
 
 E = TypeVar("E", bound="ConductorEffectBase")
 

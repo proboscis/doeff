@@ -1,6 +1,5 @@
 """Virtual-clock simulation handler for doeff-time effects."""
 
-from __future__ import annotations
 
 import heapq
 from collections.abc import Callable

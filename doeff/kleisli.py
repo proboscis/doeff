@@ -5,8 +5,6 @@ This module contains the KleisliProgram class that enables automatic
 unwrapping of Program arguments for natural composition.
 """
 
-from __future__ import annotations
-
 from abc import ABC
 import inspect
 import types
@@ -22,11 +20,24 @@ from doeff.program import (
     ProgramBase,
     _build_auto_unwrap_strategy,
     _is_effect_annotation_kind,
+    _safe_get_type_hints,
 )
 
 P = ParamSpec("P")
 T = TypeVar("T")
 U = TypeVar("U")
+
+
+def _safe_annotations(target: Any) -> dict[str, Any] | None:
+    if target is None:
+        return None
+    try:
+        annotations = getattr(target, "__annotations__", None)
+    except Exception:
+        return None
+    if isinstance(annotations, dict):
+        return annotations
+    return None
 
 
 @dataclass(frozen=True)
@@ -52,9 +63,9 @@ class KleisliProgram(ABC, Generic[P, T]):
         if signature is not None and not hasattr(self, "__signature__"):
             object.__setattr__(self, "__signature__", signature)
 
-        annotations = getattr(wrapped, "__annotations__", None)
+        annotations = _safe_annotations(wrapped)
         if annotations is None:
-            annotations = getattr(self.func, "__annotations__", None)
+            annotations = _safe_annotations(self.func)
         if annotations is not None and not hasattr(self, "__annotations__"):
             object.__setattr__(self, "__annotations__", dict(annotations))
 
@@ -218,7 +229,15 @@ def validate_do_handler_effect_annotation(handler: Any) -> None:
     if len(params) < 2:
         raise TypeError("@do handler must accept (effect, k)")
 
-    effect_annotation = params[0].annotation
+    metadata_source = getattr(handler, "_metadata_source", None)
+    type_hints = _safe_get_type_hints(metadata_source)
+    if not type_hints:
+        type_hints = _safe_get_type_hints(getattr(handler, "func", None))
+    if not type_hints:
+        type_hints = _safe_get_type_hints(handler)
+
+    effect_param = params[0]
+    effect_annotation = type_hints.get(effect_param.name, effect_param.annotation)
     if effect_annotation is inspect._empty or not _is_effect_annotation_kind(effect_annotation):
         raise TypeError("@do handler first parameter must be annotated as Effect")
 

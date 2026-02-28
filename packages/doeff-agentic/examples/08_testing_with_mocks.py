@@ -11,7 +11,6 @@ Run:
     uv run python packages/doeff-agentic/examples/08_testing_with_mocks.py
 """
 
-from __future__ import annotations
 
 import sys
 

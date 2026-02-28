@@ -1,6 +1,5 @@
 """Mock handlers for doeff-agentic effects used in tests and examples."""
 
-from __future__ import annotations
 
 import inspect
 import time

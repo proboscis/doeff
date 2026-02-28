@@ -8,7 +8,6 @@ Contains:
 - CurrentActivityPane: Selected agent's output
 """
 
-from __future__ import annotations
 
 from datetime import datetime, timezone
 

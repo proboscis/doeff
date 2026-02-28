@@ -1,6 +1,5 @@
 """Provider-agnostic time effects."""
 
-from __future__ import annotations
 
 import math
 from dataclasses import dataclass

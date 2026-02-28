@@ -6,8 +6,6 @@ Contains:
 - WorkflowWatchScreen: Workflow-level view showing all agents
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from textual import work
@@ -103,7 +101,7 @@ class WorkflowListScreen(Screen[None]):
         self._refresh_timer: Timer | None = None
 
     @property
-    def tui_app(self) -> AgenticTUI:
+    def tui_app(self) -> "AgenticTUI":
         """Get the typed app instance."""
         from .app import AgenticTUI
 
@@ -323,7 +321,7 @@ class WorkflowWatchScreen(Screen[None]):
         self._refresh_timer: Timer | None = None
 
     @property
-    def tui_app(self) -> AgenticTUI:
+    def tui_app(self) -> "AgenticTUI":
         """Get the typed app instance."""
         from .app import AgenticTUI
 
@@ -555,7 +553,7 @@ class AgentLogsScreen(Screen[None]):
         self._refresh_timer: Timer | None = None
 
     @property
-    def tui_app(self) -> AgenticTUI:
+    def tui_app(self) -> "AgenticTUI":
         """Get the typed app instance."""
         from .app import AgenticTUI
 

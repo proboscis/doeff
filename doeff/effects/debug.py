@@ -1,6 +1,5 @@
 """Effects for introspecting the execution debug context."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 

@@ -1,6 +1,5 @@
 """Tests for OpenRouter effect/handler modules."""
 
-from __future__ import annotations
 
 import importlib
 import json

@@ -4,7 +4,6 @@ Handlers in this module are user-space entities. They are dispatched by the VM
 like any other handler and are not VM internals.
 """
 
-from __future__ import annotations
 
 import atexit
 import asyncio

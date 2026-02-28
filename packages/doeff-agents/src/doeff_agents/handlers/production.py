@@ -1,6 +1,5 @@
 """Production effect handler backed by tmux."""
 
-from __future__ import annotations
 
 import re
 import shlex

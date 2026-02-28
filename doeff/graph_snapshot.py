@@ -4,7 +4,6 @@ This module provides functions to generate static HTML visualizations of doeff g
 using vis.js Network, which is simpler and more reliable than Cytoscape.
 """
 
-from __future__ import annotations
 
 import asyncio
 import json

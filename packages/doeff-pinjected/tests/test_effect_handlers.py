@@ -1,6 +1,5 @@
 """Tests for doeff-pinjected effect and handler modules."""
 
-from __future__ import annotations
 
 import importlib
 import sys

@@ -7,7 +7,6 @@ Commands:
     history - Show execution history for a workflow
 """
 
-from __future__ import annotations
 
 import json
 import time

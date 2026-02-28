@@ -8,8 +8,6 @@ rust_vm paths use unified `doeff.Ok` / `doeff.Err` instance checks that accept
 both Rust and Python-backed result objects.
 """
 
-from __future__ import annotations
-
 import traceback
 import uuid
 from collections.abc import Callable
@@ -125,7 +123,7 @@ class Result(Generic[T_co]):
             return result
         return cast(Result[U], self)
 
-    def and_then_k(self, kleisli: KleisliProgram[[T_co], U]) -> Program[U]:
+    def and_then_k(self, kleisli: "KleisliProgram[[T_co], U]") -> "Program[U]":
         """Chain a Kleisli program on success.
 
         If this is ``Ok``, calls the Kleisli program with the value.
@@ -154,7 +152,7 @@ class Result(Generic[T_co]):
 
         return GeneratorProgram(fail_generator)
 
-    def recover_k(self, kleisli: KleisliProgram[[Exception], T_co]) -> Program[T_co]:
+    def recover_k(self, kleisli: "KleisliProgram[[Exception], T_co]") -> "Program[T_co]":
         """Recover from an error using a Kleisli program.
 
         If this is ``Ok``, returns a pure ``Program`` with the value.
@@ -191,7 +189,7 @@ class Result(Generic[T_co]):
             return self
         return Ok(f(self.error))
 
-    def or_program(self, fallback: Program[T_co]) -> Program[T_co]:
+    def or_program(self, fallback: "Program[T_co]") -> "Program[T_co]":
         """Use a fallback program if this is an error.
 
         If this is ``Ok``, returns a pure ``Program`` with the value.
@@ -269,7 +267,7 @@ class Err(Result[NoReturn]):
     """Error result with optional captured traceback."""
 
     error: Exception
-    captured_traceback: Maybe[EffectTraceback] = field(default_factory=lambda: NOTHING)
+    captured_traceback: Maybe["EffectTraceback"] = field(default_factory=lambda: NOTHING)
 
 
 class Maybe(Generic[T_co]):

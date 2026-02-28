@@ -1,7 +1,6 @@
 # ruff: noqa: E402
 """Retry logging tests that avoid the google.genai dependency."""
 
-from __future__ import annotations
 
 import asyncio
 import builtins

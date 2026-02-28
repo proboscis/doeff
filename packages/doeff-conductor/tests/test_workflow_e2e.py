@@ -1,6 +1,5 @@
 """Workflow tests for doeff-conductor using shared mock handlers."""
 
-from __future__ import annotations
 
 from pathlib import Path
 from typing import Any

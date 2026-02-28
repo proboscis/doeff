@@ -9,8 +9,6 @@ Effects for managing agent sessions:
 - CaptureOutput: Get agent output
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -39,7 +37,7 @@ class RunAgent(ConductorEffectBase):
             return output
     """
 
-    env: WorktreeEnv  # Environment to run agent in
+    env: "WorktreeEnv"  # Environment to run agent in
     prompt: str  # Initial prompt for the agent
     agent_type: str = "claude"  # Agent type (claude, codex, gemini)
     name: str | None = None  # Session name
@@ -65,7 +63,7 @@ class SpawnAgent(ConductorEffectBase):
             yield WaitForStatus(ref2, AgenticSessionStatus.DONE)
     """
 
-    env: WorktreeEnv  # Environment to run agent in
+    env: "WorktreeEnv"  # Environment to run agent in
     prompt: str  # Initial prompt for the agent
     agent_type: str = "claude"  # Agent type
     name: str | None = None  # Session name
@@ -88,7 +86,7 @@ class SendMessage(ConductorEffectBase):
             yield SendMessage(ref, "Continue with step 2")
     """
 
-    agent_ref: AgentRef  # Agent to send message to
+    agent_ref: "AgentRef"  # Agent to send message to
     message: str  # Message content
     wait: bool = False  # Wait for response to complete
 
@@ -113,8 +111,8 @@ class WaitForStatus(ConductorEffectBase):
             return status
     """
 
-    agent_ref: AgentRef  # Agent to wait for
-    target: AgenticSessionStatus | tuple[AgenticSessionStatus, ...]  # Target status(es)
+    agent_ref: "AgentRef"  # Agent to wait for
+    target: "AgenticSessionStatus | tuple[AgenticSessionStatus, ...]"  # Target status(es)
     timeout: float | None = None  # Timeout in seconds
     poll_interval: float = 1.0  # Poll interval
 
@@ -136,7 +134,7 @@ class CaptureOutput(ConductorEffectBase):
             return review
     """
 
-    agent_ref: AgentRef  # Agent to capture from
+    agent_ref: "AgentRef"  # Agent to capture from
     lines: int = 500  # Number of lines to capture
 
 

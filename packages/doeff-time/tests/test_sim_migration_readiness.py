@@ -18,7 +18,6 @@ Pattern mapping (proboscis-ema → doeff):
     sim_invoke_at(prog, t)    → ScheduleAt(t, prog)
 """
 
-from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass

@@ -1,6 +1,5 @@
 """Runtime helpers for explicit handler stacking with ``WithHandler``."""
 
-from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any

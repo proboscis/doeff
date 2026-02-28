@@ -1,6 +1,5 @@
 """Tests for doeff-secret effects and built-in handlers."""
 
-from __future__ import annotations
 
 import os
 import sys

@@ -1,6 +1,5 @@
 """Effect handlers for agent session management."""
 
-from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any

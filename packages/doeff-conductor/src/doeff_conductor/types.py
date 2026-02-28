@@ -9,7 +9,6 @@ This module defines the core data types for conductor orchestration:
 - PRHandle: Pull request handle
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

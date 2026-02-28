@@ -32,7 +32,6 @@ Note:
     multiple tasks that each ``yield Await(...)``.
 """
 
-from __future__ import annotations
 
 import asyncio
 import atexit

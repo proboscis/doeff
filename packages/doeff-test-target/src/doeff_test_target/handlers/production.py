@@ -1,6 +1,5 @@
 """Production handlers for doeff-test-target fixture effects."""
 
-from __future__ import annotations
 
 from collections.abc import Callable, Mapping, MutableSequence
 from dataclasses import dataclass, field

@@ -1,6 +1,5 @@
 """WithHandler-based tests for the Secret Manager integration."""
 
-from __future__ import annotations
 
 import sys
 from dataclasses import dataclass

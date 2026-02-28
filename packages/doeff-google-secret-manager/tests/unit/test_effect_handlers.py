@@ -1,6 +1,5 @@
 """Tests for Secret Manager effects and handler map integrations."""
 
-from __future__ import annotations
 
 import importlib
 import sys

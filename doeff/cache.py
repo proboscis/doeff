@@ -1,14 +1,12 @@
 """Cache decorator for doeff programs using cache effects."""
 
-from __future__ import annotations
-
 import inspect
 import os
 import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
@@ -17,6 +15,7 @@ from doeff.effects.cache import CacheGet, CachePut
 from doeff.effects.callstack import ProgramCallStack
 from doeff.effects.result import Try
 from doeff.effects.writer import slog
+from doeff.kleisli import KleisliProgram
 from doeff.types import EffectGenerator, FrozenDict, Result
 
 
@@ -54,9 +53,6 @@ class CacheComputationError(RuntimeError):
         if call_site is not None and hasattr(self, "add_note"):
             self.add_note(f"Cache-decorated call originated at {call_site.format_location()}")
 
-
-if TYPE_CHECKING:
-    from doeff.kleisli import KleisliProgram
 
 T = TypeVar("T")
 

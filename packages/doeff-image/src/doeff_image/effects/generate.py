@@ -1,6 +1,5 @@
 """Image generation domain effect."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any

@@ -1,6 +1,5 @@
 """Shared git-domain types used by effects and handlers."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

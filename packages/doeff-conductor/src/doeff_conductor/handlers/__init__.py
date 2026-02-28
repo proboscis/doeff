@@ -16,8 +16,6 @@ Execution utilities:
 - run_sync: direct synchronous execution with default handlers
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -60,12 +58,12 @@ def production_handlers(
 
 
 def run_sync(
-    program: Program[Any],
+    program: "Program[Any]",
     env: dict[str, Any] | None = None,
     store: dict[str, Any] | None = None,
     *,
     scheduled_handlers: Sequence[HandlerProtocol] | HandlerProtocol | None = None,
-) -> RunResult[Any]:
+) -> "RunResult[Any]":
     """Run a program synchronously with custom handlers.
 
     Args:

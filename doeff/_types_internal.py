@@ -4,7 +4,6 @@ Core types for the doeff effects system.
 This module contains the foundational types with zero internal dependencies.
 """
 
-from __future__ import annotations
 
 import json
 import traceback
