@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
-from doeff import Delegate, Resume
+from doeff import Delegate, Effect, Resume, do
 
 from .effects import DeleteSecret, GetSecret, ListSecrets, SetSecret
 
@@ -95,7 +95,8 @@ def in_memory_handlers(
         project=project,
     )
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, GetSecret):
             value = active_store.get_secret(effect.secret_id, version=effect.version)
             return (yield Resume(k, value))

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Pass, Resume
+from doeff import Effect, Pass, Resume, do
 from doeff.effects import CreateExternalPromise, ExternalPromise, Wait
 from doeff_events.effects import PublishEffect, WaitForEventEffect
 
@@ -49,7 +49,8 @@ def event_handler():
 
     listeners: ListenerMap = {}
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, WaitForEventEffect):
             promise = yield CreateExternalPromise()
 

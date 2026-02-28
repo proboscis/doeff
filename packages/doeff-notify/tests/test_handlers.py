@@ -23,7 +23,7 @@ from doeff_notify.handlers import (
 )
 from doeff_notify.types import Channel, NotificationResult, Urgency
 
-from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
+from doeff import Effect, Pass, Resume, WithHandler, default_handlers, do, run
 from doeff.effects import WriterTellEffect
 
 
@@ -132,11 +132,12 @@ def _logging_program():
 def test_log_handler_emits_tell_events() -> None:
     logs: list[Any] = []
 
-    def capture_tell_handler(effect, k):
+    @do
+    def capture_tell_handler(effect: Effect, k: Any):
         if isinstance(effect, WriterTellEffect):
             logs.append(effect.message)
             return (yield Resume(k, None))
-        yield Delegate()
+        yield Pass()
 
     result = run(
         WithHandler(capture_tell_handler, WithHandler(log_handler, _logging_program())),
