@@ -9,11 +9,12 @@ from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 
 from doeff import Delegate, EffectGenerator, Resume, do
+from doeff.effects.base import Effect
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.structured_llm import _edit_image__seedream4_impl
 from doeff_seedream.types import SeedreamImageEditResult
 
-ProtocolHandler = Callable[[Any, Any], Any]
+ProtocolHandler = Callable[[Effect, Any], Any]
 
 SEEDREAM_IMAGE_MODEL_PREFIXES = ("seedream-", "doubao-seedream-")
 
@@ -116,7 +117,8 @@ def _structured_impl(effect: SeedreamStructuredOutput) -> EffectGenerator[Any]:
     )
 
 
-def seedream_image_handler(effect: Any, k: Any):  # noqa: PLR0911
+@do
+def seedream_image_handler(effect: Effect, k: Any):  # noqa: PLR0911
     """Protocol handler with model routing for unified image effects."""
     if isinstance(effect, SeedreamGenerate):
         if not _is_seedream_model(effect.model):
@@ -161,7 +163,8 @@ def production_handlers(
     active_image_edit_impl = image_edit_impl or _image_edit_impl
     active_structured_impl = structured_impl or _structured_impl
 
-    def handler(effect: Any, k: Any):  # noqa: PLR0911
+    @do
+    def handler(effect: Effect, k: Any):  # noqa: PLR0911
         if isinstance(effect, SeedreamGenerate):
             if not _is_seedream_model(effect.model):
                 yield Delegate()
