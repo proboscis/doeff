@@ -12,7 +12,7 @@ from doeff_llm.effects import (
     LLMStructuredQuery,
 )
 
-from doeff import Delegate, Resume, do
+from doeff import Pass, Resume, do
 from doeff.effects.base import Effect
 from doeff_openai.chat import chat_completion
 from doeff_openai.effects import (
@@ -111,7 +111,7 @@ def openai_production_handler(effect: Effect, k: Any):
         effect.model
     ):
         return (yield _handle_structured_output(effect, k))
-    yield Delegate()
+    yield Pass()
 
 
 def production_handlers() -> ProtocolHandler:
