@@ -34,6 +34,32 @@ rules:
       category: vm-protocol
       issue: VM-PROTO-006
 
+  - id: no-uv-run-python-execution-context-class
+    languages: [python]
+    severity: ERROR
+    message: >
+      Python-side ExecutionContext class was removed. Use doeff_vm.ExecutionContext (Rust) instead.
+      Do not re-introduce a Python ExecutionContext in _types_internal.py.
+    pattern: |
+      class ExecutionContext:
+          ...
+    paths:
+      include:
+        - "**/doeff/_types_internal.py"
+
+  - id: no-uv-run-python-run-result-class
+    languages: [python]
+    severity: ERROR
+    message: >
+      PyRunResult was removed. Use doeff_vm.RunResult (Rust) instead.
+      Do not re-introduce a Python RunResult wrapper.
+    pattern: |
+      class PyRunResult:
+          ...
+    paths:
+      include:
+        - "**/doeff/_types_internal.py"
+
   - id: time-handler-must-not-handle-spawn
     patterns:
       - pattern: |
