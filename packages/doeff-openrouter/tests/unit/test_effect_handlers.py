@@ -28,6 +28,7 @@ from doeff_openrouter.handlers import (
 from pydantic import BaseModel
 
 from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
+from doeff.effects.base import Effect
 
 
 class StructuredPayload(BaseModel):
@@ -202,7 +203,8 @@ def test_handler_swapping_between_mock_and_production(monkeypatch) -> None:
 
 
 def test_openrouter_handler_delegates_embedding_effects() -> None:
-    def fallback(effect: Any, k: Any):
+    @do
+    def fallback(effect: Effect, k: Any):
         if isinstance(effect, LLMEmbedding):
             return (yield Resume(k, "embedding-fallback"))
         yield Delegate()
