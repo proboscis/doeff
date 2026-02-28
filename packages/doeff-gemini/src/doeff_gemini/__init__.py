@@ -9,12 +9,14 @@ from .client import GeminiClient, get_gemini_client, track_api_call
 from .costs import calculate_cost, gemini_cost_calculator__default
 from .effects import (
     GeminiChat,
+    GeminiCalculateCost,
     GeminiEmbedding,
     GeminiImageEdit,
     GeminiStreamingChat,
     GeminiStructuredOutput,
 )
 from .handlers import (
+    default_gemini_cost_handler,
     gemini_image_handler,
     gemini_mock_handler,
     gemini_production_handler,
@@ -45,6 +47,7 @@ __all__ = [
     "CostInfo",
     "GeminiCallResult",
     "GeminiChat",
+    "GeminiCalculateCost",
     "GeminiClient",
     "GeminiCostEstimate",
     "GeminiEmbedding",
@@ -60,6 +63,7 @@ __all__ = [
     "build_contents",
     "build_generation_config",
     "calculate_cost",
+    "default_gemini_cost_handler",
     "edit_image__gemini",
     "gemini_mock_handler",
     "gemini_production_handler",

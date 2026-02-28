@@ -62,12 +62,14 @@ if "pydantic" not in sys.modules:
 
 from doeff_gemini import (
     CostInfo,
-    GeminiCallResult,
     GeminiCostEstimate,
 )
 from doeff_gemini.client import track_api_call
+from doeff_gemini.effects import GeminiCalculateCost
+from doeff_gemini.handlers import default_gemini_cost_handler
 
-from doeff import EffectGenerator, Local, async_run, default_handlers, do
+from doeff import Pass, Resume, async_run, default_handlers, do
+from doeff.effects.base import Effect
 
 
 def _fake_response(usage: dict[str, int]) -> Any:
@@ -108,7 +110,10 @@ async def test_default_cost_calculator_runs_when_no_custom() -> None:
             )
         )
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await async_run(
+        flow(),
+        handlers=[default_gemini_cost_handler, *default_handlers()],
+    )
 
     assert result.is_ok()
     total_cost = result.raw_store.get("gemini_total_cost")
@@ -138,7 +143,10 @@ async def test_default_cost_calculator_supports_gemini3_image() -> None:
             )
         )
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await async_run(
+        flow(),
+        handlers=[default_gemini_cost_handler, *default_handlers()],
+    )
 
     assert result.is_ok()
     total_cost = result.raw_store.get("gemini_total_cost")
@@ -173,7 +181,10 @@ async def test_cost_fallback_to_image_tokens_from_total() -> None:
             )
         )
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await async_run(
+        flow(),
+        handlers=[default_gemini_cost_handler, *default_handlers()],
+    )
 
     assert result.is_ok()
     total_cost = result.raw_store.get("gemini_total_cost")
@@ -190,37 +201,44 @@ async def test_custom_cost_calculator_overrides_default() -> None:
     response = _fake_response(usage)
 
     @do
-    def custom_calculator(call_result: GeminiCallResult) -> EffectGenerator[GeminiCostEstimate]:
-        return GeminiCostEstimate(
-            cost_info=CostInfo(
-                total_cost=1.23,
-                text_input_cost=0.1,
-                text_output_cost=1.0,
-                image_input_cost=0.0,
-                image_output_cost=0.13,
-            ),
-            raw_usage=call_result.payload.get("usage"),
-        )
+    def custom_cost_handler(effect: Effect, k: Any):
+        if isinstance(effect, GeminiCalculateCost):
+            return (
+                yield Resume(
+                    k,
+                    GeminiCostEstimate(
+                        cost_info=CostInfo(
+                            total_cost=1.23,
+                            text_input_cost=0.1,
+                            text_output_cost=1.0,
+                            image_input_cost=0.0,
+                            image_output_cost=0.13,
+                        ),
+                        raw_usage=effect.call_result.payload.get("usage"),
+                    ),
+                )
+            )
+        yield Pass()
 
     @do
     def flow():
         return (
-            yield Local(
-                {"gemini_cost_calculator": custom_calculator},
-                track_api_call(
-                    operation="generate_content",
-                    model="gemini-2.5-flash",
-                    request_summary={"operation": "test"},
-                    request_payload={"text": "hello"},
-                    response=response,
-                    start_time=time.time(),
-                    error=None,
-                    api_payload=None,
-                ),
+            yield track_api_call(
+                operation="generate_content",
+                model="gemini-2.5-flash",
+                request_summary={"operation": "test"},
+                request_payload={"text": "hello"},
+                response=response,
+                start_time=time.time(),
+                error=None,
+                api_payload=None,
             )
         )
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await async_run(
+        flow(),
+        handlers=[default_gemini_cost_handler, custom_cost_handler, *default_handlers()],
+    )
 
     assert result.is_ok()
     assert result.raw_store.get("gemini_total_cost") == pytest.approx(1.23)
@@ -234,29 +252,31 @@ async def test_cost_calculation_failure_raises() -> None:
     response = _fake_response(usage)
 
     @do
-    def failing_calculator(call_result: GeminiCallResult) -> EffectGenerator[GeminiCostEstimate]:
-        _ = call_result
-        raise ValueError("boom")
-        yield  # type: ignore[misc]  # unreachable but needed for generator
+    def failing_cost_handler(effect: Effect, k: Any):
+        if isinstance(effect, GeminiCalculateCost):
+            _ = k
+            _ = effect.call_result
+            raise ValueError("boom")
+        yield Pass()
 
     @do
     def flow():
         return (
-            yield Local(
-                {"gemini_cost_calculator": failing_calculator},
-                track_api_call(
-                    operation="generate_content",
-                    model="unknown-model",
-                    request_summary={"operation": "test"},
-                    request_payload={"text": "hello"},
-                    response=response,
-                    start_time=time.time(),
-                    error=None,
-                    api_payload=None,
-                ),
+            yield track_api_call(
+                operation="generate_content",
+                model="unknown-model",
+                request_summary={"operation": "test"},
+                request_payload={"text": "hello"},
+                response=response,
+                start_time=time.time(),
+                error=None,
+                api_payload=None,
             )
         )
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await async_run(
+        flow(),
+        handlers=[default_gemini_cost_handler, failing_cost_handler, *default_handlers()],
+    )
 
     assert result.is_err()
