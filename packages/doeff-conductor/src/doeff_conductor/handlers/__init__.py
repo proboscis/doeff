@@ -18,12 +18,10 @@ Execution utilities:
 
 from __future__ import annotations
 
-import inspect
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from doeff import Effect, Pass, Resume, default_handlers, do, run
-from doeff.do import make_doeff_generator
+from doeff import default_handlers, run
 
 from .agent_handler import AgentHandler
 from .git_handler import GitHandler
@@ -46,72 +44,14 @@ if TYPE_CHECKING:
 HandlerProtocol = Callable[..., Any]
 
 
-def _supports_continuation(handler: Callable[..., Any]) -> bool:
-    try:
-        signature = inspect.signature(handler)
-    except (TypeError, ValueError):
-        return False
-
-    params = tuple(signature.parameters.values())
-    if any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in params):
-        return True
-
-    positional = [
-        param
-        for param in params
-        if param.kind
-        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ]
-    return len(positional) >= 2
-
-
-def _is_lazy_program_value(value: object) -> bool:
-    return bool(getattr(value, "__doeff_do_expr_base__", False) or getattr(
-        value, "__doeff_effect_base__", False
-    ))
-
-
-def _coerce_effect_map_handler(
-    handlers: Mapping[type[Any], HandlerProtocol],
-) -> HandlerProtocol:
-    ordered_handlers = tuple(handlers.items())
-
-    @do
-    def map_handler(effect: Effect, k: Any):
-        for effect_type, effect_handler in ordered_handlers:
-            if not isinstance(effect, effect_type):
-                continue
-
-            if _supports_continuation(effect_handler):
-                result = effect_handler(effect, k)
-                if inspect.isgenerator(result):
-                    return (yield make_doeff_generator(result))
-                if _is_lazy_program_value(result):
-                    return (yield result)
-                return result
-
-            return (yield Resume(k, effect_handler(effect)))
-
-        yield Pass()
-
-    return map_handler
-
-
 def make_typed_handlers(
-    scheduled_handlers: (
-        Sequence[HandlerProtocol]
-        | Mapping[type[Any], HandlerProtocol]
-        | HandlerProtocol
-        | None
-    ) = None,
+    scheduled_handlers: Sequence[HandlerProtocol] | HandlerProtocol | None = None,
 ) -> list[HandlerProtocol]:
     """Normalize one or more protocol handlers into a list."""
     if scheduled_handlers is None:
         return []
     if callable(scheduled_handlers):
         return [scheduled_handlers]
-    if isinstance(scheduled_handlers, Mapping):
-        return [_coerce_effect_map_handler(scheduled_handlers)]
     return list(scheduled_handlers)
 
 
@@ -135,12 +75,7 @@ def run_sync(
     env: dict[str, Any] | None = None,
     store: dict[str, Any] | None = None,
     *,
-    scheduled_handlers: (
-        Sequence[HandlerProtocol]
-        | Mapping[type[Any], HandlerProtocol]
-        | HandlerProtocol
-        | None
-    ) = None,
+    scheduled_handlers: Sequence[HandlerProtocol] | HandlerProtocol | None = None,
 ) -> RunResult[Any]:
     """Run a program synchronously with custom handlers.
 

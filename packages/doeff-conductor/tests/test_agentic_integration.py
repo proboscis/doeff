@@ -19,7 +19,6 @@ Run:
 from __future__ import annotations
 
 import secrets
-from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,7 +46,7 @@ from doeff_conductor.handlers import run_sync
 from doeff_conductor.handlers.agent_handler import AgentHandler
 from doeff_conductor.types import AgentRef, WorktreeEnv
 
-from doeff import Effect, Pass, Resume, WithHandler, default_handlers, do, run
+from doeff import Effect, Pass, WithHandler, default_handlers, do, run
 
 # =============================================================================
 # Mock OpenCode Handler
@@ -259,25 +258,6 @@ def agent_handler_with_mock(mock_handler: MockOpenCodeHandler) -> AgentHandler:
     return handler
 
 
-def _wrap_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]) -> Any:
-    wrapped = program
-    for effect_type, effect_handler in reversed(list(handlers.items())):
-
-        @do
-        def typed_handler(effect: Effect, k, _effect_type=effect_type, _handler=effect_handler):
-            if isinstance(effect, _effect_type):
-                return (yield Resume(k, _handler(effect)))
-            yield Pass()
-
-        wrapped = WithHandler(handler=typed_handler, expr=wrapped)
-    return wrapped
-
-
-def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
-    wrapped = _wrap_with_effect_handlers(program, handlers)
-    return run(wrapped, handlers=default_handlers())
-
-
 # =============================================================================
 # Integration Tests (Mock Mode)
 # =============================================================================
@@ -442,11 +422,15 @@ class TestConductorWorkflowIntegration:
         agent_handler = AgentHandler(workflow_id="test-workflow")
         agent_handler._opencode_handler = mock_handler
 
-        handlers = {
-            RunAgent: make_scheduled_handler(agent_handler.handle_run_agent),
-        }
+        run_agent_handler = make_scheduled_handler(agent_handler.handle_run_agent)
 
-        result = run_sync(simple_workflow(), scheduled_handlers=handlers)
+        @do
+        def workflow_handler(effect: Effect, k):
+            if isinstance(effect, RunAgent):
+                return (yield run_agent_handler(effect, k))
+            yield Pass()
+
+        result = run_sync(simple_workflow(), scheduled_handlers=workflow_handler)
 
         assert result.is_ok
         assert "Implementation complete" in result.value
@@ -469,11 +453,15 @@ class TestConductorWorkflowIntegration:
         agent_handler = AgentHandler(workflow_id="test-workflow")
         agent_handler._opencode_handler = mock_handler
 
-        handlers = {
-            RunAgent: make_scheduled_handler(agent_handler.handle_run_agent),
-        }
+        run_agent_handler = make_scheduled_handler(agent_handler.handle_run_agent)
 
-        result = run_sync(review_and_fix(), scheduled_handlers=handlers)
+        @do
+        def workflow_handler(effect: Effect, k):
+            if isinstance(effect, RunAgent):
+                return (yield run_agent_handler(effect, k))
+            yield Pass()
+
+        result = run_sync(review_and_fix(), scheduled_handlers=workflow_handler)
 
         assert result.is_ok
         assert "reviewed" in result.value["review"].lower()
@@ -504,13 +492,21 @@ class TestConductorWorkflowIntegration:
         agent_handler = AgentHandler(workflow_id="test-workflow")
         agent_handler._opencode_handler = mock_handler
 
-        handlers = {
-            SpawnAgent: make_scheduled_handler(agent_handler.handle_spawn_agent),
-            WaitForStatus: make_scheduled_handler(agent_handler.handle_wait_for_status),
-            CaptureOutput: make_scheduled_handler(agent_handler.handle_capture_output),
-        }
+        spawn_agent_handler = make_scheduled_handler(agent_handler.handle_spawn_agent)
+        wait_status_handler = make_scheduled_handler(agent_handler.handle_wait_for_status)
+        capture_output_handler = make_scheduled_handler(agent_handler.handle_capture_output)
 
-        result = run_sync(spawn_workflow(), scheduled_handlers=handlers)
+        @do
+        def workflow_handler(effect: Effect, k):
+            if isinstance(effect, SpawnAgent):
+                return (yield spawn_agent_handler(effect, k))
+            if isinstance(effect, WaitForStatus):
+                return (yield wait_status_handler(effect, k))
+            if isinstance(effect, CaptureOutput):
+                return (yield capture_output_handler(effect, k))
+            yield Pass()
+
+        result = run_sync(spawn_workflow(), scheduled_handlers=workflow_handler)
 
         assert result.is_ok
         # Note: Mock doesn't complete spawned agents automatically,
@@ -541,11 +537,17 @@ class TestWithHandlerIntegration:
         agent_handler = AgentHandler(workflow_id=f"test-{secrets.token_hex(4)}")
         agent_handler._opencode_handler = mock_handler
 
-        result = _run_with_effect_handlers(
-            workflow(),
-            {
-                RunAgent: agent_handler.handle_run_agent,
-            },
+        run_agent_handler = make_scheduled_handler(agent_handler.handle_run_agent)
+
+        @do
+        def intercepted_handler(effect: Effect, k):
+            if isinstance(effect, RunAgent):
+                return (yield run_agent_handler(effect, k))
+            yield Pass()
+
+        result = run(
+            WithHandler(handler=intercepted_handler, expr=workflow()),
+            handlers=default_handlers(),
         )
 
         assert result.is_ok
