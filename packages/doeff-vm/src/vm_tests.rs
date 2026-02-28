@@ -883,6 +883,17 @@ fn test_vm_proto_frame_push_sites_extract_doeff_generator() {
 }
 
 #[test]
+fn test_vm_debt_002_step_loop_does_not_unwrap_pop_frame() {
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
+    let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
+    let runtime_src = &src[..runtime_boundary];
+    assert!(
+        !runtime_src.contains("pop_frame().unwrap()"),
+        "VM-DEBT-002: step loop must not panic via pop_frame().unwrap()"
+    );
+}
+
+#[test]
 fn test_resume_is_not_terminal() {
     let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
     let runtime_boundary = src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len());
