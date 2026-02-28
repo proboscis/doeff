@@ -11,23 +11,21 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
 use crate::continuation::Continuation;
-use crate::doeff_generator::DoeffGeneratorFn;
+use crate::do_ctrl::DoCtrl;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, dispatch_to_pyobject,
-    DispatchEffect, PyAsk, PyGet, PyLocal, PyModify, PyPut, PyPythonAsyncioAwaitEffect,
-    PyResultSafeEffect, PyTell,
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect, PyAsk,
+    PyGet, PyLocal, PyModify, PyPut, PyPythonAsyncioAwaitEffect, PyResultSafeEffect, PyTell,
 };
 use crate::error::VMError;
-use crate::frame::CallMetadata;
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
-use crate::kleisli::{KleisliRef, PyKleisli};
+use crate::kleisli::{Kleisli, KleisliDebugInfo, RustKleisli};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr, PyResultOk};
+use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
 use crate::segment::ScopeStore;
-use crate::step::{DoCtrl, PyException, PythonCall};
+use crate::step::{PyException, PythonCall};
 use crate::value::Value;
 use crate::vm::RustStore;
 
@@ -77,36 +75,10 @@ pub trait IRStreamFactory: std::fmt::Debug + Send + Sync {
     /// Default is no-op. Stateful handlers can override this to release
     /// run-scoped resources.
     fn on_run_end(&self, _run_token: u64) {}
-}
-
-pub type DoExpr = DoCtrl;
-
-#[derive(Debug, Clone)]
-pub struct HandlerDebugInfo {
-    pub name: String,
-    pub file: Option<String>,
-    pub line: Option<u32>,
-}
-
-pub trait HandlerInvoke: std::fmt::Debug + Send + Sync {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError>;
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr;
-    fn handler_name(&self) -> &str;
-    fn handler_debug_info(&self) -> HandlerDebugInfo;
-
     fn supports_error_context_conversion(&self) -> bool {
         false
     }
-
-    fn py_identity(&self) -> Option<PyShared> {
-        None
-    }
-
-    fn on_run_end(&self, _run_token: u64) {}
 }
-
-pub type HandlerRef = Arc<dyn HandlerInvoke>;
-pub type Handler = HandlerRef;
 
 /// Shared reference to a Rust program handler factory.
 pub type IRStreamFactoryRef = Arc<dyn IRStreamFactory + Send + Sync>;
@@ -114,256 +86,49 @@ pub type IRStreamFactoryRef = Arc<dyn IRStreamFactory + Send + Sync>;
 /// Shared reference to a running Rust handler program (cloneable for continuations).
 pub type IRStreamProgramRef = Arc<Mutex<Box<dyn IRStreamProgram + Send>>>;
 
-#[derive(Debug, Clone)]
-pub struct RustProgramInvocation {
-    pub factory: IRStreamFactoryRef,
-    pub effect: Box<DispatchEffect>,
-    pub continuation: Continuation,
-}
-
-fn metadata_from_debug_info(debug: HandlerDebugInfo) -> CallMetadata {
-    CallMetadata::new(
-        debug.name,
-        debug.file.unwrap_or_else(|| "<unknown>".to_string()),
-        debug.line.unwrap_or(0),
-        None,
-        None,
-    )
-}
-
-fn rust_program_apply_expr(
-    factory: IRStreamFactoryRef,
-    effect: DispatchEffect,
-    continuation: Continuation,
-    metadata: CallMetadata,
-) -> DoExpr {
-    DoCtrl::Apply {
-        f: Box::new(DoCtrl::Pure {
-            value: Value::RustProgramInvocation(RustProgramInvocation {
-                factory,
-                effect: Box::new(effect),
-                continuation,
-            }),
-        }),
-        args: vec![],
-        kwargs: vec![],
-        metadata,
-        evaluate_result: false,
-    }
-}
-
-fn rust_program_expand_expr(
-    factory: IRStreamFactoryRef,
-    effect: DispatchEffect,
-    continuation: Continuation,
-    metadata: CallMetadata,
-) -> DoExpr {
-    DoCtrl::Expand {
-        factory: Box::new(DoCtrl::Pure {
-            value: Value::RustProgramInvocation(RustProgramInvocation {
-                factory,
-                effect: Box::new(effect),
-                continuation,
-            }),
-        }),
-        args: vec![],
-        kwargs: vec![],
-        metadata,
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PythonHandler {
-    pub dgfn: Py<DoeffGeneratorFn>,
-    handler_name: String,
-    handler_file: Option<String>,
-    handler_line: Option<u32>,
-}
-
-impl PythonHandler {
-    pub fn from_dgfn(dgfn: Py<DoeffGeneratorFn>) -> Self {
-        Python::attach(|py| {
-            let borrowed = dgfn.bind(py).borrow();
-            PythonHandler {
-                dgfn,
-                handler_name: borrowed.function_name.clone(),
-                handler_file: Some(borrowed.source_file.clone()),
-                handler_line: Some(borrowed.source_line),
-            }
-        })
-    }
-}
-
-impl HandlerInvoke for PythonHandler {
-    fn can_handle(&self, _effect: &DispatchEffect) -> Result<bool, VMError> {
-        Ok(true)
+impl<T> Kleisli for T
+where
+    T: IRStreamFactory + Clone + std::fmt::Debug + Send + Sync + 'static,
+{
+    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        self.apply_with_run_token(py, args, None)
     }
 
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
-        let py_effect =
-            match Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind())) {
-                Ok(obj) => obj,
-                Err(err) => {
-                    return DoCtrl::TransferThrow {
-                        continuation: k,
-                        exception: PyException::type_error(format!(
-                            "PythonHandler invoke failed to convert effect: {err}"
-                        )),
-                    };
-                }
-            };
+    fn apply_with_run_token(
+        &self,
+        py: Python<'_>,
+        args: Vec<Value>,
+        run_token: Option<u64>,
+    ) -> Result<DoCtrl, VMError> {
+        let kleisli = RustKleisli::new(
+            Arc::new(self.clone()),
+            <Self as IRStreamFactory>::handler_name(self).to_string(),
+        );
+        kleisli.apply_with_run_token(py, args, run_token)
+    }
 
-        let kleisli = match Python::attach(|py| {
-            PyKleisli::from_handler(py, self.dgfn.clone_ref(py).into_any())
-        }) {
-            Ok(value) => value,
-            Err(err) => {
-                return DoCtrl::TransferThrow {
-                    continuation: k,
-                    exception: PyException::type_error(format!(
-                        "PythonHandler invoke failed to build PyKleisli: {err}"
-                    )),
-                };
-            }
-        };
-
-        let py_k = match Python::attach(|py| {
-            Bound::new(py, PyK::from_cont_id(k.cont_id)).map(|bound| bound.into_any().unbind())
-        }) {
-            Ok(obj) => obj,
-            Err(err) => {
-                return DoCtrl::TransferThrow {
-                    continuation: k,
-                    exception: PyException::type_error(format!(
-                        "PythonHandler invoke failed to create continuation handle: {err}"
-                    )),
-                };
-            }
-        };
-
-        let metadata = metadata_from_debug_info(self.handler_debug_info());
-        DoCtrl::Expand {
-            factory: Box::new(DoCtrl::Pure {
-                value: Value::Kleisli(Arc::new(kleisli)),
-            }),
-            args: vec![
-                DoCtrl::Pure {
-                    value: Value::Python(py_effect),
-                },
-                DoCtrl::Pure {
-                    value: Value::Python(py_k),
-                },
-            ],
-            kwargs: vec![],
-            metadata,
+    fn debug_info(&self) -> KleisliDebugInfo {
+        KleisliDebugInfo {
+            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
+            file: None,
+            line: None,
         }
     }
 
-    fn handler_name(&self) -> &str {
-        self.handler_name.as_str()
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
+        <Self as IRStreamFactory>::can_handle(self, effect)
     }
 
-    fn handler_debug_info(&self) -> HandlerDebugInfo {
-        HandlerDebugInfo {
-            name: self.handler_name.clone(),
-            file: self.handler_file.clone(),
-            line: self.handler_line,
-        }
+    fn is_rust_builtin(&self) -> bool {
+        true
     }
 
-    fn py_identity(&self) -> Option<PyShared> {
-        Some(PyShared::new(Python::attach(|py| {
-            let borrowed = self.dgfn.bind(py).borrow();
-            borrowed.callable.clone_ref(py)
-        })))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct KleisliHandler {
-    kleisli: KleisliRef,
-    handler_name: String,
-    handler_file: Option<String>,
-    handler_line: Option<u32>,
-}
-
-impl KleisliHandler {
-    pub fn new(kleisli: KleisliRef) -> Self {
-        let debug = kleisli.debug_info();
-        KleisliHandler {
-            kleisli,
-            handler_name: debug.name,
-            handler_file: debug.file,
-            handler_line: debug.line,
-        }
-    }
-}
-
-impl HandlerInvoke for KleisliHandler {
-    fn can_handle(&self, _effect: &DispatchEffect) -> Result<bool, VMError> {
-        Ok(true)
+    fn supports_error_context_conversion(&self) -> bool {
+        <Self as IRStreamFactory>::supports_error_context_conversion(self)
     }
 
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
-        let py_effect =
-            match Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind())) {
-                Ok(obj) => obj,
-                Err(err) => {
-                    return DoCtrl::TransferThrow {
-                        continuation: k,
-                        exception: PyException::type_error(format!(
-                            "KleisliHandler invoke failed to convert effect: {err}"
-                        )),
-                    };
-                }
-            };
-
-        let py_k = match Python::attach(|py| {
-            Bound::new(py, PyK::from_cont_id(k.cont_id)).map(|bound| bound.into_any().unbind())
-        }) {
-            Ok(obj) => obj,
-            Err(err) => {
-                return DoCtrl::TransferThrow {
-                    continuation: k,
-                    exception: PyException::type_error(format!(
-                        "KleisliHandler invoke failed to create continuation handle: {err}"
-                    )),
-                };
-            }
-        };
-
-        let metadata = metadata_from_debug_info(self.handler_debug_info());
-        DoCtrl::Expand {
-            factory: Box::new(DoCtrl::Pure {
-                value: Value::Kleisli(self.kleisli.clone()),
-            }),
-            args: vec![
-                DoCtrl::Pure {
-                    value: Value::Python(py_effect),
-                },
-                DoCtrl::Pure {
-                    value: Value::Python(py_k),
-                },
-            ],
-            kwargs: vec![],
-            metadata,
-        }
-    }
-
-    fn handler_name(&self) -> &str {
-        self.handler_name.as_str()
-    }
-
-    fn handler_debug_info(&self) -> HandlerDebugInfo {
-        HandlerDebugInfo {
-            name: self.handler_name.clone(),
-            file: self.handler_file.clone(),
-            line: self.handler_line,
-        }
-    }
-
-    fn py_identity(&self) -> Option<PyShared> {
-        self.kleisli.py_identity()
+    fn on_run_end(&self, run_token: u64) {
+        <Self as IRStreamFactory>::on_run_end(self, run_token);
     }
 }
 
@@ -697,33 +462,6 @@ impl IRStreamFactory for AwaitHandlerFactory {
     }
 }
 
-impl HandlerInvoke for AwaitHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as IRStreamFactory>::can_handle(self, effect)
-    }
-
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
-        rust_program_expand_expr(
-            Arc::new(self.clone()),
-            effect,
-            k,
-            metadata_from_debug_info(self.handler_debug_info()),
-        )
-    }
-
-    fn handler_name(&self) -> &str {
-        <Self as IRStreamFactory>::handler_name(self)
-    }
-
-    fn handler_debug_info(&self) -> HandlerDebugInfo {
-        HandlerDebugInfo {
-            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
-    }
-}
-
 #[derive(Debug)]
 struct AwaitHandlerProgram {
     pending_k: Option<Continuation>,
@@ -884,56 +622,6 @@ impl IRStreamFactory for StateHandlerFactory {
 
     fn handler_name(&self) -> &'static str {
         "StateHandler"
-    }
-}
-
-impl HandlerInvoke for StateHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as IRStreamFactory>::can_handle(self, effect)
-    }
-
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
-        let is_modify = {
-            #[cfg(test)]
-            if matches!(&effect, Effect::Modify { .. }) {
-                true
-            } else {
-                dispatch_ref_as_python(&effect).is_some_and(|obj| {
-                    matches!(
-                        parse_state_python_effect(obj),
-                        Ok(Some(ParsedStateEffect::Modify { .. }))
-                    )
-                })
-            }
-            #[cfg(not(test))]
-            {
-                dispatch_ref_as_python(&effect).is_some_and(|obj| {
-                    matches!(
-                        parse_state_python_effect(obj),
-                        Ok(Some(ParsedStateEffect::Modify { .. }))
-                    )
-                })
-            }
-        };
-
-        let metadata = metadata_from_debug_info(self.handler_debug_info());
-        if is_modify {
-            rust_program_expand_expr(Arc::new(self.clone()), effect, k, metadata)
-        } else {
-            rust_program_apply_expr(Arc::new(self.clone()), effect, k, metadata)
-        }
-    }
-
-    fn handler_name(&self) -> &str {
-        <Self as IRStreamFactory>::handler_name(self)
-    }
-
-    fn handler_debug_info(&self) -> HandlerDebugInfo {
-        HandlerDebugInfo {
-            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
     }
 }
 
@@ -1222,52 +910,6 @@ impl IRStreamFactory for LazyAskHandlerFactory {
     fn on_run_end(&self, run_token: u64) {
         let mut states = self.run_states.lock().expect("LazyAsk lock poisoned");
         states.remove(&run_token);
-    }
-}
-
-impl HandlerInvoke for LazyAskHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as IRStreamFactory>::can_handle(self, effect)
-    }
-
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
-        let is_direct_ask = {
-            #[cfg(test)]
-            if matches!(&effect, Effect::Ask { .. }) {
-                true
-            } else {
-                dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
-            }
-            #[cfg(not(test))]
-            {
-                dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
-            }
-        };
-
-        let metadata = metadata_from_debug_info(self.handler_debug_info());
-        if is_direct_ask {
-            rust_program_apply_expr(Arc::new(self.clone()), effect, k, metadata)
-        } else {
-            rust_program_expand_expr(Arc::new(self.clone()), effect, k, metadata)
-        }
-    }
-
-    fn handler_name(&self) -> &str {
-        <Self as IRStreamFactory>::handler_name(self)
-    }
-
-    fn handler_debug_info(&self) -> HandlerDebugInfo {
-        HandlerDebugInfo {
-            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
-    }
-
-    fn on_run_end(&self, run_token: u64) {
-        <Self as IRStreamFactory>::on_run_end(self, run_token);
     }
 }
 
@@ -1807,48 +1449,6 @@ impl IRStreamFactory for ReaderHandlerFactory {
     }
 }
 
-impl HandlerInvoke for ReaderHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as IRStreamFactory>::can_handle(self, effect)
-    }
-
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
-        let is_ask = {
-            #[cfg(test)]
-            if matches!(&effect, Effect::Ask { .. }) {
-                true
-            } else {
-                dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
-            }
-            #[cfg(not(test))]
-            {
-                dispatch_ref_as_python(&effect)
-                    .is_some_and(|obj| matches!(parse_reader_python_effect(obj), Ok(Some(_))))
-            }
-        };
-
-        let metadata = metadata_from_debug_info(self.handler_debug_info());
-        if is_ask {
-            rust_program_apply_expr(Arc::new(self.clone()), effect, k, metadata)
-        } else {
-            rust_program_expand_expr(Arc::new(self.clone()), effect, k, metadata)
-        }
-    }
-
-    fn handler_name(&self) -> &str {
-        <Self as IRStreamFactory>::handler_name(self)
-    }
-
-    fn handler_debug_info(&self) -> HandlerDebugInfo {
-        HandlerDebugInfo {
-            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
-    }
-}
-
 #[derive(Debug)]
 struct ReaderHandlerProgram;
 
@@ -2001,33 +1601,6 @@ impl IRStreamFactory for WriterHandlerFactory {
     }
 }
 
-impl HandlerInvoke for WriterHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as IRStreamFactory>::can_handle(self, effect)
-    }
-
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
-        rust_program_apply_expr(
-            Arc::new(self.clone()),
-            effect,
-            k,
-            metadata_from_debug_info(self.handler_debug_info()),
-        )
-    }
-
-    fn handler_name(&self) -> &str {
-        <Self as IRStreamFactory>::handler_name(self)
-    }
-
-    fn handler_debug_info(&self) -> HandlerDebugInfo {
-        HandlerDebugInfo {
-            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
-    }
-}
-
 #[derive(Debug)]
 struct WriterHandlerProgram;
 
@@ -2156,33 +1729,6 @@ impl IRStreamFactory for ResultSafeHandlerFactory {
 
     fn handler_name(&self) -> &'static str {
         "ResultSafeHandler"
-    }
-}
-
-impl HandlerInvoke for ResultSafeHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as IRStreamFactory>::can_handle(self, effect)
-    }
-
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
-        rust_program_expand_expr(
-            Arc::new(self.clone()),
-            effect,
-            k,
-            metadata_from_debug_info(self.handler_debug_info()),
-        )
-    }
-
-    fn handler_name(&self) -> &str {
-        <Self as IRStreamFactory>::handler_name(self)
-    }
-
-    fn handler_debug_info(&self) -> HandlerDebugInfo {
-        HandlerDebugInfo {
-            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
     }
 }
 
@@ -2380,33 +1926,6 @@ impl IRStreamFactory for DoubleCallHandlerFactory {
 }
 
 #[cfg(test)]
-impl HandlerInvoke for DoubleCallHandlerFactory {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as IRStreamFactory>::can_handle(self, effect)
-    }
-
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
-        rust_program_expand_expr(
-            Arc::new(self.clone()),
-            effect,
-            k,
-            metadata_from_debug_info(self.handler_debug_info()),
-        )
-    }
-
-    fn handler_name(&self) -> &str {
-        <Self as IRStreamFactory>::handler_name(self)
-    }
-
-    fn handler_debug_info(&self) -> HandlerDebugInfo {
-        HandlerDebugInfo {
-            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
-    }
-}
-
 #[cfg(test)]
 #[derive(Debug)]
 enum DoubleCallPhase {
@@ -2693,14 +2212,14 @@ mod tests {
     #[test]
     fn test_state_factory_can_handle() {
         let f = StateHandlerFactory;
-        assert!(HandlerInvoke::can_handle(
+        assert!(IRStreamFactory::can_handle(
             &f,
             &Effect::Get {
                 key: "x".to_string()
             }
         )
         .unwrap());
-        assert!(HandlerInvoke::can_handle(
+        assert!(IRStreamFactory::can_handle(
             &f,
             &Effect::Put {
                 key: "x".to_string(),
@@ -2708,14 +2227,14 @@ mod tests {
             }
         )
         .unwrap());
-        assert!(!HandlerInvoke::can_handle(
+        assert!(!IRStreamFactory::can_handle(
             &f,
             &Effect::Ask {
                 key: "x".to_string()
             }
         )
         .unwrap());
-        assert!(!HandlerInvoke::can_handle(
+        assert!(!IRStreamFactory::can_handle(
             &f,
             &Effect::Tell {
                 message: Value::Unit
@@ -2862,21 +2381,21 @@ mod tests {
     #[test]
     fn test_reader_factory_can_handle() {
         let f = ReaderHandlerFactory;
-        assert!(HandlerInvoke::can_handle(
+        assert!(IRStreamFactory::can_handle(
             &f,
             &Effect::Ask {
                 key: "x".to_string()
             }
         )
         .unwrap());
-        assert!(!HandlerInvoke::can_handle(
+        assert!(!IRStreamFactory::can_handle(
             &f,
             &Effect::Get {
                 key: "x".to_string()
             }
         )
         .unwrap());
-        assert!(!HandlerInvoke::can_handle(
+        assert!(!IRStreamFactory::can_handle(
             &f,
             &Effect::Tell {
                 message: Value::Unit
@@ -2917,21 +2436,21 @@ mod tests {
     #[test]
     fn test_writer_factory_can_handle() {
         let f = WriterHandlerFactory;
-        assert!(HandlerInvoke::can_handle(
+        assert!(IRStreamFactory::can_handle(
             &f,
             &Effect::Tell {
                 message: Value::Unit
             }
         )
         .unwrap());
-        assert!(!HandlerInvoke::can_handle(
+        assert!(!IRStreamFactory::can_handle(
             &f,
             &Effect::Get {
                 key: "x".to_string()
             }
         )
         .unwrap());
-        assert!(!HandlerInvoke::can_handle(
+        assert!(!IRStreamFactory::can_handle(
             &f,
             &Effect::Ask {
                 key: "x".to_string()
@@ -2990,7 +2509,7 @@ mod tests {
             let effect = Effect::from_shared(PyShared::new(obj));
             let f = ResultSafeHandlerFactory;
             assert!(
-                HandlerInvoke::can_handle(&f, &effect).unwrap(),
+                IRStreamFactory::can_handle(&f, &effect).unwrap(),
                 "ResultSafe handler should claim ResultSafeEffect"
             );
         });

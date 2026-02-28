@@ -58,11 +58,12 @@ pub use effect::{Effect, PyAsk, PyCancelEffect, PyGet, PyLocal, PyModify, PyPut,
 pub use error::VMError;
 pub use frame::Frame;
 pub use handler::{
-    Handler, HandlerDebugInfo, HandlerInvoke, HandlerRef, LazyAskHandlerFactory,
-    ReaderHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
+    AwaitHandlerFactory, IRStreamFactory, IRStreamFactoryRef, IRStreamProgram,
+    IRStreamProgramRef, LazyAskHandlerFactory, ReaderHandlerFactory, ResultSafeHandlerFactory,
+    StateHandlerFactory, WriterHandlerFactory,
 };
 pub use ids::{ContId, DispatchId, Marker, RunnableId, SegmentId};
-pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef};
+pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
 pub use py_key::HashedPyKey;
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 pub use pyvm::{DoExprTag, PyStdlib, PyVM};
