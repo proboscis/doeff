@@ -70,10 +70,15 @@ def _install_validated_runtime_api() -> None:
     raw_doexpr_to_generator = _ext.DoExpr.to_generator
     raw_nesting_to_generator = getattr(getattr(_ext, "_NestingStep", None), "to_generator", None)
 
-    def validated_with_handler(handler, expr, return_clause=None):
+    def validated_with_handler(handler, expr, return_clause=None, *, types=None):
         _validate_do_handler_annotations((handler,))
         coerced_handler = _coerce_handler(handler, api_name="WithHandler", role="handler")
-        return raw_with_handler(coerced_handler, expr, return_clause)
+        return raw_with_handler(
+            coerced_handler,
+            expr,
+            return_clause=return_clause,
+            types=types,
+        )
 
     def validated_with_intercept(f, expr, types=None, mode="include", meta=None):
         coerced_interceptor = _coerce_handler(
