@@ -16,7 +16,7 @@ The key insight from [docs/20-why-effects-over-di.md](../20-why-effects-over-di.
 ## The Strategy: Pure Effects
 
 ```python
-from doeff import do, Program, Get, Put, Tell, Try
+from doeff import do, Effect, Program, Get, Put, Tell, Try
 from doeff.effects import Await, Spawn, Gather
 
 @dataclass(frozen=True)
@@ -80,11 +80,14 @@ def mean_reversion_strategy(symbol: str, window: int = 20) -> Program[None]:
 ## Handler Mode 1: Backtest (10 Years in Seconds)
 
 ```python
+from doeff import Delegate, Effect, do
+
 def backtest_market_handler(historical_data):
     """Feeds historical price data. Simulates order fills."""
     prices = iter(historical_data)
 
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, GetPrice):
             try:
                 return next(prices)
@@ -114,7 +117,8 @@ def simulated_time_handler(start_time):
     """Delay advances simulated clock instantly. GetTime returns simulated time."""
     sim_time = start_time
 
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         nonlocal sim_time
         if isinstance(effect, Delay):
             sim_time += effect.seconds  # instant — no real sleep
@@ -143,9 +147,12 @@ result = run(
 ## Handler Mode 2: Paper Trading (Real Data, Simulated Execution)
 
 ```python
+from doeff import Delegate, Effect, do
+
 def live_market_handler():
     """Real price feeds, but orders don't execute."""
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, GetPrice):
             return fetch_real_price(effect.symbol)  # real market data
 
@@ -161,7 +168,8 @@ def live_market_handler():
 
 def real_time_handler():
     """Delay actually sleeps. GetTime returns wall clock."""
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, Delay):
             import asyncio
             await asyncio.sleep(effect.seconds)  # real wall-clock delay
@@ -186,9 +194,12 @@ result = run(
 ## Handler Mode 3: Live Trading (Real Everything)
 
 ```python
+from doeff import Delegate, Effect, do
+
 def live_execution_handler(broker_client):
     """Real price feeds, real order execution."""
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, GetPrice):
             return broker_client.get_quote(effect.symbol)
 

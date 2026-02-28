@@ -87,8 +87,11 @@ The program never mentions a provider. The handler stack decides.
 Because every LLM call is an effect, you get cost tracking for free:
 
 ```python
+from doeff import Delegate, Effect, Get, do
+
 # Cost-capping handler — applies to ALL LLM effects
-def cost_cap_handler(effect, k):
+@do
+def cost_cap_handler(effect: Effect, k):
     if isinstance(effect, LLMChat):
         current = yield Get("total_cost")
         if current > MAX_BUDGET:
