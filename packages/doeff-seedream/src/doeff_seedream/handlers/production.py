@@ -110,14 +110,6 @@ def _image_edit_impl(effect: ImageEdit) -> EffectGenerator[ImageResult]:
 
 
 @do
-def _structured_impl(effect: SeedreamStructuredOutput) -> EffectGenerator[Any]:
-    raise NotImplementedError(
-        "SeedreamStructuredOutput has no default production implementation. "
-        "Pass structured_impl=... to production_handlers() for custom behavior."
-    )
-
-
-@do
 def seedream_image_handler(effect: Effect, k: Any):  # noqa: PLR0911
     """Protocol handler with model routing for unified image effects."""
     if isinstance(effect, SeedreamGenerate):
@@ -141,10 +133,7 @@ def seedream_image_handler(effect: Effect, k: Any):  # noqa: PLR0911
         value = yield _image_edit_impl(effect)
         return (yield Resume(k, value))
 
-    if isinstance(effect, SeedreamStructuredOutput):
-        value = yield _structured_impl(effect)
-        return (yield Resume(k, value))
-
+    # No default structured output impl — delegate to outer handler
     yield Pass()
 
 
@@ -161,7 +150,6 @@ def production_handlers(
     active_generate_impl = generate_impl or _generate_impl
     active_image_generate_impl = image_generate_impl or _image_generate_impl
     active_image_edit_impl = image_edit_impl or _image_edit_impl
-    active_structured_impl = structured_impl or _structured_impl
 
     @do
     def handler(effect: Effect, k: Any):  # noqa: PLR0911
@@ -183,8 +171,8 @@ def production_handlers(
                 return
             value = yield active_image_edit_impl(effect)
             return (yield Resume(k, value))
-        if isinstance(effect, SeedreamStructuredOutput):
-            value = yield active_structured_impl(effect)
+        if isinstance(effect, SeedreamStructuredOutput) and structured_impl is not None:
+            value = yield structured_impl(effect)
             return (yield Resume(k, value))
         yield Pass()
 
