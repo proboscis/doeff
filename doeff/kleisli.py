@@ -7,6 +7,7 @@ unwrapping of Program arguments for natural composition.
 
 from __future__ import annotations
 
+from abc import ABC
 import inspect
 import types
 import warnings
@@ -29,7 +30,7 @@ U = TypeVar("U")
 
 
 @dataclass(frozen=True)
-class KleisliProgram(Generic[P, T]):
+class KleisliProgram(ABC, Generic[P, T]):
     """
     Thin wrapper around a callable representing a Kleisli arrow.
 
@@ -222,6 +223,21 @@ def validate_do_handler_effect_annotation(handler: Any) -> None:
         raise TypeError("@do handler first parameter must be annotated as Effect")
 
 
+def _register_vm_kleisli_types() -> None:
+    try:
+        import doeff_vm as vm
+    except Exception:
+        return
+
+    py_kleisli = getattr(vm, "PyKleisli", None)
+    if py_kleisli is None:
+        return
+    try:
+        KleisliProgram.register(py_kleisli)
+    except Exception:
+        return
+
+
 __all__ = ["KleisliProgram", "PartiallyAppliedKleisliProgram"]
 
 
@@ -238,3 +254,4 @@ def _hydrate_future_annotations() -> None:
 
 
 _hydrate_future_annotations()
+_register_vm_kleisli_types()

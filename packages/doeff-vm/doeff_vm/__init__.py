@@ -37,6 +37,8 @@ def _handler_registration_metadata(handler):
 def _coerce_handler(handler):
     if isinstance(handler, _ext.RustHandler):
         return handler
+    if hasattr(_ext, "PyKleisli") and isinstance(handler, _ext.PyKleisli):
+        return handler
     if isinstance(handler, _ext.DoeffGeneratorFn):
         return handler
     if not callable(handler):
@@ -129,6 +131,14 @@ ResultErr = Err
 K = _ext.K
 DoeffGenerator = _ext.DoeffGenerator
 DoeffGeneratorFn = _ext.DoeffGeneratorFn
+PyKleisli = _ext.PyKleisli
+
+try:
+    from doeff.kleisli import KleisliProgram
+
+    KleisliProgram.register(PyKleisli)
+except Exception:
+    pass
 
 
 WithHandler = _ext.WithHandler
@@ -253,6 +263,7 @@ __all__ = [
     "DoExpr",
     "DoeffGenerator",
     "DoeffGeneratorFn",
+    "PyKleisli",
     "DoThunkBase",
     "EffectBase",
     "PyAsk",
