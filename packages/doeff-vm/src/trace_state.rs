@@ -15,8 +15,8 @@ use crate::continuation::Continuation;
 use crate::dispatch::DispatchContext;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
 use crate::frame::{CallMetadata, Frame};
-use crate::handler::Handler;
 use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::step::PyException;
 use crate::value::Value;
@@ -204,9 +204,9 @@ impl TraceState {
         }
     }
 
-    fn handler_trace_info(handler: &Handler) -> (String, HandlerKind, Option<String>, Option<u32>) {
-        let info = handler.handler_debug_info();
-        let kind = if handler.py_identity().is_some() {
+    fn handler_trace_info(handler: &KleisliRef) -> (String, HandlerKind, Option<String>, Option<u32>) {
+        let info = handler.debug_info();
+        let kind = if handler.expects_python_k() {
             HandlerKind::Python
         } else {
             HandlerKind::RustBuiltin
@@ -215,12 +215,10 @@ impl TraceState {
     }
 
     fn marker_handler_trace_info(
-        handlers: &HashMap<Marker, (Handler, Option<PyShared>)>,
+        handlers: &HashMap<Marker, KleisliRef>,
         marker: Marker,
     ) -> Option<(String, HandlerKind, Option<String>, Option<u32>)> {
-        handlers
-            .get(&marker)
-            .map(|(handler, _py_identity)| Self::handler_trace_info(handler))
+        handlers.get(&marker).map(Self::handler_trace_info)
     }
 
     pub(crate) fn assemble_trace(
@@ -228,7 +226,7 @@ impl TraceState {
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[DispatchContext],
-        handlers: &HashMap<Marker, (Handler, Option<PyShared>)>,
+        handlers: &HashMap<Marker, KleisliRef>,
         effect_repr: impl Fn(&crate::effect::DispatchEffect) -> String,
     ) -> Vec<TraceEntry> {
         let mut trace: Vec<TraceEntry> = Vec::new();
@@ -413,7 +411,7 @@ impl TraceState {
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[DispatchContext],
-        handlers: &HashMap<Marker, (Handler, Option<PyShared>)>,
+        handlers: &HashMap<Marker, KleisliRef>,
         effect_repr: impl Fn(&crate::effect::DispatchEffect) -> String,
     ) {
         let mut seg_id = current_segment;

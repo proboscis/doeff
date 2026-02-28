@@ -689,7 +689,43 @@ pub type DispatchEffect = Effect;
 pub fn dispatch_from_shared(obj: PyShared) -> DispatchEffect {
     #[cfg(test)]
     {
-        return Effect::Python(obj);
+        return Python::attach(|py| {
+            let bound = obj.bind(py);
+
+            if let Ok(get) = bound.extract::<PyRef<'_, PyGet>>() {
+                return Effect::Get {
+                    key: get.key.clone(),
+                };
+            }
+
+            if let Ok(put) = bound.extract::<PyRef<'_, PyPut>>() {
+                return Effect::Put {
+                    key: put.key.clone(),
+                    value: Value::from_pyobject(put.value.bind(py)),
+                };
+            }
+
+            if let Ok(modify) = bound.extract::<PyRef<'_, PyModify>>() {
+                return Effect::Modify {
+                    key: modify.key.clone(),
+                    modifier: PyShared::new(modify.func.clone_ref(py)),
+                };
+            }
+
+            if let Ok(ask) = bound.extract::<PyRef<'_, PyAsk>>() {
+                if let Ok(key) = ask.key.bind(py).extract::<String>() {
+                    return Effect::Ask { key };
+                }
+            }
+
+            if let Ok(tell) = bound.extract::<PyRef<'_, PyTell>>() {
+                return Effect::Tell {
+                    message: Value::from_pyobject(tell.message.bind(py)),
+                };
+            }
+
+            Effect::Python(obj)
+        });
     }
     #[cfg(not(test))]
     {
@@ -876,34 +912,30 @@ impl Effect {
         #[cfg(test)]
         match self {
             Effect::Python(obj) => Ok(obj.bind(py).clone()),
-            // For built-in effects, we could create a Python wrapper
-            // but typically these are handled in Rust directly
-            _ => {
-                // Create a dict representation for debugging
-                let dict = pyo3::types::PyDict::new(py);
-                dict.set_item("type", self.type_name())?;
-                match self {
-                    #[cfg(test)]
-                    Effect::Get { key } => {
-                        dict.set_item("key", key)?;
-                    }
-                    #[cfg(test)]
-                    Effect::Put { key, value } => {
-                        dict.set_item("key", key)?;
-                        dict.set_item("value", value.to_pyobject(py)?)?;
-                    }
-                    #[cfg(test)]
-                    Effect::Ask { key } => {
-                        dict.set_item("key", key)?;
-                    }
-                    #[cfg(test)]
-                    Effect::Tell { message } => {
-                        dict.set_item("message", message.to_pyobject(py)?)?;
-                    }
-                    _ => {}
-                }
-                Ok(dict.into_any())
-            }
+            Effect::Get { key } => Ok(Bound::new(py, PyGet::new(key.clone()))?.into_any()),
+            Effect::Put { key, value } => Ok(Bound::new(
+                py,
+                PyPut::new(
+                    key.clone(),
+                    value.to_pyobject(py)?.unbind(),
+                ),
+            )?
+            .into_any()),
+            Effect::Modify { key, modifier } => Ok(Bound::new(
+                py,
+                PyModify::new(key.clone(), modifier.clone_ref(py)),
+            )?
+            .into_any()),
+            Effect::Ask { key } => Ok(Bound::new(
+                py,
+                PyAsk::new(key.clone().into_pyobject(py)?.unbind().into_any()),
+            )?
+            .into_any()),
+            Effect::Tell { message } => Ok(Bound::new(
+                py,
+                PyTell::new(message.to_pyobject(py)?.unbind()),
+            )?
+            .into_any()),
         }
     }
 }

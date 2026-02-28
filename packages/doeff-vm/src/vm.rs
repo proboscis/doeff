@@ -29,11 +29,10 @@ use crate::error::VMError;
 use crate::frame::{
     CallMetadata, EvalReturnContinuation, FinallyOutcome, Frame, InterceptorContinuation,
 };
-use crate::handler::{Handler, KleisliHandler, RustProgramInvocation};
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::interceptor_state::InterceptorState;
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
-use crate::kleisli::{HandlerSentinelKleisli, KleisliRef};
+use crate::kleisli::{with_py_identity, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::pyvm::{
@@ -47,43 +46,6 @@ pub use crate::dispatch::DispatchContext;
 pub use crate::rust_store::RustStore;
 
 static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
-
-#[derive(Debug)]
-struct RustProgramStream {
-    program: crate::handler::IRStreamProgramRef,
-}
-
-impl IRStream for RustProgramStream {
-    fn resume(
-        &mut self,
-        value: Value,
-        store: &mut RustStore,
-        scope: &mut ScopeStore,
-    ) -> IRStreamStep {
-        Python::attach(|_py| {
-            let mut guard = self.program.lock().expect("Rust program lock poisoned");
-            guard.resume(value, store, scope)
-        })
-    }
-
-    fn throw(
-        &mut self,
-        exc: PyException,
-        store: &mut RustStore,
-        scope: &mut ScopeStore,
-    ) -> IRStreamStep {
-        Python::attach(|_py| {
-            let mut guard = self.program.lock().expect("Rust program lock poisoned");
-            guard.throw(exc, store, scope)
-        })
-    }
-}
-
-fn rust_program_as_stream(program: crate::handler::IRStreamProgramRef) -> IRStreamRef {
-    Arc::new(std::sync::Mutex::new(
-        Box::new(RustProgramStream { program }) as Box<dyn IRStream>,
-    ))
-}
 
 const MISSING_UNKNOWN: &str = "[MISSING] <unknown>";
 
@@ -224,17 +186,14 @@ pub struct InterceptorEntry {
 #[derive(Clone)]
 struct InstalledHandler {
     marker: Marker,
-    handler: Handler,
-    py_identity: Option<PyShared>,
+    handler: KleisliRef,
 }
 
 #[derive(Clone)]
 struct HandlerChainEntry {
     marker: Marker,
     prompt_seg_id: SegmentId,
-    handler: Handler,
-    kleisli: Option<KleisliRef>,
-    py_identity: Option<PyShared>,
+    kleisli: KleisliRef,
 }
 
 impl Default for DebugConfig {
@@ -275,7 +234,7 @@ pub struct VM {
     pub(crate) dispatch_state: DispatchState,
     pub consumed_cont_ids: HashSet<ContId>,
     installed_handlers: Vec<InstalledHandler>,
-    run_handlers: Vec<Handler>,
+    run_handlers: Vec<KleisliRef>,
     pub(crate) interceptor_state: InterceptorState,
     pub rust_store: RustStore,
     pub py_store: Option<PyStore>,
@@ -413,7 +372,7 @@ impl VM {
             .expect("current segment not found in arena")
     }
 
-    fn track_run_handler(&mut self, handler: &Handler) {
+    fn track_run_handler(&mut self, handler: &KleisliRef) {
         if !self
             .run_handlers
             .iter()
@@ -426,24 +385,15 @@ impl VM {
     fn find_prompt_boundary_by_marker(
         &self,
         marker: Marker,
-    ) -> Option<(SegmentId, Handler, Option<KleisliRef>, Option<PyShared>)> {
+    ) -> Option<(SegmentId, KleisliRef)> {
         self.segments
             .iter()
             .find_map(|(seg_id, seg)| match &seg.kind {
                 SegmentKind::PromptBoundary {
                     handled_marker,
                     handler,
-                    handler_kleisli,
-                    py_identity,
                     ..
-                } if *handled_marker == marker => {
-                    Some((
-                        seg_id,
-                        handler.clone(),
-                        handler_kleisli.clone(),
-                        py_identity.clone(),
-                    ))
-                }
+                } if *handled_marker == marker => Some((seg_id, handler.clone())),
                 _ => None,
             })
     }
@@ -458,17 +408,13 @@ impl VM {
             if let SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,
-                handler_kleisli,
-                py_identity,
                 ..
             } = &seg.kind
             {
                 chain.push(HandlerChainEntry {
                     marker: *handled_marker,
                     prompt_seg_id: seg_id,
-                    handler: handler.clone(),
-                    kleisli: handler_kleisli.clone(),
-                    py_identity: py_identity.clone(),
+                    kleisli: handler.clone(),
                 });
             }
             cursor = seg.caller;
@@ -515,17 +461,16 @@ impl VM {
         self.handlers_in_caller_chain(seg_id)
     }
 
-    fn prompt_boundary_handler_lookup(&self) -> HashMap<Marker, (Handler, Option<PyShared>)> {
+    fn prompt_boundary_handler_lookup(&self) -> HashMap<Marker, KleisliRef> {
         let mut handlers = HashMap::new();
         for (_seg_id, seg) in self.segments.iter() {
             if let SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,
-                py_identity,
                 ..
             } = &seg.kind
             {
-                handlers.insert(*handled_marker, (handler.clone(), py_identity.clone()));
+                handlers.insert(*handled_marker, handler.clone());
             }
         }
         handlers
@@ -541,8 +486,6 @@ impl VM {
                 entry.marker,
                 entry.handler.clone(),
                 None,
-                None,
-                entry.py_identity.clone(),
             );
             self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
             self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
@@ -628,31 +571,6 @@ impl VM {
         seg.push_frame(Frame::EvalReturn(Box::new(continuation)));
         seg.mode = Mode::HandleYield(expr);
         StepEvent::Continue
-    }
-
-    fn invoke_rust_program(&mut self, invocation: RustProgramInvocation) -> StepEvent {
-        let Some(current_seg_id) = self.current_segment else {
-            return StepEvent::Error(VMError::internal(
-                "no current segment for rust program invocation",
-            ));
-        };
-        let program = invocation
-            .factory
-            .create_program_for_run(self.current_run_token());
-        let stream = rust_program_as_stream(program.clone());
-        let effect = *invocation.effect;
-        let continuation = invocation.continuation;
-        let step = {
-            let mut guard = program.lock().expect("Rust program lock poisoned");
-            let Some(seg) = self.segments.get_mut(current_seg_id) else {
-                return StepEvent::Error(VMError::invalid_segment(
-                    "segment missing for rust program invocation",
-                ));
-            };
-            let scope = &mut seg.scope_store;
-            Python::attach(|py| guard.start(py, effect, continuation, &mut self.rust_store, scope))
-        };
-        self.apply_stream_step(step, stream, None)
     }
 
     fn evaluate(&mut self, ir_node: DoCtrl) -> StepEvent {
@@ -769,9 +687,9 @@ impl VM {
         })
     }
 
-    fn handler_trace_info(handler: &Handler) -> (String, HandlerKind, Option<String>, Option<u32>) {
-        let info = handler.handler_debug_info();
-        let kind = if handler.py_identity().is_some() {
+    fn handler_trace_info(handler: &KleisliRef) -> (String, HandlerKind, Option<String>, Option<u32>) {
+        let info = handler.debug_info();
+        let kind = if handler.expects_python_k() {
             HandlerKind::Python
         } else {
             HandlerKind::RustBuiltin
@@ -780,6 +698,7 @@ impl VM {
     }
 
     fn invoke_kleisli_handler_expr(
+        &self,
         kleisli: KleisliRef,
         effect: DispatchEffect,
         continuation: Continuation,
@@ -797,21 +716,6 @@ impl VM {
                 }
             };
 
-        let py_k = match Python::attach(|py| {
-            Bound::new(py, PyK::from_cont_id(continuation.cont_id))
-                .map(|bound| bound.into_any().unbind())
-        }) {
-            Ok(obj) => obj,
-            Err(err) => {
-                return DoCtrl::TransferThrow {
-                    continuation,
-                    exception: PyException::type_error(format!(
-                        "Kleisli handler failed to create continuation handle: {err}"
-                    )),
-                };
-            }
-        };
-
         let debug = kleisli.debug_info();
         let metadata = CallMetadata::new(
             debug.name,
@@ -821,18 +725,43 @@ impl VM {
             None,
         );
 
+        let mut args = vec![DoCtrl::Pure {
+            value: Value::Python(py_effect),
+        }];
+        if !kleisli.expects_python_k() {
+            args.push(DoCtrl::Pure {
+                value: Value::Continuation(continuation.clone()),
+            });
+            if let Some(run_token) = self.current_run_token() {
+                args.push(DoCtrl::Pure {
+                    value: Value::Int(run_token as i64),
+                });
+            }
+        } else {
+            let py_k = match Python::attach(|py| {
+                Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                    .map(|bound| bound.into_any().unbind())
+            }) {
+                Ok(obj) => obj,
+                Err(err) => {
+                    return DoCtrl::TransferThrow {
+                        continuation,
+                        exception: PyException::type_error(format!(
+                            "Kleisli handler failed to create continuation handle: {err}"
+                        )),
+                    };
+                }
+            };
+            args.push(DoCtrl::Pure {
+                value: Value::Python(py_k),
+            });
+        }
+
         DoCtrl::Expand {
             factory: Box::new(DoCtrl::Pure {
                 value: Value::Kleisli(kleisli),
             }),
-            args: vec![
-                DoCtrl::Pure {
-                    value: Value::Python(py_effect),
-                },
-                DoCtrl::Pure {
-                    value: Value::Python(py_k),
-                },
-            ],
+            args,
             kwargs: vec![],
             metadata,
         }
@@ -848,13 +777,11 @@ impl VM {
                 .into_iter()
                 .find(|entry| entry.marker == marker)
             {
-                return Some(Self::handler_trace_info(&entry.handler));
+                return Some(Self::handler_trace_info(&entry.kleisli));
             }
         }
         self.find_prompt_boundary_by_marker(marker)
-            .map(|(_seg_id, handler, _handler_kleisli, _py_identity)| {
-                Self::handler_trace_info(&handler)
-            })
+            .map(|(_seg_id, handler)| Self::handler_trace_info(&handler))
     }
 
     fn current_handler_identity_for_dispatch(
@@ -2195,7 +2122,7 @@ impl VM {
     fn handle_yield_create_continuation(
         &mut self,
         expr: PyShared,
-        handlers: Vec<Handler>,
+        handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
     ) -> StepEvent {
         self.handle_create_continuation(expr, handlers, handler_identities)
@@ -2278,10 +2205,6 @@ impl VM {
 
         let func = match f_value {
             Value::Python(func) => PyShared::new(func),
-            Value::PythonHandlerCallable(func) => PyShared::new(func),
-            Value::RustProgramInvocation(invocation) => {
-                return self.invoke_rust_program(invocation);
-            }
             Value::Kleisli(kleisli) => {
                 let args_values = Self::collect_value_args(args);
                 let kwargs_values = Self::collect_value_kwargs(kwargs);
@@ -2378,10 +2301,6 @@ impl VM {
 
         let (func, handler_return) = match factory_value {
             Value::Python(factory) => (PyShared::new(factory), false),
-            Value::PythonHandlerCallable(factory) => (PyShared::new(factory), true),
-            Value::RustProgramInvocation(invocation) => {
-                return self.invoke_rust_program(invocation);
-            }
             Value::Kleisli(kleisli) => {
                 let args_values = Self::collect_value_args(args);
                 let kwargs_values = Self::collect_value_kwargs(kwargs);
@@ -2450,7 +2369,7 @@ impl VM {
     fn handle_yield_eval(
         &mut self,
         expr: PyShared,
-        handlers: Vec<Handler>,
+        handlers: Vec<KleisliRef>,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
@@ -3064,10 +2983,9 @@ impl VM {
         &self,
         handler_chain: &[Marker],
         effect: &DispatchEffect,
-    ) -> Result<(usize, Marker, Handler), VMError> {
+    ) -> Result<(usize, Marker, KleisliRef), VMError> {
         for (idx, marker) in handler_chain.iter().copied().enumerate() {
-            let Some((_prompt_seg_id, handler, _handler_kleisli, _py_identity)) =
-                self.find_prompt_boundary_by_marker(marker)
+            let Some((_prompt_seg_id, handler)) = self.find_prompt_boundary_by_marker(marker)
             else {
                 return Err(VMError::internal(format!(
                     "find_matching_handler: missing handler marker {} at index {}",
@@ -3118,8 +3036,8 @@ impl VM {
             let active_marker = *ctx.handler_chain.get(ctx.handler_idx)?;
             let active_is_python = self
                 .find_prompt_boundary_by_marker(active_marker)
-                .is_some_and(|(_prompt_seg_id, handler, _handler_kleisli, _py_identity)| {
-                    handler.py_identity().is_some()
+                .is_some_and(|(_prompt_seg_id, handler)| {
+                    handler.expects_python_k()
                 });
             if active_is_python && !Self::same_effect_python_type(&effect, &ctx.effect) {
                 return None;
@@ -3141,7 +3059,7 @@ impl VM {
 
         let mut selected: Option<(usize, HandlerChainEntry)> = None;
         for (idx, entry) in handler_chain.iter().enumerate() {
-            if entry.handler.can_handle(&effect)? {
+            if entry.kleisli.can_handle(&effect)? {
                 selected = Some((idx, entry.clone()));
                 break;
             }
@@ -3159,13 +3077,13 @@ impl VM {
 
         let handler_marker = selected.marker;
         let prompt_seg_id = selected.prompt_seg_id;
-        let handler = selected.handler.clone();
+        let handler = selected.kleisli.clone();
         let dispatch_id = DispatchId::fresh();
         let is_execution_context_effect = Self::is_execution_context_effect(&effect);
         let supports_error_context_conversion = handler.supports_error_context_conversion();
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
         for entry in &handler_chain {
-            let (name, kind, file, line) = Self::handler_trace_info(&entry.handler);
+            let (name, kind, file, line) = Self::handler_trace_info(&entry.kleisli);
             handler_chain_snapshot.push(HandlerSnapshotEntry {
                 handler_name: name,
                 handler_kind: kind,
@@ -3226,14 +3144,10 @@ impl VM {
                 .map(|(_, _, _, source_line)| *source_line),
         );
 
-        if selected.py_identity.is_some() || handler.py_identity().is_some() {
+        if handler.expects_python_k() {
             self.register_continuation(k_user.clone());
         }
-        let ir_node = selected
-            .kleisli
-            .clone()
-            .map(|kleisli| Self::invoke_kleisli_handler_expr(kleisli, effect.clone(), k_user.clone()))
-            .unwrap_or_else(|| handler.invoke(effect, k_user));
+        let ir_node = self.invoke_kleisli_handler_expr(handler, effect, k_user);
         Ok(self.evaluate(ir_node))
     }
 
@@ -3302,15 +3216,14 @@ impl VM {
     pub fn install_handler(
         &mut self,
         marker: Marker,
-        handler: Handler,
-        py_identity: Option<PyShared>,
+        handler: KleisliRef,
+        _py_identity: Option<PyShared>,
     ) {
         self.installed_handlers
             .retain(|entry| entry.marker != marker);
         self.installed_handlers.push(InstalledHandler {
             marker,
             handler,
-            py_identity,
         });
     }
 
@@ -3332,8 +3245,8 @@ impl VM {
         &mut self,
         marker: Marker,
         prompt_seg_id: SegmentId,
-        handler: Handler,
-        py_identity: Option<PyShared>,
+        handler: KleisliRef,
+        _py_identity: Option<PyShared>,
     ) -> bool {
         let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
             let prompt_seg = Segment::new_prompt(
@@ -3342,8 +3255,6 @@ impl VM {
                 marker,
                 handler.clone(),
                 None,
-                None,
-                py_identity.clone(),
             );
             self.alloc_segment(prompt_seg);
             self.track_run_handler(&handler);
@@ -3352,9 +3263,7 @@ impl VM {
         seg.kind = SegmentKind::PromptBoundary {
             handled_marker: marker,
             handler: handler.clone(),
-            handler_kleisli: None,
             return_clause: None,
-            py_identity,
         };
         self.track_run_handler(&handler);
         true
@@ -3698,31 +3607,18 @@ impl VM {
             Ok(plan) => plan,
             Err(err) => return StepEvent::Error(err),
         };
-        let (prompt_handler, prompt_kleisli): (Handler, Option<KleisliRef>) = plan
-            .handler
-            .as_any()
-            .downcast_ref::<HandlerSentinelKleisli>()
-            .map(|sentinel| (sentinel.handler(), None))
-            .unwrap_or_else(|| {
-                (
-                    Arc::new(KleisliHandler::new(plan.handler.clone())) as Handler,
-                    Some(plan.handler.clone()),
-                )
-            });
 
         let mut prompt_seg = Segment::new_prompt(
             plan.handler_marker,
             Some(plan.outside_seg_id),
             plan.handler_marker,
-            prompt_handler.clone(),
-            prompt_kleisli,
+            plan.handler.clone(),
             return_clause,
-            plan.py_identity.clone(),
         );
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
         self.copy_scope_store_from(Some(plan.outside_seg_id), &mut prompt_seg);
         let prompt_seg_id = self.alloc_segment(prompt_seg);
-        self.track_run_handler(&prompt_handler);
+        self.track_run_handler(&plan.handler);
 
         let mut body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut body_seg);
@@ -3947,9 +3843,7 @@ impl VM {
                     idx
                 )));
             };
-            let handler = entry.handler.clone();
-            let handler_kleisli = entry.kleisli.clone();
-            let py_identity = entry.py_identity.clone();
+            let handler = entry.kleisli.clone();
             let can_handle = match handler.can_handle(&effect) {
                 Ok(value) => value,
                 Err(err) => return StepEvent::Error(err),
@@ -3986,18 +3880,11 @@ impl VM {
 
                 self.current_segment = Some(handler_seg_id);
 
-                if py_identity.is_some() || handler.py_identity().is_some() {
+                if handler.expects_python_k() {
                     self.register_continuation(k_user.clone());
                 }
-                let ir_node = handler_kleisli
-                    .map(|kleisli| {
-                        Self::invoke_kleisli_handler_expr(
-                            kleisli,
-                            effect.clone(),
-                            k_user.clone(),
-                        )
-                    })
-                    .unwrap_or_else(|| handler.invoke(effect.clone(), k_user));
+                let ir_node =
+                    self.invoke_kleisli_handler_expr(handler, effect.clone(), k_user);
                 return self.evaluate(ir_node);
             }
         }
@@ -4133,10 +4020,10 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn current_visible_handlers(&self) -> Vec<Handler> {
+    fn current_visible_handlers(&self) -> Vec<KleisliRef> {
         self.current_handler_chain()
             .into_iter()
-            .map(|entry| entry.handler)
+            .map(|entry| entry.kleisli)
             .collect()
     }
 
@@ -4211,7 +4098,7 @@ impl VM {
         let handlers = self
             .handlers_in_caller_chain(ctx.k_user.segment_id)
             .into_iter()
-            .map(|entry| entry.handler)
+            .map(|entry| entry.kleisli)
             .collect::<Vec<_>>();
         self.current_seg_mut().mode = Mode::Deliver(Value::Handlers(handlers));
         StepEvent::Continue
@@ -4231,7 +4118,7 @@ impl VM {
     fn handle_create_continuation(
         &mut self,
         program: PyShared,
-        handlers: Vec<Handler>,
+        handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
     ) -> StepEvent {
         let k =
@@ -4266,8 +4153,10 @@ impl VM {
 
         let k_handler_count = k.handlers.len();
         for idx in (0..k_handler_count).rev() {
-            let handler = &k.handlers[idx];
-            let py_identity = k.handler_identities.get(idx).cloned().unwrap_or(None);
+            let mut handler = k.handlers[idx].clone();
+            if let Some(Some(identity)) = k.handler_identities.get(idx) {
+                handler = with_py_identity(handler, identity.clone());
+            }
             let handler_marker = Marker::fresh();
             let mut prompt_seg = Segment::new_prompt(
                 handler_marker,
@@ -4275,13 +4164,11 @@ impl VM {
                 handler_marker,
                 handler.clone(),
                 None,
-                None,
-                py_identity.clone(),
             );
             self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
             self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
-            self.track_run_handler(handler);
+            self.track_run_handler(&handler);
             let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
             self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
             self.copy_scope_store_from(outside_seg_id, &mut body_seg);

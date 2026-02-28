@@ -18,7 +18,7 @@ use crate::doeff_generator::DoeffGeneratorFn;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, dispatch_to_pyobject,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
     PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySpawn, PyTaskCompleted,
@@ -26,10 +26,10 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    IRStreamFactory, IRStreamProgram, IRStreamProgramRef, Handler, HandlerInvoke, PythonHandler,
-    RustProgramInvocation,
+    IRStreamFactory, IRStreamProgram, IRStreamProgramRef,
 };
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
+use crate::kleisli::{DgfnKleisli, KleisliRef, PyKleisli, RustKleisli};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
 use crate::segment::ScopeStore;
@@ -47,7 +47,7 @@ pub const PRIORITY_HIGH: u32 = 20;
 pub enum SchedulerEffect {
     Spawn {
         program: Py<PyAny>,
-        handlers: Vec<Handler>,
+        handlers: Vec<KleisliRef>,
         store_mode: StoreMode,
         priority: u32,
         creation_site: Option<SpawnSite>,
@@ -731,33 +731,39 @@ fn extract_task_id(obj: &Bound<'_, PyAny>) -> Option<TaskId> {
     None
 }
 
-fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<Handler>, String> {
+fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<KleisliRef>, String> {
     if obj.is_none() {
         return Ok(vec![]);
     }
-    let mut handlers = Vec::new();
+    let mut handlers: Vec<KleisliRef> = Vec::new();
     for item in obj.try_iter().map_err(|e| e.to_string())? {
         let item = item.map_err(|e| e.to_string())?;
         if item.is_instance_of::<PyRustHandlerSentinel>() {
-            let sentinel: PyRef<'_, PyRustHandlerSentinel> = item
-                .extract::<PyRef<'_, PyRustHandlerSentinel>>()
-                .map_err(|e| format!("{e:?}"))?;
-            handlers.push(sentinel.factory_ref());
-            continue;
+            return Err("Spawn handlers no longer accept RustHandler sentinels".to_string());
         }
 
         if item.is_instance_of::<DoeffGeneratorFn>() {
+            let py = item.py();
             let dgfn = item
-                .extract::<Py<DoeffGeneratorFn>>()
+                .extract::<PyRef<'_, DoeffGeneratorFn>>()
                 .map_err(|e| format!("{e:?}"))?;
-            handlers.push(Arc::new(PythonHandler::from_dgfn(dgfn)));
+            let callable_identity = dgfn.callable.clone_ref(py);
+            let kleisli = DgfnKleisli::from_dgfn(py, item.clone().unbind(), callable_identity)
+                .map_err(|e| format!("{e:?}"))?;
+            handlers.push(Arc::new(kleisli) as KleisliRef);
+            continue;
+        }
+
+        if item.is_instance_of::<PyKleisli>() {
+            let kleisli = item
+                .extract::<PyRef<'_, PyKleisli>>()
+                .map_err(|e| format!("{e:?}"))?;
+            handlers.push(Arc::new(kleisli.clone()) as KleisliRef);
             continue;
         }
 
         if item.is_callable() {
-            return Err(
-                "Spawn handlers must be DoeffGeneratorFn or RustHandler sentinel".to_string(),
-            );
+            return Err("Spawn handlers must be DoeffGeneratorFn or PyKleisli".to_string());
         }
 
         let ty = item
@@ -766,7 +772,7 @@ fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<Handler>, 
             .map(|name| name.to_string())
             .unwrap_or_else(|_| "<unknown>".to_string());
         return Err(format!(
-            "Spawn handlers must be DoeffGeneratorFn or RustHandler sentinel, got {ty}"
+            "Spawn handlers must be DoeffGeneratorFn or PyKleisli, got {ty}"
         ));
     }
     Ok(handlers)
@@ -2909,56 +2915,13 @@ impl IRStreamFactory for SchedulerHandler {
         SCHEDULER_HANDLER_NAME
     }
 
-    fn on_run_end(&self, run_token: u64) {
-        let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
-        states.remove(&run_token);
-    }
-}
-
-impl HandlerInvoke for SchedulerHandler {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as IRStreamFactory>::can_handle(self, effect)
-    }
-
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoCtrl {
-        DoCtrl::Expand {
-            factory: Box::new(DoCtrl::Pure {
-                value: Value::RustProgramInvocation(RustProgramInvocation {
-                    factory: Arc::new(self.clone()),
-                    effect: Box::new(effect),
-                    continuation: k,
-                }),
-            }),
-            args: vec![],
-            kwargs: vec![],
-            metadata: CallMetadata::new(
-                <Self as IRStreamFactory>::handler_name(self).to_string(),
-                "<rust>".to_string(),
-                0,
-                None,
-                None,
-            ),
-        }
-    }
-
-    fn handler_name(&self) -> &str {
-        <Self as IRStreamFactory>::handler_name(self)
-    }
-
-    fn handler_debug_info(&self) -> crate::handler::HandlerDebugInfo {
-        crate::handler::HandlerDebugInfo {
-            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
-    }
-
     fn supports_error_context_conversion(&self) -> bool {
         true
     }
 
     fn on_run_end(&self, run_token: u64) {
-        <Self as IRStreamFactory>::on_run_end(self, run_token);
+        let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
+        states.remove(&run_token);
     }
 }
 
@@ -4472,13 +4435,15 @@ mod tests {
     #[test]
     fn test_scheduler_handler_can_handle() {
         let handler = SchedulerHandler::new();
-        assert!(!HandlerInvoke::can_handle(
-            &handler,
-            &Effect::Get {
-                key: "x".to_string()
-            }
-        )
-        .unwrap());
+        assert!(
+            !<SchedulerHandler as IRStreamFactory>::can_handle(
+                &handler,
+                &Effect::Get {
+                    key: "x".to_string()
+                }
+            )
+            .unwrap()
+        );
     }
 
     #[test]

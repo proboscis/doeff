@@ -7,7 +7,6 @@ use crate::continuation::Continuation;
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
-use crate::handler::Handler;
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::value::Value;
@@ -72,7 +71,7 @@ pub enum DoCtrl {
     },
     CreateContinuation {
         expr: PyShared,
-        handlers: Vec<Handler>,
+        handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
     },
     ResumeContinuation {
@@ -101,7 +100,7 @@ pub enum DoCtrl {
     },
     Eval {
         expr: PyShared,
-        handlers: Vec<Handler>,
+        handlers: Vec<KleisliRef>,
         metadata: Option<CallMetadata>,
     },
     GetCallStack,

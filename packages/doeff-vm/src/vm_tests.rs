@@ -4,6 +4,11 @@ use crate::frame::CallMetadata;
 use crate::trace_state::TraceState;
 use std::sync::{Arc, Mutex};
 
+fn rust_handler(factory: crate::handler::IRStreamFactoryRef) -> crate::kleisli::KleisliRef {
+    let name = factory.handler_name().to_string();
+    Arc::new(crate::kleisli::RustKleisli::new(factory, name))
+}
+
 fn make_dummy_continuation() -> Continuation {
     Continuation {
         cont_id: ContId::fresh(),
@@ -146,9 +151,7 @@ fn test_visible_handlers_no_dispatch() {
         m1,
         Some(root),
         m1,
-        Arc::new(crate::handler::StateHandlerFactory),
-        None,
-        None,
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None,
     ));
     let body_1 = vm.alloc_segment(Segment::new(m1, Some(prompt_1)));
@@ -156,9 +159,7 @@ fn test_visible_handlers_no_dispatch() {
         m2,
         Some(body_1),
         m2,
-        Arc::new(crate::handler::ReaderHandlerFactory),
-        None,
-        None,
+        rust_handler(Arc::new(crate::handler::ReaderHandlerFactory)),
         None,
     ));
     let body_2 = vm.alloc_segment(Segment::new(m2, Some(prompt_2)));
@@ -179,9 +180,7 @@ fn test_visible_handlers_with_busy_boundary() {
         m1,
         Some(root),
         m1,
-        Arc::new(crate::handler::StateHandlerFactory),
-        None,
-        None,
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None,
     ));
     let b1 = vm.alloc_segment(Segment::new(m1, Some(p1)));
@@ -189,9 +188,7 @@ fn test_visible_handlers_with_busy_boundary() {
         m2,
         Some(b1),
         m2,
-        Arc::new(crate::handler::ReaderHandlerFactory),
-        None,
-        None,
+        rust_handler(Arc::new(crate::handler::ReaderHandlerFactory)),
         None,
     ));
     let b2 = vm.alloc_segment(Segment::new(m2, Some(p2)));
@@ -199,9 +196,7 @@ fn test_visible_handlers_with_busy_boundary() {
         m3,
         Some(b2),
         m3,
-        Arc::new(crate::handler::WriterHandlerFactory),
-        None,
-        None,
+        rust_handler(Arc::new(crate::handler::WriterHandlerFactory)),
         None,
     ));
     let b3 = vm.alloc_segment(Segment::new(m3, Some(p3)));
@@ -240,7 +235,7 @@ fn test_start_dispatch_allows_reentrant_handler_match() {
     assert!(vm.install_handler_on_segment(
         marker,
         prompt_seg_id,
-        Arc::new(crate::handler::StateHandlerFactory),
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None
     ));
 
@@ -291,9 +286,7 @@ fn test_handler_clause_cannot_see_below_prompt_handlers() {
         outer_marker,
         Some(root),
         outer_marker,
-        Arc::new(crate::handler::ReaderHandlerFactory),
-        None,
-        None,
+        rust_handler(Arc::new(crate::handler::ReaderHandlerFactory)),
         None,
     ));
     let outer_body = vm.alloc_segment(Segment::new(outer_marker, Some(outer_prompt)));
@@ -301,9 +294,7 @@ fn test_handler_clause_cannot_see_below_prompt_handlers() {
         inner_marker,
         Some(outer_body),
         inner_marker,
-        Arc::new(crate::handler::StateHandlerFactory),
-        None,
-        None,
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None,
     ));
     let inner_body = vm.alloc_segment(Segment::new(inner_marker, Some(inner_prompt)));
@@ -337,9 +328,7 @@ fn test_visible_handlers_completed_dispatch() {
         m1,
         Some(root),
         m1,
-        Arc::new(crate::handler::StateHandlerFactory),
-        None,
-        None,
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None,
     ));
     let b1 = vm.alloc_segment(Segment::new(m1, Some(p1)));
@@ -347,9 +336,7 @@ fn test_visible_handlers_completed_dispatch() {
         m2,
         Some(b1),
         m2,
-        Arc::new(crate::handler::ReaderHandlerFactory),
-        None,
-        None,
+        rust_handler(Arc::new(crate::handler::ReaderHandlerFactory)),
         None,
     ));
     let b2 = vm.alloc_segment(Segment::new(m2, Some(p2)));
@@ -500,13 +487,13 @@ fn test_find_matching_handler() {
     assert!(vm.install_handler_on_segment(
         m1,
         prompt_seg_id_1,
-        std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
+        rust_handler(Arc::new(crate::handler::ReaderHandlerFactory)),
         None
     ));
     assert!(vm.install_handler_on_segment(
         m2,
         prompt_seg_id_2,
-        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None
     ));
 
@@ -551,7 +538,7 @@ fn test_find_matching_handler_propagates_can_handle_parse_error() {
         assert!(vm.install_handler_on_segment(
             marker,
             prompt_seg_id,
-            std::sync::Arc::new(crate::handler::ReaderHandlerFactory),
+            rust_handler(Arc::new(crate::handler::ReaderHandlerFactory)),
             None
         ));
 
@@ -648,7 +635,7 @@ fn test_start_dispatch_get_effect() {
     assert!(vm.install_handler_on_segment(
         marker,
         prompt_seg_id,
-        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None
     ));
 
@@ -660,9 +647,18 @@ fn test_start_dispatch_get_effect() {
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), StepEvent::Continue));
     assert_eq!(vm.dispatch_state.depth(), 1);
-    // Handler yields Resume primitive; step through to process it
-    let event = vm.step();
-    assert!(matches!(event, StepEvent::Continue));
+    // RustKleisli dispatch may take multiple VM ticks before Resume completes.
+    for _ in 0..4 {
+        if vm.dispatch_state.get(0).is_some_and(|ctx| ctx.completed) {
+            break;
+        }
+        let event = vm.step();
+        assert!(
+            !matches!(event, StepEvent::Error(_)),
+            "dispatch stepping should not error, got {:?}",
+            event,
+        );
+    }
     assert!(vm.dispatch_state.get(0).unwrap().completed);
 }
 
@@ -681,15 +677,24 @@ fn test_dispatch_completion_marking() {
     assert!(vm.install_handler_on_segment(
         marker,
         prompt_seg_id,
-        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None
     ));
 
     let _ = vm.start_dispatch(Effect::Get {
         key: "x".to_string(),
     });
-    // Handler yields Resume; step through to mark dispatch complete
-    let _ = vm.step();
+    for _ in 0..4 {
+        if vm.dispatch_state.get(0).is_some_and(|ctx| ctx.completed) {
+            break;
+        }
+        let event = vm.step();
+        assert!(
+            !matches!(event, StepEvent::Error(_)),
+            "dispatch stepping should not error, got {:?}",
+            event,
+        );
+    }
     assert!(vm.dispatch_state.get(0).unwrap().completed);
 }
 
@@ -745,7 +750,7 @@ fn test_start_dispatch_records_effect_creation_site_from_continuation_frame() {
         assert!(vm.install_handler_on_segment(
             marker,
             prompt_seg_id,
-            Arc::new(crate::scheduler::SchedulerHandler::new()),
+            rust_handler(Arc::new(crate::scheduler::SchedulerHandler::new())),
             None
         ));
 
@@ -1148,7 +1153,7 @@ fn test_handle_get_handlers() {
     assert!(vm.install_handler_on_segment(
         marker,
         prompt_seg_id,
-        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None
     ));
 
@@ -1184,7 +1189,7 @@ fn test_handle_get_handlers() {
     match &vm.current_seg().mode {
         Mode::Deliver(Value::Handlers(h)) => {
             assert_eq!(h.len(), 1);
-            assert_eq!(h[0].handler_name(), "StateHandler");
+            assert_eq!(h[0].debug_info().name, "StateHandler");
         }
         _ => panic!("Expected Deliver(Handlers)"),
     }
@@ -1324,7 +1329,7 @@ fn test_remove_handler() {
     let marker = Marker::fresh();
     vm.install_handler(
         marker,
-        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None,
     );
     assert_eq!(vm.installed_handler_markers(), vec![marker]);
@@ -1345,12 +1350,12 @@ fn test_remove_handler_preserves_others() {
     let m2 = Marker::fresh();
     vm.install_handler(
         m1,
-        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None,
     );
     vm.install_handler(
         m2,
-        std::sync::Arc::new(crate::handler::WriterHandlerFactory),
+        rust_handler(Arc::new(crate::handler::WriterHandlerFactory)),
         None,
     );
     assert_eq!(vm.installed_handler_markers().len(), 2);
@@ -1647,7 +1652,7 @@ fn test_gap16_lazy_pop_before_get_handlers() {
     assert!(vm.install_handler_on_segment(
         m1,
         seg_id,
-        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None
     ));
     vm.current_segment = Some(seg_id);
@@ -1873,7 +1878,7 @@ fn test_g10_resume_continuation_preserves_handler_identity() {
         vm.current_segment = Some(seg_id);
 
         let id_obj = pyo3::types::PyDict::new(py).into_any().unbind();
-        let handler = std::sync::Arc::new(crate::handler::StateHandlerFactory);
+        let handler = rust_handler(Arc::new(crate::handler::StateHandlerFactory));
         let program = PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any());
 
         let k = Continuation::create_unstarted_with_identities(
@@ -1896,10 +1901,10 @@ fn test_g10_resume_continuation_preserves_handler_identity() {
             .get(prompt_seg_id)
             .expect("missing prompt segment");
         match &prompt_seg.kind {
-            SegmentKind::PromptBoundary {
-                py_identity: Some(identity),
-                ..
-            } => {
+            SegmentKind::PromptBoundary { handler, .. } => {
+                let identity = handler
+                    .py_identity()
+                    .expect("G10 FAIL: handler prompt should preserve identity");
                 assert!(
                     identity.bind(py).is(&id_obj.bind(py)),
                     "G10 FAIL: preserved identity does not match original"
@@ -1936,7 +1941,7 @@ fn test_needs_python_from_resume_propagates_correctly() {
         assert!(vm.install_handler_on_segment(
             marker,
             prompt_seg_id,
-            std::sync::Arc::new(crate::handler::DoubleCallHandlerFactory),
+            rust_handler(Arc::new(crate::handler::DoubleCallHandlerFactory)),
             None
         ));
 
@@ -1949,7 +1954,18 @@ fn test_needs_python_from_resume_propagates_correctly() {
             modifier: PyShared::new(modifier),
         });
         assert!(result.is_ok());
-        let event1 = result.unwrap();
+        let mut event1 = result.unwrap();
+        for _ in 0..4 {
+            if matches!(event1, StepEvent::NeedsPython(PythonCall::CallFunc { .. })) {
+                break;
+            }
+            assert!(
+                matches!(event1, StepEvent::Continue),
+                "Expected Continue while waiting for first NeedsPython, got {:?}",
+                event1
+            );
+            event1 = vm.step();
+        }
         let dispatch_id = vm
             .dispatch_state
             .get(0)
@@ -2119,7 +2135,7 @@ fn test_s009_g3_modify_resumes_with_new_value() {
         assert!(vm.install_handler_on_segment(
             marker,
             prompt_seg_id,
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
+            rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
             None
         ));
 
@@ -2131,7 +2147,18 @@ fn test_s009_g3_modify_resumes_with_new_value() {
             modifier: PyShared::new(modifier),
         });
         assert!(result.is_ok());
-        let event = result.unwrap();
+        let mut event = result.unwrap();
+        for _ in 0..4 {
+            if matches!(event, StepEvent::NeedsPython(PythonCall::CallFunc { .. })) {
+                break;
+            }
+            assert!(
+                matches!(event, StepEvent::Continue),
+                "Expected Continue while waiting for modifier call, got {:?}",
+                event
+            );
+            event = vm.step();
+        }
         assert!(matches!(
             event,
             StepEvent::NeedsPython(PythonCall::CallFunc { .. })
@@ -2182,7 +2209,7 @@ fn test_d10_handler_return_uses_deliver_not_return() {
     assert!(vm.install_handler_on_segment(
         marker,
         prompt_seg_id,
-        std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        rust_handler(Arc::new(crate::handler::StateHandlerFactory)),
         None
     ));
 
@@ -2814,7 +2841,7 @@ fn test_r9h_eval_with_handlers_installs_scope() {
 
         let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
 
-        let handler = std::sync::Arc::new(crate::handler::StateHandlerFactory);
+        let handler = rust_handler(Arc::new(crate::handler::StateHandlerFactory));
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Eval {
             expr: PyShared::new(dummy_expr),
