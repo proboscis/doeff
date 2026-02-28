@@ -92,15 +92,17 @@ Writer convenience helpers:
 The innermost `WithHandler` layer sees the effect first.
 
 ```python
-from doeff import Ask, AskEffect, Delegate, Resume, WithHandler, default_handlers, do, run
+from doeff import Ask, AskEffect, Delegate, Effect, Resume, WithHandler, default_handlers, do, run
 
-def base_handler(effect, k):
+@do
+def base_handler(effect: Effect, k: object):
     if isinstance(effect, AskEffect):
         return (yield Resume(k, "base"))
     yield Delegate()
 
 
-def override_handler(effect, k):
+@do
+def override_handler(effect: Effect, k: object):
     if isinstance(effect, AskEffect):
         return (yield Resume(k, "override"))
     yield Delegate()
