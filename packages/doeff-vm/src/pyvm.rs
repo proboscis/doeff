@@ -92,7 +92,9 @@ use crate::handler::{
     ReaderHandlerFactory, ResultSafeHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
-use crate::kleisli::{Kleisli, PyKleisli};
+use crate::kleisli::{
+    DgfnKleisli, HandlerSentinelKleisli, Kleisli, KleisliRef, PyCallableKleisli, PyKleisli,
+};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerHandler;
@@ -740,6 +742,46 @@ impl PyVM {
         Err(PyTypeError::new_err(format!("{base_message}, got {ty}")))
     }
 
+    fn extract_kleisli_ref(
+        py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+        context: &str,
+    ) -> PyResult<KleisliRef> {
+        if obj.is_instance_of::<PyKleisli>() {
+            let kleisli: PyRef<'_, PyKleisli> = obj.extract()?;
+            return Ok(Arc::new(kleisli.clone()));
+        }
+
+        if obj.is_instance_of::<DoeffGeneratorFn>() {
+            let dgfn: PyRef<'_, DoeffGeneratorFn> = obj.extract()?;
+            let callable_identity = dgfn.callable.clone_ref(py);
+            let kleisli =
+                DgfnKleisli::from_dgfn(py, obj.clone().unbind(), callable_identity)?;
+            return Ok(Arc::new(kleisli));
+        }
+
+        if obj.is_instance_of::<PyRustHandlerSentinel>() {
+            let sentinel: PyRef<'_, PyRustHandlerSentinel> = obj.extract()?;
+            let identity = PyShared::new(obj.clone().unbind());
+            let kleisli = HandlerSentinelKleisli::new(sentinel.factory_ref(), identity);
+            return Ok(Arc::new(kleisli));
+        }
+
+        if obj.is_callable() {
+            let callable = PyCallableKleisli::from_callable(py, obj.clone().unbind())?;
+            return Ok(Arc::new(callable));
+        }
+
+        let ty = obj
+            .get_type()
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string());
+        Err(PyTypeError::new_err(format!(
+            "{context} must be callable or PyKleisli, got {ty}"
+        )))
+    }
+
     fn start_with_expr(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<()> {
         self.vm.end_active_run_session();
         self.vm.begin_run_session();
@@ -1114,16 +1156,17 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
             DoCtrl::TransferThrow { .. } | DoCtrl::ResumeThrow { .. } => None,
             DoCtrl::WithHandler {
                 handler,
-                expr,
+                body,
                 return_clause,
-                py_identity,
             } => {
-                let debug = handler.handler_debug_info();
-                let handler_obj = py_identity
-                    .as_ref()
+                let debug = handler.debug_info();
+                let handler_obj = handler
+                    .py_identity()
                     .map(|identity| identity.clone_ref(py))
-                    .or_else(|| handler.py_identity().map(|identity| identity.clone_ref(py)))
                     .unwrap_or_else(|| py.None());
+                let body_obj = doctrl_to_pyexpr_for_vm(body)?.ok_or_else(|| {
+                    PyException::type_error("WithHandler.body must convert to DoExpr")
+                })?;
                 Some(
                     Bound::new(
                         py,
@@ -1133,7 +1176,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             })
                             .add_subclass(PyWithHandler {
                                 handler: handler_obj,
-                                expr: expr.clone_ref(py),
+                                expr: body_obj,
                                 return_clause: return_clause
                                     .as_ref()
                                     .map(|clause| clause.clone_ref(py)),
@@ -1149,28 +1192,37 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
             }
             DoCtrl::WithIntercept {
                 interceptor,
-                expr,
+                body,
                 metadata,
-            } => Some(
-                Bound::new(
-                    py,
-                    PyClassInitializer::from(PyDoExprBase)
-                        .add_subclass(PyDoCtrlBase {
-                            tag: DoExprTag::WithIntercept as u8,
-                        })
-                        .add_subclass(PyWithIntercept {
-                            f: interceptor.clone_ref(py),
-                            expr: expr.clone_ref(py),
-                            meta: metadata
-                                .as_ref()
-                                .map(|meta| call_metadata_to_dict(py, meta))
-                                .transpose()?,
-                        }),
+            } => {
+                let interceptor_obj = interceptor
+                    .py_identity()
+                    .map(|identity| identity.clone_ref(py))
+                    .unwrap_or_else(|| py.None());
+                let body_obj = doctrl_to_pyexpr_for_vm(body)?.ok_or_else(|| {
+                    PyException::type_error("WithIntercept.body must convert to DoExpr")
+                })?;
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::WithIntercept as u8,
+                            })
+                            .add_subclass(PyWithIntercept {
+                                f: interceptor_obj,
+                                expr: body_obj,
+                                meta: metadata
+                                    .as_ref()
+                                    .map(|meta| call_metadata_to_dict(py, meta))
+                                    .transpose()?,
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
                 )
-                .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                .into_any()
-                .unbind(),
-            ),
+            }
             DoCtrl::Finally { cleanup } => Some(
                 Bound::new(
                     py,
@@ -1264,10 +1316,14 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
             } => {
                 let list = PyList::empty(py);
                 for (idx, handler) in handlers.iter().enumerate() {
-                    if let Some(Some(identity)) = handler_identities.get(idx) {
-                        list.append(identity.bind(py))
-                            .map_err(|err| PyException::runtime_error(format!("{err}")))?;
-                    } else if let Some(identity) = handler.py_identity() {
+                    if let Some(identity_opt) = handler_identities.get(idx) {
+                        if let Some(identity) = identity_opt {
+                            list.append(identity.bind(py))
+                                .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                            continue;
+                        }
+                    }
+                    if let Some(identity) = handler.py_identity() {
                         list.append(identity.bind(py))
                             .map_err(|err| PyException::runtime_error(format!("{err}")))?;
                     } else {
@@ -1544,23 +1600,25 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::WithHandler => {
                 let wh: PyRef<'_, PyWithHandler> = obj.extract()?;
                 let handler_bound = wh.handler.bind(py);
-                let (handler, py_identity) =
-                    PyVM::classify_handler_object(py, handler_bound, "WithHandler")?;
+                let handler = PyVM::extract_kleisli_ref(py, handler_bound, "WithHandler.handler")?;
+                let body = classify_yielded_bound(vm, py, wh.expr.bind(py))?;
                 Ok(DoCtrl::WithHandler {
                     handler,
-                    expr: wh.expr.clone_ref(py),
+                    body: Box::new(body),
                     return_clause: wh
                         .return_clause
                         .as_ref()
                         .map(|clause| PyShared::new(clause.clone_ref(py))),
-                    py_identity,
                 })
             }
             DoExprTag::WithIntercept => {
                 let wi: PyRef<'_, PyWithIntercept> = obj.extract()?;
+                let interceptor =
+                    PyVM::extract_kleisli_ref(py, wi.f.bind(py), "WithIntercept.f")?;
+                let body = classify_yielded_bound(vm, py, wi.expr.bind(py))?;
                 Ok(DoCtrl::WithIntercept {
-                    interceptor: PyShared::new(wi.f.clone_ref(py)),
-                    expr: wi.expr.clone_ref(py),
+                    interceptor,
+                    body: Box::new(body),
                     metadata: call_metadata_from_optional_meta(py, &wi.meta, "WithIntercept")?,
                 })
             }
@@ -3114,6 +3172,19 @@ mod tests {
             .unwrap()
             .into_any()
             .unbind();
+            let pure_expr = Bound::new(
+                py,
+                PyClassInitializer::from(PyDoExprBase)
+                    .add_subclass(PyDoCtrlBase {
+                        tag: DoExprTag::Pure as u8,
+                    })
+                    .add_subclass(PyPure {
+                        value: py.None().into_pyobject(py).unwrap().unbind().into_any(),
+                    }),
+            )
+            .unwrap()
+            .into_any()
+            .unbind();
 
             let with_handler = Bound::new(
                 py,
@@ -3123,7 +3194,7 @@ mod tests {
                     })
                     .add_subclass(PyWithHandler {
                         handler: sentinel.clone_ref(py),
-                        expr: py.None().into_pyobject(py).unwrap().unbind().into_any(),
+                        expr: pure_expr,
                         return_clause: None,
                         handler_name: None,
                         handler_file: None,
@@ -3141,7 +3212,7 @@ mod tests {
             seg.mode = Mode::HandleYield(yielded);
 
             let event = pyvm.vm.step();
-            assert!(matches!(event, StepEvent::NeedsPython(_)));
+            assert!(matches!(event, StepEvent::Continue));
 
             let body_seg_id = pyvm.vm.current_segment.expect("body segment missing");
             let body_seg = pyvm.vm.segments.get(body_seg_id).expect("segment missing");
