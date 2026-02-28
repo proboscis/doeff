@@ -293,6 +293,35 @@ fn normalize_intercept_types_obj(
     Ok(Some(tuple.into_any().unbind()))
 }
 
+fn normalize_handler_types_obj(
+    py: Python<'_>,
+    types: Option<Py<PyAny>>,
+) -> PyResult<Option<Py<PyAny>>> {
+    let Some(types_obj) = types else {
+        return Ok(None);
+    };
+    let types_bound = types_obj.bind(py);
+    let iter = types_bound.try_iter().map_err(|_| {
+        PyTypeError::new_err("WithHandler.types must be an iterable of type objects")
+    })?;
+
+    let mut normalized = Vec::new();
+    for item in iter {
+        let item = item.map_err(|_| {
+            PyTypeError::new_err("WithHandler.types must be an iterable of type objects")
+        })?;
+        if !item.is_instance_of::<PyType>() {
+            return Err(PyTypeError::new_err(
+                "WithHandler.types must contain only Python type objects",
+            ));
+        }
+        normalized.push(item.unbind());
+    }
+
+    let tuple = PyTuple::new(py, normalized)?;
+    Ok(Some(tuple.into_any().unbind()))
+}
+
 fn intercept_types_from_pyobj(
     py: Python<'_>,
     types: &Option<Py<PyAny>>,
@@ -319,7 +348,44 @@ fn intercept_types_from_pyobj(
     Ok(Some(normalized))
 }
 
+fn handler_types_from_pyobj(
+    py: Python<'_>,
+    types: &Option<Py<PyAny>>,
+) -> PyResult<Option<Vec<PyShared>>> {
+    let Some(types_obj) = types else {
+        return Ok(None);
+    };
+    let iter = types_obj.bind(py).try_iter().map_err(|_| {
+        PyTypeError::new_err("WithHandler.types must be an iterable of type objects")
+    })?;
+
+    let mut normalized = Vec::new();
+    for item in iter {
+        let item = item.map_err(|_| {
+            PyTypeError::new_err("WithHandler.types must be an iterable of type objects")
+        })?;
+        if !item.is_instance_of::<PyType>() {
+            return Err(PyTypeError::new_err(
+                "WithHandler.types must contain only Python type objects",
+            ));
+        }
+        normalized.push(PyShared::new(item.unbind()));
+    }
+    Ok(Some(normalized))
+}
+
 fn intercept_types_to_pyobj(
+    py: Python<'_>,
+    types: &Option<Vec<PyShared>>,
+) -> PyResult<Option<Py<PyAny>>> {
+    let Some(types) = types else {
+        return Ok(None);
+    };
+    let tuple = PyTuple::new(py, types.iter().map(|item| item.clone_ref(py)))?;
+    Ok(Some(tuple.into_any().unbind()))
+}
+
+fn handler_types_to_pyobj(
     py: Python<'_>,
     types: &Option<Vec<PyShared>>,
 ) -> PyResult<Option<Py<PyAny>>> {
@@ -1283,6 +1349,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
             DoCtrl::WithHandler {
                 handler,
                 body,
+                types,
                 return_clause,
             } => {
                 let debug = handler.debug_info();
@@ -1303,6 +1370,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             .add_subclass(PyWithHandler {
                                 handler: handler_obj,
                                 expr: body_obj,
+                                types: handler_types_to_pyobj(py, types)?,
                                 return_clause: return_clause
                                     .as_ref()
                                     .map(|clause| clause.clone_ref(py)),
@@ -1732,9 +1800,11 @@ pub(crate) fn classify_yielded_bound(
                 let handler_bound = wh.handler.bind(py);
                 let handler = PyVM::extract_kleisli_ref(py, handler_bound, "WithHandler.handler")?;
                 let body = classify_yielded_bound(vm, py, wh.expr.bind(py))?;
+                let types = handler_types_from_pyobj(py, &wh.types)?;
                 Ok(DoCtrl::WithHandler {
                     handler,
                     body: Box::new(body),
+                    types,
                     return_clause: wh
                         .return_clause
                         .as_ref()
@@ -2469,6 +2539,8 @@ pub struct PyWithHandler {
     #[pyo3(get)]
     pub expr: Py<PyAny>,
     #[pyo3(get)]
+    pub types: Option<Py<PyAny>>,
+    #[pyo3(get)]
     pub return_clause: Option<Py<PyAny>>,
     #[pyo3(get)]
     pub handler_name: Option<String>,
@@ -2481,12 +2553,13 @@ pub struct PyWithHandler {
 #[pymethods]
 impl PyWithHandler {
     #[new]
-    #[pyo3(signature = (handler, expr, return_clause=None, handler_name=None, handler_file=None, handler_line=None))]
+    #[pyo3(signature = (handler, expr, return_clause=None, *, types=None, handler_name=None, handler_file=None, handler_line=None))]
     fn new(
         py: Python<'_>,
         handler: Py<PyAny>,
         expr: Py<PyAny>,
         return_clause: Option<Py<PyAny>>,
+        types: Option<Py<PyAny>>,
         handler_name: Option<String>,
         handler_file: Option<String>,
         handler_line: Option<u32>,
@@ -2504,6 +2577,7 @@ impl PyWithHandler {
         }
 
         let expr = lift_effect_to_perform_expr(py, expr)?;
+        let normalized_types = normalize_handler_types_obj(py, types)?;
 
         let expr_obj = expr.bind(py);
         if !expr_obj.is_instance_of::<PyDoExprBase>() {
@@ -2524,6 +2598,7 @@ impl PyWithHandler {
             .add_subclass(PyWithHandler {
                 handler,
                 expr,
+                types: normalized_types,
                 return_clause,
                 handler_name,
                 handler_file,
@@ -3263,6 +3338,7 @@ impl NestingGenerator {
         let wh = PyWithHandler {
             handler,
             expr: inner,
+            types: None,
             return_clause: None,
             handler_name: None,
             handler_file: None,
@@ -3349,6 +3425,7 @@ mod tests {
                     .add_subclass(PyWithHandler {
                         handler: sentinel.clone_ref(py),
                         expr: pure_expr,
+                        types: None,
                         return_clause: None,
                         handler_name: None,
                         handler_file: None,
@@ -4251,6 +4328,7 @@ fn run(
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
+                types: None,
                 return_clause: None,
                 handler_name: None,
                 handler_file: None,
@@ -4313,6 +4391,7 @@ fn async_run<'py>(
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
+                types: None,
                 return_clause: None,
                 handler_name: None,
                 handler_file: None,

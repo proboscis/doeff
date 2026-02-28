@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import types as py_types
 import warnings
 from collections.abc import Sequence
-from typing import Any
+from typing import Annotated, Any, ForwardRef, Union, get_args, get_origin, get_type_hints
 
 
 def _vm() -> Any:
@@ -125,6 +126,99 @@ def _normalize_intercept_types(types: Any) -> tuple[type[Any], ...] | None:
         if not isinstance(typ, type):
             raise TypeError("WithIntercept.types must contain only Python type objects")
     return normalized
+
+
+def _safe_get_type_hints(target: Any) -> dict[str, Any]:
+    if target is None:
+        return {}
+    try:
+        return get_type_hints(target, include_extras=True)
+    except Exception as exc:
+        warnings.warn(f"Failed to resolve type hints for {target}: {exc}", stacklevel=2)
+        return {}
+
+
+def _safe_signature(target: Any) -> inspect.Signature | None:
+    try:
+        return inspect.signature(target)
+    except (TypeError, ValueError, NameError):
+        # NameError: unresolved forward references on some Python versions.
+        return None
+
+
+def _safe_issubclass(candidate: Any, base: type[Any]) -> bool:
+    try:
+        return isinstance(candidate, type) and issubclass(candidate, base)
+    except TypeError:
+        return False
+
+
+def _resolve_handler_effect_types(annotation: Any) -> tuple[type[Any], ...] | None:
+    from doeff.types import Effect, EffectBase
+
+    if annotation is inspect._empty:
+        return None
+    if annotation in (Any, Effect, EffectBase):
+        return None
+    if isinstance(annotation, ForwardRef):
+        # Unresolved forward references cannot be converted to runtime type filters safely.
+        return None
+    if isinstance(annotation, str):
+        return None
+
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        args = get_args(annotation)
+        if not args:
+            return None
+        return _resolve_handler_effect_types(args[0])
+
+    union_type = getattr(py_types, "UnionType", None)
+    if origin is Union or (union_type is not None and origin is union_type):
+        union_types: list[type[Any]] = []
+        for arg in get_args(annotation):
+            resolved = _resolve_handler_effect_types(arg)
+            if resolved is None:
+                # Any unresolvable or catch-all branch means "handle all".
+                return None
+            union_types.extend(resolved)
+        if not union_types:
+            return None
+        return tuple(dict.fromkeys(union_types))
+
+    if _safe_issubclass(annotation, EffectBase):
+        return (annotation,)
+    if _safe_issubclass(origin, EffectBase):
+        return (origin,)
+
+    return None
+
+
+def _extract_handler_effect_types(handler: Any) -> tuple[type[Any], ...] | None:
+    """Extract effect filter types from a handler's first parameter annotation.
+
+    Returns None when the annotation implies "handle all effects" or cannot be
+    resolved safely.
+    """
+    func = getattr(handler, "func", handler)
+
+    signature = getattr(handler, "__signature__", None)
+    if signature is None:
+        signature = _safe_signature(func) or _safe_signature(handler)
+    if signature is None:
+        return None
+
+    params = list(signature.parameters.values())
+    if not params:
+        return None
+
+    effect_param = params[0]
+    metadata_source = getattr(handler, "_metadata_source", None)
+    type_hints = _safe_get_type_hints(metadata_source)
+    if not type_hints:
+        type_hints = _safe_get_type_hints(func)
+    annotation = type_hints.get(effect_param.name, effect_param.annotation)
+    return _resolve_handler_effect_types(annotation)
 
 
 def _with_intercept_metadata(interceptor: Any) -> dict[str, Any]:
@@ -352,8 +446,9 @@ def WithHandler(
     return_clause: Any = None,
 ) -> Any:
     handler = _coerce_handler(handler, api_name="WithHandler", role="handler")
+    types = _extract_handler_effect_types(handler)
     vm = _vm()
-    return vm.WithHandler(handler, expr, return_clause)
+    return vm.WithHandler(handler, expr, types=types, return_clause=return_clause)
 
 
 def WithIntercept(
