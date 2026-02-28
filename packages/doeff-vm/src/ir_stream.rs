@@ -26,6 +26,9 @@ pub trait IRStream: fmt::Debug + Send {
         store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep;
+    fn eager_start(&self) -> bool {
+        false
+    }
     fn debug_location(&self) -> Option<StreamLocation> {
         None
     }

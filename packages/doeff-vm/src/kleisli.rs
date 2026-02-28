@@ -1,20 +1,25 @@
 //! Kleisli arrow types for IR-level callables (SPEC-VM-017).
 
-use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
+use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
+use crate::effect::{dispatch_from_shared, DispatchEffect};
 use crate::error::VMError;
 use crate::frame::CallMetadata;
-use crate::handler::{Handler, IRStreamFactoryRef};
-use crate::ir_stream::{IRStreamRef, PythonGeneratorStream};
+use crate::handler::{IRStreamFactoryRef, IRStreamProgramRef};
+use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::py_shared::PyShared;
+use crate::pyvm::PyK;
+use crate::segment::ScopeStore;
+use crate::step::PyException;
 use crate::value::Value;
+use crate::vm::RustStore;
 
 /// Debug metadata for a Kleisli arrow.
 #[derive(Debug, Clone)]
@@ -35,20 +40,90 @@ pub trait Kleisli: std::fmt::Debug + Send + Sync {
     /// Apply the arrow to arguments, producing a DoCtrl to evaluate.
     fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError>;
 
+    /// Whether this Kleisli can handle the given effect in handler dispatch.
+    fn can_handle(&self, _effect: &DispatchEffect) -> Result<bool, VMError> {
+        Ok(true)
+    }
+
+    /// Whether dispatch should convert effects to Python objects before apply.
+    fn expects_python_effect(&self) -> bool {
+        true
+    }
+
+    /// Whether exceptions thrown by this handler can be converted with context.
+    fn supports_error_context_conversion(&self) -> bool {
+        false
+    }
+
     /// Debug metadata for tracing/error reporting.
     fn debug_info(&self) -> KleisliDebugInfo;
 
-    /// Downcasting hook for specialized VM behavior.
-    fn as_any(&self) -> &dyn Any;
+    /// Convenience name accessor for compatibility with older handler APIs.
+    fn handler_name(&self) -> String {
+        self.debug_info().name
+    }
 
     /// Optional Python identity for handler self-exclusion (OCaml semantics).
     fn py_identity(&self) -> Option<PyShared> {
         None
     }
+
+    /// Notification when a run session ends.
+    fn on_run_end(&self, _run_token: u64) {}
+
+    /// Optional hook to bind a run token for per-run stateful handlers.
+    fn bind_run_token(&self, _run_token: Option<u64>) {}
 }
 
 /// Shared reference to a Kleisli arrow.
 pub type KleisliRef = Arc<dyn Kleisli>;
+
+/// Kleisli wrapper that forces a specific Python identity while delegating behavior.
+#[derive(Debug, Clone)]
+pub struct IdentityKleisli {
+    inner: KleisliRef,
+    identity: PyShared,
+}
+
+impl IdentityKleisli {
+    pub fn new(inner: KleisliRef, identity: PyShared) -> Self {
+        Self { inner, identity }
+    }
+}
+
+impl Kleisli for IdentityKleisli {
+    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        self.inner.apply(py, args)
+    }
+
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
+        self.inner.can_handle(effect)
+    }
+
+    fn expects_python_effect(&self) -> bool {
+        self.inner.expects_python_effect()
+    }
+
+    fn supports_error_context_conversion(&self) -> bool {
+        self.inner.supports_error_context_conversion()
+    }
+
+    fn debug_info(&self) -> KleisliDebugInfo {
+        self.inner.debug_info()
+    }
+
+    fn py_identity(&self) -> Option<PyShared> {
+        Some(self.identity.clone())
+    }
+
+    fn on_run_end(&self, run_token: u64) {
+        self.inner.on_run_end(run_token);
+    }
+
+    fn bind_run_token(&self, run_token: Option<u64>) {
+        self.inner.bind_run_token(run_token);
+    }
+}
 
 /// Python-backed Kleisli arrow.
 ///
@@ -250,11 +325,18 @@ impl PyKleisli {
     }
 }
 
+fn kleisli_arg_to_pyobject<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
+    match value {
+        Value::Continuation(k) => Bound::new(py, PyK::from_cont_id(k.cont_id)).map(|b| b.into_any()),
+        _ => value.to_pyobject(py),
+    }
+}
+
 impl Kleisli for PyKleisli {
     fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
         let arg_values: Vec<Bound<'_, PyAny>> = args
             .iter()
-            .map(|value| value.to_pyobject(py))
+            .map(|value| kleisli_arg_to_pyobject(py, value))
             .collect::<PyResult<Vec<_>>>()
             .map_err(Self::map_pyerr)?;
         let arg_tuple = PyTuple::new(py, &arg_values).map_err(Self::map_pyerr)?;
@@ -320,10 +402,6 @@ impl Kleisli for PyKleisli {
         }
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn py_identity(&self) -> Option<PyShared> {
         Python::attach(|py| {
             if let Ok(factory) = self.func.bind(py).getattr("_doeff_generator_factory") {
@@ -363,10 +441,6 @@ impl Kleisli for DgfnKleisli {
 
     fn debug_info(&self) -> KleisliDebugInfo {
         self.inner.debug_info()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn py_identity(&self) -> Option<PyShared> {
@@ -439,58 +513,82 @@ impl Kleisli for PyCallableKleisli {
         }
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn py_identity(&self) -> Option<PyShared> {
         Some(self.func.clone())
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct HandlerSentinelKleisli {
-    handler: Handler,
-    identity: PyShared,
-    debug: KleisliDebugInfo,
+#[derive(Debug)]
+struct RustProgramStream {
+    program: IRStreamProgramRef,
+    start_effect: Option<DispatchEffect>,
+    start_continuation: Option<Continuation>,
+    started: bool,
 }
 
-impl HandlerSentinelKleisli {
-    pub fn new(handler: Handler, identity: PyShared) -> Self {
-        let info = handler.handler_debug_info();
+impl RustProgramStream {
+    fn new(program: IRStreamProgramRef, effect: DispatchEffect, continuation: Continuation) -> Self {
         Self {
-            handler,
-            identity,
-            debug: KleisliDebugInfo {
-                name: info.name,
-                file: info.file,
-                line: info.line,
-            },
+            program,
+            start_effect: Some(effect),
+            start_continuation: Some(continuation),
+            started: false,
         }
     }
 
-    pub fn handler(&self) -> Handler {
-        self.handler.clone()
+    fn start_if_needed(
+        &mut self,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> Option<IRStreamStep> {
+        if self.started {
+            return None;
+        }
+        self.started = true;
+        let effect = self
+            .start_effect
+            .take()
+            .expect("RustProgramStream missing start_effect");
+        let continuation = self
+            .start_continuation
+            .take()
+            .expect("RustProgramStream missing start_continuation");
+        Some(Python::attach(|py| {
+            let mut guard = self.program.lock().expect("Rust program lock poisoned");
+            guard.start(py, effect, continuation, store, scope)
+        }))
     }
 }
 
-impl Kleisli for HandlerSentinelKleisli {
-    fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
-        Err(VMError::internal(
-            "RustHandler sentinel Kleisli cannot be invoked directly",
-        ))
+impl IRStream for RustProgramStream {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> IRStreamStep {
+        if let Some(step) = self.start_if_needed(store, scope) {
+            return step;
+        }
+        let mut guard = self.program.lock().expect("Rust program lock poisoned");
+        guard.resume(value, store, scope)
     }
 
-    fn debug_info(&self) -> KleisliDebugInfo {
-        self.debug.clone()
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        scope: &mut ScopeStore,
+    ) -> IRStreamStep {
+        if !self.started {
+            let _ = self.start_if_needed(store, scope);
+        }
+        let mut guard = self.program.lock().expect("Rust program lock poisoned");
+        guard.throw(exc, store, scope)
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn py_identity(&self) -> Option<PyShared> {
-        Some(self.identity.clone())
+    fn eager_start(&self) -> bool {
+        true
     }
 }
 
@@ -498,23 +596,99 @@ impl Kleisli for HandlerSentinelKleisli {
 pub struct RustKleisli {
     factory: IRStreamFactoryRef,
     name: String,
+    py_identity: Option<PyShared>,
+    supports_error_context_conversion: bool,
+    run_token: Arc<Mutex<Option<u64>>>,
 }
 
 impl RustKleisli {
     pub fn new(factory: IRStreamFactoryRef, name: String) -> Self {
-        Self { factory, name }
+        Self {
+            factory,
+            name,
+            py_identity: None,
+            supports_error_context_conversion: false,
+            run_token: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn from_factory(factory: IRStreamFactoryRef) -> Self {
+        Self::new(factory.clone(), factory.handler_name().to_string())
     }
 
     pub fn factory(&self) -> &IRStreamFactoryRef {
         &self.factory
     }
+
+    pub fn with_py_identity(mut self, py_identity: Option<PyShared>) -> Self {
+        self.py_identity = py_identity;
+        self
+    }
+
+    pub fn with_error_context_conversion(mut self, enabled: bool) -> Self {
+        self.supports_error_context_conversion = enabled;
+        self
+    }
 }
 
 impl Kleisli for RustKleisli {
-    fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
-        Err(VMError::internal(
-            "RustKleisli.apply() not yet wired - use IRStreamFactory directly until Phase 3",
-        ))
+    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        if args.len() != 2 {
+            return Err(VMError::type_error(format!(
+                "RustKleisli {} expected 2 args (effect, continuation), got {}",
+                self.name,
+                args.len()
+            )));
+        }
+        let mut iter = args.into_iter();
+        let effect_arg = iter.next().expect("args length checked");
+        let continuation_arg = iter.next().expect("args length checked");
+
+        let effect = match effect_arg {
+            Value::DispatchEffect(effect) => *effect,
+            Value::Python(obj) => dispatch_from_shared(PyShared::new(obj)),
+            other => {
+                let py_obj = kleisli_arg_to_pyobject(py, &other).map_err(PyKleisli::map_pyerr)?;
+                dispatch_from_shared(PyShared::new(py_obj.unbind()))
+            }
+        };
+        let continuation = match continuation_arg {
+            Value::Continuation(k) => k,
+            other => {
+                return Err(VMError::type_error(format!(
+                    "RustKleisli {} expected Continuation as arg[1], got {:?}",
+                    self.name, other
+                )));
+            }
+        };
+
+        let run_token = *self.run_token.lock().expect("RustKleisli run_token lock poisoned");
+        let program = self.factory.create_program_for_run(run_token);
+        let stream: IRStreamRef = Arc::new(Mutex::new(Box::new(RustProgramStream::new(
+            program,
+            effect,
+            continuation,
+        ))));
+        let metadata = Some(CallMetadata::new(
+            self.name.clone(),
+            "<rust>".to_string(),
+            0,
+            None,
+            None,
+        ));
+        Ok(DoCtrl::IRStream { stream, metadata })
+    }
+
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
+        self.factory.can_handle(effect)
+    }
+
+    fn expects_python_effect(&self) -> bool {
+        false
+    }
+
+    fn supports_error_context_conversion(&self) -> bool {
+        self.supports_error_context_conversion
     }
 
     fn debug_info(&self) -> KleisliDebugInfo {
@@ -525,7 +699,19 @@ impl Kleisli for RustKleisli {
         }
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn py_identity(&self) -> Option<PyShared> {
+        self.py_identity.clone()
+    }
+
+    fn on_run_end(&self, run_token: u64) {
+        self.factory.on_run_end(run_token);
+    }
+
+    fn bind_run_token(&self, run_token: Option<u64>) {
+        let mut slot = self
+            .run_token
+            .lock()
+            .expect("RustKleisli run_token lock poisoned");
+        *slot = run_token;
     }
 }
