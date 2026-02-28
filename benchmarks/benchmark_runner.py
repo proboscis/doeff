@@ -12,7 +12,7 @@ import statistics
 import time
 from collections.abc import Iterable
 
-from doeff import ExecutionContext, ProgramInterpreter, do
+from doeff import default_handlers, do, run
 from doeff.effects import Ask, Put, Tell
 
 
@@ -27,18 +27,20 @@ def _stateful_workload(iterations: int) -> int:
     return total
 
 
-def _run_once(interpreter: ProgramInterpreter, workload_iterations: int) -> None:
-    ctx = ExecutionContext(env={"seed": 1})
-    interpreter.run(_stateful_workload(workload_iterations), ctx)
+def _run_once(workload_iterations: int) -> None:
+    run(
+        _stateful_workload(workload_iterations),
+        handlers=default_handlers(),
+        env={"seed": 1},
+    )
 
 
 def benchmark(runs: int, *, workload_iterations: int) -> dict[str, float]:
-    interpreter = ProgramInterpreter()
     timings: list[float] = []
 
     for _ in range(runs):
         start = time.perf_counter()
-        _run_once(interpreter, workload_iterations)
+        _run_once(workload_iterations)
         elapsed = (time.perf_counter() - start) * 1000.0
         timings.append(elapsed)
 
