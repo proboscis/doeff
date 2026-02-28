@@ -34,11 +34,10 @@ from doeff_conductor import (
     WorktreeEnv,
     # Handler utility
     make_scheduled_handler,
-    make_typed_handlers,
 )
 from doeff_preset import preset_handlers
 
-from doeff import EffectGenerator, default_handlers, do, run, slog
+from doeff import Effect, EffectGenerator, Pass, default_handlers, do, run, slog
 
 
 # Mock handlers for demonstration (no real git/agent operations)
@@ -179,22 +178,34 @@ Implement user authentication with JWT tokens.
 
     # Set up mock handlers
     mock = MockHandlers()
-    domain_handlers = {
-        CreateWorktree: make_scheduled_handler(mock.handle_create_worktree),
-        RunAgent: make_scheduled_handler(mock.handle_run_agent),
-        Commit: make_scheduled_handler(mock.handle_commit),
-        Push: make_scheduled_handler(mock.handle_push),
-        CreatePR: make_scheduled_handler(mock.handle_create_pr),
-        ResolveIssue: make_scheduled_handler(mock.handle_resolve_issue),
-    }
+    preset_handler = preset_handlers()
+    create_worktree_handler = make_scheduled_handler(mock.handle_create_worktree)
+    run_agent_handler = make_scheduled_handler(mock.handle_run_agent)
+    commit_handler = make_scheduled_handler(mock.handle_commit)
+    push_handler = make_scheduled_handler(mock.handle_push)
+    create_pr_handler = make_scheduled_handler(mock.handle_create_pr)
+    resolve_issue_handler = make_scheduled_handler(mock.handle_resolve_issue)
 
-    # Merge preset handlers (slog display) with domain handlers
-    handlers = {**preset_handlers(), **domain_handlers}
+    @do
+    def workflow_handler(effect: Effect, k):
+        if isinstance(effect, CreateWorktree):
+            return (yield create_worktree_handler(effect, k))
+        if isinstance(effect, RunAgent):
+            return (yield run_agent_handler(effect, k))
+        if isinstance(effect, Commit):
+            return (yield commit_handler(effect, k))
+        if isinstance(effect, Push):
+            return (yield push_handler(effect, k))
+        if isinstance(effect, CreatePR):
+            return (yield create_pr_handler(effect, k))
+        if isinstance(effect, ResolveIssue):
+            return (yield resolve_issue_handler(effect, k))
+        yield Pass()
 
     # Run the workflow
     result = run(
         basic_pr_workflow(issue),
-        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+        handlers=[preset_handler, workflow_handler, *default_handlers()],
     )
 
     print(f"\n{'='*50}")

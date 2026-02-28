@@ -38,10 +38,9 @@ from doeff_conductor import (
     WorktreeEnv,
     # Handler utility
     make_scheduled_handler,
-    make_typed_handlers,
 )
 
-from doeff import EffectGenerator, Gather, default_handlers, do, run, slog
+from doeff import Effect, EffectGenerator, Gather, Pass, default_handlers, do, run, slog
 from doeff_preset import preset_handlers
 
 
@@ -238,25 +237,37 @@ Implement a caching layer for database queries.
 
     # Set up mock handlers for domain-specific effects
     mock = MockHandlers()
-    mock_handlers = {
-        CreateWorktree: make_scheduled_handler(mock.handle_create_worktree),
-        MergeBranches: make_scheduled_handler(mock.handle_merge_branches),
-        RunAgent: make_scheduled_handler(mock.handle_run_agent),
-        Commit: make_scheduled_handler(mock.handle_commit),
-        Push: make_scheduled_handler(mock.handle_push),
-        CreatePR: make_scheduled_handler(mock.handle_create_pr),
-        ResolveIssue: make_scheduled_handler(mock.handle_resolve_issue),
-    }
+    preset_handler = preset_handlers()
+    create_worktree_handler = make_scheduled_handler(mock.handle_create_worktree)
+    merge_branches_handler = make_scheduled_handler(mock.handle_merge_branches)
+    run_agent_handler = make_scheduled_handler(mock.handle_run_agent)
+    commit_handler = make_scheduled_handler(mock.handle_commit)
+    push_handler = make_scheduled_handler(mock.handle_push)
+    create_pr_handler = make_scheduled_handler(mock.handle_create_pr)
+    resolve_issue_handler = make_scheduled_handler(mock.handle_resolve_issue)
 
-    # Merge preset handlers with mock handlers
-    # Preset provides: slog display (WriterTellEffect) + config (Ask preset.*)
-    # Mock provides: conductor-specific effects (CreateWorktree, RunAgent, etc.)
-    handlers = {**preset_handlers(), **mock_handlers}
+    @do
+    def workflow_handler(effect: Effect, k):
+        if isinstance(effect, CreateWorktree):
+            return (yield create_worktree_handler(effect, k))
+        if isinstance(effect, MergeBranches):
+            return (yield merge_branches_handler(effect, k))
+        if isinstance(effect, RunAgent):
+            return (yield run_agent_handler(effect, k))
+        if isinstance(effect, Commit):
+            return (yield commit_handler(effect, k))
+        if isinstance(effect, Push):
+            return (yield push_handler(effect, k))
+        if isinstance(effect, CreatePR):
+            return (yield create_pr_handler(effect, k))
+        if isinstance(effect, ResolveIssue):
+            return (yield resolve_issue_handler(effect, k))
+        yield Pass()
 
     # Run the workflow - slog messages will be displayed via rich
     result = run(
         multi_agent_workflow(issue),
-        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+        handlers=[preset_handler, workflow_handler, *default_handlers()],
     )
 
     print(f"\n{'='*50}")

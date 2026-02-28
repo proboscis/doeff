@@ -51,7 +51,7 @@ Let's create a minimal workflow that demonstrates the core concepts.
 
 ```python
 # my_first_workflow.py
-from doeff import default_handlers, do, run
+from doeff import Effect, Pass, default_handlers, do, run
 from doeff_conductor import (
     CreateWorktree,
     Commit,
@@ -59,8 +59,8 @@ from doeff_conductor import (
     WorktreeHandler,
     GitHandler,
     make_scheduled_handler,
-    make_typed_handlers,
 )
+from doeff_preset import preset_handlers
 from pathlib import Path
 
 @do
@@ -86,18 +86,26 @@ def hello_workflow():
 # Set up handlers
 worktree_handler = WorktreeHandler(base_path=Path.cwd())
 git_handler = GitHandler()
+create_worktree_handler = make_scheduled_handler(worktree_handler.handle_create_worktree)
+commit_handler = make_scheduled_handler(git_handler.handle_commit)
+delete_worktree_handler = make_scheduled_handler(worktree_handler.handle_delete_worktree)
+preset_handler = preset_handlers()
 
-handlers = {
-    CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-    Commit: make_scheduled_handler(git_handler.handle_commit),
-    DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-}
+@do
+def workflow_handler(effect: Effect, k):
+    if isinstance(effect, CreateWorktree):
+        return (yield create_worktree_handler(effect, k))
+    if isinstance(effect, Commit):
+        return (yield commit_handler(effect, k))
+    if isinstance(effect, DeleteWorktree):
+        return (yield delete_worktree_handler(effect, k))
+    yield Pass()
 
 # Run the workflow
 if __name__ == "__main__":
     result = run(
         hello_workflow(),
-        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+        handlers=[preset_handler, workflow_handler, *default_handlers()],
     )
     print(f"Result: {result}")
 ```
@@ -146,7 +154,7 @@ conductor template show basic_pr
 
 ```python
 from doeff import default_handlers, run
-from doeff_conductor import Issue, IssueStatus, basic_pr, make_typed_handlers
+from doeff_conductor import Issue, IssueStatus, basic_pr
 
 # Create an issue
 issue = Issue(
@@ -160,10 +168,11 @@ issue = Issue(
 program = basic_pr(issue)
 
 # Run with handlers (see full handler setup in examples)
-# handlers = {...}
+# workflow_handler = ...  # @do handler with isinstance branches
+# preset_handler = preset_handlers()
 result = run(
     program,
-    handlers=[*make_typed_handlers(handlers), *default_handlers()],
+    handlers=[preset_handler, workflow_handler, *default_handlers()],
 )
 print(f"Created PR: {result.value.url}")
 ```
@@ -332,8 +341,9 @@ def handle_run_linter(effect: RunLinter) -> dict:
         "output": result.stdout + result.stderr,
     }
 
-# Add to handlers
-handlers[RunLinter] = handle_run_linter
+# Add a new branch to your workflow handler
+# if isinstance(effect, RunLinter):
+#     return (yield run_linter_handler(effect, k))
 ```
 
 ---
