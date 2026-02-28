@@ -369,6 +369,11 @@ def do(
 
     if not callable(func):
         raise TypeError(f"@do expects a callable, got {type(func).__name__}")
+    if inspect.iscoroutinefunction(func) or inspect.isasyncgenfunction(func):
+        raise TypeError(
+            "@do does not support async def functions. "
+            "Use a regular def and yield Await(coroutine) inside @do."
+        )
     do_yield_fn = DoYieldFunction(func)
 
     import doeff_vm as vm
