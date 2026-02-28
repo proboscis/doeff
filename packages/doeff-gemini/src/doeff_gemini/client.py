@@ -1,6 +1,5 @@
 """Gemini client helpers integrated with doeff effects."""
 
-from __future__ import annotations
 
 import base64
 import io

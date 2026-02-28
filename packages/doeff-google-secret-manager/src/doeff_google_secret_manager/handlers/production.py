@@ -1,6 +1,5 @@
 """Production handlers for Google Secret Manager domain effects."""
 
-from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import suppress

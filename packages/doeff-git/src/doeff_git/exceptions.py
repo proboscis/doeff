@@ -1,6 +1,5 @@
 """Domain exceptions for doeff-git handlers."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from subprocess import CalledProcessError
@@ -37,7 +36,7 @@ class GitCommandError(GitError):
         error: CalledProcessError,
         *,
         cwd: str | None = None,
-    ) -> GitCommandError:
+    ) -> "GitCommandError":
         command: list[str]
         if isinstance(error.cmd, (list, tuple)):
             command = [str(part) for part in error.cmd]

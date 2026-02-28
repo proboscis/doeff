@@ -10,8 +10,9 @@ import base64
 import io
 import json
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+import PIL.Image
 from pydantic import BaseModel
 
 from doeff import (
@@ -25,9 +26,6 @@ from doeff_openai.client import (
     get_openai_client,
     track_api_call,
 )
-
-if TYPE_CHECKING:
-    import PIL.Image
 
 
 def is_gpt5_model(model: str) -> bool:

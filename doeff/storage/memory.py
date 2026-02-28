@@ -5,7 +5,6 @@ This storage is NOT durable across process restarts.
 Use SQLiteStorage for production durable workflows.
 """
 
-from __future__ import annotations
 
 import threading
 from collections.abc import Iterable

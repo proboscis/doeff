@@ -5,7 +5,6 @@ This module provides the @do decorator that converts generator functions
 into KleisliPrograms, enabling do-notation for monadic computations.
 """
 
-from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Generator
@@ -25,6 +24,13 @@ T = TypeVar("T")
 _GeneratorFunc = Callable[..., Generator[Effect | Program, Any, T]]
 
 _BRIDGE_CODE_OBJECTS: set[object] = set()
+
+
+def _safe_get_attr(target: Any, attr: str) -> Any:
+    try:
+        return getattr(target, attr, None)
+    except Exception:
+        return None
 
 
 def _default_get_frame(generator: object) -> object | None:
@@ -260,13 +266,13 @@ class DoYieldFunction(KleisliProgram[P, T]):
         )
 
         for attr in ("__doc__", "__module__", "__name__", "__qualname__", "__annotations__"):
-            value = getattr(func, attr, None)
+            value = _safe_get_attr(func, attr)
             if value is not None:
                 setattr(self, attr, value)
 
         try:
             signature = inspect.signature(func)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, NameError):
             signature = None
         if signature is not None:
             self.__signature__ = signature
@@ -387,7 +393,9 @@ def do(
     )
 
     for attr in ("__doc__", "__module__", "__name__", "__qualname__", "__annotations__"):
-        value = getattr(do_yield_fn, attr, getattr(func, attr, None))
+        value = _safe_get_attr(do_yield_fn, attr)
+        if value is None:
+            value = _safe_get_attr(func, attr)
         if value is not None:
             setattr(kleisli, attr, value)
 
@@ -395,7 +403,7 @@ def do(
     if signature is None:
         try:
             signature = inspect.signature(func)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, NameError):
             signature = None
     if signature is not None:
         kleisli.__signature__ = signature

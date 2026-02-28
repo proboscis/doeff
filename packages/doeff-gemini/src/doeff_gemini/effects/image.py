@@ -1,6 +1,5 @@
 """Gemini image effect aliases."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from warnings import warn

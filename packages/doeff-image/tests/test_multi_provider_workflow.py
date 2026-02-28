@@ -1,7 +1,6 @@
 # ruff: noqa: E402
 """Integration tests for unified multi-provider image workflows."""
 
-from __future__ import annotations
 
 import sys
 from pathlib import Path

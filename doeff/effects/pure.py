@@ -1,6 +1,5 @@
 """Pure control node helpers backed by the Rust VM."""
 
-from __future__ import annotations
 
 from typing import Any
 

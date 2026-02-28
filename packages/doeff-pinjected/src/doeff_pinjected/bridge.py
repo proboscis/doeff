@@ -5,7 +5,6 @@ This module provides functions to convert Program[T] from the doeff
 effects system into pinjected's Injected[T] and IProxy[T] types.
 """
 
-from __future__ import annotations
 
 from typing import TypeVar, cast
 

@@ -1,6 +1,5 @@
 """Common LLM-oriented type aliases and dataclasses."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any

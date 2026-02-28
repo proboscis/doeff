@@ -4,7 +4,6 @@ Domain exceptions for doeff-conductor.
 Provides a hierarchy of exceptions for specific error handling in workflows.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from subprocess import CalledProcessError
@@ -81,7 +80,7 @@ class GitCommandError(ConductorError):
         cls,
         error: CalledProcessError,
         cwd: str | None = None,
-    ) -> GitCommandError:
+    ) -> "GitCommandError":
         """Create from a subprocess.CalledProcessError.
 
         Args:

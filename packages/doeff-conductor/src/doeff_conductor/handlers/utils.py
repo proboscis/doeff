@@ -3,7 +3,6 @@
 Utilities in this module build handler-protocol callables for conductor effect types.
 """
 
-from __future__ import annotations
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -59,10 +58,10 @@ def make_async_scheduled_handler(
 
 
 def default_scheduled_handlers(
-    worktree_handler: WorktreeHandler | None = None,
-    issue_handler: IssueHandler | None = None,
-    agent_handler: AgentHandler | None = None,
-    git_handler: GitHandler | None = None,
+    worktree_handler: "WorktreeHandler | None" = None,
+    issue_handler: "IssueHandler | None" = None,
+    agent_handler: "AgentHandler | None" = None,
+    git_handler: "GitHandler | None" = None,
 ) -> Callable[..., Any]:
     """Build a complete protocol handler for all conductor effects.
 

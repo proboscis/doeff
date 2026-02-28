@@ -1,6 +1,5 @@
 """Runtime validators for effect attribute type checking."""
 
-from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Hashable, Mapping

@@ -4,7 +4,6 @@ Exception types for doeff-agentic.
 All exceptions inherit from AgenticError base class.
 """
 
-from __future__ import annotations
 
 
 class AgenticError(Exception):

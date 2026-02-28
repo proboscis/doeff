@@ -4,7 +4,6 @@ This handler intercepts WriterTellEffect and displays structured logs (slog)
 to the console using rich, while still accumulating them in the writer log.
 """
 
-from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any

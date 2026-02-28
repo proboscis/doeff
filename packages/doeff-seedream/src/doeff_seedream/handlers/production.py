@@ -1,6 +1,5 @@
 """Production handlers for doeff-seedream domain effects."""
 
-from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any

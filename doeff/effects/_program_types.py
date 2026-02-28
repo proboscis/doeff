@@ -1,6 +1,5 @@
 """Shared type aliases for effect functions that accept programs."""
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

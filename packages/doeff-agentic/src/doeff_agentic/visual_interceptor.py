@@ -1,6 +1,5 @@
 """Visual effect interceptor for doeff-agentic examples."""
 
-from __future__ import annotations
 
 import time
 from dataclasses import dataclass

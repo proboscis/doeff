@@ -8,7 +8,6 @@ Pre-built workflow templates:
 - multi_agent: issue -> parallel agents -> merge -> PR
 """
 
-from __future__ import annotations
 
 import inspect
 from collections.abc import Callable

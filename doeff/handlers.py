@@ -8,7 +8,6 @@ Default Await behavior for run()/async_run() comes from Python handlers in
 doeff.effects.future via default handler presets.
 """
 
-from __future__ import annotations
 
 _HANDLER_SENTINELS = {
     "state",

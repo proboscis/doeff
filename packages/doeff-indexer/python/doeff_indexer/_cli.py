@@ -5,7 +5,6 @@ the bundled native binary, avoiding Python interpreter startup overhead
 for CLI invocations.
 """
 
-from __future__ import annotations
 
 import os
 import subprocess

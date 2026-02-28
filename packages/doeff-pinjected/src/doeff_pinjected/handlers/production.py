@@ -1,6 +1,5 @@
 """Production handlers for doeff-pinjected effects."""
 
-from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping

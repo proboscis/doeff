@@ -9,7 +9,6 @@ This module defines the core data types used throughout the package:
 - AgenticEvent: Event from session stream
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -100,7 +99,7 @@ class AgenticWorkflowHandle:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgenticWorkflowHandle:
+    def from_dict(cls, data: dict[str, Any]) -> "AgenticWorkflowHandle":
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -136,7 +135,7 @@ class AgenticEnvironmentHandle:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgenticEnvironmentHandle:
+    def from_dict(cls, data: dict[str, Any]) -> "AgenticEnvironmentHandle":
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -178,7 +177,7 @@ class AgenticSessionHandle:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgenticSessionHandle:
+    def from_dict(cls, data: dict[str, Any]) -> "AgenticSessionHandle":
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -212,7 +211,7 @@ class AgenticMessageHandle:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgenticMessageHandle:
+    def from_dict(cls, data: dict[str, Any]) -> "AgenticMessageHandle":
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -245,7 +244,7 @@ class AgenticMessage:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgenticMessage:
+    def from_dict(cls, data: dict[str, Any]) -> "AgenticMessage":
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -281,7 +280,7 @@ class AgenticEvent:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgenticEvent:
+    def from_dict(cls, data: dict[str, Any]) -> "AgenticEvent":
         """Create from dictionary."""
         return cls(
             event_type=data["event_type"],
@@ -356,7 +355,7 @@ class AgentInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgentInfo:
+    def from_dict(cls, data: dict[str, Any]) -> "AgentInfo":
         """Create from dictionary."""
         return cls(
             name=data["name"],
@@ -397,7 +396,7 @@ class WorkflowInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WorkflowInfo:
+    def from_dict(cls, data: dict[str, Any]) -> "WorkflowInfo":
         """Create from dictionary."""
         return cls(
             id=data["id"],

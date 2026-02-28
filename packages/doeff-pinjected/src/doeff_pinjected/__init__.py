@@ -6,7 +6,6 @@ into pinjected's Injected[T] and IProxy[T] types, enabling seamless
 integration with pinjected's dependency injection framework.
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 

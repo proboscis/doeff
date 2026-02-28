@@ -1,6 +1,5 @@
 """Production handlers for doeff-gemini domain effects."""
 
-from __future__ import annotations
 
 import json
 import math
