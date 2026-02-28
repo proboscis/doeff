@@ -9,7 +9,6 @@ This module defines the core data types used throughout the package:
 - AgenticEvent: Event from session stream
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

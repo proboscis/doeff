@@ -7,8 +7,6 @@ This module serves two roles:
 The module also defines the ``EffectTraceback`` protocol used by different interpreter backends.
 """
 
-from __future__ import annotations
-
 import importlib.util
 import linecache
 import logging
@@ -16,8 +14,8 @@ import sysconfig
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import TracebackType
 from typing import (
-    TYPE_CHECKING,
     Any,
     Literal,
     Protocol,
@@ -75,9 +73,6 @@ else:
     )
 
     _logger = logging.getLogger(__name__)
-
-    if TYPE_CHECKING:
-        from types import TracebackType
 
     @runtime_checkable
     class EffectTraceback(Protocol):

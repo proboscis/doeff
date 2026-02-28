@@ -11,8 +11,6 @@ A workflow with parallel agents:
 5. Create PR
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from doeff import EffectGenerator, Gather, Spawn, do
@@ -23,7 +21,7 @@ if TYPE_CHECKING:
 
 # Helper functions to wrap effects as Programs for Spawn
 @do
-def _create_worktree(issue: Issue, suffix: str) -> EffectGenerator["WorktreeEnv"]:
+def _create_worktree(issue: "Issue", suffix: str) -> "EffectGenerator[WorktreeEnv]":
     """Create a worktree (wrapper for Spawn compatibility)."""
     from ..effects import CreateWorktree
     return (yield CreateWorktree(issue=issue, suffix=suffix))
@@ -44,7 +42,7 @@ def _commit(env: "WorktreeEnv", message: str) -> EffectGenerator[str]:
 
 
 @do
-def multi_agent(issue: Issue) -> EffectGenerator[PRHandle]:
+def multi_agent(issue: "Issue") -> "EffectGenerator[PRHandle]":
     """Multi-agent PR workflow: issue -> parallel agents -> merge -> PR.
 
     Args:

@@ -1,6 +1,5 @@
 """Public handlers for doeff-time."""
 
-from __future__ import annotations
 
 from .async_time import ProtocolHandler, async_time_handler
 from .sim_time import sim_time_handler

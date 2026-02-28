@@ -1,6 +1,5 @@
 """Cost-calculation effect for doeff-gemini."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 

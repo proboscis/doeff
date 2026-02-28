@@ -1,6 +1,5 @@
 """Mock handlers for doeff-seedream domain effects."""
 
-from __future__ import annotations
 
 import base64
 import copy

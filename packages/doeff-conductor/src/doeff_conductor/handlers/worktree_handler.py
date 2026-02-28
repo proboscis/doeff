@@ -5,8 +5,6 @@ Handles CreateWorktree, MergeBranches, DeleteWorktree effects
 by managing git worktrees.
 """
 
-from __future__ import annotations
-
 import os
 import secrets
 import subprocess
@@ -92,7 +90,7 @@ class WorktreeHandler:
         self.worktree_base = _get_worktree_base_dir()
         self.worktree_base.mkdir(parents=True, exist_ok=True)
 
-    def handle_create_worktree(self, effect: CreateWorktree) -> WorktreeEnv:
+    def handle_create_worktree(self, effect: "CreateWorktree") -> "WorktreeEnv":
         """Handle CreateWorktree effect.
 
         Creates a new git worktree with a dedicated branch.
@@ -146,7 +144,7 @@ class WorktreeHandler:
             created_at=datetime.now(timezone.utc),
         )
 
-    def handle_merge_branches(self, effect: MergeBranches) -> WorktreeEnv:
+    def handle_merge_branches(self, effect: "MergeBranches") -> "WorktreeEnv":
         """Handle MergeBranches effect.
 
         Merges multiple worktree branches into a new worktree.
@@ -217,7 +215,7 @@ class WorktreeHandler:
             created_at=datetime.now(timezone.utc),
         )
 
-    def handle_delete_worktree(self, effect: DeleteWorktree) -> bool:
+    def handle_delete_worktree(self, effect: "DeleteWorktree") -> bool:
         """Handle DeleteWorktree effect.
 
         Removes the worktree and cleans up.

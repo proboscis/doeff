@@ -1,6 +1,5 @@
 """HTTP client and tracking helpers for OpenRouter."""
 
-from __future__ import annotations
 
 import copy
 import time

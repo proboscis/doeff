@@ -14,7 +14,6 @@ Commands:
     template    Template management (list, show, new)
 """
 
-from __future__ import annotations
 
 import json
 import sys

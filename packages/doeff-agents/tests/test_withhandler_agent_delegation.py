@@ -1,6 +1,5 @@
 """WithHandler-based agent delegation tests for doeff-agents."""
 
-from __future__ import annotations
 
 import sys
 from collections.abc import Callable

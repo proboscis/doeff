@@ -1,6 +1,5 @@
 """Public API for doeff-time."""
 
-from __future__ import annotations
 
 from .effects import (
     Delay,

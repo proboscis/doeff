@@ -9,7 +9,6 @@ The current implementation relies on a placeholder Rust analyzer that returns em
 shapes are stable so downstream tooling can begin integration work.
 """
 
-from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field

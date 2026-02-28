@@ -1,6 +1,5 @@
 """Handlers for doeff-agentic effects."""
 
-from __future__ import annotations
 
 from typing import Any
 

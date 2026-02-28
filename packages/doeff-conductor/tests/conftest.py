@@ -7,7 +7,6 @@ This module provides:
 - Detection functions for external dependencies
 """
 
-from __future__ import annotations
 
 import os
 import shutil

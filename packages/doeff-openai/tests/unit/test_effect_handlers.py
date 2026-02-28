@@ -1,6 +1,5 @@
 """Tests for doeff-openai domain effects and handler maps."""
 
-from __future__ import annotations
 
 from typing import Any
 

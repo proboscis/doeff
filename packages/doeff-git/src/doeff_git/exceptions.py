@@ -1,6 +1,5 @@
 """Domain exceptions for doeff-git handlers."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from subprocess import CalledProcessError

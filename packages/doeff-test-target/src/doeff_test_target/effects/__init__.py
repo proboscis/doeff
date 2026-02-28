@@ -1,6 +1,5 @@
 """Domain effects for doeff-test-target fixtures."""
 
-from __future__ import annotations
 
 from .test_effects import (
     ReadFixtureValue,

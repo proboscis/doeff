@@ -1,6 +1,5 @@
 """Backward-compatible in-memory handlers for Google Secret Manager effects."""
 
-from __future__ import annotations
 
 import warnings
 from collections.abc import Mapping

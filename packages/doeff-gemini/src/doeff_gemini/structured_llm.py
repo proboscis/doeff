@@ -1,6 +1,5 @@
 """Structured LLM helper for Google Gemini built on top of doeff effects."""
 
-from __future__ import annotations
 
 import asyncio
 import base64

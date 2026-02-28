@@ -1,6 +1,5 @@
 """Reader monad effects (Rust-backed core ask effect)."""
 
-from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any

@@ -4,7 +4,6 @@ This module provides protocols and implementations for discovering default
 interpreters and environments based on # doeff: markers in the codebase.
 """
 
-from __future__ import annotations
 
 import importlib
 import logging

@@ -1,6 +1,5 @@
 """Trace introspection effects."""
 
-from __future__ import annotations
 
 import doeff_vm
 

@@ -1,6 +1,5 @@
 """Testing helpers for doeff-secret effects."""
 
-from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field

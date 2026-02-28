@@ -1,6 +1,5 @@
 """Handlers for doeff-gemini domain effects."""
 
-from __future__ import annotations
 
 from .production import (
     default_gemini_cost_handler,

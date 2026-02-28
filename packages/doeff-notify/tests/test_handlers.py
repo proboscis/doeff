@@ -1,7 +1,6 @@
 # ruff: noqa: E402
 """Tests for doeff-notify effects and built-in handlers."""
 
-from __future__ import annotations
 
 import importlib
 import sys

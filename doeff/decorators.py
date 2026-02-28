@@ -1,6 +1,5 @@
 """Helper decorators for declaring doeff-specific protocols."""
 
-from __future__ import annotations
 
 from collections.abc import Callable
 from typing import TypeVar

@@ -1,6 +1,5 @@
 """Asyncio-backed wall-clock handler for doeff-time effects."""
 
-from __future__ import annotations
 
 import asyncio
 import time

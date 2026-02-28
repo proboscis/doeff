@@ -1,6 +1,5 @@
 """Domain effects for OpenAI chat completion operations."""
 
-from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass

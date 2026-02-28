@@ -3,7 +3,6 @@
 Utilities in this module build handler-protocol callables for conductor effect types.
 """
 
-from __future__ import annotations
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
