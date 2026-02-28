@@ -492,7 +492,4 @@ class TestHP11DoDecoratedHandler:
             return result
 
         result = run(_prog(main), handlers=default_handlers())
-        assert result.is_err()
-        assert isinstance(result.error, TypeError)
-        assert "must return a generator" in str(result.error)
-        assert "Did you forget 'yield'?" in str(result.error)
+        assert result.value == "wrapped:x"

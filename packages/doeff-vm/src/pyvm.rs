@@ -4,7 +4,6 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 
-use crate::ir_stream::{IRStream, PythonGeneratorStream};
 use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
@@ -14,6 +13,7 @@ use crate::effect::{
     PyProgramCallFrame, PyProgramCallStack, PyProgramTrace, PyPut, PyPythonAsyncioAwaitEffect,
     PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn, PyTaskCompleted, PyTell,
 };
+use crate::ir_stream::{IRStream, PythonGeneratorStream};
 
 // ---------------------------------------------------------------------------
 // R13-I: GIL-free tag dispatch
@@ -88,10 +88,11 @@ impl TryFrom<u8> for DoExprTag {
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    AwaitHandlerFactory, Handler, HandlerRef, LazyAskHandlerFactory, PythonHandler,
+    AwaitHandlerFactory, Handler, HandlerRef, KleisliHandler, LazyAskHandlerFactory, PythonHandler,
     ReaderHandlerFactory, ResultSafeHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
+use crate::kleisli::{Kleisli, PyKleisli};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerHandler;
@@ -716,7 +717,17 @@ impl PyVM {
             return Ok((handler, Some(PyShared::new(callable_identity))));
         }
 
-        let base_message = format!("{context} handler must be DoeffGeneratorFn or RustHandler");
+        if obj.is_instance_of::<PyKleisli>() {
+            let kleisli: PyRef<'_, PyKleisli> = obj.extract()?;
+            let kleisli = kleisli.clone();
+            let py_identity = Kleisli::py_identity(&kleisli)
+                .or_else(|| Some(PyShared::new(obj.clone().unbind())));
+            let handler: Handler = Arc::new(KleisliHandler::new(Arc::new(kleisli)));
+            return Ok((handler, py_identity));
+        }
+
+        let base_message =
+            format!("{context} handler must be DoeffGeneratorFn, PyKleisli, or RustHandler");
         if obj.is_callable() {
             return Err(PyTypeError::new_err(base_message));
         }
@@ -2290,10 +2301,11 @@ impl PyWithHandler {
         let handler_obj = handler.bind(py);
         let is_rust_handler = handler_obj.is_instance_of::<PyRustHandlerSentinel>();
         let is_dgfn = handler_obj.is_instance_of::<DoeffGeneratorFn>();
-        if !is_rust_handler && !is_dgfn {
+        let is_kleisli = handler_obj.is_instance_of::<PyKleisli>();
+        if !is_rust_handler && !is_dgfn && !is_kleisli {
             if handler_obj.is_callable() {
                 return Err(PyTypeError::new_err(
-                    "WithHandler handler must be DoeffGeneratorFn or RustHandler",
+                    "WithHandler handler must be DoeffGeneratorFn, PyKleisli, or RustHandler",
                 ));
             }
             let ty = handler_obj
@@ -2302,7 +2314,7 @@ impl PyWithHandler {
                 .map(|n| n.to_string())
                 .unwrap_or_else(|_| "<unknown>".to_string());
             return Err(PyTypeError::new_err(format!(
-                "WithHandler handler must be DoeffGeneratorFn or RustHandler, got {ty}"
+                "WithHandler handler must be DoeffGeneratorFn, PyKleisli, or RustHandler, got {ty}"
             )));
         }
 
@@ -2314,7 +2326,9 @@ impl PyWithHandler {
         }
         if let Some(return_clause_obj) = return_clause.as_ref() {
             if !return_clause_obj.bind(py).is_callable() {
-                return Err(PyTypeError::new_err("WithHandler.return_clause must be callable"));
+                return Err(PyTypeError::new_err(
+                    "WithHandler.return_clause must be callable",
+                ));
             }
         }
 
@@ -4131,6 +4145,7 @@ fn async_run<'py>(
 #[pymodule]
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVM>()?;
+    m.add_class::<crate::kleisli::PyKleisli>()?;
     m.add_class::<DoeffGeneratorFn>()?;
     m.add_class::<DoeffGenerator>()?;
     m.add_class::<PyDoExprBase>()?;
