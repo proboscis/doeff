@@ -33,6 +33,7 @@ from doeff_preset.handlers import (
 from doeff import (
     Ask,
     AskEffect,
+    Effect,
     EffectBase,
     MissingEnvKeyError,
     Pass,
@@ -201,7 +202,8 @@ class TestConfigHandlers:
             show_logs = yield Ask("preset.show_logs")
             return show_logs
 
-        def mock_preset_config(effect, k):
+        @do
+        def mock_preset_config(effect: Effect, k: Any):
             if isinstance(effect, AskEffect) and effect.key == "preset.show_logs":
                 return (yield Resume(k, False))
             yield Pass()
@@ -265,7 +267,8 @@ class TestPresetHandlers:
         class CustomEffect(EffectBase):
             value: str
 
-        def handle_custom(effect: CustomEffect, k):
+        @do
+        def handle_custom(effect: Effect, k: Any):
             if isinstance(effect, CustomEffect):
                 return (yield Resume(k, f"handled: {effect.value}"))
             yield Pass()
