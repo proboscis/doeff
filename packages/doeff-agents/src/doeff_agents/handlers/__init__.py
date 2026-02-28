@@ -6,7 +6,8 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
-from doeff import Delegate, Resume
+from doeff import Effect, Pass, Resume, do
+from doeff.do import make_doeff_generator
 from doeff_agents.effects import (
     CaptureEffect,
     LaunchEffect,
@@ -52,13 +53,20 @@ def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:
 
 
 SimpleHandler = Callable[[Any], Any]
-ProtocolHandler = Callable[[Any, Any], Any]
+ProtocolHandler = Callable[[Effect, Any], Any]
+
+
+def _is_lazy_program_value(value: object) -> bool:
+    return bool(getattr(value, "__doeff_do_expr_base__", False) or getattr(
+        value, "__doeff_effect_base__", False
+    ))
 
 
 def make_scheduled_handler(handler: SimpleHandler) -> ProtocolHandler:
     """Wrap a plain `(effect) -> value` callable into `(effect, k) -> DoExpr`."""
 
-    def scheduled_handler(effect: Any, k):
+    @do
+    def scheduled_handler(effect: Effect, k: Any):
         return (yield Resume(k, handler(effect)))
 
     return scheduled_handler
@@ -67,13 +75,16 @@ def make_scheduled_handler(handler: SimpleHandler) -> ProtocolHandler:
 def make_typed_handler(effect_type: type[Any], handler: ProtocolHandler) -> ProtocolHandler:
     """Restrict a protocol handler to one effect type and delegate otherwise."""
 
-    def typed_handler(effect: Any, k):
+    @do
+    def typed_handler(effect: Effect, k: Any):
         if isinstance(effect, effect_type):
             result = handler(effect, k)
             if inspect.isgenerator(result):
-                return (yield from result)
+                return (yield make_doeff_generator(result))
+            if _is_lazy_program_value(result):
+                return (yield result)
             return result
-        yield Delegate()
+        yield Pass()
 
     return typed_handler
 
@@ -83,11 +94,12 @@ def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
 
     scheduled_dispatch = make_scheduled_handler(lambda effect: dispatch_effect(agent_handler, effect))
 
-    def protocol_handler(effect: Any, k):
+    @do
+    def protocol_handler(effect: Effect, k: Any):
         if not isinstance(effect, AGENT_EFFECT_TYPES):
-            yield Delegate()
+            yield Pass()
             return
-        return (yield from scheduled_dispatch(effect, k))
+        return (yield scheduled_dispatch(effect, k))
 
     return protocol_handler
 
