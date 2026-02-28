@@ -7,8 +7,8 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::handler::Handler;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
+use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::segment::{ScopeStore, Segment};
 use crate::step::{Mode, PendingPython, PyException};
@@ -49,7 +49,7 @@ pub struct Continuation {
 
     /// Handlers to install when started=false (innermost first).
     /// Empty for captured (started=true) continuations.
-    pub handlers: Vec<Handler>,
+    pub handlers: Vec<KleisliRef>,
 
     /// Optional Python identities corresponding to handlers by index.
     /// Used to preserve Rust sentinel identity across continuation round-trips.
@@ -116,13 +116,13 @@ impl Continuation {
         }
     }
 
-    pub fn create_unstarted(expr: PyShared, handlers: Vec<Handler>) -> Self {
+    pub fn create_unstarted(expr: PyShared, handlers: Vec<KleisliRef>) -> Self {
         Self::create_unstarted_with_metadata(expr, handlers, None)
     }
 
     pub fn create_unstarted_with_metadata(
         expr: PyShared,
-        handlers: Vec<Handler>,
+        handlers: Vec<KleisliRef>,
         metadata: Option<CallMetadata>,
     ) -> Self {
         let handler_identities = vec![None; handlers.len()];
@@ -149,7 +149,7 @@ impl Continuation {
 
     pub fn create_unstarted_with_identities(
         expr: PyShared,
-        handlers: Vec<Handler>,
+        handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
     ) -> Self {
         Self::create_unstarted_with_identities_and_metadata(
@@ -162,7 +162,7 @@ impl Continuation {
 
     pub fn create_unstarted_with_identities_and_metadata(
         expr: PyShared,
-        handlers: Vec<Handler>,
+        handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
         metadata: Option<CallMetadata>,
     ) -> Self {
