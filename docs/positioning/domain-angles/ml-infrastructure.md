@@ -84,6 +84,8 @@ Every function that calls this needs all 15 dependencies injected. Every test ne
 ### The Solution (doeff)
 
 ```python
+from doeff import Delegate, Effect, Program, Tell, do, run
+
 @dataclass(frozen=True)
 class SystemCall(Effect):
     cmd: str
@@ -220,6 +222,8 @@ def a_krsync_to_pod(_a_system: Injected, _logger: Injected, /, src: Path, pod: s
 ### The Solution (doeff)
 
 ```python
+from doeff import Delegate, Effect, Program, Tell, do, run
+
 @dataclass(frozen=True)
 class SystemCall(Effect):
     cmd: str
@@ -243,7 +247,8 @@ def retry_handler(max_retries=3, backoff=1.0, transient_errors=None):
     """Retry handler for SystemCall effects."""
     transient_errors = transient_errors or ["connection refused", "timeout", "rate limit"]
     
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if not isinstance(effect, SystemCall):
             yield Delegate()
             return
@@ -325,6 +330,8 @@ def a_execute_ai_platform_silent(_a_system: Injected, /, cmd: str) -> FutureResu
 ### The Solution (doeff)
 
 ```python
+from doeff import Delegate, Effect, Program, Tell, do, run
+
 @do
 def execute_kubectl(cmd: str) -> Program[str]:
     """One function. Logging is a handler concern."""
@@ -336,7 +343,8 @@ def execute_ai_platform(cmd: str) -> Program[str]:
 
 # Logging handler
 def logging_handler():
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, SystemCall):
             yield Tell(f"Executing: {effect.cmd}")
             result = yield Delegate()
@@ -392,11 +400,14 @@ def test_job_deployment():
 ### The Solution (doeff)
 
 ```python
+from doeff import Delegate, Effect, do, run
+
 def test_job_deployment():
     """No infrastructure required."""
     # Stub handlers return fake responses
     def stub_system_call_handler():
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, SystemCall):
                 if "kubectl apply" in effect.cmd:
                     return "pod/test-job created"
@@ -406,7 +417,8 @@ def test_job_deployment():
         return handler
     
     def stub_sync_handler():
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, SyncFiles):
                 return None  # sync succeeded
             yield Delegate()
@@ -433,7 +445,8 @@ def test_retry_on_transient_failure():
     call_count = 0
     
     def flaky_system_call_handler():
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             nonlocal call_count
             if isinstance(effect, SystemCall):
                 call_count += 1
@@ -634,10 +647,13 @@ def run_ml_job(
 **That's it. One function. No `_a_system`, no `_logger`, no `_a_krsync`.** Now each environment is a handler stack:
 
 ```python
+from doeff import Delegate, Effect, do
+
 # ---- Local Docker handlers ----
 
 def local_docker_handlers():
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, BuildImage):
             return (yield SystemCall(f"docker build -t {effect.builder.tag} {effect.builder.context}"))
         elif isinstance(effect, PushImage):
@@ -659,7 +675,8 @@ def local_docker_handlers():
 # ---- K8s GPUaaS handlers ----
 
 def k8s_gpuaas_handlers(registry: str):
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, BuildImage):
             return (yield SystemCall(f"docker build -t {effect.builder.tag} {effect.builder.context}"))
         elif isinstance(effect, PushImage):
@@ -697,7 +714,8 @@ def k8s_gpuaas_handlers(registry: str):
 # ---- GCE / Vertex AI handlers ----
 
 def vertex_ai_handlers(registry: str, gcs_bucket: str):
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, BuildImage):
             return (yield SystemCall(f"docker build -t {effect.builder.tag} {effect.builder.context}"))
         elif isinstance(effect, PushImage):
@@ -881,6 +899,8 @@ def a_execute_kubectl(_a_system: Injected, _a_event_bus: Injected, /, cmd: str) 
 ### The Solution (doeff)
 
 ```python
+from doeff import Delegate, Effect, Program, do, run
+
 @do
 def execute_kubectl(cmd: str) -> Program[str]:
     """No event bus calls. That's a handler concern."""
@@ -888,7 +908,8 @@ def execute_kubectl(cmd: str) -> Program[str]:
 
 # Event bus handler
 def event_bus_handler(bus):
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, SystemCall):
             # Emit start event
             bus.emit(SystemCallStart(cmd=effect.cmd))

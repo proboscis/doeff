@@ -118,6 +118,8 @@ images = CostTrackingImage(RetryImage(LoggingImage(SeedreamImage(), logger), 3),
 **With effects**, cross-cutting handlers apply to ALL effects simultaneously:
 
 ```python
+from doeff import Delegate, Effect, Get, Resume, Try, do
+
 @do
 def my_workflow():
     yield LLMChat(...)           # Automatically gets: logging, cost tracking,
@@ -126,7 +128,8 @@ def my_workflow():
     yield GetSecret(...)         # Even non-AI effects get the same benefits
 
 # One cost handler works across all effect types
-def cost_cap_handler(effect, k):
+@do
+def cost_cap_handler(effect: Effect, k):
     if hasattr(effect, 'model'):  # Any effect with a model field
         current_cost = yield Get("total_cost")
         if current_cost > MAX_BUDGET:
@@ -134,7 +137,8 @@ def cost_cap_handler(effect, k):
     yield Delegate()
 
 # One retry handler works for everything
-def retry_handler(effect, k):
+@do
+def retry_handler(effect: Effect, k):
     for attempt in range(3):
         safe = yield Try(Resume(k, effect))
         if safe.is_ok():
@@ -151,8 +155,11 @@ def retry_handler(effect, k):
 Effects can be intercepted, transformed, or blocked without the original code knowing.
 
 ```python
+from doeff import Delegate, Effect, Get, Resume, Tell, do
+
 # Budget cap across ALL providers — impossible to bypass
-def budget_handler(effect, k):
+@do
+def budget_handler(effect: Effect, k):
     if isinstance(effect, (LLMChat, LLMStructuredOutput, ImageGenerate)):
         total = yield Get("total_cost")
         if total > settings.max_budget_usd:
@@ -161,14 +168,16 @@ def budget_handler(effect, k):
     yield Delegate()
 
 # Model rewriting — swap models transparently
-def model_rewrite_handler(effect, k):
+@do
+def model_rewrite_handler(effect: Effect, k):
     if isinstance(effect, LLMChat) and effect.model == "gpt-4":
         # Transparently downgrade to cheaper model in dev
         effect = LLMChat(**{**vars(effect), "model": "gpt-4o-mini"})
     yield Delegate()  # Let the actual provider handler deal with it
 
 # Dry-run mode — intercept ALL side effects
-def dry_run_handler(effect, k):
+@do
+def dry_run_handler(effect: Effect, k):
     if isinstance(effect, (LLMChat, ImageGenerate)):
         yield Tell(f"[DRY RUN] Would execute: {type(effect).__name__}(model={effect.model})")
         return (yield Resume(k, mock_response(effect)))
@@ -211,14 +220,18 @@ With doeff-flow, this becomes live-observable in real-time. DI gives you nothing
 No explicit `MultiLLMService` router needed. The handler stack is the routing mechanism.
 
 ```python
+from doeff import Delegate, Effect, Resume, do
+
 # Each handler checks model prefix, delegates if not its concern
-def openai_handler(effect, k):
+@do
+def openai_handler(effect: Effect, k):
     if isinstance(effect, LLMChat) and effect.model.startswith("gpt-"):
         response = yield _call_openai(effect)
         return (yield Resume(k, response))
     yield Delegate()  # Not my model, pass to next handler
 
-def gemini_handler(effect, k):
+@do
+def gemini_handler(effect: Effect, k):
     if isinstance(effect, LLMChat) and effect.model.startswith("gemini-"):
         response = yield _call_gemini(effect)
         return (yield Resume(k, response))

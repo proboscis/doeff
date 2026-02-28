@@ -38,8 +38,11 @@ def style_transfer(content_img, style_img):
 ```
 
 ```python
+from doeff import Delegate, Effect, do
+
 # Handler that streams effects to Gradio — orthogonal to the pipeline
-def gradio_streaming_handler(effect, k):
+@do
+def gradio_streaming_handler(effect: Effect, k):
     if isinstance(effect, Tell):
         if isinstance(effect.value, str):
             gradio_log_queue.put(effect.value)        # -> live log panel
@@ -68,7 +71,10 @@ def image_pipeline(image):
 ```
 
 ```python
-def interactive_step_handler(effect, k):
+from doeff import Delegate, Effect, do
+
+@do
+def interactive_step_handler(effect: Effect, k):
     """Pause at each effect. Show preview. Let user adjust parameters."""
     gradio_step_display.update(f"Next: {type(effect).__name__}")
     gradio_preview.update(getattr(effect, 'input_image', None))
