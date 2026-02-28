@@ -5,7 +5,7 @@ import inspect
 import doeff_vm
 import pytest
 
-from doeff import Ask, Program, do
+from doeff import Ask, Effect, Program, do
 from doeff.do import _default_get_frame
 
 
@@ -64,16 +64,13 @@ def test_program_to_generator_uses_default_callback() -> None:
     assert wrapped.get_frame(wrapped.generator) is wrapped.generator.gi_frame
 
 
-def test_with_handler_wraps_generator_handler_returns_as_doeff_generator() -> None:
-    def handler(effect, k):
+def test_with_handler_accepts_do_handler_as_kleisli() -> None:
+    @do
+    def handler(effect: Effect, k):
         if False:  # pragma: no cover
             yield
-        return doeff_vm.Delegate()
+        return (yield doeff_vm.Delegate())
 
     control = doeff_vm.WithHandler(handler, doeff_vm.Perform(Ask("x")))
-    wrapped = control.handler(Ask("x"), None)
-
-    assert isinstance(wrapped, doeff_vm.DoeffGenerator)
-    assert inspect.isgenerator(wrapped.generator)
-    assert wrapped.get_frame is _default_get_frame
-    assert wrapped.function_name == handler.__qualname__
+    assert isinstance(control.handler, doeff_vm.PyKleisli)
+    assert bool(getattr(control.handler, "__doeff_do_decorated__", False))

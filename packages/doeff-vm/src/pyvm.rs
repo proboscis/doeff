@@ -93,7 +93,7 @@ use crate::handler::{
 };
 use crate::ids::Marker;
 use crate::kleisli::{
-    DgfnKleisli, IdentityKleisli, KleisliRef, PyCallableKleisli, PyKleisli, RustKleisli,
+    DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli, RustKleisli,
 };
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
@@ -168,6 +168,62 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
     // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
     let py = unsafe { Python::assume_attached() };
     vmerror_to_pyerr_with_traceback_data(py, e).0
+}
+
+const HANDLER_HELP_URL: &str = "https://docs.doeff.dev/handlers";
+
+fn py_type_name(obj: &Bound<'_, PyAny>) -> String {
+    obj.get_type()
+        .name()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string())
+}
+
+fn py_repr_text(obj: &Bound<'_, PyAny>) -> String {
+    obj.repr()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|_| "<unrepresentable>".to_string())
+}
+
+fn strict_handler_type_error(api_name: &str, role: &str, obj: &Bound<'_, PyAny>) -> PyErr {
+    let got_repr = py_repr_text(obj);
+    let ty = py_type_name(obj);
+    let fix_block = if role == "handler" {
+        "  To fix, decorate your handler with @do:\n\n\
+    from doeff import do\n\
+    from doeff.effects.base import Effect\n\n\
+    @do\n\
+    def my_handler(effect: Effect, k):\n\
+        ...\n\
+        yield Resume(k, value)\n"
+    } else {
+        "  To fix, decorate your interceptor with @do:\n\n\
+    from doeff import do\n\
+    from doeff.effects.base import Effect\n\n\
+    @do\n\
+    def my_interceptor(effect: Effect):\n\
+        return effect\n"
+    };
+    PyTypeError::new_err(format!(
+        "{api_name} {role} must be a @do decorated function, PyKleisli, or RustHandler.\n\n\
+  Got: {got_repr} (type: {ty})\n\n\
+{fix_block}\n\
+  See: {HANDLER_HELP_URL}"
+    ))
+}
+
+fn strict_kleisli_ref_type_error(context: &str, obj: &Bound<'_, PyAny>) -> PyErr {
+    if context.starts_with("WithHandler") {
+        return strict_handler_type_error("WithHandler", "handler", obj);
+    }
+    if context.starts_with("WithIntercept") {
+        return strict_handler_type_error("WithIntercept", "interceptor", obj);
+    }
+    let ty = py_type_name(obj);
+    let repr = py_repr_text(obj);
+    PyTypeError::new_err(format!(
+        "{context} must be DoeffGeneratorFn, PyKleisli, or RustHandler, got {repr} (type: {ty})"
+    ))
 }
 
 fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -741,19 +797,7 @@ impl PyVM {
             )));
         }
 
-        if obj.is_callable() {
-            let callable = PyCallableKleisli::from_callable(py, obj.clone().unbind())?;
-            return Ok(Arc::new(callable));
-        }
-
-        let ty = obj
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string());
-        Err(PyTypeError::new_err(format!(
-            "{context} must be callable or PyKleisli, got {ty}"
-        )))
+        Err(strict_kleisli_ref_type_error(context, obj))
     }
 
     fn start_with_expr(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<()> {
@@ -2374,19 +2418,11 @@ impl PyWithHandler {
         let is_dgfn = handler_obj.is_instance_of::<DoeffGeneratorFn>();
         let is_kleisli = handler_obj.is_instance_of::<PyKleisli>();
         if !is_rust_handler && !is_dgfn && !is_kleisli {
-            if handler_obj.is_callable() {
-                return Err(PyTypeError::new_err(
-                    "WithHandler handler must be DoeffGeneratorFn, PyKleisli, or RustHandler",
-                ));
-            }
-            let ty = handler_obj
-                .get_type()
-                .name()
-                .map(|n| n.to_string())
-                .unwrap_or_else(|_| "<unknown>".to_string());
-            return Err(PyTypeError::new_err(format!(
-                "WithHandler handler must be DoeffGeneratorFn, PyKleisli, or RustHandler, got {ty}"
-            )));
+            return Err(strict_handler_type_error(
+                "WithHandler",
+                "handler",
+                handler_obj,
+            ));
         }
 
         let expr = lift_effect_to_perform_expr(py, expr)?;
@@ -2438,8 +2474,16 @@ impl PyWithIntercept {
         expr: Py<PyAny>,
         meta: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        if !f.bind(py).is_callable() {
-            return Err(PyTypeError::new_err("WithIntercept.f must be callable"));
+        let f_obj = f.bind(py);
+        let is_rust_handler = f_obj.is_instance_of::<PyRustHandlerSentinel>();
+        let is_dgfn = f_obj.is_instance_of::<DoeffGeneratorFn>();
+        let is_kleisli = f_obj.is_instance_of::<PyKleisli>();
+        if !is_rust_handler && !is_dgfn && !is_kleisli {
+            return Err(strict_handler_type_error(
+                "WithIntercept",
+                "interceptor",
+                f_obj,
+            ));
         }
 
         if let Some(meta_obj) = meta.as_ref() {

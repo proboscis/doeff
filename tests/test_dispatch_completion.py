@@ -7,6 +7,7 @@ from doeff import (
     CacheGet,
     CachePut,
     Delegate,
+    Effect,
     EffectGenerator,
     Modify,
     Pass,
@@ -54,14 +55,16 @@ class Noop(EffectBase):
     tag: str = "noop"
 
 
-def greet_handler(effect: object, k: object):
+@do
+def greet_handler(effect: Effect, k: object):
     if not isinstance(effect, Greet):
         yield Pass()
         return
     return (yield Resume(k, f"hello {effect.name}"))
 
 
-def noop_handler(effect: object, k: object):
+@do
+def noop_handler(effect: Effect, k: object):
     if not isinstance(effect, Noop):
         yield Pass()
         return
@@ -74,7 +77,8 @@ def greet_world() -> EffectGenerator[str]:
 
 
 def test_effect_yield_then_delegate_basic() -> None:
-    def interceptor(effect: object, k: object):
+    @do
+    def interceptor(effect: Effect, k: object):
         if not isinstance(effect, Greet):
             yield Pass()
             return
@@ -89,7 +93,8 @@ def test_effect_yield_then_delegate_basic() -> None:
 
 
 def test_effect_yield_then_delegate_with_multiple_nested_effects() -> None:
-    def interceptor(effect: object, k: object):
+    @do
+    def interceptor(effect: Effect, k: object):
         if not isinstance(effect, Greet):
             yield Pass()
             return
@@ -108,7 +113,8 @@ def test_cache_miss_delegate_then_put_then_hit() -> None:
     cache_store: dict[object, object] = {}
     delegated_calls = {"count": 0}
 
-    def cache_backend(effect: object, k: object):
+    @do
+    def cache_backend(effect: Effect, k: object):
         if isinstance(effect, CacheGetEffect):
             return (yield Resume(k, cache_store.get(effect.key)))
         if isinstance(effect, CachePutEffect):
@@ -116,14 +122,16 @@ def test_cache_miss_delegate_then_put_then_hit() -> None:
             return (yield Resume(k, effect.value))
         yield Pass()
 
-    def greet_source(effect: object, k: object):
+    @do
+    def greet_source(effect: Effect, k: object):
         if not isinstance(effect, Greet):
             yield Pass()
             return
         delegated_calls["count"] += 1
         return (yield Resume(k, f"hello {effect.name}"))
 
-    def cache_interceptor(effect: object, k: object):
+    @do
+    def cache_interceptor(effect: Effect, k: object):
         if not isinstance(effect, Greet):
             yield Pass()
             return
@@ -152,7 +160,8 @@ def test_cache_miss_delegate_then_put_then_hit() -> None:
 def test_nested_interceptors_preserve_outer_dispatch_context() -> None:
     seen: list[str] = []
 
-    def inner_interceptor(effect: object, k: object):
+    @do
+    def inner_interceptor(effect: Effect, k: object):
         if not isinstance(effect, Greet):
             yield Pass()
             return
@@ -161,7 +170,8 @@ def test_nested_interceptors_preserve_outer_dispatch_context() -> None:
         delegated = yield Delegate()
         return (yield Resume(k, f"{delegated}|inner"))
 
-    def outer_interceptor(effect: object, k: object):
+    @do
+    def outer_interceptor(effect: Effect, k: object):
         if not isinstance(effect, Greet):
             yield Pass()
             return
@@ -184,7 +194,8 @@ def test_nested_interceptors_preserve_outer_dispatch_context() -> None:
 
 
 def test_delegate_without_prior_effect_yield_regression() -> None:
-    def interceptor(effect: object, k: object):
+    @do
+    def interceptor(effect: Effect, k: object):
         if not isinstance(effect, Greet):
             yield Pass()
             return
@@ -198,7 +209,8 @@ def test_delegate_without_prior_effect_yield_regression() -> None:
 
 
 def test_inner_handler_resumes_then_raises_in_nested_dispatch() -> None:
-    def inner(effect: object, k: object):
+    @do
+    def inner(effect: Effect, k: object):
         if not isinstance(effect, Greet):
             yield Pass()
             return
@@ -206,7 +218,8 @@ def test_inner_handler_resumes_then_raises_in_nested_dispatch() -> None:
         _ = yield Resume(k, delegated)
         raise RuntimeError("inner post-resume boom")
 
-    def outer(effect: object, k: object):
+    @do
+    def outer(effect: Effect, k: object):
         if not isinstance(effect, Greet):
             yield Pass()
             return
@@ -227,7 +240,8 @@ def test_transfer_completes_dispatch_for_subsequent_effects() -> None:
     class TransferPing(EffectBase):
         value: str
 
-    def transfer_handler(effect: object, k: object):
+    @do
+    def transfer_handler(effect: Effect, k: object):
         if not isinstance(effect, TransferPing):
             yield Pass()
             return
@@ -257,7 +271,8 @@ def test_thrown_dispatch_consumes_continuation_and_rejects_late_resume() -> None
     class ThrowAndCapture(EffectBase):
         tag: str = "boom"
 
-    def throwing_handler(effect: object, k: object):
+    @do
+    def throwing_handler(effect: Effect, k: object):
         if not isinstance(effect, ThrowAndCapture):
             yield Pass()
             return
@@ -284,7 +299,8 @@ def test_terminal_error_dispatch_does_not_strand_followup_dispatch() -> None:
 
     seen_execution_context: list[int] = []
 
-    def observe_execution_context(effect: object, k: object):
+    @do
+    def observe_execution_context(effect: Effect, k: object):
         if isinstance(effect, GetExecutionContext):
             seen_execution_context.append(1)
             context = yield Delegate()
@@ -322,7 +338,8 @@ def test_rust_program_continuation_path_runs_under_nested_dispatch() -> None:
     class NestedModify(EffectBase):
         delta: int
 
-    def nested_modify_handler(effect: object, k: object):
+    @do
+    def nested_modify_handler(effect: Effect, k: object):
         if not isinstance(effect, NestedModify):
             yield Pass()
             return

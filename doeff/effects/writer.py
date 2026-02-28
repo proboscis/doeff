@@ -39,7 +39,8 @@ def listen(sub_program: ProgramLike):
     def _listen_program():
         captured = BoundedLog()
 
-        def handle_listen_tell(effect, k):
+        @do
+        def handle_listen_tell(effect: Effect, k):
             if isinstance(effect, WriterTellEffect):
                 captured.append(effect.message)
                 return (yield doeff_vm.Resume(k, None))
@@ -68,7 +69,8 @@ def Listen(sub_program: ProgramLike) -> Effect:
     def _listen_program():
         captured = BoundedLog()
 
-        def handle_listen_tell(effect, k):
+        @do
+        def handle_listen_tell(effect: Effect, k):
             if isinstance(effect, WriterTellEffect):
                 captured.append(effect.message)
                 return (yield doeff_vm.Resume(k, None))
