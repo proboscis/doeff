@@ -58,10 +58,10 @@ def make_async_scheduled_handler(
 
 
 def default_scheduled_handlers(
-    worktree_handler: WorktreeHandler | None = None,
-    issue_handler: IssueHandler | None = None,
-    agent_handler: AgentHandler | None = None,
-    git_handler: GitHandler | None = None,
+    worktree_handler: "WorktreeHandler | None" = None,
+    issue_handler: "IssueHandler | None" = None,
+    agent_handler: "AgentHandler | None" = None,
+    git_handler: "GitHandler | None" = None,
 ) -> Callable[..., Any]:
     """Build a complete protocol handler for all conductor effects.
 

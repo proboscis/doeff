@@ -118,7 +118,7 @@ class EventLogEntry:
         return json.dumps({"ts": self.ts, "event_type": self.event_type, **self.data})
 
     @classmethod
-    def from_json(cls, line: str) -> EventLogEntry:
+    def from_json(cls, line: str) -> "EventLogEntry":
         """Parse from JSON string."""
         obj = json.loads(line)
         ts = obj.pop("ts")

@@ -51,7 +51,7 @@ class PRHandle:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PRHandle:
+    def from_dict(cls, data: dict[str, Any]) -> "PRHandle":
         """Rehydrate a PRHandle from serialized data."""
         raw_work_dir = data.get("work_dir")
         work_dir = Path(raw_work_dir) if raw_work_dir else None

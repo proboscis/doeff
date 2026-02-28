@@ -12,12 +12,8 @@ A workflow with quality gates:
 """
 
 
-from typing import TYPE_CHECKING
-
 from doeff import EffectGenerator, do
-
-if TYPE_CHECKING:
-    from ..types import Issue, PRHandle
+from ..types import Issue, PRHandle
 
 
 @do

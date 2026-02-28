@@ -11,19 +11,15 @@ A workflow with code review:
 5. Create PR once review passes
 """
 
-from typing import TYPE_CHECKING
-
 from doeff import EffectGenerator, do
-
-if TYPE_CHECKING:
-    from ..types import Issue, PRHandle
+from ..types import Issue, PRHandle
 
 
 @do
 def reviewed_pr(
-    issue: "Issue",
+    issue: Issue,
     max_reviews: int = 2,
-) -> "EffectGenerator[PRHandle]":
+) -> EffectGenerator[PRHandle]:
     """Reviewed PR workflow: issue -> agent -> review -> PR.
 
     Args:
