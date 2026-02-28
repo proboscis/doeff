@@ -15,6 +15,8 @@ def test_rust_vm_exports_traceback_query_types() -> None:
     assert hasattr(rust_vm_module, "TraceHop")
     assert hasattr(rust_vm_module, "GetExecutionContext")
     assert hasattr(rust_vm_module, "ExecutionContext")
+    assert hasattr(rust_vm_module, "UnhandledEffectError")
+    assert hasattr(rust_vm_module, "NoMatchingHandlerError")
 
 
 def test_default_handlers_requires_module_sentinels(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -200,11 +202,61 @@ def test_print_doeff_trace_warns_on_format_failure(monkeypatch: pytest.MonkeyPat
         rust_vm_module._print_doeff_trace_if_present(SimpleNamespace())
 
 
-def test_raise_unhandled_effect_uses_run_result_attributes_directly() -> None:
+def test_raise_unhandled_effect_uses_typed_exception_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnhandledEffectError(TypeError):
+        pass
+
+    fake_vm = SimpleNamespace(
+        UnhandledEffectError=UnhandledEffectError,
+        NoMatchingHandlerError=UnhandledEffectError,
+    )
+    monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
+
+    run_result = SimpleNamespace(
+        is_err=lambda: True,
+        error=UnhandledEffectError("no matching handler"),
+    )
+
+    with pytest.raises(UnhandledEffectError, match="no matching handler"):
+        rust_vm_module._raise_unhandled_effect_if_present(run_result, raise_unhandled=True)
+
+
+def test_raise_unhandled_effect_does_not_pattern_match_plain_typeerror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnhandledEffectError(TypeError):
+        pass
+
+    fake_vm = SimpleNamespace(
+        UnhandledEffectError=UnhandledEffectError,
+        NoMatchingHandlerError=UnhandledEffectError,
+    )
+    monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
+
     run_result = SimpleNamespace(
         is_err=lambda: True,
         error=TypeError("UnhandledEffect: no matching handler"),
     )
 
-    with pytest.raises(TypeError, match="UnhandledEffect"):
-        rust_vm_module._raise_unhandled_effect_if_present(run_result, raise_unhandled=True)
+    returned = rust_vm_module._raise_unhandled_effect_if_present(run_result, raise_unhandled=True)
+    assert returned is run_result
+
+
+def test_run_call_kwargs_skips_trace_when_signature_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_no_signature(_target: object) -> object:
+        raise ValueError("no signature")
+
+    monkeypatch.setattr(rust_vm_module.inspect, "signature", _raise_no_signature)
+
+    kwargs = rust_vm_module._run_call_kwargs(
+        object(),
+        handlers=[],
+        env=None,
+        store=None,
+        trace=True,
+    )
+    assert "trace" not in kwargs

@@ -133,6 +133,8 @@ PySchedulerHandler = _ext.PySchedulerHandler
 PyVM = _ext.PyVM
 RunResult = _ext.RunResult
 DoeffTracebackData = _ext.DoeffTracebackData
+UnhandledEffectError = _ext.UnhandledEffectError
+NoMatchingHandlerError = _ext.NoMatchingHandlerError
 Ok = getattr(_ext, "Ok", None)
 Err = getattr(_ext, "Err", None)
 ResultOk = Ok
@@ -315,6 +317,8 @@ __all__ = [
     "ResumeContinuation",
     "RunResult",
     "DoeffTracebackData",
+    "UnhandledEffectError",
+    "NoMatchingHandlerError",
     "RustHandler",
     "Transfer",
     "WithHandler",
