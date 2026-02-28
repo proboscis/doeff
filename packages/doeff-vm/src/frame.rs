@@ -3,8 +3,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::ast_stream::ASTStreamRef;
-use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::ir_stream::IRStreamRef;
+use crate::do_ctrl::DoCtrl;
 use crate::ids::{DispatchId, Marker};
 use crate::py_shared::PyShared;
 use crate::step::PyException;
@@ -71,7 +71,7 @@ pub struct InterceptorContinuation {
     pub marker: Marker,
     pub original_yielded: DoCtrl,
     pub original_obj: PyShared,
-    pub emitter_stream: ASTStreamRef,
+    pub emitter_stream: IRStreamRef,
     pub emitter_metadata: Option<CallMetadata>,
     pub chain: Arc<Vec<Marker>>,
     pub next_idx: usize,
@@ -81,43 +81,43 @@ pub struct InterceptorContinuation {
 #[derive(Debug, Clone)]
 pub enum EvalReturnContinuation {
     ApplyResolveFunction {
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
+        args: Vec<DoCtrl>,
+        kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
         evaluate_result: bool,
     },
     ApplyResolveArg {
-        f: CallArg,
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
+        f: DoCtrl,
+        args: Vec<DoCtrl>,
+        kwargs: Vec<(String, DoCtrl)>,
         arg_idx: usize,
         metadata: CallMetadata,
         evaluate_result: bool,
     },
     ApplyResolveKwarg {
-        f: CallArg,
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
+        f: DoCtrl,
+        args: Vec<DoCtrl>,
+        kwargs: Vec<(String, DoCtrl)>,
         kwarg_idx: usize,
         metadata: CallMetadata,
         evaluate_result: bool,
     },
     ExpandResolveFactory {
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
+        args: Vec<DoCtrl>,
+        kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
     },
     ExpandResolveArg {
-        factory: CallArg,
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
+        factory: DoCtrl,
+        args: Vec<DoCtrl>,
+        kwargs: Vec<(String, DoCtrl)>,
         arg_idx: usize,
         metadata: CallMetadata,
     },
     ExpandResolveKwarg {
-        factory: CallArg,
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
+        factory: DoCtrl,
+        args: Vec<DoCtrl>,
+        kwargs: Vec<(String, DoCtrl)>,
         kwarg_idx: usize,
         metadata: CallMetadata,
     },
@@ -135,7 +135,7 @@ pub enum FinallyOutcome {
 #[derive(Debug, Clone)]
 pub enum Frame {
     Program {
-        stream: ASTStreamRef,
+        stream: IRStreamRef,
         metadata: Option<CallMetadata>,
     },
     InterceptorApply(Box<InterceptorContinuation>),
@@ -159,7 +159,7 @@ pub enum Frame {
 }
 
 impl Frame {
-    pub fn program(stream: ASTStreamRef, metadata: Option<CallMetadata>) -> Self {
+    pub fn program(stream: IRStreamRef, metadata: Option<CallMetadata>) -> Self {
         Frame::Program { stream, metadata }
     }
 
@@ -181,7 +181,7 @@ impl Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast_stream::{ASTStream, ASTStreamStep};
+    use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::rust_store::RustStore;
     use crate::segment::ScopeStore;
     use crate::value::Value;
@@ -189,14 +189,14 @@ mod tests {
     #[derive(Debug)]
     struct DummyStream;
 
-    impl ASTStream for DummyStream {
+    impl IRStream for DummyStream {
         fn resume(
             &mut self,
             _value: Value,
             _store: &mut RustStore,
             _scope: &mut ScopeStore,
-        ) -> ASTStreamStep {
-            ASTStreamStep::Return(Value::Unit)
+        ) -> IRStreamStep {
+            IRStreamStep::Return(Value::Unit)
         }
 
         fn throw(
@@ -204,8 +204,8 @@ mod tests {
             exc: crate::driver::PyException,
             _store: &mut RustStore,
             _scope: &mut ScopeStore,
-        ) -> ASTStreamStep {
-            ASTStreamStep::Throw(exc)
+        ) -> IRStreamStep {
+            IRStreamStep::Throw(exc)
         }
     }
 
@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn test_program_frame_is_program() {
         let stream = std::sync::Arc::new(std::sync::Mutex::new(
-            Box::new(DummyStream) as Box<dyn ASTStream>
+            Box::new(DummyStream) as Box<dyn IRStream>
         ));
         let frame = Frame::program(stream, None);
         assert!(frame.is_program());
@@ -230,9 +230,9 @@ mod tests {
         let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
         assert!(
             runtime_src.contains("Program {")
-                && runtime_src.contains("stream: ASTStreamRef")
+                && runtime_src.contains("stream: IRStreamRef")
                 && !runtime_src.contains("PythonGenerator"),
-            "VM-PROTO-001: Frame::Program must carry ASTStreamRef and replace PythonGenerator"
+            "VM-PROTO-001: Frame::Program must carry IRStreamRef and replace PythonGenerator"
         );
     }
 }

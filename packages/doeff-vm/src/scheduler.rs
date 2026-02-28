@@ -1,6 +1,6 @@
 //! Scheduler types for cooperative multitasking.
 //!
-//! The scheduler is a ASTStreamFactory that manages tasks, promises,
+//! The scheduler is a IRStreamFactory that manages tasks, promises,
 //! and cooperative scheduling via Transfer-only semantics.
 
 use std::cmp::Ordering as CmpOrdering;
@@ -11,10 +11,9 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::ast_stream::{ASTStream, ASTStreamStep, StreamLocation};
+use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::capture::{SpawnSite, TraceHop};
 use crate::continuation::Continuation;
-use crate::do_ctrl::CallArg;
 use crate::doeff_generator::DoeffGeneratorFn;
 #[cfg(test)]
 use crate::effect::Effect;
@@ -27,7 +26,7 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    ASTStreamFactory, ASTStreamProgram, ASTStreamProgramRef, Handler, HandlerInvoke, PythonHandler,
+    IRStreamFactory, IRStreamProgram, IRStreamProgramRef, Handler, HandlerInvoke, PythonHandler,
     RustProgramInvocation,
 };
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
@@ -311,14 +310,14 @@ impl ReadySet {
     }
 }
 
-fn transfer_to_continuation(k: Continuation, value: Value) -> ASTStreamStep {
+fn transfer_to_continuation(k: Continuation, value: Value) -> IRStreamStep {
     if k.started {
-        return ASTStreamStep::Yield(DoCtrl::Transfer {
+        return IRStreamStep::Yield(DoCtrl::Transfer {
             continuation: k,
             value,
         });
     }
-    ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+    IRStreamStep::Yield(DoCtrl::ResumeContinuation {
         continuation: k,
         value,
     })
@@ -344,33 +343,33 @@ fn transfer_to_continuation(k: Continuation, value: Value) -> ASTStreamStep {
 //
 // This helper intentionally delegates started continuations to Transfer via
 // transfer_to_continuation(). Do not change started-path behavior back to Resume.
-fn resume_to_continuation(cont: Continuation, result: Value) -> ASTStreamStep {
+fn resume_to_continuation(cont: Continuation, result: Value) -> IRStreamStep {
     if cont.started {
         return transfer_to_continuation(cont, result);
     }
-    ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+    IRStreamStep::Yield(DoCtrl::ResumeContinuation {
         continuation: cont,
         value: result,
     })
 }
 
-fn throw_to_continuation(k: Continuation, error: PyException) -> ASTStreamStep {
+fn throw_to_continuation(k: Continuation, error: PyException) -> IRStreamStep {
     if k.started {
-        return ASTStreamStep::Yield(DoCtrl::TransferThrow {
+        return IRStreamStep::Yield(DoCtrl::TransferThrow {
             continuation: k,
             exception: error,
         });
     }
-    ASTStreamStep::Throw(error)
+    IRStreamStep::Throw(error)
 }
 
-fn step_targets_cont_id(step: &ASTStreamStep, cont_id: ContId) -> bool {
+fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
     match step {
-        ASTStreamStep::Yield(DoCtrl::Resume { continuation, .. })
-        | ASTStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
-        | ASTStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
-        | ASTStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
-        | ASTStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
+        IRStreamStep::Yield(DoCtrl::Resume { continuation, .. })
+        | IRStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
+        | IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
+        | IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
+        | IRStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
             continuation.cont_id == cont_id
         }
         _ => false,
@@ -378,23 +377,23 @@ fn step_targets_cont_id(step: &ASTStreamStep, cont_id: ContId) -> bool {
 }
 
 #[cfg(test)]
-fn step_is_terminal(step: &ASTStreamStep) -> bool {
+fn step_is_terminal(step: &IRStreamStep) -> bool {
     matches!(
         step,
-        ASTStreamStep::Yield(DoCtrl::Transfer { .. })
-            | ASTStreamStep::Yield(DoCtrl::TransferThrow { .. })
-            | ASTStreamStep::Yield(DoCtrl::Pass { .. })
+        IRStreamStep::Yield(DoCtrl::Transfer { .. })
+            | IRStreamStep::Yield(DoCtrl::TransferThrow { .. })
+            | IRStreamStep::Yield(DoCtrl::Pass { .. })
     )
 }
 
-fn step_switches_into_task_body(step: &ASTStreamStep) -> bool {
+fn step_switches_into_task_body(step: &IRStreamStep) -> bool {
     matches!(
         step,
-        ASTStreamStep::Yield(DoCtrl::ResumeContinuation { .. })
-            | ASTStreamStep::Yield(DoCtrl::Resume { .. })
-            | ASTStreamStep::Yield(DoCtrl::ResumeThrow { .. })
-            | ASTStreamStep::Yield(DoCtrl::Transfer { .. })
-            | ASTStreamStep::Yield(DoCtrl::TransferThrow { .. })
+        IRStreamStep::Yield(DoCtrl::ResumeContinuation { .. })
+            | IRStreamStep::Yield(DoCtrl::Resume { .. })
+            | IRStreamStep::Yield(DoCtrl::ResumeThrow { .. })
+            | IRStreamStep::Yield(DoCtrl::Transfer { .. })
+            | IRStreamStep::Yield(DoCtrl::TransferThrow { .. })
     )
 }
 
@@ -1827,12 +1826,12 @@ impl SchedulerState {
     ///
     /// Per spec (SPEC-008 L1434-1447): saves the current task's store before
     /// switching and loads the new task's store after switching.
-    pub fn transfer_next(&mut self, store: &mut RustStore) -> Option<ASTStreamStep> {
+    pub fn transfer_next(&mut self, store: &mut RustStore) -> Option<IRStreamStep> {
         loop {
             self.process_semaphore_drop_notifications();
 
             if let Err(error) = self.drain_external_completions_nonblocking() {
-                return Some(ASTStreamStep::Throw(error));
+                return Some(IRStreamStep::Throw(error));
             }
 
             let mut selected_ready = None;
@@ -1883,7 +1882,7 @@ impl SchedulerState {
                                     (continuation, outcome, pending_merge)
                                 }
                                 Some(TaskState::Done { .. }) | None => {
-                                    return Some(ASTStreamStep::Throw(scheduler_internal_error(
+                                    return Some(IRStreamStep::Throw(scheduler_internal_error(
                                         format!(
                                             "transfer_next: ready task {} has no continuation",
                                             task_id.raw()
@@ -1896,13 +1895,13 @@ impl SchedulerState {
                         if let Some(old_id) = self.current_task {
                             if old_id != task_id {
                                 if let Err(error) = self.save_task_store(old_id, store) {
-                                    return Some(ASTStreamStep::Throw(error));
+                                    return Some(IRStreamStep::Throw(error));
                                 }
                             }
                         }
                         // Load new task's store.
                         if let Err(error) = self.load_task_store(task_id, store) {
-                            return Some(ASTStreamStep::Throw(error));
+                            return Some(IRStreamStep::Throw(error));
                         }
                         self.current_task = Some(task_id);
                         if let Some(items) = merge_items.as_ref() {
@@ -1925,7 +1924,7 @@ impl SchedulerState {
                         );
                         if let Some(waiting_task) = ready_root.waiting_task {
                             if let Err(error) = self.load_task_store(waiting_task, store) {
-                                return Some(ASTStreamStep::Throw(error));
+                                return Some(IRStreamStep::Throw(error));
                             }
                             self.current_task = Some(waiting_task);
                         } else {
@@ -1945,7 +1944,7 @@ impl SchedulerState {
 
             if self.ready.is_empty() && self.has_external_waiters() {
                 if let Err(error) = self.block_until_external_completion() {
-                    return Some(ASTStreamStep::Throw(error));
+                    return Some(IRStreamStep::Throw(error));
                 }
                 continue;
             }
@@ -1955,7 +1954,7 @@ impl SchedulerState {
         }
     }
 
-    pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> ASTStreamStep {
+    pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> IRStreamStep {
         self.transfer_next(store)
             .unwrap_or_else(|| resume_to_continuation(k, Value::Unit))
     }
@@ -2008,7 +2007,7 @@ enum SchedulerPhase {
 }
 
 // ---------------------------------------------------------------------------
-// SchedulerProgram + ASTStreamProgram impl
+// SchedulerProgram + IRStreamProgram impl
 // ---------------------------------------------------------------------------
 
 pub struct SchedulerProgram {
@@ -2048,7 +2047,7 @@ impl SchedulerProgram {
         k_user: Continuation,
         items: Vec<Waitable>,
         store: &mut RustStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
         if let Some(aggregate) = state.collect_all_result(&items) {
@@ -2065,7 +2064,7 @@ impl SchedulerProgram {
         }
         if let Some(waiting_task) = waiting_task {
             if let Err(error) = state.suspend_task_for_wait(waiting_task, k_user.clone()) {
-                return ASTStreamStep::Throw(error);
+                return IRStreamStep::Throw(error);
             }
         }
 
@@ -2082,7 +2081,7 @@ impl SchedulerProgram {
 
         let Some(step) = state.transfer_next(store) else {
             self.phase = SchedulerPhase::Idle;
-            return ASTStreamStep::Throw(scheduler_internal_error(
+            return IRStreamStep::Throw(scheduler_internal_error(
                 "deadlock: Gather blocked with no runnable tasks".to_string(),
             ));
         };
@@ -2107,7 +2106,7 @@ impl SchedulerProgram {
         k_user: Continuation,
         items: Vec<Waitable>,
         store: &mut RustStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
         if let Some(first) = state.collect_any_result(&items) {
@@ -2119,7 +2118,7 @@ impl SchedulerProgram {
         }
         if let Some(waiting_task) = waiting_task {
             if let Err(error) = state.suspend_task_for_wait(waiting_task, k_user.clone()) {
-                return ASTStreamStep::Throw(error);
+                return IRStreamStep::Throw(error);
             }
         }
 
@@ -2136,7 +2135,7 @@ impl SchedulerProgram {
 
         let Some(step) = state.transfer_next(store) else {
             self.phase = SchedulerPhase::Idle;
-            return ASTStreamStep::Throw(scheduler_internal_error(
+            return IRStreamStep::Throw(scheduler_internal_error(
                 "deadlock: Race blocked with no runnable tasks".to_string(),
             ));
         };
@@ -2156,7 +2155,7 @@ impl SchedulerProgram {
         step
     }
 
-    fn handle_get_execution_context(&mut self, k_user: Continuation) -> ASTStreamStep {
+    fn handle_get_execution_context(&mut self, k_user: Continuation) -> IRStreamStep {
         let spawn_boundaries = {
             let mut state = self.state.lock().expect("Scheduler lock poisoned");
             let task_for_context = state
@@ -2201,7 +2200,7 @@ impl SchedulerProgram {
                 Ok(ctx) => ctx,
                 Err(err) => {
                     let err_obj = err.value(py).clone().into_any().unbind();
-                    return ASTStreamStep::Throw(pyobject_to_exception(py, err_obj.bind(py)));
+                    return IRStreamStep::Throw(pyobject_to_exception(py, err_obj.bind(py)));
                 }
             };
 
@@ -2233,7 +2232,7 @@ impl SchedulerProgram {
 
                 if let Err(err) = result {
                     let err_obj = err.value(py).clone().into_any().unbind();
-                    return ASTStreamStep::Throw(pyobject_to_exception(py, err_obj.bind(py)));
+                    return IRStreamStep::Throw(pyobject_to_exception(py, err_obj.bind(py)));
                 }
             }
 
@@ -2245,13 +2244,13 @@ impl SchedulerProgram {
         state: &mut SchedulerState,
         k_user: Continuation,
         store: &mut RustStore,
-    ) -> (ASTStreamStep, bool) {
+    ) -> (IRStreamStep, bool) {
         let raw_step = state.transfer_next_or(k_user.clone(), store);
         let step = match raw_step {
-            ASTStreamStep::Yield(DoCtrl::TransferThrow {
+            IRStreamStep::Yield(DoCtrl::TransferThrow {
                 continuation,
                 exception,
-            }) => ASTStreamStep::Yield(DoCtrl::ResumeThrow {
+            }) => IRStreamStep::Yield(DoCtrl::ResumeThrow {
                 continuation,
                 exception,
             }),
@@ -2270,21 +2269,21 @@ impl SchedulerProgram {
         outcome: Result<Value, PyException>,
         k_user: Continuation,
         store: &mut RustStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
 
         let Some(task_id) = state.current_task else {
-            return ASTStreamStep::Throw(PyException::runtime_error(
+            return IRStreamStep::Throw(PyException::runtime_error(
                 "scheduler resumed/thrown without current running task",
             ));
         };
         state.current_task = None;
 
         if let Err(error) = state.save_task_store(task_id, store) {
-            return ASTStreamStep::Throw(error);
+            return IRStreamStep::Throw(error);
         }
         if let Err(error) = state.mark_task_done(task_id, outcome) {
-            return ASTStreamStep::Throw(error);
+            return IRStreamStep::Throw(error);
         }
         state.wake_waiters(Waitable::Task(task_id));
         let (step, keep_preemptive_transfer) =
@@ -2305,7 +2304,7 @@ impl SchedulerProgram {
         promise: PromiseId,
         outcome: Result<Value, PyException>,
         store: &mut RustStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         let current_priority = state.current_task_priority();
         let highest_woken_task = state.mark_promise_done(promise, outcome);
@@ -2319,7 +2318,7 @@ impl SchedulerProgram {
         ) && !nested_preemptive_transfer_active;
         if should_preempt {
             if let Err(error) = state.park_current_with_value(k_user.clone(), Value::Unit) {
-                return ASTStreamStep::Throw(error);
+                return IRStreamStep::Throw(error);
             }
             let (step, keep_preemptive_transfer) =
                 Self::transfer_next_after_preemption_step(&mut state, k_user.clone(), store);
@@ -2341,7 +2340,7 @@ impl SchedulerProgram {
         owner: WaitOwner,
         running_task: TaskId,
         store: &mut RustStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
 
         let owner_still_waiting = match &owner {
@@ -2366,17 +2365,17 @@ impl SchedulerProgram {
         if task_already_done && !owner_still_waiting {
             self.phase = SchedulerPhase::Idle;
             return match outcome_for_fallback {
-                Ok(value) => ASTStreamStep::Return(value),
-                Err(error) => ASTStreamStep::Throw(error),
+                Ok(value) => IRStreamStep::Return(value),
+                Err(error) => IRStreamStep::Throw(error),
             };
         }
 
         if !task_already_done {
             if let Err(error) = state.save_task_store(running_task, store) {
-                return ASTStreamStep::Throw(error);
+                return IRStreamStep::Throw(error);
             }
             if let Err(error) = state.mark_task_done(running_task, outcome) {
-                return ASTStreamStep::Throw(error);
+                return IRStreamStep::Throw(error);
             }
             state.wake_waiters(Waitable::Task(running_task));
         }
@@ -2385,11 +2384,11 @@ impl SchedulerProgram {
             self.phase = SchedulerPhase::Idle;
             if !owner_still_waiting {
                 return match outcome_for_fallback {
-                    Ok(value) => ASTStreamStep::Return(value),
-                    Err(error) => ASTStreamStep::Throw(error),
+                    Ok(value) => IRStreamStep::Return(value),
+                    Err(error) => IRStreamStep::Throw(error),
                 };
             }
-            return ASTStreamStep::Return(Value::Unit);
+            return IRStreamStep::Return(Value::Unit);
         };
 
         let next_running_task = state.current_task;
@@ -2410,7 +2409,7 @@ impl SchedulerProgram {
     }
 }
 
-impl ASTStreamProgram for SchedulerProgram {
+impl IRStreamProgram for SchedulerProgram {
     fn start(
         &mut self,
         _py: Python<'_>,
@@ -2418,7 +2417,7 @@ impl ASTStreamProgram for SchedulerProgram {
         k_user: Continuation,
         store: &mut RustStore,
         _scope: &mut ScopeStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         {
             let mut state = self.state.lock().expect("Scheduler lock poisoned");
             state.process_semaphore_drop_notifications();
@@ -2431,12 +2430,12 @@ impl ASTStreamProgram for SchedulerProgram {
             match parse_scheduler_python_effect(&obj, None) {
                 Ok(Some(se)) => se,
                 Ok(None) => {
-                    return ASTStreamStep::Yield(DoCtrl::Delegate {
+                    return IRStreamStep::Yield(DoCtrl::Delegate {
                         effect: dispatch_from_shared(obj),
                     })
                 }
                 Err(msg) => {
-                    return ASTStreamStep::Throw(PyException::type_error(format!(
+                    return IRStreamStep::Throw(PyException::type_error(format!(
                         "failed to parse scheduler effect: {msg}"
                     )))
                 }
@@ -2444,7 +2443,7 @@ impl ASTStreamProgram for SchedulerProgram {
         } else {
             #[cfg(test)]
             {
-                return ASTStreamStep::Yield(DoCtrl::Delegate { effect });
+                return IRStreamStep::Yield(DoCtrl::Delegate { effect });
             }
             #[cfg(not(test))]
             {
@@ -2458,7 +2457,7 @@ impl ASTStreamProgram for SchedulerProgram {
                     k_user: k_user.clone(),
                     effect,
                 };
-                ASTStreamStep::Yield(DoCtrl::GetTraceback {
+                IRStreamStep::Yield(DoCtrl::GetTraceback {
                     continuation: k_user,
                 })
             }
@@ -2472,10 +2471,10 @@ impl ASTStreamProgram for SchedulerProgram {
             SchedulerEffect::TaskCompleted { task, result } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 if let Err(error) = state.save_task_store(task, store) {
-                    return ASTStreamStep::Throw(error);
+                    return IRStreamStep::Throw(error);
                 }
                 if let Err(error) = state.mark_task_done(task, result) {
-                    return ASTStreamStep::Throw(error);
+                    return IRStreamStep::Throw(error);
                 }
                 state.wake_waiters(Waitable::Task(task));
                 state.transfer_next_or(k_user, store)
@@ -2506,7 +2505,7 @@ impl ASTStreamProgram for SchedulerProgram {
                 state.promises.insert(pid, PromiseState::Pending);
                 let completion_queue = match state.ensure_external_completion_queue() {
                     Ok(queue) => queue,
-                    Err(error) => return ASTStreamStep::Throw(error),
+                    Err(error) => return IRStreamStep::Throw(error),
                 };
                 resume_to_continuation(
                     k_user,
@@ -2526,7 +2525,7 @@ impl ASTStreamProgram for SchedulerProgram {
                 let semaphore_value =
                     match make_python_semaphore_value(semaphore_id, scheduler_state_id) {
                         Ok(value) => value,
-                        Err(error) => return ASTStreamStep::Throw(error),
+                        Err(error) => return IRStreamStep::Throw(error),
                     };
                 resume_to_continuation(k_user, semaphore_value)
             }
@@ -2536,7 +2535,7 @@ impl ASTStreamProgram for SchedulerProgram {
                     let mut state = self.state.lock().expect("Scheduler lock poisoned");
                     match state.acquire_semaphore(semaphore_id) {
                         Ok(result) => result,
-                        Err(error) => return ASTStreamStep::Throw(error),
+                        Err(error) => return IRStreamStep::Throw(error),
                     }
                 };
                 match waiter_promise {
@@ -2547,12 +2546,12 @@ impl ASTStreamProgram for SchedulerProgram {
                             if let Err(error) =
                                 state.suspend_task_for_wait(waiting_task, k_user.clone())
                             {
-                                return ASTStreamStep::Throw(error);
+                                return IRStreamStep::Throw(error);
                             }
                         }
                         state.wait_on_any(&items, k_user.clone(), store);
                         state.transfer_next(store).unwrap_or_else(|| {
-                            ASTStreamStep::Throw(scheduler_internal_error(
+                            IRStreamStep::Throw(scheduler_internal_error(
                                 "deadlock: AcquireSemaphore blocked with no runnable tasks"
                                     .to_string(),
                             ))
@@ -2565,7 +2564,7 @@ impl ASTStreamProgram for SchedulerProgram {
             SchedulerEffect::ReleaseSemaphore { semaphore_id } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 if let Err(error) = state.release_semaphore(semaphore_id) {
-                    return ASTStreamStep::Throw(error);
+                    return IRStreamStep::Throw(error);
                 }
                 resume_to_continuation(k_user, Value::Unit)
             }
@@ -2579,13 +2578,13 @@ impl ASTStreamProgram for SchedulerProgram {
         value: Value,
         store: &mut RustStore,
         _scope: &mut ScopeStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
             SchedulerPhase::SpawnAwaitTraceback { k_user, effect } => {
                 let traceback = match value {
                     Value::Traceback(hops) => hops,
                     _ => {
-                        return ASTStreamStep::Throw(PyException::type_error(
+                        return IRStreamStep::Throw(PyException::type_error(
                             "scheduler Spawn expected GetTraceback result".to_string(),
                         ));
                     }
@@ -2596,13 +2595,13 @@ impl ASTStreamProgram for SchedulerProgram {
                     match parse_scheduler_python_effect(&obj, spawn_site.clone()) {
                         Ok(Some(se)) => se,
                         Ok(None) => {
-                            return ASTStreamStep::Throw(PyException::runtime_error(
+                            return IRStreamStep::Throw(PyException::runtime_error(
                                 "scheduler Spawn traceback phase got non-scheduler effect"
                                     .to_string(),
                             ));
                         }
                         Err(msg) => {
-                            return ASTStreamStep::Throw(PyException::type_error(format!(
+                            return IRStreamStep::Throw(PyException::type_error(format!(
                                 "failed to parse scheduler effect: {msg}"
                             )));
                         }
@@ -2610,7 +2609,7 @@ impl ASTStreamProgram for SchedulerProgram {
                 } else {
                     #[cfg(test)]
                     {
-                        return ASTStreamStep::Throw(PyException::runtime_error(
+                        return IRStreamStep::Throw(PyException::runtime_error(
                             "scheduler Spawn traceback phase requires python effect".to_string(),
                         ));
                     }
@@ -2628,7 +2627,7 @@ impl ASTStreamProgram for SchedulerProgram {
                     creation_site,
                 } = sched_effect
                 else {
-                    return ASTStreamStep::Throw(PyException::runtime_error(
+                    return IRStreamStep::Throw(PyException::runtime_error(
                         "scheduler Spawn traceback phase expected Spawn effect".to_string(),
                     ));
                 };
@@ -2647,7 +2646,7 @@ impl ASTStreamProgram for SchedulerProgram {
                         priority,
                         spawn_site: creation_site,
                     };
-                    return ASTStreamStep::Yield(DoCtrl::GetHandlers);
+                    return IRStreamStep::Yield(DoCtrl::GetHandlers);
                 }
 
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
@@ -2658,7 +2657,7 @@ impl ASTStreamProgram for SchedulerProgram {
                     spawn_site: creation_site,
                 };
 
-                ASTStreamStep::Yield(DoCtrl::CreateContinuation {
+                IRStreamStep::Yield(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities: vec![],
@@ -2676,7 +2675,7 @@ impl ASTStreamProgram for SchedulerProgram {
                 let handlers = match value {
                     Value::Handlers(hs) => hs,
                     _ => {
-                        return ASTStreamStep::Throw(PyException::type_error(
+                        return IRStreamStep::Throw(PyException::type_error(
                             "scheduler Spawn expected GetHandlers result".to_string(),
                         ));
                     }
@@ -2690,7 +2689,7 @@ impl ASTStreamProgram for SchedulerProgram {
                     spawn_site,
                 };
 
-                ASTStreamStep::Yield(DoCtrl::CreateContinuation {
+                IRStreamStep::Yield(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities: vec![],
@@ -2708,7 +2707,7 @@ impl ASTStreamProgram for SchedulerProgram {
                 let cont = match value {
                     Value::Continuation(c) => c,
                     _ => {
-                        return ASTStreamStep::Throw(PyException::type_error(
+                        return IRStreamStep::Throw(PyException::type_error(
                             "expected continuation from CreateContinuation, got unexpected type"
                                 .to_string(),
                         ));
@@ -2723,7 +2722,7 @@ impl ASTStreamProgram for SchedulerProgram {
                             merge,
                         },
                         None => {
-                            return ASTStreamStep::Throw(PyException::runtime_error(
+                            return IRStreamStep::Throw(PyException::runtime_error(
                                 "isolated spawn missing store snapshot".to_string(),
                             ))
                         }
@@ -2757,7 +2756,7 @@ impl ASTStreamProgram for SchedulerProgram {
                 let task_value = Value::Task(TaskHandle { id: task_id });
                 if matches!(current_priority, Some(current) if priority > current) {
                     if let Err(error) = state.park_current_with_value(k_user.clone(), task_value) {
-                        return ASTStreamStep::Throw(error);
+                        return IRStreamStep::Throw(error);
                     }
                     let (step, keep_preemptive_transfer) =
                         Self::transfer_next_after_preemption_step(
@@ -2786,7 +2785,7 @@ impl ASTStreamProgram for SchedulerProgram {
                 running_task,
             } => self.continue_driving(Ok(value), owner, running_task, store),
 
-            SchedulerPhase::Idle => ASTStreamStep::Return(value),
+            SchedulerPhase::Idle => IRStreamStep::Return(value),
         }
     }
 
@@ -2795,7 +2794,7 @@ impl ASTStreamProgram for SchedulerProgram {
         exc: PyException,
         store: &mut RustStore,
         _scope: &mut ScopeStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
             SchedulerPhase::Driving {
                 owner,
@@ -2804,19 +2803,19 @@ impl ASTStreamProgram for SchedulerProgram {
             SchedulerPhase::PreemptiveTransfer { k_user } => {
                 self.continue_preemptive_transfer(Err(exc), k_user, store)
             }
-            _ => ASTStreamStep::Throw(exc),
+            _ => IRStreamStep::Throw(exc),
         }
     }
 }
 
-impl ASTStream for SchedulerProgram {
+impl IRStream for SchedulerProgram {
     fn resume(
         &mut self,
         value: Value,
         store: &mut RustStore,
         scope: &mut ScopeStore,
-    ) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::resume(self, value, store, scope)
+    ) -> IRStreamStep {
+        <Self as IRStreamProgram>::resume(self, value, store, scope)
     }
 
     fn throw(
@@ -2824,8 +2823,8 @@ impl ASTStream for SchedulerProgram {
         exc: PyException,
         store: &mut RustStore,
         scope: &mut ScopeStore,
-    ) -> ASTStreamStep {
-        <Self as ASTStreamProgram>::throw(self, exc, store, scope)
+    ) -> IRStreamStep {
+        <Self as IRStreamProgram>::throw(self, exc, store, scope)
     }
 
     fn debug_location(&self) -> Option<StreamLocation> {
@@ -2839,7 +2838,7 @@ impl ASTStream for SchedulerProgram {
 }
 
 // ---------------------------------------------------------------------------
-// SchedulerHandler + ASTStreamFactory impl
+// SchedulerHandler + IRStreamFactory impl
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -2882,7 +2881,7 @@ impl SchedulerHandler {
     }
 }
 
-impl ASTStreamFactory for SchedulerHandler {
+impl IRStreamFactory for SchedulerHandler {
     fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
@@ -2894,13 +2893,13 @@ impl ASTStreamFactory for SchedulerHandler {
         }
     }
 
-    fn create_program(&self) -> ASTStreamProgramRef {
+    fn create_program(&self) -> IRStreamProgramRef {
         Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
             self.state_for_run(None),
         ))))
     }
 
-    fn create_program_for_run(&self, run_token: Option<u64>) -> ASTStreamProgramRef {
+    fn create_program_for_run(&self, run_token: Option<u64>) -> IRStreamProgramRef {
         Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
             self.state_for_run(run_token),
         ))))
@@ -2918,20 +2917,22 @@ impl ASTStreamFactory for SchedulerHandler {
 
 impl HandlerInvoke for SchedulerHandler {
     fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as ASTStreamFactory>::can_handle(self, effect)
+        <Self as IRStreamFactory>::can_handle(self, effect)
     }
 
     fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoCtrl {
         DoCtrl::Expand {
-            factory: CallArg::Value(Value::RustProgramInvocation(RustProgramInvocation {
-                factory: Arc::new(self.clone()),
-                effect: Box::new(effect),
-                continuation: k,
-            })),
+            factory: Box::new(DoCtrl::Pure {
+                value: Value::RustProgramInvocation(RustProgramInvocation {
+                    factory: Arc::new(self.clone()),
+                    effect: Box::new(effect),
+                    continuation: k,
+                }),
+            }),
             args: vec![],
             kwargs: vec![],
             metadata: CallMetadata::new(
-                <Self as ASTStreamFactory>::handler_name(self).to_string(),
+                <Self as IRStreamFactory>::handler_name(self).to_string(),
                 "<rust>".to_string(),
                 0,
                 None,
@@ -2941,12 +2942,12 @@ impl HandlerInvoke for SchedulerHandler {
     }
 
     fn handler_name(&self) -> &str {
-        <Self as ASTStreamFactory>::handler_name(self)
+        <Self as IRStreamFactory>::handler_name(self)
     }
 
     fn handler_debug_info(&self) -> crate::handler::HandlerDebugInfo {
         crate::handler::HandlerDebugInfo {
-            name: <Self as ASTStreamFactory>::handler_name(self).to_string(),
+            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
             file: None,
             line: None,
         }
@@ -2957,14 +2958,14 @@ impl HandlerInvoke for SchedulerHandler {
     }
 
     fn on_run_end(&self, run_token: u64) {
-        <Self as ASTStreamFactory>::on_run_end(self, run_token);
+        <Self as IRStreamFactory>::on_run_end(self, run_token);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast_stream::{ASTStream, ASTStreamStep};
+    use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::capture::TraceFrame;
     use crate::pyvm::{DoExprTag, PyEffectBase};
     use pyo3::types::PyDict;
@@ -3050,7 +3051,7 @@ mod tests {
         let step = transfer_to_continuation(cont, Value::Int(123));
 
         match step {
-            ASTStreamStep::Yield(DoCtrl::Transfer {
+            IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             }) => {
@@ -3068,7 +3069,7 @@ mod tests {
         let step = transfer_to_continuation(cont, Value::Int(456));
 
         match step {
-            ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+            IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                 continuation,
                 value,
             }) => {
@@ -3083,15 +3084,15 @@ mod tests {
     fn test_step_is_terminal() {
         let cont = make_test_continuation();
         let terminal_steps = vec![
-            ASTStreamStep::Yield(DoCtrl::Transfer {
+            IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation: cont.clone(),
                 value: Value::Unit,
             }),
-            ASTStreamStep::Yield(DoCtrl::TransferThrow {
+            IRStreamStep::Yield(DoCtrl::TransferThrow {
                 continuation: cont.clone(),
                 exception: PyException::runtime_error("boom".to_string()),
             }),
-            ASTStreamStep::Yield(DoCtrl::Pass {
+            IRStreamStep::Yield(DoCtrl::Pass {
                 effect: Effect::Get {
                     key: "k".to_string(),
                 },
@@ -3104,39 +3105,39 @@ mod tests {
         Python::attach(|py| {
             let expr = PyShared::new(py.None());
             let non_terminal_steps = vec![
-                ASTStreamStep::Yield(DoCtrl::Delegate {
+                IRStreamStep::Yield(DoCtrl::Delegate {
                     effect: Effect::Get {
                         key: "k".to_string(),
                     },
                 }),
-                ASTStreamStep::Yield(DoCtrl::Resume {
+                IRStreamStep::Yield(DoCtrl::Resume {
                     continuation: cont.clone(),
                     value: Value::Unit,
                 }),
-                ASTStreamStep::Yield(DoCtrl::ResumeThrow {
+                IRStreamStep::Yield(DoCtrl::ResumeThrow {
                     continuation: cont.clone(),
                     exception: PyException::runtime_error("boom".to_string()),
                 }),
-                ASTStreamStep::Yield(DoCtrl::GetTraceback {
+                IRStreamStep::Yield(DoCtrl::GetTraceback {
                     continuation: cont.clone(),
                 }),
-                ASTStreamStep::Yield(DoCtrl::GetHandlers),
-                ASTStreamStep::Yield(DoCtrl::CreateContinuation {
+                IRStreamStep::Yield(DoCtrl::GetHandlers),
+                IRStreamStep::Yield(DoCtrl::CreateContinuation {
                     expr: expr.clone(),
                     handlers: vec![],
                     handler_identities: vec![],
                 }),
-                ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+                IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                     continuation: cont.clone(),
                     value: Value::Unit,
                 }),
-                ASTStreamStep::Yield(DoCtrl::Expand {
-                    factory: CallArg::Value(Value::Unit),
+                IRStreamStep::Yield(DoCtrl::Expand {
+                    factory: Box::new(DoCtrl::Pure { value: Value::Unit }),
                     args: vec![],
                     kwargs: vec![],
                     metadata: CallMetadata::anonymous(),
                 }),
-                ASTStreamStep::Throw(PyException::runtime_error("boom".to_string())),
+                IRStreamStep::Throw(PyException::runtime_error("boom".to_string())),
             ];
             for step in non_terminal_steps {
                 assert!(!step_is_terminal(&step));
@@ -3166,7 +3167,7 @@ mod tests {
         let fresh_step = fresh_state.transfer_next_or(make_test_continuation(), &mut store);
         assert!(matches!(
             fresh_step,
-            ASTStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
+            IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
             if continuation.cont_id == fresh_cont.cont_id
         ));
 
@@ -3187,7 +3188,7 @@ mod tests {
         let woke_ok_step = woke_ok_state.transfer_next_or(make_test_continuation(), &mut store);
         assert!(matches!(
             woke_ok_step,
-            ASTStreamStep::Yield(DoCtrl::Transfer { continuation, value })
+            IRStreamStep::Yield(DoCtrl::Transfer { continuation, value })
             if continuation.cont_id == woke_ok_cont.cont_id && value.as_int() == Some(7)
         ));
 
@@ -3208,7 +3209,7 @@ mod tests {
         let woke_err_step = woke_err_state.transfer_next_or(make_test_continuation(), &mut store);
         assert!(matches!(
             woke_err_step,
-            ASTStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
+            IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
             if continuation.cont_id == woke_err_cont.cont_id
         ));
     }
@@ -3298,7 +3299,7 @@ mod tests {
                 effect: dispatch_from_shared(PyShared::new(spawn_effect)),
             };
 
-            let location = ASTStream::debug_location(&program).expect("scheduler debug location");
+            let location = IRStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.function_name, SCHEDULER_HANDLER_NAME);
             assert_eq!(location.phase.as_deref(), Some("SpawnAwaitTraceback"));
 
@@ -3309,23 +3310,23 @@ mod tests {
                     source_line: 321,
                 }],
             }];
-            let step = ASTStream::resume(&mut program, Value::Traceback(traceback), &mut store, &mut _scope);
-            assert!(matches!(step, ASTStreamStep::Yield(DoCtrl::GetHandlers)));
+            let step = IRStream::resume(&mut program, Value::Traceback(traceback), &mut store, &mut _scope);
+            assert!(matches!(step, IRStreamStep::Yield(DoCtrl::GetHandlers)));
 
-            let location = ASTStream::debug_location(&program).expect("scheduler debug location");
+            let location = IRStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.phase.as_deref(), Some("SpawnAwaitHandlers"));
 
-            let step = ASTStream::resume(&mut program, Value::Handlers(vec![]), &mut store, &mut _scope);
+            let step = IRStream::resume(&mut program, Value::Handlers(vec![]), &mut store, &mut _scope);
             assert!(matches!(
                 step,
-                ASTStreamStep::Yield(DoCtrl::CreateContinuation { .. })
+                IRStreamStep::Yield(DoCtrl::CreateContinuation { .. })
             ));
 
-            let location = ASTStream::debug_location(&program).expect("scheduler debug location");
+            let location = IRStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.phase.as_deref(), Some("SpawnAwaitContinuation"));
 
             let created_continuation = make_test_continuation();
-            let step = ASTStream::resume(
+            let step = IRStream::resume(
                 &mut program,
                 Value::Continuation(created_continuation),
                 &mut store,
@@ -3333,25 +3334,25 @@ mod tests {
             );
 
             match step {
-                ASTStreamStep::Yield(DoCtrl::Resume {
+                IRStreamStep::Yield(DoCtrl::Resume {
                     continuation,
                     value,
                 })
-                | ASTStreamStep::Yield(DoCtrl::Transfer {
+                | IRStreamStep::Yield(DoCtrl::Transfer {
                     continuation,
                     value,
                 })
-                | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+                | IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                     continuation,
                     value,
                 }) => {
                     assert_eq!(continuation.cont_id, k_user_id);
                     assert!(matches!(value, Value::Task(_)));
                 }
-                _ => panic!("expected ASTStream Yield(Resume|Transfer|ResumeContinuation)"),
+                _ => panic!("expected IRStream Yield(Resume|Transfer|ResumeContinuation)"),
             }
 
-            let location = ASTStream::debug_location(&program).expect("scheduler debug location");
+            let location = IRStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.phase.as_deref(), Some("Idle"));
         });
     }
@@ -3391,7 +3392,7 @@ mod tests {
             spawn_site: None,
         };
 
-        let step = ASTStream::resume(
+        let step = IRStream::resume(
             &mut program,
             Value::Continuation(spawned_k.clone()),
             &mut store,
@@ -3485,7 +3486,7 @@ mod tests {
             );
 
             let step =
-                ASTStreamProgram::start(&mut program, py, complete, idle_k.clone(), &mut store, &mut _scope);
+                IRStreamProgram::start(&mut program, py, complete, idle_k.clone(), &mut store, &mut _scope);
             assert!(
                 step_targets_cont_id(&step, waiter_k.cont_id),
                 "higher-priority waiter must run first after promise completion, got {:?}",
@@ -3608,17 +3609,17 @@ mod tests {
             running_task,
         };
 
-        let step = ASTStream::resume(&mut program, Value::Int(55), &mut store, &mut _scope);
+        let step = IRStream::resume(&mut program, Value::Int(55), &mut store, &mut _scope);
         match step {
-            ASTStreamStep::Yield(DoCtrl::Resume {
+            IRStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::Transfer {
+            | IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+            | IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                 continuation,
                 value,
             }) => {
@@ -3708,7 +3709,7 @@ mod tests {
                     .unbind(),
             );
 
-            let first_step = ASTStreamProgram::start(
+            let first_step = IRStreamProgram::start(
                 &mut program,
                 py,
                 complete,
@@ -3727,7 +3728,7 @@ mod tests {
                 if k_user.cont_id == idle_driver_k.cont_id
             ));
 
-            let second_step = ASTStream::resume(&mut program, Value::Unit, &mut store, &mut _scope);
+            let second_step = IRStream::resume(&mut program, Value::Unit, &mut store, &mut _scope);
             assert!(
                 step_targets_cont_id(&second_step, idle_driver_k.cont_id),
                 "IDLE driver should resume after NORMAL task hands control back, got {:?}",
@@ -3817,7 +3818,7 @@ mod tests {
                     .unbind(),
             );
 
-            let resolver_step = ASTStreamProgram::start(
+            let resolver_step = IRStreamProgram::start(
                 &mut resolver_program,
                 py,
                 complete,
@@ -3843,7 +3844,7 @@ mod tests {
                     .expect("mark waiting task done");
             }
 
-            let stale_step = ASTStream::resume(&mut driving_program, Value::Unit, &mut store, &mut _scope);
+            let stale_step = IRStream::resume(&mut driving_program, Value::Unit, &mut store, &mut _scope);
 
             let mut waiter_activation_count = 0;
             if step_targets_cont_id(&resolver_step, waiter_k.cont_id) {
@@ -3961,7 +3962,7 @@ mod tests {
                     .unbind(),
             );
             let first_step =
-                ASTStreamProgram::start(&mut program, py, wake_normal, idle_k.clone(), &mut store, &mut _scope);
+                IRStreamProgram::start(&mut program, py, wake_normal, idle_k.clone(), &mut store, &mut _scope);
             assert!(
                 step_targets_cont_id(&first_step, normal_k.cont_id),
                 "first promise completion should preempt IDLE and run NORMAL, got {:?}",
@@ -3982,7 +3983,7 @@ mod tests {
                     .unbind(),
             );
             let second_step =
-                ASTStreamProgram::start(&mut program, py, wake_high, normal_k.clone(), &mut store, &mut _scope);
+                IRStreamProgram::start(&mut program, py, wake_high, normal_k.clone(), &mut store, &mut _scope);
             assert!(
                 step_targets_cont_id(&second_step, normal_k.cont_id),
                 "nested preemption must be blocked while transfer is active, got {:?}",
@@ -4065,11 +4066,11 @@ mod tests {
                 .into_any();
             let fail = make_fail_promise_effect(py, promise_obj, error_obj);
 
-            let step = ASTStreamProgram::start(&mut program, py, fail, idle_k.clone(), &mut store, &mut _scope);
+            let step = IRStreamProgram::start(&mut program, py, fail, idle_k.clone(), &mut store, &mut _scope);
             assert!(
                 matches!(
                     &step,
-                    ASTStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
+                    IRStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
                     if continuation.cont_id == waiter_k.cont_id
                 ),
                 "higher-priority waiter should receive non-terminal throw transfer, got {:?}",
@@ -4133,7 +4134,7 @@ mod tests {
             spawn_site: None,
         };
 
-        let step = ASTStream::resume(&mut program, Value::Continuation(spawned_k), &mut store, &mut _scope);
+        let step = IRStream::resume(&mut program, Value::Continuation(spawned_k), &mut store, &mut _scope);
         assert!(
             step_targets_cont_id(&step, caller_k.cont_id),
             "same-priority spawn should resume caller immediately, got {:?}",
@@ -4183,7 +4184,7 @@ mod tests {
             spawn_site: None,
         };
 
-        let step = ASTStream::resume(&mut program, Value::Continuation(spawned_k), &mut store, &mut _scope);
+        let step = IRStream::resume(&mut program, Value::Continuation(spawned_k), &mut store, &mut _scope);
         assert!(
             step_targets_cont_id(&step, caller_k.cont_id),
             "lower-priority spawn should resume caller immediately, got {:?}",
@@ -4281,10 +4282,10 @@ mod tests {
 
             let step = state.transfer_next_or(scheduler_k.clone(), &mut store);
             match step {
-                ASTStreamStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
+                IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
                     assert_eq!(continuation.cont_id, expected_cont);
                 }
-                ASTStreamStep::Yield(DoCtrl::Resume { .. }) => {
+                IRStreamStep::Yield(DoCtrl::Resume { .. }) => {
                     panic!("task switches must not emit DoCtrl::Resume")
                 }
                 _ => panic!("task switches must emit DoCtrl::Transfer"),
@@ -4323,7 +4324,7 @@ mod tests {
         // transfer_next_or should resume whichever waiter is globally ready.
         let step = state.transfer_next_or(waiter.clone(), &mut store);
         match step {
-            ASTStreamStep::Yield(DoCtrl::Transfer {
+            IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             }) => {
@@ -5121,15 +5122,15 @@ mod tests {
         let foreign_owner = make_test_continuation();
         let step = state.transfer_next_or(foreign_owner, &mut store);
         match step {
-            ASTStreamStep::Yield(DoCtrl::Transfer {
+            IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::Resume {
+            | IRStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+            | IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                 continuation,
                 value,
             }) => {
@@ -5166,15 +5167,15 @@ mod tests {
         let foreign_owner = make_test_continuation();
         let step = state.transfer_next_or(foreign_owner, &mut store);
         match step {
-            ASTStreamStep::Yield(DoCtrl::Resume {
+            IRStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::Transfer {
+            | IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+            | IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                 continuation,
                 value,
             }) => {
@@ -5251,15 +5252,15 @@ mod tests {
 
         let step = state.transfer_next_or(owner_b_cont, &mut store);
         match step {
-            ASTStreamStep::Yield(DoCtrl::Transfer {
+            IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::Resume {
+            | IRStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+            | IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                 continuation,
                 value,
             }) => {
@@ -5320,15 +5321,15 @@ mod tests {
         let owner_after_second = make_test_continuation();
         let second_step = state.transfer_next_or(owner_after_second, &mut store);
         match second_step {
-            ASTStreamStep::Yield(DoCtrl::Transfer {
+            IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::Resume {
+            | IRStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+            | IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                 continuation,
                 value,
             }) => {
@@ -5386,15 +5387,15 @@ mod tests {
         let foreign_owner = make_test_continuation();
         let step = state.transfer_next_or(foreign_owner, &mut store);
         match step {
-            ASTStreamStep::Yield(DoCtrl::Transfer {
+            IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::Resume {
+            | IRStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
             })
-            | ASTStreamStep::Yield(DoCtrl::ResumeContinuation {
+            | IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                 continuation,
                 value,
             }) => {

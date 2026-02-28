@@ -1,5 +1,5 @@
 use super::*;
-use crate::ast_stream::{ASTStream, ASTStreamStep};
+use crate::ir_stream::{IRStream, IRStreamStep};
 use crate::frame::CallMetadata;
 use crate::trace_state::TraceState;
 use std::sync::{Arc, Mutex};
@@ -29,14 +29,14 @@ fn make_dummy_continuation() -> Continuation {
 #[derive(Debug)]
 struct DummyProgramStream;
 
-impl ASTStream for DummyProgramStream {
+impl IRStream for DummyProgramStream {
     fn resume(
         &mut self,
         _value: Value,
         _store: &mut RustStore,
         _scope: &mut crate::segment::ScopeStore,
-    ) -> ASTStreamStep {
-        ASTStreamStep::Return(Value::Unit)
+    ) -> IRStreamStep {
+        IRStreamStep::Return(Value::Unit)
     }
 
     fn throw(
@@ -44,8 +44,8 @@ impl ASTStream for DummyProgramStream {
         exc: PyException,
         _store: &mut RustStore,
         _scope: &mut crate::segment::ScopeStore,
-    ) -> ASTStreamStep {
-        ASTStreamStep::Throw(exc)
+    ) -> IRStreamStep {
+        IRStreamStep::Throw(exc)
     }
 }
 
@@ -57,8 +57,8 @@ fn make_program_frame(function_name: &str, source_file: &str, source_line: u32) 
         None,
         None,
     );
-    let stream: Arc<Mutex<Box<dyn ASTStream>>> = Arc::new(Mutex::new(
-        Box::new(DummyProgramStream) as Box<dyn ASTStream>
+    let stream: Arc<Mutex<Box<dyn IRStream>>> = Arc::new(Mutex::new(
+        Box::new(DummyProgramStream) as Box<dyn IRStream>
     ));
     Frame::program(stream, Some(metadata))
 }
@@ -719,7 +719,7 @@ fn test_start_dispatch_records_effect_creation_site_from_continuation_frame() {
         let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
             PyShared::new(wrapper),
             PyShared::new(get_frame),
-        )) as Box<dyn ASTStream>));
+        )) as Box<dyn IRStream>));
         body_seg.push_frame(Frame::Program {
             stream,
             metadata: Some(CallMetadata::new(
@@ -789,7 +789,7 @@ fn test_stream_debug_location_uses_get_frame_callback_result() {
         let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
             PyShared::new(wrapper),
             PyShared::new(get_frame),
-        )) as Box<dyn ASTStream>));
+        )) as Box<dyn IRStream>));
         let observed =
             TraceState::stream_debug_location(&stream).expect("expected stream location");
         assert_eq!(observed.source_line, line);
@@ -804,7 +804,7 @@ fn test_vm_proto_runtime_uses_get_frame_callback_instead_of_gi_frame_probe() {
     let inner_attr = ["__doeff_", "inner__"].concat();
     assert!(
         runtime_src.contains("debug_location()") && runtime_src.contains("stream_debug_location"),
-        "VM-PROTO-001: VM must resolve live locations via ASTStream::debug_location()"
+        "VM-PROTO-001: VM must resolve live locations via IRStream::debug_location()"
     );
     assert!(
         !runtime_src.contains("getattr(\"gi_frame\")"),
@@ -2057,15 +2057,15 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
             original_exception: None,
         });
 
-        let stream: ASTStreamRef = Arc::new(Mutex::new(
-            Box::new(DummyProgramStream) as Box<dyn ASTStream>
+        let stream: IRStreamRef = Arc::new(Mutex::new(
+            Box::new(DummyProgramStream) as Box<dyn IRStream>
         ));
         let call = PythonCall::CallFunc {
             func: PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any()),
             args: Vec::new(),
             kwargs: Vec::new(),
         };
-        let event = vm.apply_stream_step(ASTStreamStep::NeedsPython(call), stream, None);
+        let event = vm.apply_stream_step(IRStreamStep::NeedsPython(call), stream, None);
         assert!(matches!(
             event,
             StepEvent::NeedsPython(PythonCall::CallFunc { .. })
@@ -2255,7 +2255,9 @@ fn test_apply_return_delivers_value_without_pushing_frame() {
         );
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(dummy_f)),
+            f: Box::new(DoCtrl::Pure {
+                value: Value::Python(dummy_f),
+            }),
             args: vec![],
             kwargs: vec![],
             metadata,
@@ -2304,7 +2306,9 @@ fn test_apply_return_reenters_handle_yield_when_evaluate_result_true() {
         );
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(dummy_f)),
+            f: Box::new(DoCtrl::Pure {
+                value: Value::Python(dummy_f),
+            }),
             args: vec![],
             kwargs: vec![],
             metadata,
@@ -2357,7 +2361,9 @@ fn test_apply_return_preserves_doexpr_value_when_evaluate_result_false() {
         );
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(dummy_f)),
+            f: Box::new(DoCtrl::Pure {
+                value: Value::Python(dummy_f),
+            }),
             args: vec![],
             kwargs: vec![],
             metadata,
@@ -2403,7 +2409,9 @@ fn test_expand_requires_doeff_generator_or_errors() {
         );
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Expand {
-            factory: CallArg::Value(Value::Python(dummy_factory)),
+            factory: Box::new(DoCtrl::Pure {
+                value: Value::Python(dummy_factory),
+            }),
             args: vec![],
             kwargs: vec![],
             metadata: metadata.clone(),
@@ -2456,7 +2464,9 @@ fn test_expand_success_routes_through_aststream_doctrl() {
         );
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Expand {
-            factory: CallArg::Value(Value::Python(dummy_factory)),
+            factory: Box::new(DoCtrl::Pure {
+                value: Value::Python(dummy_factory),
+            }),
             args: vec![],
             kwargs: vec![],
             metadata,
@@ -2500,9 +2510,9 @@ fn test_expand_success_routes_through_aststream_doctrl() {
         assert!(
             matches!(
                 &vm.current_seg().mode,
-                Mode::HandleYield(DoCtrl::ASTStream { .. })
+                Mode::HandleYield(DoCtrl::IRStream { .. })
             ),
-            "Expand success must route through DoCtrl::ASTStream, got {:?}",
+            "Expand success must route through DoCtrl::IRStream, got {:?}",
             std::mem::discriminant(&vm.current_seg().mode)
         );
 
@@ -2512,7 +2522,7 @@ fn test_expand_success_routes_through_aststream_doctrl() {
         assert_eq!(
             seg.frames.len(),
             1,
-            "ASTStream handling must push a Program frame before stepping"
+            "IRStream handling must push a Program frame before stepping"
         );
         assert!(matches!(seg.frames[0], Frame::Program { .. }));
     });
@@ -2538,7 +2548,9 @@ fn test_r9a_apply_empty_args_yields_call_func() {
         );
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(dummy_f)),
+            f: Box::new(DoCtrl::Pure {
+                value: Value::Python(dummy_f),
+            }),
             args: vec![],
             kwargs: vec![],
             metadata: metadata.clone(),
@@ -2589,10 +2601,16 @@ fn test_r9a_apply_with_args_yields_call_func() {
         );
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(dummy_f)),
+            f: Box::new(DoCtrl::Pure {
+                value: Value::Python(dummy_f),
+            }),
             args: vec![
-                CallArg::Value(Value::Int(42)),
-                CallArg::Value(Value::String("hello".to_string())),
+                DoCtrl::Pure {
+                    value: Value::Int(42),
+                },
+                DoCtrl::Pure {
+                    value: Value::String("hello".to_string()),
+                },
             ],
             kwargs: vec![],
             metadata,
@@ -2639,13 +2657,24 @@ fn test_r9a_apply_kwargs_preserved_separately() {
         );
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(dummy_f)),
-            args: vec![CallArg::Value(Value::Int(1))],
+            f: Box::new(DoCtrl::Pure {
+                value: Value::Python(dummy_f),
+            }),
+            args: vec![DoCtrl::Pure {
+                value: Value::Int(1),
+            }],
             kwargs: vec![
-                ("key1".to_string(), CallArg::Value(Value::Int(2))),
+                (
+                    "key1".to_string(),
+                    DoCtrl::Pure {
+                        value: Value::Int(2),
+                    },
+                ),
                 (
                     "key2".to_string(),
-                    CallArg::Value(Value::String("val".to_string())),
+                    DoCtrl::Pure {
+                        value: Value::String("val".to_string()),
+                    },
                 ),
             ],
             metadata,
@@ -2697,11 +2726,15 @@ fn test_r9a_apply_kwargs_only_takes_callfunc_path() {
         );
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(dummy_f)),
+            f: Box::new(DoCtrl::Pure {
+                value: Value::Python(dummy_f),
+            }),
             args: vec![],
             kwargs: vec![(
                 "name".to_string(),
-                CallArg::Value(Value::String("test".to_string())),
+                DoCtrl::Pure {
+                    value: Value::String("test".to_string()),
+                },
             )],
             metadata,
             evaluate_result: false,

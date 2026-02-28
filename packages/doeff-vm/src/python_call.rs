@@ -1,6 +1,6 @@
 //! Python bridge call protocol.
 
-use crate::ast_stream::ASTStreamRef;
+use crate::ir_stream::IRStreamRef;
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
@@ -42,7 +42,7 @@ pub enum PendingPython {
         evaluate_result: bool,
     },
     StepUserGenerator {
-        stream: ASTStreamRef,
+        stream: IRStreamRef,
         metadata: Option<CallMetadata>,
     },
     ExpandReturn {
@@ -72,8 +72,8 @@ mod tests {
         let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
         assert!(
             runtime_src.contains("StepUserGenerator {")
-                && runtime_src.contains("stream: ASTStreamRef"),
-            "VM-PROTO-001: PendingPython::StepUserGenerator must carry ASTStreamRef"
+                && runtime_src.contains("stream: IRStreamRef"),
+            "VM-PROTO-001: PendingPython::StepUserGenerator must carry IRStreamRef"
         );
     }
 }

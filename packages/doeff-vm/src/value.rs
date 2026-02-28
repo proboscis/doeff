@@ -18,7 +18,7 @@ use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 ///
 /// Can be either a Rust-native value or a Python object.
 /// Rust-native variants avoid Python overhead for common cases.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Value {
     Python(Py<PyAny>),
     Unit,
@@ -30,6 +30,7 @@ pub enum Value {
     Handlers(Vec<Handler>),
     RustProgramInvocation(RustProgramInvocation),
     PythonHandlerCallable(Py<PyAny>),
+    Kleisli(crate::kleisli::KleisliRef),
     Task(TaskHandle),
     Promise(PromiseHandle),
     ExternalPromise(ExternalPromise),
@@ -336,6 +337,7 @@ impl Value {
             }
             Value::RustProgramInvocation(_) => Ok(py.None().into_bound(py)),
             Value::PythonHandlerCallable(callable) => Ok(callable.bind(py).clone()),
+            Value::Kleisli(_) => Ok(py.None().into_bound(py)),
             Value::Task(handle) => {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("type", "Task")?;
@@ -506,6 +508,7 @@ impl Value {
             Value::PythonHandlerCallable(callable) => {
                 Value::PythonHandlerCallable(callable.clone_ref(py))
             }
+            Value::Kleisli(kleisli) => Value::Kleisli(kleisli.clone()),
             Value::Task(h) => Value::Task(*h),
             Value::Promise(h) => Value::Promise(*h),
             Value::ExternalPromise(h) => Value::ExternalPromise(h.clone()),
@@ -515,6 +518,12 @@ impl Value {
             Value::ActiveChain(entries) => Value::ActiveChain(entries.clone()),
             Value::List(items) => Value::List(items.iter().map(|v| v.clone_ref(py)).collect()),
         }
+    }
+}
+
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        Python::attach(|py| self.clone_ref(py))
     }
 }
 
