@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
-use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::continuation::Continuation;
 use crate::doeff_generator::DoeffGeneratorFn;
 #[cfg(test)]
@@ -22,6 +21,8 @@ use crate::effect::{
 };
 use crate::error::VMError;
 use crate::frame::CallMetadata;
+use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
+use crate::kleisli::{KleisliRef, PyKleisli};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr, PyResultOk};
@@ -212,6 +213,20 @@ impl HandlerInvoke for PythonHandler {
                 }
             };
 
+        let kleisli = match Python::attach(|py| {
+            PyKleisli::from_handler(py, self.dgfn.clone_ref(py).into_any())
+        }) {
+            Ok(value) => value,
+            Err(err) => {
+                return DoCtrl::TransferThrow {
+                    continuation: k,
+                    exception: PyException::type_error(format!(
+                        "PythonHandler invoke failed to build PyKleisli: {err}"
+                    )),
+                };
+            }
+        };
+
         let py_k = match Python::attach(|py| {
             Bound::new(py, PyK::from_cont_id(k.cont_id)).map(|bound| bound.into_any().unbind())
         }) {
@@ -229,9 +244,7 @@ impl HandlerInvoke for PythonHandler {
         let metadata = metadata_from_debug_info(self.handler_debug_info());
         DoCtrl::Expand {
             factory: Box::new(DoCtrl::Pure {
-                value: Value::PythonHandlerCallable(Python::attach(|py| {
-                    self.dgfn.clone_ref(py).into_any()
-                })),
+                value: Value::Kleisli(Arc::new(kleisli)),
             }),
             args: vec![
                 DoCtrl::Pure {
@@ -263,6 +276,94 @@ impl HandlerInvoke for PythonHandler {
             let borrowed = self.dgfn.bind(py).borrow();
             borrowed.callable.clone_ref(py)
         })))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct KleisliHandler {
+    kleisli: KleisliRef,
+    handler_name: String,
+    handler_file: Option<String>,
+    handler_line: Option<u32>,
+}
+
+impl KleisliHandler {
+    pub fn new(kleisli: KleisliRef) -> Self {
+        let debug = kleisli.debug_info();
+        KleisliHandler {
+            kleisli,
+            handler_name: debug.name,
+            handler_file: debug.file,
+            handler_line: debug.line,
+        }
+    }
+}
+
+impl HandlerInvoke for KleisliHandler {
+    fn can_handle(&self, _effect: &DispatchEffect) -> Result<bool, VMError> {
+        Ok(true)
+    }
+
+    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoExpr {
+        let py_effect =
+            match Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind())) {
+                Ok(obj) => obj,
+                Err(err) => {
+                    return DoCtrl::TransferThrow {
+                        continuation: k,
+                        exception: PyException::type_error(format!(
+                            "KleisliHandler invoke failed to convert effect: {err}"
+                        )),
+                    };
+                }
+            };
+
+        let py_k = match Python::attach(|py| {
+            Bound::new(py, PyK::from_cont_id(k.cont_id)).map(|bound| bound.into_any().unbind())
+        }) {
+            Ok(obj) => obj,
+            Err(err) => {
+                return DoCtrl::TransferThrow {
+                    continuation: k,
+                    exception: PyException::type_error(format!(
+                        "KleisliHandler invoke failed to create continuation handle: {err}"
+                    )),
+                };
+            }
+        };
+
+        let metadata = metadata_from_debug_info(self.handler_debug_info());
+        DoCtrl::Expand {
+            factory: Box::new(DoCtrl::Pure {
+                value: Value::Kleisli(self.kleisli.clone()),
+            }),
+            args: vec![
+                DoCtrl::Pure {
+                    value: Value::Python(py_effect),
+                },
+                DoCtrl::Pure {
+                    value: Value::Python(py_k),
+                },
+            ],
+            kwargs: vec![],
+            metadata,
+        }
+    }
+
+    fn handler_name(&self) -> &str {
+        self.handler_name.as_str()
+    }
+
+    fn handler_debug_info(&self) -> HandlerDebugInfo {
+        HandlerDebugInfo {
+            name: self.handler_name.clone(),
+            file: self.handler_file.clone(),
+            line: self.handler_line,
+        }
+    }
+
+    fn py_identity(&self) -> Option<PyShared> {
+        self.kleisli.py_identity()
     }
 }
 
@@ -649,7 +750,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
-    _scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_await_python_effect(&obj) {
@@ -687,7 +788,12 @@ impl IRStreamProgram for AwaitHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         if let Some(continuation) = self.pending_k.take() {
             return IRStreamStep::Yield(DoCtrl::Resume {
                 continuation,
@@ -697,7 +803,12 @@ impl IRStreamProgram for AwaitHandlerProgram {
         IRStreamStep::Return(value)
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         if let Some(continuation) = self.pending_k.take() {
             return IRStreamStep::Yield(DoCtrl::TransferThrow {
                 continuation,
@@ -709,11 +820,21 @@ impl IRStreamProgram for AwaitHandlerProgram {
 }
 
 impl IRStream for AwaitHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -853,7 +974,7 @@ impl IRStreamProgram for StateHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
-    _scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         #[cfg(test)]
         if let Effect::Get { key } = effect.clone() {
@@ -937,7 +1058,12 @@ impl IRStreamProgram for StateHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         if self.pending_key.is_none() {
             // Terminal case (Get/Put): handler is done, pass through return value
             return IRStreamStep::Return(value);
@@ -954,17 +1080,32 @@ impl IRStreamProgram for StateHandlerProgram {
         })
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         IRStreamStep::Throw(exc)
     }
 }
 
 impl IRStream for StateHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -1602,11 +1743,21 @@ impl IRStreamProgram for LazyAskHandlerProgram {
 }
 
 impl IRStream for LazyAskHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -1763,24 +1914,44 @@ impl IRStreamProgram for ReaderHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         if false {
             unreachable!("ReaderHandler never yields mid-handling");
         }
         IRStreamStep::Return(value)
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         IRStreamStep::Throw(exc)
     }
 }
 
 impl IRStream for ReaderHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -1873,7 +2044,7 @@ impl IRStreamProgram for WriterHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
-    _scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         #[cfg(test)]
         if let Effect::Tell { message } = effect.clone() {
@@ -1911,12 +2082,7 @@ impl IRStreamProgram for WriterHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(
-        &mut self,
-        value: Value,
-        _: &mut RustStore,
-        _scope: &mut ScopeStore,
-    ) -> IRStreamStep {
+    fn resume(&mut self, value: Value, _: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
         if false {
             unreachable!("WriterHandler never yields mid-handling");
         }
@@ -1934,11 +2100,21 @@ impl IRStreamProgram for WriterHandlerProgram {
 }
 
 impl IRStream for WriterHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -2070,7 +2246,7 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
-    _scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_result_safe_python_effect(&obj) {
@@ -2099,7 +2275,12 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
             ResultSafePhase::AwaitHandlers {
                 continuation,
@@ -2125,7 +2306,12 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
             ResultSafePhase::AwaitHandlers { continuation, .. }
             | ResultSafePhase::AwaitEval { continuation } => self.finish_err(continuation, exc),
@@ -2135,11 +2321,21 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
 }
 
 impl IRStream for ResultSafeHandlerProgram {
-    fn resume(&mut self, value: Value, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::resume(self, value, store, _scope)
     }
 
-    fn throw(&mut self, exc: PyException, store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         <Self as IRStreamProgram>::throw(self, exc, store, _scope)
     }
 
@@ -2246,7 +2442,7 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
-    _scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match effect {
             Effect::Modify { modifier, .. } => {
@@ -2265,7 +2461,12 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
         }
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn resume(
+        &mut self,
+        value: Value,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, DoubleCallPhase::Done) {
             DoubleCallPhase::AwaitingFirstResult { k, modifier } => {
                 // Got first result. Now do a SECOND Python call: modifier(first_result).
@@ -2293,7 +2494,12 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+    fn throw(
+        &mut self,
+        exc: PyException,
+        _store: &mut RustStore,
+        _scope: &mut ScopeStore,
+    ) -> IRStreamStep {
         IRStreamStep::Throw(exc)
     }
 }
@@ -2301,8 +2507,8 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::ids::Marker;
+    use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::segment::Segment;
     use pyo3::types::PyDictMethods;
     use pyo3::{IntoPyObject, Python};
@@ -2394,7 +2600,12 @@ mod tests {
         assert_eq!(location.function_name, "ReaderHandler");
         assert_eq!(location.phase.as_deref(), Some("AskApply"));
 
-        let step = IRStream::throw(&mut program, PyException::runtime_error("boom"), &mut store, &mut scope);
+        let step = IRStream::throw(
+            &mut program,
+            PyException::runtime_error("boom"),
+            &mut store,
+            &mut scope,
+        );
         assert!(matches!(step, IRStreamStep::Throw(_)));
     }
 
@@ -2408,7 +2619,12 @@ mod tests {
         assert_eq!(location.function_name, "WriterHandler");
         assert_eq!(location.phase.as_deref(), Some("TellApply"));
 
-        let step = IRStream::throw(&mut program, PyException::runtime_error("boom"), &mut store, &mut scope);
+        let step = IRStream::throw(
+            &mut program,
+            PyException::runtime_error("boom"),
+            &mut store,
+            &mut scope,
+        );
         assert!(matches!(step, IRStreamStep::Throw(_)));
     }
 
@@ -2445,7 +2661,7 @@ mod tests {
     fn test_result_safe_ast_stream_handlers_to_eval_sequence() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             let mut program = ResultSafeHandlerProgram::new();
             let continuation = make_test_continuation();
             let sub_program =
@@ -2459,7 +2675,12 @@ mod tests {
             assert_eq!(location.function_name, "ResultSafeHandler");
             assert_eq!(location.phase.as_deref(), Some("AwaitHandlers"));
 
-            let step = IRStream::resume(&mut program, Value::Handlers(vec![]), &mut store, &mut scope);
+            let step = IRStream::resume(
+                &mut program,
+                Value::Handlers(vec![]),
+                &mut store,
+                &mut scope,
+            );
             assert!(matches!(step, IRStreamStep::Yield(DoCtrl::Eval { .. })));
 
             let location = IRStream::debug_location(&program).expect("result safe debug location");
@@ -2507,7 +2728,7 @@ mod tests {
     fn test_state_factory_get() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             store.put("key".to_string(), Value::Int(42));
             let k = make_test_continuation();
             let program_ref = StateHandlerFactory.create_program();
@@ -2539,7 +2760,7 @@ mod tests {
     fn test_state_factory_put() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
             let program_ref = StateHandlerFactory.create_program();
             let step = {
@@ -2571,7 +2792,7 @@ mod tests {
         use pyo3::Python;
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             store.put("key".to_string(), Value::Int(10));
             let k = make_test_continuation();
             let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
@@ -2604,7 +2825,7 @@ mod tests {
         use pyo3::Python;
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             store.put("key".to_string(), Value::Int(10));
             let k = make_test_continuation();
             let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
@@ -2668,7 +2889,7 @@ mod tests {
     fn test_reader_factory_ask() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             store.set_env_str("config", Value::String("value".to_string()));
             let k = make_test_continuation();
             let program_ref = ReaderHandlerFactory.create_program();
@@ -2723,7 +2944,7 @@ mod tests {
     fn test_writer_factory_tell() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
             let program_ref = WriterHandlerFactory.create_program();
             let step = {
@@ -2779,7 +3000,7 @@ mod tests {
     fn test_result_safe_handler_wraps_return_and_exception() {
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
 
             let locals = pyo3::types::PyDict::new(py);
@@ -2872,7 +3093,7 @@ mod tests {
         use pyo3::Python;
         Python::attach(|py| {
             let mut store = RustStore::new();
-        let mut scope = ScopeStore::default();
+            let mut scope = ScopeStore::default();
             let k = make_test_continuation();
             let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
 

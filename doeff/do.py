@@ -369,7 +369,40 @@ def do(
 
     if not callable(func):
         raise TypeError(f"@do expects a callable, got {type(func).__name__}")
-    return DoYieldFunction(func)
+    do_yield_fn = DoYieldFunction(func)
+
+    import doeff_vm as vm
+
+    code = func.__code__
+    kleisli = vm.PyKleisli(
+        func=cast(Any, do_yield_fn),
+        name=func.__qualname__,
+        file=code.co_filename,
+        line=code.co_firstlineno,
+    )
+
+    for attr in ("__doc__", "__module__", "__name__", "__qualname__", "__annotations__"):
+        value = getattr(do_yield_fn, attr, getattr(func, attr, None))
+        if value is not None:
+            setattr(kleisli, attr, value)
+
+    signature = getattr(do_yield_fn, "__signature__", None)
+    if signature is None:
+        try:
+            signature = inspect.signature(func)
+        except (TypeError, ValueError):
+            signature = None
+    if signature is not None:
+        kleisli.__signature__ = signature
+
+    kleisli.__wrapped__ = func
+    kleisli.original_func = func
+    kleisli.original_generator = func
+    kleisli.__doeff_do_decorated__ = True
+    kleisli._is_do_decorated = True
+    kleisli._doeff_generator_factory = getattr(do_yield_fn, "_doeff_generator_factory", None)
+
+    return cast(KleisliProgram[P, T], kleisli)
 
 
 __all__ = [

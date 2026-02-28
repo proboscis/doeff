@@ -9,7 +9,6 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::arena::SegmentArena;
-use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, EffectCreationSite, HandlerAction, HandlerKind,
     HandlerSnapshotEntry, TraceEntry,
@@ -33,6 +32,7 @@ use crate::frame::{
 use crate::handler::{Handler, RustProgramInvocation};
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::interceptor_state::InterceptorState;
+use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::pyvm::{classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase};
@@ -604,7 +604,11 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn eval_then_reenter_call(&mut self, expr: DoCtrl, continuation: EvalReturnContinuation) -> StepEvent {
+    fn eval_then_reenter_call(
+        &mut self,
+        expr: DoCtrl,
+        continuation: EvalReturnContinuation,
+    ) -> StepEvent {
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal("Call evaluation outside current segment"));
         };
@@ -633,15 +637,7 @@ impl VM {
                 ));
             };
             let scope = &mut seg.scope_store;
-            Python::attach(|py| {
-                guard.start(
-                    py,
-                    effect,
-                    continuation,
-                    &mut self.rust_store,
-                    scope,
-                )
-            })
+            Python::attach(|py| guard.start(py, effect, continuation, &mut self.rust_store, scope))
         };
         self.apply_stream_step(step, stream, None)
     }
@@ -1192,9 +1188,9 @@ impl VM {
         let handlers = self.current_visible_handlers();
         let seg = self.current_seg_mut();
         seg.kind = SegmentKind::Normal;
-        seg.push_frame(Frame::EvalReturn(Box::new(EvalReturnContinuation::FinallyCleanup {
-            original,
-        })));
+        seg.push_frame(Frame::EvalReturn(Box::new(
+            EvalReturnContinuation::FinallyCleanup { original },
+        )));
         seg.mode = Mode::HandleYield(DoCtrl::Eval {
             expr: cleanup,
             handlers,
@@ -2326,7 +2322,18 @@ impl VM {
 
                 let result = Python::attach(|py| kleisli.apply(py, args_values));
                 return match result {
-                    Ok(doctrl) => self.evaluate(doctrl),
+                    Ok(doctrl) => {
+                        if let DoCtrl::IRStream { .. } = &doctrl {
+                            if let Some(dispatch_id) = self
+                                .current_dispatch_id()
+                                .or_else(|| self.current_active_handler_dispatch_id())
+                            {
+                                self.current_seg_mut()
+                                    .push_frame(Frame::HandlerDispatch { dispatch_id });
+                            }
+                        }
+                        self.evaluate(doctrl)
+                    }
                     Err(vm_err) => StepEvent::Error(vm_err),
                 };
             }
@@ -2455,7 +2462,11 @@ impl VM {
         }
     }
 
-    fn is_active_handler_return_to_prompt(&self, seg_id: SegmentId, prompt_seg_id: SegmentId) -> bool {
+    fn is_active_handler_return_to_prompt(
+        &self,
+        seg_id: SegmentId,
+        prompt_seg_id: SegmentId,
+    ) -> bool {
         let Some(seg) = self.segments.get(seg_id) else {
             return false;
         };
@@ -2493,7 +2504,8 @@ impl VM {
     ) -> Option<PyShared> {
         // Resume path: continuation body returned into active handler clause.
         // Apply return_clause before the value re-enters handler via Resume.
-        if let Some(prompt_seg_id) = self.prompt_for_resume_return_to_active_handler(seg_id, caller_id)
+        if let Some(prompt_seg_id) =
+            self.prompt_for_resume_return_to_active_handler(seg_id, caller_id)
         {
             return self.take_prompt_return_clause(prompt_seg_id);
         }
@@ -3081,8 +3093,7 @@ impl VM {
         let supports_error_context_conversion = handler.supports_error_context_conversion();
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
         for entry in &handler_chain {
-            let (name, kind, file, line) =
-                Self::handler_trace_info(&entry.handler);
+            let (name, kind, file, line) = Self::handler_trace_info(&entry.handler);
             handler_chain_snapshot.push(HandlerSnapshotEntry {
                 handler_name: name,
                 handler_kind: kind,
@@ -3336,7 +3347,9 @@ impl VM {
     }
 
     fn continuation_caller_segment(&self, k: &Continuation) -> Option<SegmentId> {
-        self.segments.get(k.segment_id).and_then(|source_seg| source_seg.caller)
+        self.segments
+            .get(k.segment_id)
+            .and_then(|source_seg| source_seg.caller)
     }
 
     fn gather_finally_cleanups_from_caller(&self, mut cursor: Option<SegmentId>) -> Vec<PyShared> {
@@ -3463,10 +3476,9 @@ impl VM {
                         .caller_segment(self.current_segment)
                         .and_then(|seg_id| self.segments.get(seg_id))
                         .and_then(|seg| seg.caller),
-                    ContinuationActivationKind::Transfer => self
-                        .segments
-                        .get(k.segment_id)
-                        .and_then(|seg| seg.caller),
+                    ContinuationActivationKind::Transfer => {
+                        self.segments.get(k.segment_id).and_then(|seg| seg.caller)
+                    }
                 };
                 let caller = self.continuation_resume_caller(kind, &k, caller);
                 self.enter_continuation_segment_with_dispatch(&k, caller, None);
@@ -3478,10 +3490,9 @@ impl VM {
 
         let caller = match kind {
             ContinuationActivationKind::Resume => kind.caller_segment(self.current_segment),
-            ContinuationActivationKind::Transfer => self
-                .segments
-                .get(k.segment_id)
-                .and_then(|seg| seg.caller),
+            ContinuationActivationKind::Transfer => {
+                self.segments.get(k.segment_id).and_then(|seg| seg.caller)
+            }
         };
         let caller = self.continuation_resume_caller(kind, &k, caller);
         self.enter_continuation_segment(&k, caller);
@@ -3849,8 +3860,7 @@ impl VM {
 
         for idx in start_idx..handler_chain.len() {
             let marker = handler_chain[idx];
-            let Some(entry) = visible_chain.iter().find(|entry| entry.marker == marker)
-            else {
+            let Some(entry) = visible_chain.iter().find(|entry| entry.marker == marker) else {
                 return StepEvent::Error(VMError::internal(format!(
                     "{}: missing handler marker {} at index {}",
                     kind.missing_handler_context(),

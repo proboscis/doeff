@@ -174,11 +174,11 @@ class TestRustBuiltinHandlers:
 
 class TestDoHandlerPreKleisli:
     @pytest.mark.pre_kleisli_behavior
-    def test_do_handler_returns_type_error(self) -> None:
+    def test_do_handler_returns_value(self) -> None:
         @do
         def handler(effect: Effect, _k):
             if isinstance(effect, Ping):
-                return f"handled:{effect.payload}"
+                return (yield Resume(_k, f"handled:{effect.payload}"))
             yield Delegate()
 
         def body():
@@ -189,18 +189,16 @@ class TestDoHandlerPreKleisli:
             return (yield WithHandler(handler, _prog(body)))
 
         result = run(_prog(main), handlers=default_handlers())
-        assert result.is_err()
-        assert isinstance(result.error, TypeError)
-        assert "must return a generator" in str(result.error)
+        assert result.value == "handled:hello"
 
     @pytest.mark.pre_kleisli_behavior
-    def test_do_handler_with_effects_returns_type_error(self) -> None:
+    def test_do_handler_with_effects_returns_value(self) -> None:
         @do
         def handler(effect: Effect, _k):
             if isinstance(effect, Ping):
                 state_val = yield Get("key")
-                return f"handled:{state_val}"
-            yield Delegate()
+                return (yield Resume(_k, f"handled:{state_val}"))
+            yield Pass()
 
         def body():
             value = yield Ping("hello")
@@ -210,9 +208,7 @@ class TestDoHandlerPreKleisli:
             return (yield WithHandler(handler, _prog(body)))
 
         result = run(_prog(main), handlers=default_handlers(), store={"key": "magic"})
-        assert result.is_err()
-        assert isinstance(result.error, TypeError)
-        assert "must return a generator" in str(result.error)
+        assert result.value == "handled:magic"
 
 
 class TestHandlerIdentity:
