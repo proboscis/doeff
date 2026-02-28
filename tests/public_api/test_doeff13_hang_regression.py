@@ -203,7 +203,7 @@ class TestDoeff13HangRegression:
 
 
 class TestDoeff13NegativeControl:
-    """Plain (non-``@do``) handler with explicit ``Resume`` — no hang."""
+    """Explicit ``Resume`` handler path remains fast under watchdog budget."""
 
     def test_plain_handler_with_resume_completes_quickly(self) -> None:
         """A bare-generator handler using ``Resume`` must finish well within
@@ -213,7 +213,8 @@ class TestDoeff13NegativeControl:
         Expected: PASS both before and after fix.
         """
 
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, f"wrapped:{effect.value}"))
             yield Delegate()

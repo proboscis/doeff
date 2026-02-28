@@ -468,8 +468,8 @@ impl Kleisli for DgfnKleisli {
 
 /// Python-callable Kleisli that returns the callable's raw value.
 ///
-/// This is used for interceptor functions that can return a transformed
-/// DoExpr/effect directly (not necessarily a generator).
+/// NOTE: Public entry points no longer route plain callables through this type.
+/// It is retained for internal/experimental wiring and potential future use.
 #[derive(Debug, Clone)]
 pub struct PyCallableKleisli {
     func: PyShared,

@@ -11,12 +11,6 @@ def _vm() -> Any:
     return importlib.import_module("doeff_vm")
 
 
-def _is_generator_like(value: Any) -> bool:
-    return inspect.isgenerator(value) or (
-        hasattr(value, "__next__") and hasattr(value, "send") and hasattr(value, "throw")
-    )
-
-
 def _handler_registration_metadata(
     handler: Any,
 ) -> tuple[str, str, int]:
@@ -38,7 +32,49 @@ def _handler_registration_metadata(
     return handler_name, source_file, source_line
 
 
-def _coerce_handler(handler: Any) -> Any:
+_HANDLER_HELP_URL = "https://docs.doeff.dev/handlers"
+
+
+def _format_handler_type_error(
+    *,
+    api_name: str,
+    role: str,
+    value: Any,
+) -> str:
+    got_value = f"{value!r} (type: {type(value).__name__})"
+    if role == "handler":
+        fix_block = (
+            "  To fix, decorate your handler with @do:\n\n"
+            "    from doeff import do\n"
+            "    from doeff.effects.base import Effect\n\n"
+            "    @do\n"
+            "    def my_handler(effect: Effect, k):\n"
+            "        ...\n"
+            "        yield Resume(k, value)\n"
+        )
+    else:
+        fix_block = (
+            "  To fix, decorate your interceptor with @do:\n\n"
+            "    from doeff import do\n"
+            "    from doeff.effects.base import Effect\n\n"
+            "    @do\n"
+            "    def my_interceptor(effect: Effect):\n"
+            "        return effect\n"
+        )
+    return (
+        f"{api_name} {role} must be a @do decorated function, PyKleisli, or RustHandler.\n\n"
+        f"  Got: {got_value}\n\n"
+        f"{fix_block}\n"
+        f"  See: {_HANDLER_HELP_URL}"
+    )
+
+
+def _coerce_handler(
+    handler: Any,
+    *,
+    api_name: str,
+    role: str,
+) -> Any:
     vm = _vm()
     rust_handler_type = getattr(vm, "RustHandler", None)
     if rust_handler_type is not None and isinstance(handler, rust_handler_type):
@@ -51,22 +87,9 @@ def _coerce_handler(handler: Any) -> Any:
     doeff_generator_fn_type = getattr(vm, "DoeffGeneratorFn", None)
     if doeff_generator_fn_type is not None and isinstance(handler, doeff_generator_fn_type):
         return handler
-    if not callable(handler):
-        return handler
-
-    if doeff_generator_fn_type is None:
-        return handler
-
-    from doeff.do import _default_get_frame
-
-    handler_name, handler_file, handler_line = _handler_registration_metadata(handler)
-    return vm.DoeffGeneratorFn(
-        callable=handler,
-        function_name=handler_name,
-        source_file=handler_file,
-        source_line=handler_line,
-        get_frame=_default_get_frame,
-    )
+    if callable(handler):
+        raise TypeError(_format_handler_type_error(api_name=api_name, role=role, value=handler))
+    return handler
 
 
 def _coerce_program(program: Any) -> Any:
@@ -260,8 +283,8 @@ def default_handlers() -> list[Any]:
 
     return [
         *_core_handler_sentinels(vm),
-        _coerce_handler(spawn_intercept_handler),
-        _coerce_handler(sync_await_handler),
+        spawn_intercept_handler,
+        sync_await_handler,
     ]
 
 
@@ -273,8 +296,8 @@ def default_async_handlers() -> list[Any]:
 
     return [
         *_core_handler_sentinels(vm),
-        _coerce_handler(spawn_intercept_handler),
-        _coerce_handler(async_await_handler),
+        spawn_intercept_handler,
+        async_await_handler,
     ]
 
 
@@ -337,6 +360,7 @@ def WithHandler(
     expr: Any,
     return_clause: Any = None,
 ) -> Any:
+    handler = _coerce_handler(handler, api_name="WithHandler", role="handler")
     vm = _vm()
     return vm.WithHandler(handler, expr, return_clause)
 
@@ -347,8 +371,7 @@ def WithIntercept(
     types: Any = None,
     mode: str = "include",
 ) -> Any:
-    if not callable(f):
-        raise TypeError("WithIntercept.f must be callable")
+    f = _coerce_handler(f, api_name="WithIntercept", role="interceptor")
     if mode not in {"include", "exclude"}:
         raise TypeError(f"WithIntercept.mode must be 'include' or 'exclude', got {mode!r}")
 
@@ -356,8 +379,11 @@ def WithIntercept(
     metadata = _with_intercept_metadata(f)
 
     if normalized_types is not None:
+        from doeff.do import do
+
         original_f = f
 
+        @do
         def filtered(effect: Any) -> Any:
             matches = isinstance(effect, normalized_types)
             should_call = (mode == "include" and matches) or (mode == "exclude" and not matches)

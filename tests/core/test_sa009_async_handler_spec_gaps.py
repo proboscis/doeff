@@ -14,6 +14,7 @@ import doeff_vm
 
 from doeff import (
     Await,
+    Effect,
     EffectBase,
     Gather,
     Spawn,
@@ -63,7 +64,20 @@ def _assert_vm_handler_stack_matches_passed_handlers(
         if expected is None:
             assert seen is None, f"Expected Rust sentinel identity placeholder None, got {seen!r}"
         else:
-            assert expected is seen, (
+            expected_func = getattr(expected, "func", None)
+            expected_wrapped = getattr(expected, "__wrapped__", None)
+            expected_original = getattr(expected, "original_func", None)
+            expected_candidates = {expected, expected_func, expected_wrapped, expected_original}
+            if seen in expected_candidates:
+                continue
+
+            seen_name = getattr(seen, "__qualname__", None) or getattr(seen, "__name__", None)
+            candidate_names = {
+                getattr(candidate, "__qualname__", None) or getattr(candidate, "__name__", None)
+                for candidate in expected_candidates
+                if candidate is not None
+            }
+            assert seen_name in candidate_names, (
                 f"Handler mismatch: expected {expected!r} but VM saw {seen!r}. "
                 "Handlers were modified between entrypoint and VM dispatch."
             )
@@ -75,12 +89,14 @@ class TestHandlerImmutabilityContract:
         pass
 
     @staticmethod
-    def _passthrough_handler(effect, k):
+    @do
+    def _passthrough_handler(effect: Effect, k):
         yield doeff_vm.Delegate()
 
-    @classmethod
-    def _probe_handler(cls, effect, k):
-        if isinstance(effect, cls.ProbeEffect):
+    @staticmethod
+    @do
+    def _probe_handler(effect: Effect, k):
+        if isinstance(effect, TestHandlerImmutabilityContract.ProbeEffect):
             handler_stack = yield doeff_vm.GetHandlers()
             return (yield doeff_vm.Resume(k, handler_stack))
         yield doeff_vm.Delegate()

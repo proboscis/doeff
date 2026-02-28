@@ -15,6 +15,7 @@ import pytest
 from doeff import (
     Ask,
     Delegate,
+    Effect,
     Get,
     K,
     Pass,
@@ -23,6 +24,7 @@ from doeff import (
     Transfer,
     WithHandler,
     default_handlers,
+    do,
     run,
 )
 
@@ -59,7 +61,8 @@ def test_run_rejects_non_dict_store_for_valid_program() -> None:
 
 
 def test_withhandler_expr_requires_rust_runtime_bases() -> None:
-    def handler(_effect, _k):
+    @do
+    def handler(_effect: Effect, _k):
         yield Delegate()
 
     with pytest.raises(TypeError, match=r"DoExpr"):
@@ -67,7 +70,8 @@ def test_withhandler_expr_requires_rust_runtime_bases() -> None:
 
 
 def test_withhandler_accepts_rust_effect_expr() -> None:
-    def handler(_effect, _k):
+    @do
+    def handler(_effect: Effect, _k):
         yield Delegate()
 
     ctrl = WithHandler(handler, Perform(Ask("key")))
@@ -84,7 +88,8 @@ def test_resume_transfer_require_real_k() -> None:
 def test_python_handler_receives_k_for_resume() -> None:
     seen: dict[str, bool] = {"is_k": False}
 
-    def handler(_effect, k):
+    @do
+    def handler(_effect: Effect, k):
         seen["is_k"] = isinstance(k, K)
         return (yield Resume(k, "override"))
 
@@ -101,7 +106,8 @@ def test_python_handler_receives_k_for_resume() -> None:
 def test_python_handler_transfer_and_delegate_with_k() -> None:
     transfer_seen: dict[str, bool] = {"is_k": False}
 
-    def transfer_handler(_effect, k):
+    @do
+    def transfer_handler(_effect: Effect, k):
         transfer_seen["is_k"] = isinstance(k, K)
         yield Transfer(k, "via-transfer")
 
@@ -113,7 +119,8 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
 
     delegate_seen: dict[str, bool] = {"is_k": False}
 
-    def delegate_handler(_effect, k):
+    @do
+    def delegate_handler(_effect: Effect, k):
         delegate_seen["is_k"] = isinstance(k, K)
         yield Pass()
 
