@@ -28,6 +28,8 @@ impl PyShared {
         match Arc::try_unwrap(self.0) {
             Ok(py) => py,
             Err(arc) => {
+                // SAFETY: into_inner is only used while executing VM/Python-initiated paths where
+                // the thread is already attached to the Python runtime.
                 let py = unsafe { Python::assume_attached() };
                 arc.clone_ref(py)
             }
