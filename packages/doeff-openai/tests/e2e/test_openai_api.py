@@ -25,8 +25,9 @@ from pydantic import BaseModel, Field
 
 from doeff import (
     AskEffect,
-    Delegate,
+    Effect,
     EffectGenerator,
+    Pass,
     Resume,
     WithHandler,
     async_run,
@@ -117,12 +118,13 @@ def _make_mock_client(mock_create: AsyncMock) -> Mock:
 def _make_mock_handler(mock_client: Mock):
     """Handler that satisfies Reader asks for OpenAI dependencies."""
 
-    def mock_handler(effect: Any, k: Any):
+    @do
+    def mock_handler(effect: Effect, k: Any):
         if isinstance(effect, AskEffect) and effect.key == "openai_client":
             return (yield Resume(k, mock_client))
         if isinstance(effect, AskEffect) and effect.key == "openai_api_key":
             return (yield Resume(k, "sk-fake-test-key"))
-        yield Delegate()
+        yield Pass()
 
     return mock_handler
 
