@@ -273,7 +273,7 @@ class TestConductorWorkflowWithMockAgentic:
         from doeff_conductor.handlers import run_sync
         from doeff_conductor.handlers.agent_handler import AgentHandler
 
-        from doeff import do
+        from doeff import Effect, Pass, do
 
         @do
         def agent_workflow():
@@ -317,15 +317,27 @@ class TestConductorWorkflowWithMockAgentic:
         agent_handler = AgentHandler(workflow_id="test")
         agent_handler._opencode_handler = create_mock_agentic_handler()
 
-        handlers = {
-            CreateIssue: make_scheduled_handler(issue_handler.handle_create_issue),
-            ResolveIssue: make_scheduled_handler(issue_handler.handle_resolve_issue),
-            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-            RunAgent: make_scheduled_handler(agent_handler.handle_run_agent),
-        }
+        create_issue_handler = make_scheduled_handler(issue_handler.handle_create_issue)
+        resolve_issue_handler = make_scheduled_handler(issue_handler.handle_resolve_issue)
+        create_worktree_handler = make_scheduled_handler(worktree_handler.handle_create_worktree)
+        delete_worktree_handler = make_scheduled_handler(worktree_handler.handle_delete_worktree)
+        run_agent_handler = make_scheduled_handler(agent_handler.handle_run_agent)
 
-        result = run_sync(agent_workflow(), scheduled_handlers=handlers)
+        @do
+        def workflow_handler(effect: Effect, k):
+            if isinstance(effect, CreateIssue):
+                return (yield create_issue_handler(effect, k))
+            if isinstance(effect, ResolveIssue):
+                return (yield resolve_issue_handler(effect, k))
+            if isinstance(effect, CreateWorktree):
+                return (yield create_worktree_handler(effect, k))
+            if isinstance(effect, DeleteWorktree):
+                return (yield delete_worktree_handler(effect, k))
+            if isinstance(effect, RunAgent):
+                return (yield run_agent_handler(effect, k))
+            yield Pass()
+
+        result = run_sync(agent_workflow(), scheduled_handlers=workflow_handler)
 
         assert result.is_ok
         workflow_result = result.value
@@ -348,7 +360,7 @@ class TestConductorWorkflowWithMockAgentic:
         from doeff_conductor.handlers import run_sync
         from doeff_conductor.handlers.agent_handler import AgentHandler
 
-        from doeff import do
+        from doeff import Effect, Pass, do
 
         @do
         def sequential_agents():
@@ -382,13 +394,21 @@ class TestConductorWorkflowWithMockAgentic:
         agent_handler = AgentHandler(workflow_id="chain-test")
         agent_handler._opencode_handler = create_mock_agentic_handler()
 
-        handlers = {
-            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-            RunAgent: make_scheduled_handler(agent_handler.handle_run_agent),
-        }
+        create_worktree_handler = make_scheduled_handler(worktree_handler.handle_create_worktree)
+        delete_worktree_handler = make_scheduled_handler(worktree_handler.handle_delete_worktree)
+        run_agent_handler = make_scheduled_handler(agent_handler.handle_run_agent)
 
-        result = run_sync(sequential_agents(), scheduled_handlers=handlers)
+        @do
+        def workflow_handler(effect: Effect, k):
+            if isinstance(effect, CreateWorktree):
+                return (yield create_worktree_handler(effect, k))
+            if isinstance(effect, DeleteWorktree):
+                return (yield delete_worktree_handler(effect, k))
+            if isinstance(effect, RunAgent):
+                return (yield run_agent_handler(effect, k))
+            yield Pass()
+
+        result = run_sync(sequential_agents(), scheduled_handlers=workflow_handler)
 
         assert result.is_ok
         outputs = result.value
@@ -415,7 +435,7 @@ class TestConductorWorkflowWithMockAgentic:
         from doeff_conductor.handlers import run_sync
         from doeff_conductor.handlers.agent_handler import AgentHandler
 
-        from doeff import do
+        from doeff import Effect, Pass, do
 
         @do
         def parallel_agents():
@@ -458,14 +478,24 @@ class TestConductorWorkflowWithMockAgentic:
         agent_handler = AgentHandler(workflow_id="parallel-test")
         agent_handler._opencode_handler = create_mock_agentic_handler()
 
-        handlers = {
-            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-            SpawnAgent: make_scheduled_handler(agent_handler.handle_spawn_agent),
-            CaptureOutput: make_scheduled_handler(agent_handler.handle_capture_output),
-        }
+        create_worktree_handler = make_scheduled_handler(worktree_handler.handle_create_worktree)
+        delete_worktree_handler = make_scheduled_handler(worktree_handler.handle_delete_worktree)
+        spawn_agent_handler = make_scheduled_handler(agent_handler.handle_spawn_agent)
+        capture_output_handler = make_scheduled_handler(agent_handler.handle_capture_output)
 
-        result = run_sync(parallel_agents(), scheduled_handlers=handlers)
+        @do
+        def workflow_handler(effect: Effect, k):
+            if isinstance(effect, CreateWorktree):
+                return (yield create_worktree_handler(effect, k))
+            if isinstance(effect, DeleteWorktree):
+                return (yield delete_worktree_handler(effect, k))
+            if isinstance(effect, SpawnAgent):
+                return (yield spawn_agent_handler(effect, k))
+            if isinstance(effect, CaptureOutput):
+                return (yield capture_output_handler(effect, k))
+            yield Pass()
+
+        result = run_sync(parallel_agents(), scheduled_handlers=workflow_handler)
 
         assert result.is_ok
         outputs = result.value
@@ -640,7 +670,7 @@ class TestRealAgentE2E:
         from doeff_conductor.effects.agent import RunAgent
         from doeff_conductor.handlers import run_sync
 
-        from doeff import do
+        from doeff import Effect, Pass, do
 
         @do
         def file_creation_workflow():
@@ -667,13 +697,21 @@ class TestRealAgentE2E:
         worktree_handler = WorktreeHandler(repo_path=test_repo)
         worktree_handler.worktree_base = worktree_base
 
-        handlers = {
-            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-            RunAgent: make_scheduled_handler(real_agent_handler.handle_run_agent),
-        }
+        create_worktree_handler = make_scheduled_handler(worktree_handler.handle_create_worktree)
+        delete_worktree_handler = make_scheduled_handler(worktree_handler.handle_delete_worktree)
+        run_agent_handler = make_scheduled_handler(real_agent_handler.handle_run_agent)
 
-        result = run_sync(file_creation_workflow(), scheduled_handlers=handlers)
+        @do
+        def workflow_handler(effect: Effect, k):
+            if isinstance(effect, CreateWorktree):
+                return (yield create_worktree_handler(effect, k))
+            if isinstance(effect, DeleteWorktree):
+                return (yield delete_worktree_handler(effect, k))
+            if isinstance(effect, RunAgent):
+                return (yield run_agent_handler(effect, k))
+            yield Pass()
+
+        result = run_sync(file_creation_workflow(), scheduled_handlers=workflow_handler)
 
         if result.is_err:
             pytest.fail(f"Workflow failed: {result.result.error}")
@@ -693,7 +731,7 @@ class TestRealAgentE2E:
         from doeff_conductor.effects.agent import CaptureOutput, SpawnAgent, WaitForStatus
         from doeff_conductor.handlers import run_sync
 
-        from doeff import do
+        from doeff import Effect, Pass, do
 
         @do
         def spawn_capture_workflow():
@@ -723,15 +761,27 @@ class TestRealAgentE2E:
         worktree_handler = WorktreeHandler(repo_path=test_repo)
         worktree_handler.worktree_base = worktree_base
 
-        handlers = {
-            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-            SpawnAgent: make_scheduled_handler(real_agent_handler.handle_spawn_agent),
-            WaitForStatus: make_scheduled_handler(real_agent_handler.handle_wait_for_status),
-            CaptureOutput: make_scheduled_handler(real_agent_handler.handle_capture_output),
-        }
+        create_worktree_handler = make_scheduled_handler(worktree_handler.handle_create_worktree)
+        delete_worktree_handler = make_scheduled_handler(worktree_handler.handle_delete_worktree)
+        spawn_agent_handler = make_scheduled_handler(real_agent_handler.handle_spawn_agent)
+        wait_status_handler = make_scheduled_handler(real_agent_handler.handle_wait_for_status)
+        capture_output_handler = make_scheduled_handler(real_agent_handler.handle_capture_output)
 
-        result = run_sync(spawn_capture_workflow(), scheduled_handlers=handlers)
+        @do
+        def workflow_handler(effect: Effect, k):
+            if isinstance(effect, CreateWorktree):
+                return (yield create_worktree_handler(effect, k))
+            if isinstance(effect, DeleteWorktree):
+                return (yield delete_worktree_handler(effect, k))
+            if isinstance(effect, SpawnAgent):
+                return (yield spawn_agent_handler(effect, k))
+            if isinstance(effect, WaitForStatus):
+                return (yield wait_status_handler(effect, k))
+            if isinstance(effect, CaptureOutput):
+                return (yield capture_output_handler(effect, k))
+            yield Pass()
+
+        result = run_sync(spawn_capture_workflow(), scheduled_handlers=workflow_handler)
 
         if result.is_err:
             pytest.fail(f"Workflow failed: {result.result.error}")

@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import inspect
 import os
 import re
 import shutil
@@ -34,7 +35,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Delegate, Resume
+from doeff import Effect, Pass, Resume, do
+from doeff.do import make_doeff_generator
 
 from ..effects import (
     AgenticAbortSession,
@@ -911,13 +913,31 @@ class TmuxHandler:
 # Handler Factory
 # =============================================================================
 
+
+def _is_lazy_program_value(value: object) -> bool:
+    return bool(getattr(value, "__doeff_do_expr_base__", False) or getattr(
+        value, "__doeff_effect_base__", False
+    ))
+
+
 def _as_protocol_handler(
     handler_fn: Callable[[Any], Any],
 ) -> Callable[[Any, Any], Any]:
     """Adapt an effect -> value handler into (effect, k) protocol."""
 
-    def _wrapped(effect: Any, k):
-        return (yield Resume(k, handler_fn(effect)))
+    @do
+    def _wrapped(effect: Effect, k: Any):
+        result = handler_fn(effect)
+
+        if inspect.isgenerator(result):
+            resolved = yield make_doeff_generator(result)
+            return (yield Resume(k, resolved))
+
+        if _is_lazy_program_value(result):
+            resolved = yield result
+            return (yield Resume(k, resolved))
+
+        return (yield Resume(k, result))
 
     return _wrapped
 
@@ -960,11 +980,12 @@ def tmux_handler(working_dir: str | None = None) -> Callable[[Any, Any], Any]:
         (AgenticSupportsCapability, _as_protocol_handler(handler.handle_supports_capability)),
     )
 
-    def protocol_handler(effect: Any, k: Any):
+    @do
+    def protocol_handler(effect: Effect, k: Any):
         for effect_type, effect_handler in effect_handlers:
             if isinstance(effect, effect_type):
-                return (yield from effect_handler(effect, k))
-        yield Delegate()
+                return (yield effect_handler(effect, k))
+        yield Pass()
 
     return protocol_handler
 

@@ -126,7 +126,7 @@ class ConductorAPI:
             self._save_workflow(handle)
 
             # Execute the workflow
-            from doeff import Delegate, default_handlers, run
+            from doeff import Effect, Pass, default_handlers, do, run
 
             # Build kwargs
             kwargs = params or {}
@@ -188,11 +188,12 @@ class ConductorAPI:
                 (MergePR, make_scheduled_handler(git_handler.handle_merge_pr)),
             )
 
-            def conductor_handler(effect: Any, k: Any):
+            @do
+            def conductor_handler(effect: Effect, k: Any):
                 for effect_type, effect_handler in handlers:
                     if isinstance(effect, effect_type):
-                        return (yield from effect_handler(effect, k))
-                yield Delegate()
+                        return (yield effect_handler(effect, k))
+                yield Pass()
 
             result = run(
                 program,
