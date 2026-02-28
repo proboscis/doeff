@@ -19,7 +19,7 @@ from doeff_llm.effects import (
 )
 from PIL import Image
 
-from doeff import Await, Delegate, EffectGenerator, Pass, Resume, Try
+from doeff import Await, EffectGenerator, Pass, Resume, Try
 from doeff.do import do
 from doeff.effects.base import Effect, EffectBase
 from doeff_gemini.client import get_gemini_client, track_api_call
@@ -329,26 +329,26 @@ def gemini_image_handler(effect: Effect, k: Any):
     """Protocol handler with model routing for unified image effects."""
     if isinstance(effect, GeminiImageEdit):
         if not _is_gemini_image_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         value = yield _image_edit_impl(effect)
         return (yield Resume(k, value))
 
     if isinstance(effect, ImageGenerate):
         if not _is_gemini_image_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         value = yield _image_generate_impl(effect)
         return (yield Resume(k, value))
 
     if isinstance(effect, ImageEdit):
         if not _is_gemini_image_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         value = yield _image_edit_impl(effect)
         return (yield Resume(k, value))
 
-    yield Delegate()
+    yield Pass()
 
 
 @do
@@ -358,10 +358,10 @@ def default_gemini_cost_handler(effect: Effect, k: Any):
         estimate = calculate_known_model_cost(effect.call_result)
         if estimate is not None:
             return (yield Resume(k, estimate))
-        yield Delegate()
+        yield Pass()
         return
     if isinstance(effect, EffectBase):
-        yield Delegate()
+        yield Pass()
         return
     yield Pass()
 
@@ -394,18 +394,18 @@ def production_handlers(
     def handler(effect: Effect, k: Any):
         if isinstance(effect, GeminiCalculateCost):
             if active_cost_handler is None:
-                yield Delegate()
+                yield Pass()
                 return
             return (yield active_cost_handler(effect, k))
         if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
             if not _is_gemini_model(effect.model):
-                yield Delegate()
+                yield Pass()
                 return
             value = yield active_streaming_chat_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, LLMChat | GeminiChat):
             if not _is_gemini_model(effect.model):
-                yield Delegate()
+                yield Pass()
                 return
             if effect.stream:
                 value = yield active_streaming_chat_impl(effect)
@@ -414,29 +414,29 @@ def production_handlers(
             return (yield Resume(k, value))
         if isinstance(effect, LLMStructuredQuery | GeminiStructuredOutput):
             if not _is_gemini_model(effect.model):
-                yield Delegate()
+                yield Pass()
                 return
             value = yield active_structured_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, LLMEmbedding | GeminiEmbedding):
             if not _is_gemini_model(effect.model):
-                yield Delegate()
+                yield Pass()
                 return
             value = yield active_embedding_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageGenerate):
             if not _is_gemini_image_model(effect.model):
-                yield Delegate()
+                yield Pass()
                 return
             value = yield active_image_generate_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageEdit | GeminiImageEdit):
             if not _is_gemini_image_model(effect.model):
-                yield Delegate()
+                yield Pass()
                 return
             value = yield active_image_edit_impl(effect)
             return (yield Resume(k, value))
-        yield Delegate()
+        yield Pass()
 
     return handler
 
@@ -465,7 +465,7 @@ def gemini_production_handler(effect: Effect, k: Any):
     elif isinstance(effect, LLMEmbedding | GeminiEmbedding) and _is_gemini_model(effect.model):
         value = yield _embedding_impl(effect)
         return (yield Resume(k, value))
-    yield Delegate()
+    yield Pass()
 
 
 __all__ = [
