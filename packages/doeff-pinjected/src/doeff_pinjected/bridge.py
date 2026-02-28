@@ -12,7 +12,7 @@ from typing import TypeVar, cast
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff import Effect, Program, RunResult, WithHandler, async_run, default_async_handlers
+from doeff import Effect, Program, RunResult, WithHandler, async_run, default_async_handlers, do
 from doeff.effects import AskEffect, GraphAnnotateEffect, GraphStepEffect, Intercept, Pure
 from doeff_pinjected.effects import PinjectedResolve
 from doeff_pinjected.handlers import production_handlers
@@ -94,8 +94,9 @@ def program_to_injected(prog: Program[T]) -> Injected[T]:
             original_build_local_handler = reader_effects._build_local_handler
 
             def _bridge_build_local_handler(_overlay: dict):
-                def handle_local_ask(_effect, _k):
-                    yield doeff_vm.Delegate()
+                @do
+                def handle_local_ask(effect: Effect, _k):
+                    return (yield doeff_vm.Delegate())
 
                 return handle_local_ask
 
@@ -172,8 +173,9 @@ def program_to_injected_result(prog: Program[T]) -> Injected[RunResult[T]]:
             original_build_local_handler = reader_effects._build_local_handler
 
             def _bridge_build_local_handler(_overlay: dict):
-                def handle_local_ask(_effect, _k):
-                    yield doeff_vm.Delegate()
+                @do
+                def handle_local_ask(effect: Effect, _k):
+                    return (yield doeff_vm.Delegate())
 
                 return handle_local_ask
 

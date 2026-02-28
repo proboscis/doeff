@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import Delegate, Resume
+from doeff import Effect, Pass, Resume, do
 from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
 from doeff_git.types import PRHandle
 
@@ -93,7 +93,8 @@ def mock_handlers(
 
     active_runtime = runtime or MockGitRuntime()
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, GitCommit):
             return (yield Resume(k, active_runtime.handle_commit(effect)))
         if isinstance(effect, GitDiff):
@@ -109,7 +110,7 @@ def mock_handlers(
         if isinstance(effect, MergePR):
             active_runtime.handle_merge_pr(effect)
             return (yield Resume(k, None))
-        yield Delegate()
+        return (yield Pass())
 
     return handler
 

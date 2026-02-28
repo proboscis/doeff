@@ -6,7 +6,7 @@ from collections.abc import Generator
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import Ask, AskEffect, Delegate, Resume, WithHandler, default_handlers, do, run
+from doeff import Ask, AskEffect, Effect, Pass, Resume, WithHandler, default_handlers, do, run
 
 _EFFECT_FAILURE_TYPE_NAMES = {"EffectFailure", "EffectFailureError"}
 
@@ -37,7 +37,8 @@ class MockPinjectedGraph:
 def _mock_pinjected_handler(graph: MockPinjectedGraph):
     """Return a WithHandler-compatible function for bridge Ask effects."""
 
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, AskEffect):
             if effect.key == "pinjected_graph":
                 return (yield Resume(k, graph))
@@ -46,7 +47,7 @@ def _mock_pinjected_handler(graph: MockPinjectedGraph):
                 binding_name = effect.key.split(":", 1)[1]
                 return (yield Resume(k, graph.resolve(binding_name)))
 
-        yield Delegate()
+        return (yield Pass())
 
     return handler
 

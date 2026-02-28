@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from doeff import Delegate, Resume
+from doeff import Effect, Pass, Resume, do
 from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -98,7 +98,8 @@ def mock_handlers(
 
     active_recorder = recorder or MockTraceRecorder()
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, TracePush):
             active_recorder.push(effect)
             return (yield Resume(k, None))
@@ -111,7 +112,7 @@ def mock_handlers(
         if isinstance(effect, TraceCapture):
             captured = active_recorder.capture(effect.format)
             return (yield Resume(k, captured))
-        yield Delegate()
+        return (yield Pass())
 
     return handler
 
