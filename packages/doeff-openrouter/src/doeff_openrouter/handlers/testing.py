@@ -14,7 +14,8 @@ from doeff_llm.effects import (
     LLMStructuredQuery,
 )
 
-from doeff import Pass, Resume
+from doeff import Pass, Resume, do
+from doeff.effects.base import Effect
 from doeff_openrouter.effects import (
     RouterChat,
     RouterStreamingChat,
@@ -84,14 +85,16 @@ def mock_handlers(
 
     active_runtime = runtime or MockOpenRouterRuntime()
 
-    def handler(effect: Any, k: Any):
-        return (yield from openrouter_mock_handler(effect, k, runtime=active_runtime))
+    @do
+    def handler(effect: Effect, k: Any):
+        return (yield openrouter_mock_handler(effect, k, runtime=active_runtime))
 
     return handler
 
 
+@do
 def openrouter_mock_handler(
-    effect: Any,
+    effect: Effect,
     k: Any,
     *,
     runtime: MockOpenRouterRuntime | None = None,

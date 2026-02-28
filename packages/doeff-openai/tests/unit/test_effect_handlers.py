@@ -41,6 +41,7 @@ from doeff import (
     default_handlers,
     do,
 )
+from doeff.effects.base import Effect
 
 
 class StructuredAnswer(BaseModel):
@@ -187,9 +188,10 @@ async def test_openai_handler_delegates_unsupported_models() -> None:
     config = MockOpenAIConfig(chat_responses=["openai-response"])
     state = MockOpenAIState()
 
-    def wrapped_openai_handler(effect: Any, k: Any):
+    @do
+    def wrapped_openai_handler(effect: Effect, k: Any):
         return (
-            yield from openai_mock_handler(
+            yield openai_mock_handler(
                 effect,
                 k,
                 config=config,
@@ -197,7 +199,8 @@ async def test_openai_handler_delegates_unsupported_models() -> None:
             )
         )
 
-    def fallback_handler(effect: Any, k: Any):
+    @do
+    def fallback_handler(effect: Effect, k: Any):
         if isinstance(effect, LLMChat):
             return (yield Resume(k, "fallback-response"))
         yield Delegate()

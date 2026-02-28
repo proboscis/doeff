@@ -12,7 +12,8 @@ from doeff_llm.effects import (
     LLMStructuredQuery,
 )
 
-from doeff import Delegate, Resume
+from doeff import Delegate, Resume, do
+from doeff.effects.base import Effect
 from doeff_openai.chat import chat_completion
 from doeff_openai.effects import (
     ChatCompletion,
@@ -37,6 +38,7 @@ def _is_openai_model(model: str) -> bool:
     return any(model.startswith(prefix) for prefix in OPENAI_MODEL_PREFIXES)
 
 
+@do
 def _handle_chat_completion(effect: LLMChat, k):
     response = yield chat_completion(
         messages=effect.messages,
@@ -49,6 +51,7 @@ def _handle_chat_completion(effect: LLMChat, k):
     return (yield Resume(k, response))
 
 
+@do
 def _handle_streaming_chat_completion(effect: LLMStreamingChat | LLMChat, k):
     response = yield chat_completion(
         messages=effect.messages,
@@ -61,6 +64,7 @@ def _handle_streaming_chat_completion(effect: LLMStreamingChat | LLMChat, k):
     return (yield Resume(k, response))
 
 
+@do
 def _handle_embedding(effect: LLMEmbedding, k):
     response = yield create_embedding(
         input=effect.input,
@@ -69,6 +73,7 @@ def _handle_embedding(effect: LLMEmbedding, k):
     return (yield Resume(k, response))
 
 
+@do
 def _handle_structured_output(effect: LLMStructuredQuery, k):
     api_params = yield build_api_parameters(
         model=effect.model,
@@ -89,22 +94,23 @@ def _handle_structured_output(effect: LLMStructuredQuery, k):
     return (yield Resume(k, parsed))
 
 
-def openai_production_handler(effect: Any, k: Any):
+@do
+def openai_production_handler(effect: Effect, k: Any):
     """Single protocol handler suitable for ``WithHandler`` usage."""
     if isinstance(effect, LLMStreamingChat | StreamingChatCompletion):
         if _is_openai_model(effect.model):
-            return (yield from _handle_streaming_chat_completion(effect, k))
+            return (yield _handle_streaming_chat_completion(effect, k))
     elif isinstance(effect, LLMChat | ChatCompletion):
         if _is_openai_model(effect.model):
             if effect.stream:
-                return (yield from _handle_streaming_chat_completion(effect, k))
-            return (yield from _handle_chat_completion(effect, k))
+                return (yield _handle_streaming_chat_completion(effect, k))
+            return (yield _handle_chat_completion(effect, k))
     elif isinstance(effect, LLMEmbedding | Embedding) and _is_openai_model(effect.model):
-        return (yield from _handle_embedding(effect, k))
+        return (yield _handle_embedding(effect, k))
     elif isinstance(effect, LLMStructuredQuery | StructuredOutput) and _is_openai_model(
         effect.model
     ):
-        return (yield from _handle_structured_output(effect, k))
+        return (yield _handle_structured_output(effect, k))
     yield Delegate()
 
 
