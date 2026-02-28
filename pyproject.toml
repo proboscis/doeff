@@ -84,6 +84,7 @@ markers = [
     "cli: tests for CLI functionality",
     "semgrep: tests that invoke semgrep subprocess",
     "stress: stress tests with high concurrency or iteration count",
+    "pre_kleisli_behavior: characterization tests for pre-Kleisli handler behavior",
 ]
 
 [tool.ruff]

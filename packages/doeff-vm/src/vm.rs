@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::arena::SegmentArena;
-use crate::ast_stream::{ASTStream, ASTStreamRef, ASTStreamStep, PythonGeneratorStream};
+use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, EffectCreationSite, HandlerAction, HandlerKind,
     HandlerSnapshotEntry, TraceEntry,
@@ -17,7 +17,7 @@ use crate::capture::{
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
 use crate::dispatch_state::DispatchState;
-use crate::do_ctrl::{CallArg, DoCtrl};
+use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
@@ -47,16 +47,16 @@ static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug)]
 struct RustProgramStream {
-    program: crate::handler::ASTStreamProgramRef,
+    program: crate::handler::IRStreamProgramRef,
 }
 
-impl ASTStream for RustProgramStream {
+impl IRStream for RustProgramStream {
     fn resume(
         &mut self,
         value: Value,
         store: &mut RustStore,
         scope: &mut ScopeStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         Python::attach(|_py| {
             let mut guard = self.program.lock().expect("Rust program lock poisoned");
             guard.resume(value, store, scope)
@@ -68,7 +68,7 @@ impl ASTStream for RustProgramStream {
         exc: PyException,
         store: &mut RustStore,
         scope: &mut ScopeStore,
-    ) -> ASTStreamStep {
+    ) -> IRStreamStep {
         Python::attach(|_py| {
             let mut guard = self.program.lock().expect("Rust program lock poisoned");
             guard.throw(exc, store, scope)
@@ -76,9 +76,9 @@ impl ASTStream for RustProgramStream {
     }
 }
 
-fn rust_program_as_stream(program: crate::handler::ASTStreamProgramRef) -> ASTStreamRef {
+fn rust_program_as_stream(program: crate::handler::IRStreamProgramRef) -> IRStreamRef {
     Arc::new(std::sync::Mutex::new(
-        Box::new(RustProgramStream { program }) as Box<dyn ASTStream>,
+        Box::new(RustProgramStream { program }) as Box<dyn IRStream>,
     ))
 }
 
@@ -604,21 +604,12 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn eval_then_reenter_call(
-        &mut self,
-        expr: PyShared,
-        continuation: EvalReturnContinuation,
-    ) -> StepEvent {
-        let handlers = self.current_visible_handlers();
+    fn eval_then_reenter_call(&mut self, expr: DoCtrl, continuation: EvalReturnContinuation) -> StepEvent {
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal("Call evaluation outside current segment"));
         };
         seg.push_frame(Frame::EvalReturn(Box::new(continuation)));
-        seg.mode = Mode::HandleYield(DoCtrl::Eval {
-            expr,
-            handlers,
-            metadata: None,
-        });
+        seg.mode = Mode::HandleYield(expr);
         StepEvent::Continue
     }
 
@@ -682,7 +673,7 @@ impl VM {
         value: Py<PyAny>,
         inherited_metadata: Option<CallMetadata>,
         context: &str,
-    ) -> Result<(ASTStreamRef, Option<CallMetadata>), PyException> {
+    ) -> Result<(IRStreamRef, Option<CallMetadata>), PyException> {
         Python::attach(|py| {
             let bound = value.bind(py);
             let wrapped: PyRef<'_, DoeffGenerator> = bound.extract().map_err(|_| {
@@ -703,7 +694,7 @@ impl VM {
             let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
                 PyShared::new(wrapped.generator.clone_ref(py)),
                 PyShared::new(wrapped.get_frame.clone_ref(py)),
-            )) as Box<dyn ASTStream>));
+            )) as Box<dyn IRStream>));
             Ok((
                 stream,
                 Self::merged_metadata_from_doeff(
@@ -830,7 +821,7 @@ impl VM {
     fn dispatch_uses_user_continuation_stream(
         &self,
         dispatch_id: DispatchId,
-        stream: &ASTStreamRef,
+        stream: &IRStreamRef,
     ) -> bool {
         self.dispatch_state
             .find_by_dispatch_id(dispatch_id)
@@ -923,8 +914,8 @@ impl VM {
         }
     }
 
-    fn stream_debug_location(stream: &ASTStreamRef) -> Option<crate::ast_stream::StreamLocation> {
-        let guard = stream.lock().expect("ASTStream lock poisoned");
+    fn stream_debug_location(stream: &IRStreamRef) -> Option<crate::ir_stream::StreamLocation> {
+        let guard = stream.lock().expect("IRStream lock poisoned");
         guard.debug_location()
     }
 
@@ -1167,7 +1158,7 @@ impl VM {
                         return StepEvent::Error(VMError::invalid_segment("segment not found"));
                     };
                     let scope = &mut seg.scope_store;
-                    let mut guard = stream.lock().expect("ASTStream lock poisoned");
+                    let mut guard = stream.lock().expect("IRStream lock poisoned");
                     match mode {
                         Mode::Deliver(value) => guard.resume(value, &mut self.rust_store, scope),
                         Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store, scope),
@@ -1352,7 +1343,7 @@ impl VM {
                 metadata,
                 evaluate_result,
             } => Mode::HandleYield(DoCtrl::Apply {
-                f: CallArg::Value(value),
+                f: Box::new(DoCtrl::Pure { value }),
                 args,
                 kwargs,
                 metadata,
@@ -1371,9 +1362,9 @@ impl VM {
                         "apply continuation arg index out of bounds",
                     ));
                 };
-                *slot = CallArg::Value(value);
+                *slot = DoCtrl::Pure { value };
                 Mode::HandleYield(DoCtrl::Apply {
-                    f,
+                    f: Box::new(f),
                     args,
                     kwargs,
                     metadata,
@@ -1393,9 +1384,9 @@ impl VM {
                         "apply continuation kwarg index out of bounds",
                     ));
                 };
-                *slot = CallArg::Value(value);
+                *slot = DoCtrl::Pure { value };
                 Mode::HandleYield(DoCtrl::Apply {
-                    f,
+                    f: Box::new(f),
                     args,
                     kwargs,
                     metadata,
@@ -1407,7 +1398,7 @@ impl VM {
                 kwargs,
                 metadata,
             } => Mode::HandleYield(DoCtrl::Expand {
-                factory: CallArg::Value(value),
+                factory: Box::new(DoCtrl::Pure { value }),
                 args,
                 kwargs,
                 metadata,
@@ -1424,9 +1415,9 @@ impl VM {
                         "expand continuation arg index out of bounds",
                     ));
                 };
-                *slot = CallArg::Value(value);
+                *slot = DoCtrl::Pure { value };
                 Mode::HandleYield(DoCtrl::Expand {
-                    factory,
+                    factory: Box::new(factory),
                     args,
                     kwargs,
                     metadata,
@@ -1444,9 +1435,9 @@ impl VM {
                         "expand continuation kwarg index out of bounds",
                     ));
                 };
-                *slot = CallArg::Value(value);
+                *slot = DoCtrl::Pure { value };
                 Mode::HandleYield(DoCtrl::Expand {
-                    factory,
+                    factory: Box::new(factory),
                     args,
                     kwargs,
                     metadata,
@@ -1467,8 +1458,10 @@ impl VM {
         match mode {
             Mode::Deliver(value) => {
                 self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
-                    f: CallArg::Value(Value::Python(mapper.into_inner())),
-                    args: vec![CallArg::Value(value)],
+                    f: Box::new(DoCtrl::Pure {
+                        value: Value::Python(mapper.into_inner()),
+                    }),
+                    args: vec![DoCtrl::Pure { value }],
                     kwargs: vec![],
                     metadata: mapper_meta,
                     evaluate_result: false,
@@ -1512,8 +1505,10 @@ impl VM {
                 };
                 seg.push_frame(Frame::FlatMapBindResult);
                 seg.mode = Mode::HandleYield(DoCtrl::Expand {
-                    factory: CallArg::Value(Value::Python(binder.into_inner())),
-                    args: vec![CallArg::Value(value)],
+                    factory: Box::new(DoCtrl::Pure {
+                        value: Value::Python(binder.into_inner()),
+                    }),
+                    args: vec![DoCtrl::Pure { value }],
                     kwargs: vec![],
                     metadata: binder_meta,
                 });
@@ -1540,19 +1535,19 @@ impl VM {
 
     fn apply_stream_step(
         &mut self,
-        step: ASTStreamStep,
-        stream: ASTStreamRef,
+        step: IRStreamStep,
+        stream: IRStreamRef,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         match step {
-            ASTStreamStep::Yield(yielded) => self.handle_stream_yield(yielded, stream, metadata),
-            ASTStreamStep::Return(value) => {
+            IRStreamStep::Yield(yielded) => self.handle_stream_yield(yielded, stream, metadata),
+            IRStreamStep::Return(value) => {
                 if let Some(ref m) = metadata {
                     self.maybe_emit_frame_exited(m);
                 }
                 self.handle_handler_return(value)
             }
-            ASTStreamStep::Throw(exc) => {
+            IRStreamStep::Throw(exc) => {
                 if let Some(original) = self.active_error_dispatch_original_exception() {
                     TraceState::set_exception_cause(&exc, &original);
                 }
@@ -1571,7 +1566,7 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            ASTStreamStep::NeedsPython(call) => {
+            IRStreamStep::NeedsPython(call) => {
                 if matches!(
                     &call,
                     PythonCall::GenNext | PythonCall::GenSend { .. } | PythonCall::GenThrow { .. }
@@ -1614,7 +1609,7 @@ impl VM {
     fn handle_stream_yield(
         &mut self,
         yielded: DoCtrl,
-        stream: ASTStreamRef,
+        stream: IRStreamRef,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         let chain = Arc::new(self.current_interceptor_chain());
@@ -1626,7 +1621,7 @@ impl VM {
     fn finalize_stream_yield_mode(
         &mut self,
         yielded: DoCtrl,
-        stream: ASTStreamRef,
+        stream: IRStreamRef,
         metadata: Option<CallMetadata>,
     ) -> Mode {
         let is_terminal = matches!(
@@ -1697,7 +1692,7 @@ impl VM {
     fn continue_interceptor_chain_mode(
         &mut self,
         yielded: DoCtrl,
-        stream: ASTStreamRef,
+        stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         chain: Arc<Vec<Marker>>,
         start_idx: usize,
@@ -1756,7 +1751,7 @@ impl VM {
         entry: InterceptorEntry,
         yielded: DoCtrl,
         yielded_obj: Py<PyAny>,
-        stream: ASTStreamRef,
+        stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         chain: Arc<Vec<Marker>>,
         next_idx: usize,
@@ -1797,8 +1792,12 @@ impl VM {
         seg.push_frame(Frame::InterceptorApply(Box::new(continuation)));
 
         Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(interceptor_callable)),
-            args: vec![CallArg::Value(Value::Python(yielded_obj))],
+            f: Box::new(DoCtrl::Pure {
+                value: Value::Python(interceptor_callable),
+            }),
+            args: vec![DoCtrl::Pure {
+                value: Value::Python(yielded_obj),
+            }],
             kwargs: vec![],
             metadata: apply_metadata,
             evaluate_result: false,
@@ -2003,17 +2002,15 @@ impl VM {
                 kwargs,
                 metadata,
                 evaluate_result,
-            } => self.handle_yield_apply(f, args, kwargs, metadata, evaluate_result),
+            } => self.handle_yield_apply(*f, args, kwargs, metadata, evaluate_result),
             // PendingPython::ExpandReturn is set in handle_yield_expand.
             DoCtrl::Expand {
                 factory,
                 args,
                 kwargs,
                 metadata,
-            } => self.handle_yield_expand(factory, args, kwargs, metadata),
-            DoCtrl::ASTStream { stream, metadata } => {
-                self.handle_yield_ast_stream(stream, metadata)
-            }
+            } => self.handle_yield_expand(*factory, args, kwargs, metadata),
+            DoCtrl::IRStream { stream, metadata } => self.handle_yield_ir_stream(stream, metadata),
             DoCtrl::Eval {
                 expr,
                 handlers,
@@ -2154,16 +2151,15 @@ impl VM {
 
     fn handle_yield_apply(
         &mut self,
-        f: CallArg,
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
+        f: DoCtrl,
+        args: Vec<DoCtrl>,
+        kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
         evaluate_result: bool,
     ) -> StepEvent {
-        if let CallArg::Expr(expr) = &f {
-            let expr = expr.clone();
+        if !matches!(&f, DoCtrl::Pure { .. }) {
             return self.eval_then_reenter_call(
-                expr,
+                f,
                 EvalReturnContinuation::ApplyResolveFunction {
                     args,
                     kwargs,
@@ -2173,7 +2169,7 @@ impl VM {
             );
         }
 
-        if let Some((arg_idx, expr)) = Self::first_expr_arg(&args) {
+        if let Some((arg_idx, expr)) = Self::first_non_pure_arg(&args) {
             return self.eval_then_reenter_call(
                 expr,
                 EvalReturnContinuation::ApplyResolveArg {
@@ -2187,7 +2183,7 @@ impl VM {
             );
         }
 
-        if let Some((kwargs_idx, expr)) = Self::first_expr_kwarg(&kwargs) {
+        if let Some((kwargs_idx, expr)) = Self::first_non_pure_kwarg(&kwargs) {
             return self.eval_then_reenter_call(
                 expr,
                 EvalReturnContinuation::ApplyResolveKwarg {
@@ -2201,20 +2197,49 @@ impl VM {
             );
         }
 
-        let func = match f {
-            CallArg::Value(Value::Python(func)) => PyShared::new(func),
-            CallArg::Value(Value::PythonHandlerCallable(func)) => PyShared::new(func),
-            CallArg::Value(Value::RustProgramInvocation(invocation)) => {
+        let f_value = match f {
+            DoCtrl::Pure { value } => value,
+            other => {
+                self.current_seg_mut().mode = Mode::Throw(PyException::type_error(format!(
+                    "DoCtrl::Apply f must be a pure callable value, got {:?}",
+                    other
+                )));
+                return StepEvent::Continue;
+            }
+        };
+
+        let func = match f_value {
+            Value::Python(func) => PyShared::new(func),
+            Value::PythonHandlerCallable(func) => PyShared::new(func),
+            Value::RustProgramInvocation(invocation) => {
                 return self.invoke_rust_program(invocation);
             }
-            CallArg::Value(other) => {
+            Value::Kleisli(kleisli) => {
+                let args_values = Self::collect_value_args(args);
+                let kwargs_values = Self::collect_value_kwargs(kwargs);
+                if !kwargs_values.is_empty() {
+                    self.current_seg_mut().mode = Mode::Throw(PyException::type_error(
+                        "Kleisli apply does not support keyword arguments".to_string(),
+                    ));
+                    return StepEvent::Continue;
+                }
+
+                let result = Python::attach(|py| kleisli.apply(py, args_values));
+                return match result {
+                    Ok(doctrl) => {
+                        let _ = evaluate_result;
+                        self.evaluate(doctrl)
+                    }
+                    Err(vm_err) => StepEvent::Error(vm_err),
+                };
+            }
+            other => {
                 self.current_seg_mut().mode = Mode::Throw(PyException::type_error(format!(
                     "DoCtrl::Apply f must be Python callable value, got {:?}",
                     other
                 )));
                 return StepEvent::Continue;
             }
-            CallArg::Expr(_) => unreachable!(),
         };
 
         self.current_seg_mut().pending_python = Some(PendingPython::CallFuncReturn {
@@ -2230,15 +2255,14 @@ impl VM {
 
     fn handle_yield_expand(
         &mut self,
-        factory: CallArg,
-        args: Vec<CallArg>,
-        kwargs: Vec<(String, CallArg)>,
+        factory: DoCtrl,
+        args: Vec<DoCtrl>,
+        kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
     ) -> StepEvent {
-        if let CallArg::Expr(expr) = &factory {
-            let expr = expr.clone();
+        if !matches!(&factory, DoCtrl::Pure { .. }) {
             return self.eval_then_reenter_call(
-                expr,
+                factory,
                 EvalReturnContinuation::ExpandResolveFactory {
                     args,
                     kwargs,
@@ -2247,7 +2271,7 @@ impl VM {
             );
         }
 
-        if let Some((arg_idx, expr)) = Self::first_expr_arg(&args) {
+        if let Some((arg_idx, expr)) = Self::first_non_pure_arg(&args) {
             return self.eval_then_reenter_call(
                 expr,
                 EvalReturnContinuation::ExpandResolveArg {
@@ -2260,7 +2284,7 @@ impl VM {
             );
         }
 
-        if let Some((kwargs_idx, expr)) = Self::first_expr_kwarg(&kwargs) {
+        if let Some((kwargs_idx, expr)) = Self::first_non_pure_kwarg(&kwargs) {
             return self.eval_then_reenter_call(
                 expr,
                 EvalReturnContinuation::ExpandResolveKwarg {
@@ -2273,20 +2297,46 @@ impl VM {
             );
         }
 
-        let (func, handler_return) = match factory {
-            CallArg::Value(Value::Python(factory)) => (PyShared::new(factory), false),
-            CallArg::Value(Value::PythonHandlerCallable(factory)) => (PyShared::new(factory), true),
-            CallArg::Value(Value::RustProgramInvocation(invocation)) => {
+        let factory_value = match factory {
+            DoCtrl::Pure { value } => value,
+            other => {
+                self.current_seg_mut().mode = Mode::Throw(PyException::type_error(format!(
+                    "DoCtrl::Expand factory must be a pure callable value, got {:?}",
+                    other
+                )));
+                return StepEvent::Continue;
+            }
+        };
+
+        let (func, handler_return) = match factory_value {
+            Value::Python(factory) => (PyShared::new(factory), false),
+            Value::PythonHandlerCallable(factory) => (PyShared::new(factory), true),
+            Value::RustProgramInvocation(invocation) => {
                 return self.invoke_rust_program(invocation);
             }
-            CallArg::Value(other) => {
+            Value::Kleisli(kleisli) => {
+                let args_values = Self::collect_value_args(args);
+                let kwargs_values = Self::collect_value_kwargs(kwargs);
+                if !kwargs_values.is_empty() {
+                    self.current_seg_mut().mode = Mode::Throw(PyException::type_error(
+                        "Kleisli expand does not support keyword arguments".to_string(),
+                    ));
+                    return StepEvent::Continue;
+                }
+
+                let result = Python::attach(|py| kleisli.apply(py, args_values));
+                return match result {
+                    Ok(doctrl) => self.evaluate(doctrl),
+                    Err(vm_err) => StepEvent::Error(vm_err),
+                };
+            }
+            other => {
                 self.current_seg_mut().mode = Mode::Throw(PyException::type_error(format!(
                     "DoCtrl::Expand factory must be Python callable value, got {:?}",
                     other
                 )));
                 return StepEvent::Continue;
             }
-            CallArg::Expr(_) => unreachable!(),
         };
 
         self.current_seg_mut().pending_python = Some(PendingPython::ExpandReturn {
@@ -2300,9 +2350,9 @@ impl VM {
         })
     }
 
-    fn handle_yield_ast_stream(
+    fn handle_yield_ir_stream(
         &mut self,
-        stream: ASTStreamRef,
+        stream: IRStreamRef,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         if let Some(ref m) = metadata {
@@ -2310,7 +2360,7 @@ impl VM {
         }
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal(
-                "handle_yield_ast_stream called without current segment",
+                "handle_yield_ir_stream called without current segment",
             ));
         };
         seg.push_frame(Frame::Program { stream, metadata });
@@ -2361,43 +2411,37 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn first_expr_arg(args: &[CallArg]) -> Option<(usize, PyShared)> {
+    fn first_non_pure_arg(args: &[DoCtrl]) -> Option<(usize, DoCtrl)> {
         let arg_idx = args
             .iter()
-            .position(|arg| matches!(arg, CallArg::Expr(_)))?;
-        let CallArg::Expr(expr) = &args[arg_idx] else {
-            unreachable!();
-        };
-        Some((arg_idx, expr.clone()))
+            .position(|arg| !matches!(arg, DoCtrl::Pure { .. }))?;
+        Some((arg_idx, args[arg_idx].clone()))
     }
 
-    fn first_expr_kwarg(kwargs: &[(String, CallArg)]) -> Option<(usize, PyShared)> {
+    fn first_non_pure_kwarg(kwargs: &[(String, DoCtrl)]) -> Option<(usize, DoCtrl)> {
         let kwargs_idx = kwargs
             .iter()
-            .position(|(_, value)| matches!(value, CallArg::Expr(_)))?;
-        let CallArg::Expr(expr) = &kwargs[kwargs_idx].1 else {
-            unreachable!();
-        };
-        Some((kwargs_idx, expr.clone()))
+            .position(|(_, value)| !matches!(value, DoCtrl::Pure { .. }))?;
+        Some((kwargs_idx, kwargs[kwargs_idx].1.clone()))
     }
 
-    fn collect_value_args(args: Vec<CallArg>) -> Vec<Value> {
+    fn collect_value_args(args: Vec<DoCtrl>) -> Vec<Value> {
         let mut values = Vec::with_capacity(args.len());
         for arg in args {
             match arg {
-                CallArg::Value(value) => values.push(value),
-                CallArg::Expr(_) => unreachable!(),
+                DoCtrl::Pure { value } => values.push(value),
+                _ => unreachable!(),
             }
         }
         values
     }
 
-    fn collect_value_kwargs(kwargs: Vec<(String, CallArg)>) -> Vec<(String, Value)> {
+    fn collect_value_kwargs(kwargs: Vec<(String, DoCtrl)>) -> Vec<(String, Value)> {
         let mut values = Vec::with_capacity(kwargs.len());
         for (key, value) in kwargs {
             match value {
-                CallArg::Value(inner) => values.push((key, inner)),
-                CallArg::Expr(_) => unreachable!(),
+                DoCtrl::Pure { value } => values.push((key, value)),
+                _ => unreachable!(),
             }
         }
         values
@@ -2469,8 +2513,10 @@ impl VM {
     fn invoke_prompt_return_clause(&mut self, return_clause: PyShared, value: Value) -> StepEvent {
         let callable = Python::attach(|py| return_clause.clone_ref(py));
         self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
-            f: CallArg::Value(Value::Python(callable)),
-            args: vec![CallArg::Value(value)],
+            f: Box::new(DoCtrl::Pure {
+                value: Value::Python(callable),
+            }),
+            args: vec![DoCtrl::Pure { value }],
             kwargs: vec![],
             metadata: CallMetadata::new(
                 "WithHandler.return_clause".to_string(),
@@ -2680,7 +2726,7 @@ impl VM {
                         };
                         seg.push_frame(Frame::HandlerDispatch { dispatch_id });
                         self.current_seg_mut().mode =
-                            Mode::HandleYield(DoCtrl::ASTStream { stream, metadata });
+                            Mode::HandleYield(DoCtrl::IRStream { stream, metadata });
                     }
                     Err(exception) => {
                         self.current_seg_mut().mode = Mode::Throw(exception);
@@ -2699,7 +2745,7 @@ impl VM {
                 match Self::extract_doeff_generator(generator, metadata, "ExpandReturn") {
                     Ok((stream, metadata)) => {
                         self.current_seg_mut().mode =
-                            Mode::HandleYield(DoCtrl::ASTStream { stream, metadata });
+                            Mode::HandleYield(DoCtrl::IRStream { stream, metadata });
                     }
                     Err(exception) => {
                         self.current_seg_mut().mode = Mode::Throw(exception);
@@ -2742,7 +2788,7 @@ impl VM {
 
     fn receive_step_user_generator_result(
         &mut self,
-        stream: ASTStreamRef,
+        stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         outcome: PyCallOutcome,
     ) {
