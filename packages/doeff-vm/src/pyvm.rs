@@ -716,6 +716,37 @@ impl PyVM {
             return Ok((handler, Some(PyShared::new(callable_identity))));
         }
 
+        if obj.is_instance_of::<crate::kleisli::PyKleisli>() {
+            let kleisli: PyRef<'_, crate::kleisli::PyKleisli> = obj.extract()?;
+            let func = kleisli.func.clone_ref(_py);
+            let name = kleisli.name.clone();
+            let file = kleisli.file.clone().unwrap_or_else(|| "<unknown>".to_string());
+            let line = kleisli.line.unwrap_or(0);
+            let get_frame = _py
+                .eval(
+                    c"lambda gen: getattr(gen, 'gi_frame', None)",
+                    None,
+                    None,
+                )?
+                .unbind();
+            let dgfn = Py::new(
+                _py,
+                DoeffGeneratorFn {
+                    callable: func,
+                    function_name: name,
+                    source_file: file,
+                    source_line: line,
+                    get_frame,
+                },
+            )?;
+            let callable_identity = {
+                let dgfn_ref = dgfn.bind(_py).borrow();
+                dgfn_ref.callable.clone_ref(_py)
+            };
+            let handler: Handler = Arc::new(PythonHandler::from_dgfn(dgfn));
+            return Ok((handler, Some(PyShared::new(callable_identity))));
+        }
+
         let base_message = format!("{context} handler must be DoeffGeneratorFn or RustHandler");
         if obj.is_callable() {
             return Err(PyTypeError::new_err(base_message));
@@ -2290,7 +2321,8 @@ impl PyWithHandler {
         let handler_obj = handler.bind(py);
         let is_rust_handler = handler_obj.is_instance_of::<PyRustHandlerSentinel>();
         let is_dgfn = handler_obj.is_instance_of::<DoeffGeneratorFn>();
-        if !is_rust_handler && !is_dgfn {
+        let is_pykleisli = handler_obj.is_instance_of::<crate::kleisli::PyKleisli>();
+        if !is_rust_handler && !is_dgfn && !is_pykleisli {
             if handler_obj.is_callable() {
                 return Err(PyTypeError::new_err(
                     "WithHandler handler must be DoeffGeneratorFn or RustHandler",
@@ -4169,6 +4201,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGetTrace>()?;
     m.add_class::<PyAsyncEscape>()?;
     m.add_class::<PyRustHandlerSentinel>()?;
+    m.add_class::<crate::kleisli::PyKleisli>()?;
     m.add_class::<NestingStep>()?;
     m.add_class::<NestingGenerator>()?;
     // ADR-14: Module-level sentinel handler objects

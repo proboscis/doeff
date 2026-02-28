@@ -16,6 +16,11 @@ from doeff.kleisli import KleisliProgram
 from doeff.program import Program, _build_auto_unwrap_strategy
 from doeff.types import Effect, EffectGenerator
 
+try:
+    from doeff_vm import PyKleisli as _PyKleisli
+except ImportError:
+    _PyKleisli = None
+
 P = ParamSpec("P")
 T = TypeVar("T")
 
@@ -273,6 +278,17 @@ class DoYieldFunction(KleisliProgram[P, T]):
 
         self.__doeff_do_decorated__ = True
         object.__setattr__(self, "_is_do_decorated", True)
+
+        if _PyKleisli is not None:
+            source_file = code.co_filename
+            source_line_num = code.co_firstlineno
+            pykleisli = _PyKleisli(
+                func=generator_factory,
+                name=func.__qualname__,
+                file=source_file,
+                line=source_line_num,
+            )
+            object.__setattr__(self, "_pykleisli", pykleisli)
 
         strategy = _build_auto_unwrap_strategy(self)
         object.__setattr__(self, "_auto_unwrap_strategy", strategy)

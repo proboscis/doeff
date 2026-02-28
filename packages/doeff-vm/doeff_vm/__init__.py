@@ -39,6 +39,16 @@ def _coerce_handler(handler):
         return handler
     if isinstance(handler, _ext.DoeffGeneratorFn):
         return handler
+    if isinstance(handler, _ext.PyKleisli):
+        return handler
+
+    # @do-decorated handlers have a _doeff_generator_factory attribute (DoeffGeneratorFn)
+    # that wraps the raw generator factory. Extract it to avoid calling
+    # DoYieldFunction.__call__ (which returns a DoExpr, not a generator).
+    dgfn = getattr(handler, "_doeff_generator_factory", None)
+    if dgfn is not None and isinstance(dgfn, _ext.DoeffGeneratorFn):
+        return dgfn
+
     if not callable(handler):
         return handler
 
@@ -129,6 +139,7 @@ ResultErr = Err
 K = _ext.K
 DoeffGenerator = _ext.DoeffGenerator
 DoeffGeneratorFn = _ext.DoeffGeneratorFn
+PyKleisli = _ext.PyKleisli
 
 
 WithHandler = _ext.WithHandler
@@ -295,6 +306,7 @@ __all__ = [
     "ResumeContinuation",
     "RunResult",
     "DoeffTracebackData",
+    "PyKleisli",
     "RustHandler",
     "Transfer",
     "WithHandler",
