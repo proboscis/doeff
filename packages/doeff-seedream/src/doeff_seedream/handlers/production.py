@@ -8,7 +8,7 @@ from typing import Any
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 
-from doeff import Delegate, EffectGenerator, Resume, do
+from doeff import EffectGenerator, Pass, Resume, do
 from doeff.effects.base import Effect
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.structured_llm import _edit_image__seedream4_impl
@@ -122,21 +122,21 @@ def seedream_image_handler(effect: Effect, k: Any):  # noqa: PLR0911
     """Protocol handler with model routing for unified image effects."""
     if isinstance(effect, SeedreamGenerate):
         if not _is_seedream_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         value = yield _generate_impl(effect)
         return (yield Resume(k, value))
 
     if isinstance(effect, ImageGenerate):
         if not _is_seedream_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         value = yield _image_generate_impl(effect)
         return (yield Resume(k, value))
 
     if isinstance(effect, ImageEdit):
         if not _is_seedream_model(effect.model):
-            yield Delegate()
+            yield Pass()
             return
         value = yield _image_edit_impl(effect)
         return (yield Resume(k, value))
@@ -145,7 +145,7 @@ def seedream_image_handler(effect: Effect, k: Any):  # noqa: PLR0911
         value = yield _structured_impl(effect)
         return (yield Resume(k, value))
 
-    yield Delegate()
+    yield Pass()
 
 
 def production_handlers(
@@ -167,26 +167,26 @@ def production_handlers(
     def handler(effect: Effect, k: Any):  # noqa: PLR0911
         if isinstance(effect, SeedreamGenerate):
             if not _is_seedream_model(effect.model):
-                yield Delegate()
+                yield Pass()
                 return
             value = yield active_generate_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageGenerate):
             if not _is_seedream_model(effect.model):
-                yield Delegate()
+                yield Pass()
                 return
             value = yield active_image_generate_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageEdit):
             if not _is_seedream_model(effect.model):
-                yield Delegate()
+                yield Pass()
                 return
             value = yield active_image_edit_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, SeedreamStructuredOutput):
             value = yield active_structured_impl(effect)
             return (yield Resume(k, value))
-        yield Delegate()
+        yield Pass()
 
     return handler
 
