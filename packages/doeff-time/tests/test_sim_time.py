@@ -8,6 +8,7 @@ from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, SetTime, WaitUntil, sim_time_handler
 
 from doeff import (
+    Effect,
     Gather,
     Listen,
     Pass,
@@ -60,7 +61,8 @@ def _run_with_probe(
 ):
     seen = 0
 
-    def probe(effect: Any, k: Any):
+    @do
+    def probe(effect: Effect, k: Any):
         nonlocal seen
         if isinstance(effect, effect_type):
             seen += 1

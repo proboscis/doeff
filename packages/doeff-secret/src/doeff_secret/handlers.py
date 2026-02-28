@@ -6,7 +6,7 @@ import os
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from doeff import Delegate, Resume
+from doeff import Delegate, Effect, Resume, do
 
 from .effects import GetSecret
 
@@ -63,7 +63,11 @@ def env_var_handler(
     active_environ = os.environ if environ is None else environ
     normalized_prefix = _normalize_prefix(prefix)
 
-    def handle_get_secret(effect: GetSecret, k):
+    @do
+    def handle_get_secret(effect: Effect, k: Any):
+        if not isinstance(effect, GetSecret):
+            yield Delegate()
+            return None
         value = _resolve_env_secret(
             effect.secret_id,
             environ=active_environ,
@@ -72,12 +76,13 @@ def env_var_handler(
         )
         if value is None:
             yield Delegate()
-            return
+            return None
         return (yield Resume(k, value))
 
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, GetSecret):
-            return (yield from handle_get_secret(effect, k))
+            return (yield handle_get_secret(effect, k))
         yield Delegate()
 
     return handler
@@ -97,10 +102,11 @@ def env_var_handlers(
     active_environ = os.environ if environ is None else environ
     normalized_prefix = _normalize_prefix(prefix)
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if not isinstance(effect, GetSecret):
             yield Delegate()
-            return
+            return None
         value = _resolve_env_secret(
             effect.secret_id,
             environ=active_environ,

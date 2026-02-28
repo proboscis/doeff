@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from itertools import count
 from typing import Any, overload
 
-from doeff import Delegate, Resume
+from doeff import Effect, Pass, Resume, do
 from doeff_notify.effects import Acknowledge, Notify, NotifyThread
 from doeff_notify.types import Channel, NotificationResult
 
@@ -55,7 +55,8 @@ def build_testing_handler(
     seen_ids: set[str] = set()
     next_id = count(1)
 
-    def _handler(effect, k):
+    @do
+    def _handler(effect: Effect, k: Any):
         if isinstance(effect, Notify):
             capture.notifications.append(effect)
             notification_id = f"{default_channel}-{next(next_id)}"
@@ -80,7 +81,7 @@ def build_testing_handler(
             acknowledged = auto_acknowledge and effect.notification_id in seen_ids
             return (yield Resume(k, acknowledged))
 
-        yield Delegate()
+        yield Pass()
 
     return _handler, capture
 

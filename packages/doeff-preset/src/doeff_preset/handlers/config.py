@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from doeff import AskEffect, MissingEnvKeyError, Pass, Resume
+from doeff import AskEffect, Effect, MissingEnvKeyError, Pass, Resume, do
 from doeff_preset.effects.config import is_preset_config_key
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -44,7 +44,8 @@ def make_config_handler(
     if defaults:
         config.update(defaults)
 
-    def handle_ask_with_config(effect: Any, k):
+    @do
+    def handle_ask_with_config(effect: Effect, k: Any):
         """Handle Ask effect with preset.* config support.
 
         - `preset.*` keys are resolved from this handler's config.
@@ -52,7 +53,7 @@ def make_config_handler(
         """
         if not isinstance(effect, AskEffect):
             yield Pass()
-            return
+            return None
 
         key = effect.key
 
