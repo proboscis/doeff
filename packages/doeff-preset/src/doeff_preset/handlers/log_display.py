@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from doeff import Pass, WriterTellEffect
+from doeff import Effect, Pass, WriterTellEffect, do
 
 # Global console for log output
 _console = Console(stderr=True)
@@ -70,9 +70,10 @@ def format_slog(message: dict[str, Any]) -> Panel | Text:
     return Text.from_markup(f"{level_badge} {display_text}")
 
 
+@do
 def handle_tell_with_display(
-    effect: Any,
-    _k,
+    effect: Effect,
+    _k: Any,
 ):
     """Handle WriterTellEffect with console display for slog messages.
 
@@ -88,7 +89,7 @@ def handle_tell_with_display(
     """
     if not isinstance(effect, WriterTellEffect):
         yield Pass()
-        return
+        return None
 
     message = effect.message
 
@@ -99,13 +100,15 @@ def handle_tell_with_display(
 
     # Delegate to outer Writer handler for normal log accumulation.
     yield Pass()
+    return None
 
 
 def log_display_handlers() -> ProtocolHandler:
     """Return a protocol handler for slog display."""
 
-    def handler(effect: Any, k: Any):
-        return (yield from handle_tell_with_display(effect, k))
+    @do
+    def handler(effect: Effect, k: Any):
+        return (yield handle_tell_with_display(effect, k))
 
     return handler
 
