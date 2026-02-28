@@ -6,11 +6,13 @@ use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
 use crate::dispatch::DispatchContext;
+use crate::do_ctrl::InterceptMode;
 use crate::doeff_generator::DoeffGenerator;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
+use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase};
 use crate::segment::Segment;
 use crate::vm::InterceptorEntry;
@@ -160,12 +162,16 @@ impl InterceptorState {
         &mut self,
         marker: Marker,
         interceptor: KleisliRef,
+        types: Option<Vec<PyShared>>,
+        mode: InterceptMode,
         metadata: Option<CallMetadata>,
     ) {
         self.interceptors.insert(
             marker,
             InterceptorEntry {
                 interceptor,
+                types,
+                mode,
                 metadata,
             },
         );
@@ -178,6 +184,8 @@ impl InterceptorState {
     pub(crate) fn prepare_with_intercept(
         &mut self,
         interceptor: KleisliRef,
+        types: Option<Vec<PyShared>>,
+        mode: InterceptMode,
         metadata: Option<CallMetadata>,
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
@@ -190,7 +198,7 @@ impl InterceptorState {
             VMError::invalid_segment("current segment not found for WithIntercept")
         })?;
 
-        self.insert(interceptor_marker, interceptor, metadata);
+        self.insert(interceptor_marker, interceptor, types, mode, metadata);
 
         let mut body_seg = Segment::new(interceptor_marker, Some(outside_seg_id));
         // Inherit guard state — see `copy_interceptor_guard_state` doc for why

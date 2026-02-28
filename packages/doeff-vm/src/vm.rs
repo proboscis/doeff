@@ -16,7 +16,7 @@ use crate::capture::{
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
 use crate::dispatch_state::DispatchState;
-use crate::do_ctrl::DoCtrl;
+use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
@@ -35,9 +35,7 @@ use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStrea
 use crate::kleisli::{IdentityKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::pyvm::{
-    classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase,
-};
+use crate::pyvm::{classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase};
 use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::TraceState;
 use crate::value::Value;
@@ -180,6 +178,8 @@ impl ForwardKind {
 #[derive(Clone)]
 pub struct InterceptorEntry {
     pub(crate) interceptor: KleisliRef,
+    pub(crate) types: Option<Vec<PyShared>>,
+    pub(crate) mode: InterceptMode,
     pub(crate) metadata: Option<CallMetadata>,
 }
 
@@ -382,10 +382,7 @@ impl VM {
         }
     }
 
-    fn find_prompt_boundary_by_marker(
-        &self,
-        marker: Marker,
-    ) -> Option<(SegmentId, KleisliRef)> {
+    fn find_prompt_boundary_by_marker(&self, marker: Marker) -> Option<(SegmentId, KleisliRef)> {
         self.segments
             .iter()
             .find_map(|(seg_id, seg)| match &seg.kind {
@@ -1229,6 +1226,10 @@ impl VM {
         continuation: InterceptorContinuation,
         mode: Mode,
     ) -> StepEvent {
+        if continuation.guard_eval_depth {
+            let seg = self.current_seg_mut();
+            seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_sub(1);
+        }
         if let Some(metadata) = continuation.interceptor_metadata.as_ref() {
             self.maybe_emit_frame_exited(metadata);
         }
@@ -1662,6 +1663,31 @@ impl VM {
         })
     }
 
+    fn should_invoke_interceptor(
+        &self,
+        entry: &InterceptorEntry,
+        yielded_obj: &Py<PyAny>,
+    ) -> Result<bool, PyException> {
+        let Some(types) = entry.types.as_ref() else {
+            return Ok(true);
+        };
+        if types.is_empty() {
+            return Ok(entry.mode.should_invoke(false));
+        }
+
+        let matches_filter = Python::attach(|py| -> PyResult<bool> {
+            let yielded = yielded_obj.bind(py);
+            for ty in types {
+                let ty_bound = ty.bind(py);
+                if yielded.is_instance(&ty_bound)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })?;
+        Ok(entry.mode.should_invoke(matches_filter))
+    }
+
     fn continue_interceptor_chain_mode(
         &mut self,
         yielded: DoCtrl,
@@ -1692,6 +1718,12 @@ impl VM {
                 Ok(None) => continue,
                 Err(exc) => return Mode::Throw(exc),
             };
+
+            match self.should_invoke_interceptor(&entry, &yielded_obj) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(exc) => return Mode::Throw(exc),
+            }
 
             return self.start_interceptor_invocation_mode(
                 marker,
@@ -1730,6 +1762,7 @@ impl VM {
         next_idx: usize,
     ) -> Mode {
         let interceptor_kleisli = entry.interceptor.clone();
+        let guard_eval_depth = entry.types.is_some();
         let interceptor_meta = entry.metadata.clone();
         let yielded_obj_for_continuation = Python::attach(|py| yielded_obj.clone_ref(py));
         let apply_metadata = interceptor_meta
@@ -1755,6 +1788,7 @@ impl VM {
             chain,
             next_idx,
             interceptor_metadata: interceptor_meta,
+            guard_eval_depth,
         };
         let Some(seg) = self.current_segment_mut() else {
             self.pop_interceptor_skip(marker);
@@ -1762,6 +1796,9 @@ impl VM {
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         };
+        if guard_eval_depth {
+            seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_add(1);
+        }
         seg.push_frame(Frame::InterceptorApply(Box::new(continuation)));
 
         Mode::HandleYield(DoCtrl::Apply {
@@ -1790,6 +1827,7 @@ impl VM {
             emitter_metadata,
             chain,
             next_idx,
+            guard_eval_depth,
             ..
         } = continuation;
         let Value::Python(result_obj) = value else {
@@ -1840,6 +1878,7 @@ impl VM {
                 chain,
                 next_idx,
                 interceptor_metadata: None,
+                guard_eval_depth,
             })));
 
             let handlers = self.current_visible_handlers();
@@ -1947,8 +1986,10 @@ impl VM {
             DoCtrl::WithIntercept {
                 interceptor,
                 body,
+                types,
+                mode,
                 metadata,
-            } => self.handle_yield_with_intercept(interceptor, *body, metadata),
+            } => self.handle_yield_with_intercept(interceptor, *body, types, mode, metadata),
             DoCtrl::Finally { cleanup } => self.handle_yield_finally(cleanup),
             DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
             DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
@@ -2060,9 +2101,11 @@ impl VM {
         &mut self,
         interceptor: KleisliRef,
         body: DoCtrl,
+        types: Option<Vec<PyShared>>,
+        mode: InterceptMode,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        self.handle_with_intercept(interceptor, body, metadata)
+        self.handle_with_intercept(interceptor, body, types, mode, metadata)
     }
 
     fn handle_yield_finally(&mut self, cleanup: PyShared) -> StepEvent {
@@ -2192,9 +2235,8 @@ impl VM {
                 }
 
                 let run_token = self.current_run_token();
-                let result = Python::attach(|py| {
-                    kleisli.apply_with_run_token(py, args_values, run_token)
-                });
+                let result =
+                    Python::attach(|py| kleisli.apply_with_run_token(py, args_values, run_token));
                 return match result {
                     Ok(doctrl) => {
                         let _ = evaluate_result;
@@ -2291,9 +2333,8 @@ impl VM {
                 }
 
                 let run_token = self.current_run_token();
-                let result = Python::attach(|py| {
-                    kleisli.apply_with_run_token(py, args_values, run_token)
-                });
+                let result =
+                    Python::attach(|py| kleisli.apply_with_run_token(py, args_values, run_token));
                 return match result {
                     Ok(doctrl) => {
                         if let DoCtrl::IRStream { .. } = &doctrl {
@@ -3201,7 +3242,8 @@ impl VM {
     ) {
         self.installed_handlers
             .retain(|entry| entry.marker != marker);
-        self.installed_handlers.push(InstalledHandler { marker, handler });
+        self.installed_handlers
+            .push(InstalledHandler { marker, handler });
     }
 
     pub fn remove_handler(&mut self, marker: Marker) -> bool {
@@ -3226,13 +3268,7 @@ impl VM {
         _py_identity: Option<PyShared>,
     ) -> bool {
         let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
-            let prompt_seg = Segment::new_prompt(
-                marker,
-                None,
-                marker,
-                handler.clone(),
-                None,
-            );
+            let prompt_seg = Segment::new_prompt(marker, None, marker, handler.clone(), None);
             self.alloc_segment(prompt_seg);
             self.track_run_handler(&handler);
             return true;
@@ -3611,10 +3647,14 @@ impl VM {
         &mut self,
         interceptor: KleisliRef,
         program: DoCtrl,
+        types: Option<Vec<PyShared>>,
+        mode: InterceptMode,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         let body_seg = match self.interceptor_state.prepare_with_intercept(
             interceptor,
+            types,
+            mode,
             metadata,
             self.current_segment,
             &self.segments,
@@ -3861,10 +3901,11 @@ impl VM {
                 if handler.py_identity().is_some() {
                     self.register_continuation(k_user.clone());
                 }
-                let ir_node = match Self::invoke_kleisli_handler_expr(handler, effect.clone(), k_user) {
-                    Ok(node) => node,
-                    Err(err) => return StepEvent::Error(err),
-                };
+                let ir_node =
+                    match Self::invoke_kleisli_handler_expr(handler, effect.clone(), k_user) {
+                        Ok(node) => node,
+                        Err(err) => return StepEvent::Error(err),
+                    };
                 return self.evaluate(ir_node);
             }
         }
