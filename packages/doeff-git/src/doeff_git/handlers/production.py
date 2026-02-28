@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from doeff import Delegate, Resume
+from doeff import Effect, Pass, Resume, do
 from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
 from doeff_git.exceptions import GitCommandError
 from doeff_git.types import MergeStrategy, PRHandle
@@ -185,7 +185,8 @@ def production_handlers(
     local = local_handler or GitLocalHandler()
     hosting = github_handler or GitHubHandler()
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, GitCommit):
             return (yield Resume(k, local.handle_commit(effect)))
         if isinstance(effect, GitDiff):
@@ -201,7 +202,7 @@ def production_handlers(
         if isinstance(effect, MergePR):
             hosting.handle_merge_pr(effect)
             return (yield Resume(k, None))
-        yield Delegate()
+        return (yield Pass())
 
     return handler
 

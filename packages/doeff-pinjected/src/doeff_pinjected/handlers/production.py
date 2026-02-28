@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from doeff import Ask, Await, Pass, Resume
+from doeff import Ask, Await, Effect, Pass, Resume, do
 from doeff_pinjected.effects import PinjectedProvide, PinjectedResolve
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -60,12 +60,14 @@ def production_handlers(
         resolver=resolver,
         bindings=dict(bindings or {}),
     )
-    def handler(effect: Any, k: Any):
+
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, PinjectedResolve):
             return (yield from runtime.handle_resolve(effect, k))
         if isinstance(effect, PinjectedProvide):
             return (yield from runtime.handle_provide(effect, k))
-        yield Pass()
+        return (yield Pass())
 
     return handler
 

@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff import AskEffect, Delegate, Resume, WithHandler, default_handlers, do, run
+from doeff import AskEffect, Effect, Pass, Resume, WithHandler, default_handlers, do, run
 from doeff.effects import ask
 
 
@@ -35,10 +35,11 @@ def _single_ask_program(key: str):
 
 
 def test_withhandler_basic_effect_pipeline_with_mock_handler():
-    def mock_handler(effect, k):
+    @do
+    def mock_handler(effect: Effect, k):
         if isinstance(effect, AskEffect):
             return (yield Resume(k, f"mock-{effect.key}"))
-        yield Delegate()
+        return (yield Pass())
 
     result = run(
         WithHandler(mock_handler, _test_target_pipeline()),
@@ -49,15 +50,17 @@ def test_withhandler_basic_effect_pipeline_with_mock_handler():
 
 
 def test_withhandler_nesting_inner_handler_overrides_outer_handler():
-    def outer_handler(effect, k):
+    @do
+    def outer_handler(effect: Effect, k):
         if isinstance(effect, AskEffect):
             return (yield Resume(k, f"outer-{effect.key}"))
-        yield Delegate()
+        return (yield Pass())
 
-    def inner_handler(effect, k):
+    @do
+    def inner_handler(effect: Effect, k):
         if isinstance(effect, AskEffect) and effect.key == "inner":
             return (yield Resume(k, "inner-mock"))
-        yield Delegate()
+        return (yield Pass())
 
     result = run(
         WithHandler(outer_handler, WithHandler(inner_handler, _nested_ask_program())),
@@ -71,10 +74,11 @@ def test_withhandler_error_propagation_from_handler():
     class HandlerFailure(RuntimeError):
         pass
 
-    def failing_handler(effect, _k):
+    @do
+    def failing_handler(effect: Effect, _k):
         if isinstance(effect, AskEffect) and effect.key == "explode":
             raise HandlerFailure("mock handler failure for explode")
-        yield Delegate()
+        return (yield Pass())
 
     result = run(
         WithHandler(failing_handler, _single_ask_program("explode")),
@@ -91,10 +95,11 @@ def test_withhandler_error_propagation_from_handler():
 def test_withhandler_delegate_passthrough_uses_default_reader():
     seen_keys: list[str] = []
 
-    def delegating_handler(effect, _k):
+    @do
+    def delegating_handler(effect: Effect, _k):
         if isinstance(effect, AskEffect):
             seen_keys.append(effect.key)
-        yield Delegate()
+        return (yield Pass())
 
     result = run(
         WithHandler(delegating_handler, _single_ask_program("service_name")),
@@ -116,10 +121,11 @@ def test_withhandler_resume_supports_various_value_types():
     ]
 
     for sample_value in sample_values:
-        def typed_mock_handler(effect, k):
+        @do
+        def typed_mock_handler(effect: Effect, k):
             if isinstance(effect, AskEffect):
                 return (yield Resume(k, sample_value))
-            yield Delegate()
+            return (yield Pass())
 
         result = run(
             WithHandler(typed_mock_handler, _single_ask_program("any-key")),
