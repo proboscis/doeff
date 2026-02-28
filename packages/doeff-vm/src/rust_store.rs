@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use pyo3::exceptions::PyTypeError;
+use pyo3::prelude::{Bound, PyAny, PyResult};
 #[cfg(not(test))]
 use pyo3::types::PyString;
 #[cfg(not(test))]
@@ -44,17 +46,25 @@ impl From<String> for HashedPyKey {
     }
 }
 
-fn string_key_to_hashed(key: &str) -> HashedPyKey {
+fn py_key_to_hashed(key_obj: &Bound<'_, PyAny>) -> PyResult<HashedPyKey> {
+    HashedPyKey::from_bound(key_obj).map_err(|err| {
+        PyTypeError::new_err(format!(
+            "environment key must be hashable, got error: {err}"
+        ))
+    })
+}
+
+fn string_key_to_hashed(key: &str) -> PyResult<HashedPyKey> {
     #[cfg(test)]
     {
-        return HashedPyKey::from_test_string(key);
+        return Ok(HashedPyKey::from_test_string(key));
     }
 
     #[cfg(not(test))]
     {
         Python::attach(|py| {
             let py_key = PyString::new(py, key).into_any();
-            HashedPyKey::from_bound(&py_key).expect("Python string keys must be hashable")
+            py_key_to_hashed(&py_key)
         })
     }
 }
@@ -107,14 +117,14 @@ impl RustStore {
         Some(old_clone)
     }
 
-    pub fn with_local<F, R>(&mut self, bindings: HashMap<String, Value>, f: F) -> R
+    pub fn with_local<F, R>(&mut self, bindings: HashMap<String, Value>, f: F) -> PyResult<R>
     where
         F: FnOnce(&mut Self) -> R,
     {
         let hashed_bindings: HashMap<HashedPyKey, Value> = bindings
             .into_iter()
-            .map(|(k, v)| (string_key_to_hashed(&k), v))
-            .collect();
+            .map(|(k, v)| string_key_to_hashed(&k).map(|hashed| (hashed, v)))
+            .collect::<PyResult<_>>()?;
 
         let old: HashMap<HashedPyKey, Value> = hashed_bindings
             .keys()
@@ -139,7 +149,7 @@ impl RustStore {
             self.env.remove(&k);
         }
 
-        result
+        Ok(result)
     }
 
     pub fn clear_logs(&mut self) -> Vec<Value> {
@@ -150,5 +160,30 @@ impl RustStore {
 impl Default for RustStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pyo3::exceptions::PyTypeError;
+    use pyo3::types::{PyAnyMethods, PyModule};
+    use pyo3::Python;
+
+    use super::py_key_to_hashed;
+
+    #[test]
+    fn py_key_to_hashed_maps_unhashable_to_type_error() {
+        Python::attach(|py| {
+            let module = PyModule::from_code(
+                py,
+                pyo3::ffi::c_str!("class Unhashable:\n    __hash__ = None\nobj = Unhashable()\n"),
+                pyo3::ffi::c_str!("test_key.py"),
+                pyo3::ffi::c_str!("test_key"),
+            )
+            .expect("failed to create test module");
+            let obj = module.getattr("obj").expect("obj must be present");
+            let err = py_key_to_hashed(&obj).expect_err("unhashable key must error");
+            assert!(err.is_instance_of::<PyTypeError>(py));
+        });
     }
 }
