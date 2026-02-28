@@ -42,7 +42,7 @@ def test_multi_model_workflow_routes_to_openai_then_gemini() -> None:
     @do
     def gemini_handler(effect: Effect, k: Any):
         return (
-            yield from gemini_mock_handler(
+            yield gemini_mock_handler(
                 effect,
                 k,
                 chat_responses={"gemini-1.5-pro": "Gemini summary"},
