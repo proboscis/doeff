@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyTuple};
 
 use crate::arena::SegmentArena;
 use crate::capture::{
@@ -194,6 +194,7 @@ struct HandlerChainEntry {
     marker: Marker,
     prompt_seg_id: SegmentId,
     handler: KleisliRef,
+    types: Option<Vec<PyShared>>,
 }
 
 impl Default for DebugConfig {
@@ -382,15 +383,19 @@ impl VM {
         }
     }
 
-    fn find_prompt_boundary_by_marker(&self, marker: Marker) -> Option<(SegmentId, KleisliRef)> {
+    fn find_prompt_boundary_by_marker(
+        &self,
+        marker: Marker,
+    ) -> Option<(SegmentId, KleisliRef, Option<Vec<PyShared>>)> {
         self.segments
             .iter()
             .find_map(|(seg_id, seg)| match &seg.kind {
                 SegmentKind::PromptBoundary {
                     handled_marker,
                     handler,
+                    types,
                     ..
-                } if *handled_marker == marker => Some((seg_id, handler.clone())),
+                } if *handled_marker == marker => Some((seg_id, handler.clone(), types.clone())),
                 _ => None,
             })
     }
@@ -405,6 +410,7 @@ impl VM {
             if let SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,
+                types,
                 ..
             } = &seg.kind
             {
@@ -412,6 +418,7 @@ impl VM {
                     marker: *handled_marker,
                     prompt_seg_id: seg_id,
                     handler: handler.clone(),
+                    types: types.clone(),
                 });
             }
             cursor = seg.caller;
@@ -747,7 +754,7 @@ impl VM {
             }
         }
         self.find_prompt_boundary_by_marker(marker)
-            .map(|(_seg_id, handler)| Self::handler_trace_info(&handler))
+            .map(|(_seg_id, handler, _types)| Self::handler_trace_info(&handler))
     }
 
     fn current_handler_identity_for_dispatch(
@@ -1688,6 +1695,25 @@ impl VM {
         Ok(entry.mode.should_invoke(matches_filter))
     }
 
+    fn should_invoke_handler(
+        &self,
+        entry: &HandlerChainEntry,
+        effect_obj: &Py<PyAny>,
+    ) -> Result<bool, PyException> {
+        let Some(types) = entry.types.as_ref() else {
+            return Ok(true);
+        };
+        if types.is_empty() {
+            return Ok(false);
+        }
+
+        Ok(Python::attach(|py| -> PyResult<bool> {
+            let effect = effect_obj.bind(py);
+            let type_tuple = PyTuple::new(py, types.iter().map(|ty| ty.clone_ref(py)))?;
+            effect.is_instance(&type_tuple)
+        })?)
+    }
+
     fn continue_interceptor_chain_mode(
         &mut self,
         yielded: DoCtrl,
@@ -1981,8 +2007,9 @@ impl VM {
             DoCtrl::WithHandler {
                 handler,
                 body,
+                types,
                 return_clause,
-            } => self.handle_yield_with_handler(handler, *body, return_clause),
+            } => self.handle_yield_with_handler(handler, *body, types, return_clause),
             DoCtrl::WithIntercept {
                 interceptor,
                 body,
@@ -2092,9 +2119,10 @@ impl VM {
         &mut self,
         handler: KleisliRef,
         body: DoCtrl,
+        types: Option<Vec<PyShared>>,
         return_clause: Option<PyShared>,
     ) -> StepEvent {
-        self.handle_with_handler(handler, body, return_clause)
+        self.handle_with_handler(handler, body, types, return_clause)
     }
 
     fn handle_yield_with_intercept(
@@ -3007,8 +3035,15 @@ impl VM {
         handler_chain: &[Marker],
         effect: &DispatchEffect,
     ) -> Result<(usize, Marker, KleisliRef), VMError> {
+        let effect_obj =
+            Python::attach(|py| dispatch_to_pyobject(py, effect).map(|obj| obj.unbind()))
+                .map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to convert dispatch effect to Python object: {err}"
+                    ))
+                })?;
         for (idx, marker) in handler_chain.iter().copied().enumerate() {
-            let Some((_prompt_seg_id, handler)) = self.find_prompt_boundary_by_marker(marker)
+            let Some((prompt_seg_id, handler, types)) = self.find_prompt_boundary_by_marker(marker)
             else {
                 return Err(VMError::internal(format!(
                     "find_matching_handler: missing handler marker {} at index {}",
@@ -3016,7 +3051,23 @@ impl VM {
                     idx
                 )));
             };
-            if handler.can_handle(effect)? {
+            if handler.can_handle(effect)?
+                && self
+                    .should_invoke_handler(
+                        &HandlerChainEntry {
+                            marker,
+                            prompt_seg_id,
+                            handler: handler.clone(),
+                            types,
+                        },
+                        &effect_obj,
+                    )
+                    .map_err(|err| {
+                        VMError::python_error(format!(
+                            "failed to evaluate WithHandler type filter: {err:?}"
+                        ))
+                    })?
+            {
                 return Ok((idx, marker, handler));
             }
         }
@@ -3059,7 +3110,7 @@ impl VM {
             let active_marker = *ctx.handler_chain.get(ctx.handler_idx)?;
             let active_is_python = self
                 .find_prompt_boundary_by_marker(active_marker)
-                .is_some_and(|(_prompt_seg_id, handler)| handler.py_identity().is_some());
+                .is_some_and(|(_prompt_seg_id, handler, _types)| handler.py_identity().is_some());
             if active_is_python && !Self::same_effect_python_type(&effect, &ctx.effect) {
                 return None;
             }
@@ -3078,9 +3129,23 @@ impl VM {
             return Err(VMError::unhandled_effect(effect));
         }
 
+        let effect_obj =
+            Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind()))
+                .map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to convert dispatch effect to Python object: {err}"
+                    ))
+                })?;
+
         let mut selected: Option<(usize, HandlerChainEntry)> = None;
         for (idx, entry) in handler_chain.iter().enumerate() {
-            if entry.handler.can_handle(&effect)? {
+            if entry.handler.can_handle(&effect)?
+                && self.should_invoke_handler(entry, &effect_obj).map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to evaluate WithHandler type filter: {err:?}"
+                    ))
+                })?
+            {
                 selected = Some((idx, entry.clone()));
                 break;
             }
@@ -3276,6 +3341,7 @@ impl VM {
         seg.kind = SegmentKind::PromptBoundary {
             handled_marker: marker,
             handler: handler.clone(),
+            types: None,
             return_clause: None,
         };
         self.track_run_handler(&handler);
@@ -3614,6 +3680,7 @@ impl VM {
         &mut self,
         handler: KleisliRef,
         program: DoCtrl,
+        types: Option<Vec<PyShared>>,
         return_clause: Option<PyShared>,
     ) -> StepEvent {
         let plan = match DispatchState::prepare_with_handler(handler, self.current_segment) {
@@ -3622,11 +3689,12 @@ impl VM {
         };
         let prompt_handler = plan.handler.clone();
 
-        let mut prompt_seg = Segment::new_prompt(
+        let mut prompt_seg = Segment::new_prompt_with_types(
             plan.handler_marker,
             Some(plan.outside_seg_id),
             plan.handler_marker,
             prompt_handler.clone(),
+            types,
             return_clause,
         );
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
@@ -3851,6 +3919,16 @@ impl VM {
             }
         }
 
+        let effect_obj =
+            match Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind())) {
+                Ok(obj) => obj,
+                Err(err) => {
+                    return StepEvent::Error(VMError::python_error(format!(
+                        "failed to convert dispatch effect to Python object: {err}"
+                    )))
+                }
+            };
+
         for idx in start_idx..handler_chain.len() {
             let marker = handler_chain[idx];
             let Some(entry) = visible_chain.iter().find(|entry| entry.marker == marker) else {
@@ -3867,6 +3945,17 @@ impl VM {
                 Err(err) => return StepEvent::Error(err),
             };
             if can_handle {
+                let should_invoke = match self.should_invoke_handler(entry, &effect_obj) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return StepEvent::Error(VMError::python_error(format!(
+                            "failed to evaluate WithHandler type filter: {err:?}"
+                        )))
+                    }
+                };
+                if !should_invoke {
+                    continue;
+                }
                 let supports_error_context_conversion = handler.supports_error_context_conversion();
                 self.maybe_emit_forward_capture_event(
                     kind,
