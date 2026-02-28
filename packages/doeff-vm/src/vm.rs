@@ -2160,7 +2160,7 @@ impl VM {
         metadata: CallMetadata,
         evaluate_result: bool,
     ) -> StepEvent {
-        if !f.is_pure() {
+        if !matches!(*f, DoCtrl::Pure { .. }) {
             let expr = Self::doctrl_to_eval_expr(&f);
             return self.eval_then_reenter_call(
                 expr,
@@ -2253,7 +2253,7 @@ impl VM {
         kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
     ) -> StepEvent {
-        if !factory.is_pure() {
+        if !matches!(*factory, DoCtrl::Pure { .. }) {
             let expr = Self::doctrl_to_eval_expr(&factory);
             return self.eval_then_reenter_call(
                 expr,
@@ -2409,7 +2409,7 @@ impl VM {
     fn first_non_pure_arg(args: &[DoCtrl]) -> Option<(usize, PyShared)> {
         let arg_idx = args
             .iter()
-            .position(|arg| !arg.is_pure())?;
+            .position(|arg| !matches!(arg, DoCtrl::Pure { .. }))?;
         let expr = Self::doctrl_to_eval_expr(&args[arg_idx]);
         Some((arg_idx, expr))
     }
@@ -2417,7 +2417,7 @@ impl VM {
     fn first_non_pure_kwarg(kwargs: &[(String, DoCtrl)]) -> Option<(usize, PyShared)> {
         let kwargs_idx = kwargs
             .iter()
-            .position(|(_, value)| !value.is_pure())?;
+            .position(|(_, value)| !matches!(value, DoCtrl::Pure { .. }))?;
         let expr = Self::doctrl_to_eval_expr(&kwargs[kwargs_idx].1);
         Some((kwargs_idx, expr))
     }
