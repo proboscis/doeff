@@ -21,8 +21,8 @@ from doeff_seedream import SeedreamClient, edit_image__seedream4, get_seedream_c
 
 from doeff import (
     AskEffect,
-    Delegate,
     Get,
+    Pass,
     Resume,
     Try,
     WithHandler,
@@ -30,6 +30,7 @@ from doeff import (
     default_handlers,
     do,
 )
+from doeff.effects.base import Effect
 
 
 class RecordingSeedreamClient(SeedreamClient):
@@ -56,10 +57,11 @@ class FailingSeedreamClient(SeedreamClient):
 
 
 def _build_mock_seedream_handler(overrides: dict[str, Any]):
-    def _handler(effect, k):
+    @do
+    def _handler(effect: Effect, k: Any):
         if isinstance(effect, AskEffect) and effect.key in overrides:
             return (yield Resume(k, overrides[effect.key]))
-        yield Delegate()
+        yield Pass()
 
     return _handler
 

@@ -67,6 +67,7 @@ from doeff import (
     do,
     run,
 )
+from doeff.effects.base import Effect
 from doeff_image.effects import ImageEdit
 from doeff_image.effects import ImageEdit as UnifiedImageEdit
 from doeff_image.effects import ImageGenerate as UnifiedImageGenerate
@@ -232,7 +233,8 @@ def test_handler_swapping_changes_behavior() -> None:
 
 
 def test_gemini_handler_delegates_unsupported_models() -> None:
-    def fallback_handler(effect: Any, k: Any):
+    @do
+    def fallback_handler(effect: Effect, k: Any):
         if isinstance(effect, LLMChat):
             return (yield Resume(k, "fallback-chat"))
         yield Delegate()

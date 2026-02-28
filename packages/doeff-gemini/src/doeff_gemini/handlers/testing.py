@@ -18,7 +18,8 @@ from doeff_llm.effects import (
 )
 from PIL import Image as PILImage
 
-from doeff import Pass, Resume
+from doeff import Pass, Resume, do
+from doeff.effects.base import Effect
 from doeff_gemini.effects import (
     GeminiChat,
     GeminiEmbedding,
@@ -28,7 +29,7 @@ from doeff_gemini.effects import (
 )
 from doeff_gemini.handlers.production import _is_gemini_model
 
-ProtocolHandler = Callable[[Any, Any], Any]
+ProtocolHandler = Callable[[Effect, Any], Any]
 
 
 def _default_value_for_annotation(annotation: Any, field_name: str) -> Any:  # noqa: PLR0911
@@ -188,7 +189,8 @@ def mock_handlers(
         embedding_seed=embedding_seed,
     )
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
             if not _is_gemini_model(effect.model):
                 yield Pass()
@@ -218,8 +220,9 @@ def mock_handlers(
     return handler
 
 
+@do
 def gemini_mock_handler(
-    effect: Any,
+    effect: Effect,
     k: Any,
     *,
     handler: MockGeminiHandler | None = None,
