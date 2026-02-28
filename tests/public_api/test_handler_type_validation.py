@@ -14,6 +14,7 @@ from doeff import (
     WithIntercept,
     async_run,
     do,
+    rust_vm,
     run,
 )
 
@@ -82,6 +83,46 @@ def test_withintercept_rejects_plain_callable_with_helpful_message() -> None:
     assert "WithIntercept interceptor must be" in message
     assert "@do" in message
     assert "plain_interceptor" in message
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_type"),
+    [
+        ("not_callable", "str"),
+        (123, "int"),
+        (object(), "object"),
+    ],
+)
+def test_private_rust_vm_coerce_rejects_non_callable_values(
+    value: object,
+    expected_type: str,
+) -> None:
+    with pytest.raises(TypeError) as exc_info:
+        rust_vm._coerce_handler(value, api_name="WithHandler", role="handler")
+
+    message = str(exc_info.value)
+    assert "WithHandler handler must be" in message
+    assert f"type: {expected_type}" in message
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_type"),
+    [
+        ("not_callable", "str"),
+        (123, "int"),
+        (object(), "object"),
+    ],
+)
+def test_private_doeff_vm_coerce_rejects_non_callable_values(
+    value: object,
+    expected_type: str,
+) -> None:
+    with pytest.raises(TypeError) as exc_info:
+        doeff_vm._coerce_handler(value, api_name="WithIntercept", role="interceptor")
+
+    message = str(exc_info.value)
+    assert "WithIntercept interceptor must be" in message
+    assert f"type: {expected_type}" in message
 
 
 def test_withhandler_accepts_do_decorated_handler() -> None:

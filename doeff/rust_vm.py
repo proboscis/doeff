@@ -87,9 +87,7 @@ def _coerce_handler(
     doeff_generator_fn_type = getattr(vm, "DoeffGeneratorFn", None)
     if doeff_generator_fn_type is not None and isinstance(handler, doeff_generator_fn_type):
         return handler
-    if callable(handler):
-        raise TypeError(_format_handler_type_error(api_name=api_name, role=role, value=handler))
-    return handler
+    raise TypeError(_format_handler_type_error(api_name=api_name, role=role, value=handler))
 
 
 def _coerce_program(program: Any) -> Any:
