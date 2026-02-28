@@ -20,8 +20,9 @@ from pydantic import BaseModel
 
 from doeff import (
     AskEffect,
-    Delegate,
+    Effect,
     EffectGenerator,
+    Pass,
     Resume,
     WithHandler,
     default_handlers,
@@ -99,12 +100,13 @@ class MockOpenRouterClient:
 
 
 def _build_mock_handler(client: MockOpenRouterClient) -> Callable[..., Any]:
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, AskEffect) and effect.key == "openrouter_client":
             return (yield Resume(k, client))
         if isinstance(effect, AskEffect) and effect.key == "openrouter_api_key":
             return (yield Resume(k, "fake-key"))
-        yield Delegate()
+        yield Pass()
 
     return handler
 

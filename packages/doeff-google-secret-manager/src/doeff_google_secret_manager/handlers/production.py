@@ -9,7 +9,8 @@ from typing import Any
 
 from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret
 
-from doeff import Delegate, Resume
+from doeff import Delegate, Resume, do
+from doeff.effects.base import Effect
 from doeff_google_secret_manager.client import SecretManagerClient, get_secret_manager_client
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -44,6 +45,7 @@ class _ProductionSecretRuntime:
     client: SecretManagerClient | None
     project: str | None
 
+    @do
     def resolve_client(self):
         if self.client is None:
             self.client = yield get_secret_manager_client()
@@ -57,8 +59,9 @@ class _ProductionSecretRuntime:
             )
         return resolved_project
 
+    @do
     def handle_get_secret(self, effect: GetSecret, k):
-        resolved_client: SecretManagerClient = yield from self.resolve_client()
+        resolved_client: SecretManagerClient = yield self.resolve_client()
         resolved_project = self.resolve_project(resolved_client.project)
         version_name = (
             f"projects/{resolved_project}/secrets/{effect.secret_id}/versions/{effect.version}"
@@ -72,8 +75,9 @@ class _ProductionSecretRuntime:
             raise TypeError("Secret Manager payload data must be bytes")
         return (yield Resume(k, bytes(raw_data)))
 
+    @do
     def handle_set_secret(self, effect: SetSecret, k):
-        resolved_client: SecretManagerClient = yield from self.resolve_client()
+        resolved_client: SecretManagerClient = yield self.resolve_client()
         resolved_project = self.resolve_project(resolved_client.project)
         parent = f"projects/{resolved_project}"
         secret_name = f"{parent}/secrets/{effect.secret_id}"
@@ -108,8 +112,9 @@ class _ProductionSecretRuntime:
             if not _matches_exception(exc, "ALREADY_EXISTS"):
                 raise
 
+    @do
     def handle_list_secrets(self, effect: ListSecrets, k):
-        resolved_client: SecretManagerClient = yield from self.resolve_client()
+        resolved_client: SecretManagerClient = yield self.resolve_client()
         resolved_project = self.resolve_project(resolved_client.project)
         request: dict[str, Any] = {"parent": f"projects/{resolved_project}"}
         if effect.filter is not None:
@@ -126,8 +131,9 @@ class _ProductionSecretRuntime:
                 secret_ids.append(_extract_secret_id(item_name))
         return (yield Resume(k, secret_ids))
 
+    @do
     def handle_delete_secret(self, effect: DeleteSecret, k):
-        resolved_client: SecretManagerClient = yield from self.resolve_client()
+        resolved_client: SecretManagerClient = yield self.resolve_client()
         resolved_project = self.resolve_project(resolved_client.project)
         secret_name = f"projects/{resolved_project}/secrets/{effect.secret_id}"
         resolved_client.client.delete_secret(request={"name": secret_name})
@@ -143,15 +149,16 @@ def production_handlers(
 
     runtime = _ProductionSecretRuntime(client=client, project=project)
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, GetSecret):
-            return (yield from runtime.handle_get_secret(effect, k))
+            return (yield runtime.handle_get_secret(effect, k))
         if isinstance(effect, SetSecret):
-            return (yield from runtime.handle_set_secret(effect, k))
+            return (yield runtime.handle_set_secret(effect, k))
         if isinstance(effect, ListSecrets):
-            return (yield from runtime.handle_list_secrets(effect, k))
+            return (yield runtime.handle_list_secrets(effect, k))
         if isinstance(effect, DeleteSecret):
-            return (yield from runtime.handle_delete_secret(effect, k))
+            return (yield runtime.handle_delete_secret(effect, k))
         yield Delegate()
 
     return handler
