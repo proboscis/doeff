@@ -23,13 +23,15 @@ from doeff_google_secret_manager import (  # noqa: E402
 
 from doeff import (  # noqa: E402
     AskEffect,
-    Delegate,
+    Pass,
     Resume,
     WithHandler,
     default_handlers,
+    do,
     run,
 )
 from doeff.effects import StateGetEffect, StatePutEffect  # noqa: E402
+from doeff.effects.base import Effect  # noqa: E402
 
 
 @dataclass
@@ -75,7 +77,8 @@ def _build_handler(
     state = {} if initial_state is None else dict(initial_state)
     event_log: list[tuple[str, str, Any]] = [] if events is None else events
 
-    def mock_handler(effect, k):
+    @do
+    def mock_handler(effect: Effect, k: Any):
         if isinstance(effect, AskEffect):
             value = ask_map.get(effect.key)
             event_log.append(("ask", effect.key, value))
@@ -88,7 +91,7 @@ def _build_handler(
             state[effect.key] = effect.value
             event_log.append(("put", effect.key, effect.value))
             return (yield Resume(k, None))
-        yield Delegate()
+        yield Pass()
 
     return mock_handler, state, event_log
 

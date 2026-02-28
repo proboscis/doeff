@@ -25,8 +25,9 @@ from pydantic import BaseModel
 from doeff import (
     Ask,
     AskEffect,
-    Delegate,
+    Effect,
     EffectGenerator,
+    Pass,
     Resume,
     WithHandler,
     async_run,
@@ -555,12 +556,13 @@ async def test_structured_llm_integration():
     )
     mock_async_client.chat.completions.create.return_value = mock_response
 
-    def mock_openai_handler(effect: Any, k: Any):
+    @do
+    def mock_openai_handler(effect: Effect, k: Any):
         if isinstance(effect, AskEffect) and effect.key == "openai_client":
             return (yield Resume(k, mock_client))
         if isinstance(effect, AskEffect) and effect.key == "openai_api_key":
             return (yield Resume(k, "sk-fake-test-key"))
-        yield Delegate()
+        yield Pass()
 
     @do
     def test_flow() -> EffectGenerator[SimpleResponse]:
