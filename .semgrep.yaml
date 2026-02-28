@@ -1222,6 +1222,27 @@ rules:
       category: doexpr-hierarchy
       rationale: "canonical WithHandler signature is (handler, expr: DoExpr)"
 
+  - id: no-withintercept-python-type-wrapper
+    patterns:
+      - pattern-inside: |
+          def WithIntercept(...):
+              ...
+      - pattern: |
+          @do
+          def $WRAPPER(...):
+              ...
+    paths:
+      include:
+        - "**/doeff/rust_vm.py"
+    message: >
+      WithIntercept type filtering must be done in the Rust VM, not via Python @do wrappers.
+      Pass types= directly to vm.WithIntercept instead of creating a filtered wrapper.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "WithIntercept filtering belongs to Rust VM dispatch"
+
   - id: doeff-doexpr-root-check-to-generator-strict
     patterns:
       - pattern-inside: |
