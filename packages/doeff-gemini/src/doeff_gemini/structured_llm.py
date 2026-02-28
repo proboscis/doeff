@@ -824,7 +824,7 @@ def structured_llm__gemini(
 
     safe_retry_result = yield Try(
         _retry_with_backoff(
-            make_api_call,
+            lambda: make_api_call(),
             max_attempts=max_retries,
             delay_strategy=_gemini_random_backoff,
         )
@@ -848,7 +848,7 @@ def structured_llm__gemini(
         if safe_structured.is_err():
             exc = safe_structured.error
             if isinstance(exc, GeminiStructuredOutputError):
-                default_sllm = _make_gemini_json_fix_sllm(
+                default_sllm_impl = _make_gemini_json_fix_sllm(
                     model=model,
                     max_output_tokens=max_output_tokens,
                     system_instruction=system_instruction,
@@ -857,6 +857,10 @@ def structured_llm__gemini(
                     tool_config=tool_config,
                     generation_config_overrides=generation_config_overrides,
                 )
+
+                def default_sllm(json_text: str, response_format: type[BaseModel]):
+                    return default_sllm_impl(json_text, response_format=response_format)
+
                 result = yield repair_structured_response(
                     model=model,
                     response_format=response_format,
@@ -1025,7 +1029,7 @@ def edit_image__gemini(
 
     safe_retry_result = yield Try(
         _retry_with_backoff(
-            make_api_call,
+            lambda: make_api_call(),
             max_attempts=max_retries,
             delay_strategy=_gemini_random_backoff,
         )
