@@ -95,27 +95,33 @@ Shows the high-level API for:
 ### Handler Setup
 
 ```python
-from doeff import default_handlers, run
+from doeff import Effect, Pass, default_handlers, do, run
 from doeff_conductor import (
     Commit,
     CreateWorktree,
     GitHandler,
     WorktreeHandler,
     make_scheduled_handler,
-    make_typed_handlers,
 )
+from doeff_preset import preset_handlers
 
 worktree_handler = WorktreeHandler(base_path=Path.cwd())
 git_handler = GitHandler()
+create_worktree_handler = make_scheduled_handler(worktree_handler.handle_create_worktree)
+commit_handler = make_scheduled_handler(git_handler.handle_commit)
+preset_handler = preset_handlers()
 
-handlers = {
-    CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-    Commit: make_scheduled_handler(git_handler.handle_commit),
-}
+@do
+def workflow_handler(effect: Effect, k):
+    if isinstance(effect, CreateWorktree):
+        return (yield create_worktree_handler(effect, k))
+    if isinstance(effect, Commit):
+        return (yield commit_handler(effect, k))
+    yield Pass()
 
 result = run(
     my_workflow(),
-    handlers=[*make_typed_handlers(handlers), *default_handlers()],
+    handlers=[preset_handler, workflow_handler, *default_handlers()],
 )
 ```
 
@@ -128,7 +134,7 @@ issue = Issue(id="ISSUE-001", title="Add feature", body="...")
 program = basic_pr(issue)
 result = run(
     program,
-    handlers=[*make_typed_handlers(handlers), *default_handlers()],
+    handlers=[preset_handler, workflow_handler, *default_handlers()],
 )
 ```
 
