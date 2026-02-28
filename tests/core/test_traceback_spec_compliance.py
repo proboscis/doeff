@@ -229,6 +229,8 @@ def test_spec_example_6_handler_return_abandons_inner_chain() -> None:
 def test_spec_example_8_spawn_chain_during_gather() -> None:
     @do
     def fetch_data(url: str) -> Program[str]:
+        if False:  # pragma: no cover - keep generator trace shape stable on py3.10+
+            yield Ask("__unused__")
         if url.endswith("/item/3"):
             raise ConnectionError(f"Failed: {url} -> 500")
         return f"ok:{url}"

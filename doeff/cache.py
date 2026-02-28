@@ -226,9 +226,12 @@ def cache(
             level: str | None = None,
         ) -> EffectGenerator[None]:
             try:
-                import cloudpickle
+                try:
+                    import cloudpickle as serializer
+                except ModuleNotFoundError:
+                    import pickle as serializer
 
-                cloudpickle.dumps(key_obj)
+                serializer.dumps(key_obj)
             except Exception as exc:  # pragma: no cover - defensive logging path
                 truncated_key = _truncate_for_log(key_obj)
                 yield slog(msg=f"serializing cache key failed:{truncated_key}", level="ERROR")

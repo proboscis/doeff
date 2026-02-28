@@ -307,6 +307,8 @@ def test_example_5_handler_stack_changes() -> None:
 def test_example_8_spawn_chain() -> None:
     @do
     def fetch_data(url: str) -> Program[str]:
+        if False:  # pragma: no cover - keep generator trace shape stable on py3.10+
+            yield Ask("__unused__")
         if url.endswith("/item/3"):
             raise ConnectionError(f"Failed: {url} -> 500")
         return f"ok:{url}"

@@ -36,8 +36,12 @@ class CachePutEffect(EffectBase):
                 "policy must be CachePolicy, got "
                 f"{type(self.policy).__name__}"
             )
-        import cloudpickle
-        cloudpickle.dumps(self.key)
+        try:
+            import cloudpickle as serializer
+        except ModuleNotFoundError:  # pragma: no cover - defensive fallback
+            import pickle as serializer
+
+        serializer.dumps(self.key)
         # so this, is always running fine!
 
 
