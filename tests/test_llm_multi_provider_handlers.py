@@ -14,7 +14,7 @@ from doeff_openai.handlers import (
 from doeff_openrouter.handlers import MockOpenRouterRuntime, openrouter_mock_handler
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, WithHandler, default_handlers, do, run
+from doeff import Effect, EffectGenerator, WithHandler, default_handlers, do, run
 
 
 class AnalysisResult(BaseModel):
@@ -28,7 +28,8 @@ def test_multi_model_workflow_routes_to_openai_then_gemini() -> None:
         structured_responses=[{"verdict": "clean", "score": 9}],
     )
 
-    def openai_handler(effect: Any, k: Any):
+    @do
+    def openai_handler(effect: Effect, k: Any):
         return (
             yield from openai_mock_handler(
                 effect,
@@ -38,7 +39,8 @@ def test_multi_model_workflow_routes_to_openai_then_gemini() -> None:
             )
         )
 
-    def gemini_handler(effect: Any, k: Any):
+    @do
+    def gemini_handler(effect: Effect, k: Any):
         return (
             yield from gemini_mock_handler(
                 effect,
@@ -93,8 +95,12 @@ def test_openrouter_catch_all_can_handle_unmatched_model() -> None:
             )
         )
 
+    @do
+    def catch_all_handler(effect: Effect, k: Any):
+        return (yield from openrouter_mock_handler(effect, k))
+
     result = run(
-        WithHandler(openrouter_mock_handler, workflow()),
+        WithHandler(catch_all_handler, workflow()),
         handlers=default_handlers(),
     )
 
@@ -102,7 +108,8 @@ def test_openrouter_catch_all_can_handle_unmatched_model() -> None:
     assert result.value["id"] == "mock-router-chat"
 
     # Run once more with explicit runtime to verify call capture on catch-all routing.
-    def router_handler(effect: Any, k: Any):
+    @do
+    def router_handler(effect: Effect, k: Any):
         return (yield from openrouter_mock_handler(effect, k, runtime=runtime))
 
     routed = run(

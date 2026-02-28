@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from doeff import Gather, Program, Spawn, do
+from doeff import Effect, Gather, Program, Spawn, do
 from doeff.rust_vm import (
     Delegate,
     GetExecutionContext,
@@ -31,7 +31,8 @@ def _entries_from_error(error: BaseException) -> list[Any]:
 def test_generror_dispatches_get_execution_context_to_handlers() -> None:
     seen: list[str] = []
 
-    def observer(effect: object, k: object):
+    @do
+    def observer(effect: Effect, k: object):
         if isinstance(effect, GetExecutionContext):
             seen.append(type(effect).__name__)
             context = yield Delegate()
@@ -50,7 +51,8 @@ def test_generror_dispatches_get_execution_context_to_handlers() -> None:
 
 
 def test_handler_can_enrich_execution_context_before_throw() -> None:
-    def enrich(effect: object, k: object):
+    @do
+    def enrich(effect: Effect, k: object):
         if isinstance(effect, GetExecutionContext):
             context = yield Delegate()
             context.add({"kind": "test_marker", "value": "enriched"})
@@ -82,7 +84,8 @@ def test_all_handlers_pass_falls_back_to_original_exception() -> None:
 def test_base_exception_bypasses_get_execution_context_conversion() -> None:
     seen: list[str] = []
 
-    def observer(effect: object, k: object):
+    @do
+    def observer(effect: Effect, k: object):
         if isinstance(effect, GetExecutionContext):
             seen.append("called")
             context = yield Delegate()
@@ -101,7 +104,8 @@ def test_base_exception_bypasses_get_execution_context_conversion() -> None:
 
 
 def test_handler_throw_during_enrichment_chains_original_as_cause() -> None:
-    def exploding_handler(effect: object, _k: object):
+    @do
+    def exploding_handler(effect: Effect, _k: object):
         if isinstance(effect, GetExecutionContext):
             raise RuntimeError("enrichment failed")
         yield Pass()
@@ -119,7 +123,8 @@ def test_handler_throw_during_enrichment_chains_original_as_cause() -> None:
 def test_nested_generror_guard_blocks_recursive_error_dispatch() -> None:
     calls: list[int] = []
 
-    def exploding_handler(effect: object, _k: object):
+    @do
+    def exploding_handler(effect: Effect, _k: object):
         if isinstance(effect, GetExecutionContext):
             calls.append(1)
             raise RuntimeError("enrichment failed")
@@ -181,7 +186,8 @@ def test_cross_task_propagation_accumulates_spawn_boundaries() -> None:
 def test_get_traceback_is_available_during_get_execution_context_dispatch() -> None:
     captured: dict[str, list[object]] = {}
 
-    def inspector(effect: object, k: object):
+    @do
+    def inspector(effect: Effect, k: object):
         if isinstance(effect, GetExecutionContext):
             hops = yield GetTraceback(k)
             captured["hops"] = hops

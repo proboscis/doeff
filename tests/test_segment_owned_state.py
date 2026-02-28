@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from doeff import (
+    Effect,
     EffectGenerator,
     Pass,
     Pure,
@@ -57,14 +58,16 @@ class ScopeTrigger(EffectBase):
     label: str
 
 
-def inner_ping_handler(effect: object, k: object):
+@do
+def inner_ping_handler(effect: Effect, k: object):
     if not isinstance(effect, InnerPing):
         yield Pass()
         return
     return (yield Resume(k, f"inner:{effect.label}"))
 
 
-def outer_ping_handler(effect: object, k: object):
+@do
+def outer_ping_handler(effect: Effect, k: object):
     if not isinstance(effect, OuterPing):
         yield Pass()
         return
@@ -73,14 +76,16 @@ def outer_ping_handler(effect: object, k: object):
     return (yield Resume(k, f"{first}|{second}"))
 
 
-def boom_handler(effect: object, k: object):
+@do
+def boom_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopeBoom):
         yield Pass()
         return
     raise RuntimeError(f"boom:{effect.label}")
 
 
-def outer_boom_handler(effect: object, k: object):
+@do
+def outer_boom_handler(effect: Effect, k: object):
     if not isinstance(effect, OuterPing):
         yield Pass()
         return
@@ -88,7 +93,8 @@ def outer_boom_handler(effect: object, k: object):
     return (yield Resume(k, inner))
 
 
-def scope_probe_handler(effect: object, k: object):
+@do
+def scope_probe_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopeProbe):
         yield Pass()
         return
@@ -96,7 +102,8 @@ def scope_probe_handler(effect: object, k: object):
     return Pure(f"handled:{effect.label}")
 
 
-def scope_trigger_handler(effect: object, k: object):
+@do
+def scope_trigger_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopeTrigger):
         yield Pass()
         return
@@ -136,10 +143,11 @@ def test_pending_error_context_not_stolen_by_nested_dispatch() -> None:
 def test_interceptor_eval_depth_isolated_per_context() -> None:
     seen: list[str] = []
 
-    def interceptor(expr: object):
-        if isinstance(expr, ScopeProbe):
-            seen.append(expr.label)
-        return expr
+    @do
+    def interceptor(effect: Effect):
+        if isinstance(effect, ScopeProbe):
+            seen.append(effect.label)
+        return effect
 
     @do
     def program() -> EffectGenerator[str]:
@@ -158,10 +166,11 @@ def test_interceptor_eval_depth_isolated_per_context() -> None:
 def test_interceptor_skip_stack_isolated_per_context() -> None:
     seen: list[str] = []
 
-    def interceptor(expr: object):
-        if isinstance(expr, InnerPing):
-            seen.append(expr.label)
-        return expr
+    @do
+    def interceptor(effect: Effect):
+        if isinstance(effect, InnerPing):
+            seen.append(effect.label)
+        return effect
 
     @do
     def program() -> EffectGenerator[tuple[str, str]]:
@@ -186,7 +195,8 @@ def test_continuation_capture_resume_path_remains_well_scoped() -> None:
     class CaptureOnce(EffectBase):
         label: str
 
-    def capture_handler(effect: object, k: object):
+    @do
+    def capture_handler(effect: Effect, k: object):
         if not isinstance(effect, CaptureOnce):
             yield Pass()
             return
@@ -222,20 +232,23 @@ def test_three_level_nested_structural_isolation() -> None:
     class L3(EffectBase):
         tag: str = "l3"
 
-    def h3(effect: object, k: object):
+    @do
+    def h3(effect: Effect, k: object):
         if not isinstance(effect, L3):
             yield Pass()
             return
         return (yield Resume(k, "L3"))
 
-    def h2(effect: object, k: object):
+    @do
+    def h2(effect: Effect, k: object):
         if not isinstance(effect, L2):
             yield Pass()
             return
         inner = yield L3()
         return (yield Resume(k, f"L2<{inner}>"))
 
-    def h1(effect: object, k: object):
+    @do
+    def h1(effect: Effect, k: object):
         if not isinstance(effect, L1):
             yield Pass()
             return
@@ -266,31 +279,30 @@ def test_interceptor_guard_survives_dispatch_prompt_hop() -> None:
     class HopInner(EffectBase):
         label: str
 
-    def hop_ping_handler(effect: object, k: object):
+    @do
+    def hop_ping_handler(effect: Effect, k: object):
         if not isinstance(effect, HopPing):
             yield Pass()
             return
         inner = yield HopInner(label=f"{effect.label}:inner")
         return (yield Resume(k, f"hop:{inner}"))
 
-    def hop_inner_handler(effect: object, k: object):
+    @do
+    def hop_inner_handler(effect: Effect, k: object):
         if not isinstance(effect, HopInner):
             yield Pass()
             return
         return (yield Resume(k, f"inner:{effect.label}"))
 
-    def interceptor(expr: object):
-        @do
-        def effectful() -> EffectGenerator[object]:
-            if isinstance(expr, HopPing):
-                seen.append(f"ping:{expr.label}")
-                if expr.label == "root":
-                    _ = yield HopPing(label="observer-hop")
-            if isinstance(expr, HopInner):
-                seen.append(f"inner:{expr.label}")
-            return expr
-
-        return effectful()
+    @do
+    def interceptor(effect: Effect) -> EffectGenerator[object]:
+        if isinstance(effect, HopPing):
+            seen.append(f"ping:{effect.label}")
+            if effect.label == "root":
+                _ = yield HopPing(label="observer-hop")
+        if isinstance(effect, HopInner):
+            seen.append(f"inner:{effect.label}")
+        return effect
 
     @do
     def program() -> EffectGenerator[str]:
@@ -314,28 +326,27 @@ def test_interceptor_guard_survives_delegate_pass() -> None:
     class PassPing(EffectBase):
         label: str
 
-    def inner_pass_handler(effect: object, k: object):
+    @do
+    def inner_pass_handler(effect: Effect, k: object):
         if not isinstance(effect, PassPing):
             yield Pass()
             return
         yield Pass()
 
-    def outer_pass_handler(effect: object, k: object):
+    @do
+    def outer_pass_handler(effect: Effect, k: object):
         if not isinstance(effect, PassPing):
             yield Pass()
             return
         return (yield Resume(k, f"outer:{effect.label}"))
 
-    def interceptor(expr: object):
-        @do
-        def effectful() -> EffectGenerator[object]:
-            if isinstance(expr, PassPing):
-                seen.append(expr.label)
-                if expr.label == "root":
-                    _ = yield PassPing(label="observer-pass")
-            return expr
-
-        return effectful()
+    @do
+    def interceptor(effect: Effect) -> EffectGenerator[object]:
+        if isinstance(effect, PassPing):
+            seen.append(effect.label)
+            if effect.label == "root":
+                _ = yield PassPing(label="observer-pass")
+        return effect
 
     @do
     def program() -> EffectGenerator[str]:
@@ -366,33 +377,32 @@ def test_effectful_interceptor_no_double_eval_during_dispatch() -> None:
     class EvalProbe(EffectBase):
         label: str
 
-    def eval_ping_handler(effect: object, k: object):
+    @do
+    def eval_ping_handler(effect: Effect, k: object):
         if not isinstance(effect, EvalPing):
             yield Pass()
             return
         return (yield Resume(k, f"handled:{effect.label}"))
 
-    def eval_probe_handler(effect: object, k: object):
+    @do
+    def eval_probe_handler(effect: Effect, k: object):
         if not isinstance(effect, EvalProbe):
             yield Pass()
             return
         return Pure(f"probe:{effect.label}")
 
-    def interceptor(expr: object):
-        @do
-        def effectful() -> EffectGenerator[object]:
-            if not isinstance(expr, EvalPing):
-                return expr
-            intercept_count["value"] += 1
-            if intercept_count["value"] == 1:
-                probe_result = yield Try(EvalProbe(label="inner"))
-                probe_is_ok.append(bool(probe_result.is_ok()))
-                if probe_result.is_ok():
-                    seen_value_types.append(type(probe_result.value).__name__)
-                return Pure(expr)
-            return expr
-
-        return effectful()
+    @do
+    def interceptor(effect: Effect) -> EffectGenerator[object]:
+        if not isinstance(effect, EvalPing):
+            return effect
+        intercept_count["value"] += 1
+        if intercept_count["value"] == 1:
+            probe_result = yield Try(EvalProbe(label="inner"))
+            probe_is_ok.append(bool(probe_result.is_ok()))
+            if probe_result.is_ok():
+                seen_value_types.append(type(probe_result.value).__name__)
+            return Pure(effect)
+        return effect
 
     @do
     def program() -> EffectGenerator[str]:

@@ -7,6 +7,7 @@ import pytest
 from doeff import (
     Ask,
     Delegate,
+    Effect,
     EffectBase,
     Program,
     WithHandler,
@@ -79,7 +80,8 @@ def test_doeff_trace_renders_active_chain(capsys: pytest.CaptureFixture[str]) ->
     class Boom(EffectBase):
         pass
 
-    def exploding_handler(effect: object, _k: object):
+    @do
+    def exploding_handler(effect: Effect, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("handler exploded")
         yield Delegate()

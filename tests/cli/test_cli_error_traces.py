@@ -25,6 +25,10 @@ def run_cli(
         "DOEFF_DISABLE_DEFAULT_ENV": "1",
         "DOEFF_DISABLE_PROFILE": "1",
     }
+    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV"):
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
     if env_overrides:
         for key, value in env_overrides.items():
             if value is None:
@@ -106,13 +110,14 @@ def test_handler_error_shows_handler_context() -> None:
         "-c",
         """
 from dataclasses import dataclass
-from doeff import Delegate, EffectBase, Program, WithHandler, do
+from doeff import Delegate, Effect, EffectBase, Program, WithHandler, do
 
 @dataclass(frozen=True, kw_only=True)
 class Boom(EffectBase):
     pass
 
-def bad_handler(effect, _k):
+@do
+def bad_handler(effect: Effect, _k):
     if isinstance(effect, Boom):
         raise RuntimeError("handler exploded")
     yield Delegate()

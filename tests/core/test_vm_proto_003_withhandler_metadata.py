@@ -5,7 +5,7 @@ from typing import Any
 import doeff_vm
 import pytest
 
-from doeff import Delegate, EffectBase, WithHandler, do
+from doeff import Delegate, Effect, EffectBase, WithHandler, do
 from doeff.rust_vm import default_handlers, run
 
 
@@ -28,49 +28,46 @@ def _extract_dispatch_entry(entries: list[Any]) -> Any | None:
     return None
 
 
-def test_withhandler_wraps_generator_results_as_doeff_generator() -> None:
-    def handler(_effect, _k):
+def test_withhandler_accepts_do_handler_as_pykleisli() -> None:
+    @do
+    def handler(_effect: Effect, _k):
         yield Delegate()
 
     control = WithHandler(handler, _probe_program())
-    wrapped = control.handler
-
-    wrapped_result = wrapped(_ProbeEffect(), object())
-    assert isinstance(wrapped_result, doeff_vm.DoeffGenerator)
+    assert isinstance(control.handler, doeff_vm.PyKleisli)
 
 
-def test_withhandler_non_generator_return_raises_typeerror_with_hint() -> None:
+def test_withhandler_rejects_plain_handler_with_do_hint() -> None:
     def bad_handler(_effect, _k):
         return 123
 
-    control = WithHandler(bad_handler, _probe_program())
-    wrapped = control.handler
-
     with pytest.raises(TypeError) as exc_info:
-        wrapped(_ProbeEffect(), object())
+        WithHandler(bad_handler, _probe_program())
 
     message = str(exc_info.value)
     assert "bad_handler" in message
-    assert "must return a generator" in message
-    assert "Did you forget 'yield'?" in message
+    assert "@do" in message
 
 
 def test_handler_trace_metadata_uses_registration_values_not_runtime_dunder_reads() -> None:
-    def crash_handler(effect, _k):
+    @do
+    def crash_handler(effect: Effect, _k):
         if isinstance(effect, _ProbeEffect):
             raise RuntimeError("boom")
         yield Delegate()
 
     control = WithHandler(crash_handler, _probe_program())
+    original_callable = getattr(crash_handler, "__wrapped__", None)
+    assert original_callable is not None
     original_qualname = crash_handler.__qualname__
-    original_source_file = crash_handler.__code__.co_filename
-    original_source_line = crash_handler.__code__.co_firstlineno
+    original_source_file = original_callable.__code__.co_filename
+    original_source_line = original_callable.__code__.co_firstlineno
 
     # Mutate the underlying callable after registration.
     # VM-PROTO-003 requires trace metadata to come from registration-time fields,
     # not runtime getattr("__name__") / getattr("__code__") probing.
-    control.handler.callable.__name__ = "mutated_handler_name"
-    control.handler.callable.__qualname__ = "mutated_handler_qualname"
+    crash_handler.__name__ = "mutated_handler_name"
+    crash_handler.__qualname__ = "mutated_handler_qualname"
 
     result = run(control, handlers=default_handlers(), print_doeff_trace=False)
     assert result.is_err()

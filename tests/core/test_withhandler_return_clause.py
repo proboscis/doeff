@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from doeff import EffectBase, Pass, Pure, Resume, WithHandler, default_handlers, do, run
+from doeff import Effect, EffectBase, Pass, Pure, Resume, WithHandler, default_handlers, do, run
 
 
 class _Ping(EffectBase):
@@ -15,7 +15,8 @@ class _ClauseEffect(EffectBase):
         self.value = value
 
 
-def _passthrough_handler(_effect, _k):
+@do
+def _passthrough_handler(_effect: Effect, _k):
     yield Pass()
 
 
@@ -49,7 +50,8 @@ def test_withhandler_return_clause_can_return_effectful_doexpr() -> None:
     def body():
         return "base"
 
-    def clause_handler(effect, k):
+    @do
+    def clause_handler(effect: Effect, k):
         if isinstance(effect, _ClauseEffect):
             return (yield Resume(k, f"{effect.value}-ok"))
         yield Pass()
@@ -88,7 +90,8 @@ def test_withhandler_return_clause_exception_propagates() -> None:
 
 
 def test_withhandler_resume_and_return_clause_interaction() -> None:
-    def ping_handler(effect, k):
+    @do
+    def ping_handler(effect: Effect, k):
         if isinstance(effect, _Ping):
             resumed = yield Resume(k, effect.value + 1)
             return resumed * 2

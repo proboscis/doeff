@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar, runtime_checkable, Protocol
 
 import doeff_vm
+from doeff.do import do
 
 from ._program_types import ProgramLike
 from ._validators import ensure_dict_str_any, ensure_program_like
@@ -192,7 +193,8 @@ def normalize_waitable(value: Any) -> Waitable[Any]:
     )
 
 
-def spawn_intercept_handler(effect: Any, k: Any):
+@do
+def spawn_intercept_handler(effect: Effect, k: Any):
     if isinstance(effect, SpawnEffect):
         raw = yield doeff_vm.Delegate()
         return (yield doeff_vm.Resume(k, coerce_task_handle(raw)))

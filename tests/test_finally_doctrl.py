@@ -6,6 +6,7 @@ import pytest
 
 from doeff import (
     Apply,
+    Effect,
     Finally,
     Get,
     Modify,
@@ -102,7 +103,8 @@ def test_finally_travels_with_resumed_continuation() -> None:
     class Ping(EffectBase):
         label: str
 
-    def ping_handler(effect: object, k: object):
+    @do
+    def ping_handler(effect: Effect, k: object):
         if isinstance(effect, Ping):
             return (yield Resume(k, f"handled:{effect.label}"))
         yield Pass()
@@ -129,7 +131,8 @@ def test_finally_travels_with_transferred_continuation() -> None:
     class Ping(EffectBase):
         label: str
 
-    def ping_handler(effect: object, k: object):
+    @do
+    def ping_handler(effect: Effect, k: object):
         if isinstance(effect, Ping):
             yield Transfer(k, f"handled:{effect.label}")
         yield Pass()
@@ -158,7 +161,8 @@ def test_abandoned_continuation_with_finally_logs_warning(
     class Ping(EffectBase):
         label: str
 
-    def abandon_handler(effect: object, k: object):
+    @do
+    def abandon_handler(effect: Effect, k: object):
         if isinstance(effect, Ping):
             return "abandoned"
         yield Pass()
