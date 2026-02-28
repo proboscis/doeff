@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 
-from doeff import Program, do
+from doeff import Effect, Program, do
 from doeff._types_internal import EffectBase
 from doeff.effects import ProgramCallStack, ProgramTrace, Put, slog
 from doeff.rust_vm import Delegate, Pass, Resume, WithHandler, default_handlers, run
@@ -69,7 +69,8 @@ def test_slog_dispatch_effect_repr_contains_payload() -> None:
 
 
 def test_program_trace_from_python_handler() -> None:
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, Ping):
             handler_view = yield ProgramTrace()
             resumed = yield Resume(k, effect.value + 1)
@@ -139,13 +140,15 @@ def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
 
 
 def test_delegation_chain_routes_to_outer_handler() -> None:
-    def inner_handler(effect, _k):
+    @do
+    def inner_handler(effect: Effect, _k):
         if isinstance(effect, NeedsHandler):
             delegated_result = yield Delegate()
             return delegated_result
         yield Pass()
 
-    def outer_handler(effect, k):
+    @do
+    def outer_handler(effect: Effect, k):
         if isinstance(effect, NeedsHandler):
             return (yield Resume(k, effect.value))
         yield Pass()
@@ -190,7 +193,8 @@ def test_recursive_frames_preserve_frame_id_and_args_repr() -> None:
 
 
 def test_handler_sources_and_exception_repr_for_thrown_handler() -> None:
-    def crashing_handler(effect, _k):
+    @do
+    def crashing_handler(effect: Effect, _k):
         if isinstance(effect, Explode):
             raise RuntimeError("handler exploded")
         yield Pass()

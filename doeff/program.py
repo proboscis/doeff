@@ -109,6 +109,14 @@ def _annotation_text_is_effect_kind(annotation_text: str) -> bool:
     )
 
 
+def _safe_issubclass(candidate: Any, parent: Any) -> bool:
+    """Return False for typing/generic alias objects that are not real classes."""
+    try:
+        return issubclass(candidate, parent)
+    except TypeError:
+        return False
+
+
 def _is_program_annotation_kind(annotation: Any) -> bool:
     if annotation is inspect._empty:
         return False
@@ -120,8 +128,8 @@ def _is_program_annotation_kind(annotation: Any) -> bool:
     if annotation in (program_type, ProgramBase):
         return True
     # Check for subclasses of ProgramBase (excluding EffectBase subclasses)
-    if isinstance(annotation, type) and issubclass(annotation, ProgramBase):
-        if not issubclass(annotation, EffectBaseType):
+    if isinstance(annotation, type) and _safe_issubclass(annotation, ProgramBase):
+        if not _safe_issubclass(annotation, EffectBaseType):
             return True
     if isinstance(annotation, ForwardRef):
         return _annotation_text_is_program_kind(annotation.__forward_arg__)
@@ -131,8 +139,8 @@ def _is_program_annotation_kind(annotation: Any) -> bool:
     if origin in (program_type, ProgramBase):
         return True
     # Check origin for subclasses (e.g., MyProgram[T])
-    if isinstance(origin, type) and issubclass(origin, ProgramBase):
-        if not issubclass(origin, EffectBaseType):
+    if isinstance(origin, type) and _safe_issubclass(origin, ProgramBase):
+        if not _safe_issubclass(origin, EffectBaseType):
             return True
     if origin is Annotated:
         args = get_args(annotation)
@@ -153,7 +161,7 @@ def _is_effect_annotation_kind(annotation: Any) -> bool:
     if annotation in (Effect, EffectBase):
         return True
     # Check for subclasses of EffectBase
-    if isinstance(annotation, type) and issubclass(annotation, EffectBase):
+    if isinstance(annotation, type) and _safe_issubclass(annotation, EffectBase):
         return True
     if isinstance(annotation, ForwardRef):
         return _annotation_text_is_effect_kind(annotation.__forward_arg__)
@@ -163,7 +171,7 @@ def _is_effect_annotation_kind(annotation: Any) -> bool:
     if origin in (Effect, EffectBase):
         return True
     # Check origin for subclasses (e.g., MyEffect[T])
-    if isinstance(origin, type) and issubclass(origin, EffectBase):
+    if isinstance(origin, type) and _safe_issubclass(origin, EffectBase):
         return True
     if origin is Annotated:
         args = get_args(annotation)

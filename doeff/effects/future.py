@@ -13,6 +13,7 @@ import threading
 from typing import Any
 
 import doeff_vm
+from doeff.do import do
 
 from .external_promise import CreateExternalPromise
 from .wait import Wait
@@ -94,7 +95,8 @@ def _submit_awaitable(awaitable: Awaitable[Any], promise: Any) -> None:
     future.add_done_callback(_on_done)
 
 
-def sync_await_handler(effect: Any, k: Any):
+@do
+def sync_await_handler(effect: Effect, k: Any):
     """Handle Await effects via background-loop bridge for sync execution."""
     if isinstance(effect, PythonAsyncioAwaitEffect):
         promise = yield CreateExternalPromise()
@@ -105,7 +107,8 @@ def sync_await_handler(effect: Any, k: Any):
     yield doeff_vm.Pass()
 
 
-def async_await_handler(effect: Any, k: Any):
+@do
+def async_await_handler(effect: Effect, k: Any):
     """Handle Await effects in async execution via non-blocking kickoff.
 
     Uses PythonAsyncSyntaxEscape to kick off awaitable submission without

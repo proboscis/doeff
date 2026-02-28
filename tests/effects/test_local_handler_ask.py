@@ -8,6 +8,7 @@ import pytest
 
 from doeff import (
     Ask,
+    Effect,
     EffectBase,
     Local,
     Pass,
@@ -47,7 +48,8 @@ async def test_handler_ask_sees_local_scope(parameterized_interpreter) -> None:
     class Ping(EffectBase):
         pass
 
-    def ping_handler(effect, k):
+    @do
+    def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass()
             return
@@ -76,7 +78,8 @@ async def test_handler_ask_falls_through_to_outer_env(parameterized_interpreter)
     class Ping(EffectBase):
         pass
 
-    def ping_handler(effect, k):
+    @do
+    def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass()
             return
@@ -105,7 +108,8 @@ async def test_handler_ask_nested_local(parameterized_interpreter) -> None:
     class Ping(EffectBase):
         pass
 
-    def ping_handler(effect, k):
+    @do
+    def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass()
             return
@@ -135,10 +139,12 @@ async def test_handler_ask_with_intercept_and_local(parameterized_interpreter) -
     class Ping(EffectBase):
         pass
 
-    def observer(effect):
+    @do
+    def observer(effect: Effect):
         return effect
 
-    def ping_handler(effect, k):
+    @do
+    def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass()
             return
@@ -177,14 +183,16 @@ async def test_multiple_handlers_ask_in_local(parameterized_interpreter) -> None
     class EffB(EffectBase):
         pass
 
-    def handler_a(effect, k):
+    @do
+    def handler_a(effect: Effect, k):
         if not isinstance(effect, EffA):
             yield Pass()
             return
         value = yield Ask("key_a")
         return (yield Resume(k, value))
 
-    def handler_b(effect, k):
+    @do
+    def handler_b(effect: Effect, k):
         if not isinstance(effect, EffB):
             yield Pass()
             return
@@ -225,7 +233,8 @@ async def test_handler_ask_lazy_value_in_local(parameterized_interpreter) -> Non
             yield
         return 42
 
-    def ping_handler(effect, k):
+    @do
+    def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass()
             return
