@@ -1434,18 +1434,20 @@ fn test_gap11_with_local_scoped_bindings() {
         Value::String("localhost".to_string()),
     );
 
-    let result = store.with_local(
-        HashMap::from([
-            ("db".to_string(), Value::String("test".to_string())),
-            ("temp".to_string(), Value::Int(42)),
-        ]),
-        |s| {
-            assert_eq!(s.ask("db").unwrap().as_str(), Some("test"));
-            assert_eq!(s.ask("temp").unwrap().as_int(), Some(42));
-            assert_eq!(s.ask("host").unwrap().as_str(), Some("localhost"));
-            "done"
-        },
-    );
+    let result = store
+        .with_local(
+            HashMap::from([
+                ("db".to_string(), Value::String("test".to_string())),
+                ("temp".to_string(), Value::Int(42)),
+            ]),
+            |s| {
+                assert_eq!(s.ask("db").unwrap().as_str(), Some("test"));
+                assert_eq!(s.ask("temp").unwrap().as_int(), Some(42));
+                assert_eq!(s.ask("host").unwrap().as_str(), Some("localhost"));
+                "done"
+            },
+        )
+        .expect("with_local should accept string keys");
     assert_eq!(result, "done");
     // After with_local, old bindings restored, temp removed
     assert_eq!(store.ask("db").unwrap().as_str(), Some("prod"));
