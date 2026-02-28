@@ -2,6 +2,8 @@
 //!
 //! Values can be either Rust-native (for optimization) or Python objects.
 
+use std::sync::Arc;
+
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString};
 
@@ -433,6 +435,9 @@ impl Value {
         }
         if let Ok(s) = obj.extract::<String>() {
             return Value::String(s);
+        }
+        if let Ok(kleisli) = obj.extract::<PyRef<'_, crate::kleisli::PyKleisli>>() {
+            return Value::Kleisli(Arc::new(kleisli.clone()));
         }
         Value::Python(obj.clone().unbind())
     }
