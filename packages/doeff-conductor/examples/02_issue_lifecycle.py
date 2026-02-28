@@ -22,11 +22,10 @@ from doeff_conductor import (
     ListIssues,
     ResolveIssue,
     make_scheduled_handler,
-    make_typed_handlers,
 )
 from doeff_preset import preset_handlers
 
-from doeff import EffectGenerator, default_handlers, do, run, slog
+from doeff import Effect, EffectGenerator, Pass, default_handlers, do, run, slog
 
 
 @do
@@ -79,21 +78,28 @@ def main():
     """Run the issue lifecycle demo."""
     # Set up handlers
     issue_handler = IssueHandler()
+    preset_handler = preset_handlers()
+    create_issue_handler = make_scheduled_handler(issue_handler.handle_create_issue)
+    list_issues_handler = make_scheduled_handler(issue_handler.handle_list_issues)
+    get_issue_handler = make_scheduled_handler(issue_handler.handle_get_issue)
+    resolve_issue_handler = make_scheduled_handler(issue_handler.handle_resolve_issue)
 
-    domain_handlers = {
-        CreateIssue: make_scheduled_handler(issue_handler.handle_create_issue),
-        ListIssues: make_scheduled_handler(issue_handler.handle_list_issues),
-        GetIssue: make_scheduled_handler(issue_handler.handle_get_issue),
-        ResolveIssue: make_scheduled_handler(issue_handler.handle_resolve_issue),
-    }
-
-    # Merge preset handlers (slog display) with domain handlers
-    handlers = {**preset_handlers(), **domain_handlers}
+    @do
+    def workflow_handler(effect: Effect, k):
+        if isinstance(effect, CreateIssue):
+            return (yield create_issue_handler(effect, k))
+        if isinstance(effect, ListIssues):
+            return (yield list_issues_handler(effect, k))
+        if isinstance(effect, GetIssue):
+            return (yield get_issue_handler(effect, k))
+        if isinstance(effect, ResolveIssue):
+            return (yield resolve_issue_handler(effect, k))
+        yield Pass()
 
     # Run the demo
     result = run(
         issue_lifecycle_demo(),
-        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+        handlers=[preset_handler, workflow_handler, *default_handlers()],
     )
 
     print(f"\nFinal issue state: {result.value.to_dict()}")

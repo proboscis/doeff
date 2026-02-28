@@ -13,6 +13,23 @@ rules:
   # EFFECT SYSTEM PATTERNS
   # ---------------------------------------------------------------------------
 
+  - id: no-make-typed-handler
+    languages: [python]
+    severity: ERROR
+    message: >
+      make_typed_handler/make_typed_handlers encode a type-mapping dispatch model
+      that does not belong in doeff. Use @do handler functions with isinstance checks instead.
+    pattern-either:
+      - pattern: |
+          def make_typed_handler(...):
+              ...
+      - pattern: |
+          def make_typed_handlers(...):
+              ...
+    paths:
+      include:
+        - packages/
+
   - id: doeff-no-effect-creation-context-wrapper
     patterns:
       - pattern-either:

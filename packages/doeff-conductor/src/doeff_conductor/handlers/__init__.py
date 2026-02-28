@@ -44,17 +44,6 @@ if TYPE_CHECKING:
 HandlerProtocol = Callable[..., Any]
 
 
-def make_typed_handlers(
-    scheduled_handlers: Sequence[HandlerProtocol] | HandlerProtocol | None = None,
-) -> list[HandlerProtocol]:
-    """Normalize one or more protocol handlers into a list."""
-    if scheduled_handlers is None:
-        return []
-    if callable(scheduled_handlers):
-        return [scheduled_handlers]
-    return list(scheduled_handlers)
-
-
 def production_handlers(
     worktree_handler: WorktreeHandler | None = None,
     issue_handler: IssueHandler | None = None,
@@ -83,7 +72,7 @@ def run_sync(
         program: The program to execute
         env: Optional initial environment
         store: Optional initial store
-        scheduled_handlers: Optional effect->handler mapping
+        scheduled_handlers: Optional protocol handler(s)
 
     Returns:
         RunResult containing the execution outcome
@@ -93,7 +82,14 @@ def run_sync(
         if result.is_ok():
             print(result.value)
     """
-    handlers = [*make_typed_handlers(scheduled_handlers), *default_handlers()]
+    protocol_handlers: list[HandlerProtocol] = []
+    if scheduled_handlers is not None:
+        if callable(scheduled_handlers):
+            protocol_handlers = [scheduled_handlers]
+        else:
+            protocol_handlers = list(scheduled_handlers)
+
+    handlers = [*protocol_handlers, *default_handlers()]
     return run(program, handlers=handlers, env=env, store=store)
 
 
@@ -111,7 +107,6 @@ __all__ = [
     # Utilities
     "make_scheduled_handler",
     "make_scheduled_handler_with_store",
-    "make_typed_handlers",
     "mock_handlers",
     "production_handlers",
     # Testing utility
