@@ -9,8 +9,9 @@ import random
 import textwrap
 import time
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
+import PIL.Image
 from pydantic import BaseModel, ValidationError
 
 from doeff import (
@@ -25,9 +26,6 @@ from doeff import (
 
 from .client import get_gemini_client, track_api_call
 from .types import GeminiImageEditResult
-
-if TYPE_CHECKING:  # pragma: no cover - optional dependency for type checkers
-    import PIL.Image
 
 
 class GeminiStructuredOutputError(ValueError):
@@ -126,7 +124,7 @@ def _make_gemini_json_fix_sllm(
     return _impl
 
 
-def _image_to_part(image: PIL.Image.Image):
+def _image_to_part(image: "PIL.Image.Image"):
     """Convert a PIL image into a Gemini content part."""
     from google.genai import types
 
@@ -220,7 +218,7 @@ def _extract_json_payload_from_response(response: Any) -> Any | None:
 @do
 def build_contents(
     text: str,
-    images: list[PIL.Image.Image] | None = None,
+    images: list["PIL.Image.Image"] | None = None,
 ) -> EffectGenerator[list[Any]]:
     """Prepare the list of :mod:`google.genai` contents to feed into Gemini."""
     from google.genai import types
@@ -705,7 +703,7 @@ def process_image_edit_response(response: Any) -> EffectGenerator[GeminiImageEdi
 def structured_llm__gemini(
     text: str,
     model: str = "gemini-2.5-pro",
-    images: list[PIL.Image.Image] | None = None,
+    images: list["PIL.Image.Image"] | None = None,
     response_format: type[BaseModel] | None = None,
     max_output_tokens: int = 2048,
     temperature: float = 0.7,
@@ -889,7 +887,7 @@ def structured_llm__gemini(
 def edit_image__gemini(
     prompt: str,
     model: str = "gemini-2.5-flash-image-preview",
-    images: list[PIL.Image.Image] | None = None,
+    images: list["PIL.Image.Image"] | None = None,
     max_output_tokens: int = 8192,
     temperature: float = 0.9,
     top_p: float | None = None,
