@@ -7,8 +7,8 @@ use crate::continuation::Continuation;
 use crate::dispatch::DispatchContext;
 use crate::effect::DispatchEffect;
 use crate::error::VMError;
-use crate::handler::Handler;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
+use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::step::PyException;
 
@@ -21,7 +21,7 @@ pub(crate) struct DispatchState {
 pub(crate) struct WithHandlerPlan {
     pub(crate) handler_marker: Marker,
     pub(crate) outside_seg_id: SegmentId,
-    pub(crate) handler: Handler,
+    pub(crate) handler: KleisliRef,
     pub(crate) py_identity: Option<PyShared>,
 }
 
@@ -222,8 +222,7 @@ impl DispatchState {
     }
 
     pub(crate) fn prepare_with_handler(
-        handler: Handler,
-        explicit_py_identity: Option<PyShared>,
+        handler: KleisliRef,
         current_segment: Option<SegmentId>,
     ) -> Result<WithHandlerPlan, VMError> {
         let handler_marker = Marker::fresh();
@@ -231,7 +230,7 @@ impl DispatchState {
             return Err(VMError::internal("no current segment for WithHandler"));
         };
 
-        let py_identity = explicit_py_identity.or_else(|| handler.py_identity());
+        let py_identity = handler.py_identity();
         Ok(WithHandlerPlan {
             handler_marker,
             outside_seg_id,

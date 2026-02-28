@@ -1,5 +1,6 @@
 //! Kleisli arrow types for IR-level callables (SPEC-VM-017).
 
+use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::PyTypeError;
@@ -10,7 +11,7 @@ use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::error::VMError;
 use crate::frame::CallMetadata;
-use crate::handler::IRStreamFactoryRef;
+use crate::handler::{Handler, IRStreamFactoryRef};
 use crate::ir_stream::{IRStreamRef, PythonGeneratorStream};
 use crate::py_shared::PyShared;
 use crate::value::Value;
@@ -36,6 +37,9 @@ pub trait Kleisli: std::fmt::Debug + Send + Sync {
 
     /// Debug metadata for tracing/error reporting.
     fn debug_info(&self) -> KleisliDebugInfo;
+
+    /// Downcasting hook for specialized VM behavior.
+    fn as_any(&self) -> &dyn Any;
 
     /// Optional Python identity for handler self-exclusion (OCaml semantics).
     fn py_identity(&self) -> Option<PyShared> {
@@ -316,6 +320,10 @@ impl Kleisli for PyKleisli {
         }
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn py_identity(&self) -> Option<PyShared> {
         Python::attach(|py| {
             if let Ok(factory) = self.func.bind(py).getattr("_doeff_generator_factory") {
@@ -325,6 +333,164 @@ impl Kleisli for PyKleisli {
             }
             Some(self.func.clone())
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DgfnKleisli {
+    inner: PyKleisli,
+    callable_identity: PyShared,
+}
+
+impl DgfnKleisli {
+    pub fn from_dgfn(
+        py: Python<'_>,
+        dgfn_obj: Py<PyAny>,
+        callable_identity: Py<PyAny>,
+    ) -> PyResult<Self> {
+        let inner = PyKleisli::from_handler(py, dgfn_obj)?;
+        Ok(Self {
+            inner,
+            callable_identity: PyShared::new(callable_identity),
+        })
+    }
+}
+
+impl Kleisli for DgfnKleisli {
+    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        self.inner.apply(py, args)
+    }
+
+    fn debug_info(&self) -> KleisliDebugInfo {
+        self.inner.debug_info()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn py_identity(&self) -> Option<PyShared> {
+        Some(self.callable_identity.clone())
+    }
+}
+
+/// Python-callable Kleisli that returns the callable's raw value.
+///
+/// This is used for interceptor functions that can return a transformed
+/// DoExpr/effect directly (not necessarily a generator).
+#[derive(Debug, Clone)]
+pub struct PyCallableKleisli {
+    func: PyShared,
+    name: String,
+    file: Option<String>,
+    line: Option<u32>,
+}
+
+impl PyCallableKleisli {
+    pub fn from_callable(py: Python<'_>, func: Py<PyAny>) -> PyResult<Self> {
+        if !func.bind(py).is_callable() {
+            return Err(PyTypeError::new_err("callable must be callable"));
+        }
+        let callable = func.bind(py);
+        let name = callable
+            .getattr("__qualname__")
+            .ok()
+            .and_then(|bound| bound.extract::<String>().ok())
+            .or_else(|| {
+                callable
+                    .getattr("__name__")
+                    .ok()
+                    .and_then(|bound| bound.extract::<String>().ok())
+            })
+            .unwrap_or_else(|| "<python_callable>".to_string());
+        let (file, line) = PyKleisli::source_info(callable);
+        Ok(Self {
+            func: PyShared::new(func),
+            name,
+            file,
+            line,
+        })
+    }
+}
+
+impl Kleisli for PyCallableKleisli {
+    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        let arg_values: Vec<Bound<'_, PyAny>> = args
+            .iter()
+            .map(|value| value.to_pyobject(py))
+            .collect::<PyResult<Vec<_>>>()
+            .map_err(PyKleisli::map_pyerr)?;
+        let arg_tuple = PyTuple::new(py, &arg_values).map_err(PyKleisli::map_pyerr)?;
+        let produced = self
+            .func
+            .bind(py)
+            .call1(arg_tuple)
+            .map_err(PyKleisli::map_pyerr)?;
+        Ok(DoCtrl::Pure {
+            value: Value::Python(produced.unbind()),
+        })
+    }
+
+    fn debug_info(&self) -> KleisliDebugInfo {
+        KleisliDebugInfo {
+            name: self.name.clone(),
+            file: self.file.clone(),
+            line: self.line,
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn py_identity(&self) -> Option<PyShared> {
+        Some(self.func.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HandlerSentinelKleisli {
+    handler: Handler,
+    identity: PyShared,
+    debug: KleisliDebugInfo,
+}
+
+impl HandlerSentinelKleisli {
+    pub fn new(handler: Handler, identity: PyShared) -> Self {
+        let info = handler.handler_debug_info();
+        Self {
+            handler,
+            identity,
+            debug: KleisliDebugInfo {
+                name: info.name,
+                file: info.file,
+                line: info.line,
+            },
+        }
+    }
+
+    pub fn handler(&self) -> Handler {
+        self.handler.clone()
+    }
+}
+
+impl Kleisli for HandlerSentinelKleisli {
+    fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        Err(VMError::internal(
+            "RustHandler sentinel Kleisli cannot be invoked directly",
+        ))
+    }
+
+    fn debug_info(&self) -> KleisliDebugInfo {
+        self.debug.clone()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn py_identity(&self) -> Option<PyShared> {
+        Some(self.identity.clone())
     }
 }
 
@@ -357,5 +523,9 @@ impl Kleisli for RustKleisli {
             file: None,
             line: None,
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

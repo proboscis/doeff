@@ -14,6 +14,7 @@ from doeff import (
     Resume,
     Tell,
     WithHandler,
+    WithIntercept,
     default_handlers,
     do,
     run,
@@ -285,3 +286,143 @@ class TestNestedWithHandler:
             handlers=default_handlers(),
         )
         assert result.value == "middle:outer"
+
+
+@pytest.mark.phase3_baseline
+def test_with_handler_plain_generator() -> None:
+    def handler(effect, k):
+        if isinstance(effect, Ping):
+            return (yield Resume(k, f"plain:{effect.payload}"))
+        yield Pass()
+
+    @do
+    def body():
+        return (yield Ping("x"))
+
+    result = run(WithHandler(handler, body()), handlers=default_handlers())
+    assert result.value == "plain:x"
+
+
+@pytest.mark.phase3_baseline
+def test_with_handler_do_decorated() -> None:
+    @do
+    def handler(effect: Effect, k):
+        if isinstance(effect, Ping):
+            return (yield Resume(k, f"do:{effect.payload}"))
+        yield Delegate()
+
+    @do
+    def body():
+        return (yield Ping("y"))
+
+    result = run(WithHandler(handler, body()), handlers=default_handlers())
+    assert result.value == "do:y"
+
+
+@pytest.mark.phase3_baseline
+def test_with_intercept_plain_callable() -> None:
+    def interceptor(expr):
+        if isinstance(expr, Ping):
+            return Ping("mutated")
+        return expr
+
+    def handler(effect, k):
+        if isinstance(effect, Ping):
+            return (yield Resume(k, effect.payload))
+        yield Pass()
+
+    @do
+    def body():
+        return (yield Ping("original"))
+
+    result = run(
+        WithHandler(
+            handler,
+            WithIntercept(interceptor, body(), (Ping,), "include"),
+        ),
+        handlers=default_handlers(),
+    )
+    assert result.value == "mutated"
+
+
+@pytest.mark.phase3_baseline
+def test_with_intercept_do_decorated() -> None:
+    @do
+    def interceptor(expr):
+        if isinstance(expr, Ping):
+            seen = yield Get("seen")
+            yield Put("seen", seen + 1)
+        return expr
+
+    def handler(effect, k):
+        if isinstance(effect, Ping):
+            return (yield Resume(k, effect.payload))
+        yield Pass()
+
+    @do
+    def body():
+        value = yield Ping("base")
+        seen = yield Get("seen")
+        return f"{value}:{seen}"
+
+    result = run(
+        WithHandler(
+            handler,
+            WithIntercept(interceptor, body()),
+        ),
+        handlers=default_handlers(),
+        store={"seen": 0},
+    )
+    assert result.value == "base:1"
+
+
+@pytest.mark.phase3_baseline
+def test_with_handler_return_clause() -> None:
+    def handler(_effect, _k):
+        yield Pass()
+
+    def return_clause(value):
+        return f"ret:{value}"
+
+    @do
+    def body():
+        return "done"
+
+    result = run(
+        WithHandler(handler, body(), return_clause),
+        handlers=default_handlers(),
+    )
+    assert result.value == "ret:done"
+
+
+@pytest.mark.phase3_baseline
+def test_with_intercept_effectful() -> None:
+    def interceptor(expr):
+        @do
+        def effectful():
+            if isinstance(expr, Ping):
+                count = yield Get("count")
+                yield Put("count", count + 1)
+            return expr
+
+        return effectful()
+
+    def handler(effect, k):
+        if isinstance(effect, Ping):
+            return (yield Resume(k, "ok"))
+        yield Pass()
+
+    @do
+    def body():
+        _ = yield Ping("ignored")
+        return (yield Get("count"))
+
+    result = run(
+        WithHandler(
+            handler,
+            WithIntercept(interceptor, body(), (Ping,), "include"),
+        ),
+        handlers=default_handlers(),
+        store={"count": 0},
+    )
+    assert result.value == 1
