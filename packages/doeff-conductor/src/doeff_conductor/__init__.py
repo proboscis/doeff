@@ -106,7 +106,6 @@ from .handlers import (
     # Handler utilities
     make_scheduled_handler,
     make_scheduled_handler_with_store,
-    make_typed_handlers,
     mock_handlers,
     production_handlers,
 )
@@ -202,7 +201,6 @@ __all__ = [
     "make_blocking_scheduled_handler_with_store",
     "make_scheduled_handler",
     "make_scheduled_handler_with_store",
-    "make_typed_handlers",
     # Handler utilities
     "mock_handlers",
     "multi_agent",

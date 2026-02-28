@@ -22,11 +22,10 @@ from doeff_conductor import (
     WorktreeEnv,
     WorktreeHandler,
     make_scheduled_handler,
-    make_typed_handlers,
 )
 from doeff_preset import preset_handlers
 
-from doeff import EffectGenerator, default_handlers, do, run, slog
+from doeff import Effect, EffectGenerator, Pass, default_handlers, do, run, slog
 
 
 @do
@@ -61,20 +60,25 @@ def main():
     # Set up handlers
     worktree_handler = WorktreeHandler(repo_path=Path.cwd())
     git_handler = GitHandler()
+    preset_handler = preset_handlers()
+    create_worktree_handler = make_scheduled_handler(worktree_handler.handle_create_worktree)
+    delete_worktree_handler = make_scheduled_handler(worktree_handler.handle_delete_worktree)
+    commit_handler = make_scheduled_handler(git_handler.handle_commit)
 
-    domain_handlers = {
-        CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-        DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-        Commit: make_scheduled_handler(git_handler.handle_commit),
-    }
-
-    # Merge preset handlers (slog display) with domain handlers
-    handlers = {**preset_handlers(), **domain_handlers}
+    @do
+    def workflow_handler(effect: Effect, k):
+        if isinstance(effect, CreateWorktree):
+            return (yield create_worktree_handler(effect, k))
+        if isinstance(effect, DeleteWorktree):
+            return (yield delete_worktree_handler(effect, k))
+        if isinstance(effect, Commit):
+            return (yield commit_handler(effect, k))
+        yield Pass()
 
     # Run the workflow
     result = run(
         hello_workflow(),
-        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+        handlers=[preset_handler, workflow_handler, *default_handlers()],
     )
 
     print(f"\nResult: {result.value}")
