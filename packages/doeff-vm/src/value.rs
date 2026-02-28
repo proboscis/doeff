@@ -337,7 +337,13 @@ impl Value {
             }
             Value::RustProgramInvocation(_) => Ok(py.None().into_bound(py)),
             Value::PythonHandlerCallable(callable) => Ok(callable.bind(py).clone()),
-            Value::Kleisli(_) => Ok(py.None().into_bound(py)),
+            Value::Kleisli(kleisli) => {
+                if let Some(identity) = kleisli.py_identity() {
+                    Ok(identity.bind(py).clone())
+                } else {
+                    Ok(py.None().into_bound(py))
+                }
+            }
             Value::Task(handle) => {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("type", "Task")?;
@@ -433,6 +439,10 @@ impl Value {
         }
         if let Ok(s) = obj.extract::<String>() {
             return Value::String(s);
+        }
+        // Check if it's a PyKleisli instance — wrap as Value::Kleisli
+        if let Ok(kleisli) = obj.extract::<crate::kleisli::PyKleisli>() {
+            return Value::Kleisli(std::sync::Arc::new(kleisli));
         }
         Value::Python(obj.clone().unbind())
     }

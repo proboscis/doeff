@@ -1,13 +1,9 @@
-"""doeff-13 hang regression tests (RED stage).
+"""doeff-13 hang regression tests.
 
-These tests capture the known hanging behavior when ``@do``-decorated handlers
-are used with ``WithHandler``.  The KPC auto-unwrap path re-enters itself and
-spins forever; a 3.0 s watchdog budget bounds every scenario so the suite
-always terminates.
-
-Post-fix expectation: all tests PASS within the budget.
-Pre-fix expectation:  ``@do``-handler tests FAIL (timeout) while the negative-
-                      control plain-handler test PASSES.
+These tests verify that ``@do``-decorated handlers work correctly with
+``WithHandler`` — previously they caused hangs or TypeErrors (doeff-13).
+After VM-KLEISLI-PHASE2, all tests complete within the watchdog budget
+with correct results.
 """
 
 from __future__ import annotations
@@ -96,25 +92,18 @@ def _run_with_watchdog(
 
 
 class TestDoeff13HangRegression:
-    """Hang-regression suite for doeff-13.
+    """Regression suite for doeff-13 (VM-KLEISLI-PHASE2).
 
     Every scenario uses a ``@do``-decorated handler pushed via ``WithHandler``.
-    Before the fix these hang indefinitely; the watchdog converts each hang
-    into a bounded, deterministic failure.
+    Before the fix these caused TypeError or hangs; after PHASE2 they complete
+    correctly within the watchdog budget.
     """
 
     def test_do_handler_path_completes_within_3s(self) -> None:
-        """A @do-decorated handler that plain-returns should NOT hang.
-
-        VM-PROTO-003 contract: handlers must return generators.
-        A plain return from @do handler is now a bounded TypeError
-        (instead of historical hang behavior).
-        """
-
         @do
-        def handler(effect: Effect, _k):
+        def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
-                return f"wrapped:{effect.value}"
+                return (yield Resume(k, f"wrapped:{effect.value}"))
             yield Delegate()
 
         def body():
@@ -126,30 +115,17 @@ class TestDoeff13HangRegression:
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main))
-        assert run_result.is_err()
-        assert isinstance(run_result.error, TypeError)
-        assert "must return a generator" in str(run_result.error)
-        assert "Did you forget 'yield'?" in str(run_result.error)
+        assert run_result.value == "wrapped:x"
 
     def test_nested_do_handler_path_completes_within_3s(self) -> None:
-        """Two nested @do-decorated handlers should NOT hang.
-
-        The outer handler delegates unknown effects; the inner handler
-        intercepts ``_CustomEffect``.  Pre-fix both layers trigger re-entry.
-
-        VM-PROTO-003 contract: handlers must return generators.
-        Nested @do handlers with plain returns should fail fast with TypeError.
-        """
-
         @do
-        def inner_handler(effect: Effect, _k):
+        def inner_handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
-                return f"inner:{effect.value}"
+                return (yield Resume(k, f"inner:{effect.value}"))
             yield Delegate()
 
         @do
         def outer_handler(effect: Effect, _k):
-            # Outer handler never intercepts _CustomEffect — always delegates.
             yield Delegate()
 
         def body():
@@ -165,32 +141,17 @@ class TestDoeff13HangRegression:
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main))
-        assert run_result.is_err()
-        assert isinstance(run_result.error, TypeError)
-        assert "must return a generator" in str(run_result.error)
-        assert "Did you forget 'yield'?" in str(run_result.error)
+        assert run_result.value == "inner:hello"
 
     def test_no_infinite_reentry_on_custom_handler(self) -> None:
-        """A @do handler that yields an effect INSIDE the handler must not loop.
-
-        The handler intercepts ``_CustomEffect`` and internally yields a
-        ``Get`` (state read) — an operation that requires the default
-        handlers.  If the KPC path re-enters the handler stack this becomes
-        an infinite loop.
-
-        VM-PROTO-003 contract: handlers must return generators.
-        @do handlers that return Program values now fail fast with TypeError.
-        """
-        from doeff import Get
+        from doeff import Get, Pass
 
         @do
-        def handler(effect: Effect, _k):
+        def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
-                # Yield an effect *inside* the handler body — this is the
-                # pattern most likely to trigger infinite KPC re-entry.
                 state_val: object = yield Get("sentinel")
-                return f"got:{effect.value}:{state_val}"
-            yield Delegate()
+                return (yield Resume(k, f"got:{effect.value}:{state_val}"))
+            yield Pass()
 
         def body():
             result = yield _CustomEffect("x")
@@ -201,10 +162,7 @@ class TestDoeff13HangRegression:
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main), store={"sentinel": "fallback"})
-        assert run_result.is_err()
-        assert isinstance(run_result.error, TypeError)
-        assert "must return a generator" in str(run_result.error)
-        assert "Did you forget 'yield'?" in str(run_result.error)
+        assert run_result.value == "got:x:fallback"
 
 
 # ---------------------------------------------------------------------------

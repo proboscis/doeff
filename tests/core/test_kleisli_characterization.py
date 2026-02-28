@@ -172,47 +172,44 @@ class TestRustBuiltinHandlers:
         assert result.value == "counter:10|11"
 
 
-class TestDoHandlerPreKleisli:
-    @pytest.mark.pre_kleisli_behavior
-    def test_do_handler_returns_type_error(self) -> None:
+class TestDoHandler:
+    def test_do_handler_resume_returns_value_to_body(self) -> None:
         @do
-        def handler(effect: Effect, _k):
+        def handler(effect: Effect, k):
             if isinstance(effect, Ping):
-                return f"handled:{effect.payload}"
-            yield Delegate()
+                return (yield Resume(k, f"handled:{effect.payload}"))
+            yield Pass()
 
+        @do
         def body():
             value = yield Ping("hello")
             return value
 
-        def main():
-            return (yield WithHandler(handler, _prog(body)))
+        result = run(
+            WithHandler(handler, body()),
+            handlers=default_handlers(),
+        )
+        assert result.value == "handled:hello"
 
-        result = run(_prog(main), handlers=default_handlers())
-        assert result.is_err()
-        assert isinstance(result.error, TypeError)
-        assert "must return a generator" in str(result.error)
-
-    @pytest.mark.pre_kleisli_behavior
-    def test_do_handler_with_effects_returns_type_error(self) -> None:
+    def test_do_handler_with_effects_resumes_correctly(self) -> None:
         @do
-        def handler(effect: Effect, _k):
+        def handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 state_val = yield Get("key")
-                return f"handled:{state_val}"
-            yield Delegate()
+                return (yield Resume(k, f"handled:{state_val}"))
+            yield Pass()
 
+        @do
         def body():
             value = yield Ping("hello")
             return value
 
-        def main():
-            return (yield WithHandler(handler, _prog(body)))
-
-        result = run(_prog(main), handlers=default_handlers(), store={"key": "magic"})
-        assert result.is_err()
-        assert isinstance(result.error, TypeError)
-        assert "must return a generator" in str(result.error)
+        result = run(
+            WithHandler(handler, body()),
+            handlers=default_handlers(),
+            store={"key": "magic"},
+        )
+        assert result.value == "handled:magic"
 
 
 class TestHandlerIdentity:

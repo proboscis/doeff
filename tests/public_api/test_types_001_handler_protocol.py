@@ -476,23 +476,20 @@ class TestHP11DoDecoratedHandler:
         ):
             asyncio.run(sub.async_run(_prog(body), handlers=[bad_handler]))
 
-    def test_do_decorated_handler_plain_return(self) -> None:
+    def test_do_decorated_handler_with_resume(self) -> None:
         @do
-        def handler(effect: Effect, _k):
+        def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
-                return f"wrapped:{effect.value}"
-            yield Delegate()
+                return (yield Resume(k, f"wrapped:{effect.value}"))
+            yield Pass()
 
+        @do
         def body():
             result = yield _CustomEffect("x")
             return result
 
-        def main():
-            result = yield WithHandler(handler=handler, expr=_prog(body))
-            return result
-
-        result = run(_prog(main), handlers=default_handlers())
-        assert result.is_err()
-        assert isinstance(result.error, TypeError)
-        assert "must return a generator" in str(result.error)
-        assert "Did you forget 'yield'?" in str(result.error)
+        result = run(
+            WithHandler(handler, body()),
+            handlers=default_handlers(),
+        )
+        assert result.value == "wrapped:x"
