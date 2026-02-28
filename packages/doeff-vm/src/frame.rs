@@ -3,9 +3,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::ir_stream::IRStreamRef;
 use crate::do_ctrl::DoCtrl;
 use crate::ids::{DispatchId, Marker};
+use crate::ir_stream::IRStreamRef;
 use crate::py_shared::PyShared;
 use crate::step::PyException;
 use crate::value::Value;
@@ -76,6 +76,7 @@ pub struct InterceptorContinuation {
     pub chain: Arc<Vec<Marker>>,
     pub next_idx: usize,
     pub interceptor_metadata: Option<CallMetadata>,
+    pub guard_eval_depth: bool,
 }
 
 #[derive(Debug, Clone)]

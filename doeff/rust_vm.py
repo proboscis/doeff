@@ -369,23 +369,14 @@ def WithIntercept(
     normalized_types = _normalize_intercept_types(types)
     metadata = _with_intercept_metadata(f)
 
-    if normalized_types is not None:
-        from doeff.do import do
-
-        original_f = f
-
-        @do
-        def filtered(effect: Any) -> Any:
-            matches = isinstance(effect, normalized_types)
-            should_call = (mode == "include" and matches) or (mode == "exclude" and not matches)
-            if should_call:
-                return original_f(effect)
-            return effect
-
-        f = filtered
-
     vm = _vm()
-    return vm.WithIntercept(f, expr, metadata)
+    return vm.WithIntercept(
+        f,
+        expr,
+        types=normalized_types,
+        mode=mode,
+        meta=metadata,
+    )
 
 
 def __getattr__(name: str) -> Any:
