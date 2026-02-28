@@ -20,7 +20,7 @@ class EffectCallTreeNode:
     name: str
     is_effect: bool
     children: OrderedDict[str, "EffectCallTreeNode"] = field(default_factory=OrderedDict)
-    observations: list[EffectObservation] = field(default_factory=list)
+    observations: list["EffectObservation"] = field(default_factory=list)
 
     def add_child(self, name: str, *, is_effect: bool) -> "EffectCallTreeNode":
         node = self.children.get(name)
@@ -42,7 +42,7 @@ class EffectCallTree:
 
     @classmethod
     def from_observations(
-        cls, observations: Iterable[EffectObservation]
+        cls, observations: Iterable["EffectObservation"]
     ) -> "EffectCallTree":
         root = EffectCallTreeNode(name="<root>", is_effect=False)
 
@@ -98,7 +98,7 @@ def _display_name(node: EffectCallTreeNode) -> str:
     return f"{node.name} x{count}"
 
 
-def _format_frame(frame: CallFrame) -> str:
+def _format_frame(frame: "CallFrame") -> str:
     function_name = getattr(frame, "function_name", "<unknown>")
     args = getattr(frame, "args", ())
     kwargs = getattr(frame, "kwargs", {})
@@ -113,7 +113,7 @@ def _format_frame(frame: CallFrame) -> str:
     return f"{function_name}({arg_str})"
 
 
-def _format_effect(observation: EffectObservation) -> str:
+def _format_effect(observation: "EffectObservation") -> str:
     effect_type = getattr(observation, "effect_type", "Effect")
     key = getattr(observation, "key", None)
 
