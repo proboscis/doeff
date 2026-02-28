@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from itertools import count
+from typing import Any
 
-from doeff import Delegate, Resume
+from doeff import Effect, Pass, Resume, do
 from doeff_notify.effects import Acknowledge, Notify, NotifyThread
 from doeff_notify.types import Channel, NotificationResult, Urgency
 
@@ -21,7 +22,8 @@ def _next_id() -> str:
     return f"console-{next(_CONSOLE_IDS)}"
 
 
-def console_handler(effect, k):
+@do
+def console_handler(effect: Effect, k: Any):
     """Print notifications to stdout and return NotificationResult payloads."""
 
     if isinstance(effect, Notify):
@@ -47,7 +49,7 @@ def console_handler(effect, k):
     if isinstance(effect, Acknowledge):
         return (yield Resume(k, False))
 
-    yield Delegate()
+    yield Pass()
 
 
 __all__ = ["console_handler"]

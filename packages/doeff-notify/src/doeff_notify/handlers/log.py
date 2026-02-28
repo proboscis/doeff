@@ -5,7 +5,7 @@ from __future__ import annotations
 from itertools import count
 from typing import Any
 
-from doeff import Delegate, Resume, Tell
+from doeff import Effect, Pass, Resume, Tell, do
 from doeff_notify.effects import Acknowledge, Notify, NotifyThread
 from doeff_notify.types import Channel, NotificationResult
 
@@ -26,7 +26,8 @@ def _notify_payload(effect: Notify, notification_id: str) -> dict[str, Any]:
     }
 
 
-def log_handler(effect, k):
+@do
+def log_handler(effect: Effect, k: Any):
     """Emit notification events as Tell effects for logging handlers."""
 
     if isinstance(effect, Notify):
@@ -64,7 +65,7 @@ def log_handler(effect, k):
         )
         return (yield Resume(k, False))
 
-    yield Delegate()
+    yield Pass()
 
 
 __all__ = ["log_handler"]
