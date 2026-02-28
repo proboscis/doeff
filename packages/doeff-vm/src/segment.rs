@@ -17,6 +17,7 @@ pub enum SegmentKind {
     PromptBoundary {
         handled_marker: Marker,
         handler: KleisliRef,
+        types: Option<Vec<PyShared>>,
         return_clause: Option<PyShared>,
     },
     MaskBoundary {
@@ -81,6 +82,35 @@ impl Segment {
             kind: SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,
+                types: None,
+                return_clause,
+            },
+            dispatch_id: None,
+            mode: Mode::Deliver(crate::value::Value::Unit),
+            pending_python: None,
+            pending_error_context: None,
+            interceptor_eval_depth: 0,
+            interceptor_skip_stack: Vec::new(),
+        }
+    }
+
+    pub fn new_prompt_with_types(
+        marker: Marker,
+        caller: Option<SegmentId>,
+        handled_marker: Marker,
+        handler: KleisliRef,
+        types: Option<Vec<PyShared>>,
+        return_clause: Option<PyShared>,
+    ) -> Self {
+        Segment {
+            marker,
+            frames: Vec::new(),
+            caller,
+            scope_store: ScopeStore::default(),
+            kind: SegmentKind::PromptBoundary {
+                handled_marker,
+                handler,
+                types,
                 return_clause,
             },
             dispatch_id: None,
