@@ -44,6 +44,10 @@ def _coerce_handler(handler: Any) -> Any:
     if rust_handler_type is not None and isinstance(handler, rust_handler_type):
         return handler
 
+    py_kleisli_type = getattr(vm, "PyKleisli", None)
+    if py_kleisli_type is not None and isinstance(handler, py_kleisli_type):
+        return handler
+
     doeff_generator_fn_type = getattr(vm, "DoeffGeneratorFn", None)
     if doeff_generator_fn_type is not None and isinstance(handler, doeff_generator_fn_type):
         return handler
