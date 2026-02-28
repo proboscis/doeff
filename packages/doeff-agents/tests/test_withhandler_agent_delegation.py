@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
+from doeff import Effect, Pass, Resume, WithHandler, default_handlers, do, run
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -22,7 +22,6 @@ from doeff_agents import (
     SessionStatus,
     SleepEffect,
     StopEffect,
-    make_typed_handler,
     run_agent_to_completion,
 )
 
@@ -60,7 +59,8 @@ def _make_pipeline_handler(
         "captures": {},
     }
 
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, LaunchEffect):
             state["launches"].append(effect.session_name)
             handle = _session_handle(
@@ -98,7 +98,7 @@ def _make_pipeline_handler(
             state["sleep_calls"].append(effect.seconds)
             return (yield Resume(k, None))
 
-        yield Delegate()
+        yield Pass()
 
     return handler, state
 
@@ -190,14 +190,16 @@ def test_withhandler_multiple_agent_delegations_in_sequence() -> None:
     assert state["stops"] == ["alpha", "beta"]
 
 
-def test_withhandler_protocol_compliance_with_typed_handler() -> None:
+def test_withhandler_protocol_compliance_with_explicit_launch_handler() -> None:
     launch_calls: list[str] = []
 
-    def launch_only_handler(effect, k):
-        launch_calls.append(effect.session_name)
-        return (yield Resume(k, _session_handle(effect.session_name, effect.config.agent_type)))
+    @do
+    def launch_only_handler(effect: Effect, k):
+        if isinstance(effect, LaunchEffect):
+            launch_calls.append(effect.session_name)
+            return (yield Resume(k, _session_handle(effect.session_name, effect.config.agent_type)))
+        yield Pass()
 
-    typed_launch_handler = make_typed_handler(LaunchEffect, launch_only_handler)
     lifecycle_handler, lifecycle_state = _make_pipeline_handler(
         {"typed-flow": [(SessionStatus.DONE, "typed done")]}
     )
@@ -205,7 +207,7 @@ def test_withhandler_protocol_compliance_with_typed_handler() -> None:
     wrapped = WithHandler(
         handler=lifecycle_handler,
         expr=WithHandler(
-            handler=typed_launch_handler,
+            handler=launch_only_handler,
             expr=_run_completion("typed-flow", _build_config(), poll_interval=0.0),
         ),
     )
@@ -223,13 +225,14 @@ def test_withhandler_protocol_compliance_with_typed_handler() -> None:
 def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
     primary_attempts: list[AgentType] = []
 
-    def primary_handler(effect, k):
+    @do
+    def primary_handler(effect: Effect, k):
         if isinstance(effect, LaunchEffect):
             primary_attempts.append(effect.config.agent_type)
             if effect.config.agent_type == AgentType.CODEX:
                 handle = _session_handle(effect.session_name, AgentType.CODEX)
                 return (yield Resume(k, handle))
-        yield Delegate()
+        yield Pass()
 
     fallback_handler, fallback_state = _make_pipeline_handler(
         {"fallback-agent": [(SessionStatus.DONE, "fallback output")]},

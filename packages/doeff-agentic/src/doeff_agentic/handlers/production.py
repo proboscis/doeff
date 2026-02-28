@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Delegate, Resume, WithHandler
+from doeff import Effect, Pass, Resume, WithHandler, do
 from doeff_agents import (
     AgentType,
     Capture,
@@ -430,7 +430,8 @@ def agentic_effectful_handlers(
         state_dir=state_dir,
     )
 
-    def _handle(effect: Any, k):
+    @do
+    def _handle(effect: Effect, k: Any):
         if isinstance(effect, RunAgentEffect):
             return (yield Resume(k, handler.handle_run_agent(effect)))
         if isinstance(effect, SendMessageEffect):
@@ -443,7 +444,7 @@ def agentic_effectful_handlers(
             return (yield Resume(k, handler.handle_wait_for_user_input(effect)))
         if isinstance(effect, StopAgentEffect):
             return (yield Resume(k, handler.handle_stop_agent(effect)))
-        yield Delegate()
+        yield Pass()
 
     return _handle
 
