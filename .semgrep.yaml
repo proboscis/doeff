@@ -30,6 +30,29 @@ rules:
       include:
         - packages/
 
+  - id: no-raise-on-unknown-effect-in-handler
+    languages: [python]
+    severity: WARNING
+    message: >
+      Handlers should delegate unrecognized effects via yield Pass() or yield Delegate(),
+      not raise errors. Raising on unknown effect types kills composability — an outer
+      handler may know how to handle the effect.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              raise TypeError(f"Unknown effect type: ...")
+          - pattern: |
+              raise TypeError(f"Unknown effect type: {$X}")
+          - pattern: |
+              raise ValueError(f"Unknown effect type: ...")
+          - pattern: |
+              raise ValueError(f"Unknown effect type: {$X}")
+    paths:
+      include:
+        - "**/handlers/**"
+      exclude:
+        - "**/tests/**"
+
   - id: doeff-no-effect-creation-context-wrapper
     patterns:
       - pattern-either:

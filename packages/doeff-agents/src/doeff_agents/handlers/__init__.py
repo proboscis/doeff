@@ -47,7 +47,7 @@ def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:
         return handler.handle_stop(effect)
     if isinstance(effect, SleepEffect):
         return handler.handle_sleep(effect)
-    raise TypeError(f"Unknown effect type: {type(effect)}")
+    return None
 
 
 SimpleHandler = Callable[[Any], Any]
@@ -67,7 +67,9 @@ def make_scheduled_handler(handler: SimpleHandler) -> ProtocolHandler:
 def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
     """Convert an AgentHandler object to doeff_vm handler protocol."""
 
-    scheduled_dispatch = make_scheduled_handler(lambda effect: dispatch_effect(agent_handler, effect))
+    scheduled_dispatch = make_scheduled_handler(
+        lambda effect: dispatch_effect(agent_handler, effect)
+    )
 
     @do
     def protocol_handler(effect: Effect, k: Any):
