@@ -12,7 +12,7 @@ from doeff_llm.effects import (
     LLMStructuredQuery,
 )
 
-from doeff import Delegate, Resume, do
+from doeff import Pass, Resume, do
 from doeff.effects.base import Effect
 from doeff_openrouter.chat import chat_completion
 from doeff_openrouter.effects import (
@@ -89,9 +89,9 @@ def openrouter_production_handler(effect: Effect, k: Any):
     if isinstance(effect, LLMStructuredQuery | RouterStructuredOutput):
         return (yield _handle_structured_output(effect, k))
     if isinstance(effect, LLMEmbedding):
-        yield Delegate()
+        yield Pass()
         return
-    yield Delegate()
+    yield Pass()
 
 
 def production_handlers() -> ProtocolHandler:
