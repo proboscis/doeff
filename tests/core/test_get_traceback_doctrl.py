@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from doeff import Program, do
+from doeff import Effect, Program, do
 from doeff._types_internal import EffectBase
 from doeff.rust_vm import (
     Delegate,
@@ -23,12 +23,14 @@ class Ping(EffectBase):
 def test_get_traceback_inside_dispatch_returns_parent_chain_frames() -> None:
     captured: dict[str, list[object]] = {}
 
-    def inner_handler(effect, _k):
+    @do
+    def inner_handler(effect: Effect, _k):
         if isinstance(effect, Ping):
             return (yield Delegate())
         yield Pass()
 
-    def outer_handler(effect, k):
+    @do
+    def outer_handler(effect: Effect, k):
         if isinstance(effect, Ping):
             hops = yield GetTraceback(k)
             captured["hops"] = hops

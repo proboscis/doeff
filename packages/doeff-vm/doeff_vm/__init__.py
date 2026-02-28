@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib import import_module
 
 _ext = import_module("doeff_vm.doeff_vm")
+_HANDLER_HELP_URL = "https://docs.doeff.dev/handlers"
 
 
 def _validate_do_handler_annotations(handlers) -> None:
@@ -15,49 +16,49 @@ def _validate_do_handler_annotations(handlers) -> None:
             validate_do_handler_effect_annotation(handler)
 
 
-def _handler_registration_metadata(handler):
-    handler_name = getattr(handler, "__qualname__", None) or getattr(handler, "__name__", None)
-    if handler_name is None:
-        handler_name = type(handler).__name__
-    if handler_name is None:
-        handler_name = "<python_handler>"
+def _format_handler_type_error(*, api_name: str, role: str, value: object) -> str:
+    got_value = f"{value!r} (type: {type(value).__name__})"
+    if role == "handler":
+        fix_block = (
+            "  To fix, decorate your handler with @do:\n\n"
+            "    from doeff import do\n"
+            "    from doeff.effects.base import Effect\n\n"
+            "    @do\n"
+            "    def my_handler(effect: Effect, k):\n"
+            "        ...\n"
+            "        yield Resume(k, value)\n"
+        )
+    else:
+        fix_block = (
+            "  To fix, decorate your interceptor with @do:\n\n"
+            "    from doeff import do\n"
+            "    from doeff.effects.base import Effect\n\n"
+            "    @do\n"
+            "    def my_interceptor(effect: Effect):\n"
+            "        return effect\n"
+        )
+    return (
+        f"{api_name} {role} must be a @do decorated function, PyKleisli, or RustHandler.\n\n"
+        f"  Got: {got_value}\n\n"
+        f"{fix_block}\n"
+        f"  See: {_HANDLER_HELP_URL}"
+    )
 
-    code_obj = getattr(handler, "__code__", None)
-    if code_obj is None:
-        call_method = getattr(handler, "__call__", None)
-        code_obj = getattr(call_method, "__code__", None)
 
-    source_file = getattr(code_obj, "co_filename", None) or "<unknown>"
-    source_line = getattr(code_obj, "co_firstlineno", None)
-    if not isinstance(source_line, int):
-        source_line = 0
-    return handler_name, source_file, source_line
-
-
-def _coerce_handler(handler):
+def _coerce_handler(handler, *, api_name: str, role: str):
     if isinstance(handler, _ext.RustHandler):
         return handler
     if hasattr(_ext, "PyKleisli") and isinstance(handler, _ext.PyKleisli):
         return handler
     if isinstance(handler, _ext.DoeffGeneratorFn):
         return handler
-    if not callable(handler):
-        return handler
-
-    from doeff.do import _default_get_frame
-
-    handler_name, source_file, source_line = _handler_registration_metadata(handler)
-    return _ext.DoeffGeneratorFn(
-        callable=handler,
-        function_name=handler_name,
-        source_file=source_file,
-        source_line=source_line,
-        get_frame=_default_get_frame,
-    )
+    if callable(handler):
+        raise TypeError(_format_handler_type_error(api_name=api_name, role=role, value=handler))
+    return handler
 
 
-def _coerce_handlers(handlers):
-    return [_coerce_handler(handler) for handler in handlers]
+def _coerce_handlers(handlers, *, api_name: str):
+    return [_coerce_handler(handler, api_name=api_name, role="handler") for handler in handlers]
 
 
 def _install_validated_runtime_api() -> None:
@@ -65,6 +66,7 @@ def _install_validated_runtime_api() -> None:
         return
 
     raw_with_handler = _ext.WithHandler
+    raw_with_intercept = _ext.WithIntercept
     raw_run = _ext.run
     raw_async_run = _ext.async_run
     raw_doexpr_to_generator = _ext.DoExpr.to_generator
@@ -72,17 +74,25 @@ def _install_validated_runtime_api() -> None:
 
     def validated_with_handler(handler, expr, return_clause=None):
         _validate_do_handler_annotations((handler,))
-        coerced_handler = _coerce_handler(handler)
+        coerced_handler = _coerce_handler(handler, api_name="WithHandler", role="handler")
         return raw_with_handler(coerced_handler, expr, return_clause)
+
+    def validated_with_intercept(f, expr, meta=None):
+        coerced_interceptor = _coerce_handler(
+            f,
+            api_name="WithIntercept",
+            role="interceptor",
+        )
+        return raw_with_intercept(coerced_interceptor, expr, meta)
 
     def validated_run(program, handlers=(), env=None, store=None, trace=False):
         _validate_do_handler_annotations(handlers)
-        coerced_handlers = _coerce_handlers(handlers)
+        coerced_handlers = _coerce_handlers(handlers, api_name="run()")
         return raw_run(program, handlers=coerced_handlers, env=env, store=store, trace=trace)
 
     async def validated_async_run(program, handlers=(), env=None, store=None, trace=False):
         _validate_do_handler_annotations(handlers)
-        coerced_handlers = _coerce_handlers(handlers)
+        coerced_handlers = _coerce_handlers(handlers, api_name="async_run()")
         return await raw_async_run(
             program,
             handlers=coerced_handlers,
@@ -103,6 +113,7 @@ def _install_validated_runtime_api() -> None:
         return make_doeff_generator(raw_nesting_to_generator(self))
 
     setattr(_ext, "WithHandler", validated_with_handler)
+    setattr(_ext, "WithIntercept", validated_with_intercept)
     setattr(_ext, "run", validated_run)
     setattr(_ext, "async_run", validated_async_run)
     setattr(_ext.DoExpr, "to_generator", validated_doexpr_to_generator)

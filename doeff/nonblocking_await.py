@@ -41,7 +41,9 @@ import threading
 from typing import Any
 
 import doeff_vm
+from doeff.do import do
 
+from doeff.effects.base import Effect
 from doeff.effects.external_promise import CreateExternalPromise
 from doeff.effects.future import PythonAsyncioAwaitEffect
 from doeff.effects.wait import Wait
@@ -115,7 +117,8 @@ def get_loop() -> asyncio.AbstractEventLoop:
 # ---------------------------------------------------------------------------
 
 
-def _nonblocking_await_handler(effect: PythonAsyncioAwaitEffect, k: Any):
+@do
+def _nonblocking_await_handler(effect: Effect, k: Any):
     """Handle PythonAsyncioAwaitEffect by submitting to the background loop."""
     if not isinstance(effect, PythonAsyncioAwaitEffect):
         yield doeff_vm.Pass()
