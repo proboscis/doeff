@@ -346,19 +346,14 @@ class TestSA001G16DoCtrlExtends:
         assert "extends" in m.group(1), f"PyWithHandler missing extends: #[pyclass({m.group(1)})]"
 
 
-class TestSA001G17StringAnnotations:
-    """G17: String annot missing DoThunk/DoExpr."""
+class TestSA001G17ProgramAnnotations:
+    """G17: Program-kind detection should use resolved type objects."""
 
-    def test_doexpr_annotation_is_recognized_as_program_kind(self):
-        """String DoExpr/Program annotations should be recognized as program kinds."""
-        from doeff.program import _annotation_text_is_program_kind
+    def test_program_annotation_is_recognized_as_program_kind(self):
+        """Program[T] annotations should be recognized as program kinds."""
+        from doeff.program import Program, _is_program_annotation_kind
 
-        assert _annotation_text_is_program_kind("DoExpr[int]"), (
-            "'DoExpr[int]' not recognized as program annotation"
-        )
-        assert _annotation_text_is_program_kind("Program[int]"), (
-            "'Program[int]' not recognized as program annotation"
-        )
+        assert _is_program_annotation_kind(Program[int]), "Program[int] not recognized as program annotation"
 
 
 class TestSA001G18Signature:

@@ -1,6 +1,5 @@
 """Provider-agnostic secret effects and helpers for doeff."""
 
-from __future__ import annotations
 
 from .effects import DeleteSecret, GetSecret, ListSecrets, SecretEffectBase, SetSecret
 from .handlers import env_var_handler, env_var_handlers

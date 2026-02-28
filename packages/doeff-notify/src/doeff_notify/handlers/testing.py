@@ -1,6 +1,5 @@
 """In-memory notification handler for tests."""
 
-from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field

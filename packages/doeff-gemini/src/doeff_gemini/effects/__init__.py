@@ -1,6 +1,5 @@
 """Gemini domain effects."""
 
-from __future__ import annotations
 
 from doeff_image.effects import ImageEdit, ImageGenerate
 

@@ -1,6 +1,5 @@
 """High-level helpers for interacting with Seedream models."""
 
-from __future__ import annotations
 
 import asyncio
 import base64

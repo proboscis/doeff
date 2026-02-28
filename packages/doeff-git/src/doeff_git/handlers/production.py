@@ -1,6 +1,5 @@
 """Production handlers for doeff-git effects."""
 
-from __future__ import annotations
 
 import re
 import subprocess

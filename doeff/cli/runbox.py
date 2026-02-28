@@ -5,19 +5,14 @@ records before running programs, enabling reproducible execution via
 `runbox replay <record-id>`.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 def is_runbox_available() -> bool:

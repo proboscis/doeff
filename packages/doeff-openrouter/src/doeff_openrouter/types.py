@@ -1,6 +1,5 @@
 """Type definitions for the :mod:`doeff_openrouter` package."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime

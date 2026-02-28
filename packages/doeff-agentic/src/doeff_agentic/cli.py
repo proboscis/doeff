@@ -12,7 +12,6 @@ Commands:
     tui         Launch interactive Textual TUI
 """
 
-from __future__ import annotations
 
 import json
 import sys

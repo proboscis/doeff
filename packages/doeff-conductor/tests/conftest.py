@@ -7,7 +7,6 @@ This module provides:
 - Detection functions for external dependencies
 """
 
-from __future__ import annotations
 
 import os
 import shutil
@@ -212,7 +211,7 @@ def opencode_url() -> str | None:
 
 
 @pytest.fixture
-def sample_issue() -> Issue:
+def sample_issue() -> "Issue":
     """Fixture providing a sample Issue for testing."""
     from doeff_conductor.types import Issue, IssueStatus
 
@@ -227,7 +226,7 @@ def sample_issue() -> Issue:
 
 
 @pytest.fixture
-def sample_issue_file(issues_dir: Path, sample_issue: Issue) -> Path:
+def sample_issue_file(issues_dir: Path, sample_issue: "Issue") -> Path:
     """Fixture that writes a sample issue to the issues directory."""
     issue_path = issues_dir / f"{sample_issue.id}.md"
     content = f"""# {sample_issue.title}

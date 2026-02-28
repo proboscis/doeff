@@ -1,6 +1,5 @@
 """Handlers for doeff-test-target fixture effects."""
 
-from __future__ import annotations
 
 from .production import ProductionFixtureRuntime, production_handlers
 from .testing import MockFixtureRuntime, mock_handlers

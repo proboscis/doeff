@@ -5,8 +5,6 @@ This module contains the KleisliProgram class that enables automatic
 unwrapping of Program arguments for natural composition.
 """
 
-from __future__ import annotations
-
 from abc import ABC
 import inspect
 import types
@@ -22,11 +20,24 @@ from doeff.program import (
     ProgramBase,
     _build_auto_unwrap_strategy,
     _is_effect_annotation_kind,
+    _safe_get_type_hints,
 )
 
 P = ParamSpec("P")
 T = TypeVar("T")
 U = TypeVar("U")
+
+
+def _safe_annotations(target: Any) -> dict[str, Any] | None:
+    if target is None:
+        return None
+    try:
+        annotations = getattr(target, "__annotations__", None)
+    except Exception:
+        return None
+    if isinstance(annotations, dict):
+        return annotations
+    return None
 
 
 @dataclass(frozen=True)
@@ -52,9 +63,9 @@ class KleisliProgram(ABC, Generic[P, T]):
         if signature is not None and not hasattr(self, "__signature__"):
             object.__setattr__(self, "__signature__", signature)
 
-        annotations = getattr(wrapped, "__annotations__", None)
+        annotations = _safe_annotations(wrapped)
         if annotations is None:
-            annotations = getattr(self.func, "__annotations__", None)
+            annotations = _safe_annotations(self.func)
         if annotations is not None and not hasattr(self, "__annotations__"):
             object.__setattr__(self, "__annotations__", dict(annotations))
 
@@ -121,13 +132,13 @@ class KleisliProgram(ABC, Generic[P, T]):
             return Apply(Pure(generator_factory), positional_args, keyword_args, metadata)
         return Apply(Pure(self.func), positional_args, keyword_args, metadata)
 
-    def partial(self, /, *args: P.args, **kwargs: P.kwargs) -> PartiallyAppliedKleisliProgram[P, T]:
+    def partial(self, /, *args: P.args, **kwargs: P.kwargs) -> "PartiallyAppliedKleisliProgram[P, T]":
         return PartiallyAppliedKleisliProgram(self, args, kwargs)
 
     def and_then_k(
         self,
         binder: TypingCallable[[T], Program[U]],
-    ) -> KleisliProgram[P, U]:
+    ) -> "KleisliProgram[P, U]":
         if not callable(binder):
             raise TypeError("binder must be callable returning a Program")
 
@@ -143,13 +154,13 @@ class KleisliProgram(ABC, Generic[P, T]):
     def __rshift__(
         self,
         binder: TypingCallable[[T], Program[U]],
-    ) -> KleisliProgram[P, U]:
+    ) -> "KleisliProgram[P, U]":
         return self.and_then_k(binder)
 
     def fmap(
         self,
         mapper: TypingCallable[[T], U],
-    ) -> KleisliProgram[P, U]:
+    ) -> "KleisliProgram[P, U]":
         if not callable(mapper):
             raise TypeError("mapper must be callable")
 
@@ -189,7 +200,7 @@ class PartiallyAppliedKleisliProgram(KleisliProgram[P, T]):
         merged_kwargs = {**self._pre_kwargs, **kwargs}
         return self._base(*merged_args, **merged_kwargs)
 
-    def partial(self, /, *args: Any, **kwargs: Any) -> PartiallyAppliedKleisliProgram[P, T]:
+    def partial(self, /, *args: Any, **kwargs: Any) -> "PartiallyAppliedKleisliProgram[P, T]":
         merged_args = self._pre_args + args
         merged_kwargs = {**self._pre_kwargs, **kwargs}
         return PartiallyAppliedKleisliProgram(self._base, merged_args, merged_kwargs)
@@ -218,7 +229,15 @@ def validate_do_handler_effect_annotation(handler: Any) -> None:
     if len(params) < 2:
         raise TypeError("@do handler must accept (effect, k)")
 
-    effect_annotation = params[0].annotation
+    metadata_source = getattr(handler, "_metadata_source", None)
+    type_hints = _safe_get_type_hints(metadata_source)
+    if not type_hints:
+        type_hints = _safe_get_type_hints(getattr(handler, "func", None))
+    if not type_hints:
+        type_hints = _safe_get_type_hints(handler)
+
+    effect_param = params[0]
+    effect_annotation = type_hints.get(effect_param.name, effect_param.annotation)
     if effect_annotation is inspect._empty or not _is_effect_annotation_kind(effect_annotation):
         raise TypeError("@do handler first parameter must be annotated as Effect")
 

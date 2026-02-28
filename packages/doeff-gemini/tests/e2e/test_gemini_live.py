@@ -1,6 +1,5 @@
 """Gemini integration tests with WithHandler-based mocks and one live smoke test."""
 
-from __future__ import annotations
 
 import os
 import sys

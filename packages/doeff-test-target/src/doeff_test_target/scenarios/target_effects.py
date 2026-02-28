@@ -1,6 +1,5 @@
 """Scenarios that exercise doeff-test-target domain effects."""
 
-from __future__ import annotations
 
 from doeff import do
 from doeff_test_target.effects import read_fixture_value, record_fixture_event

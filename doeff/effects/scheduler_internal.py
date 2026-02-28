@@ -8,7 +8,6 @@ These effects are NOT meant to be used directly by user programs.
 The underscore prefix (_Scheduler*) signals internal/private use.
 """
 
-from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass

@@ -3,7 +3,6 @@
 SPEC-009 section 7: pre-built handler lists for typical use cases.
 """
 
-from __future__ import annotations
 
 from typing import Any
 

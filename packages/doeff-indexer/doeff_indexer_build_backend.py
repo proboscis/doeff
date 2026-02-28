@@ -4,7 +4,6 @@ This wraps maturin's backend to ensure the Rust CLI binary is built and bundled 
 and editable installs.
 """
 
-from __future__ import annotations
 
 import importlib
 import os

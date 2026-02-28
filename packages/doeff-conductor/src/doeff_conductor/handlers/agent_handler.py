@@ -2,8 +2,6 @@
 Agent handler for doeff-conductor.
 """
 
-from __future__ import annotations
-
 import secrets
 from typing import TYPE_CHECKING
 
@@ -27,7 +25,7 @@ class AgentHandler:
 
     def __init__(self, workflow_id: str | None = None):
         self.workflow_id = workflow_id or secrets.token_hex(4)
-        self._sessions: dict[str, AgentRef] = {}
+        self._sessions: dict[str, "AgentRef"] = {}
         self._opencode_handler = None
 
     def _get_opencode_handler(self):
@@ -38,7 +36,7 @@ class AgentHandler:
             self._opencode_handler = OpenCodeHandler()
         return self._opencode_handler
 
-    def handle_run_agent(self, effect: RunAgent) -> str:
+    def handle_run_agent(self, effect: "RunAgent") -> str:
         """Handle RunAgent effect.
 
         Spawns an agent and waits for completion.
@@ -95,7 +93,7 @@ class AgentHandler:
 
         return ""
 
-    def handle_spawn_agent(self, effect: SpawnAgent) -> AgentRef:
+    def handle_spawn_agent(self, effect: "SpawnAgent") -> "AgentRef":
         """Handle SpawnAgent effect.
 
         Starts an agent without waiting for completion.
@@ -149,7 +147,7 @@ class AgentHandler:
         self._sessions[session_name] = agent_ref
         return agent_ref
 
-    def handle_send_message(self, effect: SendMessage) -> None:
+    def handle_send_message(self, effect: "SendMessage") -> None:
         """Handle SendMessage effect.
 
         Sends a message to a running agent.
@@ -165,7 +163,7 @@ class AgentHandler:
         )
         handler.handle_send_message(msg_effect)
 
-    def handle_wait_for_status(self, effect: WaitForStatus) -> AgenticSessionStatus:
+    def handle_wait_for_status(self, effect: "WaitForStatus") -> "AgenticSessionStatus":
         """Wait for an agent to reach a specific status."""
         import time
 
@@ -200,7 +198,7 @@ class AgentHandler:
 
             time.sleep(effect.poll_interval)
 
-    def handle_capture_output(self, effect: CaptureOutput) -> str:
+    def handle_capture_output(self, effect: "CaptureOutput") -> str:
         """Handle CaptureOutput effect.
 
         Captures output from an agent session.

@@ -1,7 +1,6 @@
 # ruff: noqa: E402
 """Tests for Seedream domain effects and handlers."""
 
-from __future__ import annotations
 
 import sys
 from pathlib import Path

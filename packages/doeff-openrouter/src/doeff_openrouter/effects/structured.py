@@ -1,6 +1,5 @@
 """Structured-output OpenRouter effects."""
 
-from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass

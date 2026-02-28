@@ -1,13 +1,13 @@
 """Structured output helpers for OpenRouter models."""
 
-from __future__ import annotations
 
 import base64
 import io
 import json
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+import PIL.Image
 from pydantic import BaseModel, ValidationError
 
 from doeff import (
@@ -18,11 +18,8 @@ from doeff import (
 
 from .chat import chat_completion
 
-if TYPE_CHECKING:  # pragma: no cover - optional dependency for type checking
-    import PIL.Image
 
-
-def convert_pil_to_base64(image: PIL.Image.Image) -> str:
+def convert_pil_to_base64(image: "PIL.Image.Image") -> str:
     """Encode a PIL image as a data URL accepted by OpenRouter."""
     buffer = io.BytesIO()
     image_format = (image.format or "PNG").upper()
@@ -97,7 +94,7 @@ def build_messages(
     text: str,
     *,
     system_prompt: str | None = None,
-    images: list[PIL.Image.Image] | None = None,
+    images: list["PIL.Image.Image"] | None = None,
     extra_messages: list[dict[str, Any]] | None = None,
 ) -> EffectGenerator[list[dict[str, Any]]]:
     """Construct OpenRouter chat messages for the request."""
@@ -282,7 +279,7 @@ def structured_llm(
     *,
     model: str,
     response_format: type[BaseModel] | None = None,
-    images: list[PIL.Image.Image] | None = None,
+    images: list["PIL.Image.Image"] | None = None,
     system_prompt: str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,

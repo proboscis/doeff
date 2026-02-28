@@ -10,7 +10,6 @@ The handler:
 3. Integrates with doeff-flow for observability
 """
 
-from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field

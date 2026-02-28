@@ -1,6 +1,5 @@
 """E2E smoke tests for doeff-openai domain effect handlers."""
 
-from __future__ import annotations
 
 import os  # noqa: PINJ050 - true e2e env gating
 

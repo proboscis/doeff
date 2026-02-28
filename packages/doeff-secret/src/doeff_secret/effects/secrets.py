@@ -1,6 +1,5 @@
 """Provider-agnostic effect definitions for secret operations."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 

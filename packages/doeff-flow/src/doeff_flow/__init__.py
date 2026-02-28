@@ -39,8 +39,6 @@ CLI Usage:
     $ doeff-flow history wf-001
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -59,13 +57,13 @@ T = TypeVar("T")
 
 
 def run_workflow(
-    program: Program[T],
+    program: "Program[T]",
     workflow_id: str,
     trace_dir: Path | str | None = None,
     *,
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
-) -> RunResult[T]:
+) -> "RunResult[T]":
     """Run a workflow with live trace observability.
 
     Convenience wrapper that combines run with trace output.

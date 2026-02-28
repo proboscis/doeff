@@ -7,8 +7,6 @@ Effects for managing git worktree environments:
 - DeleteWorktree: Delete a worktree and clean up
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -33,7 +31,7 @@ class CreateWorktree(ConductorEffectBase):
             # env.path is now an isolated worktree
     """
 
-    issue: Issue | None = None  # Issue to create worktree for
+    issue: "Issue | None" = None  # Issue to create worktree for
     base_branch: str | None = None  # Base branch (default: main/master)
     suffix: str | None = None  # Branch suffix for parallel worktrees
     name: str | None = None  # Custom worktree name
@@ -56,8 +54,8 @@ class MergeBranches(ConductorEffectBase):
             merged = yield MergeBranches(envs=[impl_env, test_env])
     """
 
-    envs: tuple[WorktreeEnv, ...]  # Worktrees to merge
-    strategy: MergeStrategy | None = None  # Merge strategy (default: MERGE)
+    envs: "tuple[WorktreeEnv, ...]"  # Worktrees to merge
+    strategy: "MergeStrategy | None" = None  # Merge strategy (default: MERGE)
     name: str | None = None  # Name for merged worktree
 
 
@@ -70,7 +68,7 @@ class DeleteWorktree(ConductorEffectBase):
     Yields: bool (True if deleted successfully)
     """
 
-    env: WorktreeEnv  # Worktree to delete
+    env: "WorktreeEnv"  # Worktree to delete
     force: bool = False  # Force delete even if uncommitted changes
 
 

@@ -1,6 +1,5 @@
 """Blocking wall-clock handler for doeff-time effects."""
 
-from __future__ import annotations
 
 import threading
 import time

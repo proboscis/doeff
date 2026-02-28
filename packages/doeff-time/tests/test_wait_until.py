@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import pytest
 from doeff_time.effects import WaitUntil, WaitUntilEffect

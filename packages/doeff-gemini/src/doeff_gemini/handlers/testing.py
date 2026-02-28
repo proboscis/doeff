@@ -1,6 +1,5 @@
 """Mock handlers for doeff-gemini domain effects."""
 
-from __future__ import annotations
 
 import hashlib
 import json
