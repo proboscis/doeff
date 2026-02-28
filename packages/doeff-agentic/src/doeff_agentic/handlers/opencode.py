@@ -31,7 +31,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Await, Delegate, Resume, do, slog
+from doeff import Await, Effect, Pass, Resume, do, slog
+from doeff.do import make_doeff_generator
 
 from ..effects import (
     AgenticAbortSession,
@@ -1021,11 +1022,12 @@ def _as_protocol_handler(
 ) -> Callable[[Any, Any], Any]:
     """Adapt an effect -> value/do-program handler into (effect, k) protocol."""
 
-    def _wrapped(effect: Any, k):
+    @do
+    def _wrapped(effect: Effect, k: Any):
         result = handler_fn(effect)
 
         if inspect.isgenerator(result):
-            resolved = yield from result
+            resolved = yield make_doeff_generator(result)
             return (yield Resume(k, resolved))
 
         if _is_lazy_program_value(result):
@@ -1095,11 +1097,12 @@ def opencode_handler(
         (AgenticSupportsCapability, _as_protocol_handler(handler.handle_supports_capability)),
     )
 
-    def protocol_handler(effect: Any, k: Any):
+    @do
+    def protocol_handler(effect: Effect, k: Any):
         for effect_type, effect_handler in effect_handlers:
             if isinstance(effect, effect_type):
-                return (yield from effect_handler(effect, k))
-        yield Delegate()
+                return (yield effect_handler(effect, k))
+        yield Pass()
 
     return protocol_handler
 

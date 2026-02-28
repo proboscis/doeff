@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from doeff import Delegate, EffectBase, default_handlers, do, run
+from doeff import Effect, EffectBase, Pass, Resume, WithHandler, default_handlers, do, run
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -41,6 +41,18 @@ def _mock_workflow(session_name: str, config: LaunchConfig):
     return observation.status
 
 
+@do
+def _unknown_workflow():
+    return (yield UnknownEffect(value="noop"))
+
+
+@do
+def _unknown_effect_fallback(effect: Effect, k):
+    if isinstance(effect, UnknownEffect):
+        return (yield Resume(k, effect.value))
+    yield Pass()
+
+
 def test_protocol_handlers_are_not_dict_registries() -> None:
     assert isinstance(agent_effectful_handlers(), tuple)
     assert isinstance(mock_agent_handlers(), tuple)
@@ -54,9 +66,15 @@ def test_protocol_handlers_have_effect_k_signature() -> None:
 
 
 def test_unknown_effect_delegates() -> None:
-    handler = agent_effectful_handler()
-    step = next(handler(UnknownEffect(value="noop"), object()))
-    assert isinstance(step, Delegate)
+    result = run(
+        WithHandler(
+            handler=_unknown_effect_fallback,
+            expr=WithHandler(handler=agent_effectful_handler(), expr=_unknown_workflow()),
+        ),
+        handlers=default_handlers(),
+    )
+    assert result.is_ok()
+    assert result.value == "noop"
 
 
 def test_mock_handler_runs_program_with_public_vm_api() -> None:
