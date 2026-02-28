@@ -112,7 +112,9 @@ async def test_with_intercept_observes_user_tell(parameterized_interpreter) -> N
 
 
 @pytest.mark.asyncio
-async def test_with_intercept_observes_handler_tell_cross_cutting(parameterized_interpreter) -> None:
+async def test_with_intercept_observes_handler_tell_cross_cutting(
+    parameterized_interpreter,
+) -> None:
     seen: list[str] = []
 
     @do
@@ -185,6 +187,36 @@ async def test_with_intercept_type_filter_exclude(parameterized_interpreter) -> 
 
 
 @pytest.mark.asyncio
+async def test_raw_doeff_vm_with_intercept_filters_types(parameterized_interpreter) -> None:
+    seen: list[str] = []
+
+    @do
+    def observe(effect: Effect):
+        seen.append(type(effect).__name__)
+        return effect
+
+    @do
+    def body():
+        yield Tell("log")
+        _ = yield Ping("x")
+        return "done"
+
+    wrapped = doeff_vm.WithHandler(
+        ping_handler,
+        doeff_vm.WithIntercept(
+            observe,
+            body(),
+            types=(WriterTellEffect,),
+            mode="include",
+        ),
+    )
+    result = await parameterized_interpreter.run_async(wrapped)
+    assert result.is_ok
+    assert result.value == "done"
+    assert seen == ["PyTell"]
+
+
+@pytest.mark.asyncio
 async def test_with_intercept_can_filter_doctrl_withhandler(parameterized_interpreter) -> None:
     seen: list[str] = []
     with_handler_type = type(doeff_vm.WithHandler(ping_handler, _ping_program("probe")))
@@ -251,9 +283,7 @@ async def test_with_intercept_no_reentrancy_same_interceptor(parameterized_inter
 
     @do
     def main():
-        return (
-            yield Listen(WithIntercept(observe, body(), (WriterTellEffect,), "include"))
-        )
+        return (yield Listen(WithIntercept(observe, body(), (WriterTellEffect,), "include")))
 
     result = await parameterized_interpreter.run_async(main())
     assert result.is_ok
@@ -313,9 +343,7 @@ async def test_with_intercept_effect_transformation(parameterized_interpreter) -
 
     @do
     def main():
-        return (
-            yield Listen(WithIntercept(transform, body(), (WriterTellEffect,), "include"))
-        )
+        return (yield Listen(WithIntercept(transform, body(), (WriterTellEffect,), "include")))
 
     result = await parameterized_interpreter.run_async(main())
     assert result.is_ok
@@ -336,9 +364,7 @@ async def test_with_intercept_pure_observation_passthrough(parameterized_interpr
 
     @do
     def main():
-        return (
-            yield Listen(WithIntercept(observe, body(), (WriterTellEffect,), "include"))
-        )
+        return (yield Listen(WithIntercept(observe, body(), (WriterTellEffect,), "include")))
 
     result = await parameterized_interpreter.run_async(main())
     assert result.is_ok
@@ -360,9 +386,7 @@ async def test_with_intercept_effectful_interceptor(parameterized_interpreter) -
 
     @do
     def main():
-        return (
-            yield Listen(WithIntercept(effectful, body(), (WriterTellEffect,), "include"))
-        )
+        return (yield Listen(WithIntercept(effectful, body(), (WriterTellEffect,), "include")))
 
     result = await parameterized_interpreter.run_async(main())
     assert result.is_ok
@@ -393,7 +417,9 @@ async def test_with_intercept_empty_types_include_never_matches(parameterized_in
 
 
 @pytest.mark.asyncio
-async def test_with_intercept_empty_types_exclude_matches_everything(parameterized_interpreter) -> None:
+async def test_with_intercept_empty_types_exclude_matches_everything(
+    parameterized_interpreter,
+) -> None:
     seen_types: list[str] = []
 
     @do
@@ -472,7 +498,9 @@ async def test_with_intercept_observes_delegate_path(parameterized_interpreter) 
 
     wrapped = WithIntercept(
         observe,
-        doeff_vm.WithHandler(ping_handler, doeff_vm.WithHandler(always_delegate, _ping_program("x"))),
+        doeff_vm.WithHandler(
+            ping_handler, doeff_vm.WithHandler(always_delegate, _ping_program("x"))
+        ),
         (),
         "exclude",
     )
