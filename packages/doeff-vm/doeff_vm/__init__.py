@@ -52,9 +52,7 @@ def _coerce_handler(handler, *, api_name: str, role: str):
         return handler
     if isinstance(handler, _ext.DoeffGeneratorFn):
         return handler
-    if callable(handler):
-        raise TypeError(_format_handler_type_error(api_name=api_name, role=role, value=handler))
-    return handler
+    raise TypeError(_format_handler_type_error(api_name=api_name, role=role, value=handler))
 
 
 def _coerce_handlers(handlers, *, api_name: str):
