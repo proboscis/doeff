@@ -4,6 +4,7 @@ import inspect
 from typing import Any
 
 import doeff_vm
+import pytest
 
 from doeff import Program, default_handlers, do, run
 
@@ -87,3 +88,23 @@ def test_do_generator_wrapper_wraps_bridge_generator() -> None:
     assert isinstance(wrapper, doeff_vm.DoeffGenerator)
     assert inspect.isgenerator(wrapper.generator)
     assert not hasattr(wrapper.generator, "__doeff_inner__")
+
+
+def test_do_rejects_async_function_decoration() -> None:
+    with pytest.raises(TypeError, match=r"@do does not support async def functions") as exc_info:
+
+        @do
+        async def bad() -> int:
+            return 1
+
+    assert "yield Await(coroutine)" in str(exc_info.value)
+
+
+def test_do_rejects_async_generator_decoration() -> None:
+    with pytest.raises(TypeError, match=r"@do does not support async def functions") as exc_info:
+
+        @do
+        async def bad_async_gen():
+            yield 1
+
+    assert "yield Await(coroutine)" in str(exc_info.value)
