@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::frame::Frame;
-use crate::handler::HandlerRef;
 use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
@@ -17,10 +16,8 @@ pub enum SegmentKind {
     Normal,
     PromptBoundary {
         handled_marker: Marker,
-        handler: HandlerRef,
-        handler_kleisli: Option<KleisliRef>,
+        handler: KleisliRef,
         return_clause: Option<PyShared>,
-        py_identity: Option<PyShared>,
     },
     MaskBoundary {
         masked_effects: Vec<PyShared>,
@@ -73,10 +70,8 @@ impl Segment {
         marker: Marker,
         caller: Option<SegmentId>,
         handled_marker: Marker,
-        handler: HandlerRef,
-        handler_kleisli: Option<KleisliRef>,
+        handler: KleisliRef,
         return_clause: Option<PyShared>,
-        py_identity: Option<PyShared>,
     ) -> Self {
         Segment {
             marker,
@@ -86,9 +81,7 @@ impl Segment {
             kind: SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,
-                handler_kleisli,
                 return_clause,
-                py_identity,
             },
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
@@ -151,9 +144,10 @@ mod tests {
             marker,
             None,
             handled,
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            None,
-            None,
+            std::sync::Arc::new(crate::kleisli::RustKleisli::new(
+                std::sync::Arc::new(crate::handler::StateHandlerFactory),
+                "StateHandler".to_string(),
+            )),
             None,
         );
         assert!(seg.is_prompt_boundary());

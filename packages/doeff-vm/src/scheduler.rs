@@ -24,12 +24,9 @@ use crate::effect::{
     PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySpawn, PyTaskCompleted,
 };
 use crate::error::VMError;
-use crate::frame::CallMetadata;
-use crate::handler::{
-    IRStreamFactory, IRStreamProgram, IRStreamProgramRef, Handler, HandlerInvoke, PythonHandler,
-    RustProgramInvocation,
-};
+use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
+use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
 use crate::segment::ScopeStore;
@@ -47,7 +44,7 @@ pub const PRIORITY_HIGH: u32 = 20;
 pub enum SchedulerEffect {
     Spawn {
         program: Py<PyAny>,
-        handlers: Vec<Handler>,
+        handlers: Vec<KleisliRef>,
         store_mode: StoreMode,
         priority: u32,
         creation_site: Option<SpawnSite>,
@@ -731,10 +728,11 @@ fn extract_task_id(obj: &Bound<'_, PyAny>) -> Option<TaskId> {
     None
 }
 
-fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<Handler>, String> {
+fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<KleisliRef>, String> {
     if obj.is_none() {
         return Ok(vec![]);
     }
+    let py = obj.py();
     let mut handlers = Vec::new();
     for item in obj.try_iter().map_err(|e| e.to_string())? {
         let item = item.map_err(|e| e.to_string())?;
@@ -742,15 +740,18 @@ fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<Handler>, 
             let sentinel: PyRef<'_, PyRustHandlerSentinel> = item
                 .extract::<PyRef<'_, PyRustHandlerSentinel>>()
                 .map_err(|e| format!("{e:?}"))?;
-            handlers.push(sentinel.factory_ref());
+            handlers.push(sentinel.kleisli_ref());
             continue;
         }
 
         if item.is_instance_of::<DoeffGeneratorFn>() {
-            let dgfn = item
-                .extract::<Py<DoeffGeneratorFn>>()
-                .map_err(|e| format!("{e:?}"))?;
-            handlers.push(Arc::new(PythonHandler::from_dgfn(dgfn)));
+            let dgfn: PyRef<'_, DoeffGeneratorFn> =
+                item.extract().map_err(|e| format!("{e:?}"))?;
+            let callable_identity = dgfn.callable.clone_ref(py);
+            let kleisli =
+                DgfnKleisli::from_dgfn(py, item.clone().unbind(), callable_identity)
+                    .map_err(|e| format!("{e:?}"))?;
+            handlers.push(Arc::new(kleisli));
             continue;
         }
 
@@ -2913,52 +2914,9 @@ impl IRStreamFactory for SchedulerHandler {
         let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
         states.remove(&run_token);
     }
-}
-
-impl HandlerInvoke for SchedulerHandler {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as IRStreamFactory>::can_handle(self, effect)
-    }
-
-    fn invoke(&self, effect: DispatchEffect, k: Continuation) -> DoCtrl {
-        DoCtrl::Expand {
-            factory: Box::new(DoCtrl::Pure {
-                value: Value::RustProgramInvocation(RustProgramInvocation {
-                    factory: Arc::new(self.clone()),
-                    effect: Box::new(effect),
-                    continuation: k,
-                }),
-            }),
-            args: vec![],
-            kwargs: vec![],
-            metadata: CallMetadata::new(
-                <Self as IRStreamFactory>::handler_name(self).to_string(),
-                "<rust>".to_string(),
-                0,
-                None,
-                None,
-            ),
-        }
-    }
-
-    fn handler_name(&self) -> &str {
-        <Self as IRStreamFactory>::handler_name(self)
-    }
-
-    fn handler_debug_info(&self) -> crate::handler::HandlerDebugInfo {
-        crate::handler::HandlerDebugInfo {
-            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
-    }
 
     fn supports_error_context_conversion(&self) -> bool {
         true
-    }
-
-    fn on_run_end(&self, run_token: u64) {
-        <Self as IRStreamFactory>::on_run_end(self, run_token);
     }
 }
 
@@ -3135,7 +3093,7 @@ mod tests {
                     factory: Box::new(DoCtrl::Pure { value: Value::Unit }),
                     args: vec![],
                     kwargs: vec![],
-                    metadata: CallMetadata::anonymous(),
+                    metadata: crate::frame::CallMetadata::anonymous(),
                 }),
                 IRStreamStep::Throw(PyException::runtime_error("boom".to_string())),
             ];
@@ -4472,7 +4430,7 @@ mod tests {
     #[test]
     fn test_scheduler_handler_can_handle() {
         let handler = SchedulerHandler::new();
-        assert!(!HandlerInvoke::can_handle(
+        assert!(!IRStreamFactory::can_handle(
             &handler,
             &Effect::Get {
                 key: "x".to_string()
