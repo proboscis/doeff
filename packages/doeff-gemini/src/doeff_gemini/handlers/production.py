@@ -19,10 +19,14 @@ from doeff_llm.effects import (
 )
 from PIL import Image
 
-from doeff import Await, Delegate, EffectGenerator, Resume, Try, do
+from doeff import Await, Delegate, EffectGenerator, Pass, Resume, Try
+from doeff.do import do
+from doeff.effects.base import Effect, EffectBase
 from doeff_gemini.client import get_gemini_client, track_api_call
+from doeff_gemini.costs import calculate_known_model_cost
 from doeff_gemini.effects import (
     GeminiChat,
+    GeminiCalculateCost,
     GeminiEmbedding,
     GeminiImageEdit,
     GeminiStreamingChat,
@@ -320,7 +324,8 @@ def _embedding_impl(effect: LLMEmbedding) -> EffectGenerator[list[float] | list[
     return vectors
 
 
-def gemini_image_handler(effect: Any, k: Any):
+@do
+def gemini_image_handler(effect: Effect, k: Any):
     """Protocol handler with model routing for unified image effects."""
     if isinstance(effect, GeminiImageEdit):
         if not _is_gemini_image_model(effect.model):
@@ -346,6 +351,21 @@ def gemini_image_handler(effect: Any, k: Any):
     yield Delegate()
 
 
+@do
+def default_gemini_cost_handler(effect: Effect, k: Any):
+    """Default cost handler backed by built-in pricing for known Gemini models."""
+    if isinstance(effect, GeminiCalculateCost):
+        estimate = calculate_known_model_cost(effect.call_result)
+        if estimate is not None:
+            return (yield Resume(k, estimate))
+        yield Delegate()
+        return
+    if isinstance(effect, EffectBase):
+        yield Delegate()
+        return
+    yield Pass()
+
+
 def production_handlers(
     *,
     chat_impl: Callable[[LLMChat], EffectGenerator[str]] | None = None,
@@ -358,6 +378,7 @@ def production_handlers(
     | None = None,
     image_generate_impl: Callable[[ImageGenerate], EffectGenerator[ImageResult]] | None = None,
     image_edit_impl: Callable[[ImageEdit], EffectGenerator[ImageResult]] | None = None,
+    cost_handler: ProtocolHandler | None = default_gemini_cost_handler,
 ) -> ProtocolHandler:
     """Build a protocol handler backed by real Gemini API integrations."""
 
@@ -367,8 +388,15 @@ def production_handlers(
     active_embedding_impl = embedding_impl or _embedding_impl
     active_image_generate_impl = image_generate_impl or _image_generate_impl
     active_image_edit_impl = image_edit_impl or _image_edit_impl
+    active_cost_handler = cost_handler
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
+        if isinstance(effect, GeminiCalculateCost):
+            if active_cost_handler is None:
+                yield Delegate()
+                return
+            return (yield active_cost_handler(effect, k))
         if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
             if not _is_gemini_model(effect.model):
                 yield Delegate()
@@ -413,8 +441,11 @@ def production_handlers(
     return handler
 
 
-def gemini_production_handler(effect: Any, k: Any):
+@do
+def gemini_production_handler(effect: Effect, k: Any):
     """Single protocol handler suitable for ``WithHandler`` usage."""
+    if isinstance(effect, GeminiCalculateCost):
+        return (yield default_gemini_cost_handler(effect, k))
     if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
         if _is_gemini_model(effect.model):
             value = yield _streaming_chat_impl(effect)
@@ -443,6 +474,7 @@ __all__ = [
     "GEMINI_MODEL_PREFIXES",
     "ProtocolHandler",
     "_is_gemini_model",
+    "default_gemini_cost_handler",
     "gemini_image_handler",
     "gemini_production_handler",
     "production_handlers",
