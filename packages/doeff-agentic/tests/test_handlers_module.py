@@ -1,6 +1,5 @@
 """Tests for handler module restructuring and compatibility exports."""
 
-from __future__ import annotations
 
 import pytest
 from doeff_agentic.effects import (

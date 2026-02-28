@@ -1,6 +1,5 @@
 """End-to-end tests for doeff-flow on the Rust VM runtime."""
 
-from __future__ import annotations
 
 import json
 import threading

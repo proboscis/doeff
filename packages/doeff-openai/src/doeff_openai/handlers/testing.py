@@ -1,6 +1,5 @@
 """Deterministic mock handlers for doeff-openai domain effects."""
 
-from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field

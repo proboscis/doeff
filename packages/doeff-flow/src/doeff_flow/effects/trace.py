@@ -1,6 +1,5 @@
 """Effect definitions for trace and observability operations."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any

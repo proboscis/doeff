@@ -5,7 +5,6 @@ Provides persistent storage that survives process restarts.
 Thread-safe via connection-per-thread pattern.
 """
 
-from __future__ import annotations
 
 import pickle
 import sqlite3

@@ -8,8 +8,6 @@ Effects for managing issues in the vault:
 - ResolveIssue: Mark issue as resolved
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -57,7 +55,7 @@ class ListIssues(ConductorEffectBase):
             return issues
     """
 
-    status: IssueStatus | None = None  # Filter by status
+    status: "IssueStatus | None" = None  # Filter by status
     labels: tuple[str, ...] = ()  # Filter by labels (any match)
     limit: int | None = None  # Max issues to return
 
@@ -94,7 +92,7 @@ class ResolveIssue(ConductorEffectBase):
             yield ResolveIssue(issue=issue, pr_url=pr.url)
     """
 
-    issue: Issue  # Issue to resolve
+    issue: "Issue"  # Issue to resolve
     pr_url: str | None = None  # Associated PR URL
     result: str | None = None  # Resolution summary
 

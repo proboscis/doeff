@@ -1,6 +1,5 @@
 """Tests for the pinjected bridge effect pipeline without importing pinjected."""
 
-from __future__ import annotations
 
 from collections.abc import Generator
 from dataclasses import dataclass, field

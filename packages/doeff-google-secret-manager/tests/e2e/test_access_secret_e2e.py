@@ -1,6 +1,5 @@
 """End-to-end Secret Manager test that requires real Google Cloud access."""
 
-from __future__ import annotations
 
 import os
 import sys

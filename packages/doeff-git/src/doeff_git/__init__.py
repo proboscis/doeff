@@ -1,6 +1,5 @@
 """doeff-git: provider-agnostic git effects and handlers for doeff."""
 
-from __future__ import annotations
 
 __version__ = "0.1.0"
 

@@ -1,6 +1,5 @@
 """Chat completion helpers with doeff-powered observability."""
 
-from __future__ import annotations
 
 import asyncio
 import time

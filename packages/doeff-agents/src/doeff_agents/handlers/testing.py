@@ -1,6 +1,5 @@
 """Testing effect handler for deterministic agent tests."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 

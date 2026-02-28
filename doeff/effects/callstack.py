@@ -1,6 +1,5 @@
 """Effects for introspecting the program call stack."""
 
-from __future__ import annotations
 
 import warnings
 

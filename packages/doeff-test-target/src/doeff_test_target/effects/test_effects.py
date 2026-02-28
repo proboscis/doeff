@@ -1,6 +1,5 @@
 """Effect definitions used by doeff-test-target scenario fixtures."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 

@@ -1,6 +1,5 @@
 """Testing handlers for doeff-pinjected effects."""
 
-from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field

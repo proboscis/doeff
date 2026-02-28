@@ -4,8 +4,6 @@ Base imports for effect modules.
 This module contains the common imports used across all effect modules.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -16,7 +14,7 @@ if TYPE_CHECKING:  # pragma: no cover - type-only import
 
 
 def intercept_value(
-    value: Any, transform: Callable[[Effect], Effect | Program]
+    value: Any, transform: "Callable[[Effect], Effect | Program]"
 ) -> Any:
     """Apply ``transform`` to any nested programs within ``value``."""
 

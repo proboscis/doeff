@@ -3,7 +3,6 @@
 This module is deprecated. Import effects from `doeff_secret.effects` instead.
 """
 
-from __future__ import annotations
 
 import warnings
 

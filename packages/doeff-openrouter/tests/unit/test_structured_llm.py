@@ -1,6 +1,5 @@
 """Unit tests for OpenRouter structured LLM helpers."""
 
-from __future__ import annotations
 
 import importlib
 import json

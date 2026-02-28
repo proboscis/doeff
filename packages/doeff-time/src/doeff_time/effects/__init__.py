@@ -1,6 +1,5 @@
 """Public time effects for doeff-time."""
 
-from __future__ import annotations
 
 from .time import (
     Delay,

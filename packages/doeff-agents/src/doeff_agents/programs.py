@@ -11,7 +11,6 @@ Key design:
 - Programs are testable and inspectable
 """
 
-from __future__ import annotations
 
 from collections.abc import Callable, Generator
 from dataclasses import dataclass

@@ -11,7 +11,6 @@ A workflow with quality gates:
 5. Create PR only if tests pass
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 

@@ -5,7 +5,6 @@ Most tests run without network access by intercepting ``AskEffect`` requests for
 Only a small subset remains true E2E and is gated by environment flags.
 """
 
-from __future__ import annotations
 
 import json
 import os  # noqa: PINJ050 - Required for true E2E environment detection

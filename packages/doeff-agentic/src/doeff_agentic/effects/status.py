@@ -1,6 +1,5 @@
 """Status and capability effects for doeff-agentic."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 

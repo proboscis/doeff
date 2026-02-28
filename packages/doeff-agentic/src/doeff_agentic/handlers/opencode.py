@@ -17,7 +17,6 @@ Usage:
     asyncio.run(main())
 """
 
-from __future__ import annotations
 
 import hashlib
 import inspect

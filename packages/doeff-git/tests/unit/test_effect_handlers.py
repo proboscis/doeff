@@ -1,7 +1,6 @@
 # ruff: noqa: E402
 """Tests for doeff-git effects and handlers."""
 
-from __future__ import annotations
 
 import importlib
 import subprocess

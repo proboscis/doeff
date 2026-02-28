@@ -1,7 +1,6 @@
 # ruff: noqa: E402, I001
 """Tests for Gemini effect and handler modules."""
 
-from __future__ import annotations
 
 import sys
 from pathlib import Path

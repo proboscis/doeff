@@ -8,7 +8,6 @@ delegate to the real stdlib module; otherwise we re-export the full doeff
 types from ``_types_internal``.
 """
 
-from __future__ import annotations
 
 import os
 import sys
