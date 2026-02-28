@@ -25,6 +25,10 @@ def run_cli(
         "DOEFF_DISABLE_DEFAULT_ENV": "1",
         "DOEFF_DISABLE_PROFILE": "1",
     }
+    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV"):
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
     if env_overrides:
         for key, value in env_overrides.items():
             if value is None:
