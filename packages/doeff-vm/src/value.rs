@@ -527,6 +527,8 @@ impl Clone for Value {
 impl Value {
     pub fn from_effect(effect: &crate::effect::Effect) -> Self {
         if let Some(py_obj) = effect.as_python() {
+            // SAFETY: from_effect only clones an existing Py<PyAny> from VM-managed effect values,
+            // and all callers execute under attached Python contexts.
             let py = unsafe { pyo3::Python::assume_attached() };
             return Value::Python(py_obj.clone_ref(py));
         }
