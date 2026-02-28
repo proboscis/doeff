@@ -6,6 +6,7 @@ import doeff_vm
 import pytest
 
 from doeff import (
+    Effect,
     EffectBase,
     Listen,
     Tell,
@@ -27,14 +28,16 @@ class Log(EffectBase):
     msg: str
 
 
-def ping_handler(effect, k):
+@do
+def ping_handler(effect: Effect, k):
     if isinstance(effect, Ping):
         return (yield doeff_vm.Resume(k, f"handled:{effect.label}"))
     delegated = yield doeff_vm.Delegate()
     return (yield doeff_vm.Resume(k, delegated))
 
 
-def ping_with_tell_handler(effect, k):
+@do
+def ping_with_tell_handler(effect: Effect, k):
     if isinstance(effect, Ping):
         yield Tell(f"handler:{effect.label}")
         return (yield doeff_vm.Resume(k, f"handled:{effect.label}"))
@@ -42,7 +45,8 @@ def ping_with_tell_handler(effect, k):
     return (yield doeff_vm.Resume(k, delegated))
 
 
-def handler_a(effect, k):
+@do
+def handler_a(effect: Effect, k):
     if isinstance(effect, Ping):
         yield Tell(f"handler_a:{effect.label}")
         yield Log(msg=f"log_from_a:{effect.label}")
@@ -51,7 +55,8 @@ def handler_a(effect, k):
     return (yield doeff_vm.Resume(k, delegated))
 
 
-def handler_b(effect, k):
+@do
+def handler_b(effect: Effect, k):
     if isinstance(effect, Log):
         yield Tell(f"handler_b_saw:{effect.msg}")
         return (yield doeff_vm.Resume(k, None))
@@ -59,7 +64,8 @@ def handler_b(effect, k):
     return (yield doeff_vm.Resume(k, delegated))
 
 
-def always_delegate(effect, k):
+@do
+def always_delegate(effect: Effect, k):
     delegated = yield doeff_vm.Delegate()
     return (yield doeff_vm.Resume(k, delegated))
 
@@ -87,10 +93,11 @@ def _ping_program(label: str):
 async def test_with_intercept_observes_user_tell(parameterized_interpreter) -> None:
     seen: list[str] = []
 
-    def observe(expr):
-        if isinstance(expr, WriterTellEffect):
-            seen.append(expr.message)
-        return expr
+    @do
+    def observe(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            seen.append(effect.message)
+        return effect
 
     @do
     def body():
@@ -108,10 +115,11 @@ async def test_with_intercept_observes_user_tell(parameterized_interpreter) -> N
 async def test_with_intercept_observes_handler_tell_cross_cutting(parameterized_interpreter) -> None:
     seen: list[str] = []
 
-    def observe(expr):
-        if isinstance(expr, WriterTellEffect):
-            seen.append(expr.message)
-        return expr
+    @do
+    def observe(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            seen.append(effect.message)
+        return effect
 
     wrapped = WithIntercept(
         observe,
@@ -129,9 +137,10 @@ async def test_with_intercept_observes_handler_tell_cross_cutting(parameterized_
 async def test_with_intercept_type_filter_include(parameterized_interpreter) -> None:
     seen: list[str] = []
 
-    def observe(expr):
-        seen.append(type(expr).__name__)
-        return expr
+    @do
+    def observe(effect: Effect):
+        seen.append(type(effect).__name__)
+        return effect
 
     @do
     def body():
@@ -153,9 +162,10 @@ async def test_with_intercept_type_filter_include(parameterized_interpreter) -> 
 async def test_with_intercept_type_filter_exclude(parameterized_interpreter) -> None:
     seen: list[str] = []
 
-    def observe(expr):
-        seen.append(type(expr).__name__)
-        return expr
+    @do
+    def observe(effect: Effect):
+        seen.append(type(effect).__name__)
+        return effect
 
     @do
     def body():
@@ -179,10 +189,11 @@ async def test_with_intercept_can_filter_doctrl_withhandler(parameterized_interp
     seen: list[str] = []
     with_handler_type = type(doeff_vm.WithHandler(ping_handler, _ping_program("probe")))
 
-    def observe(expr):
-        if isinstance(expr, with_handler_type):
+    @do
+    def observe(effect: Effect):
+        if isinstance(effect, with_handler_type):
             seen.append("with_handler")
-        return expr
+        return effect
 
     @do
     def body():
@@ -204,10 +215,11 @@ async def test_with_intercept_can_filter_doctrl_withhandler(parameterized_interp
 async def test_with_intercept_can_filter_doctrl_resume(parameterized_interpreter) -> None:
     seen: list[str] = []
 
-    def observe(expr):
-        if isinstance(expr, doeff_vm.Resume):
+    @do
+    def observe(effect: Effect):
+        if isinstance(effect, doeff_vm.Resume):
             seen.append("resume")
-        return expr
+        return effect
 
     wrapped = WithIntercept(
         observe,
@@ -225,15 +237,12 @@ async def test_with_intercept_can_filter_doctrl_resume(parameterized_interpreter
 async def test_with_intercept_no_reentrancy_same_interceptor(parameterized_interpreter) -> None:
     seen: list[str] = []
 
-    def observe(expr):
-        @do
-        def effectful_observer():
-            if isinstance(expr, WriterTellEffect):
-                seen.append(expr.message)
-                yield Tell("from-observer")
-            return expr
-
-        return effectful_observer()
+    @do
+    def observe(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            seen.append(effect.message)
+            yield Tell("from-observer")
+        return effect
 
     @do
     def body():
@@ -258,20 +267,18 @@ async def test_with_intercept_nested_interceptors_compose(parameterized_interpre
     seen_outer: list[str] = []
     seen_inner: list[str] = []
 
-    def inner(expr):
-        @do
-        def inner_effectful():
-            if isinstance(expr, WriterTellEffect):
-                seen_inner.append(expr.message)
-                yield Tell("from-inner")
-            return expr
+    @do
+    def inner(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            seen_inner.append(effect.message)
+            yield Tell("from-inner")
+        return effect
 
-        return inner_effectful()
-
-    def outer(expr):
-        if isinstance(expr, WriterTellEffect):
-            seen_outer.append(expr.message)
-        return expr
+    @do
+    def outer(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            seen_outer.append(effect.message)
+        return effect
 
     @do
     def body():
@@ -293,10 +300,11 @@ async def test_with_intercept_nested_interceptors_compose(parameterized_interpre
 
 @pytest.mark.asyncio
 async def test_with_intercept_effect_transformation(parameterized_interpreter) -> None:
-    def transform(expr):
-        if isinstance(expr, WriterTellEffect):
-            return Tell(f"mutated:{expr.message}")
-        return expr
+    @do
+    def transform(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            return Tell(f"mutated:{effect.message}")
+        return effect
 
     @do
     def body():
@@ -317,8 +325,9 @@ async def test_with_intercept_effect_transformation(parameterized_interpreter) -
 
 @pytest.mark.asyncio
 async def test_with_intercept_pure_observation_passthrough(parameterized_interpreter) -> None:
-    def observe(expr):
-        return expr
+    @do
+    def observe(effect: Effect):
+        return effect
 
     @do
     def body():
@@ -339,13 +348,10 @@ async def test_with_intercept_pure_observation_passthrough(parameterized_interpr
 
 @pytest.mark.asyncio
 async def test_with_intercept_effectful_interceptor(parameterized_interpreter) -> None:
-    def effectful(expr):
-        @do
-        def effectful_wrapper():
-            yield Tell("side-effect")
-            return expr
-
-        return effectful_wrapper()
+    @do
+    def effectful(effect: Effect):
+        yield Tell("side-effect")
+        return effect
 
     @do
     def body():
@@ -368,10 +374,11 @@ async def test_with_intercept_effectful_interceptor(parameterized_interpreter) -
 async def test_with_intercept_empty_types_include_never_matches(parameterized_interpreter) -> None:
     hit_count = 0
 
-    def observe(expr):
+    @do
+    def observe(effect: Effect):
         nonlocal hit_count
         hit_count += 1
-        return expr
+        return effect
 
     @do
     def body():
@@ -389,9 +396,10 @@ async def test_with_intercept_empty_types_include_never_matches(parameterized_in
 async def test_with_intercept_empty_types_exclude_matches_everything(parameterized_interpreter) -> None:
     seen_types: list[str] = []
 
-    def observe(expr):
-        seen_types.append(type(expr).__name__)
-        return expr
+    @do
+    def observe(effect: Effect):
+        seen_types.append(type(effect).__name__)
+        return effect
 
     @do
     def body():
@@ -407,8 +415,9 @@ async def test_with_intercept_empty_types_exclude_matches_everything(parameteriz
 
 
 def test_with_intercept_trace_contains_interceptor_frame() -> None:
-    def trace_observer(expr):
-        return expr
+    @do
+    def trace_observer(effect: Effect):
+        return effect
 
     @do
     def body():
@@ -433,10 +442,11 @@ def test_with_intercept_trace_contains_interceptor_frame() -> None:
 async def test_with_intercept_deep_handler_nesting_cross_cutting(parameterized_interpreter) -> None:
     seen: list[str] = []
 
-    def observe(expr):
-        if isinstance(expr, WriterTellEffect):
-            seen.append(expr.message)
-        return expr
+    @do
+    def observe(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            seen.append(effect.message)
+        return effect
 
     wrapped = WithIntercept(
         observe,
@@ -455,9 +465,10 @@ async def test_with_intercept_deep_handler_nesting_cross_cutting(parameterized_i
 async def test_with_intercept_observes_delegate_path(parameterized_interpreter) -> None:
     seen_types: list[str] = []
 
-    def observe(expr):
-        seen_types.append(type(expr).__name__)
-        return expr
+    @do
+    def observe(effect: Effect):
+        seen_types.append(type(effect).__name__)
+        return effect
 
     wrapped = WithIntercept(
         observe,
@@ -476,18 +487,21 @@ async def test_with_intercept_delegate_resume_no_leak(parameterized_interpreter)
     """After delegate-resume, outer handler yields should not be intercepted."""
     seen: list[str] = []
 
-    def observe(expr):
-        if isinstance(expr, WriterTellEffect):
-            seen.append(expr.message)
-        return expr
+    @do
+    def observe(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            seen.append(effect.message)
+        return effect
 
-    def inner_handler(effect, k):
+    @do
+    def inner_handler(effect: Effect, k):
         if isinstance(effect, Ping):
             return (yield doeff_vm.Resume(k, f"inner:{effect.label}"))
         delegated = yield doeff_vm.Delegate()
         return (yield doeff_vm.Resume(k, delegated))
 
-    def outer_handler(effect, k):
+    @do
+    def outer_handler(effect: Effect, k):
         if isinstance(effect, Ping):
             delegated = yield doeff_vm.Delegate()
             yield Tell(f"outer-after-resume:{delegated}")
@@ -517,10 +531,11 @@ async def test_with_intercept_delegate_resume_no_leak(parameterized_interpreter)
 async def test_with_intercept_withhandler_outside_scope(parameterized_interpreter) -> None:
     seen: list[str] = []
 
-    def observe(expr):
-        if isinstance(expr, WriterTellEffect):
-            seen.append(expr.message)
-        return expr
+    @do
+    def observe(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            seen.append(effect.message)
+        return effect
 
     @do
     def body():
@@ -544,15 +559,17 @@ async def test_with_intercept_nested_filters_match_spec_example(parameterized_in
     f1_seen: list[str] = []
     f2_seen: list[str] = []
 
-    def f1(expr):
-        if isinstance(expr, WriterTellEffect):
-            f1_seen.append(expr.message)
-        return expr
+    @do
+    def f1(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            f1_seen.append(effect.message)
+        return effect
 
-    def f2(expr):
-        if isinstance(expr, Ping):
-            f2_seen.append(expr.label)
-        return expr
+    @do
+    def f2(effect: Effect):
+        if isinstance(effect, Ping):
+            f2_seen.append(effect.label)
+        return effect
 
     @do
     def body():
@@ -580,10 +597,11 @@ async def test_with_intercept_nested_filters_match_spec_example(parameterized_in
 async def test_with_intercept_long_sequence_ordered_observation(parameterized_interpreter) -> None:
     seen: list[str] = []
 
-    def observe(expr):
-        if isinstance(expr, WriterTellEffect):
-            seen.append(expr.message)
-        return expr
+    @do
+    def observe(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            seen.append(effect.message)
+        return effect
 
     @do
     def chatty_program():
@@ -608,7 +626,8 @@ async def test_with_intercept_long_sequence_ordered_observation(parameterized_in
 async def test_with_intercept_observer_raises_propagates_and_cleans_state(
     parameterized_interpreter,
 ) -> None:
-    def bad_observer(expr):
+    @do
+    def bad_observer(_effect: Effect):
         raise RuntimeError("interceptor broke")
 
     @do
@@ -624,11 +643,12 @@ async def test_with_intercept_observer_raises_propagates_and_cleans_state(
 
     fire_count = 0
 
-    def observe_after(expr):
+    @do
+    def observe_after(effect: Effect):
         nonlocal fire_count
-        if isinstance(expr, WriterTellEffect):
+        if isinstance(effect, WriterTellEffect):
             fire_count += 1
-        return expr
+        return effect
 
     @do
     def after():
@@ -649,10 +669,11 @@ async def test_with_intercept_program_error_propagates_after_prior_observation(
 ) -> None:
     seen: list[str] = []
 
-    def observe(expr):
-        if isinstance(expr, WriterTellEffect):
-            seen.append(expr.message)
-        return expr
+    @do
+    def observe(effect: Effect):
+        if isinstance(effect, WriterTellEffect):
+            seen.append(effect.message)
+        return effect
 
     @do
     def failing_program():

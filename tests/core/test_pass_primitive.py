@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import EffectBase, Pass, Resume, WithHandler, default_handlers, do, run
+from doeff import Effect, EffectBase, Pass, Resume, WithHandler, default_handlers, do, run
 from doeff.rust_vm import pass_
 
 
@@ -17,14 +17,16 @@ class _EffectB(EffectBase):
 def test_pass_is_terminal_passthrough() -> None:
     resumed_after_pass = {"value": False}
 
-    def inner_handler(effect, _k):
+    @do
+    def inner_handler(effect: Effect, _k):
         if isinstance(effect, _EffectA):
             yield Pass()
             resumed_after_pass["value"] = True
             return "unreachable"
         yield Pass()
 
-    def outer_handler(effect, k):
+    @do
+    def outer_handler(effect: Effect, k):
         if isinstance(effect, _EffectA):
             return (yield Resume(k, "handled-by-outer"))
         yield Pass()

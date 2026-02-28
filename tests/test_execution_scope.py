@@ -5,6 +5,7 @@ from typing import Any
 
 from doeff import (
     Delegate,
+    Effect,
     EffectGenerator,
     Pass,
     Resume,
@@ -42,14 +43,16 @@ class ScopeBoom(EffectBase):
     label: str
 
 
-def ping_base_handler(effect: object, k: object):
+@do
+def ping_base_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopePing):
         yield Pass()
         return
     return (yield Resume(k, f"base:{effect.label}"))
 
 
-def boom_handler(effect: object, k: object):
+@do
+def boom_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopeBoom):
         yield Pass()
         return
@@ -62,7 +65,8 @@ def ping_program(label: str) -> EffectGenerator[str]:
 
 
 def test_nested_dispatch_scope_restores_outer_context() -> None:
-    def outer(effect: object, k: object):
+    @do
+    def outer(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
             yield Pass()
             return
@@ -81,14 +85,16 @@ def test_nested_dispatch_scope_restores_outer_context() -> None:
 
 
 def test_delegate_keeps_nested_handler_scope_order() -> None:
-    def inner(effect: object, k: object):
+    @do
+    def inner(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
             yield Pass()
             return
         delegated = yield Delegate()
         return (yield Resume(k, f"{delegated}|inner"))
 
-    def outer(effect: object, k: object):
+    @do
+    def outer(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
             yield Pass()
             return
@@ -121,7 +127,8 @@ def test_try_results_remain_scoped_across_multiple_failures() -> None:
 
 
 def test_nested_try_inside_handler_does_not_corrupt_outer_flow() -> None:
-    def outer(effect: object, k: object):
+    @do
+    def outer(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
             yield Pass()
             return
@@ -140,7 +147,8 @@ def test_transfer_keeps_dispatch_stack_stable_for_repeated_effects() -> None:
     class TransferPing(EffectBase):
         value: int
 
-    def transfer_handler(effect: object, k: object):
+    @do
+    def transfer_handler(effect: Effect, k: object):
         if not isinstance(effect, TransferPing):
             yield Pass()
             return
@@ -166,7 +174,8 @@ def test_late_resume_of_consumed_continuation_stays_scoped() -> None:
     class CaptureEffect(EffectBase):
         label: str
 
-    def capture_handler(effect: object, k: object):
+    @do
+    def capture_handler(effect: Effect, k: object):
         if not isinstance(effect, CaptureEffect):
             yield Pass()
             return

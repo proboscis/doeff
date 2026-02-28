@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from doeff import Ask, Pass, Program, Resume, WithHandler, default_handlers, do, run
+from doeff import Ask, Effect, Pass, Program, Resume, WithHandler, default_handlers, do, run
 from doeff.effects import Put
 from doeff.effects.gather import Gather
 from doeff.effects.spawn import Spawn
@@ -129,12 +129,14 @@ def test_spec_example_1_nested_program_failure() -> None:
 
 
 def test_spec_example_2_with_handler_stack_markers() -> None:
-    def auth_handler(effect: object, k: object):
+    @do
+    def auth_handler(effect: Effect, k: object):
         if getattr(effect, "key", None) == "token":
             return (yield Resume(k, "Bearer sk-1234"))
         yield Pass()
 
-    def rate_limiter(effect: object, k: object):
+    @do
+    def rate_limiter(effect: Effect, k: object):
         if getattr(effect, "key", None) == "rate_limit":
             return (yield Resume(k, 100))
         yield Pass()
@@ -157,7 +159,8 @@ def test_spec_example_2_with_handler_stack_markers() -> None:
 
 
 def test_spec_example_3_handler_throws() -> None:
-    def strict_handler(effect: object, _k: object):
+    @do
+    def strict_handler(effect: Effect, _k: object):
         if getattr(effect, "key", None) == "result":
             value = getattr(effect, "value", None)
             if not isinstance(value, int):
@@ -196,7 +199,8 @@ def test_spec_example_4_missing_env_key() -> None:
 
 
 def test_spec_example_6_handler_return_abandons_inner_chain() -> None:
-    def short_circuit_handler(effect: object, _k: object):
+    @do
+    def short_circuit_handler(effect: Effect, _k: object):
         if getattr(effect, "key", None) == "mode":
             return "fallback"
         yield Pass()
@@ -225,6 +229,8 @@ def test_spec_example_6_handler_return_abandons_inner_chain() -> None:
 def test_spec_example_8_spawn_chain_during_gather() -> None:
     @do
     def fetch_data(url: str) -> Program[str]:
+        if False:  # pragma: no cover - keep generator trace shape stable on py3.10+
+            yield Ask("__unused__")
         if url.endswith("/item/3"):
             raise ConnectionError(f"Failed: {url} -> 500")
         return f"ok:{url}"

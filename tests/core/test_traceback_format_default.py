@@ -7,6 +7,7 @@ from pathlib import Path
 from doeff import (
     Ask,
     Delegate,
+    Effect,
     EffectBase,
     Pass,
     Program,
@@ -294,7 +295,8 @@ def test_format_default_handler_stack_same() -> None:
 
 
 def test_format_default_keeps_duplicate_handler_names_from_vm_chain() -> None:
-    def same_name_handler(_effect: object, _k: object):
+    @do
+    def same_name_handler(_effect: Effect, _k: object):
         yield Pass()
 
     @do
@@ -320,7 +322,8 @@ def test_format_default_keeps_duplicate_handler_names_from_vm_chain() -> None:
 
 def test_format_default_duplicate_name_throw_marks_correct_handler() -> None:
     def _mk_handler(label: str):
-        def handler(effect: object, k: object):
+        @do
+        def handler(effect: Effect, k: object):
             if getattr(effect, "key", None) == "x":
                 _ = yield Resume(k, f"{label}:resumed")
                 raise RuntimeError(f"{label}:boom")
@@ -743,7 +746,8 @@ class Boom(EffectBase):
 
 
 def test_format_default_shows_effect_yield_on_handler_throw() -> None:
-    def crash_handler(effect: object, _k: object):
+    @do
+    def crash_handler(effect: Effect, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("handler exploded")
         yield Pass()
@@ -768,7 +772,8 @@ def test_format_default_shows_effect_yield_on_handler_throw() -> None:
 
 
 def test_format_default_shows_program_yield_chain() -> None:
-    def crash_handler(effect: object, _k: object):
+    @do
+    def crash_handler(effect: Effect, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("handler exploded")
         yield Pass()
@@ -817,12 +822,14 @@ def test_format_default_includes_resumed_effects() -> None:
 
 
 def test_format_default_shows_delegation_chain() -> None:
-    def outer_crash_handler(effect: object, _k: object):
+    @do
+    def outer_crash_handler(effect: Effect, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("delegated boom")
         yield Pass()
 
-    def inner_delegate_handler(_effect: object, _k: object):
+    @do
+    def inner_delegate_handler(_effect: Effect, _k: object):
         yield Pass()
 
     @do
@@ -851,18 +858,21 @@ def test_format_default_runtime_distinguishes_passed_and_delegated() -> None:
     class MarkerEffect(EffectBase):
         pass
 
-    def outer_throw_handler(effect: object, _k: object):
+    @do
+    def outer_throw_handler(effect: Effect, _k: object):
         if isinstance(effect, MarkerEffect):
             raise RuntimeError("pass-vs-delegate boom")
         yield Pass()
 
-    def middle_delegate_handler(effect: object, _k: object):
+    @do
+    def middle_delegate_handler(effect: Effect, _k: object):
         if isinstance(effect, MarkerEffect):
             yield Delegate()
             return
         yield Pass()
 
-    def inner_pass_handler(_effect: object, _k: object):
+    @do
+    def inner_pass_handler(_effect: Effect, _k: object):
         yield Pass()
 
     @do
@@ -887,7 +897,8 @@ def test_format_default_runtime_distinguishes_passed_and_delegated() -> None:
 
 
 def test_format_default_spawn_shows_effect_in_child() -> None:
-    def crash_handler(effect: object, _k: object):
+    @do
+    def crash_handler(effect: Effect, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("child exploded")
         yield Pass()
@@ -936,7 +947,8 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
 
 
 def test_spawn_site_attribution_under_single_delegate_handler() -> None:
-    def crash_handler(effect: object, _k: object):
+    @do
+    def crash_handler(effect: Effect, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("child exploded")
         yield Pass()
@@ -968,7 +980,8 @@ def test_spawn_site_attribution_under_single_delegate_handler() -> None:
 
 
 def test_spawn_site_attribution_under_nested_delegate_handlers() -> None:
-    def crash_handler(effect: object, _k: object):
+    @do
+    def crash_handler(effect: Effect, _k: object):
         if isinstance(effect, Boom):
             raise RuntimeError("child exploded")
         yield Pass()

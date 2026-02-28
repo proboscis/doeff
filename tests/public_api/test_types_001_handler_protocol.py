@@ -50,7 +50,8 @@ def _prog(gen_factory):
 
 class TestHP01BasicHandler:
     def test_handler_intercepts_and_resumes(self) -> None:
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value * 2))
             else:
@@ -75,7 +76,8 @@ class TestHP01BasicHandler:
 
 class TestHP02EffectAttributes:
     def test_handler_reads_effect_attributes(self) -> None:
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, f"got:{effect.value}"))
             else:
@@ -100,7 +102,8 @@ class TestHP02EffectAttributes:
 
 class TestHP03PostProcess:
     def test_handler_transforms_resume_result(self) -> None:
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 resume_value = yield Resume(k, effect.value)
                 return resume_value * 3
@@ -137,8 +140,7 @@ class TestHP03BReturnEffect:
         result = run(_prog(main), handlers=default_handlers(), env={"api_key": "secret"})
         assert result.is_err()
         assert isinstance(result.error, TypeError)
-        assert "must return a generator" in str(result.error)
-        assert "Did you forget 'yield'?" in str(result.error)
+        assert "@do" in str(result.error)
 
 
 # ---------------------------------------------------------------------------
@@ -164,8 +166,7 @@ class TestHP04AbandonContinuation:
         result = run(_prog(main), handlers=default_handlers())
         assert result.is_err()
         assert isinstance(result.error, TypeError)
-        assert "must return a generator" in str(result.error)
-        assert "Did you forget 'yield'?" in str(result.error)
+        assert "@do" in str(result.error)
 
 
 # ---------------------------------------------------------------------------
@@ -175,13 +176,15 @@ class TestHP04AbandonContinuation:
 
 class TestHP05Delegate:
     def test_inner_delegates_to_outer(self) -> None:
-        def outer_handler(effect, k):
+        @do
+        def outer_handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value + 100))
             else:
                 yield Delegate()
 
-        def inner_handler(effect, k):
+        @do
+        def inner_handler(effect: Effect, k):
             # always delegate
             yield Pass()
 
@@ -208,13 +211,15 @@ class TestHP05Delegate:
 
 class TestHP06NestedHandlers:
     def test_inner_handler_intercepts_before_outer(self) -> None:
-        def inner_handler(effect, k):
+        @do
+        def inner_handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value + 100))
             else:
                 yield Delegate()
 
-        def outer_handler(effect, k):
+        @do
+        def outer_handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value * 2))
             else:
@@ -237,13 +242,15 @@ class TestHP06NestedHandlers:
         assert result.value == 105  # inner handler won
 
     def test_delegated_then_outer_handles(self) -> None:
-        def inner_handler(effect, k):
+        @do
+        def inner_handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect) and effect.value < 10:
                 return (yield Resume(k, effect.value + 100))
             else:
                 yield Pass()
 
-        def outer_handler(effect, k):
+        @do
+        def outer_handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value * 2))
             else:
@@ -276,7 +283,8 @@ class TestHP07StatefulHandler:
         def make_counting_handler():
             state = {"count": 0}
 
-            def handler(effect, k):
+            @do
+            def handler(effect: Effect, k):
                 if isinstance(effect, _CustomEffect):
                     state["count"] += 1
                     return (yield Resume(k, state["count"]))
@@ -309,7 +317,8 @@ class TestHP07StatefulHandler:
 
 class TestHP08WithHandlerKeywords:
     def test_keyword_args(self) -> None:
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value * 3))
             else:
@@ -336,7 +345,8 @@ class TestHP09MultipleEffects:
     def test_handler_invoked_for_each_effect(self) -> None:
         invocations = []
 
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 invocations.append(effect.value)
                 return (yield Resume(k, effect.value))
@@ -365,7 +375,8 @@ class TestHP09MultipleEffects:
 
 class TestHP10CoexistWithBuiltins:
     def test_custom_handler_with_state_reader_writer(self) -> None:
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, _CustomEffect):
                 return (yield Resume(k, effect.value))
             else:

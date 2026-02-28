@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import doeff_vm
 
+from doeff.do import do
 from doeff.program import ProgramBase
 
 from .base import Effect, EffectBase
@@ -24,7 +25,8 @@ def Intercept(
     if not transforms:
         raise ValueError("Intercept requires at least one transform function")
 
-    def handle_intercept(effect, k):
+    @do
+    def handle_intercept(effect: Effect, k):
         replacement = None
         for transform in transforms:
             candidate = transform(effect)

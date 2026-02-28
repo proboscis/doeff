@@ -4,6 +4,7 @@ from doeff import (
     Ask,
     AskEffect,
     Delegate,
+    Effect,
     EffectBase,
     Pass,
     Resume,
@@ -21,13 +22,15 @@ class _ProbeEffect(EffectBase):
 def test_delegate_returns_outer_value_back_to_inner_handler() -> None:
     observed: dict[str, int] = {}
 
-    def inner_handler(effect, _k):
+    @do
+    def inner_handler(effect: Effect, _k):
         if isinstance(effect, _ProbeEffect):
             observed["raw"] = yield Delegate()
             return observed["raw"]
         yield Pass()
 
-    def outer_handler(effect, k):
+    @do
+    def outer_handler(effect: Effect, k):
         if isinstance(effect, _ProbeEffect):
             return (yield Resume(k, 42))
         yield Pass()
@@ -46,13 +49,15 @@ def test_delegate_returns_outer_value_back_to_inner_handler() -> None:
 
 
 def test_delegate_allows_transform_then_resume_original_continuation() -> None:
-    def inner_handler(effect, k):
+    @do
+    def inner_handler(effect: Effect, k):
         if isinstance(effect, _ProbeEffect):
             raw = yield Delegate()
             return (yield Resume(k, raw * 2))
         yield Pass()
 
-    def outer_handler(effect, k):
+    @do
+    def outer_handler(effect: Effect, k):
         if isinstance(effect, _ProbeEffect):
             return (yield Resume(k, 21))
         yield Pass()
@@ -70,19 +75,22 @@ def test_delegate_allows_transform_then_resume_original_continuation() -> None:
 
 
 def test_nested_delegate_chain_flows_c_to_b_to_a_to_user() -> None:
-    def handler_a(effect, k):
+    @do
+    def handler_a(effect: Effect, k):
         if isinstance(effect, _ProbeEffect):
             raw = yield Delegate()
             return (yield Resume(k, f"{raw}-a"))
         yield Pass()
 
-    def handler_b(effect, k):
+    @do
+    def handler_b(effect: Effect, k):
         if isinstance(effect, _ProbeEffect):
             raw = yield Delegate()
             return (yield Resume(k, f"{raw}-b"))
         yield Pass()
 
-    def handler_c(effect, k):
+    @do
+    def handler_c(effect: Effect, k):
         if isinstance(effect, _ProbeEffect):
             return (yield Resume(k, "c"))
         yield Pass()
@@ -102,19 +110,22 @@ def test_nested_delegate_chain_flows_c_to_b_to_a_to_user() -> None:
 
 
 def test_pass_from_middle_handler_preserves_k_new_for_outer_handler() -> None:
-    def handler_a(effect, k):
+    @do
+    def handler_a(effect: Effect, k):
         if isinstance(effect, _ProbeEffect):
             raw = yield Delegate()
             return (yield Resume(k, raw + 5))
         yield Pass()
 
-    def handler_b(effect, _k):
+    @do
+    def handler_b(effect: Effect, _k):
         if isinstance(effect, _ProbeEffect):
             yield Pass()
             return -1  # unreachable
         yield Pass()
 
-    def handler_c(effect, k):
+    @do
+    def handler_c(effect: Effect, k):
         if isinstance(effect, _ProbeEffect):
             return (yield Resume(k, 37))
         yield Pass()
@@ -136,13 +147,15 @@ def test_pass_from_middle_handler_preserves_k_new_for_outer_handler() -> None:
 def test_delegate_handler_can_return_without_resuming_k_user() -> None:
     body_resumed = {"value": False}
 
-    def inner_handler(effect, _k):
+    @do
+    def inner_handler(effect: Effect, _k):
         if isinstance(effect, _ProbeEffect):
             raw = yield Delegate()
             return f"inner:{raw}"
         yield Pass()
 
-    def outer_handler(effect, k):
+    @do
+    def outer_handler(effect: Effect, k):
         if isinstance(effect, _ProbeEffect):
             return (yield Resume(k, "outer"))
         yield Pass()
@@ -162,13 +175,15 @@ def test_delegate_handler_can_return_without_resuming_k_user() -> None:
 
 
 def test_koka_equivalent_delegate_semantics_result_is_85() -> None:
-    def inner_handler(effect, k):
+    @do
+    def inner_handler(effect: Effect, k):
         if isinstance(effect, AskEffect):
             raw = yield Delegate()
             return (yield Resume(k, raw * 2))
         yield Pass()
 
-    def outer_handler(effect, k):
+    @do
+    def outer_handler(effect: Effect, k):
         if isinstance(effect, AskEffect):
             return (yield Resume(k, 42))
         yield Pass()

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff import Ask, Delegate, Resume, WithHandler, default_handlers, run
+from doeff import Ask, Delegate, Effect, Resume, WithHandler, default_handlers, do, run
 from doeff.program import GeneratorProgram
 
 
@@ -56,7 +56,8 @@ def test_SA_007_G05_docontrol_has_pure_map_flatmap_nodes() -> None:
 
 
 def test_SA_007_G06_run_accepts_top_level_withhandler_expr() -> None:
-    def passthrough_handler(effect, k):
+    @do
+    def passthrough_handler(effect: Effect, k):
         yield Delegate()
 
     result = run(WithHandler(passthrough_handler, _mk_program()), handlers=default_handlers())

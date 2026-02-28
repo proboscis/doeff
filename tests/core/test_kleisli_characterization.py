@@ -43,7 +43,8 @@ def _prog(gen_factory):
 
 class TestPlainGeneratorHandler:
     def test_resume_returns_value_to_body(self) -> None:
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 return (yield Resume(k, f"pong:{effect.payload}"))
             yield Delegate()
@@ -59,11 +60,13 @@ class TestPlainGeneratorHandler:
         assert result.value == "pong:hello"
 
     def test_delegate_passes_to_outer(self) -> None:
-        def inner_handler(_effect, _k):
+        @do
+        def inner_handler(_effect: Effect, _k):
             delegated = yield Delegate()
             return delegated
 
-        def outer_handler(effect, k):
+        @do
+        def outer_handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 return (yield Resume(k, "from-outer"))
             yield Pass()
@@ -80,7 +83,8 @@ class TestPlainGeneratorHandler:
         assert result.value == "from-outer"
 
     def test_handler_can_yield_effects(self) -> None:
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 state_val = yield Get("key")
                 return (yield Resume(k, f"got:{state_val}"))
@@ -97,7 +101,8 @@ class TestPlainGeneratorHandler:
         assert result.value == "got:magic"
 
     def test_multiple_effects_in_body(self) -> None:
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 return (yield Resume(k, f"ping:{effect.payload}"))
             if isinstance(effect, Pong):
@@ -152,7 +157,8 @@ class TestRustBuiltinHandlers:
         assert "entry" in result.value.log
 
     def test_state_with_custom_handler(self) -> None:
-        def handler(effect, k):
+        @do
+        def handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 before = yield Get("counter")
                 yield Put("counter", before + 1)
@@ -214,13 +220,15 @@ class TestDoHandlerPreKleisli:
 
 class TestHandlerIdentity:
     def test_handler_does_not_handle_own_effects(self) -> None:
-        def inner_handler(effect, k):
+        @do
+        def inner_handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 delegated = yield Ping("from-inner-body")
                 return (yield Resume(k, f"inner:{delegated}"))
             yield Pass()
 
-        def outer_handler(effect, k):
+        @do
+        def outer_handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 return (yield Resume(k, f"outer:{effect.payload}"))
             yield Pass()
@@ -238,12 +246,14 @@ class TestHandlerIdentity:
 
 class TestNestedWithHandler:
     def test_inner_handler_takes_priority(self) -> None:
-        def inner_handler(effect, k):
+        @do
+        def inner_handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 return (yield Resume(k, "inner"))
             yield Pass()
 
-        def outer_handler(effect, k):
+        @do
+        def outer_handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 return (yield Resume(k, "outer"))
             yield Pass()
@@ -258,19 +268,22 @@ class TestNestedWithHandler:
         assert result.value == "inner"
 
     def test_delegation_chain(self) -> None:
-        def inner_handler(effect, _k):
+        @do
+        def inner_handler(effect: Effect, _k):
             if isinstance(effect, Ping):
                 yield Pass()
                 return "unreachable"
             yield Pass()
 
-        def middle_handler(effect, k):
+        @do
+        def middle_handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 delegated = yield Delegate()
                 return (yield Resume(k, f"middle:{delegated}"))
             yield Pass()
 
-        def outer_handler(effect, k):
+        @do
+        def outer_handler(effect: Effect, k):
             if isinstance(effect, Ping):
                 return (yield Resume(k, "outer"))
             yield Pass()
@@ -290,7 +303,8 @@ class TestNestedWithHandler:
 
 @pytest.mark.phase3_baseline
 def test_with_handler_plain_generator() -> None:
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, Ping):
             return (yield Resume(k, f"plain:{effect.payload}"))
         yield Pass()
@@ -321,12 +335,14 @@ def test_with_handler_do_decorated() -> None:
 
 @pytest.mark.phase3_baseline
 def test_with_intercept_plain_callable() -> None:
-    def interceptor(expr):
-        if isinstance(expr, Ping):
+    @do
+    def interceptor(effect: Effect):
+        if isinstance(effect, Ping):
             return Ping("mutated")
-        return expr
+        return effect
 
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, Ping):
             return (yield Resume(k, effect.payload))
         yield Pass()
@@ -348,13 +364,14 @@ def test_with_intercept_plain_callable() -> None:
 @pytest.mark.phase3_baseline
 def test_with_intercept_do_decorated() -> None:
     @do
-    def interceptor(expr):
-        if isinstance(expr, Ping):
+    def interceptor(effect: Effect):
+        if isinstance(effect, Ping):
             seen = yield Get("seen")
             yield Put("seen", seen + 1)
-        return expr
+        return effect
 
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, Ping):
             return (yield Resume(k, effect.payload))
         yield Pass()
@@ -378,7 +395,8 @@ def test_with_intercept_do_decorated() -> None:
 
 @pytest.mark.phase3_baseline
 def test_with_handler_return_clause() -> None:
-    def handler(_effect, _k):
+    @do
+    def handler(_effect: Effect, _k):
         yield Pass()
 
     def return_clause(value):
@@ -397,17 +415,15 @@ def test_with_handler_return_clause() -> None:
 
 @pytest.mark.phase3_baseline
 def test_with_intercept_effectful() -> None:
-    def interceptor(expr):
-        @do
-        def effectful():
-            if isinstance(expr, Ping):
-                count = yield Get("count")
-                yield Put("count", count + 1)
-            return expr
+    @do
+    def interceptor(effect: Effect):
+        if isinstance(effect, Ping):
+            count = yield Get("count")
+            yield Put("count", count + 1)
+        return effect
 
-        return effectful()
-
-    def handler(effect, k):
+    @do
+    def handler(effect: Effect, k):
         if isinstance(effect, Ping):
             return (yield Resume(k, "ok"))
         yield Pass()

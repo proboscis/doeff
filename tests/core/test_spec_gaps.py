@@ -171,7 +171,14 @@ class TestG18RunResultUnification:
             yield  # noqa: RET504
 
         result = run(_prog(gen), handlers=default_handlers())
-        assert isinstance(result, RunResult), (
+        try:
+            is_run_result = isinstance(result, RunResult)
+        except ValueError as exc:
+            # Python 3.10 runtime-checkable Protocol checks can trigger property access
+            # on `RunResult.error`, which raises for Ok results in the Rust type.
+            assert "RunResult is Ok, not Err" in str(exc)
+            is_run_result = True
+        assert is_run_result, (
             f"run() returned {type(result).__module__}.{type(result).__name__}, "
             f"expected doeff.RunResult"
         )
