@@ -14,7 +14,8 @@ from doeff_llm.effects import (
     LLMStructuredQuery,
 )
 
-from doeff import Pass, Resume
+from doeff import Pass, Resume, do
+from doeff.effects.base import Effect
 from doeff_openai.effects import (
     ChatCompletion,
     Embedding,
@@ -247,6 +248,7 @@ def _coerce_structured_value(payload: Any, response_format: type[Any]) -> Any:
     return payload
 
 
+@do
 def _handle_chat_completion(
     effect: LLMChat,
     k: Any,
@@ -272,6 +274,7 @@ def _handle_chat_completion(
     return (yield Resume(k, response))
 
 
+@do
 def _handle_streaming_chat_completion(
     effect: LLMStreamingChat | LLMChat,
     k: Any,
@@ -296,6 +299,7 @@ def _handle_streaming_chat_completion(
     return (yield Resume(k, stream))
 
 
+@do
 def _handle_embedding(
     effect: LLMEmbedding,
     k: Any,
@@ -328,6 +332,7 @@ def _handle_embedding(
     return (yield Resume(k, response))
 
 
+@do
 def _handle_structured_output(
     effect: LLMStructuredQuery,
     k: Any,
@@ -357,8 +362,9 @@ def _handle_structured_output(
     return (yield Resume(k, value))
 
 
+@do
 def openai_mock_handler(
-    effect: Any,
+    effect: Effect,
     k: Any,
     *,
     config: MockOpenAIConfig | None = None,
@@ -371,7 +377,7 @@ def openai_mock_handler(
     if isinstance(effect, LLMStreamingChat | StreamingChatCompletion):
         if _is_openai_model(effect.model):
             return (
-                yield from _handle_streaming_chat_completion(
+                yield _handle_streaming_chat_completion(
                     effect, k, config=resolved_config, state=resolved_state
                 )
             )
@@ -379,24 +385,22 @@ def openai_mock_handler(
         if _is_openai_model(effect.model):
             if effect.stream:
                 return (
-                    yield from _handle_streaming_chat_completion(
+                    yield _handle_streaming_chat_completion(
                         effect, k, config=resolved_config, state=resolved_state
                     )
                 )
             return (
-                yield from _handle_chat_completion(
+                yield _handle_chat_completion(
                     effect, k, config=resolved_config, state=resolved_state
                 )
             )
     elif isinstance(effect, LLMEmbedding | Embedding) and _is_openai_model(effect.model):
-        return (
-            yield from _handle_embedding(effect, k, config=resolved_config, state=resolved_state)
-        )
+        return (yield _handle_embedding(effect, k, config=resolved_config, state=resolved_state))
     elif isinstance(effect, LLMStructuredQuery | StructuredOutput) and _is_openai_model(
         effect.model
     ):
         return (
-            yield from _handle_structured_output(
+            yield _handle_structured_output(
                 effect, k, config=resolved_config, state=resolved_state
             )
         )
@@ -412,9 +416,10 @@ def mock_handlers(
     resolved_config = config or MockOpenAIConfig()
     resolved_state = state or MockOpenAIState()
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         return (
-            yield from openai_mock_handler(
+            yield openai_mock_handler(
                 effect,
                 k,
                 config=resolved_config,
