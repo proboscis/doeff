@@ -20,7 +20,8 @@ use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
-    dispatch_ref_as_python, make_get_execution_context_effect, DispatchEffect, PyGetExecutionContext,
+    dispatch_ref_as_python, dispatch_to_pyobject, make_get_execution_context_effect,
+    DispatchEffect, PyGetExecutionContext,
 };
 #[cfg(test)]
 use crate::effect::{Effect, PySpawn};
@@ -702,7 +703,13 @@ impl VM {
         kleisli: KleisliRef,
         effect: DispatchEffect,
         continuation: Continuation,
-    ) -> DoCtrl {
+    ) -> Result<DoCtrl, VMError> {
+        let effect_obj = Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|v| v.unbind()))
+            .map_err(|err| {
+                VMError::python_error(format!(
+                    "failed to convert dispatch effect to Python object: {err}"
+                ))
+            })?;
         let debug = kleisli.debug_info();
         let metadata = CallMetadata::new(
             debug.name,
@@ -712,13 +719,13 @@ impl VM {
             None,
         );
 
-        DoCtrl::Expand {
+        Ok(DoCtrl::Expand {
             factory: Box::new(DoCtrl::Pure {
                 value: Value::Kleisli(kleisli),
             }),
             args: vec![
                 DoCtrl::Pure {
-                    value: Value::DispatchEffect(Box::new(effect)),
+                    value: Value::Python(effect_obj),
                 },
                 DoCtrl::Pure {
                     value: Value::Continuation(continuation),
@@ -726,7 +733,7 @@ impl VM {
             ],
             kwargs: vec![],
             metadata,
-        }
+        })
     }
 
     fn marker_handler_trace_info(
@@ -3113,7 +3120,7 @@ impl VM {
         if handler.py_identity().is_some() {
             self.register_continuation(k_user.clone());
         }
-        let ir_node = Self::invoke_kleisli_handler_expr(handler, effect, k_user);
+        let ir_node = Self::invoke_kleisli_handler_expr(handler, effect, k_user)?;
         Ok(self.evaluate(ir_node))
     }
 
@@ -3847,7 +3854,10 @@ impl VM {
                 if handler.py_identity().is_some() {
                     self.register_continuation(k_user.clone());
                 }
-                let ir_node = Self::invoke_kleisli_handler_expr(handler, effect.clone(), k_user);
+                let ir_node = match Self::invoke_kleisli_handler_expr(handler, effect.clone(), k_user) {
+                    Ok(node) => node,
+                    Err(err) => return StepEvent::Error(err),
+                };
                 return self.evaluate(ir_node);
             }
         }

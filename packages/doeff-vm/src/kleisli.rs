@@ -621,11 +621,10 @@ impl Kleisli for RustKleisli {
         }
 
         let effect = match &args[0] {
-            Value::DispatchEffect(effect) => (**effect).clone(),
             Value::Python(obj) => dispatch_from_shared(PyShared::new(obj.clone_ref(py))),
             other => {
                 return Err(VMError::type_error(format!(
-                    "RustKleisli arg[0] must be DispatchEffect/Python effect, got {other:?}"
+                    "RustKleisli arg[0] must be Python effect, got {other:?}"
                 )))
             }
         };
