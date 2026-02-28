@@ -11,7 +11,7 @@ from click.testing import CliRunner
 from doeff_flow import run_workflow
 from doeff_flow.cli import cli
 
-from doeff import Ask, Delegate, Get, Pure, Put, WithHandler, async_run, default_handlers, do
+from doeff import Ask, Effect, Get, Pass, Pure, Put, WithHandler, async_run, default_handlers, do
 from doeff import run as run_sync
 
 
@@ -126,10 +126,11 @@ class TestWithHandlerTracing:
     def test_sync_run_observes_effects_with_withhandler(self):
         captured_effects: list[object] = []
 
-        def capturing_handler(effect, k):
+        @do
+        def capturing_handler(effect: Effect, k):
             _ = k
             captured_effects.append(effect)
-            yield Delegate()
+            return (yield Pass())
 
         @do
         def workflow():
@@ -153,10 +154,11 @@ class TestWithHandlerTracing:
     async def test_async_run_observes_effects_with_withhandler(self):
         captured_effects: list[object] = []
 
-        def capturing_handler(effect, k):
+        @do
+        def capturing_handler(effect: Effect, k):
             _ = k
             captured_effects.append(effect)
-            yield Delegate()
+            return (yield Pass())
 
         @do
         def workflow():
