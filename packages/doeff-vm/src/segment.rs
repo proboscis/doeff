@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::frame::Frame;
 use crate::handler::HandlerRef;
 use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::step::{Mode, PendingPython, PyException};
@@ -17,6 +18,7 @@ pub enum SegmentKind {
     PromptBoundary {
         handled_marker: Marker,
         handler: HandlerRef,
+        handler_kleisli: Option<KleisliRef>,
         return_clause: Option<PyShared>,
         py_identity: Option<PyShared>,
     },
@@ -72,6 +74,7 @@ impl Segment {
         caller: Option<SegmentId>,
         handled_marker: Marker,
         handler: HandlerRef,
+        handler_kleisli: Option<KleisliRef>,
         return_clause: Option<PyShared>,
         py_identity: Option<PyShared>,
     ) -> Self {
@@ -83,6 +86,7 @@ impl Segment {
             kind: SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,
+                handler_kleisli,
                 return_clause,
                 py_identity,
             },
@@ -148,6 +152,7 @@ mod tests {
             None,
             handled,
             std::sync::Arc::new(crate::handler::StateHandlerFactory),
+            None,
             None,
             None,
         );

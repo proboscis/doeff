@@ -149,6 +149,7 @@ fn test_visible_handlers_no_dispatch() {
         Arc::new(crate::handler::StateHandlerFactory),
         None,
         None,
+        None,
     ));
     let body_1 = vm.alloc_segment(Segment::new(m1, Some(prompt_1)));
     let prompt_2 = vm.alloc_segment(Segment::new_prompt(
@@ -156,6 +157,7 @@ fn test_visible_handlers_no_dispatch() {
         Some(body_1),
         m2,
         Arc::new(crate::handler::ReaderHandlerFactory),
+        None,
         None,
         None,
     ));
@@ -180,6 +182,7 @@ fn test_visible_handlers_with_busy_boundary() {
         Arc::new(crate::handler::StateHandlerFactory),
         None,
         None,
+        None,
     ));
     let b1 = vm.alloc_segment(Segment::new(m1, Some(p1)));
     let p2 = vm.alloc_segment(Segment::new_prompt(
@@ -189,6 +192,7 @@ fn test_visible_handlers_with_busy_boundary() {
         Arc::new(crate::handler::ReaderHandlerFactory),
         None,
         None,
+        None,
     ));
     let b2 = vm.alloc_segment(Segment::new(m2, Some(p2)));
     let p3 = vm.alloc_segment(Segment::new_prompt(
@@ -196,6 +200,7 @@ fn test_visible_handlers_with_busy_boundary() {
         Some(b2),
         m3,
         Arc::new(crate::handler::WriterHandlerFactory),
+        None,
         None,
         None,
     ));
@@ -289,6 +294,7 @@ fn test_handler_clause_cannot_see_below_prompt_handlers() {
         Arc::new(crate::handler::ReaderHandlerFactory),
         None,
         None,
+        None,
     ));
     let outer_body = vm.alloc_segment(Segment::new(outer_marker, Some(outer_prompt)));
     let inner_prompt = vm.alloc_segment(Segment::new_prompt(
@@ -296,6 +302,7 @@ fn test_handler_clause_cannot_see_below_prompt_handlers() {
         Some(outer_body),
         inner_marker,
         Arc::new(crate::handler::StateHandlerFactory),
+        None,
         None,
         None,
     ));
@@ -333,6 +340,7 @@ fn test_visible_handlers_completed_dispatch() {
         Arc::new(crate::handler::StateHandlerFactory),
         None,
         None,
+        None,
     ));
     let b1 = vm.alloc_segment(Segment::new(m1, Some(p1)));
     let p2 = vm.alloc_segment(Segment::new_prompt(
@@ -340,6 +348,7 @@ fn test_visible_handlers_completed_dispatch() {
         Some(b1),
         m2,
         Arc::new(crate::handler::ReaderHandlerFactory),
+        None,
         None,
         None,
     ));

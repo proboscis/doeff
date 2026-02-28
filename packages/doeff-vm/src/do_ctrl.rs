@@ -8,6 +8,7 @@ use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
 use crate::handler::Handler;
+use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::value::Value;
 
@@ -46,14 +47,13 @@ pub enum DoCtrl {
         exception: PyException,
     },
     WithHandler {
-        handler: Handler,
-        expr: Py<PyAny>,
+        handler: KleisliRef,
+        body: Box<DoCtrl>,
         return_clause: Option<PyShared>,
-        py_identity: Option<PyShared>,
     },
     WithIntercept {
-        interceptor: PyShared,
-        expr: Py<PyAny>,
+        interceptor: KleisliRef,
+        body: Box<DoCtrl>,
         metadata: Option<CallMetadata>,
     },
     Finally {
@@ -165,22 +165,20 @@ impl DoCtrl {
             },
             DoCtrl::WithHandler {
                 handler,
-                expr,
+                body,
                 return_clause,
-                py_identity,
             } => DoCtrl::WithHandler {
                 handler: handler.clone(),
-                expr: expr.clone_ref(py),
+                body: body.clone(),
                 return_clause: return_clause.clone(),
-                py_identity: py_identity.clone(),
             },
             DoCtrl::WithIntercept {
                 interceptor,
-                expr,
+                body,
                 metadata,
             } => DoCtrl::WithIntercept {
                 interceptor: interceptor.clone(),
-                expr: expr.clone_ref(py),
+                body: body.clone(),
                 metadata: metadata.clone(),
             },
             DoCtrl::Finally { cleanup } => DoCtrl::Finally {
