@@ -88,12 +88,12 @@ impl TryFrom<u8> for DoExprTag {
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    AwaitHandlerFactory, Handler, HandlerRef, KleisliHandler, LazyAskHandlerFactory, PythonHandler,
-    ReaderHandlerFactory, ResultSafeHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
+    AwaitHandlerFactory, IRStreamFactoryRef, LazyAskHandlerFactory, ReaderHandlerFactory,
+    ResultSafeHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
 use crate::kleisli::{
-    DgfnKleisli, HandlerSentinelKleisli, Kleisli, KleisliRef, PyCallableKleisli, PyKleisli,
+    DgfnKleisli, KleisliRef, PyCallableKleisli, PyKleisli, RustKleisli,
 };
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
@@ -168,6 +168,16 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
     // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
     let py = unsafe { Python::assume_attached() };
     vmerror_to_pyerr_with_traceback_data(py, e).0
+}
+
+fn rust_factory_kleisli(factory: IRStreamFactoryRef) -> KleisliRef {
+    Arc::new(RustKleisli::from_factory(factory))
+}
+
+fn scheduler_kleisli(handler: SchedulerHandler) -> KleisliRef {
+    Arc::new(
+        RustKleisli::from_factory(Arc::new(handler)).with_error_context_conversion(true),
+    )
 }
 
 fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -665,21 +675,21 @@ impl PyVM {
         if state {
             let marker = Marker::fresh();
             self.vm
-                .install_handler(marker, Arc::new(StateHandlerFactory), None);
+                .install_handler(marker, rust_factory_kleisli(Arc::new(StateHandlerFactory)), None);
             scoped_markers.push(marker);
         }
 
         if reader {
             let marker = Marker::fresh();
             self.vm
-                .install_handler(marker, Arc::new(ReaderHandlerFactory), None);
+                .install_handler(marker, rust_factory_kleisli(Arc::new(ReaderHandlerFactory)), None);
             scoped_markers.push(marker);
         }
 
         if writer {
             let marker = Marker::fresh();
             self.vm
-                .install_handler(marker, Arc::new(WriterHandlerFactory), None);
+                .install_handler(marker, rust_factory_kleisli(Arc::new(WriterHandlerFactory)), None);
             scoped_markers.push(marker);
         }
 
@@ -696,52 +706,6 @@ impl PyVM {
 }
 
 impl PyVM {
-    fn classify_handler_object(
-        _py: Python<'_>,
-        obj: &Bound<'_, PyAny>,
-        context: &str,
-    ) -> PyResult<(Handler, Option<PyShared>)> {
-        if obj.is_instance_of::<PyRustHandlerSentinel>() {
-            let sentinel: PyRef<'_, PyRustHandlerSentinel> = obj.extract()?;
-            return Ok((
-                sentinel.factory.clone(),
-                Some(PyShared::new(obj.clone().unbind())),
-            ));
-        }
-
-        if obj.is_instance_of::<DoeffGeneratorFn>() {
-            let dgfn = obj.extract::<Py<DoeffGeneratorFn>>()?;
-            let callable_identity = {
-                let dgfn_ref = dgfn.bind(_py).borrow();
-                dgfn_ref.callable.clone_ref(_py)
-            };
-            let handler: Handler = Arc::new(PythonHandler::from_dgfn(dgfn));
-            return Ok((handler, Some(PyShared::new(callable_identity))));
-        }
-
-        if obj.is_instance_of::<PyKleisli>() {
-            let kleisli: PyRef<'_, PyKleisli> = obj.extract()?;
-            let kleisli = kleisli.clone();
-            let py_identity = Kleisli::py_identity(&kleisli)
-                .or_else(|| Some(PyShared::new(obj.clone().unbind())));
-            let handler: Handler = Arc::new(KleisliHandler::new(Arc::new(kleisli)));
-            return Ok((handler, py_identity));
-        }
-
-        let base_message =
-            format!("{context} handler must be DoeffGeneratorFn, PyKleisli, or RustHandler");
-        if obj.is_callable() {
-            return Err(PyTypeError::new_err(base_message));
-        }
-
-        let ty = obj
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string());
-        Err(PyTypeError::new_err(format!("{base_message}, got {ty}")))
-    }
-
     fn extract_kleisli_ref(
         py: Python<'_>,
         obj: &Bound<'_, PyAny>,
@@ -762,8 +726,9 @@ impl PyVM {
 
         if obj.is_instance_of::<PyRustHandlerSentinel>() {
             let sentinel: PyRef<'_, PyRustHandlerSentinel> = obj.extract()?;
-            let identity = PyShared::new(obj.clone().unbind());
-            let kleisli = HandlerSentinelKleisli::new(sentinel.factory_ref(), identity);
+            let kleisli = RustKleisli::from_factory(sentinel.factory_ref())
+                .with_error_context_conversion(sentinel.supports_error_context_conversion())
+                .with_py_identity(Some(PyShared::new(obj.clone().unbind())));
             return Ok(Arc::new(kleisli));
         }
 
@@ -980,21 +945,21 @@ impl PyStdlib {
     pub fn install_state(&self, vm: &mut PyVM) {
         if let Some(marker) = self.state_marker {
             vm.vm
-                .install_handler(marker, Arc::new(StateHandlerFactory), None);
+                .install_handler(marker, rust_factory_kleisli(Arc::new(StateHandlerFactory)), None);
         }
     }
 
     pub fn install_reader(&self, vm: &mut PyVM) {
         if let Some(marker) = self.reader_marker {
             vm.vm
-                .install_handler(marker, Arc::new(ReaderHandlerFactory), None);
+                .install_handler(marker, rust_factory_kleisli(Arc::new(ReaderHandlerFactory)), None);
         }
     }
 
     pub fn install_writer(&self, vm: &mut PyVM) {
         if let Some(marker) = self.writer_marker {
             vm.vm
-                .install_handler(marker, Arc::new(WriterHandlerFactory), None);
+                .install_handler(marker, rust_factory_kleisli(Arc::new(WriterHandlerFactory)), None);
         }
     }
 }
@@ -1007,7 +972,7 @@ impl PySchedulerHandler {
         }
         if let Some(marker) = self.marker {
             vm.vm
-                .install_handler(marker, Arc::new(self.handler.clone()), None);
+                .install_handler(marker, scheduler_kleisli(self.handler.clone()), None);
         }
     }
 }
@@ -1788,8 +1753,8 @@ pub(crate) fn classify_yielded_bound(
                 let mut handler_identities = Vec::new();
                 for item in handlers_list.try_iter()? {
                     let item = item?;
-                    let (handler, identity) =
-                        PyVM::classify_handler_object(py, &item, "CreateContinuation")?;
+                    let handler = PyVM::extract_kleisli_ref(py, &item, "CreateContinuation")?;
+                    let identity = handler.py_identity();
                     handlers.push(handler);
                     handler_identities.push(identity);
                 }
@@ -1826,7 +1791,7 @@ pub(crate) fn classify_yielded_bound(
                 let mut handlers = Vec::new();
                 for item in handlers_list.try_iter()? {
                     let item = item?;
-                    let (handler, _) = PyVM::classify_handler_object(py, &item, "Eval")?;
+                    let handler = PyVM::extract_kleisli_ref(py, &item, "Eval")?;
                     handlers.push(handler);
                 }
                 Ok(DoCtrl::Eval {
@@ -3033,12 +2998,17 @@ impl PyAsyncEscape {
 /// WithHandler arms. ADR-14: no string-based shortcuts.
 #[pyclass(frozen, name = "RustHandler")]
 pub struct PyRustHandlerSentinel {
-    pub(crate) factory: HandlerRef,
+    pub(crate) factory: IRStreamFactoryRef,
+    pub(crate) supports_error_context_conversion: bool,
 }
 
 impl PyRustHandlerSentinel {
-    pub(crate) fn factory_ref(&self) -> HandlerRef {
+    pub(crate) fn factory_ref(&self) -> IRStreamFactoryRef {
         self.factory.clone()
+    }
+
+    pub(crate) fn supports_error_context_conversion(&self) -> bool {
+        self.supports_error_context_conversion
     }
 }
 
@@ -3167,6 +3137,7 @@ mod tests {
                 py,
                 PyRustHandlerSentinel {
                     factory: Arc::new(StateHandlerFactory),
+                    supports_error_context_conversion: false,
                 },
             )
             .unwrap()
@@ -3224,9 +3195,12 @@ mod tests {
                 .expect("prompt segment missing");
             match &prompt_seg.kind {
                 SegmentKind::PromptBoundary {
-                    py_identity: Some(identity),
+                    handler,
                     ..
                 } => {
+                    let identity = handler
+                        .py_identity()
+                        .expect("G2 FAIL: handler missing preserved identity");
                     assert!(
                         identity.bind(py).is(&sentinel.bind(py)),
                         "G2 FAIL: preserved identity does not match original sentinel"
@@ -3289,6 +3263,7 @@ mod tests {
                 py,
                 PyRustHandlerSentinel {
                     factory: Arc::new(StateHandlerFactory),
+                    supports_error_context_conversion: false,
                 },
             )
             .unwrap()
@@ -3309,7 +3284,7 @@ mod tests {
                     assert!(
                         handlers
                             .first()
-                            .is_some_and(|handler| handler.handler_name() == "StateHandler"),
+                            .is_some_and(|handler| handler.debug_info().name == "StateHandler"),
                         "G3 FAIL: CreateContinuation converted rust sentinel into Python handler"
                     );
                 }
@@ -3398,6 +3373,7 @@ mod tests {
                 py,
                 PyRustHandlerSentinel {
                     factory: Arc::new(StateHandlerFactory),
+                    supports_error_context_conversion: false,
                 },
             )
             .unwrap()
@@ -4262,24 +4238,28 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "state",
         PyRustHandlerSentinel {
             factory: Arc::new(StateHandlerFactory),
+            supports_error_context_conversion: false,
         },
     )?;
     m.add(
         "reader",
         PyRustHandlerSentinel {
             factory: Arc::new(ReaderHandlerFactory),
+            supports_error_context_conversion: false,
         },
     )?;
     m.add(
         "writer",
         PyRustHandlerSentinel {
             factory: Arc::new(WriterHandlerFactory),
+            supports_error_context_conversion: false,
         },
     )?;
     m.add(
         "result_safe",
         PyRustHandlerSentinel {
             factory: Arc::new(ResultSafeHandlerFactory),
+            supports_error_context_conversion: false,
         },
     )?;
     // R11-A: #[pyclass] effect structs for isinstance checks
@@ -4313,18 +4293,21 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "scheduler",
         PyRustHandlerSentinel {
             factory: Arc::new(SchedulerHandler::new()),
+            supports_error_context_conversion: true,
         },
     )?;
     m.add(
         "lazy_ask",
         PyRustHandlerSentinel {
             factory: Arc::new(LazyAskHandlerFactory::new()),
+            supports_error_context_conversion: false,
         },
     )?;
     m.add(
         "await_handler",
         PyRustHandlerSentinel {
             factory: Arc::new(AwaitHandlerFactory),
+            supports_error_context_conversion: false,
         },
     )?;
     // R13-I: DoExprTag constants for Python introspection

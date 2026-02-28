@@ -1897,9 +1897,12 @@ fn test_g10_resume_continuation_preserves_handler_identity() {
             .expect("missing prompt segment");
         match &prompt_seg.kind {
             SegmentKind::PromptBoundary {
-                py_identity: Some(identity),
+                handler,
                 ..
             } => {
+                let identity = handler
+                    .py_identity()
+                    .expect("G10 FAIL: handler missing preserved identity");
                 assert!(
                     identity.bind(py).is(&id_obj.bind(py)),
                     "G10 FAIL: preserved identity does not match original"

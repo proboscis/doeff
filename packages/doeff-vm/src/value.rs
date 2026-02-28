@@ -11,8 +11,9 @@ use crate::capture::{
     ActiveChainEntry, DispatchAction, EffectResult, HandlerDispatchEntry, HandlerKind,
     HandlerStatus, TraceEntry, TraceHop,
 };
+use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
-use crate::handler::{Handler, RustProgramInvocation};
+use crate::kleisli::KleisliRef;
 use crate::pyvm::{PyTraceFrame, PyTraceHop};
 use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 
@@ -29,9 +30,8 @@ pub enum Value {
     Bool(bool),
     None,
     Continuation(crate::continuation::Continuation),
-    Handlers(Vec<Handler>),
-    RustProgramInvocation(RustProgramInvocation),
-    PythonHandlerCallable(Py<PyAny>),
+    DispatchEffect(Box<DispatchEffect>),
+    Handlers(Vec<KleisliRef>),
     Kleisli(crate::kleisli::KleisliRef),
     Task(TaskHandle),
     Promise(PromiseHandle),
@@ -326,19 +326,22 @@ impl Value {
             Value::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
             Value::None => Ok(py.None().into_bound(py)),
             Value::Continuation(k) => k.to_pyobject(py),
+            Value::DispatchEffect(_) => Ok(py.None().into_bound(py)),
             Value::Handlers(handlers) => {
                 let list = PyList::empty(py);
                 for h in handlers {
-                    if let Some(identity) = h.py_identity() {
-                        list.append(identity.bind(py))?;
+                    if h.expects_python_effect() {
+                        if let Some(identity) = h.py_identity() {
+                            list.append(identity.bind(py))?;
+                        } else {
+                            list.append(py.None().into_bound(py))?;
+                        }
                     } else {
                         list.append(py.None().into_bound(py))?;
                     }
                 }
                 Ok(list.into_any())
             }
-            Value::RustProgramInvocation(_) => Ok(py.None().into_bound(py)),
-            Value::PythonHandlerCallable(callable) => Ok(callable.bind(py).clone()),
             Value::Kleisli(_) => Ok(py.None().into_bound(py)),
             Value::Task(handle) => {
                 let dict = pyo3::types::PyDict::new(py);
@@ -482,7 +485,7 @@ impl Value {
     }
 
     /// Try to get as handlers slice.
-    pub fn as_handlers(&self) -> Option<&[Handler]> {
+    pub fn as_handlers(&self) -> Option<&[KleisliRef]> {
         match self {
             Value::Handlers(h) => Some(h),
             _ => None,
@@ -506,13 +509,8 @@ impl Value {
             Value::Bool(b) => Value::Bool(*b),
             Value::None => Value::None,
             Value::Continuation(k) => Value::Continuation(k.clone()),
+            Value::DispatchEffect(effect) => Value::DispatchEffect(Box::new((**effect).clone())),
             Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
-            Value::RustProgramInvocation(invocation) => {
-                Value::RustProgramInvocation(invocation.clone())
-            }
-            Value::PythonHandlerCallable(callable) => {
-                Value::PythonHandlerCallable(callable.clone_ref(py))
-            }
             Value::Kleisli(kleisli) => Value::Kleisli(kleisli.clone()),
             Value::Task(h) => Value::Task(*h),
             Value::Promise(h) => Value::Promise(*h),
@@ -595,7 +593,9 @@ mod tests {
 
     #[test]
     fn test_value_handlers() {
-        let handlers = vec![std::sync::Arc::new(crate::handler::StateHandlerFactory) as Handler];
+        let handlers = vec![std::sync::Arc::new(crate::kleisli::RustKleisli::from_factory(
+            std::sync::Arc::new(crate::handler::StateHandlerFactory),
+        )) as KleisliRef];
         let val = Value::Handlers(handlers);
         assert!(val.as_handlers().is_some());
         assert_eq!(val.as_handlers().unwrap().len(), 1);
