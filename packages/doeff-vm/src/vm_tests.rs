@@ -148,8 +148,6 @@ fn test_visible_handlers_no_dispatch() {
         m1,
         Arc::new(crate::handler::StateHandlerFactory),
         None,
-        None,
-        None,
     ));
     let body_1 = vm.alloc_segment(Segment::new(m1, Some(prompt_1)));
     let prompt_2 = vm.alloc_segment(Segment::new_prompt(
@@ -157,8 +155,6 @@ fn test_visible_handlers_no_dispatch() {
         Some(body_1),
         m2,
         Arc::new(crate::handler::ReaderHandlerFactory),
-        None,
-        None,
         None,
     ));
     let body_2 = vm.alloc_segment(Segment::new(m2, Some(prompt_2)));
@@ -181,8 +177,6 @@ fn test_visible_handlers_with_busy_boundary() {
         m1,
         Arc::new(crate::handler::StateHandlerFactory),
         None,
-        None,
-        None,
     ));
     let b1 = vm.alloc_segment(Segment::new(m1, Some(p1)));
     let p2 = vm.alloc_segment(Segment::new_prompt(
@@ -191,8 +185,6 @@ fn test_visible_handlers_with_busy_boundary() {
         m2,
         Arc::new(crate::handler::ReaderHandlerFactory),
         None,
-        None,
-        None,
     ));
     let b2 = vm.alloc_segment(Segment::new(m2, Some(p2)));
     let p3 = vm.alloc_segment(Segment::new_prompt(
@@ -200,8 +192,6 @@ fn test_visible_handlers_with_busy_boundary() {
         Some(b2),
         m3,
         Arc::new(crate::handler::WriterHandlerFactory),
-        None,
-        None,
         None,
     ));
     let b3 = vm.alloc_segment(Segment::new(m3, Some(p3)));
@@ -293,8 +283,6 @@ fn test_handler_clause_cannot_see_below_prompt_handlers() {
         outer_marker,
         Arc::new(crate::handler::ReaderHandlerFactory),
         None,
-        None,
-        None,
     ));
     let outer_body = vm.alloc_segment(Segment::new(outer_marker, Some(outer_prompt)));
     let inner_prompt = vm.alloc_segment(Segment::new_prompt(
@@ -302,8 +290,6 @@ fn test_handler_clause_cannot_see_below_prompt_handlers() {
         Some(outer_body),
         inner_marker,
         Arc::new(crate::handler::StateHandlerFactory),
-        None,
-        None,
         None,
     ));
     let inner_body = vm.alloc_segment(Segment::new(inner_marker, Some(inner_prompt)));
@@ -339,8 +325,6 @@ fn test_visible_handlers_completed_dispatch() {
         m1,
         Arc::new(crate::handler::StateHandlerFactory),
         None,
-        None,
-        None,
     ));
     let b1 = vm.alloc_segment(Segment::new(m1, Some(p1)));
     let p2 = vm.alloc_segment(Segment::new_prompt(
@@ -348,8 +332,6 @@ fn test_visible_handlers_completed_dispatch() {
         Some(b1),
         m2,
         Arc::new(crate::handler::ReaderHandlerFactory),
-        None,
-        None,
         None,
     ));
     let b2 = vm.alloc_segment(Segment::new(m2, Some(p2)));
@@ -660,7 +642,9 @@ fn test_start_dispatch_get_effect() {
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), StepEvent::Continue));
     assert_eq!(vm.dispatch_state.depth(), 1);
-    // Handler yields Resume primitive; step through to process it
+    // Rust Kleisli stream starts on first Program frame resume.
+    let event = vm.step();
+    assert!(matches!(event, StepEvent::Continue));
     let event = vm.step();
     assert!(matches!(event, StepEvent::Continue));
     assert!(vm.dispatch_state.get(0).unwrap().completed);
@@ -1896,10 +1880,10 @@ fn test_g10_resume_continuation_preserves_handler_identity() {
             .get(prompt_seg_id)
             .expect("missing prompt segment");
         match &prompt_seg.kind {
-            SegmentKind::PromptBoundary {
-                py_identity: Some(identity),
-                ..
-            } => {
+            SegmentKind::PromptBoundary { handler, .. } => {
+                let Some(identity) = handler.py_identity() else {
+                    panic!("G10 FAIL: continuation rehydration dropped handler identity");
+                };
                 assert!(
                     identity.bind(py).is(&id_obj.bind(py)),
                     "G10 FAIL: preserved identity does not match original"
@@ -1956,11 +1940,17 @@ fn test_needs_python_from_resume_propagates_correctly() {
             .expect("dispatch context must exist")
             .dispatch_id;
 
-        // Should get NeedsPython for first call
+        // start_dispatch schedules handler execution; first NeedsPython arrives on step().
         assert!(
-            matches!(event1, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
-            "Expected NeedsPython for first call, got {:?}",
+            matches!(event1, StepEvent::Continue),
+            "Expected Continue from start_dispatch, got {:?}",
             std::mem::discriminant(&event1)
+        );
+        let event1b = vm.step();
+        assert!(
+            matches!(event1b, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
+            "Expected NeedsPython for first call, got {:?}",
+            std::mem::discriminant(&event1b)
         );
 
         // Step 2: Feed first Python result (100)
@@ -2132,6 +2122,8 @@ fn test_s009_g3_modify_resumes_with_new_value() {
         });
         assert!(result.is_ok());
         let event = result.unwrap();
+        assert!(matches!(event, StepEvent::Continue));
+        let event = vm.step();
         assert!(matches!(
             event,
             StepEvent::NeedsPython(PythonCall::CallFunc { .. })

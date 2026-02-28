@@ -15,8 +15,8 @@ use crate::continuation::Continuation;
 use crate::dispatch::DispatchContext;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
 use crate::frame::{CallMetadata, Frame};
-use crate::handler::Handler;
 use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::step::PyException;
 use crate::value::Value;
@@ -204,8 +204,10 @@ impl TraceState {
         }
     }
 
-    fn handler_trace_info(handler: &Handler) -> (String, HandlerKind, Option<String>, Option<u32>) {
-        let info = handler.handler_debug_info();
+    fn handler_trace_info(
+        handler: &KleisliRef,
+    ) -> (String, HandlerKind, Option<String>, Option<u32>) {
+        let info = handler.debug_info();
         let kind = if handler.py_identity().is_some() {
             HandlerKind::Python
         } else {
@@ -215,7 +217,7 @@ impl TraceState {
     }
 
     fn marker_handler_trace_info(
-        handlers: &HashMap<Marker, (Handler, Option<PyShared>)>,
+        handlers: &HashMap<Marker, (KleisliRef, Option<PyShared>)>,
         marker: Marker,
     ) -> Option<(String, HandlerKind, Option<String>, Option<u32>)> {
         handlers
@@ -228,7 +230,7 @@ impl TraceState {
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[DispatchContext],
-        handlers: &HashMap<Marker, (Handler, Option<PyShared>)>,
+        handlers: &HashMap<Marker, (KleisliRef, Option<PyShared>)>,
         effect_repr: impl Fn(&crate::effect::DispatchEffect) -> String,
     ) -> Vec<TraceEntry> {
         let mut trace: Vec<TraceEntry> = Vec::new();
@@ -413,7 +415,7 @@ impl TraceState {
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[DispatchContext],
-        handlers: &HashMap<Marker, (Handler, Option<PyShared>)>,
+        handlers: &HashMap<Marker, (KleisliRef, Option<PyShared>)>,
         effect_repr: impl Fn(&crate::effect::DispatchEffect) -> String,
     ) {
         let mut seg_id = current_segment;
