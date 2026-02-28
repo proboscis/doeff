@@ -497,19 +497,19 @@ class EffectBase(_RustEffectBase, metaclass=_EffectBaseMeta):
 
     __doeff_effect_base__: bool = field(default=True, init=False, repr=False, compare=False)
 
-    def map(self, f: Callable[[Any], Any]) -> Program[Any]:
+    def map(self, f: Callable[[Any], Any]) -> "Program[Any]":
         raise TypeError(
             "Effect values do not support direct map(); lift with Perform(effect) "
             "or Program.lift(effect) before composition"
         )
 
-    def flat_map(self, f: Callable[[Any], Any]) -> Program[Any]:
+    def flat_map(self, f: Callable[[Any], Any]) -> "Program[Any]":
         raise TypeError(
             "Effect values do not support direct flat_map(); lift with Perform(effect) "
             "or Program.lift(effect) before composition"
         )
 
-    def and_then_k(self, binder: Callable[[Any], Any]) -> Program[Any]:
+    def and_then_k(self, binder: Callable[[Any], Any]) -> "Program[Any]":
         raise TypeError(
             "Effect values do not support direct and_then_k(); lift with Perform(effect) "
             "or Program.lift(effect) before composition"
@@ -1482,7 +1482,7 @@ class ListenResult:
         return iter([self.value, self.log])
 
 
-def _intercept_value(value: Any, transform: Callable[[Effect], Effect | Program]) -> Any:
+def _intercept_value(value: Any, transform: Callable[[Effect], "Effect | Program"]) -> Any:
     """Recursively intercept Programs embedded within ``value``."""
 
     from doeff.program import ProgramBase  # Local import to avoid circular dependency
@@ -1509,7 +1509,7 @@ def _intercept_value(value: Any, transform: Callable[[Effect], Effect | Program]
 
 
 def _intercept_mapping(
-    mapping: dict[Any, Any], transform: Callable[[Effect], Effect | Program]
+    mapping: dict[Any, Any], transform: Callable[[Effect], "Effect | Program"]
 ) -> dict[Any, Any]:
     changed = False
     new_items: dict[Any, Any] = {}
@@ -1522,7 +1522,7 @@ def _intercept_mapping(
 
 
 def _wrap_callable(
-    func: Callable[..., Any], transform: Callable[[Effect], Effect | Program]
+    func: Callable[..., Any], transform: Callable[[Effect], "Effect | Program"]
 ) -> Callable[..., Any]:
     """Wrap callable so that any Program it returns is intercepted."""
 
