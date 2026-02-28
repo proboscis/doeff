@@ -668,6 +668,29 @@ rules:
       spec: VM-FAILFAST-001C
       category: fail-fast
 
+  - id: no-string-match-error-detection
+    languages: [python]
+    severity: ERROR
+    message: >
+      Do not detect error types by string-matching on exception messages.
+      Use isinstance checks against specific exception classes instead.
+    patterns:
+      - pattern-inside: |
+          try:
+              ...
+          except TypeError as $EXC:
+              ...
+      - pattern-either:
+          - pattern: |
+              if $TEXT in str($EXC):
+                  ...
+          - pattern: |
+              if $TEXT in str($EXC).lower():
+                  ...
+    paths:
+      include:
+        - "**/doeff/rust_vm.py"
+
   # ---------------------------------------------------------------------------
   # LAYER BOUNDARIES
   # ---------------------------------------------------------------------------
