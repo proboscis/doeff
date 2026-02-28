@@ -39,6 +39,7 @@ from doeff_gemini import (
 )
 from doeff_gemini.client import track_api_call
 from doeff_gemini.costs import calculate_cost
+from doeff_gemini.handlers import default_gemini_cost_handler
 from doeff_gemini.structured_llm import GeminiStructuredOutputError
 from doeff_gemini.types import APICallMetadata
 
@@ -48,6 +49,14 @@ from pydantic import BaseModel
 from doeff import EffectGenerator, async_run, default_handlers, do
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
+
+
+async def _run_with_default_cost(program: Any, *, env: dict[str, Any] | None = None):
+    return await async_run(
+        program,
+        handlers=[default_gemini_cost_handler, *default_handlers()],
+        env=env,
+    )
 
 
 class SimpleResponse(BaseModel):
@@ -116,7 +125,7 @@ async def test_build_contents_text_only() -> None:
         contents = yield build_contents("Hello Gemini")
         return contents
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     contents = result.value
@@ -152,7 +161,7 @@ async def test_build_generation_config_basic() -> None:
         )
         return config
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     config = result.value
@@ -190,7 +199,7 @@ async def test_build_generation_config_with_modalities() -> None:
             )
         )
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     config = result.value
@@ -212,7 +221,7 @@ async def test_process_structured_response_from_text() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     parsed = result.value
@@ -233,7 +242,7 @@ async def test_process_structured_response_from_parsed() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     assert result.value is parsed_response
@@ -256,7 +265,7 @@ async def test_process_structured_response_nested_model_from_parsed() -> None:
         result = yield process_structured_response(response, SymbolAssessmentsV2)
         return result
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     assert result.value is parsed_response
@@ -284,7 +293,7 @@ async def test_process_structured_response_from_json_part() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     payload = result.value
@@ -314,7 +323,7 @@ async def test_process_structured_response_from_json_part_string_payload() -> No
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     payload = result.value
@@ -343,7 +352,7 @@ async def test_process_structured_response_from_json_part_with_model() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     payload = result.value
@@ -374,7 +383,7 @@ async def test_process_structured_response_nested_model_from_json_part() -> None
         result = yield process_structured_response(response, SymbolAssessmentsV2)
         return result
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     payload = result.value
@@ -407,7 +416,7 @@ async def test_process_structured_response_from_outputs_structure() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     payload = result.value
@@ -426,7 +435,7 @@ async def test_process_structured_response_without_json_payload() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_err()
     error = result.result.error
@@ -445,7 +454,7 @@ async def test_process_unstructured_response() -> None:
         result = yield process_unstructured_response(response)
         return result
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     assert result.value == "A concise answer"
@@ -485,7 +494,7 @@ async def test_repair_structured_response_uses_default_when_missing(monkeypatch)
 
     @do
     def flow() -> EffectGenerator[SimpleResponse]:
-        default_sllm = structured_llm_module._make_gemini_json_fix_sllm(
+        default_sllm_impl = structured_llm_module._make_gemini_json_fix_sllm(
             model="gemini-default",
             max_output_tokens=128,
             system_instruction=None,
@@ -494,6 +503,10 @@ async def test_repair_structured_response_uses_default_when_missing(monkeypatch)
             tool_config=None,
             generation_config_overrides=None,
         )
+
+        def default_sllm(json_text: str, response_format: type[BaseModel]):
+            return default_sllm_impl(json_text, response_format=response_format)
+
         return (
             yield structured_llm_module.repair_structured_response(
                 model="gemini-default",
@@ -504,7 +517,7 @@ async def test_repair_structured_response_uses_default_when_missing(monkeypatch)
             )
         )
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     assert result.value.answer == "fixed"
@@ -529,7 +542,7 @@ async def test_repair_structured_response_uses_injected_sllm() -> None:
 
     @do
     def flow() -> EffectGenerator[SimpleResponse]:
-        default_sllm = structured_llm_module._make_gemini_json_fix_sllm(
+        default_sllm_impl = structured_llm_module._make_gemini_json_fix_sllm(
             model="unused",
             max_output_tokens=64,
             system_instruction=None,
@@ -538,6 +551,10 @@ async def test_repair_structured_response_uses_injected_sllm() -> None:
             tool_config=None,
             generation_config_overrides=None,
         )
+
+        def default_sllm(json_text: str, response_format: type[BaseModel]):
+            return default_sllm_impl(json_text, response_format=response_format)
+
         return (
             yield structured_llm_module.repair_structured_response(
                 model="unused",
@@ -548,8 +565,15 @@ async def test_repair_structured_response_uses_injected_sllm() -> None:
             )
         )
 
-    result = await async_run(
-        flow(), handlers=default_handlers(), env={"sllm_for_json_fix": custom_fix}
+    result = await _run_with_default_cost(
+        flow(),
+        env={
+            "sllm_for_json_fix": (
+                lambda json_text, response_format: custom_fix(
+                    json_text, response_format=response_format
+                )
+            )
+        },
     )
 
     assert result.is_ok()
@@ -586,9 +610,7 @@ async def test_structured_llm_text_only() -> None:
         )
         return result
 
-    result = await async_run(
-        flow(), handlers=default_handlers(), env={"gemini_client": mock_client}
-    )
+    result = await _run_with_default_cost(flow(), env={"gemini_client": mock_client})
 
     assert result.is_ok()
     assert result.value == "Test response"
@@ -630,9 +652,7 @@ async def test_structured_llm_with_pydantic() -> None:
         )
         return result
 
-    result = await async_run(
-        flow(), handlers=default_handlers(), env={"gemini_client": mock_client}
-    )
+    result = await _run_with_default_cost(flow(), env={"gemini_client": mock_client})
 
     assert result.is_ok()
     value = result.value
@@ -690,7 +710,7 @@ async def test_process_image_edit_response_success(tmp_path: Path) -> None:
     def flow() -> EffectGenerator[GeminiImageEditResult]:
         return (yield process_image_edit_response(response))
 
-    result = await async_run(flow(), handlers=default_handlers())
+    result = await _run_with_default_cost(flow())
 
     assert result.is_ok()
     payload = result.value
@@ -757,7 +777,7 @@ async def test_edit_image__gemini_success() -> None:
             )
         )
 
-    result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": client})
+    result = await _run_with_default_cost(flow(), env={"gemini_client": client})
 
     assert result.is_ok()
     payload = result.value
@@ -816,7 +836,7 @@ async def test_track_api_call_accumulates_under_gather() -> None:
         second = yield invoke(call_defs[1])
         return [first, second]
 
-    result = await async_run(run_calls(), handlers=default_handlers())
+    result = await _run_with_default_cost(run_calls())
 
     assert result.is_ok()
     state = result.raw_store
