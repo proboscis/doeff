@@ -109,14 +109,6 @@ pub enum DoCtrl {
 }
 
 impl DoCtrl {
-    /// Returns the value if this is Pure, None otherwise.
-    pub fn as_pure_value(&self) -> Option<&Value> {
-        match self {
-            DoCtrl::Pure { value } => Some(value),
-            _ => None,
-        }
-    }
-
     pub fn clone_ref(&self, py: Python<'_>) -> Self {
         match self {
             DoCtrl::Pure { value } => DoCtrl::Pure {

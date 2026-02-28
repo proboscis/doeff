@@ -2157,7 +2157,7 @@ impl VM {
         metadata: CallMetadata,
         evaluate_result: bool,
     ) -> StepEvent {
-        if f.as_pure_value().is_none() {
+        if !matches!(&f, DoCtrl::Pure { .. }) {
             return self.eval_then_reenter_call(
                 f,
                 EvalReturnContinuation::ApplyResolveFunction {
@@ -2260,7 +2260,7 @@ impl VM {
         kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
     ) -> StepEvent {
-        if factory.as_pure_value().is_none() {
+        if !matches!(&factory, DoCtrl::Pure { .. }) {
             return self.eval_then_reenter_call(
                 factory,
                 EvalReturnContinuation::ExpandResolveFactory {
@@ -2412,14 +2412,16 @@ impl VM {
     }
 
     fn first_non_pure_arg(args: &[DoCtrl]) -> Option<(usize, DoCtrl)> {
-        let arg_idx = args.iter().position(|arg| arg.as_pure_value().is_none())?;
+        let arg_idx = args
+            .iter()
+            .position(|arg| !matches!(arg, DoCtrl::Pure { .. }))?;
         Some((arg_idx, args[arg_idx].clone()))
     }
 
     fn first_non_pure_kwarg(kwargs: &[(String, DoCtrl)]) -> Option<(usize, DoCtrl)> {
         let kwargs_idx = kwargs
             .iter()
-            .position(|(_, value)| value.as_pure_value().is_none())?;
+            .position(|(_, value)| !matches!(value, DoCtrl::Pure { .. }))?;
         Some((kwargs_idx, kwargs[kwargs_idx].1.clone()))
     }
 

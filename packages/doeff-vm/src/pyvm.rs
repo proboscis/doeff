@@ -974,7 +974,7 @@ fn call_metadata_to_dict(py: Python<'_>, metadata: &CallMetadata) -> PyResult<Py
 }
 
 fn call_expr_to_pyobject(py: Python<'_>, expr: &DoCtrl) -> PyResult<Py<PyAny>> {
-    if let Some(value) = expr.as_pure_value() {
+    if let DoCtrl::Pure { value } = expr {
         return Ok(value.to_pyobject(py)?.unbind());
     }
 
