@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Callable
 from typing import Any
 
-from doeff import Delegate, Resume
+from doeff import Effect, Pass, Resume, do
 from doeff_agents.effects import (
     CaptureEffect,
     LaunchEffect,
@@ -52,30 +51,17 @@ def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:
 
 
 SimpleHandler = Callable[[Any], Any]
-ProtocolHandler = Callable[[Any, Any], Any]
+ProtocolHandler = Callable[[Effect, Any], Any]
 
 
 def make_scheduled_handler(handler: SimpleHandler) -> ProtocolHandler:
     """Wrap a plain `(effect) -> value` callable into `(effect, k) -> DoExpr`."""
 
-    def scheduled_handler(effect: Any, k):
+    @do
+    def scheduled_handler(effect: Effect, k: Any):
         return (yield Resume(k, handler(effect)))
 
     return scheduled_handler
-
-
-def make_typed_handler(effect_type: type[Any], handler: ProtocolHandler) -> ProtocolHandler:
-    """Restrict a protocol handler to one effect type and delegate otherwise."""
-
-    def typed_handler(effect: Any, k):
-        if isinstance(effect, effect_type):
-            result = handler(effect, k)
-            if inspect.isgenerator(result):
-                return (yield from result)
-            return result
-        yield Delegate()
-
-    return typed_handler
 
 
 def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
@@ -83,11 +69,12 @@ def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
 
     scheduled_dispatch = make_scheduled_handler(lambda effect: dispatch_effect(agent_handler, effect))
 
-    def protocol_handler(effect: Any, k):
+    @do
+    def protocol_handler(effect: Effect, k: Any):
         if not isinstance(effect, AGENT_EFFECT_TYPES):
-            yield Delegate()
+            yield Pass()
             return
-        return (yield from scheduled_dispatch(effect, k))
+        return (yield scheduled_dispatch(effect, k))
 
     return protocol_handler
 
@@ -160,7 +147,6 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "get_adapter",
     "get_mock_agent_state",
     "make_scheduled_handler",
-    "make_typed_handler",
     "mock_agent_handler",
     "mock_agent_handlers",
     "mock_handlers",

@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from doeff import Delegate, Resume
+from doeff import Effect, Pass, Resume, do
 
 if TYPE_CHECKING:
     from .agent_handler import AgentHandler
@@ -22,7 +22,8 @@ SimpleHandler = Callable[[Any], Any]
 def make_scheduled_handler(handler: SimpleHandler) -> Callable[..., Any]:
     """Create a handler-protocol callable from a pure effect handler."""
 
-    def scheduled_handler(effect: Any, k):
+    @do
+    def scheduled_handler(effect: Effect, k: Any):
         return (yield Resume(k, handler(effect)))
 
     return scheduled_handler
@@ -115,11 +116,12 @@ def default_scheduled_handlers(
         (MergePR, make_blocking_scheduled_handler(git.handle_merge_pr)),
     )
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         for effect_type, effect_handler in handlers:
             if isinstance(effect, effect_type):
-                return (yield from effect_handler(effect, k))
-        yield Delegate()
+                return (yield effect_handler(effect, k))
+        yield Pass()
 
     return handler
 

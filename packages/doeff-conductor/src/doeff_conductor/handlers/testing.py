@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Delegate
+from doeff import Effect, Pass, do
+from doeff.do import make_doeff_generator
 from doeff_conductor.effects.agent import (
     CaptureOutput,
     RunAgent,
@@ -55,6 +56,12 @@ def _supports_continuation(handler: Callable[..., Any]) -> bool:
         in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     ]
     return len(positional) >= 2
+
+
+def _is_lazy_program_value(value: object) -> bool:
+    return bool(getattr(value, "__doeff_do_expr_base__", False) or getattr(
+        value, "__doeff_effect_base__", False
+    ))
 
 
 def _done_status() -> Any:
@@ -363,11 +370,17 @@ def mock_handlers(
         )
         handlers.insert(0, (effect_type, normalized))
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         for effect_type, effect_handler in handlers:
             if isinstance(effect, effect_type):
-                return (yield from effect_handler(effect, k))
-        yield Delegate()
+                result = effect_handler(effect, k)
+                if inspect.isgenerator(result):
+                    return (yield make_doeff_generator(result))
+                if _is_lazy_program_value(result):
+                    return (yield result)
+                return result
+        yield Pass()
 
     return handler
 
