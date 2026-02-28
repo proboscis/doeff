@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from doeff import Delegate, Resume
+from doeff import Effect, Pass, Resume, do
 from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
 from doeff_flow.trace import (
     LiveTrace,
@@ -148,7 +148,8 @@ def production_handlers(
 
     active_recorder = recorder or ProductionTraceRecorder.create(workflow_id=workflow_id, trace_dir=trace_dir)
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, TracePush):
             active_recorder.push(effect)
             return (yield Resume(k, None))
@@ -161,7 +162,7 @@ def production_handlers(
         if isinstance(effect, TraceCapture):
             captured = active_recorder.capture(effect.format)
             return (yield Resume(k, captured))
-        yield Delegate()
+        return (yield Pass())
 
     return handler
 

@@ -16,7 +16,7 @@ from doeff_flow.trace import (
     write_terminal_trace,
 )
 
-from doeff import Ask, Delegate, Get, Pure, Put, Resume, WithHandler, default_handlers, do
+from doeff import Ask, Effect, Get, Pass, Pure, Put, Resume, WithHandler, default_handlers, do
 from doeff import run as run_sync
 
 
@@ -194,10 +194,11 @@ class TestWithHandlerObservability:
     def test_can_capture_effects_with_delegate(self):
         captured_effects: list[object] = []
 
-        def capturing_handler(effect, k):
+        @do
+        def capturing_handler(effect: Effect, k):
             _ = k
             captured_effects.append(effect)
-            yield Delegate()
+            return (yield Pass())
 
         @do
         def workflow():
@@ -221,12 +222,13 @@ class TestWithHandlerObservability:
     def test_can_modify_effect_result_with_resume(self):
         seen_ask = 0
 
-        def override_ask_handler(effect, k):
+        @do
+        def override_ask_handler(effect: Effect, k):
             nonlocal seen_ask
             if type(effect).__name__ == "PyAsk" and seen_ask < 2:
                 seen_ask += 1
                 return (yield Resume(k, 5))
-            yield Delegate()
+            return (yield Pass())
 
         @do
         def workflow():

@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from doeff import Pass, Resume
+from doeff import Effect, Pass, Resume, do
 from doeff_pinjected.effects import PinjectedProvide, PinjectedResolve
 
 ProtocolHandler = Callable[[Any, Any], Any]
@@ -43,7 +43,8 @@ def mock_handlers(
     if runtime is not None and bindings:
         active_runtime.bindings.update(dict(bindings))
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, PinjectedResolve):
             active_runtime.resolve_calls.append(effect.key)
             if effect.key not in active_runtime.bindings:
@@ -53,7 +54,7 @@ def mock_handlers(
             active_runtime.provide_calls.append((effect.key, effect.value))
             active_runtime.bindings[effect.key] = effect.value
             return (yield Resume(k, None))
-        yield Pass()
+        return (yield Pass())
 
     return handler
 
