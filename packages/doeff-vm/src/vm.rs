@@ -1108,14 +1108,21 @@ impl VM {
             }
         }
 
-        let segment = match self.segments.get_mut(seg_id) {
-            Some(s) => s,
-            None => return StepEvent::Error(VMError::invalid_segment("segment not found")),
-        };
-        let frame = segment.pop_frame().unwrap();
+        let (frame, mode) = {
+            let segment = match self.segments.get_mut(seg_id) {
+                Some(s) => s,
+                None => return StepEvent::Error(VMError::invalid_segment("segment not found")),
+            };
+            let Some(frame) = segment.pop_frame() else {
+                return StepEvent::Error(VMError::internal(
+                    "segment frame stack unexpectedly empty in step_deliver_or_throw",
+                ));
+            };
 
-        // Take mode by move — each branch sets self.mode before returning (D1 Phase 1).
-        let mode = std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit));
+            // Take mode by move — each branch sets segment.mode before returning.
+            let mode = std::mem::replace(&mut segment.mode, Mode::Deliver(Value::Unit));
+            (frame, mode)
+        };
 
         match frame {
             Frame::Program { stream, metadata } => {
