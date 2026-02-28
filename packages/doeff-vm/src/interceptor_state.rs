@@ -10,7 +10,7 @@ use crate::doeff_generator::DoeffGenerator;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::ids::{DispatchId, Marker, SegmentId};
-use crate::py_shared::PyShared;
+use crate::kleisli::KleisliRef;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase};
 use crate::segment::Segment;
 use crate::vm::InterceptorEntry;
@@ -159,7 +159,7 @@ impl InterceptorState {
     pub(crate) fn insert(
         &mut self,
         marker: Marker,
-        interceptor: PyShared,
+        interceptor: KleisliRef,
         metadata: Option<CallMetadata>,
     ) {
         self.interceptors.insert(
@@ -177,7 +177,7 @@ impl InterceptorState {
 
     pub(crate) fn prepare_with_intercept(
         &mut self,
-        interceptor: PyShared,
+        interceptor: KleisliRef,
         metadata: Option<CallMetadata>,
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,

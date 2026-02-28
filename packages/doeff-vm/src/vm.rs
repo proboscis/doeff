@@ -20,7 +20,7 @@ use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
-    dispatch_ref_as_python, make_get_execution_context_effect, DispatchEffect,
+    dispatch_ref_as_python, dispatch_to_pyobject, make_get_execution_context_effect, DispatchEffect,
     PyGetExecutionContext,
 };
 #[cfg(test)]
@@ -29,13 +29,16 @@ use crate::error::VMError;
 use crate::frame::{
     CallMetadata, EvalReturnContinuation, FinallyOutcome, Frame, InterceptorContinuation,
 };
-use crate::handler::{Handler, RustProgramInvocation};
+use crate::handler::{Handler, KleisliHandler, RustProgramInvocation};
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::interceptor_state::InterceptorState;
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
+use crate::kleisli::{HandlerSentinelKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::pyvm::{classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase};
+use crate::pyvm::{
+    classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase, PyK,
+};
 use crate::segment::{ScopeStore, Segment, SegmentKind};
 use crate::trace_state::TraceState;
 use crate::value::Value;
@@ -214,7 +217,7 @@ impl ForwardKind {
 
 #[derive(Clone)]
 pub struct InterceptorEntry {
-    pub(crate) interceptor: PyShared,
+    pub(crate) interceptor: KleisliRef,
     pub(crate) metadata: Option<CallMetadata>,
 }
 
@@ -230,6 +233,7 @@ struct HandlerChainEntry {
     marker: Marker,
     prompt_seg_id: SegmentId,
     handler: Handler,
+    kleisli: Option<KleisliRef>,
     py_identity: Option<PyShared>,
 }
 
@@ -422,17 +426,23 @@ impl VM {
     fn find_prompt_boundary_by_marker(
         &self,
         marker: Marker,
-    ) -> Option<(SegmentId, Handler, Option<PyShared>)> {
+    ) -> Option<(SegmentId, Handler, Option<KleisliRef>, Option<PyShared>)> {
         self.segments
             .iter()
             .find_map(|(seg_id, seg)| match &seg.kind {
                 SegmentKind::PromptBoundary {
                     handled_marker,
                     handler,
+                    handler_kleisli,
                     py_identity,
                     ..
                 } if *handled_marker == marker => {
-                    Some((seg_id, handler.clone(), py_identity.clone()))
+                    Some((
+                        seg_id,
+                        handler.clone(),
+                        handler_kleisli.clone(),
+                        py_identity.clone(),
+                    ))
                 }
                 _ => None,
             })
@@ -448,6 +458,7 @@ impl VM {
             if let SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,
+                handler_kleisli,
                 py_identity,
                 ..
             } = &seg.kind
@@ -456,6 +467,7 @@ impl VM {
                     marker: *handled_marker,
                     prompt_seg_id: seg_id,
                     handler: handler.clone(),
+                    kleisli: handler_kleisli.clone(),
                     py_identity: py_identity.clone(),
                 });
             }
@@ -528,6 +540,7 @@ impl VM {
                 outside_seg_id,
                 entry.marker,
                 entry.handler.clone(),
+                None,
                 None,
                 entry.py_identity.clone(),
             );
@@ -766,6 +779,65 @@ impl VM {
         (info.name, kind, info.file, info.line)
     }
 
+    fn invoke_kleisli_handler_expr(
+        kleisli: KleisliRef,
+        effect: DispatchEffect,
+        continuation: Continuation,
+    ) -> DoCtrl {
+        let py_effect =
+            match Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind())) {
+                Ok(obj) => obj,
+                Err(err) => {
+                    return DoCtrl::TransferThrow {
+                        continuation,
+                        exception: PyException::type_error(format!(
+                            "Kleisli handler failed to convert effect: {err}"
+                        )),
+                    };
+                }
+            };
+
+        let py_k = match Python::attach(|py| {
+            Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                .map(|bound| bound.into_any().unbind())
+        }) {
+            Ok(obj) => obj,
+            Err(err) => {
+                return DoCtrl::TransferThrow {
+                    continuation,
+                    exception: PyException::type_error(format!(
+                        "Kleisli handler failed to create continuation handle: {err}"
+                    )),
+                };
+            }
+        };
+
+        let debug = kleisli.debug_info();
+        let metadata = CallMetadata::new(
+            debug.name,
+            debug.file.unwrap_or_else(|| "<unknown>".to_string()),
+            debug.line.unwrap_or(0),
+            None,
+            None,
+        );
+
+        DoCtrl::Expand {
+            factory: Box::new(DoCtrl::Pure {
+                value: Value::Kleisli(kleisli),
+            }),
+            args: vec![
+                DoCtrl::Pure {
+                    value: Value::Python(py_effect),
+                },
+                DoCtrl::Pure {
+                    value: Value::Python(py_k),
+                },
+            ],
+            kwargs: vec![],
+            metadata,
+        }
+    }
+
     fn marker_handler_trace_info(
         &self,
         marker: Marker,
@@ -780,7 +852,9 @@ impl VM {
             }
         }
         self.find_prompt_boundary_by_marker(marker)
-            .map(|(_seg_id, handler, _py_identity)| Self::handler_trace_info(&handler))
+            .map(|(_seg_id, handler, _handler_kleisli, _py_identity)| {
+                Self::handler_trace_info(&handler)
+            })
     }
 
     fn current_handler_identity_for_dispatch(
@@ -1752,7 +1826,7 @@ impl VM {
         chain: Arc<Vec<Marker>>,
         next_idx: usize,
     ) -> Mode {
-        let interceptor_callable = entry.interceptor.into_inner();
+        let interceptor_kleisli = entry.interceptor.clone();
         let interceptor_meta = entry.metadata.clone();
         let yielded_obj_for_continuation = Python::attach(|py| yielded_obj.clone_ref(py));
         let apply_metadata = interceptor_meta
@@ -1789,7 +1863,7 @@ impl VM {
 
         Mode::HandleYield(DoCtrl::Apply {
             f: Box::new(DoCtrl::Pure {
-                value: Value::Python(interceptor_callable),
+                value: Value::Kleisli(interceptor_kleisli),
             }),
             args: vec![DoCtrl::Pure {
                 value: Value::Python(yielded_obj),
@@ -1964,15 +2038,14 @@ impl VM {
             } => self.handle_yield_resume_throw(continuation, exception),
             DoCtrl::WithHandler {
                 handler,
-                expr,
+                body,
                 return_clause,
-                py_identity,
-            } => self.handle_yield_with_handler(handler, expr, return_clause, py_identity),
+            } => self.handle_yield_with_handler(handler, *body, return_clause),
             DoCtrl::WithIntercept {
                 interceptor,
-                expr,
+                body,
                 metadata,
-            } => self.handle_yield_with_intercept(interceptor, expr, metadata),
+            } => self.handle_yield_with_intercept(interceptor, *body, metadata),
             DoCtrl::Finally { cleanup } => self.handle_yield_finally(cleanup),
             DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
             DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
@@ -2073,21 +2146,20 @@ impl VM {
 
     fn handle_yield_with_handler(
         &mut self,
-        handler: Handler,
-        expr: Py<PyAny>,
+        handler: KleisliRef,
+        body: DoCtrl,
         return_clause: Option<PyShared>,
-        py_identity: Option<PyShared>,
     ) -> StepEvent {
-        self.handle_with_handler(handler, expr, return_clause, py_identity)
+        self.handle_with_handler(handler, body, return_clause)
     }
 
     fn handle_yield_with_intercept(
         &mut self,
-        interceptor: PyShared,
-        expr: Py<PyAny>,
+        interceptor: KleisliRef,
+        body: DoCtrl,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        self.handle_with_intercept(interceptor, expr, metadata)
+        self.handle_with_intercept(interceptor, body, metadata)
     }
 
     fn handle_yield_finally(&mut self, cleanup: PyShared) -> StepEvent {
@@ -2994,7 +3066,7 @@ impl VM {
         effect: &DispatchEffect,
     ) -> Result<(usize, Marker, Handler), VMError> {
         for (idx, marker) in handler_chain.iter().copied().enumerate() {
-            let Some((_prompt_seg_id, handler, _py_identity)) =
+            let Some((_prompt_seg_id, handler, _handler_kleisli, _py_identity)) =
                 self.find_prompt_boundary_by_marker(marker)
             else {
                 return Err(VMError::internal(format!(
@@ -3046,7 +3118,7 @@ impl VM {
             let active_marker = *ctx.handler_chain.get(ctx.handler_idx)?;
             let active_is_python = self
                 .find_prompt_boundary_by_marker(active_marker)
-                .is_some_and(|(_prompt_seg_id, handler, _py_identity)| {
+                .is_some_and(|(_prompt_seg_id, handler, _handler_kleisli, _py_identity)| {
                     handler.py_identity().is_some()
                 });
             if active_is_python && !Self::same_effect_python_type(&effect, &ctx.effect) {
@@ -3157,7 +3229,11 @@ impl VM {
         if selected.py_identity.is_some() || handler.py_identity().is_some() {
             self.register_continuation(k_user.clone());
         }
-        let ir_node = handler.invoke(effect, k_user);
+        let ir_node = selected
+            .kleisli
+            .clone()
+            .map(|kleisli| Self::invoke_kleisli_handler_expr(kleisli, effect.clone(), k_user.clone()))
+            .unwrap_or_else(|| handler.invoke(effect, k_user));
         Ok(self.evaluate(ir_node))
     }
 
@@ -3266,6 +3342,7 @@ impl VM {
                 marker,
                 handler.clone(),
                 None,
+                None,
                 py_identity.clone(),
             );
             self.alloc_segment(prompt_seg);
@@ -3275,6 +3352,7 @@ impl VM {
         seg.kind = SegmentKind::PromptBoundary {
             handled_marker: marker,
             handler: handler.clone(),
+            handler_kleisli: None,
             return_clause: None,
             py_identity,
         };
@@ -3612,32 +3690,39 @@ impl VM {
 
     fn handle_with_handler(
         &mut self,
-        handler: Handler,
-        program: Py<PyAny>,
+        handler: KleisliRef,
+        program: DoCtrl,
         return_clause: Option<PyShared>,
-        explicit_py_identity: Option<PyShared>,
     ) -> StepEvent {
-        let plan = match DispatchState::prepare_with_handler(
-            handler,
-            explicit_py_identity,
-            self.current_segment,
-        ) {
+        let plan = match DispatchState::prepare_with_handler(handler, self.current_segment) {
             Ok(plan) => plan,
             Err(err) => return StepEvent::Error(err),
         };
+        let (prompt_handler, prompt_kleisli): (Handler, Option<KleisliRef>) = plan
+            .handler
+            .as_any()
+            .downcast_ref::<HandlerSentinelKleisli>()
+            .map(|sentinel| (sentinel.handler(), None))
+            .unwrap_or_else(|| {
+                (
+                    Arc::new(KleisliHandler::new(plan.handler.clone())) as Handler,
+                    Some(plan.handler.clone()),
+                )
+            });
 
         let mut prompt_seg = Segment::new_prompt(
             plan.handler_marker,
             Some(plan.outside_seg_id),
             plan.handler_marker,
-            plan.handler.clone(),
+            prompt_handler.clone(),
+            prompt_kleisli,
             return_clause,
             plan.py_identity.clone(),
         );
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
         self.copy_scope_store_from(Some(plan.outside_seg_id), &mut prompt_seg);
         let prompt_seg_id = self.alloc_segment(prompt_seg);
-        self.track_run_handler(&plan.handler);
+        self.track_run_handler(&prompt_handler);
 
         let mut body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut body_seg);
@@ -3645,16 +3730,13 @@ impl VM {
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
-        self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr { metadata: None });
-        StepEvent::NeedsPython(PythonCall::EvalExpr {
-            expr: PyShared::new(program),
-        })
+        self.evaluate(program)
     }
 
     fn handle_with_intercept(
         &mut self,
-        interceptor: PyShared,
-        program: Py<PyAny>,
+        interceptor: KleisliRef,
+        program: DoCtrl,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         let body_seg = match self.interceptor_state.prepare_with_intercept(
@@ -3671,10 +3753,7 @@ impl VM {
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
-        self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr { metadata: None });
-        StepEvent::NeedsPython(PythonCall::EvalExpr {
-            expr: PyShared::new(program),
-        })
+        self.evaluate(program)
     }
 
     fn register_finally_boundary(&mut self, cleanup: PyShared) -> Result<(), VMError> {
@@ -3869,6 +3948,7 @@ impl VM {
                 )));
             };
             let handler = entry.handler.clone();
+            let handler_kleisli = entry.kleisli.clone();
             let py_identity = entry.py_identity.clone();
             let can_handle = match handler.can_handle(&effect) {
                 Ok(value) => value,
@@ -3909,7 +3989,15 @@ impl VM {
                 if py_identity.is_some() || handler.py_identity().is_some() {
                     self.register_continuation(k_user.clone());
                 }
-                let ir_node = handler.invoke(effect.clone(), k_user);
+                let ir_node = handler_kleisli
+                    .map(|kleisli| {
+                        Self::invoke_kleisli_handler_expr(
+                            kleisli,
+                            effect.clone(),
+                            k_user.clone(),
+                        )
+                    })
+                    .unwrap_or_else(|| handler.invoke(effect.clone(), k_user));
                 return self.evaluate(ir_node);
             }
         }
@@ -4186,6 +4274,7 @@ impl VM {
                 outside_seg_id,
                 handler_marker,
                 handler.clone(),
+                None,
                 None,
                 py_identity.clone(),
             );
