@@ -132,13 +132,13 @@ class KleisliProgram(ABC, Generic[P, T]):
             return Apply(Pure(generator_factory), positional_args, keyword_args, metadata)
         return Apply(Pure(self.func), positional_args, keyword_args, metadata)
 
-    def partial(self, /, *args: P.args, **kwargs: P.kwargs) -> PartiallyAppliedKleisliProgram[P, T]:
+    def partial(self, /, *args: P.args, **kwargs: P.kwargs) -> "PartiallyAppliedKleisliProgram[P, T]":
         return PartiallyAppliedKleisliProgram(self, args, kwargs)
 
     def and_then_k(
         self,
         binder: TypingCallable[[T], Program[U]],
-    ) -> KleisliProgram[P, U]:
+    ) -> "KleisliProgram[P, U]":
         if not callable(binder):
             raise TypeError("binder must be callable returning a Program")
 
@@ -154,13 +154,13 @@ class KleisliProgram(ABC, Generic[P, T]):
     def __rshift__(
         self,
         binder: TypingCallable[[T], Program[U]],
-    ) -> KleisliProgram[P, U]:
+    ) -> "KleisliProgram[P, U]":
         return self.and_then_k(binder)
 
     def fmap(
         self,
         mapper: TypingCallable[[T], U],
-    ) -> KleisliProgram[P, U]:
+    ) -> "KleisliProgram[P, U]":
         if not callable(mapper):
             raise TypeError("mapper must be callable")
 
@@ -200,7 +200,7 @@ class PartiallyAppliedKleisliProgram(KleisliProgram[P, T]):
         merged_kwargs = {**self._pre_kwargs, **kwargs}
         return self._base(*merged_args, **merged_kwargs)
 
-    def partial(self, /, *args: Any, **kwargs: Any) -> PartiallyAppliedKleisliProgram[P, T]:
+    def partial(self, /, *args: Any, **kwargs: Any) -> "PartiallyAppliedKleisliProgram[P, T]":
         merged_args = self._pre_args + args
         merged_kwargs = {**self._pre_kwargs, **kwargs}
         return PartiallyAppliedKleisliProgram(self._base, merged_args, merged_kwargs)

@@ -189,7 +189,7 @@ class CapturedTraceback:
 
         return "\n".join(self.lines(condensed=condensed, max_lines=max_lines))
 
-    def get_raise_location(self) -> RaiseLocation | None:
+    def get_raise_location(self) -> "RaiseLocation | None":
         """Extract the innermost user code frame where exception was raised.
 
         Returns RaiseLocation with (filename, line, function, code) or None if no frame found.
@@ -421,11 +421,11 @@ class EffectFailureError(Exception):
     Captures both the failing effect and runtime traceback context.
     """
 
-    effect: Effect
+    effect: "Effect"
     cause: BaseException  # The original exception that caused the failure
     runtime_traceback: CapturedTraceback | None = None
     traceback_data: Any | None = None
-    call_stack_snapshot: tuple[CallFrame, ...] = field(
+    call_stack_snapshot: tuple["CallFrame", ...] = field(
         default_factory=tuple
     )  # Program call stack at failure time
 
@@ -581,12 +581,12 @@ class EffectObservation:
 class EffectFailureInfo:
     """Summary of a single EffectFailure instance within an error chain."""
 
-    effect: Effect
+    effect: "Effect"
     cause: BaseException | None
     runtime_trace: CapturedTraceback | None
     cause_trace: CapturedTraceback | None
     traceback_data: Any | None = None
-    call_stack_snapshot: tuple[CallFrame, ...] = field(
+    call_stack_snapshot: tuple["CallFrame", ...] = field(
         default_factory=tuple
     )  # Program call stack at failure
 
@@ -609,7 +609,7 @@ class RunFailureDetails:
     entries: tuple[FailureEntry, ...]
 
     @classmethod
-    def from_error(cls, error: Any) -> RunFailureDetails | None:
+    def from_error(cls, error: Any) -> "RunFailureDetails | None":
         if not isinstance(error, BaseException):
             return None
 
@@ -721,7 +721,7 @@ class _DepAskStats:
     def from_observations(
         cls,
         observations: list[EffectObservation],
-    ) -> _DepAskStats:
+    ) -> "_DepAskStats":
         interesting = {"Dep", "Ask"}
         records: list[_DepAskUsageRecord] = []
         record_index: dict[tuple[str, EnvKey | None], int] = {}

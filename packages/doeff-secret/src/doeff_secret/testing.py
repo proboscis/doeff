@@ -32,7 +32,7 @@ class InMemorySecretStore:
         *,
         seed_data: Mapping[str, SeedValue] | None = None,
         project: str = "mock-project",
-    ) -> InMemorySecretStore:
+    ) -> "InMemorySecretStore":
         store = cls(project=project)
         if seed_data:
             for secret_id, value in seed_data.items():

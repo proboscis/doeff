@@ -24,7 +24,7 @@ class MockPinjectedRuntime:
         cls,
         *,
         bindings: Mapping[Any, Any] | None = None,
-    ) -> MockPinjectedRuntime:
+    ) -> "MockPinjectedRuntime":
         runtime = cls()
         if bindings:
             runtime.bindings.update(dict(bindings))

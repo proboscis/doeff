@@ -51,12 +51,12 @@ class BoundedLog(list):
         super().insert(index, item)
         self._trim()
 
-    def copy(self) -> BoundedLog:  # type: ignore[override]
+    def copy(self) -> "BoundedLog":  # type: ignore[override]
         """Return a shallow copy that preserves the retention limit."""
 
         return type(self)(self, max_entries=self._max_entries)
 
-    def spawn_empty(self) -> BoundedLog:
+    def spawn_empty(self) -> "BoundedLog":
         """Create an empty buffer with the same retention semantics."""
 
         return type(self)(max_entries=self._max_entries)

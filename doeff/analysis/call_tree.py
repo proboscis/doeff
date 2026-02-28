@@ -19,10 +19,10 @@ class EffectCallTreeNode:
 
     name: str
     is_effect: bool
-    children: OrderedDict[str, EffectCallTreeNode] = field(default_factory=OrderedDict)
+    children: OrderedDict[str, "EffectCallTreeNode"] = field(default_factory=OrderedDict)
     observations: list[EffectObservation] = field(default_factory=list)
 
-    def add_child(self, name: str, *, is_effect: bool) -> EffectCallTreeNode:
+    def add_child(self, name: str, *, is_effect: bool) -> "EffectCallTreeNode":
         node = self.children.get(name)
         if node is None:
             node = EffectCallTreeNode(name=name, is_effect=is_effect)
@@ -43,7 +43,7 @@ class EffectCallTree:
     @classmethod
     def from_observations(
         cls, observations: Iterable[EffectObservation]
-    ) -> EffectCallTree:
+    ) -> "EffectCallTree":
         root = EffectCallTreeNode(name="<root>", is_effect=False)
 
         for observation in observations:

@@ -2,7 +2,7 @@
 
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 

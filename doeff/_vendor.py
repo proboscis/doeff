@@ -82,14 +82,14 @@ class Result(Generic[T_co]):
             return self.error
         raise RuntimeError("Called unwrap_err on Ok value")
 
-    def map(self, f: Callable[[T_co], U]) -> Result[U]:
+    def map(self, f: Callable[[T_co], U]) -> "Result[U]":
         """Apply ``f`` to the contained value if this is a success."""
 
         if isinstance(self, Ok):
             return Ok(f(self.value))
         return cast(Result[U], self)
 
-    def map_err(self, f: Callable[[Exception], Exception]) -> Result[T_co]:
+    def map_err(self, f: Callable[[Exception], Exception]) -> "Result[T_co]":
         """Apply ``f`` to the contained error if this is a failure."""
 
         if isinstance(self, Err):
@@ -113,7 +113,7 @@ class Result(Generic[T_co]):
             return self.value
         return default_fn(self.error)
 
-    def and_then(self, f: Callable[[T_co], Result[U]]) -> Result[U]:
+    def and_then(self, f: "Callable[[T_co], Result[U]]") -> "Result[U]":
         """Chain computations that return ``Result``."""
 
         if isinstance(self, Ok):
@@ -174,7 +174,7 @@ class Result(Generic[T_co]):
             return Program.pure(self.value)
         return kleisli(self.error)
 
-    def recover(self, f: Callable[[Exception], T_co]) -> Result[T_co]:
+    def recover(self, f: Callable[[Exception], T_co]) -> "Result[T_co]":
         """Recover from an error by computing a new value.
 
         If this is ``Ok``, returns self unchanged.
@@ -206,7 +206,7 @@ class Result(Generic[T_co]):
             return Program.pure(self.value)
         return fallback
 
-    def __or__(self, other: Result[U]) -> Result[T_co] | Result[U]:
+    def __or__(self, other: "Result[U]") -> "Result[T_co] | Result[U]":
         """Return this result if it is ``Ok``, otherwise return ``other``.
 
         Example::
@@ -267,7 +267,7 @@ class Err(Result[NoReturn]):
     """Error result with optional captured traceback."""
 
     error: Exception
-    captured_traceback: Maybe["EffectTraceback"] = field(default_factory=lambda: NOTHING)
+    captured_traceback: "Maybe[EffectTraceback]" = field(default_factory=lambda: NOTHING)
 
 
 class Maybe(Generic[T_co]):
@@ -313,14 +313,14 @@ class Maybe(Generic[T_co]):
             return self.value
         return default_fn()
 
-    def map(self, func: Callable[[T_co], U]) -> Maybe[U]:
+    def map(self, func: Callable[[T_co], U]) -> "Maybe[U]":
         """Apply ``func`` to the contained value when present."""
 
         if isinstance(self, Some):
             return Some(func(self.value))
         return NOTHING
 
-    def flat_map(self, func: Callable[[T_co], Maybe[U]]) -> Maybe[U]:
+    def flat_map(self, func: "Callable[[T_co], Maybe[U]]") -> "Maybe[U]":
         """Chain computations that themselves return ``Maybe``."""
 
         if isinstance(self, Some):
@@ -330,7 +330,7 @@ class Maybe(Generic[T_co]):
             return result
         return NOTHING
 
-    def filter(self, predicate: Callable[[T_co], bool]) -> Maybe[T_co]:
+    def filter(self, predicate: Callable[[T_co], bool]) -> "Maybe[T_co]":
         """Return ``self`` if the predicate passes, otherwise ``Nothing``."""
 
         if isinstance(self, Some) and predicate(self.value):
@@ -364,7 +364,7 @@ class Maybe(Generic[T_co]):
         return None
 
     @classmethod
-    def from_optional(cls, value: T_co | None) -> Maybe[T_co]:
+    def from_optional(cls, value: T_co | None) -> "Maybe[T_co]":
         """Create a ``Maybe`` from an optional Python value."""
 
         if value is None:
@@ -372,7 +372,7 @@ class Maybe(Generic[T_co]):
         return Some(value)
 
     @overload
-    def __or__(self, other: Maybe[U]) -> Maybe[T_co | U]: ...
+    def __or__(self, other: "Maybe[U]") -> "Maybe[T_co | U]": ...
 
     @overload
     def __or__(self, other: object) -> Any: ...
@@ -396,7 +396,7 @@ class Maybe(Generic[T_co]):
         return other
 
     @overload
-    def __ror__(self, other: Maybe[U]) -> Maybe[T_co | U]: ...
+    def __ror__(self, other: "Maybe[U]") -> "Maybe[T_co | U]": ...
 
     @overload
     def __ror__(self, other: object) -> Any: ...
@@ -423,9 +423,9 @@ class Nothing(Maybe[NoReturn]):
     """Singleton representing the absence of a value."""
 
     __slots__ = ()
-    _instance: Nothing | None = None
+    _instance: "Nothing | None" = None
 
-    def __new__(cls) -> Nothing:
+    def __new__(cls) -> "Nothing":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -477,13 +477,13 @@ class WGraph:
     steps: frozenset[WStep] = field(default_factory=frozenset)
 
     @classmethod
-    def single(cls, value: Any) -> WGraph:
+    def single(cls, value: Any) -> "WGraph":
         """Create a graph with a single node."""
         node = WNode(value)
         step = WStep((), node)
         return cls(last=step, steps=frozenset({step}))
 
-    def with_last_meta(self, meta: dict[str, Any]) -> WGraph:
+    def with_last_meta(self, meta: dict[str, Any]) -> "WGraph":
         """Create a new graph with updated metadata on the last step."""
         # Merge new metadata with existing metadata instead of replacing
         merged_meta = {**self.last.meta, **meta} if self.last.meta else meta

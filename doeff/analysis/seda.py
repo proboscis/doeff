@@ -62,9 +62,9 @@ class EffectTreeNode:
     label: str
     effects: list[str]
     span: SourceSpan | None
-    children: list[EffectTreeNode] = field(default_factory=list)
+    children: list["EffectTreeNode"] = field(default_factory=list)
 
-    def walk(self) -> Iterable[EffectTreeNode]:
+    def walk(self) -> Iterable["EffectTreeNode"]:
         """Depth-first traversal yielding this node and descendants."""
 
         yield self

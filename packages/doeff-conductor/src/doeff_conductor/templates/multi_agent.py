@@ -11,38 +11,34 @@ A workflow with parallel agents:
 5. Create PR
 """
 
-from typing import TYPE_CHECKING
-
 from doeff import EffectGenerator, Gather, Spawn, do
-
-if TYPE_CHECKING:
-    from ..types import Issue, PRHandle, WorktreeEnv
+from ..types import Issue, PRHandle, WorktreeEnv
 
 
 # Helper functions to wrap effects as Programs for Spawn
 @do
-def _create_worktree(issue: "Issue", suffix: str) -> "EffectGenerator[WorktreeEnv]":
+def _create_worktree(issue: Issue, suffix: str) -> EffectGenerator[WorktreeEnv]:
     """Create a worktree (wrapper for Spawn compatibility)."""
     from ..effects import CreateWorktree
     return (yield CreateWorktree(issue=issue, suffix=suffix))
 
 
 @do
-def _run_agent(env: "WorktreeEnv", prompt: str, name: str) -> EffectGenerator[str]:
+def _run_agent(env: WorktreeEnv, prompt: str, name: str) -> EffectGenerator[str]:
     """Run an agent (wrapper for Spawn compatibility)."""
     from ..effects import RunAgent
     return (yield RunAgent(env=env, prompt=prompt, name=name))
 
 
 @do
-def _commit(env: "WorktreeEnv", message: str) -> EffectGenerator[str]:
+def _commit(env: WorktreeEnv, message: str) -> EffectGenerator[str]:
     """Create a commit (wrapper for Spawn compatibility)."""
     from ..effects import Commit
     return (yield Commit(env=env, message=message))
 
 
 @do
-def multi_agent(issue: "Issue") -> "EffectGenerator[PRHandle]":
+def multi_agent(issue: Issue) -> EffectGenerator[PRHandle]:
     """Multi-agent PR workflow: issue -> parallel agents -> merge -> PR.
 
     Args:
