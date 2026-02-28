@@ -13,11 +13,12 @@ from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 from PIL import Image as PILImage
 
-from doeff import Delegate, Resume
+from doeff import Delegate, Resume, do
+from doeff.effects.base import Effect
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
 
-ProtocolHandler = Callable[[Any, Any], Any]
+ProtocolHandler = Callable[[Effect, Any], Any]
 
 
 def _default_value_for_annotation(annotation: Any, field_name: str) -> Any:  # noqa: PLR0911
@@ -193,7 +194,8 @@ def mock_handlers(
         structured_responses=structured_responses or {},
     )
 
-    def handler(effect: Any, k: Any):
+    @do
+    def handler(effect: Effect, k: Any):
         if isinstance(effect, SeedreamGenerate):
             return (yield Resume(k, active_handler.handle_generate(effect)))
         if isinstance(effect, ImageGenerate):
