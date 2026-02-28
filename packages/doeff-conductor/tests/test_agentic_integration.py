@@ -47,7 +47,7 @@ from doeff_conductor.handlers import run_sync
 from doeff_conductor.handlers.agent_handler import AgentHandler
 from doeff_conductor.types import AgentRef, WorktreeEnv
 
-from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
+from doeff import Effect, Pass, Resume, WithHandler, default_handlers, do, run
 
 # =============================================================================
 # Mock OpenCode Handler
@@ -263,10 +263,11 @@ def _wrap_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any]
     wrapped = program
     for effect_type, effect_handler in reversed(list(handlers.items())):
 
-        def typed_handler(effect, k, _effect_type=effect_type, _handler=effect_handler):
+        @do
+        def typed_handler(effect: Effect, k, _effect_type=effect_type, _handler=effect_handler):
             if isinstance(effect, _effect_type):
                 return (yield Resume(k, _handler(effect)))
-            yield Delegate()
+            yield Pass()
 
         wrapped = WithHandler(handler=typed_handler, expr=wrapped)
     return wrapped
