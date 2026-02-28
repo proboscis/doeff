@@ -22,7 +22,6 @@ from doeff_agents import (
     SessionStatus,
     SleepEffect,
     StopEffect,
-    make_typed_handler,
     run_agent_to_completion,
 )
 
@@ -191,14 +190,16 @@ def test_withhandler_multiple_agent_delegations_in_sequence() -> None:
     assert state["stops"] == ["alpha", "beta"]
 
 
-def test_withhandler_protocol_compliance_with_typed_handler() -> None:
+def test_withhandler_protocol_compliance_with_explicit_launch_handler() -> None:
     launch_calls: list[str] = []
 
-    def launch_only_handler(effect, k):
-        launch_calls.append(effect.session_name)
-        return (yield Resume(k, _session_handle(effect.session_name, effect.config.agent_type)))
+    @do
+    def launch_only_handler(effect: Effect, k):
+        if isinstance(effect, LaunchEffect):
+            launch_calls.append(effect.session_name)
+            return (yield Resume(k, _session_handle(effect.session_name, effect.config.agent_type)))
+        yield Pass()
 
-    typed_launch_handler = make_typed_handler(LaunchEffect, launch_only_handler)
     lifecycle_handler, lifecycle_state = _make_pipeline_handler(
         {"typed-flow": [(SessionStatus.DONE, "typed done")]}
     )
@@ -206,7 +207,7 @@ def test_withhandler_protocol_compliance_with_typed_handler() -> None:
     wrapped = WithHandler(
         handler=lifecycle_handler,
         expr=WithHandler(
-            handler=typed_launch_handler,
+            handler=launch_only_handler,
             expr=_run_completion("typed-flow", _build_config(), poll_interval=0.0),
         ),
     )

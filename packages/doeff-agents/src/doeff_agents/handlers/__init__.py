@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Callable
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
-from doeff.do import make_doeff_generator
 from doeff_agents.effects import (
     CaptureEffect,
     LaunchEffect,
@@ -56,12 +54,6 @@ SimpleHandler = Callable[[Any], Any]
 ProtocolHandler = Callable[[Effect, Any], Any]
 
 
-def _is_lazy_program_value(value: object) -> bool:
-    return bool(getattr(value, "__doeff_do_expr_base__", False) or getattr(
-        value, "__doeff_effect_base__", False
-    ))
-
-
 def make_scheduled_handler(handler: SimpleHandler) -> ProtocolHandler:
     """Wrap a plain `(effect) -> value` callable into `(effect, k) -> DoExpr`."""
 
@@ -70,23 +62,6 @@ def make_scheduled_handler(handler: SimpleHandler) -> ProtocolHandler:
         return (yield Resume(k, handler(effect)))
 
     return scheduled_handler
-
-
-def make_typed_handler(effect_type: type[Any], handler: ProtocolHandler) -> ProtocolHandler:
-    """Restrict a protocol handler to one effect type and delegate otherwise."""
-
-    @do
-    def typed_handler(effect: Effect, k: Any):
-        if isinstance(effect, effect_type):
-            result = handler(effect, k)
-            if inspect.isgenerator(result):
-                return (yield make_doeff_generator(result))
-            if _is_lazy_program_value(result):
-                return (yield result)
-            return result
-        yield Pass()
-
-    return typed_handler
 
 
 def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
@@ -172,7 +147,6 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "get_adapter",
     "get_mock_agent_state",
     "make_scheduled_handler",
-    "make_typed_handler",
     "mock_agent_handler",
     "mock_agent_handlers",
     "mock_handlers",
