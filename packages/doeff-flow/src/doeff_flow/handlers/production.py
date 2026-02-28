@@ -44,7 +44,7 @@ class ProductionTraceRecorder:
         cls,
         workflow_id: str,
         trace_dir: Path | str | None = None,
-    ) -> ProductionTraceRecorder:
+    ) -> "ProductionTraceRecorder":
         validated_workflow_id = validate_workflow_id(workflow_id)
         if trace_dir is None:
             resolved_trace_dir = get_default_trace_dir()

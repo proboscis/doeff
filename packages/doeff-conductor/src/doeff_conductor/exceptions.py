@@ -80,7 +80,7 @@ class GitCommandError(ConductorError):
         cls,
         error: CalledProcessError,
         cwd: str | None = None,
-    ) -> GitCommandError:
+    ) -> "GitCommandError":
         """Create from a subprocess.CalledProcessError.
 
         Args:

@@ -10,16 +10,12 @@ The simplest workflow for implementing an issue:
 4. Mark the issue as resolved
 """
 
-from typing import TYPE_CHECKING
-
 from doeff import EffectGenerator, do
-
-if TYPE_CHECKING:
-    from ..types import Issue, PRHandle
+from ..types import Issue, PRHandle
 
 
 @do
-def basic_pr(issue: "Issue") -> "EffectGenerator[PRHandle]":
+def basic_pr(issue: Issue) -> EffectGenerator[PRHandle]:
     """Basic PR workflow: issue -> agent -> PR.
 
     Args:
