@@ -31,7 +31,7 @@ def test_multi_model_workflow_routes_to_openai_then_gemini() -> None:
     @do
     def openai_handler(effect: Effect, k: Any):
         return (
-            yield from openai_mock_handler(
+            yield openai_mock_handler(
                 effect,
                 k,
                 config=openai_config,
@@ -97,7 +97,7 @@ def test_openrouter_catch_all_can_handle_unmatched_model() -> None:
 
     @do
     def catch_all_handler(effect: Effect, k: Any):
-        return (yield from openrouter_mock_handler(effect, k))
+        return (yield openrouter_mock_handler(effect, k))
 
     result = run(
         WithHandler(catch_all_handler, workflow()),
@@ -110,7 +110,7 @@ def test_openrouter_catch_all_can_handle_unmatched_model() -> None:
     # Run once more with explicit runtime to verify call capture on catch-all routing.
     @do
     def router_handler(effect: Effect, k: Any):
-        return (yield from openrouter_mock_handler(effect, k, runtime=runtime))
+        return (yield openrouter_mock_handler(effect, k, runtime=runtime))
 
     routed = run(
         WithHandler(router_handler, workflow()),

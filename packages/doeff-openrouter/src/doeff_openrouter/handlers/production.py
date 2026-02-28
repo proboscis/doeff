@@ -12,7 +12,8 @@ from doeff_llm.effects import (
     LLMStructuredQuery,
 )
 
-from doeff import Delegate, Resume
+from doeff import Delegate, Resume, do
+from doeff.effects.base import Effect
 from doeff_openrouter.chat import chat_completion
 from doeff_openrouter.effects import (
     RouterChat,
@@ -34,6 +35,7 @@ def _validate_response_format(response_format: type[Any]) -> None:
         raise TypeError("RouterStructuredOutput.response_format must be a Pydantic model class")
 
 
+@do
 def _handle_chat(effect: LLMChat, k):
     response = yield chat_completion(
         messages=effect.messages,
@@ -45,6 +47,7 @@ def _handle_chat(effect: LLMChat, k):
     return (yield Resume(k, response))
 
 
+@do
 def _handle_streaming_chat(effect: LLMStreamingChat | LLMChat, k):
     response = yield chat_completion(
         messages=effect.messages,
@@ -56,6 +59,7 @@ def _handle_streaming_chat(effect: LLMStreamingChat | LLMChat, k):
     return (yield Resume(k, response))
 
 
+@do
 def _handle_structured_output(effect: LLMStructuredQuery, k):
     _validate_response_format(effect.response_format)
     response_format_payload = build_response_format_payload(effect.response_format)
@@ -73,16 +77,17 @@ def _handle_structured_output(effect: LLMStructuredQuery, k):
     return (yield Resume(k, structured_response))
 
 
-def openrouter_production_handler(effect: Any, k: Any):
+@do
+def openrouter_production_handler(effect: Effect, k: Any):
     """Single protocol handler suitable for ``WithHandler`` usage."""
     if isinstance(effect, LLMStreamingChat | RouterStreamingChat):
-        return (yield from _handle_streaming_chat(effect, k))
+        return (yield _handle_streaming_chat(effect, k))
     if isinstance(effect, LLMChat | RouterChat):
         if effect.stream:
-            return (yield from _handle_streaming_chat(effect, k))
-        return (yield from _handle_chat(effect, k))
+            return (yield _handle_streaming_chat(effect, k))
+        return (yield _handle_chat(effect, k))
     if isinstance(effect, LLMStructuredQuery | RouterStructuredOutput):
-        return (yield from _handle_structured_output(effect, k))
+        return (yield _handle_structured_output(effect, k))
     if isinstance(effect, LLMEmbedding):
         yield Delegate()
         return
