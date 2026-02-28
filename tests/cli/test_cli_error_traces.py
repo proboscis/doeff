@@ -106,13 +106,14 @@ def test_handler_error_shows_handler_context() -> None:
         "-c",
         """
 from dataclasses import dataclass
-from doeff import Delegate, EffectBase, Program, WithHandler, do
+from doeff import Delegate, Effect, EffectBase, Program, WithHandler, do
 
 @dataclass(frozen=True, kw_only=True)
 class Boom(EffectBase):
     pass
 
-def bad_handler(effect, _k):
+@do
+def bad_handler(effect: Effect, _k):
     if isinstance(effect, Boom):
         raise RuntimeError("handler exploded")
     yield Delegate()
