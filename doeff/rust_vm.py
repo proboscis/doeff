@@ -136,16 +136,24 @@ def _with_intercept_metadata(interceptor: Any) -> dict[str, Any]:
     }
 
 
+def _unhandled_effect_error_types(vm: Any) -> tuple[type[BaseException], ...]:
+    error_types: list[type[BaseException]] = []
+    for name in ("UnhandledEffectError", "NoMatchingHandlerError"):
+        error_type = getattr(vm, name, None)
+        if isinstance(error_type, type) and issubclass(error_type, BaseException):
+            error_types.append(error_type)
+    return tuple(error_types)
+
+
 def _raise_unhandled_effect_if_present(run_result: Any, *, raise_unhandled: bool) -> Any:
     if not raise_unhandled:
         return run_result
     is_err = run_result.is_err
     if callable(is_err) and is_err():
         error = run_result.error
-        if isinstance(error, TypeError):
-            text = str(error).lower()
-            if "unhandledeffect" in text or "unhandled effect" in text:
-                raise error
+        vm = _vm()
+        if isinstance(error, _unhandled_effect_error_types(vm)):
+            raise error
     return run_result
 
 
@@ -205,19 +213,23 @@ def _run_call_kwargs(
         "env": env,
         "store": store,
     }
+    if not trace:
+        return kwargs
 
     try:
         parameters = inspect.signature(run_fn).parameters
     except (TypeError, ValueError):
-        kwargs["trace"] = trace
+        text_signature = getattr(run_fn, "__text_signature__", None)
+        if isinstance(text_signature, str) and "trace" in text_signature:
+            kwargs["trace"] = True
         return kwargs
 
     if "trace" in parameters:
-        kwargs["trace"] = trace
+        kwargs["trace"] = True
         return kwargs
 
     if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
-        kwargs["trace"] = trace
+        kwargs["trace"] = True
 
     return kwargs
 
@@ -230,31 +242,12 @@ def _normalize_env(env: dict[Any, Any] | None) -> dict[Any, Any] | None:
     return dict(env)
 
 
-def _is_unexpected_trace_keyword(exc: TypeError) -> bool:
-    message = str(exc)
-    return "trace" in message and "unexpected keyword" in message
-
-
 def _call_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) -> Any:
-    try:
-        return run_fn(program, **kwargs)
-    except TypeError as exc:
-        if "trace" in kwargs and _is_unexpected_trace_keyword(exc):
-            retry_kwargs = dict(kwargs)
-            retry_kwargs.pop("trace", None)
-            return run_fn(program, **retry_kwargs)
-        raise
+    return run_fn(program, **kwargs)
 
 
 async def _call_async_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) -> Any:
-    try:
-        return await run_fn(program, **kwargs)
-    except TypeError as exc:
-        if "trace" in kwargs and _is_unexpected_trace_keyword(exc):
-            retry_kwargs = dict(kwargs)
-            retry_kwargs.pop("trace", None)
-            return await run_fn(program, **retry_kwargs)
-        raise
+    return await run_fn(program, **kwargs)
 
 
 def _core_handler_sentinels(vm: Any) -> list[Any]:
@@ -422,6 +415,8 @@ def __getattr__(name: str) -> Any:
         "TraceFrame",
         "TraceHop",
         "PythonAsyncSyntaxEscape",
+        "UnhandledEffectError",
+        "NoMatchingHandlerError",
         "K",
         "state",
         "reader",
@@ -456,6 +451,8 @@ __all__ = [
     "Resume",
     "ResumeContinuation",
     "RunResult",
+    "UnhandledEffectError",
+    "NoMatchingHandlerError",
     "TraceFrame",
     "TraceHop",
     "Transfer",

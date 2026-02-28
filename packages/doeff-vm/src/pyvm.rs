@@ -4,6 +4,9 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 
+pyo3::create_exception!(doeff_vm, UnhandledEffectError, PyTypeError);
+pyo3::create_exception!(doeff_vm, NoMatchingHandlerError, UnhandledEffectError);
+
 use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
@@ -143,10 +146,8 @@ fn build_traceback_data_pyobject(
 
 fn vmerror_to_pyerr_with_traceback_data(py: Python<'_>, e: VMError) -> (PyErr, Option<Py<PyAny>>) {
     match e {
-        VMError::UnhandledEffect { .. } | VMError::NoMatchingHandler { .. } => (
-            PyTypeError::new_err(format!("UnhandledEffect: {}", e)),
-            None,
-        ),
+        VMError::UnhandledEffect { .. } => (UnhandledEffectError::new_err(e.to_string()), None),
+        VMError::NoMatchingHandler { .. } => (NoMatchingHandlerError::new_err(e.to_string()), None),
         VMError::TypeError { .. } => (PyTypeError::new_err(e.to_string()), None),
         VMError::UncaughtException {
             exception,
@@ -4282,6 +4283,11 @@ fn async_run<'py>(
 
 #[pymodule]
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("UnhandledEffectError", m.py().get_type::<UnhandledEffectError>())?;
+    m.add(
+        "NoMatchingHandlerError",
+        m.py().get_type::<NoMatchingHandlerError>(),
+    )?;
     m.add_class::<PyVM>()?;
     m.add_class::<crate::kleisli::PyKleisli>()?;
     m.add_class::<DoeffGeneratorFn>()?;
