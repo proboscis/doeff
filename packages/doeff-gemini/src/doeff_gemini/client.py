@@ -20,7 +20,7 @@ from doeff import (
     slog,
 )
 
-from .costs import gemini_cost_calculator__default
+from .effects import GeminiCalculateCost
 from .types import APICallMetadata, CostInfo, GeminiCallResult, GeminiCostEstimate, TokenUsage
 
 
@@ -413,28 +413,6 @@ def track_api_call(
     request_id = _extract_request_id(response) if response else None
 
     @do
-    def _invoke_cost_calculator(
-        calculator, call_result: GeminiCallResult
-    ) -> EffectGenerator[GeminiCostEstimate]:
-        if calculator is None:
-            raise ValueError("gemini_cost_calculator is missing")
-
-        if not callable(calculator):
-            raise TypeError(
-                "gemini_cost_calculator must be a KleisliProgram[GeminiCallResult, GeminiCostEstimate]"
-            )
-
-        estimate = yield calculator(call_result)
-
-        if estimate is None:
-            raise ValueError("gemini_cost_calculator returned None")
-
-        if not isinstance(estimate, GeminiCostEstimate):
-            raise TypeError("gemini_cost_calculator must return GeminiCostEstimate")
-
-        return estimate
-
-    @do
     def _build_cost_input() -> EffectGenerator[GeminiCallResult]:
         usage_for_cost = token_usage.to_cost_usage() if token_usage else None
         payload = {
@@ -464,39 +442,10 @@ def track_api_call(
     cost_info: CostInfo | None = None
     if token_usage:
         call_result = yield _build_cost_input()
-
-        safe_calculator = yield Try(Ask("gemini_cost_calculator"))
-        calculator = safe_calculator.value if safe_calculator.is_ok() else None
-
-        calculator_errors: list[str] = []
-
-        estimate: GeminiCostEstimate | None = None
-        if calculator is not None:
-            safe_estimate = yield Try(_invoke_cost_calculator(calculator, call_result))
-            if safe_estimate.is_ok():
-                estimate = safe_estimate.value
-            else:
-                calculator_errors.append(str(safe_estimate.error))
-
-        if estimate is None:
-            safe_default_estimate = yield Try(
-                _invoke_cost_calculator(gemini_cost_calculator__default, call_result)
-            )
-            if safe_default_estimate.is_ok():
-                estimate = safe_default_estimate.value
-            else:
-                calculator_errors.append(str(safe_default_estimate.error))
-
-        if estimate is None:
-            message = (
-                "Failed to calculate Gemini cost. Provide a gemini_cost_calculator "
-                "KleisliProgram[GeminiCallResult, GeminiCostEstimate] via Ask('gemini_cost_calculator'), "
-                "or ensure gemini_cost_calculator__default can handle this model. "
-                f"Errors: {calculator_errors}"
-            )
-            raise RuntimeError(message)
-        else:
-            cost_info = estimate.cost_info
+        estimate = yield GeminiCalculateCost(call_result)
+        if not isinstance(estimate, GeminiCostEstimate):
+            raise TypeError("GeminiCalculateCost handler must return GeminiCostEstimate")
+        cost_info = estimate.cost_info
 
     metadata = APICallMetadata(
         operation=operation,

@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from doeff import async_run, default_handlers, do
 from doeff_gemini import structured_llm__gemini
+from doeff_gemini.handlers import default_gemini_cost_handler
 
 
 class WeatherResponse(BaseModel):
@@ -54,7 +55,7 @@ def fetch_weather() -> WeatherResponse:
 async def main():
     result = await async_run(
         fetch_weather(),
-        handlers=default_handlers(),
+        handlers=[default_gemini_cost_handler, *default_handlers()],
         env={"gemini_api_key": "your-api-key"},
     )
     print(result.value)
@@ -79,17 +80,31 @@ result = await async_run(
         model="gemini-3-pro-image-preview",
         images=[...],
     ),
-    handlers=default_handlers(),
+    handlers=[default_gemini_cost_handler, *default_handlers()],
     env={"gemini_api_key": "your-api-key"},
 )
 ```
 
 ## Cost calculation hook
 
-Cost tracking calls a Kleisli hook if provided via `Ask("gemini_cost_calculator")`,
-falling back to the built-in `gemini_cost_calculator__default` (which uses the
-pricing table in `costs.py`). See `docs/gemini_cost_hook.md` for the hook
-signature and how to override pricing.
+Cost tracking emits the `GeminiCalculateCost` effect. Use
+`default_gemini_cost_handler` for built-in pricing, then stack your own handler
+for custom/unknown models:
+
+```python
+result = await async_run(
+    my_program(),
+    handlers=[
+        default_gemini_cost_handler,  # known models
+        my_custom_cost_handler,       # overrides / unknown models
+        *default_handlers(),
+    ],
+)
+```
+
+`default_gemini_cost_handler` delegates unknown models with `Delegate()`, so a
+custom handler can catch them. If nothing handles `GeminiCalculateCost`, the
+program fails fast with an unhandled effect error.
 
 ## Client setup
 

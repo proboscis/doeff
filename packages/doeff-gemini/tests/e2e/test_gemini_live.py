@@ -23,17 +23,19 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from doeff_gemini import edit_image__gemini, structured_llm__gemini  # noqa: E402
+from doeff_gemini.handlers import default_gemini_cost_handler  # noqa: E402
 
 from doeff import (  # noqa: E402
     AskEffect,
-    Delegate,
     EffectGenerator,
+    Pass,
     Resume,
     WithHandler,
     async_run,
     default_handlers,
     do,
 )
+from doeff.effects.base import Effect  # noqa: E402
 
 
 class FunFact(BaseModel):
@@ -81,14 +83,15 @@ def _make_mock_client(response: Any) -> tuple[Any, Any]:
 
 
 def _with_mock_gemini_handler(program: Any, *, mock_client: Any, asked_keys: list[str]) -> Any:
-    def mock_handler(effect: Any, k: Any):
+    @do
+    def mock_handler(effect: Effect, k: Any):
         if isinstance(effect, AskEffect):
             asked_keys.append(effect.key)
             if effect.key == "gemini_client":
                 return (yield Resume(k, mock_client))
             if effect.key == "gemini_api_key":
                 return (yield Resume(k, "fake-gemini-key"))
-        yield Delegate()
+        yield Pass()
 
     return WithHandler(mock_handler, program)
 
@@ -149,7 +152,7 @@ async def test_edit_image__nanobanana_pro() -> None:
 
     result = await async_run(
         _with_mock_gemini_handler(flow(), mock_client=mock_client, asked_keys=asked_keys),
-        handlers=default_handlers(),
+        handlers=[default_gemini_cost_handler, *default_handlers()],
     )
 
     assert result.is_ok(), "\n".join(str(entry) for entry in result.log)
@@ -187,7 +190,7 @@ async def test_edit_image__gemini() -> None:
 
     result = await async_run(
         _with_mock_gemini_handler(flow(), mock_client=mock_client, asked_keys=asked_keys),
-        handlers=default_handlers(),
+        handlers=[default_gemini_cost_handler, *default_handlers()],
     )
 
     assert result.is_ok(), "\n".join(str(entry) for entry in result.log)
@@ -227,7 +230,7 @@ async def test_structured_llm__gemini_with_pydantic() -> None:
 
     result = await async_run(
         _with_mock_gemini_handler(flow(), mock_client=mock_client, asked_keys=asked_keys),
-        handlers=default_handlers(),
+        handlers=[default_gemini_cost_handler, *default_handlers()],
     )
 
     assert result.is_ok(), "\n".join(str(entry) for entry in result.log)
@@ -264,7 +267,11 @@ async def test_structured_llm__gemini_live_with_pydantic() -> None:
             )
         )
 
-    result = await async_run(flow(), handlers=default_handlers(), env=env)
+    result = await async_run(
+        flow(),
+        handlers=[default_gemini_cost_handler, *default_handlers()],
+        env=env,
+    )
 
     if not result.is_ok():
         log_summary = "\n".join(str(entry) for entry in result.log)
