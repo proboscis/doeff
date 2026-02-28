@@ -20,7 +20,6 @@ Usage:
     result = run(program, handlers=default_handlers())
 """
 
-from __future__ import annotations
 
 import hashlib
 import inspect

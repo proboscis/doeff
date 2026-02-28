@@ -4,8 +4,6 @@ Program class for the doeff system.
 This module contains the Program wrapper class that represents a lazy computation.
 """
 
-from __future__ import annotations
-
 import inspect
 import types
 import warnings
@@ -16,7 +14,6 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
-    ForwardRef,
     Generic,
     Protocol,
     TypeVar,
@@ -43,72 +40,6 @@ except Exception:  # pragma: no cover - fallback for docs/type tooling without n
     _RustDoExprBase = object
 
 
-def _annotation_text_is_program_kind(annotation_text: str) -> bool:
-    if not annotation_text:
-        return False
-    stripped = annotation_text.strip()
-    if not stripped:
-        return False
-    # Handle quoted strings from __future__ annotations in Python 3.14+
-    if (stripped.startswith("'") and stripped.endswith("'")) or (
-        stripped.startswith('"') and stripped.endswith('"')
-    ):
-        stripped = stripped[1:-1]
-    if "|" in stripped:
-        return any(_annotation_text_is_program_kind(part) for part in stripped.split("|"))
-    if stripped.startswith("Optional[") and stripped.endswith("]"):
-        return _annotation_text_is_program_kind(stripped[9:-1])
-    if stripped.startswith("typing.Optional[") and stripped.endswith("]"):
-        return _annotation_text_is_program_kind(stripped[len("typing.Optional[") : -1])
-    if stripped.startswith("Annotated[") and stripped.endswith("]"):
-        inner = stripped[len("Annotated[") : -1]
-        first_part = inner.split(",", 1)[0]
-        return _annotation_text_is_program_kind(first_part)
-    normalized = stripped.replace(" ", "")
-    return (
-        normalized == "Program"
-        or normalized.startswith("Program[")
-        or normalized.startswith("doeff.program.Program")
-        or normalized == "ProgramLike"
-        or normalized.startswith("ProgramLike[")
-        or normalized == "ProgramBase"
-        or normalized.startswith("ProgramBase[")
-        or normalized == "DoExpr"
-        or normalized.startswith("DoExpr[")
-    )
-
-
-def _annotation_text_is_effect_kind(annotation_text: str) -> bool:
-    if not annotation_text:
-        return False
-    stripped = annotation_text.strip()
-    if not stripped:
-        return False
-    # Handle quoted strings from __future__ annotations in Python 3.14+
-    if (stripped.startswith("'") and stripped.endswith("'")) or (
-        stripped.startswith('"') and stripped.endswith('"')
-    ):
-        stripped = stripped[1:-1]
-    if "|" in stripped:
-        return any(_annotation_text_is_effect_kind(part) for part in stripped.split("|"))
-    if stripped.startswith("Optional[") and stripped.endswith("]"):
-        return _annotation_text_is_effect_kind(stripped[9:-1])
-    if stripped.startswith("typing.Optional[") and stripped.endswith("]"):
-        return _annotation_text_is_effect_kind(stripped[len("typing.Optional[") : -1])
-    if stripped.startswith("Annotated[") and stripped.endswith("]"):
-        inner = stripped[len("Annotated[") : -1]
-        first_part = inner.split(",", 1)[0]
-        return _annotation_text_is_effect_kind(first_part)
-    normalized = stripped.replace(" ", "")
-    return (
-        normalized == "Effect"
-        or normalized == "EffectBase"
-        or normalized.startswith("Effect[")
-        or normalized.startswith("doeff.types.Effect")
-        or normalized.startswith("doeff.types.EffectBase")
-    )
-
-
 def _safe_issubclass(candidate: Any, parent: Any) -> bool:
     """Return False for typing/generic alias objects that are not real classes."""
     try:
@@ -125,21 +56,21 @@ def _is_program_annotation_kind(annotation: Any) -> bool:
 
     program_type = globals().get("Program", ProgramBase)
 
-    if annotation in (program_type, ProgramBase):
+    if annotation in (program_type, ProgramBase, DoExpr):
         return True
     # Check for subclasses of ProgramBase (excluding EffectBase subclasses)
-    if isinstance(annotation, type) and _safe_issubclass(annotation, ProgramBase):
+    if isinstance(annotation, type) and (
+        _safe_issubclass(annotation, ProgramBase) or _safe_issubclass(annotation, DoExpr)
+    ):
         if not _safe_issubclass(annotation, EffectBaseType):
             return True
-    if isinstance(annotation, ForwardRef):
-        return _annotation_text_is_program_kind(annotation.__forward_arg__)
-    if isinstance(annotation, str):
-        return _annotation_text_is_program_kind(annotation)
     origin = get_origin(annotation)
-    if origin in (program_type, ProgramBase):
+    if origin in (program_type, ProgramBase, DoExpr):
         return True
     # Check origin for subclasses (e.g., MyProgram[T])
-    if isinstance(origin, type) and _safe_issubclass(origin, ProgramBase):
+    if isinstance(origin, type) and (
+        _safe_issubclass(origin, ProgramBase) or _safe_issubclass(origin, DoExpr)
+    ):
         if not _safe_issubclass(origin, EffectBaseType):
             return True
     if origin is Annotated:
@@ -163,10 +94,6 @@ def _is_effect_annotation_kind(annotation: Any) -> bool:
     # Check for subclasses of EffectBase
     if isinstance(annotation, type) and _safe_issubclass(annotation, EffectBase):
         return True
-    if isinstance(annotation, ForwardRef):
-        return _annotation_text_is_effect_kind(annotation.__forward_arg__)
-    if isinstance(annotation, str):
-        return _annotation_text_is_effect_kind(annotation)
     origin = get_origin(annotation)
     if origin in (Effect, EffectBase):
         return True
@@ -197,7 +124,7 @@ def _safe_get_type_hints(target: Any) -> dict[str, Any]:
 def _safe_signature(target: Any) -> inspect.Signature | None:
     try:
         return inspect.signature(target)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, NameError):
         return None
 
 
@@ -293,8 +220,8 @@ class _ProgramBaseMeta(ABCMeta):
 
 
 def _make_generator_program(
-    factory: Callable[[], Generator[Effect | Program, Any, T]],
-) -> GeneratorProgram[T]:
+    factory: "Callable[[], Generator[Effect | Program, Any, T]]",
+) -> "GeneratorProgram[T]":
     return _GenProgramThunk(factory)
 
 
@@ -324,7 +251,7 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
         """Allow ``Program[T]`` generic-style annotations."""
         return super().__class_getitem__(item)
 
-    def __getattr__(self, name: str) -> Program[Any]:
+    def __getattr__(self, name: str) -> "Program[Any]":
         """Lazily project an attribute from the eventual program result."""
 
         if name.startswith("__"):
@@ -344,15 +271,15 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 
         return self.map(mapper)
 
-    def __getitem__(self, key: Any) -> Program[Any]:
+    def __getitem__(self, key: Any) -> "Program[Any]":
         """Lazily project an item from the eventual program result."""
 
         return self.map(lambda value: value[key])
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Program[Any]:
+    def __call__(self, *args: Any, **kwargs: Any) -> "Program[Any]":
         """Invoke the eventual callable result with the provided arguments."""
 
-        def invoke_callable(func: Any) -> Program[Any]:
+        def invoke_callable(func: Any) -> "Program[Any]":
             if not callable(func):
                 raise TypeError(f"Program result {func!r} is not callable")
             arg_programs = [ProgramBase.lift(arg) for arg in args]
@@ -360,16 +287,14 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 
             from doeff.effects import gather
 
-            def gather_inputs() -> Generator[
-                Effect | Program, Any, tuple[list[Any], dict[str, Any]]
-            ]:
+            def gather_inputs() -> "Generator[Effect | Program, Any, tuple[list[Any], dict[str, Any]]]":
                 resolved_args = yield gather(*arg_programs)
                 kw_keys = list(kw_programs.keys())
                 kw_values = yield gather(*kw_programs.values())
                 resolved_kwargs = dict(zip(kw_keys, kw_values, strict=False))
                 return list(resolved_args), resolved_kwargs
 
-            def call_program() -> Generator[Effect | Program, Any, Any]:
+            def call_program() -> "Generator[Effect | Program, Any, Any]":
                 from doeff.types import EffectBase
 
                 resolved_args, resolved_kwargs = yield _make_generator_program(gather_inputs)
@@ -382,7 +307,7 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 
         return self.flat_map(invoke_callable)
 
-    def map(self, f: Callable[[T], U]) -> Program[U]:
+    def map(self, f: Callable[[T], U]) -> "Program[U]":
         """Map a function over this program's result."""
 
         if not callable(f):
@@ -392,7 +317,7 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
         mapper_meta = _callable_metadata_dict(f)
         return Map(self, f, mapper_meta=mapper_meta)
 
-    def flat_map(self, f: Callable[[T], Program[U]]) -> Program[U]:
+    def flat_map(self, f: "Callable[[T], Program[U]]") -> "Program[U]":
         """Monadic bind operation."""
 
         if not callable(f):
@@ -413,23 +338,23 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 
         return FlatMap(self, binder_factory, binder_meta=binder_meta)
 
-    def and_then_k(self, binder: Callable[[T], Program[U]]) -> Program[U]:
+    def and_then_k(self, binder: "Callable[[T], Program[U]]") -> "Program[U]":
         """Alias for flat_map for Kleisli-style composition."""
 
         return self.flat_map(binder)
 
     @staticmethod
-    def pure(value: T) -> Program[T]:
+    def pure(value: T) -> "Program[T]":
         from doeff_vm import Pure
 
         return Pure(value=value)
 
     @staticmethod
-    def of(value: T) -> Program[T]:
+    def of(value: T) -> "Program[T]":
         return ProgramBase.pure(value)
 
     @staticmethod
-    def lift(value: Program[U] | U) -> Program[U]:
+    def lift(value: "Program[U] | U") -> "Program[U]":
         from doeff_vm import DoExpr
 
         from doeff.types import EffectBase
@@ -445,7 +370,7 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
         return ProgramBase.pure(value)  # type: ignore[return-value]
 
     @staticmethod
-    def first_some(*programs: ProgramLike[V]) -> Program[Maybe[V]]:
+    def first_some(*programs: "ProgramLike[V]") -> "Program[Maybe[V]]":
         if not programs:
             raise ValueError("Program.first_some requires at least one program")
 
@@ -469,7 +394,7 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
         return _make_generator_program(first_some_generator)
 
     @staticmethod
-    def sequence(programs: list[Program[T]]) -> Program[list[T]]:
+    def sequence(programs: "list[Program[T]]") -> "Program[list[T]]":
         from doeff.effects.gather import gather
         from doeff.effects.spawn import spawn
 
@@ -484,34 +409,34 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
     @staticmethod
     def traverse(
         items: list[T],
-        func: Callable[[T], Program[U]],
-    ) -> Program[list[U]]:
+        func: "Callable[[T], Program[U]]",
+    ) -> "Program[list[U]]":
         programs = [func(item) for item in items]
         return ProgramBase.sequence(programs)
 
     @staticmethod
-    def list(*values: Program[U] | U) -> Program[list[U]]:
+    def list(*values: "Program[U] | U") -> "Program[list[U]]":
         from doeff._collection_combinators import _list
 
         return _list(*values)
 
     @staticmethod
-    def tuple(*values: Program[U] | U) -> Program[tuple[U, ...]]:
+    def tuple(*values: "Program[U] | U") -> "Program[tuple[U, ...]]":
         from doeff._collection_combinators import _tuple
 
         return _tuple(*values)
 
     @staticmethod
-    def set(*values: Program[U] | U) -> Program[set[U]]:
+    def set(*values: "Program[U] | U") -> "Program[set[U]]":
         from doeff._collection_combinators import _set
 
         return _set(*values)
 
     @staticmethod
     def dict(
-        *mapping: Mapping[Any, Program[V] | V] | Iterable[tuple[Any, Program[V] | V]],
-        **kwargs: Program[V] | V,
-    ) -> Program[dict[Any, V]]:
+        *mapping: "Mapping[Any, Program[V] | V] | Iterable[tuple[Any, Program[V] | V]]",
+        **kwargs: "Program[V] | V",
+    ) -> "Program[dict[Any, V]]":
         from doeff._collection_combinators import _dict
 
         return _dict(*mapping, **kwargs)
@@ -521,7 +446,7 @@ class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
 class _GenProgramThunk(ProgramBase[T]):
     """Program backed by a generator factory."""
 
-    factory: Callable[[], Generator[Effect | Program, Any, T]]
+    factory: "Callable[[], Generator[Effect | Program, Any, T]]"
 
     def to_generator(self) -> object:
         from doeff.do import make_doeff_generator
@@ -537,11 +462,11 @@ class ProgramProtocol(Protocol[T]):
     This protocol defines the core interface for effectful computations.
     """
 
-    def map(self, f: Callable[[T], U]) -> ProgramProtocol[U]:
+    def map(self, f: Callable[[T], U]) -> "ProgramProtocol[U]":
         """Map a function over the result of this program (functor map)."""
         ...
 
-    def flat_map(self, f: Callable[[T], ProgramProtocol[U]]) -> ProgramProtocol[U]:
+    def flat_map(self, f: "Callable[[T], ProgramProtocol[U]]") -> "ProgramProtocol[U]":
         """Monadic bind operation - chain programs sequentially."""
         ...
 

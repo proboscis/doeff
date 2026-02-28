@@ -10,14 +10,8 @@ The simplest workflow for implementing an issue:
 4. Mark the issue as resolved
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 from doeff import EffectGenerator, do
-
-if TYPE_CHECKING:
-    from ..types import Issue, PRHandle
+from ..types import Issue, PRHandle
 
 
 @do

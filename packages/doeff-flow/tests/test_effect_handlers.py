@@ -1,6 +1,5 @@
 """Tests for doeff-flow trace effects and handler maps."""
 
-from __future__ import annotations
 
 import json
 from pathlib import Path

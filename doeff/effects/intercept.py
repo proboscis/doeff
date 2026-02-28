@@ -1,7 +1,5 @@
 """Effect for intercepting programs."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -19,7 +17,7 @@ InterceptTransform = Callable[..., Any]
 
 
 def Intercept(
-    program: Program,
+    program: "Program",
     *transforms: InterceptTransform,
 ) -> Effect:
     if not transforms:

@@ -9,7 +9,6 @@ Design Decisions (from spec):
 3. Cancellation: Follow asyncio conventions (cancel() is sync request, CancelledError on join)
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar, runtime_checkable, Protocol

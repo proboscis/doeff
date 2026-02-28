@@ -8,8 +8,6 @@ Provides programmatic access to conductor functionality:
 - Manage environments
 """
 
-from __future__ import annotations
-
 import json
 import os
 import secrets
@@ -46,9 +44,9 @@ class ConductorAPI:
     def run_workflow(
         self,
         template_or_file: str,
-        issue: Issue | None = None,
+        issue: "Issue | None" = None,
         params: dict[str, Any] | None = None,
-    ) -> WorkflowHandle:
+    ) -> "WorkflowHandle":
         """Run a workflow template or file.
 
         Args:
@@ -232,8 +230,8 @@ class ConductorAPI:
 
     def list_workflows(
         self,
-        status: list[WorkflowStatus] | None = None,
-    ) -> list[WorkflowHandle]:
+        status: "list[WorkflowStatus] | None" = None,
+    ) -> "list[WorkflowHandle]":
         """List workflows with optional status filter."""
         from .types import WorkflowHandle
 
@@ -262,7 +260,7 @@ class ConductorAPI:
         workflows.sort(key=lambda w: w.updated_at, reverse=True)
         return workflows
 
-    def get_workflow(self, workflow_id: str) -> WorkflowHandle | None:
+    def get_workflow(self, workflow_id: str) -> "WorkflowHandle | None":
         """Get workflow by ID or prefix."""
         from .types import WorkflowHandle
 
@@ -369,7 +367,7 @@ class ConductorAPI:
     def list_environments(
         self,
         workflow_id: str | None = None,
-    ) -> list[WorktreeEnv]:
+    ) -> "list[WorktreeEnv]":
         """List worktree environments."""
         from .handlers.worktree_handler import _get_worktree_base_dir
         from .types import WorktreeEnv
@@ -477,7 +475,7 @@ class ConductorAPI:
 
         return cleaned
 
-    def _save_workflow(self, handle: WorkflowHandle) -> None:
+    def _save_workflow(self, handle: "WorkflowHandle") -> None:
         """Save workflow state to disk."""
         workflow_dir = self.workflows_dir / handle.id
         workflow_dir.mkdir(parents=True, exist_ok=True)

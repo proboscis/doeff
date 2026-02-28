@@ -1,6 +1,5 @@
 """Provider-agnostic embedding effects."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 

@@ -23,7 +23,6 @@ Example:
     >>> # slog messages are displayed to console AND accumulated in log
 """
 
-from __future__ import annotations
 
 from typing import Any
 

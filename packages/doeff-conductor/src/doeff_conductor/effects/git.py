@@ -4,8 +4,6 @@ This module keeps conductor-specific git effects for backward compatibility.
 New workflows should prefer direct use of ``doeff_git.effects``.
 """
 
-from __future__ import annotations
-
 import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -60,7 +58,7 @@ class Commit(ConductorEffectBase):
             return sha
     """
 
-    env: WorktreeEnv  # Worktree to commit in
+    env: "WorktreeEnv"  # Worktree to commit in
     message: str  # Commit message
     all: bool = True  # Stage all changes (git add -A)
 
@@ -83,7 +81,7 @@ class Push(ConductorEffectBase):
             yield Push(env=env)
     """
 
-    env: WorktreeEnv  # Worktree to push from
+    env: "WorktreeEnv"  # Worktree to push from
     remote: str = "origin"  # Remote name
     force: bool = False  # Force push
     set_upstream: bool = True  # Set upstream tracking
@@ -113,7 +111,7 @@ class CreatePR(ConductorEffectBase):
             return pr
     """
 
-    env: WorktreeEnv  # Worktree with changes
+    env: "WorktreeEnv"  # Worktree with changes
     title: str  # PR title
     body: str | None = None  # PR body
     target: str = "main"  # Target branch
@@ -133,8 +131,8 @@ class MergePR(ConductorEffectBase):
     Yields: bool (True if merged successfully)
     """
 
-    pr: PRHandle  # PR to merge
-    strategy: MergeStrategy | None = None  # Merge strategy (default: merge)
+    pr: "PRHandle"  # PR to merge
+    strategy: "MergeStrategy | None" = None  # Merge strategy (default: merge)
     delete_branch: bool = True  # Delete source branch after merge
 
     def __post_init__(self) -> None:

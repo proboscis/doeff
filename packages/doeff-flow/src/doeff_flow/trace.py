@@ -18,7 +18,6 @@ Example usage:
         result = run(my_workflow())
 """
 
-from __future__ import annotations
 
 import json
 import os

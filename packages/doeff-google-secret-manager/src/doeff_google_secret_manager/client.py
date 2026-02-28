@@ -1,6 +1,5 @@
 """Secret Manager client helpers integrated with doeff effects."""
 
-from __future__ import annotations
 
 from typing import Any
 

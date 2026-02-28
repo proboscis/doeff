@@ -9,7 +9,6 @@ This module defines the core data types for conductor orchestration:
 - PRHandle: Pull request handle
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -110,7 +109,7 @@ class Issue:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Issue:
+    def from_dict(cls, data: dict[str, Any]) -> "Issue":
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -166,7 +165,7 @@ class WorktreeEnv:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WorktreeEnv:
+    def from_dict(cls, data: dict[str, Any]) -> "WorktreeEnv":
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -207,7 +206,7 @@ class AgentRef:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgentRef:
+    def from_dict(cls, data: dict[str, Any]) -> "AgentRef":
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -248,7 +247,7 @@ class PRHandle:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PRHandle:
+    def from_dict(cls, data: dict[str, Any]) -> "PRHandle":
         """Create from dictionary."""
         return cls(
             url=data["url"],
@@ -299,7 +298,7 @@ class WorkflowHandle:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WorkflowHandle:
+    def from_dict(cls, data: dict[str, Any]) -> "WorkflowHandle":
         """Create from dictionary."""
         return cls(
             id=data["id"],

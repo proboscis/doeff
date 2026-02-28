@@ -1,6 +1,5 @@
 """Effect metadata for preset structured log display."""
 
-from __future__ import annotations
 
 from typing import Any
 

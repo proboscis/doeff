@@ -1,6 +1,5 @@
 """Public effect API for doeff."""
 
-from __future__ import annotations
 
 from .atomic import (
     AtomicGet,

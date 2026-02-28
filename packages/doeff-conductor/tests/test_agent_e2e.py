@@ -20,7 +20,6 @@ Example:
     pytest packages/doeff-conductor/tests/test_agent_e2e.py
 """
 
-from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path

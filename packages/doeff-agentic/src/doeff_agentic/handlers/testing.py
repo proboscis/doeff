@@ -1,9 +1,9 @@
 """Mock handlers for doeff-agentic effects used in tests and examples."""
 
-from __future__ import annotations
 
 import inspect
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path

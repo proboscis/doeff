@@ -2,8 +2,6 @@
 Issue handler for doeff-conductor.
 """
 
-from __future__ import annotations
-
 import re
 import secrets
 from datetime import datetime, timezone
@@ -86,7 +84,7 @@ class IssueHandler:
         self.issues_dir = issues_dir or _get_issues_dir()
         self.issues_dir.mkdir(parents=True, exist_ok=True)
 
-    def handle_create_issue(self, effect: CreateIssue) -> Issue:
+    def handle_create_issue(self, effect: "CreateIssue") -> "Issue":
         """Handle CreateIssue effect.
 
         Creates a new issue file with YAML frontmatter.
@@ -128,7 +126,7 @@ class IssueHandler:
             metadata=effect.metadata or {},
         )
 
-    def handle_list_issues(self, effect: ListIssues) -> list[Issue]:
+    def handle_list_issues(self, effect: "ListIssues") -> "list[Issue]":
         """Handle ListIssues effect.
 
         Lists issues from the issues directory with optional filters.
@@ -196,7 +194,7 @@ class IssueHandler:
 
         return issues
 
-    def handle_get_issue(self, effect: GetIssue) -> Issue:
+    def handle_get_issue(self, effect: "GetIssue") -> "Issue":
         """Handle GetIssue effect.
 
         Gets an issue by ID.
@@ -239,7 +237,7 @@ class IssueHandler:
             },
         )
 
-    def handle_resolve_issue(self, effect: ResolveIssue) -> Issue:
+    def handle_resolve_issue(self, effect: "ResolveIssue") -> "Issue":
         """Handle ResolveIssue effect.
 
         Updates an issue's status to resolved.

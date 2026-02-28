@@ -1,6 +1,5 @@
 """Built-in handlers for provider-independent secret workflows."""
 
-from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping

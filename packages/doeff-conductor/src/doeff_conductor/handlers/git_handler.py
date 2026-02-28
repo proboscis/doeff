@@ -4,8 +4,6 @@ This handler delegates git operations to doeff-git handlers while keeping
 conductor effect APIs stable.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from doeff_git.effects import (
@@ -64,7 +62,7 @@ class GitHandler:
             cwd=error.cwd,
         )
 
-    def handle_commit(self, effect: Commit) -> str:
+    def handle_commit(self, effect: "Commit") -> str:
         """Stage changes and create a commit. Returns commit SHA."""
         git_effect = GitCommit(
             work_dir=effect.env.path,
@@ -76,7 +74,7 @@ class GitHandler:
         except DomainGitCommandError as error:
             raise self._translate_error(error) from error
 
-    def handle_push(self, effect: Push) -> None:
+    def handle_push(self, effect: "Push") -> None:
         """Push branch to remote. Raises GitCommandError on failure."""
         git_effect = GitPush(
             work_dir=effect.env.path,
@@ -90,7 +88,7 @@ class GitHandler:
         except DomainGitCommandError as error:
             raise self._translate_error(error) from error
 
-    def handle_create_pr(self, effect: CreatePR) -> PRHandle:
+    def handle_create_pr(self, effect: "CreatePR") -> "PRHandle":
         """Create a pull request using gh CLI."""
         from doeff_conductor.types import PRHandle
 
@@ -118,7 +116,7 @@ class GitHandler:
             created_at=pr.created_at,
         )
 
-    def handle_merge_pr(self, effect: MergePR) -> None:
+    def handle_merge_pr(self, effect: "MergePR") -> None:
         """Merge a pull request using gh CLI. Raises GitCommandError on failure."""
         git_effect = GitMergePR(
             pr=GitPRHandle(

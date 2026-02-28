@@ -4,7 +4,6 @@
 `preset.*` keys.
 """
 
-from __future__ import annotations
 
 from doeff import AskEffect
 

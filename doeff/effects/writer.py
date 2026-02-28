@@ -1,6 +1,5 @@
 """Writer monad effects (Rust-backed core tell effect)."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 
