@@ -11,7 +11,6 @@ use crate::capture::{
     ActiveChainEntry, DispatchAction, EffectResult, HandlerDispatchEntry, HandlerKind,
     HandlerStatus, TraceEntry, TraceHop,
 };
-use crate::effect::{dispatch_to_pyobject, DispatchEffect};
 use crate::frame::CallMetadata;
 use crate::kleisli::KleisliRef;
 use crate::pyvm::{PyTraceFrame, PyTraceHop};
@@ -29,7 +28,6 @@ pub enum Value {
     String(String),
     Bool(bool),
     None,
-    DispatchEffect(Box<DispatchEffect>),
     Continuation(crate::continuation::Continuation),
     Handlers(Vec<KleisliRef>),
     Kleisli(KleisliRef),
@@ -325,7 +323,6 @@ impl Value {
             Value::String(s) => Ok(PyString::new(py, s).into_any()),
             Value::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
             Value::None => Ok(py.None().into_bound(py)),
-            Value::DispatchEffect(effect) => dispatch_to_pyobject(py, effect.as_ref()),
             Value::Continuation(k) => k.to_pyobject(py),
             Value::Handlers(handlers) => {
                 let list = PyList::empty(py);
@@ -506,7 +503,6 @@ impl Value {
             Value::String(s) => Value::String(s.clone()),
             Value::Bool(b) => Value::Bool(*b),
             Value::None => Value::None,
-            Value::DispatchEffect(effect) => Value::DispatchEffect(Box::new((**effect).clone())),
             Value::Continuation(k) => Value::Continuation(k.clone()),
             Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
             Value::Kleisli(kleisli) => Value::Kleisli(kleisli.clone()),
