@@ -2,14 +2,44 @@
 
 use pyo3::prelude::*;
 
-use crate::ir_stream::IRStreamRef;
 use crate::continuation::Continuation;
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
+use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::value::Value;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterceptMode {
+    Include,
+    Exclude,
+}
+
+impl InterceptMode {
+    pub fn from_str(mode: &str) -> Option<Self> {
+        match mode {
+            "include" => Some(Self::Include),
+            "exclude" => Some(Self::Exclude),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Include => "include",
+            Self::Exclude => "exclude",
+        }
+    }
+
+    pub fn should_invoke(self, matches_filter: bool) -> bool {
+        match self {
+            Self::Include => matches_filter,
+            Self::Exclude => !matches_filter,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum DoCtrl {
@@ -53,6 +83,8 @@ pub enum DoCtrl {
     WithIntercept {
         interceptor: KleisliRef,
         body: Box<DoCtrl>,
+        types: Option<Vec<PyShared>>,
+        mode: InterceptMode,
         metadata: Option<CallMetadata>,
     },
     Finally {
@@ -174,10 +206,14 @@ impl DoCtrl {
             DoCtrl::WithIntercept {
                 interceptor,
                 body,
+                types,
+                mode,
                 metadata,
             } => DoCtrl::WithIntercept {
                 interceptor: interceptor.clone(),
                 body: body.clone(),
+                types: types.clone(),
+                mode: *mode,
                 metadata: metadata.clone(),
             },
             DoCtrl::Finally { cleanup } => DoCtrl::Finally {

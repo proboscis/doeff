@@ -75,13 +75,19 @@ def _install_validated_runtime_api() -> None:
         coerced_handler = _coerce_handler(handler, api_name="WithHandler", role="handler")
         return raw_with_handler(coerced_handler, expr, return_clause)
 
-    def validated_with_intercept(f, expr, meta=None):
+    def validated_with_intercept(f, expr, types=None, mode="include", meta=None):
         coerced_interceptor = _coerce_handler(
             f,
             api_name="WithIntercept",
             role="interceptor",
         )
-        return raw_with_intercept(coerced_interceptor, expr, meta)
+        return raw_with_intercept(
+            coerced_interceptor,
+            expr,
+            types=types,
+            mode=mode,
+            meta=meta,
+        )
 
     def validated_run(program, handlers=(), env=None, store=None, trace=False):
         _validate_do_handler_annotations(handlers)
