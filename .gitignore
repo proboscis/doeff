@@ -83,3 +83,6 @@ VAULT
 !examples/
 ORCH_PROMPT.md
 .worktrees/
+
+# Local workspace artifacts
+python/
