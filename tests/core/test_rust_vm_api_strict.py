@@ -112,12 +112,10 @@ def test_run_normalizes_top_level_expr(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(
         program: object,
         *,
-        handlers: list[object],
         env: dict[str, object] | None,
         store: dict[str, object] | None,
     ) -> str:
         captured["program"] = program
-        captured["handlers"] = handlers
         captured["env"] = env
         captured["store"] = store
         return "ok"
@@ -254,7 +252,6 @@ def test_run_call_kwargs_skips_trace_when_signature_is_unavailable(
 
     kwargs = rust_vm_module._run_call_kwargs(
         object(),
-        handlers=[],
         env=None,
         store=None,
         trace=True,

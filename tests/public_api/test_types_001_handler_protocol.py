@@ -477,16 +477,6 @@ class TestHP11DoDecoratedHandler:
         ):
             sub.WithHandler(bad_handler, _prog(body))
 
-        with pytest.raises(
-            TypeError, match=r"@do handler first parameter must be annotated as Effect"
-        ):
-            sub.run(_prog(body), handlers=[bad_handler])
-
-        with pytest.raises(
-            TypeError, match=r"@do handler first parameter must be annotated as Effect"
-        ):
-            asyncio.run(sub.async_run(_prog(body), handlers=[bad_handler]))
-
     def test_do_decorated_handler_plain_return(self) -> None:
         @do
         def handler(effect: Effect, _k):

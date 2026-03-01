@@ -4278,22 +4278,16 @@ fn _debug_scheduler_semaphore_count(state_id: u64) -> Option<usize> {
 
 /// Module-level `run()` — the public API entry point.
 ///
-/// Creates a fresh VM, seeds env/store, wraps the program in a WithHandler
-/// nesting chain, and returns a `RunResult`.
+/// Creates a fresh VM, seeds env/store, and runs the program to completion.
 ///
-/// ADR-13: Handler installation goes through WithHandler nesting, not
-/// install_handler bypass. `run(prog, handlers=[h0, h1, h2])` is semantically
-/// equivalent to `WithHandler(h0, WithHandler(h1, WithHandler(h2, prog)))`.
-///
-/// `handlers` accepts a list of:
-///   - `RustHandler` sentinels: `state`, `reader`, `writer`, `result_safe`, `scheduler`, `lazy_ask`
-///   - Python handler callables
+/// Handler installation is performed by the Python layer via `WithHandler`
+/// nesting before calling this function. This ensures annotation-based type
+/// filtering is applied consistently (ADR-13).
 #[pyfunction]
-#[pyo3(signature = (program, handlers=None, env=None, store=None, trace=false))]
+#[pyo3(signature = (program, env=None, store=None, trace=false))]
 fn run(
     py: Python<'_>,
     program: Bound<'_, PyAny>,
-    handlers: Option<Bound<'_, pyo3::types::PyList>>,
     env: Option<Bound<'_, pyo3::types::PyDict>>,
     store: Option<Bound<'_, pyo3::types::PyDict>>,
     trace: bool,
@@ -4301,7 +4295,6 @@ fn run(
     let mut vm = PyVM { vm: VM::new() };
     vm.vm.enable_trace(trace);
 
-    // Seed env
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
             let k = HashedPyKey::from_bound(&key)?;
@@ -4309,7 +4302,6 @@ fn run(
         }
     }
 
-    // Seed store
     if let Some(store_dict) = store {
         for (key, value) in store_dict.iter() {
             let k: String = key.extract()?;
@@ -4317,36 +4309,7 @@ fn run(
         }
     }
 
-    // Build WithHandler nesting chain directly as DoCtrl objects.
-    // handlers=[h0, h1, h2] → WithHandler(h0, WithHandler(h1, WithHandler(h2, program)))
-    let mut wrapped: Py<PyAny> = program.unbind();
-
-    if let Some(handler_list) = handlers {
-        let items: Vec<_> = handler_list.iter().collect();
-        for handler_obj in items.into_iter().rev() {
-            wrapped = lift_effect_to_perform_expr(py, wrapped)?;
-            let wh = PyWithHandler {
-                handler: handler_obj.unbind(),
-                expr: wrapped,
-                types: None,
-                return_clause: None,
-                handler_name: None,
-                handler_file: None,
-                handler_line: None,
-            };
-            let bound = Bound::new(
-                py,
-                PyClassInitializer::from(PyDoExprBase)
-                    .add_subclass(PyDoCtrlBase {
-                        tag: DoExprTag::WithHandler as u8,
-                    })
-                    .add_subclass(wh),
-            )?;
-            wrapped = bound.into_any().unbind();
-        }
-    }
-
-    vm.run_with_result(py, wrapped.bind(py).clone())
+    vm.run_with_result(py, program)
 }
 
 /// Module-level `async_run()` — true async version of `run()`.
@@ -4356,11 +4319,10 @@ fn run(
 /// async interop. All other PythonCall variants are handled synchronously
 /// via the Rust-side `step_once()`.
 #[pyfunction]
-#[pyo3(signature = (program, handlers=None, env=None, store=None, trace=false))]
+#[pyo3(signature = (program, env=None, store=None, trace=false))]
 fn async_run<'py>(
     py: Python<'py>,
     program: Bound<'py, PyAny>,
-    handlers: Option<Bound<'py, pyo3::types::PyList>>,
     env: Option<Bound<'py, pyo3::types::PyDict>>,
     store: Option<Bound<'py, pyo3::types::PyDict>>,
     trace: bool,
@@ -4382,34 +4344,7 @@ fn async_run<'py>(
         }
     }
 
-    let mut wrapped: Py<PyAny> = program.unbind();
-
-    if let Some(handler_list) = handlers {
-        let items: Vec<_> = handler_list.iter().collect();
-        for handler_obj in items.into_iter().rev() {
-            wrapped = lift_effect_to_perform_expr(py, wrapped)?;
-            let wh = PyWithHandler {
-                handler: handler_obj.unbind(),
-                expr: wrapped,
-                types: None,
-                return_clause: None,
-                handler_name: None,
-                handler_file: None,
-                handler_line: None,
-            };
-            let bound = Bound::new(
-                py,
-                PyClassInitializer::from(PyDoExprBase)
-                    .add_subclass(PyDoCtrlBase {
-                        tag: DoExprTag::WithHandler as u8,
-                    })
-                    .add_subclass(wh),
-            )?;
-            wrapped = bound.into_any().unbind();
-        }
-    }
-
-    vm.start_with_expr(py, wrapped.bind(py).clone())?;
+    vm.start_with_expr(py, program)?;
 
     let py_vm = Bound::new(py, vm)?;
 
