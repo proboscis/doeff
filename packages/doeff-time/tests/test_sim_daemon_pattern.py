@@ -2,9 +2,11 @@
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
+from conftest import SIM_TIME_EPOCH, sim_time
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, WaitUntil, sim_time_handler
 
@@ -14,7 +16,7 @@ from doeff import Gather, Spawn, Wait, WithHandler, default_handlers, do, run
 def _run_sim(
     program: Any,
     *,
-    start_time: float = 0.0,
+    start_time: datetime = SIM_TIME_EPOCH,
 ):
     return run(
         WithHandler(sim_time_handler(start_time=start_time), program),
@@ -25,7 +27,7 @@ def _run_sim(
 def _run_sim_events(
     program: Any,
     *,
-    start_time: float = 0.0,
+    start_time: datetime = SIM_TIME_EPOCH,
 ):
     return run(
         WithHandler(
@@ -40,7 +42,7 @@ def _run_sim_events_with_watchdog(
     program_factory: Callable[[], Any],
     *,
     timeout_seconds: float = 2.0,
-    start_time: float = 0.0,
+    start_time: datetime = SIM_TIME_EPOCH,
 ):
     result: dict[str, Any] = {}
     error: dict[str, BaseException] = {}
@@ -91,7 +93,11 @@ class ScheduledEvent:
 
 
 def test_spawned_service_publishes_events_received_by_main() -> None:
-    historical_events = [(1.0, 0.1), (2.0, -0.2), (3.0, 0.3)]
+    historical_events = [
+        (sim_time(1.0), 0.1),
+        (sim_time(2.0), -0.2),
+        (sim_time(3.0), 0.3),
+    ]
 
     @do
     def news_fetcher_daemon():
@@ -109,29 +115,40 @@ def test_spawned_service_publishes_events_received_by_main() -> None:
             received.append((event.score, now))
         return received
 
-    result = _run_sim_events(main(), start_time=0.0)
-    assert result.value == [(0.1, 1.0), (-0.2, 2.0), (0.3, 3.0)]
+    result = _run_sim_events(main(), start_time=sim_time(0.0))
+    assert result.value == [
+        (0.1, sim_time(1.0)),
+        (-0.2, sim_time(2.0)),
+        (0.3, sim_time(3.0)),
+    ]
 
 
 def test_virtual_time_advances_across_multiple_spawned_tasks() -> None:
     @do
-    def worker(name: str, wake_at: float):
+    def worker(name: str, wake_at: datetime):
         yield WaitUntil(wake_at)
         return name, (yield GetTime())
 
     @do
     def program():
-        early = yield Spawn(worker("early", 5.0))
-        late = yield Spawn(worker("late", 10.0))
+        early = yield Spawn(worker("early", sim_time(5.0)))
+        late = yield Spawn(worker("late", sim_time(10.0)))
         results = yield Gather(early, late)
         return results, (yield GetTime())
 
-    result = _run_sim(program(), start_time=0.0)
-    assert result.value == ([("early", 5.0), ("late", 10.0)], 10.0)
+    result = _run_sim(program(), start_time=sim_time(0.0))
+    assert result.value == (
+        [("early", sim_time(5.0)), ("late", sim_time(10.0))],
+        sim_time(10.0),
+    )
 
 
 def test_news_signal_trade_pipeline_with_spawn_and_events() -> None:
-    historical_events = [(1.0, 0.1), (2.0, -0.2), (3.0, 0.3)]
+    historical_events = [
+        (sim_time(1.0), 0.1),
+        (sim_time(2.0), -0.2),
+        (sim_time(3.0), 0.3),
+    ]
 
     @do
     def news_fetcher_daemon():
@@ -172,8 +189,12 @@ def test_news_signal_trade_pipeline_with_spawn_and_events() -> None:
         yield Wait(signal_task)
         return trades
 
-    result = _run_sim_events(backtest(), start_time=0.0)
-    assert result.value == [(1.0, 1.0), (-2.0, 2.0), (3.0, 3.0)]
+    result = _run_sim_events(backtest(), start_time=sim_time(0.0))
+    assert result.value == [
+        (1.0, sim_time(1.0)),
+        (-2.0, sim_time(2.0)),
+        (3.0, sim_time(3.0)),
+    ]
 
 
 def test_main_program_returns_while_daemons_still_running() -> None:
@@ -195,7 +216,7 @@ def test_main_program_returns_while_daemons_still_running() -> None:
         yield Wait(publisher)
         return ready
 
-    result = _run_sim_events_with_watchdog(main, start_time=0.0)
+    result = _run_sim_events_with_watchdog(main, start_time=sim_time(0.0))
     assert result.value == ReadyEvent(value="done")
 
 
@@ -210,11 +231,11 @@ def test_schedule_at_composes_with_event_handler() -> None:
     def program():
         listener = yield Spawn(wait_and_return())
         now = yield GetTime()
-        yield ScheduleAt(now + 60.0, Publish(ScheduledEvent(name="market_open")))
+        yield ScheduleAt(now + timedelta(seconds=60.0), Publish(ScheduledEvent(name="market_open")))
         yield Delay(60.0)
         return (yield Wait(listener))
 
-    result = _run_sim_events(program(), start_time=1_000.0)
+    result = _run_sim_events(program(), start_time=sim_time(1_000.0))
     event, observed_time = result.value
     assert event == ScheduledEvent(name="market_open")
-    assert observed_time == 1_060.0
+    assert observed_time == sim_time(1_060.0)
