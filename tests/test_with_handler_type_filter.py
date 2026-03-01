@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import doeff_vm
 import pytest
 
-from doeff import Effect, EffectBase, do
+from doeff import Effect, EffectBase, async_run, do, run
 from doeff import rust_vm
 from doeff.rust_vm import WithHandler
 
@@ -112,7 +112,9 @@ def test_raw_doeff_vm_with_handler_validates_types_kwarg() -> None:
 
 
 @pytest.mark.asyncio
-async def test_with_handler_type_filter_skips_non_matching_effect(parameterized_interpreter) -> None:
+async def test_with_handler_type_filter_skips_non_matching_effect(
+    parameterized_interpreter,
+) -> None:
     seen: list[str] = []
 
     @do
@@ -150,7 +152,9 @@ async def test_with_handler_type_filter_matches_subclass(parameterized_interpret
 
 
 @pytest.mark.asyncio
-async def test_with_handler_effect_annotation_keeps_backward_compat(parameterized_interpreter) -> None:
+async def test_with_handler_effect_annotation_keeps_backward_compat(
+    parameterized_interpreter,
+) -> None:
     seen: list[str] = []
 
     @do
@@ -243,3 +247,46 @@ async def test_stacked_handlers_with_distinct_type_filters(parameterized_interpr
     assert tell_result.value == "tell:t"
 
     assert seen == ["ask:AskFx", "tell:TellFx"]
+
+
+def test_run_handlers_param_applies_type_filtering() -> None:
+    seen: list[str] = []
+
+    @do
+    def tell_only_handler(effect: TellFx, k):
+        seen.append(type(effect).__name__)
+        return (yield doeff_vm.Resume(k, f"handled_tell:{effect.message}"))
+
+    result = run(_ask_program(), handlers=[tell_only_handler, fallback_handler])
+    assert result.is_ok()
+    assert result.value == "fallback_ask:k"
+    assert seen == []
+
+
+def test_run_handlers_param_matches_correct_type() -> None:
+    seen: list[str] = []
+
+    @do
+    def tell_only_handler(effect: TellFx, k):
+        seen.append(type(effect).__name__)
+        return (yield doeff_vm.Resume(k, f"handled_tell:{effect.message}"))
+
+    result = run(_tell_program("hello"), handlers=[fallback_handler, tell_only_handler])
+    assert result.is_ok()
+    assert result.value == "handled_tell:hello"
+    assert seen == ["TellFx"]
+
+
+@pytest.mark.asyncio
+async def test_async_run_handlers_param_applies_type_filtering() -> None:
+    seen: list[str] = []
+
+    @do
+    def tell_only_handler(effect: TellFx, k):
+        seen.append(type(effect).__name__)
+        return (yield doeff_vm.Resume(k, f"handled_tell:{effect.message}"))
+
+    result = await async_run(_ask_program(), handlers=[tell_only_handler, fallback_handler])
+    assert result.is_ok()
+    assert result.value == "fallback_ask:k"
+    assert seen == []

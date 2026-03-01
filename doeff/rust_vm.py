@@ -1,4 +1,3 @@
-
 import importlib
 import inspect
 import types as py_types
@@ -385,6 +384,16 @@ def default_async_handlers() -> list[Any]:
     ]
 
 
+def _wrap_handlers(program: Any, handlers: Sequence[Any], *, api_name: str) -> Any:
+    # Rust VM run() sets types=None (catch-all); wrapping here ensures annotation-based filtering.
+    vm = _vm()
+    for handler in reversed(handlers):
+        handler = _coerce_handler(handler, api_name=api_name, role="handler")
+        types = _extract_handler_effect_types(handler)
+        program = vm.WithHandler(handler, program, types=types)
+    return program
+
+
 def run(
     program: Any,
     handlers: Sequence[Any] = (),
@@ -399,9 +408,10 @@ def run(
         raise RuntimeError("Installed doeff_vm module does not expose run()")
     raise_unhandled = isinstance(program, vm.EffectBase)
     program = _coerce_program(program)
+    program = _wrap_handlers(program, handlers, api_name="run()")
     kwargs = _run_call_kwargs(
         run_fn,
-        handlers=handlers,
+        handlers=(),
         env=_normalize_env(env),
         store=store,
         trace=trace,
@@ -426,9 +436,10 @@ async def async_run(
         raise RuntimeError("Installed doeff_vm module does not expose async_run()")
     raise_unhandled = isinstance(program, vm.EffectBase)
     program = _coerce_program(program)
+    program = _wrap_handlers(program, handlers, api_name="async_run()")
     kwargs = _run_call_kwargs(
         run_fn,
-        handlers=handlers,
+        handlers=(),
         env=_normalize_env(env),
         store=store,
         trace=trace,
