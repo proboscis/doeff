@@ -1,8 +1,10 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from conftest import SIM_TIME_EPOCH, sim_seconds, sim_time
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, SetTime, WaitUntil, sim_time_handler
 
@@ -26,8 +28,8 @@ from doeff.effects.spawn import PRIORITY_HIGH, SpawnEffect
 def _run_with_sim(
     program: Any,
     *,
-    start_time: float = 0.0,
-    log_formatter: Callable[[float, Any], str] | None = None,
+    start_time: datetime = SIM_TIME_EPOCH,
+    log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
     return run(
         WithHandler(
@@ -41,8 +43,8 @@ def _run_with_sim(
 def _run_with_sim_and_events(
     program: Any,
     *,
-    start_time: float = 0.0,
-    log_formatter: Callable[[float, Any], str] | None = None,
+    start_time: datetime = SIM_TIME_EPOCH,
+    log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
     return run(
         WithHandler(
@@ -70,7 +72,7 @@ def _run_with_probe(
     result = run(
         WithHandler(
             probe,
-            WithHandler(sim_time_handler(start_time=0.0), program),
+            WithHandler(sim_time_handler(start_time=sim_time(0.0)), program),
         ),
         handlers=default_handlers(),
     )
@@ -90,35 +92,36 @@ def test_delay_advances_virtual_clock() -> None:
         after = yield GetTime()
         return before, after
 
-    result = _run_with_sim(_program(), start_time=100.0)
-    assert result.value == (100.0, 105.0)
+    result = _run_with_sim(_program(), start_time=sim_time(100.0))
+    assert result.value == (sim_time(100.0), sim_time(105.0))
 
 
 def test_wait_until_advances_virtual_clock() -> None:
     @do
     def _program():
         before = yield GetTime()
-        yield WaitUntil(14.0)
+        yield WaitUntil(sim_time(14.0))
         after = yield GetTime()
         return before, after
 
-    result = _run_with_sim(_program(), start_time=10.0)
-    assert result.value == (10.0, 14.0)
+    result = _run_with_sim(_program(), start_time=sim_time(10.0))
+    assert result.value == (sim_time(10.0), sim_time(14.0))
 
 
 def test_get_time_returns_virtual_clock() -> None:
-    result = _run_with_sim(_read_time(), start_time=1_704_067_200.0)
-    assert result.value == 1_704_067_200.0
+    start = datetime(2024, 1, 2, tzinfo=timezone.utc)
+    result = _run_with_sim(_read_time(), start_time=start)
+    assert result.value == start
 
 
 def test_set_time_jumps_clock() -> None:
     @do
     def _program():
-        yield SetTime(42.0)
+        yield SetTime(sim_time(42.0))
         return (yield GetTime())
 
-    result = _run_with_sim(_program(), start_time=0.0)
-    assert result.value == 42.0
+    result = _run_with_sim(_program(), start_time=sim_time(0.0))
+    assert result.value == sim_time(42.0)
 
 
 def test_clock_never_advances_while_normal_tasks_runnable() -> None:
@@ -134,8 +137,8 @@ def test_clock_never_advances_while_normal_tasks_runnable() -> None:
         now = yield GetTime()
         return immediate_values, now
 
-    result = _run_with_sim(_program(), start_time=0.0)
-    assert result.value == ([0.0, 0.0], 0.0)
+    result = _run_with_sim(_program(), start_time=sim_time(0.0))
+    assert result.value == ([sim_time(0.0), sim_time(0.0)], sim_time(0.0))
 
 
 def test_concurrent_delays_resolve_in_time_order() -> None:
@@ -147,8 +150,8 @@ def test_concurrent_delays_resolve_in_time_order() -> None:
         second = yield GetTime()
         return first, second
 
-    result = _run_with_sim(_program(), start_time=0.0)
-    assert result.value == (1.0, 3.0)
+    result = _run_with_sim(_program(), start_time=sim_time(0.0))
+    assert result.value == (sim_time(1.0), sim_time(3.0))
 
 
 def test_clock_driver_only_runs_at_idle_priority() -> None:
@@ -164,8 +167,8 @@ def test_clock_driver_only_runs_at_idle_priority() -> None:
         now = yield GetTime()
         return worker_time, now
 
-    result = _run_with_sim(_program(), start_time=0.0)
-    assert result.value == (0.0, 1.0)
+    result = _run_with_sim(_program(), start_time=sim_time(0.0))
+    assert result.value == (sim_time(0.0), sim_time(1.0))
 
 
 def test_sim_time_preemption_preserves_each_task_wake_time() -> None:
@@ -186,16 +189,16 @@ def test_sim_time_preemption_preserves_each_task_wake_time() -> None:
         final_time = yield GetTime()
         return wake_times, final_time
 
-    result = _run_with_sim(Listen(_program()), start_time=10.0)
+    result = _run_with_sim(Listen(_program()), start_time=sim_time(10.0))
     listen_result = result.value
     wake_times, final_time = listen_result.value
 
-    assert wake_times == [11.0, 13.0, 12.0]
-    assert final_time == 13.0
+    assert wake_times == [sim_time(11.0), sim_time(13.0), sim_time(12.0)]
+    assert final_time == sim_time(13.0)
     assert list(listen_result.log) == [
-        ("t1", 10.0, 11.0),
-        ("t3", 10.0, 12.0),
-        ("t2", 10.0, 13.0),
+        ("t1", sim_time(10.0), sim_time(11.0)),
+        ("t3", sim_time(10.0), sim_time(12.0)),
+        ("t2", sim_time(10.0), sim_time(13.0)),
     ]
 
 
@@ -203,7 +206,7 @@ def test_multiple_tasks_delay_simultaneously() -> None:
     @do
     def _program():
         start = yield GetTime()
-        target = start + 1.0
+        target = start + timedelta(seconds=1.0)
         yield WaitUntil(target)
         first = yield GetTime()
         yield WaitUntil(target)
@@ -211,8 +214,8 @@ def test_multiple_tasks_delay_simultaneously() -> None:
         now = yield GetTime()
         return first, second, now
 
-    result = _run_with_sim(_program(), start_time=0.0)
-    assert result.value == (1.0, 1.0, 1.0)
+    result = _run_with_sim(_program(), start_time=sim_time(0.0))
+    assert result.value == (sim_time(1.0), sim_time(1.0), sim_time(1.0))
 
 
 def test_delegates_spawn_to_core_scheduler() -> None:
@@ -273,7 +276,7 @@ def test_spawn_runs_immediately_not_lazy() -> None:
         yield Publish("ready")
         return (yield Wait(listener_task))
 
-    result = _run_with_sim_and_events(_program(), start_time=0.0)
+    result = _run_with_sim_and_events(_program(), start_time=sim_time(0.0))
     assert result.value == "ready"
 
 
@@ -281,33 +284,33 @@ def test_schedule_at_fires_when_clock_passes_target() -> None:
     @do
     def _program():
         now = yield GetTime()
-        yield ScheduleAt(now + 5.0, Tell("scheduled"))
+        yield ScheduleAt(now + timedelta(seconds=5.0), Tell("scheduled"))
         yield Delay(5.0)
         return (yield GetTime())
 
-    result = _run_with_sim(Listen(_program()), start_time=10.0)
+    result = _run_with_sim(Listen(_program()), start_time=sim_time(10.0))
     listen_result = result.value
-    assert listen_result.value == 15.0
+    assert listen_result.value == sim_time(15.0)
     assert list(listen_result.log) == ["scheduled"]
 
 
 def test_schedule_at_past_time_fires_immediately() -> None:
     @do
     def _program():
-        yield SetTime(10.0)
-        yield ScheduleAt(5.0, Tell("past"))
+        yield SetTime(sim_time(10.0))
+        yield ScheduleAt(sim_time(5.0), Tell("past"))
         yield Delay(0.0)
         return (yield GetTime())
 
-    result = _run_with_sim(Listen(_program()), start_time=0.0)
+    result = _run_with_sim(Listen(_program()), start_time=sim_time(0.0))
     listen_result = result.value
-    assert listen_result.value == 10.0
+    assert listen_result.value == sim_time(10.0)
     assert list(listen_result.log) == ["past"]
 
 
 @dataclass(frozen=True)
 class MarketOpen:
-    time: float
+    time: datetime
 
 
 def test_composes_with_event_handler() -> None:
@@ -320,14 +323,14 @@ def test_composes_with_event_handler() -> None:
         listener_task = yield Spawn(_listener())
         yield Delay(0.0)
         now = yield GetTime()
-        expected_event = MarketOpen(time=now + 1.0)
+        expected_event = MarketOpen(time=now + timedelta(seconds=1.0))
         yield Publish(expected_event)
         return (yield Wait(listener_task))
 
-    result = _run_with_sim_and_events(_program(), start_time=1_704_067_200.0)
+    result = _run_with_sim_and_events(_program(), start_time=sim_time(1_704_067_200.0))
     event = result.value
     assert isinstance(event, MarketOpen)
-    assert event.time == 1_704_067_201.0
+    assert event.time == sim_time(1_704_067_201.0)
 
 
 def test_spawn_wait_for_event_publish_interleaving() -> None:
@@ -342,7 +345,7 @@ def test_spawn_wait_for_event_publish_interleaving() -> None:
         yield Publish("tick")
         return (yield Wait(listener_task))
 
-    result = _run_with_sim_and_events(_program(), start_time=0.0)
+    result = _run_with_sim_and_events(_program(), start_time=sim_time(0.0))
     assert result.value == "tick"
 
 
@@ -358,8 +361,8 @@ def test_log_formatter_stamps_tell_messages() -> None:
         Listen(
             WithHandler(
                 sim_time_handler(
-                    start_time=7.5,
-                    log_formatter=lambda sim_time, msg: f"[sim:{sim_time:.1f}] {msg}",
+                    start_time=sim_time(7.5),
+                    log_formatter=lambda current_time, msg: f"[sim:{sim_seconds(current_time):.1f}] {msg}",
                 ),
                 _program(),
             )

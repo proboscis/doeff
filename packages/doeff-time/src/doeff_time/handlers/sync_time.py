@@ -4,6 +4,7 @@
 import threading
 import time
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
 
 from doeff import Effect, Pass, Resume, WithHandler, default_handlers, do, run
@@ -12,13 +13,17 @@ from doeff_time.effects import DelayEffect, GetTimeEffect, ScheduleAtEffect, Wai
 ProtocolHandler = Callable[[Any, Any], Any]
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class SyncTimeRuntime:
     """Runtime container for sync wall-clock time effects."""
 
     def __init__(
         self,
         *,
-        now: Callable[[], float],
+        now: Callable[[], datetime],
         sleep: Callable[[float], None],
     ) -> None:
         self._now = now
@@ -47,7 +52,7 @@ class SyncTimeRuntime:
 
     @do
     def _handle_wait_until(self, effect: WaitUntilEffect, k: Any):
-        self._sleep(max(0.0, effect.target - self._now()))
+        self._sleep(max(0.0, (effect.target - self._now()).total_seconds()))
         return (yield Resume(k, None))
 
     @do
@@ -56,7 +61,7 @@ class SyncTimeRuntime:
 
     @do
     def _handle_schedule_at(self, effect: ScheduleAtEffect, k: Any):
-        wait_seconds = max(0.0, effect.time - self._now())
+        wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
         timer_holder: dict[str, threading.Timer] = {}
 
         def _dispatch() -> None:
@@ -84,7 +89,7 @@ class SyncTimeRuntime:
 
 def sync_time_handler(
     *,
-    now: Callable[[], float] = time.time,
+    now: Callable[[], datetime] = _utc_now,
     sleep: Callable[[float], None] = time.sleep,
 ) -> ProtocolHandler:
     """Return a protocol handler for blocking wall-clock time semantics."""
