@@ -21,9 +21,10 @@ Pattern mapping (proboscis-ema → doeff):
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any
 
+from conftest import SIM_TIME_EPOCH, sim_seconds, sim_time
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, SetTime, WaitUntil, sim_time_handler
 
@@ -39,17 +40,6 @@ from doeff import (
     do,
     run,
 )
-
-SIM_TIME_EPOCH = datetime(2024, 1, 1, tzinfo=timezone.utc)
-
-
-def sim_time(seconds: float) -> datetime:
-    return SIM_TIME_EPOCH + timedelta(seconds=seconds)
-
-
-def sim_seconds(value: datetime) -> float:
-    return (value - SIM_TIME_EPOCH).total_seconds()
-
 
 # ---------------------------------------------------------------------------
 # Test helpers
