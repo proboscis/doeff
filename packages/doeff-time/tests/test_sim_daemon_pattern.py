@@ -2,24 +2,15 @@
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
+from conftest import SIM_TIME_EPOCH, sim_time
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, WaitUntil, sim_time_handler
 
 from doeff import Gather, Spawn, Wait, WithHandler, default_handlers, do, run
-
-SIM_TIME_EPOCH = datetime(2024, 1, 1, tzinfo=timezone.utc)
-
-
-def sim_time(seconds: float) -> datetime:
-    return SIM_TIME_EPOCH + timedelta(seconds=seconds)
-
-
-def sim_seconds(value: datetime) -> float:
-    return (value - SIM_TIME_EPOCH).total_seconds()
 
 
 def _run_sim(

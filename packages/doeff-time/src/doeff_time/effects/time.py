@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from doeff.effects.base import Effect, EffectBase
+from doeff_time._internals.validation import ensure_aware_datetime
 
 
 def _coerce_finite_float(value: float, *, name: str) -> float:
@@ -16,14 +17,6 @@ def _coerce_finite_float(value: float, *, name: str) -> float:
     if math.isnan(coerced) or math.isinf(coerced):
         raise ValueError(f"{name} must be finite, got {value!r}")
     return coerced
-
-
-def _ensure_aware_datetime(value: datetime, *, name: str) -> datetime:
-    if not isinstance(value, datetime):
-        raise TypeError(f"{name} must be datetime, got {type(value).__name__}")
-    if value.tzinfo is None:
-        raise ValueError(f"{name} must be timezone-aware datetime")
-    return value
 
 
 @dataclass(frozen=True)
@@ -46,7 +39,7 @@ class WaitUntilEffect(EffectBase):
     target: datetime
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "target", _ensure_aware_datetime(self.target, name="target"))
+        object.__setattr__(self, "target", ensure_aware_datetime(self.target, name="target"))
 
 
 @dataclass(frozen=True)
@@ -62,7 +55,7 @@ class ScheduleAtEffect(EffectBase):
     program: Any
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "time", _ensure_aware_datetime(self.time, name="time"))
+        object.__setattr__(self, "time", ensure_aware_datetime(self.time, name="time"))
 
 
 @dataclass(frozen=True)
@@ -72,7 +65,7 @@ class SetTimeEffect(EffectBase):
     time: datetime
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "time", _ensure_aware_datetime(self.time, name="time"))
+        object.__setattr__(self, "time", ensure_aware_datetime(self.time, name="time"))
 
 
 def delay(seconds: float) -> DelayEffect:
