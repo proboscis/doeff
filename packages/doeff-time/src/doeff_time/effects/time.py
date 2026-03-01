@@ -3,6 +3,7 @@
 
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from doeff.effects.base import Effect, EffectBase
@@ -15,6 +16,14 @@ def _coerce_finite_float(value: float, *, name: str) -> float:
     if math.isnan(coerced) or math.isinf(coerced):
         raise ValueError(f"{name} must be finite, got {value!r}")
     return coerced
+
+
+def _ensure_aware_datetime(value: datetime, *, name: str) -> datetime:
+    if not isinstance(value, datetime):
+        raise TypeError(f"{name} must be datetime, got {type(value).__name__}")
+    if value.tzinfo is None:
+        raise ValueError(f"{name} must be timezone-aware datetime")
+    return value
 
 
 @dataclass(frozen=True)
@@ -32,45 +41,45 @@ class DelayEffect(EffectBase):
 
 @dataclass(frozen=True)
 class WaitUntilEffect(EffectBase):
-    """Wait until a specific epoch timestamp."""
+    """Wait until a specific timezone-aware datetime."""
 
-    target: float
+    target: datetime
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "target", _coerce_finite_float(self.target, name="target"))
+        object.__setattr__(self, "target", _ensure_aware_datetime(self.target, name="target"))
 
 
 @dataclass(frozen=True)
 class GetTimeEffect(EffectBase):
-    """Read current epoch time."""
+    """Read current timezone-aware datetime."""
 
 
 @dataclass(frozen=True)
 class ScheduleAtEffect(EffectBase):
-    """Schedule a program for execution at a specific epoch timestamp."""
+    """Schedule a program for execution at a specific timezone-aware datetime."""
 
-    time: float
+    time: datetime
     program: Any
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "time", _coerce_finite_float(self.time, name="time"))
+        object.__setattr__(self, "time", _ensure_aware_datetime(self.time, name="time"))
 
 
 @dataclass(frozen=True)
 class SetTimeEffect(EffectBase):
-    """Set current epoch time (simulation handlers may support this effect)."""
+    """Set current timezone-aware datetime (simulation handlers may support this effect)."""
 
-    time: float
+    time: datetime
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "time", _coerce_finite_float(self.time, name="time"))
+        object.__setattr__(self, "time", _ensure_aware_datetime(self.time, name="time"))
 
 
 def delay(seconds: float) -> DelayEffect:
     return DelayEffect(seconds=seconds)
 
 
-def wait_until(target: float) -> WaitUntilEffect:
+def wait_until(target: datetime) -> WaitUntilEffect:
     return WaitUntilEffect(target=target)
 
 
@@ -78,11 +87,11 @@ def get_time() -> GetTimeEffect:
     return GetTimeEffect()
 
 
-def schedule_at(time: float, program: Any) -> ScheduleAtEffect:
+def schedule_at(time: datetime, program: Any) -> ScheduleAtEffect:
     return ScheduleAtEffect(time=time, program=program)
 
 
-def set_time(time: float) -> SetTimeEffect:
+def set_time(time: datetime) -> SetTimeEffect:
     return SetTimeEffect(time=time)
 
 
@@ -90,7 +99,7 @@ def Delay(seconds: float) -> Effect:  # noqa: N802
     return DelayEffect(seconds=seconds)
 
 
-def WaitUntil(target: float) -> Effect:  # noqa: N802
+def WaitUntil(target: datetime) -> Effect:  # noqa: N802
     return WaitUntilEffect(target=target)
 
 
@@ -98,11 +107,11 @@ def GetTime() -> Effect:  # noqa: N802
     return GetTimeEffect()
 
 
-def ScheduleAt(time: float, program: Any) -> Effect:  # noqa: N802
+def ScheduleAt(time: datetime, program: Any) -> Effect:  # noqa: N802
     return ScheduleAtEffect(time=time, program=program)
 
 
-def SetTime(time: float) -> Effect:  # noqa: N802
+def SetTime(time: datetime) -> Effect:  # noqa: N802
     return SetTimeEffect(time=time)
 
 
