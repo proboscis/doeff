@@ -1,4 +1,3 @@
-
 from importlib import import_module
 
 _ext = import_module("doeff_vm.doeff_vm")
@@ -93,21 +92,11 @@ def _install_validated_runtime_api() -> None:
             meta=meta,
         )
 
-    def validated_run(program, handlers=(), env=None, store=None, trace=False):
-        _validate_do_handler_annotations(handlers)
-        coerced_handlers = _coerce_handlers(handlers, api_name="run()")
-        return raw_run(program, handlers=coerced_handlers, env=env, store=store, trace=trace)
+    def validated_run(program, env=None, store=None, trace=False):
+        return raw_run(program, env=env, store=store, trace=trace)
 
-    async def validated_async_run(program, handlers=(), env=None, store=None, trace=False):
-        _validate_do_handler_annotations(handlers)
-        coerced_handlers = _coerce_handlers(handlers, api_name="async_run()")
-        return await raw_async_run(
-            program,
-            handlers=coerced_handlers,
-            env=env,
-            store=store,
-            trace=trace,
-        )
+    async def validated_async_run(program, env=None, store=None, trace=False):
+        return await raw_async_run(program, env=env, store=store, trace=trace)
 
     def validated_doexpr_to_generator(self):
         from doeff.do import make_doeff_generator

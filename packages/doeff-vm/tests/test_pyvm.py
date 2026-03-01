@@ -1162,23 +1162,23 @@ def test_module_level_run_basic():
 
 def test_module_level_run_with_env_and_store():
     """G11: run() accepts env and store dicts to seed the VM."""
-    from doeff_vm import run, state
+    from doeff_vm import run, state, WithHandler
 
     @do
     def prog() -> Program[int]:
         val = yield Get("counter")
         return val
 
-    result = run(prog(), store={"counter": 99}, handlers=[state])
+    result = run(WithHandler(state, prog()), store={"counter": 99})
     assert result.is_ok()
     assert result.value == 99
 
 
 def test_module_level_run_with_state_handler():
-    """G11: run(program, handlers=[state]) installs state handler."""
-    from doeff_vm import run, state
+    """G11: run(WithHandler(state, program)) installs state handler."""
+    from doeff_vm import run, state, WithHandler
 
-    result = run(counter_program(), handlers=[state])
+    result = run(WithHandler(state, counter_program()))
     assert result.is_ok()
     assert result.value == 1
     # raw_store should contain the state
@@ -1186,10 +1186,10 @@ def test_module_level_run_with_state_handler():
 
 
 def test_module_level_run_with_writer_handler():
-    """G11: run(program, handlers=[writer]) installs writer handler."""
-    from doeff_vm import run, writer
+    """G11: run(WithHandler(writer, program)) installs writer handler."""
+    from doeff_vm import run, writer, WithHandler
 
-    result = run(logging_program(), handlers=[writer])
+    result = run(WithHandler(writer, logging_program()))
     assert result.is_ok()
     assert result.value == "completed"
 
@@ -1236,15 +1236,15 @@ class TestR9HandlerNesting:
         assert hasattr(doeff_vm, "reader"), "Module should export 'reader' sentinel"
         assert hasattr(doeff_vm, "writer"), "Module should export 'writer' sentinel"
 
-        from doeff_vm import run, state
+        from doeff_vm import run, state, WithHandler
 
-        result = run(counter_program(), handlers=[state])
+        result = run(WithHandler(state, counter_program()))
         assert result.is_ok()
         assert result.value == 1
 
     def test_run_sentinel_state_and_reader(self):
         """R9: run() with sentinel state + reader handlers."""
-        from doeff_vm import run, state, reader
+        from doeff_vm import run, state, reader, WithHandler
 
         @do
         def prog() -> Program[str]:
@@ -1252,13 +1252,15 @@ class TestR9HandlerNesting:
             name = yield Ask("name")
             return f"{name}={val}"
 
-        result = run(prog(), handlers=[state, reader], store={"x": 42}, env={"name": "count"})
+        result = run(
+            WithHandler(state, WithHandler(reader, prog())), store={"x": 42}, env={"name": "count"}
+        )
         assert result.is_ok()
         assert result.value == "count=42"
 
     def test_run_handler_ordering_is_deterministic(self):
         """R9 INV-16: Handler ordering must be deterministic across runs."""
-        from doeff_vm import run, state, reader, writer
+        from doeff_vm import run, state, reader, writer, WithHandler
 
         results = []
         for _ in range(20):
@@ -1270,7 +1272,9 @@ class TestR9HandlerNesting:
                 val = yield Get("x")
                 return val
 
-            result = run(prog(), handlers=[state, reader, writer], store={"x": 0})
+            result = run(
+                WithHandler(state, WithHandler(reader, WithHandler(writer, prog()))), store={"x": 0}
+            )
             assert result.is_ok()
             results.append(result.value)
 
@@ -1279,7 +1283,7 @@ class TestR9HandlerNesting:
 
     def test_run_with_python_handler_and_sentinel(self):
         """R9: run() accepts mixed Python handlers and sentinel handlers."""
-        from doeff_vm import run, state, Resume
+        from doeff_vm import run, state, Resume, WithHandler
 
         @do
         def my_handler(effect: Effect, k):
@@ -1297,7 +1301,7 @@ class TestR9HandlerNesting:
             val = yield Get("x")
             return val
 
-        result = run(prog(), handlers=[my_handler, state])
+        result = run(WithHandler(my_handler, WithHandler(state, prog())))
         assert result.is_ok()
         assert result.value == 10
 
@@ -1851,7 +1855,7 @@ def test_call_resolves_doexpr_args():
         result = yield adder(Pure(10), Pure(20))
         return result
 
-    result = vm_run(body(), handlers=[])
+    result = vm_run(body())
     assert result.is_ok(), f"Call arg resolution failed: {result.result}"
     assert result.value == 30
 
@@ -1869,7 +1873,7 @@ def test_call_with_mixed_value_and_expr_args():
         result = yield mixer(42, Pure(10), Pure(20))
         return result
 
-    result = vm_run(body(), handlers=[])
+    result = vm_run(body())
     assert result.is_ok(), f"Mixed Call argument resolution failed: {result.result}"
     assert result.value == 72
 
@@ -1887,7 +1891,7 @@ def test_call_with_all_value_args():
         result = yield adder(10, 20)
         return result
 
-    result = vm_run(body(), handlers=[])
+    result = vm_run(body())
     assert result.is_ok(), f"All-value Call invocation failed: {result.result}"
     assert result.value == 30
 
@@ -1909,7 +1913,7 @@ def test_call_resolves_nested_effectful_args_left_to_right():
         value = yield outer(inner(Ask("key")))
         return value
 
-    result = vm_run(body(), handlers=[doeff_vm.reader], env={"key": 4})
+    result = vm_run(doeff_vm.WithHandler(doeff_vm.reader, body()), env={"key": 4})
     assert result.is_ok(), f"Nested Call DoCtrl resolution failed: {result.result}"
     assert result.value == 15
 

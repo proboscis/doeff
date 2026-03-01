@@ -295,13 +295,11 @@ def _print_doeff_trace_if_present(run_result: Any) -> None:
 def _run_call_kwargs(
     run_fn: Any,
     *,
-    handlers: Sequence[Any],
     env: dict[str, Any] | None,
     store: dict[str, Any] | None,
     trace: bool,
 ) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
-        "handlers": list(handlers),
         "env": env,
         "store": store,
     }
@@ -411,7 +409,6 @@ def run(
     program = _wrap_handlers(program, handlers, api_name="run()")
     kwargs = _run_call_kwargs(
         run_fn,
-        handlers=(),
         env=_normalize_env(env),
         store=store,
         trace=trace,
@@ -439,7 +436,6 @@ async def async_run(
     program = _wrap_handlers(program, handlers, api_name="async_run()")
     kwargs = _run_call_kwargs(
         run_fn,
-        handlers=(),
         env=_normalize_env(env),
         store=store,
         trace=trace,
