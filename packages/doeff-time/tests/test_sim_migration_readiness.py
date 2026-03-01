@@ -21,9 +21,9 @@ Pattern mapping (proboscis-ema → doeff):
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import pytest
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, SetTime, WaitUntil, sim_time_handler
 
@@ -40,6 +40,16 @@ from doeff import (
     run,
 )
 
+SIM_TIME_EPOCH = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+
+def sim_time(seconds: float) -> datetime:
+    return SIM_TIME_EPOCH + timedelta(seconds=seconds)
+
+
+def sim_seconds(value: datetime) -> float:
+    return (value - SIM_TIME_EPOCH).total_seconds()
+
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -49,8 +59,8 @@ from doeff import (
 def _run_sim(
     program: Any,
     *,
-    start_time: float = 0.0,
-    log_formatter: Callable[[float, Any], str] | None = None,
+    start_time: datetime = SIM_TIME_EPOCH,
+    log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
     return run(
         WithHandler(
@@ -64,8 +74,8 @@ def _run_sim(
 def _run_sim_events(
     program: Any,
     *,
-    start_time: float = 0.0,
-    log_formatter: Callable[[float, Any], str] | None = None,
+    start_time: datetime = SIM_TIME_EPOCH,
+    log_formatter: Callable[[datetime, Any], str] | None = None,
 ):
     return run(
         WithHandler(
@@ -117,7 +127,7 @@ class TestConcurrentTaskDelayInterleaving:
         def _worker(label: str, delay_seconds: float):
             yield Delay(delay_seconds)
             now = yield GetTime()
-            return f"{label}@{now:.1f}"
+            return f"{label}@{sim_seconds(now):.1f}"
 
         @do
         def _program():
@@ -127,7 +137,7 @@ class TestConcurrentTaskDelayInterleaving:
             slow_result = yield Wait(slow)
             return fast_result, slow_result
 
-        result = _run_sim(_program(), start_time=0.0)
+        result = _run_sim(_program(), start_time=sim_time(0.0))
         assert result.value == ("fast@1.0", "slow@3.0")
 
     def test_three_tasks_ordered_by_delay_magnitude(self) -> None:
@@ -135,7 +145,7 @@ class TestConcurrentTaskDelayInterleaving:
         def _worker(label: str, delay_seconds: float):
             yield Delay(delay_seconds)
             now = yield GetTime()
-            return f"{label}@{now:.1f}"
+            return f"{label}@{sim_seconds(now):.1f}"
 
         @do
         def _program():
@@ -145,7 +155,7 @@ class TestConcurrentTaskDelayInterleaving:
             results = yield Gather(t1, t2, t3)
             return results
 
-        result = _run_sim(_program(), start_time=0.0)
+        result = _run_sim(_program(), start_time=sim_time(0.0))
         assert result.value == ["A@5.0", "B@2.0", "C@8.0"]
 
     def test_tasks_at_same_delay_both_see_same_time(self) -> None:
@@ -153,7 +163,7 @@ class TestConcurrentTaskDelayInterleaving:
         def _worker(label: str):
             yield Delay(5.0)
             now = yield GetTime()
-            return f"{label}@{now:.1f}"
+            return f"{label}@{sim_seconds(now):.1f}"
 
         @do
         def _program():
@@ -161,7 +171,7 @@ class TestConcurrentTaskDelayInterleaving:
             t2 = yield Spawn(_worker("Y"))
             return (yield Gather(t1, t2))
 
-        result = _run_sim(_program(), start_time=10.0)
+        result = _run_sim(_program(), start_time=sim_time(10.0))
         assert result.value == ["X@15.0", "Y@15.0"]
 
 
@@ -211,15 +221,13 @@ class TestMultiServiceBacktestPattern:
             yield Spawn(_price_feed())
             return (yield Wait(strategy_task))
 
-        result = _run_sim_events(_program(), start_time=0.0)
+        result = _run_sim_events(_program(), start_time=sim_time(0.0))
         signals = result.value
         assert len(signals) == 3
         assert [s.price for s in signals] == [100.0, 101.5, 99.0]
 
     def test_three_services_coordinate_via_events(self) -> None:
         """Three services run concurrently: feed → processor → collector."""
-        collected: list[str] = []
-
         @do
         def _feed_service():
             for i in range(3):
@@ -256,7 +264,7 @@ class TestMultiServiceBacktestPattern:
             yield Spawn(_feed_service())
             return (yield Wait(collector))
 
-        result = _run_sim_events(_program(), start_time=0.0)
+        result = _run_sim_events(_program(), start_time=sim_time(0.0))
         fills = result.value
         assert len(fills) == 3
         assert [f.trade_id for f in fills] == ["T0", "T1", "T2"]
@@ -283,7 +291,7 @@ class TestRaceTimeVsEvent:
 
         @do
         def _wait_for_time():
-            yield WaitUntil(10.0)
+            yield WaitUntil(sim_time(10.0))
             return "time_expired"
 
         @do
@@ -299,17 +307,17 @@ class TestRaceTimeVsEvent:
             now = yield GetTime()
             return winner, now
 
-        result = _run_sim_events(_program(), start_time=0.0)
+        result = _run_sim_events(_program(), start_time=sim_time(0.0))
         race_result, final_time = result.value
         assert race_result.value == "time_expired"
-        assert final_time == 10.0
+        assert final_time == sim_time(10.0)
 
     def test_event_wins_when_arrives_before_expiry(self) -> None:
         """Close request arrives before holding period expires."""
 
         @do
         def _wait_for_time():
-            yield WaitUntil(100.0)
+            yield WaitUntil(sim_time(100.0))
             return "time_expired"
 
         @do
@@ -331,10 +339,10 @@ class TestRaceTimeVsEvent:
             now = yield GetTime()
             return winner, now
 
-        result = _run_sim_events(_program(), start_time=0.0)
+        result = _run_sim_events(_program(), start_time=sim_time(0.0))
         race_result, final_time = result.value
         assert race_result.value == "close_requested"
-        assert final_time == 5.0
+        assert final_time == sim_time(5.0)
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +394,7 @@ class TestEventDrivenStrategyLoop:
             yield Spawn(_market_feed())
             return (yield Wait(strategy_task))
 
-        result = _run_sim_events(_program(), start_time=0.0)
+        result = _run_sim_events(_program(), start_time=sim_time(0.0))
         assert result.value == [100.0, 200.0, 300.0]
         assert len(trade_log) == 3
 
@@ -420,7 +428,7 @@ class TestEventDrivenStrategyLoop:
             yield Spawn(_feed())
             return (yield Wait(strategy))
 
-        result = _run_sim_events(_program(), start_time=0.0)
+        result = _run_sim_events(_program(), start_time=sim_time(0.0))
         assert result.value == {"position": 60.0, "trades": 3}
 
 
@@ -443,11 +451,11 @@ class TestScheduleAtWithEvents:
         @do
         def _program():
             listener = yield Spawn(_listener())
-            yield ScheduleAt(5.0, Publish(MarketSignal(symbol="BTC", price=50000.0)))
+            yield ScheduleAt(sim_time(5.0), Publish(MarketSignal(symbol="BTC", price=50000.0)))
             yield Delay(5.0)
             return (yield Wait(listener))
 
-        result = _run_sim_events(_program(), start_time=0.0)
+        result = _run_sim_events(_program(), start_time=sim_time(0.0))
         assert isinstance(result.value, MarketSignal)
         assert result.value.price == 50000.0
 
@@ -465,16 +473,16 @@ class TestScheduleAtWithEvents:
         @do
         def _program():
             collector = yield Spawn(_collector())
-            yield ScheduleAt(3.0, Publish(MarketSignal(symbol="C", price=3.0)))
-            yield ScheduleAt(1.0, Publish(MarketSignal(symbol="A", price=1.0)))
-            yield ScheduleAt(2.0, Publish(MarketSignal(symbol="B", price=2.0)))
+            yield ScheduleAt(sim_time(3.0), Publish(MarketSignal(symbol="C", price=3.0)))
+            yield ScheduleAt(sim_time(1.0), Publish(MarketSignal(symbol="A", price=1.0)))
+            yield ScheduleAt(sim_time(2.0), Publish(MarketSignal(symbol="B", price=2.0)))
             # Drive clock in steps so collector can re-register between publications.
             yield Delay(1.0)
             yield Delay(1.0)
             yield Delay(1.0)
             return (yield Wait(collector))
 
-        result = _run_sim_events(_program(), start_time=0.0)
+        result = _run_sim_events(_program(), start_time=sim_time(0.0))
         assert result.value == ["A@1.0", "B@2.0", "C@3.0"]
 
 
@@ -499,7 +507,7 @@ class TestTaskFailurePropagation:
             task = yield Spawn(_failing_worker())
             return (yield Wait(task))
 
-        result = _run_sim(_program(), start_time=0.0)
+        result = _run_sim(_program(), start_time=sim_time(0.0))
         assert result.error is not None
         assert "simulated failure" in str(result.error)
 
@@ -522,7 +530,7 @@ class TestTaskFailurePropagation:
             t2 = yield Spawn(_bad_worker())
             return (yield Gather(t1, t2))
 
-        result = _run_sim(_program(), start_time=0.0)
+        result = _run_sim(_program(), start_time=sim_time(0.0))
         assert result.error is not None
 
 
@@ -537,12 +545,12 @@ class TestWaitUntilPastTime:
     def test_wait_until_past_does_not_advance_clock(self) -> None:
         @do
         def _program():
-            yield SetTime(100.0)
-            yield WaitUntil(50.0)
+            yield SetTime(sim_time(100.0))
+            yield WaitUntil(sim_time(50.0))
             return (yield GetTime())
 
-        result = _run_sim(_program(), start_time=0.0)
-        assert result.value == 100.0
+        result = _run_sim(_program(), start_time=sim_time(0.0))
+        assert result.value == sim_time(100.0)
 
     def test_wait_until_current_time_is_noop(self) -> None:
         @do
@@ -551,8 +559,8 @@ class TestWaitUntilPastTime:
             yield WaitUntil(now)
             return (yield GetTime())
 
-        result = _run_sim(_program(), start_time=42.0)
-        assert result.value == 42.0
+        result = _run_sim(_program(), start_time=sim_time(42.0))
+        assert result.value == sim_time(42.0)
 
 
 # ---------------------------------------------------------------------------
@@ -578,10 +586,10 @@ class TestGatherDelayedTasks:
             now = yield GetTime()
             return results, now
 
-        result = _run_sim(_program(), start_time=0.0)
+        result = _run_sim(_program(), start_time=sim_time(0.0))
         results, final_time = result.value
         assert results == ["fast", "slow", "medium"]
-        assert final_time == 5.0
+        assert final_time == sim_time(5.0)
 
     def test_gather_preserves_order_not_completion_order(self) -> None:
         """Results match the order tasks were passed to Gather, not completion time."""
@@ -599,8 +607,8 @@ class TestGatherDelayedTasks:
             t3 = yield Spawn(_worker(2.0))
             return (yield Gather(t1, t2, t3))
 
-        result = _run_sim(_program(), start_time=0.0)
-        assert result.value == [3.0, 1.0, 2.0]
+        result = _run_sim(_program(), start_time=sim_time(0.0))
+        assert result.value == [sim_time(3.0), sim_time(1.0), sim_time(2.0)]
 
 
 # ---------------------------------------------------------------------------
@@ -624,8 +632,8 @@ class TestSequentialDelays:
                 timestamps.append((yield GetTime()))
             return timestamps
 
-        result = _run_sim(_program(), start_time=0.0)
-        assert result.value == [1.0, 3.0, 6.0, 10.0]
+        result = _run_sim(_program(), start_time=sim_time(0.0))
+        assert result.value == [sim_time(1.0), sim_time(3.0), sim_time(6.0), sim_time(10.0)]
 
 
 # ---------------------------------------------------------------------------
@@ -658,8 +666,8 @@ class TestLogFormatterWithMultipleServices:
             Listen(
                 WithHandler(
                     sim_time_handler(
-                        start_time=100.0,
-                        log_formatter=lambda t, msg: f"[{t:.0f}] {msg}",
+                        start_time=sim_time(100.0),
+                        log_formatter=lambda t, msg: f"[{sim_seconds(t):.0f}] {msg}",
                     ),
                     _program(),
                 ),
@@ -704,7 +712,7 @@ class TestFullMiniBacktest:
         def _execute_trade(signal: MarketSignal):
             yield Delay(0.5)
             now = yield GetTime()
-            record = f"FILL:{signal.symbol}@{signal.price}:t={now:.1f}"
+            record = f"FILL:{signal.symbol}@{signal.price}:t={sim_seconds(now):.1f}"
             execution_log.append(record)
             return record
 
@@ -728,10 +736,10 @@ class TestFullMiniBacktest:
             final_time = yield GetTime()
             return {"results": results, "final_time": final_time}
 
-        result = _run_sim_events(_backtest(), start_time=0.0)
+        result = _run_sim_events(_backtest(), start_time=sim_time(0.0))
         backtest = result.value
         assert len(backtest["results"]) == 3
-        assert backtest["final_time"] == 4.0
+        assert backtest["final_time"] == sim_time(4.0)
         assert len(execution_log) == 3
 
     def test_backtest_with_log_formatter_traces_execution(self) -> None:
@@ -763,8 +771,8 @@ class TestFullMiniBacktest:
             Listen(
                 WithHandler(
                     sim_time_handler(
-                        start_time=0.0,
-                        log_formatter=lambda t, msg: f"[t={t:.0f}] {msg}",
+                        start_time=sim_time(0.0),
+                        log_formatter=lambda t, msg: f"[t={sim_seconds(t):.0f}] {msg}",
                     ),
                     WithHandler(event_handler(), _backtest()),
                 ),

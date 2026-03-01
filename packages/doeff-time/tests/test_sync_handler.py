@@ -1,5 +1,6 @@
 
 import time
+from datetime import datetime, timedelta, timezone
 
 from doeff_time.effects import Delay, WaitUntil
 from doeff_time.handlers import sync_time_handler
@@ -14,7 +15,7 @@ def _delay_program(seconds: float):
 
 
 @do
-def _wait_until_program(target: float):
+def _wait_until_program(target: datetime):
     yield WaitUntil(target)
 
 
@@ -36,7 +37,7 @@ def test_sync_delay_uses_wall_clock_sleep() -> None:
 
 
 def test_sync_wait_until_blocks_until_target_time() -> None:
-    target = time.time() + 0.03
+    target = datetime.now(timezone.utc) + timedelta(seconds=0.03)
     start = time.perf_counter()
     result = run(
         WithHandler(sync_time_handler(), _wait_until_program(target)),

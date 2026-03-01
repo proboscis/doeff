@@ -1,5 +1,6 @@
 
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from doeff_time.effects import Delay, WaitUntil
@@ -15,7 +16,7 @@ def _delay_program(seconds: float):
 
 
 @do
-def _wait_until_program(target: float):
+def _wait_until_program(target: datetime):
     yield WaitUntil(target)
 
 
@@ -39,7 +40,7 @@ async def test_async_delay_uses_wall_clock_sleep() -> None:
 
 @pytest.mark.asyncio
 async def test_async_wait_until_blocks_until_target_time() -> None:
-    target = time.time() + 0.03
+    target = datetime.now(timezone.utc) + timedelta(seconds=0.03)
     start = time.perf_counter()
     result = await async_run(
         WithHandler(async_time_handler(), _wait_until_program(target)),
