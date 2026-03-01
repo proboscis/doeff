@@ -2,8 +2,8 @@
 
 
 import asyncio
-import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from typing import Any
 
 from doeff import Await, Effect, Pass, Resume, WithHandler, async_run, default_handlers, do
@@ -12,13 +12,17 @@ from doeff_time.effects import DelayEffect, GetTimeEffect, ScheduleAtEffect, Wai
 ProtocolHandler = Callable[[Any, Any], Any]
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class AsyncTimeRuntime:
     """Runtime container for async wall-clock time effects."""
 
     def __init__(
         self,
         *,
-        now: Callable[[], float],
+        now: Callable[[], datetime],
         sleep: Callable[[float], Awaitable[Any]],
     ) -> None:
         self._now = now
@@ -74,7 +78,7 @@ class AsyncTimeRuntime:
 
     @do
     def _handle_wait_until(self, effect: WaitUntilEffect, k: Any):
-        wait_seconds = max(0.0, effect.target - self._now())
+        wait_seconds = max(0.0, (effect.target - self._now()).total_seconds())
         yield Await(self._sleep(wait_seconds))
         return (yield Resume(k, None))
 
@@ -85,7 +89,7 @@ class AsyncTimeRuntime:
     @do
     def _handle_schedule_at(self, effect: ScheduleAtEffect, k: Any):
         loop = asyncio.get_running_loop()
-        wait_seconds = max(0.0, effect.time - self._now())
+        wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
         loop.call_at(loop.time() + wait_seconds, self._schedule_program, effect.program)
         return (yield Resume(k, None))
 
@@ -104,7 +108,7 @@ class AsyncTimeRuntime:
 
 def async_time_handler(
     *,
-    now: Callable[[], float] = time.time,
+    now: Callable[[], datetime] = _utc_now,
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
 ) -> ProtocolHandler:
     """Return a protocol handler for wall-clock async time semantics."""

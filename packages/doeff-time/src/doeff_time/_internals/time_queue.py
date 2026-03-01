@@ -2,25 +2,18 @@
 
 
 import heapq
-import math
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from doeff.effects.spawn import Promise
 
-
-def _coerce_finite_float(value: float, *, name: str) -> float:
-    if not isinstance(value, (int, float)):
-        raise TypeError(f"{name} must be float, got {type(value).__name__}")
-    coerced = float(value)
-    if math.isnan(coerced) or math.isinf(coerced):
-        raise ValueError(f"{name} must be finite, got {value!r}")
-    return coerced
+from .validation import ensure_aware_datetime
 
 
 @dataclass(frozen=True)
 class TimeQueueEntry:
-    time: float
+    time: datetime
     sequence: int
     promise: Promise[Any]
 
@@ -28,10 +21,10 @@ class TimeQueueEntry:
 class TimeQueue:
     def __init__(self) -> None:
         self._sequence = 0
-        self._items: list[tuple[float, int, Promise[Any]]] = []
+        self._items: list[tuple[datetime, int, Promise[Any]]] = []
 
-    def push(self, time: float, promise: Promise[Any]) -> None:
-        target_time = _coerce_finite_float(time, name="time")
+    def push(self, time: datetime, promise: Promise[Any]) -> None:
+        target_time = ensure_aware_datetime(time, name="time")
         self._sequence += 1
         heapq.heappush(self._items, (target_time, self._sequence, promise))
 

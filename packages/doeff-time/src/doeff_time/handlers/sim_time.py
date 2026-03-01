@@ -3,6 +3,7 @@
 
 import heapq
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from doeff import (
@@ -28,7 +29,8 @@ from doeff_time.effects import (
 )
 
 ProtocolHandler = Callable[[Any, Any], Any]
-LogFormatter = Callable[[float, Any], str]
+LogFormatter = Callable[[datetime, Any], str]
+EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 class SimTimeRuntime:
@@ -37,7 +39,7 @@ class SimTimeRuntime:
     def __init__(
         self,
         *,
-        start_time: float,
+        start_time: datetime,
         log_formatter: LogFormatter | None,
     ) -> None:
         self._clock = SimClock(start_time)
@@ -45,7 +47,7 @@ class SimTimeRuntime:
         self._driver_running = False
         self._log_formatter = log_formatter
         self._schedule_sequence = 0
-        self._scheduled_programs: list[tuple[float, int, Any]] = []
+        self._scheduled_programs: list[tuple[datetime, int, Any]] = []
         self._forwarding_tell = False
 
         @do
@@ -75,19 +77,17 @@ class SimTimeRuntime:
         return None
 
     @do
-    def _wait_for_time(self, target_time: float):
+    def _wait_for_time(self, target_time: datetime):
         promise = yield CreatePromise()
         self._time_queue.push(target_time, promise)
         _ = yield self._ensure_clock_driver()
         yield Wait(promise.future)
-        return None
 
     @do
     def _run_due_scheduled_programs(self):
         while self._scheduled_programs and self._scheduled_programs[0][0] <= self._clock.current_time:
             _time, _sequence, program = heapq.heappop(self._scheduled_programs)
             yield program
-        return None
 
     @do
     def _handle_tell(self, effect: WriterTellEffect, k: Any):
@@ -99,11 +99,10 @@ class SimTimeRuntime:
         finally:
             self._forwarding_tell = False
         yield Transfer(k, result)
-        return None
 
     @do
     def _handle_delay(self, effect: DelayEffect, k: Any):
-        target_time = self._clock.current_time + effect.seconds
+        target_time = self._clock.current_time + timedelta(seconds=effect.seconds)
         _ = yield self._wait_for_time(target_time)
         _ = yield self._run_due_scheduled_programs()
         return (yield Resume(k, None))
@@ -159,7 +158,7 @@ class SimTimeRuntime:
 
 def sim_time_handler(
     *,
-    start_time: float = 0.0,
+    start_time: datetime = EPOCH_UTC,
     log_formatter: LogFormatter | None = None,
 ) -> ProtocolHandler:
     """Return a virtual-clock handler that delegates core concurrency effects."""

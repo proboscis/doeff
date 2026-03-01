@@ -1,6 +1,7 @@
 
 import asyncio
 import time
+from datetime import timedelta
 
 import pytest
 from doeff_time.effects import GetTime, ScheduleAt
@@ -20,7 +21,7 @@ def _make_marker_program(marker: dict[str, bool]):
 @do
 def _schedule_marker_program(marker: dict[str, bool], delay_seconds: float):
     current = yield GetTime()
-    yield ScheduleAt(current + delay_seconds, _make_marker_program(marker))
+    yield ScheduleAt(current + timedelta(seconds=delay_seconds), _make_marker_program(marker))
 
 
 def test_schedule_at_sync_executes_program_without_blocking_caller() -> None:

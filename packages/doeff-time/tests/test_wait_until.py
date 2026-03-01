@@ -1,15 +1,18 @@
 
+from datetime import datetime, timezone
+
 import pytest
 from doeff_time.effects import WaitUntil, WaitUntilEffect
 
 
 def test_wait_until_factory_creates_effect() -> None:
-    effect = WaitUntil(1_704_067_200.0)
+    target = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    effect = WaitUntil(target)
     assert isinstance(effect, WaitUntilEffect)
-    assert effect.target == 1_704_067_200.0
+    assert effect.target == target
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
-def test_wait_until_rejects_non_finite_target(value: float) -> None:
-    with pytest.raises(ValueError, match="target must be finite"):
-        WaitUntil(value)
+def test_wait_until_rejects_naive_target() -> None:
+    naive_target = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc).replace(tzinfo=None)
+    with pytest.raises(ValueError, match="target must be timezone-aware datetime"):
+        WaitUntil(naive_target)

@@ -1,5 +1,6 @@
 
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -9,3 +10,13 @@ EVENTS_PACKAGE_ROOT = ROOT / "packages" / "doeff-events" / "src"
 for package_root in (TIME_PACKAGE_ROOT, EVENTS_PACKAGE_ROOT):
     if str(package_root) not in sys.path:
         sys.path.insert(0, str(package_root))
+
+SIM_TIME_EPOCH = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+
+def sim_time(seconds: float) -> datetime:
+    return SIM_TIME_EPOCH + timedelta(seconds=seconds)
+
+
+def sim_seconds(value: datetime) -> float:
+    return (value - SIM_TIME_EPOCH).total_seconds()
