@@ -136,6 +136,22 @@ def test_withhandler_accepts_rust_handler() -> None:
     assert type(ctrl).__name__ == "WithHandler"
 
 
+def test_withhandler_public_import_matches_rust_vm_type_extraction() -> None:
+    from doeff import WithHandler as doeff_withhandler
+    from doeff.rust_vm import WithHandler as rust_vm_withhandler
+
+    @do
+    def typed_handler(_effect: Ping, _k):
+        yield Pass()
+
+    doeff_ctrl = doeff_withhandler(typed_handler, body())
+    rust_ctrl = rust_vm_withhandler(typed_handler, body())
+
+    assert doeff_ctrl.types == (Ping,)
+    assert rust_ctrl.types == (Ping,)
+    assert doeff_withhandler is rust_vm_withhandler
+
+
 def test_run_accepts_do_decorated_handler() -> None:
     result = run(body(), handlers=[do_handler])
     assert result.is_ok()
