@@ -66,12 +66,12 @@ class TestG8ImportPaths:
 
         assert K is not None
 
-    def test_identity_matches_doeff_vm(self) -> None:
-        """doeff.WithHandler is doeff_vm.WithHandler (same object)."""
+    def test_identity_matches_public_exports(self) -> None:
+        """doeff.WithHandler is doeff.rust_vm.WithHandler (same object)."""
         import doeff
         import doeff_vm
 
-        assert doeff.WithHandler is doeff_vm.WithHandler
+        assert doeff.WithHandler is doeff.rust_vm.WithHandler
         assert doeff.Resume is doeff_vm.Resume
         assert doeff.Delegate is doeff_vm.Delegate
         assert doeff.Transfer is doeff_vm.Transfer
