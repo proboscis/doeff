@@ -21,6 +21,7 @@ use crate::effect::{
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
     PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySpawn, PyTaskCompleted,
+    TaskCancelledError,
 };
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
@@ -31,7 +32,7 @@ use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
 use crate::segment::ScopeStore;
 use crate::step::{DoCtrl, PyException};
-use crate::value::Value;
+use crate::value::{ExternalPromise, PromiseHandle, TaskHandle, Value};
 use crate::vm::RustStore;
 
 pub const SCHEDULER_HANDLER_NAME: &str = "SchedulerHandler";
@@ -139,25 +140,6 @@ pub enum TaskState {
 pub enum PromiseState {
     Pending,
     Done(Result<Value, PyException>),
-}
-
-/// Opaque handle to a spawned task.
-#[derive(Clone, Copy, Debug)]
-pub struct TaskHandle {
-    pub id: TaskId,
-}
-
-/// Opaque handle to a promise.
-#[derive(Clone, Copy, Debug)]
-pub struct PromiseHandle {
-    pub id: PromiseId,
-}
-
-/// External promise that can be completed from outside the scheduler.
-#[derive(Clone, Debug)]
-pub struct ExternalPromise {
-    pub id: PromiseId,
-    pub completion_queue: Option<PyShared>,
 }
 
 #[derive(Clone, Debug)]
@@ -805,11 +787,7 @@ fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyExce
 fn task_cancelled_error() -> PyException {
     Python::attach(|py| {
         let message = "Task was cancelled";
-        let cancelled = (|| -> PyResult<Bound<'_, PyAny>> {
-            let spawn_mod = py.import("doeff.effects.spawn")?;
-            let cls = spawn_mod.getattr("TaskCancelledError")?;
-            cls.call1((message,))
-        })();
+        let cancelled = py.get_type::<TaskCancelledError>().call1((message,));
 
         match cancelled {
             Ok(exc_obj) => pyobject_to_exception(py, &exc_obj),

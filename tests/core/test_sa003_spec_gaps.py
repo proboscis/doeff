@@ -11,9 +11,18 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 RUST_SRC = ROOT / "packages" / "doeff-vm" / "src"
+CORE_EFFECTS_SRC = ROOT / "packages" / "doeff-core-effects" / "src"
 
 
 def _read(path: Path) -> str:
+    if not path.exists() and path.parent == RUST_SRC:
+        fallback = {
+            "effect.rs": CORE_EFFECTS_SRC / "effects" / "mod.rs",
+            "handler.rs": CORE_EFFECTS_SRC / "handlers" / "mod.rs",
+            "scheduler.rs": CORE_EFFECTS_SRC / "scheduler" / "mod.rs",
+        }.get(path.name)
+        if fallback is not None and fallback.exists():
+            path = fallback
     return path.read_text(encoding="utf-8")
 
 

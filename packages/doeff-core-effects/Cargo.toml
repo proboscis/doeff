@@ -1,0 +1,19 @@
+[package]
+name = "doeff-core-effects"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "User-space effects, handlers, and scheduler for doeff"
+license = "MIT"
+repository = "https://github.com/proboscis/doeff"
+
+[lib]
+name = "doeff_core_effects"
+crate-type = ["rlib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["py-clone"] }
+doeff-vm-core = { path = "../doeff-vm-core" }
+
+[dev-dependencies]
+pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }
