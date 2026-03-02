@@ -3138,20 +3138,41 @@ impl VM {
                 })?;
 
         let mut selected: Option<(usize, HandlerChainEntry)> = None;
+        let mut first_type_filtered_skip: Option<(usize, HandlerChainEntry)> = None;
         for (idx, entry) in handler_chain.iter().enumerate() {
-            if entry.handler.can_handle(&effect)?
-                && self.should_invoke_handler(entry, &effect_obj).map_err(|err| {
-                    VMError::python_error(format!(
-                        "failed to evaluate WithHandler type filter: {err:?}"
-                    ))
-                })?
-            {
+            let can_handle = entry.handler.can_handle(&effect)?;
+            if !can_handle {
+                continue;
+            }
+
+            let should_invoke = self.should_invoke_handler(entry, &effect_obj).map_err(|err| {
+                VMError::python_error(format!(
+                    "failed to evaluate WithHandler type filter: {err:?}"
+                ))
+            })?;
+            if should_invoke {
                 selected = Some((idx, entry.clone()));
                 break;
             }
+
+            if first_type_filtered_skip.is_none() {
+                first_type_filtered_skip = Some((idx, entry.clone()));
+            }
         }
+        let mut bootstrap_with_pass = false;
         let (handler_idx, selected) = match selected {
-            Some(found) => found,
+            Some(found) => {
+                if let Some(skipped) = &first_type_filtered_skip {
+                    if skipped.0 < found.0 {
+                        bootstrap_with_pass = true;
+                        skipped.clone()
+                    } else {
+                        found
+                    }
+                } else {
+                    found
+                }
+            }
             None => {
                 if let Some(original) = original_exception.clone() {
                     self.current_seg_mut().mode = Mode::Throw(original);
@@ -3229,6 +3250,12 @@ impl VM {
                 .as_ref()
                 .map(|(_, _, _, source_line)| *source_line),
         );
+
+        // Preserve handler scope when a type-filtered handler is skipped: this mirrors the
+        // `Pass()` forwarding topology without invoking the skipped handler body.
+        if bootstrap_with_pass {
+            return Ok(self.handle_forward(ForwardKind::Pass, effect));
+        }
 
         if handler.py_identity().is_some() {
             self.register_continuation(k_user.clone());
