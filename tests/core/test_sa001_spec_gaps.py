@@ -25,6 +25,7 @@ from doeff.program import GeneratorProgram
 from doeff.rust_vm import default_handlers, run
 
 RUST_SRC = pathlib.Path(__file__).resolve().parents[2] / "packages" / "doeff-vm" / "src"
+CORE_EFFECTS_SRC = pathlib.Path(__file__).resolve().parents[2] / "packages" / "doeff-core-effects" / "src"
 
 
 def _prog(gen_factory):
@@ -33,7 +34,17 @@ def _prog(gen_factory):
 
 
 def _read_rust(filename: str) -> str:
-    return (RUST_SRC / filename).read_text()
+    primary = RUST_SRC / filename
+    if primary.exists():
+        return primary.read_text()
+    fallback = {
+        "effect.rs": CORE_EFFECTS_SRC / "effects" / "mod.rs",
+        "handler.rs": CORE_EFFECTS_SRC / "handlers" / "mod.rs",
+        "scheduler.rs": CORE_EFFECTS_SRC / "scheduler" / "mod.rs",
+    }.get(filename)
+    if fallback is not None and fallback.exists():
+        return fallback.read_text()
+    return primary.read_text()
 
 
 def _extract_fn_body(source: str, fn_name: str) -> str | None:

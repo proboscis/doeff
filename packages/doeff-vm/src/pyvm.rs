@@ -10,11 +10,8 @@ pyo3::create_exception!(doeff_vm, NoMatchingHandlerError, UnhandledEffectError);
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
-    dispatch_from_shared, dispatch_ref_as_python, PyAcquireSemaphore, PyAsk, PyCancelEffect,
-    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore,
-    PyExecutionContext, PyFailPromise, PyGather, PyGet, PyGetExecutionContext, PyLocal, PyModify,
-    PyProgramCallFrame, PyProgramCallStack, PyProgramTrace, PyPut, PyPythonAsyncioAwaitEffect,
-    PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn, PyTaskCompleted, PyTell,
+    dispatch_from_shared, dispatch_ref_as_python, PyExecutionContext, PyGetExecutionContext,
+    PyProgramCallStack, PyProgramTrace,
 };
 use crate::ir_stream::{IRStream, PythonGeneratorStream};
 use doeff_vm_core::{
@@ -24,15 +21,10 @@ use doeff_vm_core::{
 use doeff_core_effects::sentinels::PyRustHandlerSentinel;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
-use crate::handler::{
-    AwaitHandlerFactory, LazyAskHandlerFactory, ReaderHandlerFactory, ResultSafeHandlerFactory,
-    StateHandlerFactory, WriterHandlerFactory,
-};
 use crate::ids::Marker;
-use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli, RustKleisli};
+use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::scheduler::SchedulerHandler;
 #[allow(unused_imports)]
 use crate::segment::{Segment, SegmentKind};
 use crate::step::{Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent};
@@ -362,19 +354,6 @@ pub struct PyVM {
     vm: VM,
 }
 
-#[pyclass]
-pub struct PyStdlib {
-    state_marker: Option<Marker>,
-    reader_marker: Option<Marker>,
-    writer_marker: Option<Marker>,
-}
-
-#[pyclass]
-pub struct PySchedulerHandler {
-    handler: SchedulerHandler,
-    marker: Option<Marker>,
-}
-
 #[pymethods]
 impl PyVM {
     #[new]
@@ -455,21 +434,6 @@ impl PyVM {
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
         })
-    }
-
-    pub fn stdlib(&mut self) -> PyStdlib {
-        PyStdlib {
-            state_marker: None,
-            reader_marker: None,
-            writer_marker: None,
-        }
-    }
-
-    pub fn scheduler(&self) -> PySchedulerHandler {
-        PySchedulerHandler {
-            handler: SchedulerHandler::new(),
-            marker: None,
-        }
     }
 
     pub fn state_items(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -696,67 +660,6 @@ impl PyVM {
         Ok(())
     }
 
-    #[pyo3(signature = (program, state=false, reader=false, writer=false))]
-    pub fn run_scoped(
-        &mut self,
-        py: Python<'_>,
-        program: Bound<'_, PyAny>,
-        state: bool,
-        reader: bool,
-        writer: bool,
-    ) -> PyResult<Py<PyAny>> {
-        // Track markers installed in this scope so we can clean them up
-        let mut scoped_markers: Vec<Marker> = Vec::new();
-
-        if state {
-            let marker = Marker::fresh();
-            self.vm.install_handler(
-                marker,
-                Arc::new(RustKleisli::new(
-                    Arc::new(StateHandlerFactory),
-                    "StateHandler".to_string(),
-                )),
-                None,
-            );
-            scoped_markers.push(marker);
-        }
-
-        if reader {
-            let marker = Marker::fresh();
-            self.vm.install_handler(
-                marker,
-                Arc::new(RustKleisli::new(
-                    Arc::new(ReaderHandlerFactory),
-                    "ReaderHandler".to_string(),
-                )),
-                None,
-            );
-            scoped_markers.push(marker);
-        }
-
-        if writer {
-            let marker = Marker::fresh();
-            self.vm.install_handler(
-                marker,
-                Arc::new(RustKleisli::new(
-                    Arc::new(WriterHandlerFactory),
-                    "WriterHandler".to_string(),
-                )),
-                None,
-            );
-            scoped_markers.push(marker);
-        }
-
-        // Run the program
-        let result = self.run(py, program);
-
-        // Clean up: remove handlers installed in this scope
-        for marker in &scoped_markers {
-            self.vm.remove_handler(*marker);
-        }
-
-        result
-    }
 }
 
 impl PyVM {
@@ -965,91 +868,6 @@ impl PyVM {
             // Runtime callback arguments must receive the opaque K handle.
             Value::Continuation(k) => Ok(Bound::new(py, PyK::from_cont_id(k.cont_id))?.into_any()),
             _ => value.to_pyobject(py),
-        }
-    }
-}
-
-#[pymethods]
-impl PyStdlib {
-    #[getter]
-    pub fn state(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        if self.state_marker.is_none() {
-            self.state_marker = Some(Marker::fresh());
-        }
-        Ok(py.None())
-    }
-
-    #[getter]
-    pub fn reader(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        if self.reader_marker.is_none() {
-            self.reader_marker = Some(Marker::fresh());
-        }
-        Ok(py.None())
-    }
-
-    #[getter]
-    pub fn writer(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        if self.writer_marker.is_none() {
-            self.writer_marker = Some(Marker::fresh());
-        }
-        Ok(py.None())
-    }
-
-    pub fn install_state(&self, vm: &mut PyVM) {
-        if let Some(marker) = self.state_marker {
-            vm.vm.install_handler(
-                marker,
-                Arc::new(RustKleisli::new(
-                    Arc::new(StateHandlerFactory),
-                    "StateHandler".to_string(),
-                )),
-                None,
-            );
-        }
-    }
-
-    pub fn install_reader(&self, vm: &mut PyVM) {
-        if let Some(marker) = self.reader_marker {
-            vm.vm.install_handler(
-                marker,
-                Arc::new(RustKleisli::new(
-                    Arc::new(ReaderHandlerFactory),
-                    "ReaderHandler".to_string(),
-                )),
-                None,
-            );
-        }
-    }
-
-    pub fn install_writer(&self, vm: &mut PyVM) {
-        if let Some(marker) = self.writer_marker {
-            vm.vm.install_handler(
-                marker,
-                Arc::new(RustKleisli::new(
-                    Arc::new(WriterHandlerFactory),
-                    "WriterHandler".to_string(),
-                )),
-                None,
-            );
-        }
-    }
-}
-
-#[pymethods]
-impl PySchedulerHandler {
-    pub fn install(&mut self, vm: &mut PyVM) {
-        if self.marker.is_none() {
-            self.marker = Some(Marker::fresh());
-        }
-        if let Some(marker) = self.marker {
-            vm.vm.install_handler(
-                marker,
-                Arc::new(RustKleisli::new(
-                    Arc::new(self.handler.clone()),
-                    "SchedulerHandler".to_string(),
-                )),
-                None,
-            );
         }
     }
 }
@@ -3094,8 +2912,38 @@ impl NestingGenerator {
 mod tests {
     use super::*;
     use crate::ids::Marker;
+    use crate::kleisli::{Kleisli, KleisliDebugInfo, KleisliRef};
     use crate::segment::Segment;
     use pyo3::IntoPyObject;
+
+    #[derive(Debug)]
+    struct DummyRustHandler {
+        name: String,
+    }
+
+    impl Kleisli for DummyRustHandler {
+        fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+            unreachable!("dummy test handler should never be applied")
+        }
+
+        fn debug_info(&self) -> KleisliDebugInfo {
+            KleisliDebugInfo {
+                name: self.name.clone(),
+                file: Some("<test>".to_string()),
+                line: Some(0),
+            }
+        }
+
+        fn is_rust_builtin(&self) -> bool {
+            true
+        }
+    }
+
+    fn dummy_rust_handler(name: &str) -> KleisliRef {
+        Arc::new(DummyRustHandler {
+            name: name.to_string(),
+        })
+    }
 
     #[test]
     fn test_g2_withhandler_rust_sentinel_preserves_py_identity() {
@@ -3110,10 +2958,7 @@ mod tests {
             let sentinel = Bound::new(
                 py,
                 PyRustHandlerSentinel {
-                    kleisli: Arc::new(RustKleisli::new(
-                        Arc::new(StateHandlerFactory),
-                        "StateHandler".to_string(),
-                    )),
+                    kleisli: dummy_rust_handler("StateHandler"),
                 },
             )
             .unwrap()
@@ -3236,10 +3081,7 @@ mod tests {
             let sentinel = Bound::new(
                 py,
                 PyRustHandlerSentinel {
-                    kleisli: Arc::new(RustKleisli::new(
-                        Arc::new(StateHandlerFactory),
-                        "StateHandler".to_string(),
-                    )),
+                    kleisli: dummy_rust_handler("StateHandler"),
                 },
             )
             .unwrap()
@@ -3348,10 +3190,7 @@ mod tests {
             let sentinel = Bound::new(
                 py,
                 PyRustHandlerSentinel {
-                    kleisli: Arc::new(RustKleisli::new(
-                        Arc::new(StateHandlerFactory),
-                        "StateHandler".to_string(),
-                    )),
+                    kleisli: dummy_rust_handler("StateHandler"),
                 },
             )
             .unwrap()
@@ -3983,16 +3822,6 @@ mod tests {
 // Module-level functions [G11 / SPEC-008]
 // ---------------------------------------------------------------------------
 
-#[pyfunction]
-fn _notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
-    crate::scheduler::notify_semaphore_handle_dropped(state_id, semaphore_id);
-}
-
-#[pyfunction]
-fn _debug_scheduler_semaphore_count(state_id: u64) -> Option<usize> {
-    crate::scheduler::debug_semaphore_count_for_state(state_id)
-}
-
 /// Module-level `run()` — the public API entry point.
 ///
 /// Creates a fresh VM, seeds env/store, and runs the program to completion.
@@ -4123,8 +3952,6 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEffectBase>()?;
     m.add_class::<PyDoCtrlBase>()?;
     // PyDoThunkBase removed [R12-A]: DoThunk is a Python-side concept, not a VM concept.
-    m.add_class::<PyStdlib>()?;
-    m.add_class::<PySchedulerHandler>()?;
     m.add_class::<PyDoeffTracebackData>()?;
     m.add_class::<PyRunResult>()?;
     m.add_class::<PyResultOk>()?;
@@ -4194,8 +4021,6 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_ASYNC_ESCAPE", DoExprTag::AsyncEscape as u8)?;
     m.add("TAG_EFFECT", DoExprTag::Effect as u8)?;
     m.add("TAG_UNKNOWN", DoExprTag::Unknown as u8)?;
-    m.add_function(wrap_pyfunction!(_notify_semaphore_handle_dropped, m)?)?;
-    m.add_function(wrap_pyfunction!(_debug_scheduler_semaphore_count, m)?)?;
     m.add_function(wrap_pyfunction!(run, m)?)?;
     m.add_function(wrap_pyfunction!(async_run, m)?)?;
     Ok(())
