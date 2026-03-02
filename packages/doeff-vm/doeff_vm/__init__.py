@@ -127,8 +127,6 @@ DoExpr = _ext.DoExpr
 EffectBase = _ext.EffectBase
 DoCtrlBase = _ext.DoCtrlBase
 DoThunkBase = getattr(_ext, "DoThunkBase", None)
-PyStdlib = _ext.PyStdlib
-PySchedulerHandler = _ext.PySchedulerHandler
 PyVM = _ext.PyVM
 RunResult = _ext.RunResult
 DoeffTracebackData = _ext.DoeffTracebackData
@@ -259,6 +257,7 @@ PyFailPromise = FailPromiseEffect
 PyCreateExternalPromise = CreateExternalPromiseEffect
 TaskCancelEffect = PyCancelEffect
 PyTaskCompleted = _SchedulerTaskCompleted
+TaskCancelledError = _ext.TaskCancelledError
 
 __all__ = [
     "K",
@@ -307,12 +306,11 @@ __all__ = [
     "ProgramCallStackEffect",
     "ProgramCallFrameEffect",
     "TaskCancelEffect",
+    "TaskCancelledError",
     "_SchedulerTaskCompleted",
     "PyModify",
     "PyPut",
-    "PySchedulerHandler",
     "PyVM",
-    "PyStdlib",
     "PyTell",
     "Pure",
     "Resume",

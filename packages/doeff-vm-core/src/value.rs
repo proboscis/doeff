@@ -96,7 +96,10 @@ impl Value {
         py: Python<'py>,
         entry: &TraceEntry,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let trace_mod = py.import("doeff.trace").ok();
+        let trace_mod = py
+            .import("importlib")
+            .ok()
+            .and_then(|mod_| mod_.call_method1("import_module", ("doeff.trace",)).ok());
         match entry {
             TraceEntry::Frame {
                 frame_id,
