@@ -916,12 +916,6 @@ impl IRStreamFactory for LazyAskHandlerFactory {
 #[derive(Debug)]
 enum LazyAskPhase {
     Idle,
-    AwaitLocalHandlers {
-        continuation: Continuation,
-        sub_program: PyShared,
-        cache_snapshot: HashMap<HashedPyKey, LazyCacheEntry>,
-        semaphore_snapshot: HashMap<HashedPyKey, LazySemaphoreEntry>,
-    },
     AwaitLocalEval {
         continuation: Continuation,
         cache_snapshot: HashMap<HashedPyKey, LazyCacheEntry>,
@@ -933,13 +927,6 @@ enum LazyAskPhase {
         expr: PyShared,
         source_id: usize,
         semaphore: Option<Value>,
-    },
-    AwaitCache {
-        key: HashedPyKey,
-        continuation: Continuation,
-        expr: PyShared,
-        source_id: usize,
-        semaphore: Value,
     },
     AwaitEval {
         key: HashedPyKey,
@@ -970,10 +957,8 @@ impl LazyAskHandlerProgram {
     fn current_phase_name(&self) -> &'static str {
         match self.phase {
             LazyAskPhase::Idle => "Idle",
-            LazyAskPhase::AwaitLocalHandlers { .. } => "AwaitLocalHandlers",
             LazyAskPhase::AwaitLocalEval { .. } => "AwaitLocalEval",
             LazyAskPhase::AwaitAcquire { .. } => "AwaitAcquire",
-            LazyAskPhase::AwaitCache { .. } => "AwaitCache",
             LazyAskPhase::AwaitEval { .. } => "AwaitEval",
             LazyAskPhase::AwaitRelease { .. } => "AwaitRelease",
         }
@@ -1166,13 +1151,17 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 Ok(Some(local_effect)) => {
                     let (cache_snapshot, semaphore_snapshot) = self.snapshot_lazy_state();
                     scope.scope_bindings.push(Arc::new(local_effect.overrides));
-                    self.phase = LazyAskPhase::AwaitLocalHandlers {
+                    let eval_scope = k.clone();
+                    self.phase = LazyAskPhase::AwaitLocalEval {
                         continuation: k,
-                        sub_program: local_effect.sub_program,
                         cache_snapshot,
                         semaphore_snapshot,
                     };
-                    return IRStreamStep::Yield(DoCtrl::GetHandlers);
+                    return IRStreamStep::Yield(DoCtrl::EvalInScope {
+                        expr: local_effect.sub_program,
+                        scope: eval_scope,
+                        metadata: None,
+                    });
                 }
                 Ok(None) => {}
                 Err(msg) => {
@@ -1216,31 +1205,6 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
-            LazyAskPhase::AwaitLocalHandlers {
-                continuation,
-                sub_program,
-                cache_snapshot,
-                semaphore_snapshot,
-            } => {
-                let handlers = match value {
-                    Value::Handlers(handlers) => handlers,
-                    _ => {
-                        return IRStreamStep::Throw(PyException::type_error(
-                            "lazy Ask Local expected handlers from GetHandlers".to_string(),
-                        ));
-                    }
-                };
-                self.phase = LazyAskPhase::AwaitLocalEval {
-                    continuation,
-                    cache_snapshot,
-                    semaphore_snapshot,
-                };
-                IRStreamStep::Yield(DoCtrl::Eval {
-                    expr: sub_program,
-                    handlers,
-                    metadata: None,
-                })
-            }
             LazyAskPhase::AwaitLocalEval {
                 continuation,
                 cache_snapshot,
@@ -1278,40 +1242,16 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                     return self.begin_release_phase(continuation, Ok(cached), semaphore);
                 }
 
-                self.phase = LazyAskPhase::AwaitCache {
-                    key,
-                    continuation,
-                    expr,
-                    source_id,
-                    semaphore,
-                };
-                IRStreamStep::Yield(DoCtrl::GetHandlers)
-            }
-            LazyAskPhase::AwaitCache {
-                key,
-                continuation,
-                expr,
-                source_id,
-                semaphore,
-            } => {
-                let handlers = match value {
-                    Value::Handlers(handlers) => handlers,
-                    _ => {
-                        return IRStreamStep::Throw(PyException::type_error(
-                            "lazy Ask expected handlers from GetHandlers".to_string(),
-                        ));
-                    }
-                };
-
+                let eval_scope = continuation.clone();
                 self.phase = LazyAskPhase::AwaitEval {
                     key,
                     continuation,
                     source_id,
                     semaphore,
                 };
-                IRStreamStep::Yield(DoCtrl::Eval {
+                IRStreamStep::Yield(DoCtrl::EvalInScope {
                     expr,
-                    handlers,
+                    scope: eval_scope,
                     metadata: None,
                 })
             }
@@ -1345,13 +1285,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
-            LazyAskPhase::AwaitLocalHandlers {
-                continuation,
-                cache_snapshot,
-                semaphore_snapshot,
-                ..
-            }
-            | LazyAskPhase::AwaitLocalEval {
+            LazyAskPhase::AwaitLocalEval {
                 continuation,
                 cache_snapshot,
                 semaphore_snapshot,
@@ -1366,11 +1300,6 @@ impl IRStreamProgram for LazyAskHandlerProgram {
             LazyAskPhase::AwaitAcquire { continuation, .. } => {
                 Self::transfer_throw(continuation, exc)
             }
-            LazyAskPhase::AwaitCache {
-                continuation,
-                semaphore,
-                ..
-            } => self.begin_release_phase(continuation, Err(exc), semaphore),
             LazyAskPhase::AwaitEval {
                 continuation,
                 semaphore,
@@ -1735,13 +1664,7 @@ impl IRStreamFactory for ResultSafeHandlerFactory {
 #[derive(Debug)]
 enum ResultSafePhase {
     Idle,
-    AwaitHandlers {
-        continuation: Continuation,
-        sub_program: PyShared,
-    },
-    AwaitEval {
-        continuation: Continuation,
-    },
+    AwaitEval { continuation: Continuation },
 }
 
 #[derive(Debug)]
@@ -1759,7 +1682,6 @@ impl ResultSafeHandlerProgram {
     fn current_phase_name(&self) -> &'static str {
         match self.phase {
             ResultSafePhase::Idle => "Idle",
-            ResultSafePhase::AwaitHandlers { .. } => "AwaitHandlers",
             ResultSafePhase::AwaitEval { .. } => "AwaitEval",
         }
     }
@@ -1797,11 +1719,13 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_result_safe_python_effect(&obj) {
                 Ok(Some(sub_program)) => {
-                    self.phase = ResultSafePhase::AwaitHandlers {
-                        continuation: k,
-                        sub_program,
-                    };
-                    IRStreamStep::Yield(DoCtrl::GetHandlers)
+                    let eval_scope = k.clone();
+                    self.phase = ResultSafePhase::AwaitEval { continuation: k };
+                    IRStreamStep::Yield(DoCtrl::EvalInScope {
+                        expr: sub_program,
+                        scope: eval_scope,
+                        metadata: None,
+                    })
                 }
                 Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
@@ -1828,25 +1752,6 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
-            ResultSafePhase::AwaitHandlers {
-                continuation,
-                sub_program,
-            } => {
-                let handlers = match value {
-                    Value::Handlers(handlers) => handlers,
-                    _ => {
-                        return IRStreamStep::Throw(PyException::type_error(
-                            "ResultSafe handler expected GetHandlers result",
-                        ));
-                    }
-                };
-                self.phase = ResultSafePhase::AwaitEval { continuation };
-                IRStreamStep::Yield(DoCtrl::Eval {
-                    expr: sub_program,
-                    handlers,
-                    metadata: None,
-                })
-            }
             ResultSafePhase::AwaitEval { continuation } => self.finish_ok(continuation, value),
             ResultSafePhase::Idle => IRStreamStep::Return(value),
         }
@@ -1859,8 +1764,7 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
-            ResultSafePhase::AwaitHandlers { continuation, .. }
-            | ResultSafePhase::AwaitEval { continuation } => self.finish_err(continuation, exc),
+            ResultSafePhase::AwaitEval { continuation } => self.finish_err(continuation, exc),
             ResultSafePhase::Idle => IRStreamStep::Throw(exc),
         }
     }
@@ -2177,30 +2081,40 @@ mod tests {
     }
 
     #[test]
-    fn test_result_safe_ast_stream_handlers_to_eval_sequence() {
+    fn test_result_safe_ast_stream_eval_in_scope_sequence() {
         Python::attach(|py| {
             let mut store = RustStore::new();
             let mut scope = ScopeStore::default();
             let mut program = ResultSafeHandlerProgram::new();
             let continuation = make_test_continuation();
-            let sub_program =
-                PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any());
-            program.phase = ResultSafePhase::AwaitHandlers {
-                continuation,
-                sub_program,
-            };
+            let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item(
+                    "ResultSafeEffect",
+                    py.get_type::<crate::effect::PyResultSafeEffect>(),
+                )
+                .unwrap();
+            py.run(
+                c"obj = ResultSafeEffect(None)\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::from_shared(PyShared::new(obj));
 
-            let location = IRStream::debug_location(&program).expect("result safe debug location");
-            assert_eq!(location.function_name, "ResultSafeHandler");
-            assert_eq!(location.phase.as_deref(), Some("AwaitHandlers"));
-
-            let step = IRStream::resume(
+            let step = IRStreamProgram::start(
                 &mut program,
-                Value::Handlers(vec![]),
+                py,
+                effect,
+                continuation,
                 &mut store,
                 &mut scope,
             );
-            assert!(matches!(step, IRStreamStep::Yield(DoCtrl::Eval { .. })));
+            assert!(matches!(
+                step,
+                IRStreamStep::Yield(DoCtrl::EvalInScope { .. })
+            ));
 
             let location = IRStream::debug_location(&program).expect("result safe debug location");
             assert_eq!(location.phase.as_deref(), Some("AwaitEval"));
@@ -2545,16 +2459,7 @@ mod tests {
             };
             assert!(matches!(
                 start_step,
-                IRStreamStep::Yield(DoCtrl::GetHandlers)
-            ));
-
-            let await_eval_step = {
-                let mut guard = ok_program.lock().unwrap();
-                guard.resume(Value::Handlers(vec![]), &mut store, &mut scope)
-            };
-            assert!(matches!(
-                await_eval_step,
-                IRStreamStep::Yield(DoCtrl::Eval { .. })
+                IRStreamStep::Yield(DoCtrl::EvalInScope { .. })
             ));
 
             let ok_step = {

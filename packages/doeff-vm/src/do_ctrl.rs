@@ -133,7 +133,11 @@ pub enum DoCtrl {
     },
     Eval {
         expr: PyShared,
-        handlers: Vec<KleisliRef>,
+        metadata: Option<CallMetadata>,
+    },
+    EvalInScope {
+        expr: PyShared,
+        scope: Continuation,
         metadata: Option<CallMetadata>,
     },
     GetCallStack,
@@ -280,13 +284,17 @@ impl DoCtrl {
                 stream: stream.clone(),
                 metadata: metadata.clone(),
             },
-            DoCtrl::Eval {
-                expr,
-                handlers,
-                metadata,
-            } => DoCtrl::Eval {
+            DoCtrl::Eval { expr, metadata } => DoCtrl::Eval {
                 expr: PyShared::new(expr.clone_ref(py)),
-                handlers: handlers.clone(),
+                metadata: metadata.clone(),
+            },
+            DoCtrl::EvalInScope {
+                expr,
+                scope,
+                metadata,
+            } => DoCtrl::EvalInScope {
+                expr: PyShared::new(expr.clone_ref(py)),
+                scope: scope.clone(),
                 metadata: metadata.clone(),
             },
             DoCtrl::GetCallStack => DoCtrl::GetCallStack,
@@ -401,7 +409,7 @@ mod tests {
         let enum_body = doctrl_enum_body(src);
         let variant_count = count_top_level_variants(enum_body);
         assert_eq!(
-            variant_count, 25,
+            variant_count, 26,
             "DoCtrl variant count changed! New variants require explicit human approval."
         );
     }

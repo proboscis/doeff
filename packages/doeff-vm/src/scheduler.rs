@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::capture::{SpawnSite, TraceHop};
 use crate::continuation::Continuation;
 use crate::doeff_generator::DoeffGeneratorFn;
@@ -26,6 +25,7 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
+use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
@@ -745,12 +745,10 @@ fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<KleisliRef
         }
 
         if item.is_instance_of::<DoeffGeneratorFn>() {
-            let dgfn: PyRef<'_, DoeffGeneratorFn> =
-                item.extract().map_err(|e| format!("{e:?}"))?;
+            let dgfn: PyRef<'_, DoeffGeneratorFn> = item.extract().map_err(|e| format!("{e:?}"))?;
             let callable_identity = dgfn.callable.clone_ref(py);
-            let kleisli =
-                DgfnKleisli::from_dgfn(py, item.clone().unbind(), callable_identity)
-                    .map_err(|e| format!("{e:?}"))?;
+            let kleisli = DgfnKleisli::from_dgfn(py, item.clone().unbind(), callable_identity)
+                .map_err(|e| format!("{e:?}"))?;
             handlers.push(Arc::new(kleisli));
             continue;
         }
@@ -2923,8 +2921,8 @@ impl IRStreamFactory for SchedulerHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::capture::TraceFrame;
+    use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::pyvm::{DoExprTag, PyEffectBase};
     use pyo3::types::PyDict;
     use pyo3::{IntoPyObject, PyClassInitializer, Python};
@@ -3241,7 +3239,7 @@ mod tests {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state);
             let mut store = RustStore::new();
-        let mut _scope = ScopeStore::default();
+            let mut _scope = ScopeStore::default();
             let k_user = make_test_continuation();
             let k_user_id = k_user.cont_id;
             let spawn_program = py.None().into_pyobject(py).unwrap().unbind().into_any();
@@ -3268,13 +3266,23 @@ mod tests {
                     source_line: 321,
                 }],
             }];
-            let step = IRStream::resume(&mut program, Value::Traceback(traceback), &mut store, &mut _scope);
+            let step = IRStream::resume(
+                &mut program,
+                Value::Traceback(traceback),
+                &mut store,
+                &mut _scope,
+            );
             assert!(matches!(step, IRStreamStep::Yield(DoCtrl::GetHandlers)));
 
             let location = IRStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.phase.as_deref(), Some("SpawnAwaitHandlers"));
 
-            let step = IRStream::resume(&mut program, Value::Handlers(vec![]), &mut store, &mut _scope);
+            let step = IRStream::resume(
+                &mut program,
+                Value::Handlers(vec![]),
+                &mut store,
+                &mut _scope,
+            );
             assert!(matches!(
                 step,
                 IRStreamStep::Yield(DoCtrl::CreateContinuation { .. })
@@ -3393,7 +3401,7 @@ mod tests {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
             let mut store = RustStore::new();
-        let mut _scope = ScopeStore::default();
+            let mut _scope = ScopeStore::default();
 
             let waiter_k = make_test_continuation();
             let idle_k = make_test_continuation();
@@ -3443,8 +3451,14 @@ mod tests {
                     .unbind(),
             );
 
-            let step =
-                IRStreamProgram::start(&mut program, py, complete, idle_k.clone(), &mut store, &mut _scope);
+            let step = IRStreamProgram::start(
+                &mut program,
+                py,
+                complete,
+                idle_k.clone(),
+                &mut store,
+                &mut _scope,
+            );
             assert!(
                 step_targets_cont_id(&step, waiter_k.cont_id),
                 "higher-priority waiter must run first after promise completion, got {:?}",
@@ -3618,7 +3632,7 @@ mod tests {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
             let mut store = RustStore::new();
-        let mut _scope = ScopeStore::default();
+            let mut _scope = ScopeStore::default();
 
             let normal_k = make_test_continuation();
             let idle_driver_k = make_test_continuation();
@@ -3713,7 +3727,7 @@ mod tests {
             let mut driving_program = SchedulerProgram::new(shared_state.clone());
             let mut resolver_program = SchedulerProgram::new(shared_state.clone());
             let mut store = RustStore::new();
-        let mut _scope = ScopeStore::default();
+            let mut _scope = ScopeStore::default();
 
             let waiter_k = make_test_continuation();
             let running_k = make_test_continuation();
@@ -3802,7 +3816,8 @@ mod tests {
                     .expect("mark waiting task done");
             }
 
-            let stale_step = IRStream::resume(&mut driving_program, Value::Unit, &mut store, &mut _scope);
+            let stale_step =
+                IRStream::resume(&mut driving_program, Value::Unit, &mut store, &mut _scope);
 
             let mut waiter_activation_count = 0;
             if step_targets_cont_id(&resolver_step, waiter_k.cont_id) {
@@ -3836,7 +3851,7 @@ mod tests {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
             let mut store = RustStore::new();
-        let mut _scope = ScopeStore::default();
+            let mut _scope = ScopeStore::default();
 
             let idle_k = make_test_continuation();
             let normal_k = make_test_continuation();
@@ -3919,8 +3934,14 @@ mod tests {
                     .expect("None must convert")
                     .unbind(),
             );
-            let first_step =
-                IRStreamProgram::start(&mut program, py, wake_normal, idle_k.clone(), &mut store, &mut _scope);
+            let first_step = IRStreamProgram::start(
+                &mut program,
+                py,
+                wake_normal,
+                idle_k.clone(),
+                &mut store,
+                &mut _scope,
+            );
             assert!(
                 step_targets_cont_id(&first_step, normal_k.cont_id),
                 "first promise completion should preempt IDLE and run NORMAL, got {:?}",
@@ -3940,8 +3961,14 @@ mod tests {
                     .expect("None must convert")
                     .unbind(),
             );
-            let second_step =
-                IRStreamProgram::start(&mut program, py, wake_high, normal_k.clone(), &mut store, &mut _scope);
+            let second_step = IRStreamProgram::start(
+                &mut program,
+                py,
+                wake_high,
+                normal_k.clone(),
+                &mut store,
+                &mut _scope,
+            );
             assert!(
                 step_targets_cont_id(&second_step, normal_k.cont_id),
                 "nested preemption must be blocked while transfer is active, got {:?}",
@@ -3972,7 +3999,7 @@ mod tests {
             let state = Arc::new(Mutex::new(SchedulerState::new()));
             let mut program = SchedulerProgram::new(state.clone());
             let mut store = RustStore::new();
-        let mut _scope = ScopeStore::default();
+            let mut _scope = ScopeStore::default();
 
             let waiter_k = make_test_continuation();
             let idle_k = make_test_continuation();
@@ -4024,7 +4051,14 @@ mod tests {
                 .into_any();
             let fail = make_fail_promise_effect(py, promise_obj, error_obj);
 
-            let step = IRStreamProgram::start(&mut program, py, fail, idle_k.clone(), &mut store, &mut _scope);
+            let step = IRStreamProgram::start(
+                &mut program,
+                py,
+                fail,
+                idle_k.clone(),
+                &mut store,
+                &mut _scope,
+            );
             assert!(
                 matches!(
                     &step,
@@ -4092,7 +4126,12 @@ mod tests {
             spawn_site: None,
         };
 
-        let step = IRStream::resume(&mut program, Value::Continuation(spawned_k), &mut store, &mut _scope);
+        let step = IRStream::resume(
+            &mut program,
+            Value::Continuation(spawned_k),
+            &mut store,
+            &mut _scope,
+        );
         assert!(
             step_targets_cont_id(&step, caller_k.cont_id),
             "same-priority spawn should resume caller immediately, got {:?}",
@@ -4142,7 +4181,12 @@ mod tests {
             spawn_site: None,
         };
 
-        let step = IRStream::resume(&mut program, Value::Continuation(spawned_k), &mut store, &mut _scope);
+        let step = IRStream::resume(
+            &mut program,
+            Value::Continuation(spawned_k),
+            &mut store,
+            &mut _scope,
+        );
         assert!(
             step_targets_cont_id(&step, caller_k.cont_id),
             "lower-priority spawn should resume caller immediately, got {:?}",

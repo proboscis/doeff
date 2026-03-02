@@ -1166,7 +1166,6 @@ impl VM {
     }
 
     fn begin_finally_cleanup(&mut self, cleanup: PyShared, original: FinallyOutcome) -> StepEvent {
-        let handlers = self.current_visible_handlers();
         let seg = self.current_seg_mut();
         seg.kind = SegmentKind::Normal;
         seg.push_frame(Frame::EvalReturn(Box::new(
@@ -1174,7 +1173,6 @@ impl VM {
         )));
         seg.mode = Mode::HandleYield(DoCtrl::Eval {
             expr: cleanup,
-            handlers,
             metadata: None,
         });
         StepEvent::Continue
@@ -1296,6 +1294,20 @@ impl VM {
     ) -> StepEvent {
         if let EvalReturnContinuation::FinallyCleanup { original } = continuation {
             self.current_seg_mut().mode = Self::mode_after_finally_cleanup(original, mode);
+            return StepEvent::Continue;
+        }
+        if let EvalReturnContinuation::EvalInScopeReturn { continuation } = continuation {
+            self.current_seg_mut().mode = match mode {
+                Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Transfer {
+                    continuation,
+                    value,
+                }),
+                Mode::Throw(exception) => Mode::HandleYield(DoCtrl::ResumeThrow {
+                    continuation,
+                    exception,
+                }),
+                _ => unreachable!(),
+            };
             return StepEvent::Continue;
         }
         match mode {
@@ -1423,6 +1435,9 @@ impl VM {
                     kwargs,
                     metadata,
                 })
+            }
+            EvalReturnContinuation::EvalInScopeReturn { .. } => {
+                unreachable!("EvalInScopeReturn continuation is handled before value dispatch")
             }
             EvalReturnContinuation::FinallyCleanup { .. } => {
                 unreachable!("FinallyCleanup continuation is handled before value dispatch")
@@ -1907,10 +1922,8 @@ impl VM {
                 guard_eval_depth,
             })));
 
-            let handlers = self.current_visible_handlers();
             return Mode::HandleYield(DoCtrl::Eval {
                 expr: PyShared::new(result_obj),
-                handlers,
                 metadata: None,
             });
         }
@@ -2051,11 +2064,12 @@ impl VM {
                 metadata,
             } => self.handle_yield_expand(*factory, args, kwargs, metadata),
             DoCtrl::IRStream { stream, metadata } => self.handle_yield_ir_stream(stream, metadata),
-            DoCtrl::Eval {
+            DoCtrl::Eval { expr, metadata } => self.handle_yield_eval(expr, metadata),
+            DoCtrl::EvalInScope {
                 expr,
-                handlers,
+                scope,
                 metadata,
-            } => self.handle_yield_eval(expr, handlers, metadata),
+            } => self.handle_yield_eval_in_scope(expr, scope, metadata),
             DoCtrl::GetCallStack => self.handle_yield_get_call_stack(),
             DoCtrl::GetTrace => self.handle_yield_get_trace(),
         }
@@ -2417,14 +2431,76 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn handle_yield_eval(
-        &mut self,
-        expr: PyShared,
-        handlers: Vec<KleisliRef>,
-        metadata: Option<CallMetadata>,
-    ) -> StepEvent {
+    fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
+        let handlers = self.current_visible_handlers();
         let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
         self.handle_resume_continuation(cont, Value::None)
+    }
+
+    fn handle_yield_eval_in_scope(
+        &mut self,
+        expr: PyShared,
+        scope: Continuation,
+        metadata: Option<CallMetadata>,
+    ) -> StepEvent {
+        let Some(current_seg_id) = self.current_segment else {
+            return StepEvent::Error(VMError::internal(
+                "EvalInScope called without current segment",
+            ));
+        };
+        let Some(current_seg) = self.segments.get(current_seg_id) else {
+            return StepEvent::Error(VMError::internal("EvalInScope current segment not found"));
+        };
+        let return_to = Continuation::capture(current_seg, current_seg_id, current_seg.dispatch_id);
+
+        if self.segments.get(scope.segment_id).is_none() {
+            return StepEvent::Error(VMError::internal(
+                "EvalInScope received scope from unknown segment",
+            ));
+        }
+
+        let handler_entries = self.handlers_in_caller_chain(scope.segment_id);
+
+        // Evaluate in an isolated base segment so active handlers are exactly
+        // the scope-site handlers (no duplication with current caller chain),
+        // while inheriting dynamic scope/interceptor state from the call site.
+        let mut base_seg = Segment::new(Marker::fresh(), None);
+        self.copy_interceptor_guard_state(Some(current_seg_id), &mut base_seg);
+        self.copy_scope_store_from(Some(current_seg_id), &mut base_seg);
+        base_seg.push_frame(Frame::EvalReturn(Box::new(
+            EvalReturnContinuation::EvalInScopeReturn {
+                continuation: return_to,
+            },
+        )));
+        let base_seg_id = self.alloc_segment(base_seg);
+
+        let mut outside_seg_id = Some(base_seg_id);
+        for entry in handler_entries.into_iter().rev() {
+            let handler = entry.handler.clone();
+            let handler_marker = Marker::fresh();
+            let mut prompt_seg = Segment::new_prompt_with_types(
+                handler_marker,
+                outside_seg_id,
+                handler_marker,
+                handler.clone(),
+                entry.types.clone(),
+                None,
+            );
+            self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
+            self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
+            let prompt_seg_id = self.alloc_segment(prompt_seg);
+            self.track_run_handler(&handler);
+
+            let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
+            self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
+            self.copy_scope_store_from(outside_seg_id, &mut body_seg);
+            let body_seg_id = self.alloc_segment(body_seg);
+            outside_seg_id = Some(body_seg_id);
+        }
+
+        self.current_segment = outside_seg_id;
+        self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr { metadata });
+        StepEvent::NeedsPython(PythonCall::EvalExpr { expr })
     }
 
     fn handle_yield_get_call_stack(&mut self) -> StepEvent {
@@ -3036,12 +3112,13 @@ impl VM {
         effect: &DispatchEffect,
     ) -> Result<(usize, Marker, KleisliRef), VMError> {
         let effect_obj =
-            Python::attach(|py| dispatch_to_pyobject(py, effect).map(|obj| obj.unbind()))
-                .map_err(|err| {
+            Python::attach(|py| dispatch_to_pyobject(py, effect).map(|obj| obj.unbind())).map_err(
+                |err| {
                     VMError::python_error(format!(
                         "failed to convert dispatch effect to Python object: {err}"
                     ))
-                })?;
+                },
+            )?;
         for (idx, marker) in handler_chain.iter().copied().enumerate() {
             let Some((prompt_seg_id, handler, types)) = self.find_prompt_boundary_by_marker(marker)
             else {
@@ -3108,10 +3185,10 @@ impl VM {
                 return None;
             }
             let active_marker = *ctx.handler_chain.get(ctx.handler_idx)?;
-            let active_is_python = self
-                .find_prompt_boundary_by_marker(active_marker)
-                .is_some_and(|(_prompt_seg_id, handler, _types)| handler.py_identity().is_some());
-            if active_is_python && !Self::same_effect_python_type(&effect, &ctx.effect) {
+            let is_same_effect = Self::same_effect_python_type(&effect, &ctx.effect);
+            if !is_same_effect {
+                // Cross-effect yields from handler clauses should remain dispatchable.
+                // Only same-effect re-dispatch is excluded to prevent self-recursion.
                 return None;
             }
             self.find_prompt_boundary_in_caller_chain(seg_id, active_marker)
@@ -3145,11 +3222,13 @@ impl VM {
                 continue;
             }
 
-            let should_invoke = self.should_invoke_handler(entry, &effect_obj).map_err(|err| {
-                VMError::python_error(format!(
-                    "failed to evaluate WithHandler type filter: {err:?}"
-                ))
-            })?;
+            let should_invoke = self
+                .should_invoke_handler(entry, &effect_obj)
+                .map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to evaluate WithHandler type filter: {err:?}"
+                    ))
+                })?;
             if should_invoke {
                 selected = Some((idx, entry.clone()));
                 break;
@@ -4055,7 +4134,6 @@ impl VM {
             });
 
             if should_eval && self.is_interceptor_eval_idle() {
-                let handlers = self.current_visible_handlers();
                 let expr = Python::attach(|py| PyShared::new(obj.clone_ref(py)));
                 let marker = self.current_seg().marker;
                 let Some(seg) = self.current_segment_mut() else {
@@ -4067,7 +4145,6 @@ impl VM {
                 seg.push_frame(Frame::InterceptBodyReturn { marker });
                 self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Eval {
                     expr,
-                    handlers,
                     metadata: None,
                 });
                 return StepEvent::Continue;
@@ -4170,8 +4247,6 @@ impl VM {
         mapper: PyShared,
         mapper_meta: CallMetadata,
     ) -> StepEvent {
-        let handlers = self.current_visible_handlers();
-
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal("Map outside current segment"));
         };
@@ -4181,7 +4256,6 @@ impl VM {
         });
         self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Eval {
             expr: source,
-            handlers,
             metadata: None,
         });
         StepEvent::Continue
@@ -4193,8 +4267,6 @@ impl VM {
         binder: PyShared,
         binder_meta: CallMetadata,
     ) -> StepEvent {
-        let handlers = self.current_visible_handlers();
-
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal("FlatMap outside current segment"));
         };
@@ -4204,7 +4276,6 @@ impl VM {
         });
         self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Eval {
             expr: source,
-            handlers,
             metadata: None,
         });
         StepEvent::Continue
@@ -4232,6 +4303,11 @@ impl VM {
                 "GetHandlers called with missing dispatch context",
             ));
         };
+        // Preserve full caller-visible handler stack (top-most first).
+        //
+        // This is part of the public contract used by tests and user-space
+        // handlers. Continuation installation handles deduplication when these
+        // handlers are reapplied from within active dispatch contexts.
         let handlers = self
             .handlers_in_caller_chain(ctx.k_user.segment_id)
             .into_iter()
