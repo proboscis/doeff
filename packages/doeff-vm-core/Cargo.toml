@@ -1,0 +1,22 @@
+[package]
+name = "doeff-vm-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Core VM machinery for doeff"
+license = "MIT"
+repository = "https://github.com/proboscis/doeff"
+
+[lib]
+name = "doeff_vm_core"
+crate-type = ["rlib"]
+
+[features]
+default = []
+vm_debug_logs = []
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["py-clone"] }
+
+[dev-dependencies]
+pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }

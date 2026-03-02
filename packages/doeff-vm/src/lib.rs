@@ -1,43 +1,82 @@
-//! doeff-vm: Rust VM for algebraic effects with PyO3 Python bindings.
-//!
-//! This crate implements the VM specified in SPEC-008.
-//!
-//! # Architecture
-//!
-//! - **3-layer state model**: Internals / RustStore / PyStore
-//! - **Mode-based step machine**: Deliver, Throw, HandleYield, Return
-//! - **Segment-based continuations**: Arc snapshots for one-shot semantics
-//! - **All effects dispatch**: No bypass for stdlib effects
+//! doeff-vm: cdylib glue for VM core + core effects.
 
-pub mod arena;
-pub mod capture;
-pub mod continuation;
-mod debug_state;
-pub mod dispatch;
-mod dispatch_state;
-pub mod do_ctrl;
-pub mod doeff_generator;
-pub mod driver;
-mod effect;
-pub mod error;
-pub mod frame;
-mod handler;
-pub mod ids;
-mod interceptor_state;
-pub mod ir_stream;
-pub mod kleisli;
-pub mod py_key;
-pub mod py_shared;
-pub mod python_call;
+pub mod arena {
+    pub use doeff_vm_core::arena::*;
+}
+pub mod capture {
+    pub use doeff_vm_core::capture::*;
+}
+pub mod continuation {
+    pub use doeff_vm_core::continuation::*;
+}
+pub mod dispatch {
+    pub use doeff_vm_core::dispatch::*;
+}
+pub mod do_ctrl {
+    pub use doeff_vm_core::do_ctrl::*;
+}
+pub mod doeff_generator {
+    pub use doeff_vm_core::doeff_generator::*;
+}
+pub mod driver {
+    pub use doeff_vm_core::driver::*;
+}
+pub mod effect {
+    pub use doeff_core_effects::effects::*;
+    pub use doeff_vm_core::effect::{
+        make_execution_context_object, make_get_execution_context_effect, PyExecutionContext,
+        PyGetExecutionContext,
+    };
+}
+pub mod error {
+    pub use doeff_vm_core::error::*;
+}
+pub mod frame {
+    pub use doeff_vm_core::frame::*;
+}
+mod handler {
+    pub use doeff_core_effects::handlers::*;
+    pub use doeff_vm_core::handler::*;
+}
+pub mod ids {
+    pub use doeff_vm_core::ids::*;
+}
+pub mod ir_stream {
+    pub use doeff_vm_core::ir_stream::*;
+}
+pub mod kleisli {
+    pub use doeff_vm_core::kleisli::*;
+}
+pub mod py_key {
+    pub use doeff_vm_core::py_key::*;
+}
+pub mod py_shared {
+    pub use doeff_vm_core::py_shared::*;
+}
 pub mod pyvm;
-pub mod rust_store;
-pub mod scheduler;
-pub mod segment;
-mod step;
-mod trace_state;
-pub mod value;
-mod vm;
-mod vm_logging;
+pub mod python_call {
+    pub use doeff_vm_core::python_call::*;
+}
+pub mod rust_store {
+    pub use doeff_vm_core::rust_store::*;
+}
+pub mod scheduler {
+    pub use doeff_core_effects::scheduler::*;
+}
+pub mod segment {
+    pub use doeff_vm_core::segment::*;
+}
+mod step {
+    pub use doeff_vm_core::do_ctrl::DoCtrl;
+    pub use doeff_vm_core::driver::{Mode, PyException, StepEvent};
+    pub use doeff_vm_core::python_call::{PendingPython, PyCallOutcome, PythonCall};
+}
+pub mod value {
+    pub use doeff_vm_core::value::*;
+}
+mod vm {
+    pub use doeff_vm_core::{DebugConfig, DebugLevel, RustStore, TraceEvent, VM};
+}
 
 // Re-exports for convenience
 pub use arena::SegmentArena;
@@ -51,20 +90,17 @@ pub use dispatch::DispatchContext;
 pub use do_ctrl::DoCtrl;
 pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 pub use driver::{Mode, StepEvent};
-pub use effect::{Effect, PyAsk, PyCancelEffect, PyGet, PyLocal, PyModify, PyPut, PyTell};
+pub use effect::*;
 pub use error::VMError;
 pub use frame::Frame;
-pub use handler::{
-    AwaitHandlerFactory, IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef,
-    LazyAskHandlerFactory, ReaderHandlerFactory, ResultSafeHandlerFactory, StateHandlerFactory,
-    WriterHandlerFactory,
-};
-pub use ids::{ContId, DispatchId, Marker, RunnableId, SegmentId};
+pub use handler::*;
+pub use ids::{ContId, DispatchId, Marker, PromiseId, RunnableId, SegmentId, TaskId};
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
 pub use py_key::HashedPyKey;
+pub use doeff_vm_core::DoExprTag;
+pub use pyvm::{PyStdlib, PyVM};
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
-pub use pyvm::{DoExprTag, PyStdlib, PyVM};
 pub use rust_store::RustStore;
 pub use segment::{Segment, SegmentKind};
 pub use step::PyException;

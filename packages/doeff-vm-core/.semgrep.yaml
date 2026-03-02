@@ -1,0 +1,44 @@
+rules:
+  # =========================================================================
+  # SPEC-VM-018: Core Effects Extraction Boundary Enforcement
+  # =========================================================================
+
+  # INV-4: No effect structs in VM core (except the 3 VM-internal ones)
+  - id: vm-core-no-user-effect-structs
+    pattern-regex: '#\[pyclass\(.*extends\s*=\s*PyEffectBase.*\)\]\s*pub struct (?!PyGetExecutionContext|PyExecutionContext)'
+    message: |
+      SPEC VIOLATION (INV-4): User-space effect struct found in doeff-vm-core.
+      Effect structs (PyGet, PyPut, PyAsk, etc.) must live in doeff-core-effects.
+      Only PyGetExecutionContext and PyExecutionContext are allowed in VM core
+      (per ADR-1: VM-internal error enrichment effect).
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm-core/src/**"
+
+  # INV-5: No IRStreamFactory implementations in VM core
+  - id: vm-core-no-handler-factory-impls
+    pattern-regex: "impl IRStreamFactory for \\w+Handler"
+    message: |
+      SPEC VIOLATION (INV-5): IRStreamFactory implementation found in doeff-vm-core.
+      Handler factory implementations (StateHandlerFactory, ReaderHandlerFactory, etc.)
+      must live in doeff-core-effects. VM core defines only the trait + blanket Kleisli impl.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm-core/src/**"
+
+  # INV-6: No Python doeff.* imports in VM core
+  - id: vm-core-no-doeff-python-imports
+    pattern-regex: 'py\.import\("doeff\.'
+    message: |
+      SPEC VIOLATION (INV-6): Python doeff.* import found in doeff-vm-core.
+      The VM core must not import Python-side doeff packages. Effect/handler code
+      that needs Python imports must live in doeff-core-effects.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm-core/src/**"

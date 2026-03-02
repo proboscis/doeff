@@ -10,7 +10,7 @@ keywords = ["algebraic-effects", "vm", "python", "continuations"]
 
 [lib]
 name = "doeff_vm"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [features]
 default = []
@@ -18,6 +18,8 @@ vm_debug_logs = []
 
 [dependencies]
 pyo3 = { version = "0.28", features = ["py-clone"] }
+doeff-vm-core = { path = "../doeff-vm-core" }
+doeff-core-effects = { path = "../doeff-core-effects" }
 
 [dev-dependencies]
 pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }
