@@ -21,6 +21,20 @@ from doeff.rust_vm import default_handlers, run
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _read_vm_or_core_effects(filename: str) -> str:
+    primary = ROOT / "packages" / "doeff-vm" / "src" / filename
+    if primary.exists():
+        return primary.read_text()
+    fallback = {
+        "effect.rs": ROOT / "packages" / "doeff-core-effects" / "src" / "effects" / "mod.rs",
+        "handler.rs": ROOT / "packages" / "doeff-core-effects" / "src" / "handlers" / "mod.rs",
+        "scheduler.rs": ROOT / "packages" / "doeff-core-effects" / "src" / "scheduler" / "mod.rs",
+    }.get(filename)
+    if fallback is not None and fallback.exists():
+        return fallback.read_text()
+    return primary.read_text()
+
+
 def _prog(gen_factory):
     """Wrap a generator factory into a GeneratorProgram (has to_generator)."""
     return GeneratorProgram(gen_factory)
@@ -140,7 +154,7 @@ class TestG17SchedulerErrorPropagation:
 
     def test_error_path_returns_throw_not_none(self) -> None:
         """scheduler.rs resume() must not contain 'Return(Value::None)' in error paths."""
-        scheduler_src = (ROOT / "packages" / "doeff-vm" / "src" / "scheduler.rs").read_text()
+        scheduler_src = _read_vm_or_core_effects("scheduler.rs")
 
         # Find the resume() function body — look for Return(Value::None) which is
         # the error-swallowing pattern. After fix, these should be Throw(...).
@@ -292,8 +306,7 @@ class TestG24HandlerResumeSemantics:
 
     def test_reader_handler_resume_is_unreachable(self) -> None:
         """ReaderHandlerProgram::resume must use unreachable!(), not Return."""
-
-        handler_src = (ROOT / "packages" / "doeff-vm" / "src" / "handler.rs").read_text()
+        handler_src = _read_vm_or_core_effects("handler.rs")
 
         # Find ReaderHandlerProgram's resume method
         # Look for the impl block and its resume fn
@@ -307,7 +320,7 @@ class TestG24HandlerResumeSemantics:
 
     def test_writer_handler_resume_is_unreachable(self) -> None:
         """WriterHandlerProgram::resume must use unreachable!(), not Return."""
-        handler_src = (ROOT / "packages" / "doeff-vm" / "src" / "handler.rs").read_text()
+        handler_src = _read_vm_or_core_effects("handler.rs")
 
         writer_section = _extract_impl_resume(handler_src, "WriterHandlerProgram")
         assert writer_section is not None, "Could not find WriterHandlerProgram::resume"
@@ -357,7 +370,7 @@ class TestG20StoreContextSwitch:
 
         Current impl only pops from ready queue without any store save/load.
         """
-        scheduler_src = (ROOT / "packages" / "doeff-vm" / "src" / "scheduler.rs").read_text()
+        scheduler_src = _read_vm_or_core_effects("scheduler.rs")
 
         # Find the transfer_next_or function
         fn_match = re.search(

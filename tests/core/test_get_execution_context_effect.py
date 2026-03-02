@@ -208,7 +208,10 @@ def test_get_traceback_is_available_during_get_execution_context_dispatch() -> N
 
 
 def test_exception_spawn_boundaries_global_removed() -> None:
-    scheduler_src = (ROOT / "packages" / "doeff-vm" / "src" / "scheduler.rs").read_text()
+    scheduler_rs = ROOT / "packages" / "doeff-vm" / "src" / "scheduler.rs"
+    if not scheduler_rs.exists():
+        scheduler_rs = ROOT / "packages" / "doeff-core-effects" / "src" / "scheduler" / "mod.rs"
+    scheduler_src = scheduler_rs.read_text()
     vm_src = (ROOT / "packages" / "doeff-vm" / "src" / "vm.rs").read_text()
     assert "EXCEPTION_SPAWN_BOUNDARIES" not in scheduler_src
     assert "take_exception_spawn_boundaries" not in scheduler_src

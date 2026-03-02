@@ -27,6 +27,22 @@ from doeff import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
+RUST_SRC = ROOT / "packages" / "doeff-vm" / "src"
+CORE_EFFECTS_SRC = ROOT / "packages" / "doeff-core-effects" / "src"
+
+
+def _read_rust_source(filename: str) -> str:
+    primary = RUST_SRC / filename
+    if primary.exists():
+        return primary.read_text(encoding="utf-8")
+    fallback = {
+        "effect.rs": CORE_EFFECTS_SRC / "effects" / "mod.rs",
+        "handler.rs": CORE_EFFECTS_SRC / "handlers" / "mod.rs",
+        "scheduler.rs": CORE_EFFECTS_SRC / "scheduler" / "mod.rs",
+    }.get(filename)
+    if fallback is not None and fallback.exists():
+        return fallback.read_text(encoding="utf-8")
+    return primary.read_text(encoding="utf-8")
 
 
 def _result_is_ok(run_result: object) -> bool:
@@ -211,9 +227,7 @@ class TestSA009AsyncConcurrencyContract:
 
 class TestAwaitHandlerEffectSystemContract:
     def test_rust_handler_source_has_no_blocking_await_runner(self) -> None:
-        handler_rs = (ROOT / "packages" / "doeff-vm" / "src" / "handler.rs").read_text(
-            encoding="utf-8"
-        )
+        handler_rs = _read_rust_source("handler.rs")
         assert "get_blocking_await_runner" not in handler_rs, (
             "handler.rs still contains get_blocking_await_runner. "
             "Await handlers must use the effect system (ExternalPromise + Wait), "
@@ -221,9 +235,7 @@ class TestAwaitHandlerEffectSystemContract:
         )
 
     def test_rust_handler_source_has_no_threadpoolexecutor(self) -> None:
-        handler_rs = (ROOT / "packages" / "doeff-vm" / "src" / "handler.rs").read_text(
-            encoding="utf-8"
-        )
+        handler_rs = _read_rust_source("handler.rs")
         assert "ThreadPoolExecutor" not in handler_rs, (
             "handler.rs still contains ThreadPoolExecutor. "
             "Await effect handling must go through the effect system."

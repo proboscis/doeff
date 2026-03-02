@@ -99,7 +99,7 @@ pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, 
 pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
 pub use py_key::HashedPyKey;
 pub use doeff_vm_core::DoExprTag;
-pub use pyvm::{PyStdlib, PyVM};
+pub use pyvm::PyVM;
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 pub use rust_store::RustStore;
 pub use segment::{Segment, SegmentKind};

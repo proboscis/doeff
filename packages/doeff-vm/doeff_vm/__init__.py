@@ -127,8 +127,6 @@ DoExpr = _ext.DoExpr
 EffectBase = _ext.EffectBase
 DoCtrlBase = _ext.DoCtrlBase
 DoThunkBase = getattr(_ext, "DoThunkBase", None)
-PyStdlib = _ext.PyStdlib
-PySchedulerHandler = _ext.PySchedulerHandler
 PyVM = _ext.PyVM
 RunResult = _ext.RunResult
 DoeffTracebackData = _ext.DoeffTracebackData
@@ -312,9 +310,7 @@ __all__ = [
     "_SchedulerTaskCompleted",
     "PyModify",
     "PyPut",
-    "PySchedulerHandler",
     "PyVM",
-    "PyStdlib",
     "PyTell",
     "Pure",
     "Resume",
