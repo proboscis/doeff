@@ -559,7 +559,11 @@ struct RustKleisliStream {
 }
 
 impl RustKleisliStream {
-    fn new(program: IRStreamProgramRef, effect: DispatchEffect, continuation: Continuation) -> Self {
+    fn new(
+        program: IRStreamProgramRef,
+        effect: DispatchEffect,
+        continuation: Continuation,
+    ) -> Self {
         Self {
             program,
             start_effect: Some(effect),

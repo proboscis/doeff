@@ -52,6 +52,7 @@ pub enum DoExprTag {
     GetTraceback = 20,
     WithIntercept = 21,
     Finally = 22,
+    EvalInScope = 23,
     Effect = 128,
     Unknown = 255,
 }
@@ -82,6 +83,7 @@ impl TryFrom<u8> for DoExprTag {
             20 => Ok(DoExprTag::GetTraceback),
             21 => Ok(DoExprTag::WithIntercept),
             22 => Ok(DoExprTag::Finally),
+            23 => Ok(DoExprTag::EvalInScope),
             128 => Ok(DoExprTag::Effect),
             255 => Ok(DoExprTag::Unknown),
             other => Err(other),
@@ -967,7 +969,6 @@ impl PyVM {
         };
         seg.mode = Mode::HandleYield(DoCtrl::Eval {
             expr: PyShared::new(expr),
-            handlers: vec![],
             metadata: None,
         });
         Ok(())
@@ -1663,27 +1664,36 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 )
             }
             DoCtrl::IRStream { .. } => None,
-            DoCtrl::Eval { expr, handlers, .. } => {
-                let list = PyList::empty(py);
-                for handler in handlers {
-                    if let Some(identity) = handler.py_identity() {
-                        list.append(identity.bind(py))
-                            .map_err(|err| PyException::runtime_error(format!("{err}")))?;
-                    } else {
-                        list.append(py.None())
-                            .map_err(|err| PyException::runtime_error(format!("{err}")))?;
-                    }
-                }
+            DoCtrl::Eval { expr, .. } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::Eval as u8,
+                        })
+                        .add_subclass(PyEval {
+                            expr: expr.clone_ref(py),
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::EvalInScope { expr, scope, .. } => {
+                let k = Bound::new(py, PyK::from_cont_id(scope.cont_id))
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind();
                 Some(
                     Bound::new(
                         py,
                         PyClassInitializer::from(PyDoExprBase)
                             .add_subclass(PyDoCtrlBase {
-                                tag: DoExprTag::Eval as u8,
+                                tag: DoExprTag::EvalInScope as u8,
                             })
-                            .add_subclass(PyEval {
+                            .add_subclass(PyEvalInScope {
                                 expr: expr.clone_ref(py),
-                                handlers: list.into_any().unbind(),
+                                scope: k,
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -2027,16 +2037,27 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::Eval => {
                 let eval: PyRef<'_, PyEval> = obj.extract()?;
                 let expr = eval.expr.clone_ref(py);
-                let handlers_list = eval.handlers.bind(py);
-                let mut handlers = Vec::new();
-                for item in handlers_list.try_iter()? {
-                    let item = item?;
-                    let kleisli = PyVM::extract_kleisli_ref(py, &item, "Eval")?;
-                    handlers.push(kleisli);
-                }
                 Ok(DoCtrl::Eval {
                     expr: PyShared::new(expr),
-                    handlers,
+                    metadata: None,
+                })
+            }
+            DoExprTag::EvalInScope => {
+                let eval: PyRef<'_, PyEvalInScope> = obj.extract()?;
+                let expr = eval.expr.clone_ref(py);
+                let scope_obj = eval.scope.bind(py).cast::<PyK>().map_err(|_| {
+                    PyTypeError::new_err("EvalInScope.scope must be K (opaque continuation handle)")
+                })?;
+                let cont_id = scope_obj.borrow().cont_id;
+                let scope = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                    PyRuntimeError::new_err(format!(
+                        "EvalInScope with unknown continuation id {}",
+                        cont_id.raw()
+                    ))
+                })?;
+                Ok(DoCtrl::EvalInScope {
+                    expr: PyShared::new(expr),
+                    scope,
                     metadata: None,
                 })
             }
@@ -2830,24 +2851,48 @@ Program/Kleisli call sites must pass {'function_name', 'source_file', 'source_li
 pub struct PyEval {
     #[pyo3(get)]
     pub expr: Py<PyAny>,
-    #[pyo3(get)]
-    pub handlers: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyEval {
     #[new]
-    fn new(
-        py: Python<'_>,
-        expr: Py<PyAny>,
-        handlers: Py<PyAny>,
-    ) -> PyResult<PyClassInitializer<Self>> {
+    fn new(py: Python<'_>, expr: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let expr = lift_effect_to_perform_expr(py, expr)?;
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::Eval as u8,
             })
-            .add_subclass(PyEval { expr, handlers }))
+            .add_subclass(PyEval { expr }))
+    }
+}
+
+#[pyclass(name = "EvalInScope", extends=PyDoCtrlBase)]
+pub struct PyEvalInScope {
+    #[pyo3(get)]
+    pub expr: Py<PyAny>,
+    #[pyo3(get)]
+    pub scope: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyEvalInScope {
+    #[new]
+    fn new(
+        py: Python<'_>,
+        expr: Py<PyAny>,
+        scope: Py<PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let expr = lift_effect_to_perform_expr(py, expr)?;
+        if !scope.bind(py).is_instance_of::<PyK>() {
+            return Err(PyTypeError::new_err(
+                "EvalInScope.scope must be K (opaque continuation handle)",
+            ));
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::EvalInScope as u8,
+            })
+            .add_subclass(PyEvalInScope { expr, scope }))
     }
 }
 
@@ -4389,7 +4434,10 @@ fn async_run<'py>(
 
 #[pymodule]
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("UnhandledEffectError", m.py().get_type::<UnhandledEffectError>())?;
+    m.add(
+        "UnhandledEffectError",
+        m.py().get_type::<UnhandledEffectError>(),
+    )?;
     m.add(
         "NoMatchingHandlerError",
         m.py().get_type::<NoMatchingHandlerError>(),
@@ -4420,6 +4468,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMap>()?;
     m.add_class::<PyFlatMap>()?;
     m.add_class::<PyEval>()?;
+    m.add_class::<PyEvalInScope>()?;
     m.add_class::<PyPerform>()?;
     m.add_class::<PyResume>()?;
     m.add_class::<PyDelegate>()?;
@@ -4545,6 +4594,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
     m.add("TAG_GET_TRACE", DoExprTag::GetTrace as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;
+    m.add("TAG_EVAL_IN_SCOPE", DoExprTag::EvalInScope as u8)?;
     m.add("TAG_APPLY", DoExprTag::Apply as u8)?;
     m.add("TAG_EXPAND", DoExprTag::Expand as u8)?;
     m.add(
