@@ -1,6 +1,6 @@
 use super::*;
-use crate::ir_stream::{IRStream, IRStreamStep};
 use crate::frame::CallMetadata;
+use crate::ir_stream::{IRStream, IRStreamStep};
 use crate::trace_state::TraceState;
 use std::sync::{Arc, Mutex};
 
@@ -57,9 +57,8 @@ fn make_program_frame(function_name: &str, source_file: &str, source_line: u32) 
         None,
         None,
     );
-    let stream: Arc<Mutex<Box<dyn IRStream>>> = Arc::new(Mutex::new(
-        Box::new(DummyProgramStream) as Box<dyn IRStream>
-    ));
+    let stream: Arc<Mutex<Box<dyn IRStream>>> =
+        Arc::new(Mutex::new(Box::new(DummyProgramStream) as Box<dyn IRStream>));
     Frame::program(stream, Some(metadata))
 }
 
@@ -642,11 +641,18 @@ fn test_start_dispatch_get_effect() {
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), StepEvent::Continue));
     assert_eq!(vm.dispatch_state.depth(), 1);
-    // Rust Kleisli stream starts on first Program frame resume.
-    let event = vm.step();
-    assert!(matches!(event, StepEvent::Continue));
-    let event = vm.step();
-    assert!(matches!(event, StepEvent::Continue));
+    // Rust Kleisli stream may require multiple internal Continue ticks before
+    // dispatch completion; do not pin to an exact step count.
+    for _ in 0..8 {
+        let event = vm.step();
+        if let StepEvent::Error(err) = &event {
+            panic!("unexpected Error while finishing Get dispatch: {err:?}");
+        }
+        assert!(matches!(event, StepEvent::Continue | StepEvent::Done(_)));
+        if vm.dispatch_state.get(0).unwrap().completed {
+            break;
+        }
+    }
     assert!(vm.dispatch_state.get(0).unwrap().completed);
 }
 
@@ -672,8 +678,13 @@ fn test_dispatch_completion_marking() {
     let _ = vm.start_dispatch(Effect::Get {
         key: "x".to_string(),
     });
-    // Handler yields Resume; step through to mark dispatch complete
-    let _ = vm.step();
+    // Handler yields Resume; step until dispatch marks completion.
+    for _ in 0..8 {
+        let _ = vm.step();
+        if vm.dispatch_state.get(0).unwrap().completed {
+            break;
+        }
+    }
     assert!(vm.dispatch_state.get(0).unwrap().completed);
 }
 
@@ -1960,6 +1971,14 @@ fn test_needs_python_from_resume_propagates_correctly() {
             std::mem::discriminant(&event1)
         );
         let event1b = vm.step();
+        let event1b = if matches!(event1b, StepEvent::Continue) {
+            vm.step()
+        } else {
+            event1b
+        };
+        if let StepEvent::Error(err) = &event1b {
+            panic!("unexpected Error while awaiting first NeedsPython: {err:?}");
+        }
         assert!(
             matches!(event1b, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
             "Expected NeedsPython for first call, got {:?}",
@@ -2069,9 +2088,8 @@ fn test_needs_python_rust_continuation_uses_current_dispatch_id_context() {
             original_exception: None,
         });
 
-        let stream: IRStreamRef = Arc::new(Mutex::new(
-            Box::new(DummyProgramStream) as Box<dyn IRStream>
-        ));
+        let stream: IRStreamRef =
+            Arc::new(Mutex::new(Box::new(DummyProgramStream) as Box<dyn IRStream>));
         let call = PythonCall::CallFunc {
             func: PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any()),
             args: Vec::new(),
@@ -2137,6 +2155,14 @@ fn test_s009_g3_modify_resumes_with_new_value() {
         let event = result.unwrap();
         assert!(matches!(event, StepEvent::Continue));
         let event = vm.step();
+        let event = if matches!(event, StepEvent::Continue) {
+            vm.step()
+        } else {
+            event
+        };
+        if let StepEvent::Error(err) = &event {
+            panic!("unexpected Error while awaiting Modify NeedsPython: {err:?}");
+        }
         assert!(matches!(
             event,
             StepEvent::NeedsPython(PythonCall::CallFunc { .. })
@@ -2784,7 +2810,6 @@ fn test_r9h_eval_creates_and_resumes_continuation() {
 
         vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Eval {
             expr: PyShared::new(dummy_expr),
-            handlers: vec![],
             metadata: None,
         });
 
@@ -2806,24 +2831,55 @@ fn test_r9h_eval_creates_and_resumes_continuation() {
     });
 }
 
-/// R9-H: Eval with handlers installs them on the continuation scope.
-/// Handlers are installed as prompt+body segment pairs by handle_resume_continuation.
+/// EvalInScope anchors handler selection under the provided continuation segment.
 #[test]
-fn test_r9h_eval_with_handlers_installs_scope() {
+fn test_eval_in_scope_anchors_to_scope_segment() {
     Python::attach(|py| {
         let mut vm = VM::new();
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
+        let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+
+        let handler_marker = Marker::fresh();
+        let handler = Arc::new(crate::kleisli::RustKleisli::new(
+            Arc::new(crate::handler::StateHandlerFactory),
+            "StateHandler".to_string(),
+        )) as KleisliRef;
+        let prompt_id = vm.alloc_segment(Segment::new_prompt(
+            handler_marker,
+            Some(root_id),
+            handler_marker,
+            handler,
+            None,
+        ));
+        let scope_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(prompt_id)));
+
+        let current_marker = Marker::fresh();
+        let current_handler = Arc::new(crate::kleisli::RustKleisli::new(
+            Arc::new(crate::handler::ReaderHandlerFactory),
+            "ReaderHandler".to_string(),
+        )) as KleisliRef;
+        let current_prompt_id = vm.alloc_segment(Segment::new_prompt(
+            current_marker,
+            Some(root_id),
+            current_marker,
+            current_handler,
+            None,
+        ));
+        let current_seg_id =
+            vm.alloc_segment(Segment::new(Marker::fresh(), Some(current_prompt_id)));
+        vm.current_segment = Some(current_seg_id);
 
         let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
+        let scope = {
+            let scope_seg = vm
+                .segments
+                .get(scope_seg_id)
+                .expect("scope segment must exist");
+            Continuation::capture(scope_seg, scope_seg_id, None)
+        };
 
-        let handler = std::sync::Arc::new(crate::handler::StateHandlerFactory);
-
-        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Eval {
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::EvalInScope {
             expr: PyShared::new(dummy_expr),
-            handlers: vec![handler],
+            scope,
             metadata: None,
         });
 
@@ -2831,19 +2887,210 @@ fn test_r9h_eval_with_handlers_installs_scope() {
 
         assert!(
             matches!(event, StepEvent::NeedsPython(PythonCall::EvalExpr { .. })),
-            "R9-H: Eval with handlers must still yield EvalExpr"
+            "EvalInScope must yield EvalExpr in the selected scope"
         );
 
+        let visible_names = vm
+            .current_visible_handlers()
+            .into_iter()
+            .map(|h| h.debug_info().name)
+            .collect::<Vec<_>>();
         assert!(
-            !vm.current_handler_chain().is_empty(),
-            "R9-H: Eval with handlers must install prompt-boundary handlers"
+            visible_names
+                .first()
+                .is_some_and(|name| name == "StateHandler"),
+            "EvalInScope must select handlers from scope continuation chain; got {:?}",
+            visible_names
+        );
+    });
+}
+
+/// EvalInScope uses the scope continuation only for handler anchoring.
+/// Dynamic scope bindings must come from the current call site.
+#[test]
+fn test_eval_in_scope_prefers_current_scope_store_over_scope_continuation_store() {
+    Python::attach(|py| {
+        let mut vm = VM::new();
+        let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+
+        let handler_marker = Marker::fresh();
+        let handler = Arc::new(crate::kleisli::RustKleisli::new(
+            Arc::new(crate::handler::StateHandlerFactory),
+            "StateHandler".to_string(),
+        )) as KleisliRef;
+        let prompt_id = vm.alloc_segment(Segment::new_prompt(
+            handler_marker,
+            Some(root_id),
+            handler_marker,
+            handler,
+            None,
+        ));
+        let scope_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(prompt_id)));
+        let current_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
+        vm.current_segment = Some(current_seg_id);
+
+        let key = crate::py_key::HashedPyKey::from_test_string("svc");
+        let mut scope_map = std::collections::HashMap::new();
+        scope_map.insert(key.clone(), Value::Int(11));
+        vm.segments
+            .get_mut(scope_seg_id)
+            .expect("scope segment must exist")
+            .scope_store
+            .scope_bindings
+            .push(Arc::new(scope_map));
+
+        let mut current_map = std::collections::HashMap::new();
+        current_map.insert(key.clone(), Value::Int(22));
+        vm.segments
+            .get_mut(current_seg_id)
+            .expect("current segment must exist")
+            .scope_store
+            .scope_bindings
+            .push(Arc::new(current_map));
+
+        let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
+        let scope = {
+            let scope_seg = vm
+                .segments
+                .get(scope_seg_id)
+                .expect("scope segment must exist");
+            Continuation::capture(scope_seg, scope_seg_id, None)
+        };
+
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::EvalInScope {
+            expr: PyShared::new(dummy_expr),
+            scope,
+            metadata: None,
+        });
+
+        let event = vm.step_handle_yield();
+        assert!(
+            matches!(event, StepEvent::NeedsPython(PythonCall::EvalExpr { .. })),
+            "EvalInScope should schedule EvalExpr"
         );
 
-        assert_ne!(
-            vm.current_segment,
-            Some(seg_id),
-            "R9-H: Eval must change current_segment to the body segment of installed handlers"
+        let active_seg_id = vm.current_segment.expect("EvalInScope active segment");
+        let active_seg = vm
+            .segments
+            .get(active_seg_id)
+            .expect("EvalInScope segment should exist");
+        let resolved = active_seg
+            .scope_store
+            .scope_bindings
+            .last()
+            .and_then(|bindings| bindings.get(&key))
+            .and_then(Value::as_int);
+        assert_eq!(
+            resolved,
+            Some(22),
+            "EvalInScope must inherit dynamic scope from current call-site segment"
         );
+    });
+}
+
+/// EvalInScope should inherit interceptor guard state from the current call site.
+#[test]
+fn test_eval_in_scope_inherits_current_interceptor_guard_state() {
+    Python::attach(|py| {
+        let mut vm = VM::new();
+        let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+        let scope_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
+        let current_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
+        vm.current_segment = Some(current_seg_id);
+
+        let scope_skip = Marker::fresh();
+        {
+            let scope_seg = vm
+                .segments
+                .get_mut(scope_seg_id)
+                .expect("scope segment must exist");
+            scope_seg.interceptor_eval_depth = 9;
+            scope_seg.interceptor_skip_stack = vec![scope_skip];
+        }
+
+        let call_skip_a = Marker::fresh();
+        let call_skip_b = Marker::fresh();
+        {
+            let current_seg = vm
+                .segments
+                .get_mut(current_seg_id)
+                .expect("current segment must exist");
+            current_seg.interceptor_eval_depth = 3;
+            current_seg.interceptor_skip_stack = vec![call_skip_a, call_skip_b];
+        }
+
+        let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
+        let scope = {
+            let scope_seg = vm
+                .segments
+                .get(scope_seg_id)
+                .expect("scope segment must exist");
+            Continuation::capture(scope_seg, scope_seg_id, None)
+        };
+
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::EvalInScope {
+            expr: PyShared::new(dummy_expr),
+            scope,
+            metadata: None,
+        });
+
+        let event = vm.step_handle_yield();
+        assert!(
+            matches!(event, StepEvent::NeedsPython(PythonCall::EvalExpr { .. })),
+            "EvalInScope should schedule EvalExpr"
+        );
+
+        let active_seg_id = vm.current_segment.expect("EvalInScope active segment");
+        let active_seg = vm
+            .segments
+            .get(active_seg_id)
+            .expect("EvalInScope segment should exist");
+        assert_eq!(active_seg.interceptor_eval_depth, 3);
+        assert_eq!(
+            active_seg.interceptor_skip_stack,
+            vec![call_skip_a, call_skip_b]
+        );
+    });
+}
+
+#[test]
+fn test_eval_in_scope_with_unknown_scope_segment_errors() {
+    Python::attach(|py| {
+        let mut vm = VM::new();
+        let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+        let current_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
+        vm.current_segment = Some(current_seg_id);
+
+        let orphan_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+        let scope = {
+            let orphan = vm
+                .segments
+                .get(orphan_seg_id)
+                .expect("orphan segment must exist");
+            Continuation::capture(orphan, orphan_seg_id, None)
+        };
+        vm.segments.free(orphan_seg_id);
+
+        let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
+        vm.current_seg_mut().mode = Mode::HandleYield(DoCtrl::EvalInScope {
+            expr: PyShared::new(dummy_expr),
+            scope,
+            metadata: None,
+        });
+
+        let event = vm.step_handle_yield();
+        match event {
+            StepEvent::Error(VMError::InternalError { message }) => {
+                assert!(
+                    message.contains("unknown segment"),
+                    "unexpected internal error: {message}"
+                );
+            }
+            other => panic!(
+                "EvalInScope with unknown scope segment should error, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
     });
 }
 

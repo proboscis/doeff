@@ -216,7 +216,8 @@ DoCtrl[T] ::=
 
     -- computation
     | Call(f: DoExpr, args: [DoExpr], kwargs, meta) -- function application
-    | Eval(expr: DoExpr, handlers: [Handler])       -- scoped evaluation
+    | Eval(expr: DoExpr)                            -- evaluate under current dynamic scope
+    | EvalInScope(expr: DoExpr, scope: K)           -- evaluate under explicit captured scope
     | Map(source: DoExpr[S], f: S → T)              -- functor map
     | FlatMap(source: DoExpr[S], f: S → DoExpr[T])  -- monadic bind
     | Perform(effect: EffectValue[T])               -- explicit effect dispatch
@@ -263,11 +264,14 @@ and optionally a reference to the `KleisliProgramCall` for rich introspection.
 Metadata is extracted by the **driver** (with GIL) during `classify_yielded`, then
 passed to the VM as part of the `Call` primitive.
 
-**`Eval(expr, handlers)`** — scoped evaluation. Evaluates a DoExpr in a **fresh
-handler scope** with the explicit handler chain. Used when evaluation must occur
-under a different handler configuration than the current scope. [SPEC-VM-016]
-Handlers are re-entrant by default — `Eval`'s purpose is scoped handler
-installation, not busy boundary avoidance.
+**`Eval(expr)`** — evaluates a DoExpr under the current dynamic scope.
+
+**`EvalInScope(expr, scope)`** — scoped evaluation using an explicit continuation
+token (`K`) captured at a yield site (for handlers, this is usually the `k`
+parameter). `EvalInScope` runs `expr` under that captured scope instead of the
+current handler body scope. This avoids handler-chain duplication from
+`GetHandlers -> Eval(...)` plumbing while keeping all handler semantics in
+user space.
 
 **`Map(source, f)` / `FlatMap(source, f)`** — composition nodes. Replace
 `DerivedProgram` (which was a DoThunk wrapping a generator). `Map` evaluates
@@ -765,7 +769,8 @@ DoExpr Subtype       Examples                        Handled by
 ────────────────────────────────────────────────────────────────────
 DoCtrl               Pure(value),                    VM directly
                      Call(f, args, kwargs, meta),
-                     Eval(expr, handlers),
+                     Eval(expr),
+                     EvalInScope(expr, scope),
                      Map(source, f),
                      FlatMap(source, binder),
                      Handle (WithHandler), Resume,

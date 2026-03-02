@@ -13,6 +13,8 @@ from doeff import (
     Local,
     Pass,
     Resume,
+    Tell,
+    WithHandler,
     WithIntercept,
     async_run,
     default_async_handlers,
@@ -20,6 +22,12 @@ from doeff import (
     do,
     run,
 )
+
+
+@dataclass(frozen=True)
+class ReplaceAudioTrackForLocalTypedFilter(EffectBase):
+    duck_original: float
+    duck_speech: float
 
 
 def _base_handlers(mode: str) -> list[Any]:
@@ -254,3 +262,98 @@ async def test_handler_ask_lazy_value_in_local(parameterized_interpreter) -> Non
     assert result.is_ok
     assert result.value == 42
     assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_local_eval_keeps_typed_handler_filtering(parameterized_interpreter) -> None:
+    """GetHandlers->Eval must not duplicate handler chains around Local."""
+
+    seen_effect_types: list[str] = []
+
+    @do
+    def replace_audio_handler(effect: ReplaceAudioTrackForLocalTypedFilter, k):
+        seen_effect_types.append(type(effect).__name__)
+        value = f"{effect.duck_original}:{effect.duck_speech}"
+        return (yield Resume(k, value))
+
+    @do
+    def memo_rewriter(_effect: Effect, _k):
+        yield Pass()
+
+    @do
+    def body():
+        yield Tell({"msg": "slog"})
+        return (yield ReplaceAudioTrackForLocalTypedFilter(duck_original=0.25, duck_speech=0.6))
+
+    wrapped = WithHandler(
+        replace_audio_handler,
+        WithHandler(memo_rewriter, Local({"unused": "value"}, body())),
+    )
+    result = await parameterized_interpreter.run_async(wrapped, env={})
+
+    assert result.is_ok
+    assert result.value == "0.25:0.6"
+    assert seen_effect_types == ["ReplaceAudioTrackForLocalTypedFilter"]
+
+
+@pytest.mark.asyncio
+async def test_handler_emitted_local_overrides_effect_site_scope(parameterized_interpreter) -> None:
+    """Local emitted by handler should evaluate in handler call-site scope."""
+
+    @dataclass(frozen=True)
+    class Ping(EffectBase):
+        pass
+
+    @do
+    def ping_handler(effect: Effect, k):
+        if not isinstance(effect, Ping):
+            yield Pass()
+            return
+        value = yield Local({"config": "from_handler_local"}, Ask("config"))
+        return (yield Resume(k, value))
+
+    @do
+    def body():
+        return (yield Ping())
+
+    program = Local({"config": "from_effect_site"}, body())
+    result = await _run_with_handlers(
+        parameterized_interpreter.mode,
+        program,
+        [ping_handler],
+        env={"config": "from_env"},
+    )
+    assert result.is_ok
+    assert result.value == "from_handler_local"
+
+
+@pytest.mark.asyncio
+async def test_handler_emitted_local_scope_is_popped_after_eval(parameterized_interpreter) -> None:
+    """Handler-local scope should be removed after Local(...) evaluation completes."""
+
+    @dataclass(frozen=True)
+    class Ping(EffectBase):
+        pass
+
+    @do
+    def ping_handler(effect: Effect, k):
+        if not isinstance(effect, Ping):
+            yield Pass()
+            return
+        inner = yield Local({"config": "handler_local"}, Ask("config"))
+        outer = yield Ask("config")
+        return (yield Resume(k, (inner, outer)))
+
+    @do
+    def body():
+        return (yield Ping())
+
+    program = Local({"config": "effect_site_local"}, body())
+    result = await _run_with_handlers(
+        parameterized_interpreter.mode,
+        program,
+        [ping_handler],
+        env={"config": "env"},
+    )
+    assert result.is_ok
+    assert result.value == ("handler_local", "effect_site_local")

@@ -10,7 +10,6 @@
 //! - **All effects dispatch**: No bypass for stdlib effects
 
 pub mod arena;
-pub mod ir_stream;
 pub mod capture;
 pub mod continuation;
 mod debug_state;
@@ -25,6 +24,7 @@ pub mod frame;
 mod handler;
 pub mod ids;
 mod interceptor_state;
+pub mod ir_stream;
 pub mod kleisli;
 pub mod py_key;
 pub mod py_shared;
@@ -41,9 +41,6 @@ mod vm_logging;
 
 // Re-exports for convenience
 pub use arena::SegmentArena;
-pub use ir_stream::{
-    IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation,
-};
 pub use capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
     HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus,
@@ -58,11 +55,12 @@ pub use effect::{Effect, PyAsk, PyCancelEffect, PyGet, PyLocal, PyModify, PyPut,
 pub use error::VMError;
 pub use frame::Frame;
 pub use handler::{
-    AwaitHandlerFactory, IRStreamFactory, IRStreamFactoryRef, IRStreamProgram,
-    IRStreamProgramRef, LazyAskHandlerFactory, ReaderHandlerFactory, ResultSafeHandlerFactory,
-    StateHandlerFactory, WriterHandlerFactory,
+    AwaitHandlerFactory, IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef,
+    LazyAskHandlerFactory, ReaderHandlerFactory, ResultSafeHandlerFactory, StateHandlerFactory,
+    WriterHandlerFactory,
 };
 pub use ids::{ContId, DispatchId, Marker, RunnableId, SegmentId};
+pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
 pub use py_key::HashedPyKey;
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
