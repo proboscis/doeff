@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
-use crate::ir_stream::{IRStreamRef, StreamLocation};
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectCreationSite,
     EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry,
@@ -16,6 +15,7 @@ use crate::dispatch::DispatchContext;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
 use crate::frame::{CallMetadata, Frame};
 use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::ir_stream::{IRStreamRef, StreamLocation};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::step::PyException;

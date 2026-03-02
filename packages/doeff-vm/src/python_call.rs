@@ -1,11 +1,11 @@
 //! Python bridge call protocol.
 
-use crate::ir_stream::IRStreamRef;
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
 use crate::frame::CallMetadata;
 use crate::ids::Marker;
+use crate::ir_stream::IRStreamRef;
 use crate::py_shared::PyShared;
 use crate::value::Value;
 

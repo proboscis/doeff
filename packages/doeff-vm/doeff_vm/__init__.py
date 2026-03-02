@@ -161,6 +161,7 @@ Expand = _ext.Expand
 Map = _ext.Map
 FlatMap = _ext.FlatMap
 Eval = _ext.Eval
+EvalInScope = _ext.EvalInScope
 Perform = _ext.Perform
 Finally = _ext.Finally
 Resume = _ext.Resume
@@ -239,6 +240,7 @@ TAG_FINALLY = _ext.TAG_FINALLY
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
 TAG_GET_TRACE = _ext.TAG_GET_TRACE
 TAG_EVAL = _ext.TAG_EVAL
+TAG_EVAL_IN_SCOPE = _ext.TAG_EVAL_IN_SCOPE
 TAG_APPLY = _ext.TAG_APPLY
 TAG_EXPAND = _ext.TAG_EXPAND
 TAG_CREATE_CONTINUATION = _ext.TAG_CREATE_CONTINUATION
@@ -265,6 +267,7 @@ __all__ = [
     "Apply",
     "Expand",
     "Eval",
+    "EvalInScope",
     "Perform",
     "Finally",
     "Map",
@@ -324,6 +327,7 @@ __all__ = [
     "WithIntercept",
     "PythonAsyncSyntaxEscape",
     "CreateContinuation",
+    "EvalInScope",
     "GetCallStack",
     "GetTrace",
     "GetTraceback",
@@ -359,6 +363,7 @@ __all__ = [
     "TAG_GET_CALL_STACK",
     "TAG_GET_TRACE",
     "TAG_EVAL",
+    "TAG_EVAL_IN_SCOPE",
     "TAG_APPLY",
     "TAG_EXPAND",
     "TAG_CREATE_CONTINUATION",

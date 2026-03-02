@@ -6,6 +6,7 @@ from doeff import (
     Apply,
     Ask,
     Eval,
+    EvalInScope,
     Expand,
     Finally,
     Perform,
@@ -22,6 +23,7 @@ def test_doctrl_exports_are_available() -> None:
     assert Apply is not None
     assert Expand is not None
     assert Eval is not None
+    assert EvalInScope is not None
     assert Perform is not None
     assert Finally is not None
     assert ResumeContinuation is not None
@@ -52,7 +54,7 @@ def test_pure_apply_eval_execute() -> None:
     expand_result = run(identity(4))
     assert expand_result.value == 4
 
-    eval_result = run(Eval(Perform(Ask("k")), default_handlers()), env={"k": "value"})
+    eval_result = run(Eval(Perform(Ask("k"))), handlers=default_handlers(), env={"k": "value"})
     assert eval_result.value == "value"
 
     perform_result = run(Perform(Ask("k")), env={"k": "perform-value"}, handlers=default_handlers())
