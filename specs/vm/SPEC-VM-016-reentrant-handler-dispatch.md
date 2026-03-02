@@ -496,9 +496,15 @@ Re-entrant dispatch + deep handlers means: a resumed computation that yields the
 
 The cooperative scheduler handler handles `Spawn`, `Gather`, `Race`, etc. With re-entrant dispatch, a spawned task that yields `Spawn` will be handled by the same scheduler handler. This is correct — the scheduler should manage its own spawned tasks.
 
-### 6.4 `Eval(expr, handlers)`
+### 6.4 `Eval(expr)` and `EvalInScope(expr, k)`
 
-`Eval` creates a fresh scope with explicit handlers. `Eval` does not interact with `MaskBoundary` segments (the new segment created by `Eval` starts a fresh caller chain). `Eval`'s justification no longer includes "busy boundary avoidance" — its purpose is scoped handler installation.
+`Eval` evaluates under the current dynamic scope and does not take an explicit
+handler list.
+
+`EvalInScope` evaluates under an explicit continuation scope token (`k`), which
+lets handlers run sub-programs in the effect-yield-site scope without
+`GetHandlers -> Eval(...)` stack replay. This removes handler-chain doubling
+while preserving user-space handler semantics.
 
 ---
 
