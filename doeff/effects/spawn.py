@@ -65,13 +65,7 @@ class Promise(Generic[T]):
         return self._error
 
 
-class TaskCancelledError(Exception):
-    """Raised when joining a cancelled task.
-
-    Following asyncio conventions, this is raised when:
-    - cancel() was called on the task
-    - The task was awaited via join()
-    """
+TaskCancelledError = doeff_vm.TaskCancelledError
 
 
 SpawnEffect = doeff_vm.SpawnEffect

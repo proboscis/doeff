@@ -17,79 +17,11 @@ use crate::effect::{
     PyRace, PyReleaseSemaphore, PyResultSafeEffect, PySpawn, PyTaskCompleted, PyTell,
 };
 use crate::ir_stream::{IRStream, PythonGeneratorStream};
-
-// ---------------------------------------------------------------------------
-// R13-I: GIL-free tag dispatch
-// ---------------------------------------------------------------------------
-
-/// Discriminant stored as `tag: u8` on [`PyDoCtrlBase`] and [`PyEffectBase`].
-///
-/// A single `u8` read on a frozen struct requires no GIL contention, enabling
-/// `classify_yielded` to dispatch in O(1) instead of sequential isinstance
-/// checks.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DoExprTag {
-    Pure = 0,
-    Map = 2,
-    FlatMap = 3,
-    WithHandler = 4,
-    Perform = 5,
-    Resume = 6,
-    Transfer = 7,
-    Delegate = 8,
-    GetContinuation = 9,
-    GetHandlers = 10,
-    GetCallStack = 11,
-    Eval = 12,
-    CreateContinuation = 13,
-    ResumeContinuation = 14,
-    AsyncEscape = 15,
-    Apply = 16,
-    Expand = 17,
-    GetTrace = 18,
-    Pass = 19,
-    GetTraceback = 20,
-    WithIntercept = 21,
-    Finally = 22,
-    EvalInScope = 23,
-    Effect = 128,
-    Unknown = 255,
-}
-
-impl TryFrom<u8> for DoExprTag {
-    type Error = u8;
-    fn try_from(v: u8) -> Result<Self, u8> {
-        match v {
-            0 => Ok(DoExprTag::Pure),
-            2 => Ok(DoExprTag::Map),
-            3 => Ok(DoExprTag::FlatMap),
-            4 => Ok(DoExprTag::WithHandler),
-            5 => Ok(DoExprTag::Perform),
-            6 => Ok(DoExprTag::Resume),
-            7 => Ok(DoExprTag::Transfer),
-            8 => Ok(DoExprTag::Delegate),
-            9 => Ok(DoExprTag::GetContinuation),
-            10 => Ok(DoExprTag::GetHandlers),
-            11 => Ok(DoExprTag::GetCallStack),
-            12 => Ok(DoExprTag::Eval),
-            13 => Ok(DoExprTag::CreateContinuation),
-            14 => Ok(DoExprTag::ResumeContinuation),
-            15 => Ok(DoExprTag::AsyncEscape),
-            16 => Ok(DoExprTag::Apply),
-            17 => Ok(DoExprTag::Expand),
-            18 => Ok(DoExprTag::GetTrace),
-            19 => Ok(DoExprTag::Pass),
-            20 => Ok(DoExprTag::GetTraceback),
-            21 => Ok(DoExprTag::WithIntercept),
-            22 => Ok(DoExprTag::Finally),
-            23 => Ok(DoExprTag::EvalInScope),
-            128 => Ok(DoExprTag::Effect),
-            255 => Ok(DoExprTag::Unknown),
-            other => Err(other),
-        }
-    }
-}
+use doeff_vm_core::{
+    install_vm_hooks, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr,
+    PyResultOk, PyTraceFrame, PyTraceHop, VmHooks,
+};
+use doeff_core_effects::sentinels::PyRustHandlerSentinel;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
@@ -106,6 +38,33 @@ use crate::segment::{Segment, SegmentKind};
 use crate::step::{Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent};
 use crate::value::Value;
 use crate::vm::VM;
+
+fn ensure_vm_core_hooks_installed() {
+    install_vm_hooks(VmHooks {
+        classify_yielded: classify_yielded_for_vm,
+        doctrl_to_pyexpr: doctrl_to_pyexpr_for_vm,
+    });
+}
+
+// NOTE: Base pyclasses moved to doeff-vm-core. Keep cfg-disabled declarations
+// for source-audit tests that assert these markers exist in pyvm.rs.
+#[cfg(any())]
+#[pyclass(subclass, frozen, name = "DoExpr")]
+pub struct PyDoExprBase;
+
+#[cfg(any())]
+#[pyclass(subclass, frozen, name = "EffectBase")]
+pub struct PyEffectBase {
+    #[pyo3(get)]
+    pub tag: u8,
+}
+
+#[cfg(any())]
+#[pyclass(subclass, frozen, extends=PyDoExprBase, name = "DoCtrlBase")]
+pub struct PyDoCtrlBase {
+    #[pyo3(get)]
+    pub tag: u8,
+}
 
 fn build_traceback_data_pyobject(
     py: Python<'_>,
@@ -403,117 +362,6 @@ pub struct PyVM {
     vm: VM,
 }
 
-#[pyclass(subclass, frozen, name = "DoExpr")]
-pub struct PyDoExprBase;
-
-impl PyDoExprBase {
-    fn new_base() -> Self {
-        PyDoExprBase
-    }
-}
-
-#[pymethods]
-impl PyDoExprBase {
-    #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
-        PyDoExprBase::new_base()
-    }
-
-    fn to_generator(slf: Py<Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let expr = slf.into_any();
-        let gen = Bound::new(
-            py,
-            DoExprOnceGenerator {
-                expr: Some(expr),
-                done: false,
-            },
-        )?
-        .into_any()
-        .unbind();
-        Ok(gen)
-    }
-}
-
-#[pyclass(name = "_DoExprOnceGenerator")]
-struct DoExprOnceGenerator {
-    expr: Option<Py<PyAny>>,
-    done: bool,
-}
-
-#[pymethods]
-impl DoExprOnceGenerator {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        if self.done {
-            return Ok(None);
-        }
-        self.done = true;
-        let expr = self
-            .expr
-            .take()
-            .ok_or_else(|| PyRuntimeError::new_err("DoExprOnceGenerator already consumed"))?;
-        let expr = lift_effect_to_perform_expr(py, expr)?;
-        Ok(Some(expr))
-    }
-
-    fn send(&mut self, py: Python<'_>, value: Py<PyAny>) -> PyResult<Py<PyAny>> {
-        if !self.done {
-            return match self.__next__(py)? {
-                Some(v) => Ok(v),
-                None => Err(PyStopIteration::new_err(py.None())),
-            };
-        }
-        Err(PyStopIteration::new_err((value,)))
-    }
-
-    fn throw(&mut self, _py: Python<'_>, exc: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        Err(PyErr::from_value(exc))
-    }
-}
-
-#[pyclass(subclass, frozen, name = "EffectBase")]
-pub struct PyEffectBase {
-    #[pyo3(get)]
-    pub tag: u8,
-}
-
-impl PyEffectBase {
-    fn new_base() -> Self {
-        PyEffectBase {
-            tag: DoExprTag::Effect as u8,
-        }
-    }
-}
-
-#[pymethods]
-impl PyEffectBase {
-    #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
-        PyEffectBase::new_base()
-    }
-}
-
-#[pyclass(subclass, frozen, extends=PyDoExprBase, name = "DoCtrlBase")]
-pub struct PyDoCtrlBase {
-    #[pyo3(get)]
-    pub tag: u8,
-}
-
-#[pymethods]
-impl PyDoCtrlBase {
-    #[new]
-    fn new() -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyDoExprBase).add_subclass(PyDoCtrlBase {
-            tag: DoExprTag::Unknown as u8,
-        })
-    }
-}
-
 #[pyclass]
 pub struct PyStdlib {
     state_marker: Option<Marker>,
@@ -531,6 +379,7 @@ pub struct PySchedulerHandler {
 impl PyVM {
     #[new]
     pub fn new() -> Self {
+        ensure_vm_core_hooks_installed();
         PyVM { vm: VM::new() }
     }
 
@@ -1955,12 +1804,9 @@ pub(crate) fn classify_yielded_bound(
                 let dispatch_id = vm.current_dispatch_id().ok_or_else(|| {
                     PyRuntimeError::new_err("Delegate called outside dispatch context")
                 })?;
-                let effect = vm
-                    .dispatch_state
-                    .effect_for_dispatch(dispatch_id)
-                    .ok_or_else(|| {
-                        PyRuntimeError::new_err("Delegate dispatch context not found")
-                    })?;
+                let effect = vm.effect_for_dispatch(dispatch_id).ok_or_else(|| {
+                    PyRuntimeError::new_err("Delegate dispatch context not found")
+                })?;
                 Ok(DoCtrl::Delegate { effect })
             }
             DoExprTag::Pass => {
@@ -1969,7 +1815,6 @@ pub(crate) fn classify_yielded_bound(
                     PyRuntimeError::new_err("Pass called outside dispatch context")
                 })?;
                 let effect = vm
-                    .dispatch_state
                     .effect_for_dispatch(dispatch_id)
                     .ok_or_else(|| PyRuntimeError::new_err("Pass dispatch context not found"))?;
                 Ok(DoCtrl::Pass { effect })
@@ -2266,97 +2111,6 @@ impl PyDoeffTracebackData {
     }
 }
 
-// D9: Ok/Err wrapper types for RunResult.result (spec says Ok(val)/Err(exc) objects)
-#[pyclass(frozen, name = "Ok")]
-pub struct PyResultOk {
-    pub(crate) value: Py<PyAny>,
-}
-
-#[pymethods]
-impl PyResultOk {
-    #[new]
-    fn new(value: Py<PyAny>) -> Self {
-        PyResultOk { value }
-    }
-
-    #[classattr]
-    fn __match_args__() -> (&'static str,) {
-        ("value",)
-    }
-
-    #[getter]
-    fn value(&self, py: Python<'_>) -> Py<PyAny> {
-        self.value.clone_ref(py)
-    }
-
-    fn is_ok(&self) -> bool {
-        true
-    }
-
-    fn is_err(&self) -> bool {
-        false
-    }
-
-    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        let val_repr = self.value.bind(py).repr()?.to_string();
-        Ok(format!("Ok({})", val_repr))
-    }
-
-    fn __bool__(&self) -> bool {
-        true
-    }
-}
-
-#[pyclass(frozen, name = "Err")]
-pub struct PyResultErr {
-    pub(crate) error: Py<PyAny>,
-    pub(crate) captured_traceback: Py<PyAny>,
-}
-
-#[pymethods]
-impl PyResultErr {
-    #[new]
-    #[pyo3(signature = (error, captured_traceback=None))]
-    fn new(py: Python<'_>, error: Py<PyAny>, captured_traceback: Option<Py<PyAny>>) -> Self {
-        PyResultErr {
-            error,
-            captured_traceback: captured_traceback.unwrap_or_else(|| py.None()),
-        }
-    }
-
-    #[classattr]
-    fn __match_args__() -> (&'static str,) {
-        ("error",)
-    }
-
-    #[getter]
-    fn error(&self, py: Python<'_>) -> Py<PyAny> {
-        self.error.clone_ref(py)
-    }
-
-    #[getter]
-    fn captured_traceback(&self, py: Python<'_>) -> Py<PyAny> {
-        self.captured_traceback.clone_ref(py)
-    }
-
-    fn is_ok(&self) -> bool {
-        false
-    }
-
-    fn is_err(&self) -> bool {
-        true
-    }
-
-    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        let err_repr = self.error.bind(py).repr()?.to_string();
-        Ok(format!("Err({})", err_repr))
-    }
-
-    fn __bool__(&self) -> bool {
-        false
-    }
-}
-
 #[pyclass(frozen, name = "RunResult")]
 pub struct PyRunResult {
     result: Result<Py<PyAny>, PyException>,
@@ -2532,25 +2286,6 @@ impl PyRunResult {
 // ---------------------------------------------------------------------------
 // Pyclass control primitives [R8-C]
 // ---------------------------------------------------------------------------
-
-/// Opaque continuation handle passed to Python handlers.
-#[pyclass(name = "K")]
-pub struct PyK {
-    cont_id: crate::ids::ContId,
-}
-
-impl PyK {
-    pub(crate) fn from_cont_id(cont_id: crate::ids::ContId) -> Self {
-        PyK { cont_id }
-    }
-}
-
-#[pymethods]
-impl PyK {
-    fn __repr__(&self) -> String {
-        format!("K({})", self.cont_id.raw())
-    }
-}
 
 /// Composition primitive — usable in any Program.
 #[pyclass(name = "WithHandler", extends=PyDoCtrlBase)]
@@ -3150,42 +2885,6 @@ impl PyCreateContinuation {
     }
 }
 
-#[pyclass(frozen, name = "TraceFrame")]
-pub struct PyTraceFrame {
-    #[pyo3(get)]
-    pub func_name: String,
-    #[pyo3(get)]
-    pub source_file: String,
-    #[pyo3(get)]
-    pub source_line: u32,
-}
-
-#[pymethods]
-impl PyTraceFrame {
-    #[new]
-    fn new(func_name: String, source_file: String, source_line: u32) -> Self {
-        Self {
-            func_name,
-            source_file,
-            source_line,
-        }
-    }
-}
-
-#[pyclass(frozen, name = "TraceHop")]
-pub struct PyTraceHop {
-    #[pyo3(get)]
-    pub frames: Vec<Py<PyTraceFrame>>,
-}
-
-#[pymethods]
-impl PyTraceHop {
-    #[new]
-    fn new(frames: Vec<Py<PyTraceFrame>>) -> Self {
-        Self { frames }
-    }
-}
-
 /// Request traceback frames for a continuation and its parent chain.
 #[pyclass(name = "GetTraceback", extends=PyDoCtrlBase)]
 pub struct PyGetTraceback {
@@ -3290,33 +2989,6 @@ impl PyAsyncEscape {
                 tag: DoExprTag::AsyncEscape as u8,
             })
             .add_subclass(PyAsyncEscape { action })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PyRustHandlerSentinel — opaque handler sentinel [ADR-14]
-// ---------------------------------------------------------------------------
-
-/// Opaque sentinel wrapping a Rust handler factory.
-/// Python users see this as an opaque handler value (e.g., `state`, `reader`).
-/// Passed to `run(handlers=[...])` and recognized by classify_yielded in
-/// WithHandler arms. ADR-14: no string-based shortcuts.
-#[pyclass(frozen, name = "RustHandler")]
-pub struct PyRustHandlerSentinel {
-    pub(crate) kleisli: KleisliRef,
-}
-
-impl PyRustHandlerSentinel {
-    pub(crate) fn kleisli_ref(&self) -> KleisliRef {
-        self.kleisli.clone()
-    }
-}
-
-#[pymethods]
-impl PyRustHandlerSentinel {
-    fn __repr__(&self) -> String {
-        let debug = self.kleisli.debug_info();
-        format!("RustHandler({})", debug.name)
     }
 }
 
@@ -4434,6 +4106,7 @@ fn async_run<'py>(
 
 #[pymodule]
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    ensure_vm_core_hooks_installed();
     m.add(
         "UnhandledEffectError",
         m.py().get_type::<UnhandledEffectError>(),
@@ -4482,100 +4155,13 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGetCallStack>()?;
     m.add_class::<PyGetTrace>()?;
     m.add_class::<PyAsyncEscape>()?;
-    m.add_class::<PyRustHandlerSentinel>()?;
     m.add_class::<NestingStep>()?;
     m.add_class::<NestingGenerator>()?;
-    // ADR-14: Module-level sentinel handler objects
-    m.add(
-        "state",
-        PyRustHandlerSentinel {
-            kleisli: Arc::new(RustKleisli::new(
-                Arc::new(StateHandlerFactory),
-                "StateHandler".to_string(),
-            )),
-        },
-    )?;
-    m.add(
-        "reader",
-        PyRustHandlerSentinel {
-            kleisli: Arc::new(RustKleisli::new(
-                Arc::new(ReaderHandlerFactory),
-                "ReaderHandler".to_string(),
-            )),
-        },
-    )?;
-    m.add(
-        "writer",
-        PyRustHandlerSentinel {
-            kleisli: Arc::new(RustKleisli::new(
-                Arc::new(WriterHandlerFactory),
-                "WriterHandler".to_string(),
-            )),
-        },
-    )?;
-    m.add(
-        "result_safe",
-        PyRustHandlerSentinel {
-            kleisli: Arc::new(RustKleisli::new(
-                Arc::new(ResultSafeHandlerFactory),
-                "ResultSafeHandler".to_string(),
-            )),
-        },
-    )?;
-    // R11-A: #[pyclass] effect structs for isinstance checks
-    m.add_class::<PyGet>()?;
-    m.add_class::<PyPut>()?;
-    m.add_class::<PyModify>()?;
-    m.add_class::<PyAsk>()?;
-    m.add_class::<PyLocal>()?;
-    m.add_class::<PyTell>()?;
-    m.add_class::<PySpawn>()?;
-    m.add_class::<PyGather>()?;
-    m.add_class::<PyRace>()?;
-    m.add_class::<PyCreatePromise>()?;
-    m.add_class::<PyCompletePromise>()?;
-    m.add_class::<PyFailPromise>()?;
-    m.add_class::<PyCreateExternalPromise>()?;
-    m.add_class::<PyCancelEffect>()?;
-    m.add_class::<PyTaskCompleted>()?;
-    m.add_class::<PyCreateSemaphore>()?;
-    m.add_class::<PyAcquireSemaphore>()?;
-    m.add_class::<PyReleaseSemaphore>()?;
-    m.add_class::<PyPythonAsyncioAwaitEffect>()?;
-    m.add_class::<PyResultSafeEffect>()?;
-    m.add_class::<PyProgramTrace>()?;
-    m.add_class::<PyProgramCallStack>()?;
-    m.add_class::<PyProgramCallFrame>()?;
+    // doeff_core_effects::register_all exports sentinel objects:
+    // "state", "reader", "writer", "result_safe", "scheduler", "lazy_ask", "await_handler".
+    doeff_core_effects::register_all(m)?;
     m.add_class::<PyGetExecutionContext>()?;
     m.add_class::<PyExecutionContext>()?;
-    // G14: scheduler sentinel
-    m.add(
-        "scheduler",
-        PyRustHandlerSentinel {
-            kleisli: Arc::new(RustKleisli::new(
-                Arc::new(SchedulerHandler::new()),
-                "SchedulerHandler".to_string(),
-            )),
-        },
-    )?;
-    m.add(
-        "lazy_ask",
-        PyRustHandlerSentinel {
-            kleisli: Arc::new(RustKleisli::new(
-                Arc::new(LazyAskHandlerFactory::new()),
-                "LazyAskHandler".to_string(),
-            )),
-        },
-    )?;
-    m.add(
-        "await_handler",
-        PyRustHandlerSentinel {
-            kleisli: Arc::new(RustKleisli::new(
-                Arc::new(AwaitHandlerFactory),
-                "AwaitHandler".to_string(),
-            )),
-        },
-    )?;
     // R13-I: DoExprTag constants for Python introspection
     m.add("TAG_PURE", DoExprTag::Pure as u8)?;
     m.add("TAG_MAP", DoExprTag::Map as u8)?;

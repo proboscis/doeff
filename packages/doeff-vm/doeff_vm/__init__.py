@@ -259,6 +259,7 @@ PyFailPromise = FailPromiseEffect
 PyCreateExternalPromise = CreateExternalPromiseEffect
 TaskCancelEffect = PyCancelEffect
 PyTaskCompleted = _SchedulerTaskCompleted
+TaskCancelledError = _ext.TaskCancelledError
 
 __all__ = [
     "K",
@@ -307,6 +308,7 @@ __all__ = [
     "ProgramCallStackEffect",
     "ProgramCallFrameEffect",
     "TaskCancelEffect",
+    "TaskCancelledError",
     "_SchedulerTaskCompleted",
     "PyModify",
     "PyPut",
