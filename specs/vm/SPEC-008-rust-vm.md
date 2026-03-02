@@ -62,7 +62,7 @@ Changes from Rev 12. Binary type hierarchy (DoExpr = DoCtrl | Effect), DoThunk e
 | **R13-C** | Call args | **`Call(f: DoExpr, args: [DoExpr], kwargs, meta)` takes DoExpr args.** VM evaluates args sequentially left-to-right. KPC handler can pre-resolve in parallel and emit Call with Pure(resolved) args. `f` is also a DoExpr — typically Pure(callable) or an effect that resolves to a callable. |
 | **R13-D** | classify_yielded | **Binary classification: DoCtrlBase \| EffectBase.** DoThunkBase deleted. `classify_yielded` checks `isinstance(obj, DoCtrlBase)` → downcast to specific DoCtrl variant, or `isinstance(obj, EffectBase)` → `Yielded::Effect(obj)`. No third path. |
 | **R13-E** | PythonCall::StartProgram | **Renamed to `PythonCall::EvalDoExpr`.** Semantics: driver evaluates a DoExpr node. For Pure(callable), calls `callable()` and expects a generator. For Call nodes, evaluates args first, then calls. For effects, this path is not used (effects go through dispatch). The key insight: DoCtrl is the VM's instruction set, not a Python-level concept. |
-| **R13-F** | Eval framing | **`DoCtrl::Eval(expr: DoExpr, handlers)` evaluates DoExpr nodes.** `expr` can be Pure(callable), Call(...), Map(...), FlatMap(...), or an Effect. VM creates a continuation with the handler chain and evaluates the DoExpr within it. This is the VM's expression evaluator — not a Python call. |
+| **R13-F** | Eval framing | **`DoCtrl::Eval(expr: DoExpr)` evaluates DoExpr nodes under current scope.** `expr` can be Pure(callable), Call(...), Map(...), FlatMap(...), or an Effect. For explicit yield-site scope replay, use `DoCtrl::EvalInScope(expr, k)` with a continuation token. |
 | **R13-G** | Call arg evaluation | **Full spec for `DoCtrl::Call` with DoExpr args.** Added `PendingPython::CallEvalProgress` with `CallEvalPhase` (EvalF/EvalArg/Invoke) to track multi-step evaluation. Fast path: all Pure args → extract and call directly (ONE NeedsPython for the invocation). Slow path: evaluate f, then args[0..n] sequentially via `eval_do_expr()`. `eval_do_expr()` short-circuits Pure(value) without Python round-trip via GIL-free tag read. `try_call_fast_path()` checks all-Pure condition GIL-free. Also: `FlatMapBinderResult` pending state for two-step binder evaluation. |
 | **R13-H** | Stale references | **Fixed remaining stale StartProgram/DoThunk/to_generator references.** ASCII diagram updated to binary DoCtrl/Effect/Unknown. HandleYield table (INV-14) updated. INV-15 classification updated. `run()` entry point uses `classify_program_input()` instead of `to_generator()`. Legacy Specs section updated to reflect binary hierarchy. `async_run` Python example updated. |
 | **R13-I** | GIL-free tag dispatch | **`DoExprTag` discriminant for GIL-free type checking.** `PyDoCtrlBase` and `PyEffectBase` carry an immutable `tag: u8` field (`#[pyclass(frozen)]`). `DoExprTag` is a `#[repr(u8)]` enum: Pure=0, Call=1, ..., Effect=128, Unknown=255. `classify_yielded` reads the tag without GIL via unsafe pointer access to frozen struct data. `eval_do_expr` and `try_call_fast_path` also use tag-based dispatch — Pure values are extracted GIL-free. `extract_do_ctrl` reads variant-specific fields (`.value`, `.f`, `.args`, etc.) GIL-free from frozen pyclasses. Only actual Python function invocation requires NeedsPython/GIL. |
@@ -2921,6 +2921,8 @@ impl VM {
   without consuming it. Error if called outside handler context.
 - **GetHandlers**: returns the full handler chain from the callsite scope (innermost → outermost).
   These handlers can be passed back to `WithHandler` or `CreateContinuation`.
+- **Eval**: evaluates a DoExpr under current dynamic scope.
+- **EvalInScope**: evaluates a DoExpr under an explicit continuation scope token (`k`).
 - **CreateContinuation**: returns an unstarted continuation storing `(expr, handlers)`.
 - **ResumeContinuation**: if `started=true`, behaves like `Resume` (call-resume). If
   `started=false`, installs handlers (outermost first) and starts the program, returning
@@ -3843,29 +3845,30 @@ pub enum DoCtrl {
         binder: Py<PyAny>,
     },
 
-    /// Eval(expr, handlers) - Evaluate a DoExpr in a fresh scope. [R9-H] [R13-F]
-    ///
-    /// Atomically creates an unstarted continuation with the given handler
-    /// chain and evaluates the DoExpr within it. The caller is suspended;
-    /// when the evaluation completes, the VM resumes the caller with the
-    /// result. Equivalent to CreateContinuation + ResumeContinuation but
-    /// as a single atomic step.
+    /// Eval(expr) - Evaluate a DoExpr in current dynamic scope. [R9-H] [R13-F]
     ///
     /// The DoExpr can be any DoExpr node: [R13-F]
     /// - Pure(value): evaluates to value immediately
     /// - Call(f, args, kwargs, meta): evaluates f and args, calls f(*args, **kwargs)
     /// - Map(source, f): evaluates source, applies f
     /// - FlatMap(source, binder): evaluates source, applies binder, evaluates result
-    /// - Effect: dispatches through continuation's handler stack
+    /// - Effect: dispatches through the current dynamic handler stack
     ///
-    /// [SUPERSEDED BY R15-A / SPEC-KPC-001] ~~Primary use: KPC handler resolving args with the full callsite handler
-    /// chain (captured via GetHandlers), avoiding busy boundary issues.~~
-    /// [R15-A: KPC handler removed. Eval remains available for general DoExpr evaluation in scoped contexts.]
+    /// [R15-A: KPC handler removed. Eval remains available for general DoExpr evaluation.]
     Eval {
         /// The DoExpr to evaluate (Pure, Call, Map, FlatMap, or Effect) [R13-F]
         expr: Py<PyAny>,
-        /// Handler chain for the continuation's scope (from GetHandlers)
-        handlers: Vec<Handler>,
+    },
+
+    /// EvalInScope(expr, k) - Evaluate under explicit continuation scope.
+    ///
+    /// Uses continuation token `k` as the scope anchor (handler/yield-site scope).
+    /// This is the primitive used by handlers (e.g. LazyAsk/ResultSafe) when
+    /// sub-program evaluation must observe effect-yield-site handlers rather than
+    /// the handler clause body's active scope.
+    EvalInScope {
+        expr: Py<PyAny>,
+        scope: Continuation,
     },
 
     /// GetCallStack - Walk frames and return call stack metadata. [R9-B]
@@ -4489,11 +4492,14 @@ impl VM {
                 });
                 self.eval_do_expr(f)  // → NeedsPython or Continue (if Pure/DoCtrl)
             }
-            DoCtrl::Eval { expr, handlers } => {
-                // [R9-H] Evaluate a DoExpr in a fresh scope with given handlers.
-                // Atomically equivalent to CreateContinuation + ResumeContinuation.
-                let cont = Continuation::create_unstarted(expr, handlers);
+            DoCtrl::Eval { expr } => {
+                // [R9-H] Evaluate a DoExpr under current dynamic scope.
+                let cont = Continuation::create_unstarted(expr, current_visible_handlers());
                 self.handle_resume_continuation(cont, Value::None)
+            }
+            DoCtrl::EvalInScope { expr, scope } => {
+                // [R9-H] Evaluate under explicit continuation scope token.
+                self.handle_eval_in_scope(expr, scope)
             }
             DoCtrl::GetCallStack => {
                 // [R9-B] Walk frames across segments, collect CallMetadata.
@@ -5063,8 +5069,9 @@ Key differences and decisions in 008:
 - Continuations are one-shot only; multi-shot is not supported.
 - Rust program handlers (RustProgramHandler/RustHandlerProgram) are first-class.
 - `Call(f, args, kwargs, metadata)` is a DoCtrl for function invocation with
-  call stack metadata (R9-A). `Eval(expr, handlers)` evaluates a DoExpr in a fresh scope
-  (R9-H). `GetCallStack` walks frames (R9-B). [R13-A] DoThunk eliminated.
+  call stack metadata (R9-A). `Eval(expr)` evaluates under current dynamic scope and
+  `EvalInScope(expr, k)` evaluates under explicit continuation scope (R9-H).
+  `GetCallStack` walks frames (R9-B). [R13-A] DoThunk eliminated.
   [R14-A] DoExpr is control IR and effect values dispatch via explicit
   `Perform(effect)`. `Pure(value)` replaces PureProgram; `Map`/`FlatMap` replace
   DerivedProgram.
