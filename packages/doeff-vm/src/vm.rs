@@ -480,7 +480,7 @@ impl VM {
         handlers
     }
 
-    pub(crate) fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
+    pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
         let installed = self.installed_handlers.clone();
         let mut outside_seg_id: Option<SegmentId> = None;
         for entry in installed.into_iter().rev() {
@@ -661,17 +661,6 @@ impl VM {
         Python::attach(|py| {
             obj.bind(py)
                 .extract::<PyRef<'_, PyGetExecutionContext>>()
-                .is_ok()
-        })
-    }
-
-    fn is_local_effect(effect: &DispatchEffect) -> bool {
-        let Some(obj) = dispatch_ref_as_python(effect) else {
-            return false;
-        };
-        Python::attach(|py| {
-            obj.bind(py)
-                .extract::<PyRef<'_, crate::effect::PyLocal>>()
                 .is_ok()
         })
     }
@@ -3098,8 +3087,12 @@ impl VM {
         None
     }
 
-    pub(crate) fn current_dispatch_id(&self) -> Option<DispatchId> {
+    pub fn current_dispatch_id(&self) -> Option<DispatchId> {
         self.current_segment_dispatch_id()
+    }
+
+    pub fn effect_for_dispatch(&self, dispatch_id: DispatchId) -> Option<DispatchEffect> {
+        self.dispatch_state.effect_for_dispatch(dispatch_id)
     }
 
     pub fn lazy_pop_completed(&mut self) {

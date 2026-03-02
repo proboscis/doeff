@@ -4,7 +4,9 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyList, PyModule};
+
+use doeff_vm_core::effect::{PyExecutionContext, PyGetExecutionContext};
 
 use crate::py_shared::PyShared;
 use crate::pyvm::{DoExprTag, PyEffectBase};
@@ -125,6 +127,12 @@ pub struct PyTaskCompleted {
     pub result: Py<PyAny>,
 }
 
+pyo3::create_exception!(
+    doeff_vm,
+    TaskCancelledError,
+    pyo3::exceptions::PyRuntimeError
+);
+
 #[pyclass(frozen, name = "CreateSemaphoreEffect", extends=PyEffectBase)]
 pub struct PyCreateSemaphore {
     #[pyo3(get)]
@@ -165,15 +173,6 @@ pub struct PyProgramCallStack;
 pub struct PyProgramCallFrame {
     #[pyo3(get)]
     pub depth: i64,
-}
-
-#[pyclass(frozen, name = "GetExecutionContext", extends=PyEffectBase)]
-pub struct PyGetExecutionContext {}
-
-#[pyclass(name = "ExecutionContext")]
-pub struct PyExecutionContext {
-    #[pyo3(get)]
-    pub entries: Py<PyList>,
 }
 
 fn py_repr_or(py: Python<'_>, value: &Py<PyAny>, fallback: &str) -> String {
@@ -628,39 +627,6 @@ impl PyProgramCallFrame {
     }
 }
 
-#[pymethods]
-impl PyGetExecutionContext {
-    #[new]
-    fn new() -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase {
-            tag: DoExprTag::Effect as u8,
-        })
-        .add_subclass(PyGetExecutionContext {})
-    }
-
-    fn __repr__(&self) -> String {
-        "GetExecutionContext()".to_string()
-    }
-}
-
-#[pymethods]
-impl PyExecutionContext {
-    #[new]
-    fn new(py: Python<'_>) -> Self {
-        PyExecutionContext {
-            entries: PyList::empty(py).unbind(),
-        }
-    }
-
-    fn add(&mut self, py: Python<'_>, entry: Py<PyAny>) -> PyResult<()> {
-        self.entries.bind(py).append(entry.bind(py))
-    }
-
-    fn __repr__(&self, py: Python<'_>) -> String {
-        format!("ExecutionContext(entries={})", self.entries.bind(py).len())
-    }
-}
-
 #[cfg(not(test))]
 #[derive(Debug, Clone)]
 pub struct Effect(pub PyShared);
@@ -933,6 +899,34 @@ impl Effect {
             }
         }
     }
+}
+
+pub fn register_effect_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyGet>()?;
+    m.add_class::<PyPut>()?;
+    m.add_class::<PyModify>()?;
+    m.add_class::<PyAsk>()?;
+    m.add_class::<PyLocal>()?;
+    m.add_class::<PyTell>()?;
+    m.add_class::<PySpawn>()?;
+    m.add_class::<PyGather>()?;
+    m.add_class::<PyRace>()?;
+    m.add_class::<PyCreatePromise>()?;
+    m.add_class::<PyCompletePromise>()?;
+    m.add_class::<PyFailPromise>()?;
+    m.add_class::<PyCreateExternalPromise>()?;
+    m.add_class::<PyCancelEffect>()?;
+    m.add_class::<PyTaskCompleted>()?;
+    m.add("TaskCancelledError", m.py().get_type::<TaskCancelledError>())?;
+    m.add_class::<PyCreateSemaphore>()?;
+    m.add_class::<PyAcquireSemaphore>()?;
+    m.add_class::<PyReleaseSemaphore>()?;
+    m.add_class::<PyPythonAsyncioAwaitEffect>()?;
+    m.add_class::<PyResultSafeEffect>()?;
+    m.add_class::<PyProgramTrace>()?;
+    m.add_class::<PyProgramCallStack>()?;
+    m.add_class::<PyProgramCallFrame>()?;
+    Ok(())
 }
 
 #[cfg(test)]

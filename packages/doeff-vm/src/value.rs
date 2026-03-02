@@ -12,9 +12,29 @@ use crate::capture::{
     HandlerStatus, TraceEntry, TraceHop,
 };
 use crate::frame::CallMetadata;
+use crate::ids::{PromiseId, TaskId};
 use crate::kleisli::KleisliRef;
 use crate::pyvm::{PyTraceFrame, PyTraceHop};
-use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
+use crate::py_shared::PyShared;
+
+/// Opaque handle to a spawned task.
+#[derive(Clone, Copy, Debug)]
+pub struct TaskHandle {
+    pub id: TaskId,
+}
+
+/// Opaque handle to a promise.
+#[derive(Clone, Copy, Debug)]
+pub struct PromiseHandle {
+    pub id: PromiseId,
+}
+
+/// External promise that can be completed from outside the scheduler.
+#[derive(Clone, Debug)]
+pub struct ExternalPromise {
+    pub id: PromiseId,
+    pub completion_queue: Option<PyShared>,
+}
 
 /// A value that can flow through the VM.
 ///

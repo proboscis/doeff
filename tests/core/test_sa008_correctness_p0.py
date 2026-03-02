@@ -9,7 +9,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _read(rel: str) -> str:
-    return (ROOT / rel).read_text(encoding="utf-8")
+    path = ROOT / rel
+    if not path.exists():
+        fallback_rel = {
+            "packages/doeff-vm/src/effect.rs": "packages/doeff-core-effects/src/effects/mod.rs",
+            "packages/doeff-vm/src/handler.rs": "packages/doeff-core-effects/src/handlers/mod.rs",
+            "packages/doeff-vm/src/scheduler.rs": "packages/doeff-core-effects/src/scheduler/mod.rs",
+        }.get(rel)
+        if fallback_rel is not None:
+            path = ROOT / fallback_rel
+    return path.read_text(encoding="utf-8")
 
 
 def test_p0_pyvm_to_generator_strict_has_no_duck_paths() -> None:

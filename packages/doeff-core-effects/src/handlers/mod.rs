@@ -15,12 +15,12 @@ use crate::do_ctrl::DoCtrl;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect, PyAsk,
-    PyGet, PyLocal, PyModify, PyPut, PyPythonAsyncioAwaitEffect, PyResultSafeEffect, PyTell,
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
+    PyAcquireSemaphore, PyAsk, PyCreateSemaphore, PyGet, PyLocal, PyModify, PyPut,
+    PyPythonAsyncioAwaitEffect, PyReleaseSemaphore, PyResultSafeEffect, PyTell,
 };
 use crate::error::VMError;
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
-use crate::kleisli::{Kleisli, KleisliDebugInfo, RustKleisli};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
@@ -28,109 +28,7 @@ use crate::segment::ScopeStore;
 use crate::step::{PyException, PythonCall};
 use crate::value::Value;
 use crate::vm::RustStore;
-
-/// A Rust handler program instance (generator-like).
-/// start/resume/throw mirror Python generator protocol but run in Rust.
-pub trait IRStreamProgram: std::fmt::Debug + Send {
-    fn start(
-        &mut self,
-        py: Python<'_>,
-        effect: DispatchEffect,
-        k: Continuation,
-        store: &mut RustStore,
-        scope: &mut ScopeStore,
-    ) -> IRStreamStep;
-    fn resume(
-        &mut self,
-        value: Value,
-        store: &mut RustStore,
-        scope: &mut ScopeStore,
-    ) -> IRStreamStep;
-    fn throw(
-        &mut self,
-        exc: PyException,
-        store: &mut RustStore,
-        scope: &mut ScopeStore,
-    ) -> IRStreamStep;
-}
-
-/// Factory for Rust handler programs. Each dispatch creates a fresh instance.
-pub trait IRStreamFactory: std::fmt::Debug + Send + Sync {
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError>;
-    fn create_program(&self) -> IRStreamProgramRef;
-    fn handler_name(&self) -> &'static str {
-        std::any::type_name::<Self>()
-    }
-
-    /// Create a handler program for a specific VM run token.
-    ///
-    /// Handlers that keep per-run state (for example, scheduler internals)
-    /// can override this to isolate state between distinct top-level runs.
-    fn create_program_for_run(&self, _run_token: Option<u64>) -> IRStreamProgramRef {
-        self.create_program()
-    }
-
-    /// Notification that a top-level VM run has completed.
-    ///
-    /// Default is no-op. Stateful handlers can override this to release
-    /// run-scoped resources.
-    fn on_run_end(&self, _run_token: u64) {}
-    fn supports_error_context_conversion(&self) -> bool {
-        false
-    }
-}
-
-/// Shared reference to a Rust program handler factory.
-pub type IRStreamFactoryRef = Arc<dyn IRStreamFactory + Send + Sync>;
-
-/// Shared reference to a running Rust handler program (cloneable for continuations).
-pub type IRStreamProgramRef = Arc<Mutex<Box<dyn IRStreamProgram + Send>>>;
-
-impl<T> Kleisli for T
-where
-    T: IRStreamFactory + Clone + std::fmt::Debug + Send + Sync + 'static,
-{
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
-        self.apply_with_run_token(py, args, None)
-    }
-
-    fn apply_with_run_token(
-        &self,
-        py: Python<'_>,
-        args: Vec<Value>,
-        run_token: Option<u64>,
-    ) -> Result<DoCtrl, VMError> {
-        let kleisli = RustKleisli::new(
-            Arc::new(self.clone()),
-            <Self as IRStreamFactory>::handler_name(self).to_string(),
-        );
-        kleisli.apply_with_run_token(py, args, run_token)
-    }
-
-    fn debug_info(&self) -> KleisliDebugInfo {
-        KleisliDebugInfo {
-            name: <Self as IRStreamFactory>::handler_name(self).to_string(),
-            file: None,
-            line: None,
-        }
-    }
-
-    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        <Self as IRStreamFactory>::can_handle(self, effect)
-    }
-
-    fn is_rust_builtin(&self) -> bool {
-        true
-    }
-
-    fn supports_error_context_conversion(&self) -> bool {
-        <Self as IRStreamFactory>::supports_error_context_conversion(self)
-    }
-
-    fn on_run_end(&self, run_token: u64) {
-        <Self as IRStreamFactory>::on_run_end(self, run_token);
-    }
-}
+use doeff_vm_core::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
 
 enum ParsedStateEffect {
     Get { key: String },
@@ -328,13 +226,8 @@ fn lazy_source_id(value: &Value) -> Option<usize> {
 
 fn lazy_ask_create_semaphore_effect() -> Result<DispatchEffect, PyException> {
     Python::attach(|py| {
-        let semaphore_module = py
-            .import("doeff.effects.semaphore")
-            .map_err(|e| pyerr_to_exception(py, e))?;
-        let create = semaphore_module
-            .getattr("CreateSemaphore")
-            .map_err(|e| pyerr_to_exception(py, e))?;
-        let effect = create
+        let effect = py
+            .get_type::<PyCreateSemaphore>()
             .call1((1_i64,))
             .map_err(|e| pyerr_to_exception(py, e))?;
         Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
@@ -350,13 +243,8 @@ fn lazy_ask_acquire_semaphore_effect(semaphore: &Value) -> Result<DispatchEffect
     };
 
     Python::attach(|py| {
-        let semaphore_module = py
-            .import("doeff.effects.semaphore")
-            .map_err(|e| pyerr_to_exception(py, e))?;
-        let acquire = semaphore_module
-            .getattr("AcquireSemaphore")
-            .map_err(|e| pyerr_to_exception(py, e))?;
-        let effect = acquire
+        let effect = py
+            .get_type::<PyAcquireSemaphore>()
             .call1((semaphore_obj.bind(py),))
             .map_err(|e| pyerr_to_exception(py, e))?;
         Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
@@ -372,13 +260,8 @@ fn lazy_ask_release_semaphore_effect(semaphore: &Value) -> Result<DispatchEffect
     };
 
     Python::attach(|py| {
-        let semaphore_module = py
-            .import("doeff.effects.semaphore")
-            .map_err(|e| pyerr_to_exception(py, e))?;
-        let release = semaphore_module
-            .getattr("ReleaseSemaphore")
-            .map_err(|e| pyerr_to_exception(py, e))?;
-        let effect = release
+        let effect = py
+            .get_type::<PyReleaseSemaphore>()
             .call1((semaphore_obj.bind(py),))
             .map_err(|e| pyerr_to_exception(py, e))?;
         Ok(dispatch_from_shared(PyShared::new(effect.unbind())))

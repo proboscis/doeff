@@ -505,3 +505,20 @@ rules:
       spec: VM-FAILFAST-001C
       category: fail-fast
       note: "Traceback layer should not crash, but must log errors"
+
+  # ---------------------------------------------------------------------------
+  # SPEC-VM-018 boundary: doeff-vm cdylib is glue only
+  # ---------------------------------------------------------------------------
+
+  - id: cdylib-no-handler-logic
+    pattern-regex: "impl IRStreamFactory for"
+    message: |
+      SPEC VIOLATION (INV-7): IRStreamFactory implementation found in doeff-vm cdylib.
+      The cdylib should contain only glue code (PyVM wrapper, module init).
+      Handler implementations belong in doeff-core-effects.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/lib.rs"
+        - "**/doeff-vm/src/pyvm.rs"
