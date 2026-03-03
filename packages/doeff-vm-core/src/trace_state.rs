@@ -36,6 +36,8 @@ struct ActiveChainFrameState {
     source_file: String,
     source_line: u32,
     sub_program_repr: String,
+    is_handler: bool,
+    handler_kind: Option<HandlerKind>,
 }
 
 #[derive(Clone)]
@@ -138,6 +140,7 @@ impl TraceState {
         &mut self,
         metadata: &CallMetadata,
         program_call_repr: Option<String>,
+        handler_kind: Option<HandlerKind>,
     ) {
         self.capture_log.push(CaptureEvent::FrameEntered {
             frame_id: metadata.frame_id as FrameId,
@@ -146,6 +149,8 @@ impl TraceState {
             source_line: metadata.source_line,
             args_repr: metadata.args_repr.clone(),
             program_call_repr,
+            is_handler_frame: handler_kind.is_some(),
+            handler_kind,
         });
     }
 
@@ -245,6 +250,8 @@ impl TraceState {
                     source_line,
                     args_repr,
                     program_call_repr: _,
+                    is_handler_frame: _,
+                    handler_kind: _,
                 } => {
                     trace.push(TraceEntry::Frame {
                         frame_id: *frame_id,
@@ -952,6 +959,8 @@ impl TraceState {
                 source_line,
                 args_repr: _,
                 program_call_repr,
+                is_handler_frame,
+                handler_kind,
             } => {
                 state.frame_stack.push(ActiveChainFrameState {
                     frame_id: *frame_id,
@@ -961,6 +970,8 @@ impl TraceState {
                     sub_program_repr: program_call_repr
                         .clone()
                         .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
+                    is_handler: *is_handler_frame,
+                    handler_kind: handler_kind.clone(),
                 });
             }
             CaptureEvent::FrameExited { .. } => {
@@ -1234,6 +1245,8 @@ impl TraceState {
             source_line: line,
             sub_program_repr: Self::program_call_repr(metadata)
                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
+            is_handler: false,
+            handler_kind: None,
         });
     }
 
@@ -1386,6 +1399,8 @@ impl TraceState {
                             source_line: line,
                             sub_program_repr: Self::program_call_repr(metadata)
                                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
+                            is_handler: false,
+                            handler_kind: None,
                         })
                     })
                     .collect()
@@ -1436,6 +1451,8 @@ impl TraceState {
             source_file: frame.source_file.clone(),
             source_line: frame.source_line,
             sub_program_repr,
+            is_handler: frame.is_handler,
+            handler_kind: frame.handler_kind.clone(),
         }
     }
 
@@ -1460,18 +1477,24 @@ impl TraceState {
                     source_file: lhs_source_file,
                     source_line: lhs_source_line,
                     sub_program_repr: lhs_sub_program_repr,
+                    is_handler: lhs_is_handler,
+                    handler_kind: lhs_handler_kind,
                 },
                 ActiveChainEntry::ProgramYield {
                     function_name: rhs_function_name,
                     source_file: rhs_source_file,
                     source_line: rhs_source_line,
                     sub_program_repr: rhs_sub_program_repr,
+                    is_handler: rhs_is_handler,
+                    handler_kind: rhs_handler_kind,
                 },
             ) => {
                 lhs_function_name == rhs_function_name
                     && lhs_source_file == rhs_source_file
                     && lhs_source_line == rhs_source_line
                     && lhs_sub_program_repr == rhs_sub_program_repr
+                    && lhs_is_handler == rhs_is_handler
+                    && lhs_handler_kind == rhs_handler_kind
             }
             (
                 ActiveChainEntry::EffectYield {
