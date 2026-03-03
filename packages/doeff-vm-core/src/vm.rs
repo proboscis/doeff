@@ -877,6 +877,14 @@ impl VM {
         )
     }
 
+    fn current_active_handler_kind(&self) -> Option<HandlerKind> {
+        let dispatch_id = self.current_active_handler_dispatch_id()?;
+        let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+        let marker = *ctx.handler_chain.get(ctx.handler_idx)?;
+        let (_, handler_kind, _, _) = self.marker_handler_trace_info(marker)?;
+        Some(handler_kind)
+    }
+
     fn dispatch_uses_user_continuation_stream(
         &self,
         dispatch_id: DispatchId,
@@ -979,8 +987,11 @@ impl VM {
     }
 
     fn maybe_emit_frame_entered(&mut self, metadata: &CallMetadata) {
-        self.trace_state
-            .maybe_emit_frame_entered(metadata, Self::program_call_repr(metadata));
+        self.trace_state.maybe_emit_frame_entered(
+            metadata,
+            Self::program_call_repr(metadata),
+            self.current_active_handler_kind(),
+        );
     }
 
     fn maybe_emit_frame_exited(&mut self, metadata: &CallMetadata) {

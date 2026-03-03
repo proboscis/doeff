@@ -385,9 +385,16 @@ else:
                 if isinstance(entry, ProgramYield):
                     previous_handler_stack = None
                     previous_spawn_boundary = None
-                    lines.append(
-                        f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
-                    )
+                    if entry.is_handler:
+                        kind = entry.handler_kind or "unknown"
+                        lines.append(
+                            f"  ⚙ {entry.function_name}()  "
+                            f"{entry.source_file}:{entry.source_line} ({kind})"
+                        )
+                    else:
+                        lines.append(
+                            f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
+                        )
                     lines.append(f"    yield {entry.sub_program_repr}")
                     lines.append("")
                     continue

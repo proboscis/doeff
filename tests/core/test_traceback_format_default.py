@@ -20,6 +20,7 @@ from doeff import (
 from doeff.effects import Put
 from doeff.effects.gather import Gather
 from doeff.effects.spawn import Spawn
+from doeff.trace import ProgramYield
 from doeff.traceback import attach_doeff_traceback, build_doeff_traceback
 
 
@@ -219,6 +220,62 @@ def test_format_default_program_yield() -> None:
     rendered = tb.format_default()
     assert "outer()  program.py:10" in rendered
     assert "yield inner()" in rendered
+
+
+def test_format_default_handler_program_yield_python() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "program_yield",
+                "function_name": "analyze_video_handler",
+                "source_file": "video.py",
+                "source_line": 164,
+                "sub_program_repr": "_lower_analyze_video()",
+                "is_handler": True,
+                "handler_kind": "python",
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "analyze_video_handler",
+                "source_file": "video.py",
+                "source_line": 165,
+                "exception_type": "ValueError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    assert "⚙ analyze_video_handler()  video.py:164 (python)" in rendered
+    assert "yield _lower_analyze_video()" in rendered
+
+
+def test_format_default_handler_program_yield_rust_builtin() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "program_yield",
+                "function_name": "StateHandler",
+                "source_file": "<rust>",
+                "source_line": 0,
+                "sub_program_repr": "[MISSING] <sub_program>",
+                "is_handler": True,
+                "handler_kind": "rust_builtin",
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "StateHandler",
+                "source_file": "<rust>",
+                "source_line": 0,
+                "exception_type": "RuntimeError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    assert "⚙ StateHandler()  <rust>:0 (rust_builtin)" in rendered
+    assert "yield [MISSING] <sub_program>" in rendered
 
 
 def test_format_default_effect_yield_with_markers() -> None:
@@ -802,6 +859,63 @@ def test_format_default_shows_program_yield_chain() -> None:
     assert source_file in rendered
     assert "crash_handler" in rendered
     assert "/doeff/do.py:52" not in rendered
+
+
+def test_runtime_marks_python_handler_program_frame() -> None:
+    @do
+    def crash_handler(effect: Effect, _k: object):
+        if isinstance(effect, Boom):
+            raise RuntimeError("handler exploded")
+        yield Pass()
+
+    @do
+    def body() -> Program[int]:
+        yield Boom()
+        return 1
+
+    result = run(WithHandler(crash_handler, body()), handlers=default_handlers())
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    handler_frames = [
+        entry
+        for entry in tb.active_chain
+        if isinstance(entry, ProgramYield) and entry.function_name.endswith("crash_handler")
+    ]
+    assert handler_frames
+    assert any(frame.is_handler and frame.handler_kind == "python" for frame in handler_frames)
+    rendered = tb.format_default()
+    assert "⚙ " in rendered
+    assert "crash_handler()" in rendered
+    assert "(python)" in rendered
+
+
+def test_runtime_marks_rust_builtin_handler_program_frame() -> None:
+    @do
+    def crash_handler(effect: Effect, _k: object):
+        if isinstance(effect, Boom):
+            raise RuntimeError("handler exploded")
+        yield Pass()
+
+    @do
+    def body() -> Program[int]:
+        yield Put("k", 1)
+        yield Boom()
+        return 1
+
+    result = run(WithHandler(crash_handler, body()), handlers=default_handlers(), store={"k": 0})
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    rust_handler_frames = [
+        entry
+        for entry in tb.active_chain
+        if isinstance(entry, ProgramYield) and entry.is_handler and entry.handler_kind == "rust_builtin"
+    ]
+    assert rust_handler_frames
+    rendered = tb.format_default()
+    assert "⚙ " in rendered
+    assert "(rust_builtin)" in rendered
 
 
 def test_format_default_includes_resumed_effects() -> None:

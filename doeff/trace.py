@@ -107,6 +107,8 @@ class ProgramYield:
     source_file: str
     source_line: int
     sub_program_repr: str
+    is_handler: bool = False
+    handler_kind: TraceHandlerKind | None = None
 
 
 @dataclass(frozen=True)
@@ -322,11 +324,20 @@ def coerce_active_chain_entry(entry: Any) -> ActiveChainEntry:
 
     kind = entry.get("kind")
     if kind == "program_yield":
+        handler_kind_raw = entry.get("handler_kind")
+        handler_kind = (
+            _coerce_handler_kind(handler_kind_raw) if handler_kind_raw is not None else None
+        )
+        is_handler = bool(entry.get("is_handler", False))
+        if handler_kind is not None:
+            is_handler = True
         result: ActiveChainEntry = ProgramYield(
             function_name=str(entry.get("function_name", "<unknown>")),
             source_file=str(entry.get("source_file", "<unknown>")),
             source_line=int(entry.get("source_line", 0)),
             sub_program_repr=str(entry.get("sub_program_repr", "<sub_program>")),
+            is_handler=is_handler,
+            handler_kind=handler_kind,
         )
     elif kind == "effect_yield":
         stack_raw = entry.get("handler_stack", ())
