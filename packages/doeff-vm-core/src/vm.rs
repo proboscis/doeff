@@ -473,17 +473,11 @@ impl VM {
                     metadata: metadata.clone(),
                 })),
                 _ => {
-                    // Compatibility fallback: older segments may still be
-                    // `Normal` while interceptor entries remain registered.
-                    if let Some(entry) = self.interceptor_state.get_entry(seg.marker) {
-                        chain.push(CallerChainEntry::Interceptor(InterceptorChainEntry {
-                            marker: seg.marker,
-                            interceptor: entry.interceptor,
-                            types: entry.types,
-                            mode: entry.mode,
-                            metadata: entry.metadata,
-                        }));
-                    }
+                    assert!(
+                        self.interceptor_state.get_entry(seg.marker).is_none(),
+                        "normal segment marker {} unexpectedly has interceptor state entry",
+                        seg.marker.raw()
+                    );
                 }
             }
             cursor = seg.caller;
@@ -542,6 +536,10 @@ impl VM {
         // around the effect site remain visible.
         let mut cursor = scope.parent.as_deref();
         while let Some(parent) = cursor {
+            assert!(
+                parent.dispatch_id.is_some(),
+                "EvalInScope parent chain must be Delegate-created dispatch continuations"
+            );
             if self.segments.get(parent.segment_id).is_none() {
                 break;
             }
@@ -564,6 +562,18 @@ impl VM {
             }
         }
         handlers
+    }
+
+    fn structural_kind_for_marker(&self, marker: Marker) -> SegmentKind {
+        let Some(entry) = self.interceptor_state.get_entry(marker) else {
+            return SegmentKind::Normal;
+        };
+        SegmentKind::InterceptorBoundary {
+            interceptor: entry.interceptor,
+            types: entry.types,
+            mode: entry.mode,
+            metadata: entry.metadata,
+        }
     }
 
     pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
@@ -650,6 +660,310 @@ impl VM {
             if let Some(remapped) = marker_remap.get(marker) {
                 *marker = *remapped;
             }
+        }
+    }
+
+    fn remap_marker(marker: &mut Marker, marker_remap: &HashMap<Marker, Marker>) {
+        if let Some(remapped) = marker_remap.get(marker) {
+            *marker = *remapped;
+        }
+    }
+
+    fn remap_interceptor_markers_in_doctrl(ctrl: &mut DoCtrl, marker_remap: &HashMap<Marker, Marker>) {
+        match ctrl {
+            DoCtrl::Pure { .. } => {}
+            DoCtrl::Map { .. } => {}
+            DoCtrl::FlatMap { .. } => {}
+            DoCtrl::Perform { .. } => {}
+            DoCtrl::Resume { continuation, .. } => {
+                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
+            }
+            DoCtrl::Transfer { continuation, .. } => {
+                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
+            }
+            DoCtrl::TransferThrow { continuation, .. } => {
+                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
+            }
+            DoCtrl::ResumeThrow { continuation, .. } => {
+                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
+            }
+            DoCtrl::WithHandler { body, .. } => {
+                Self::remap_interceptor_markers_in_doctrl(body, marker_remap);
+            }
+            DoCtrl::WithIntercept { body, .. } => {
+                Self::remap_interceptor_markers_in_doctrl(body, marker_remap);
+            }
+            DoCtrl::Finally { .. } => {}
+            DoCtrl::Delegate { .. } => {}
+            DoCtrl::Pass { .. } => {}
+            DoCtrl::GetContinuation => {}
+            DoCtrl::GetHandlers => {}
+            DoCtrl::GetTraceback { continuation } => {
+                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
+            }
+            DoCtrl::CreateContinuation { .. } => {}
+            DoCtrl::ResumeContinuation { continuation, .. } => {
+                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
+            }
+            DoCtrl::PythonAsyncSyntaxEscape { .. } => {}
+            DoCtrl::EvalInScope { scope, .. } => {
+                Self::remap_interceptor_markers_in_continuation(scope, marker_remap);
+            }
+            DoCtrl::Apply {
+                f, args, kwargs, ..
+            } => {
+                Self::remap_interceptor_markers_in_doctrl(f, marker_remap);
+                for arg in args {
+                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
+                }
+                for (_, kwarg) in kwargs {
+                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
+                }
+            }
+            DoCtrl::Expand {
+                factory,
+                args,
+                kwargs,
+                ..
+            } => {
+                Self::remap_interceptor_markers_in_doctrl(factory, marker_remap);
+                for arg in args {
+                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
+                }
+                for (_, kwarg) in kwargs {
+                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
+                }
+            }
+            DoCtrl::IRStream { .. } => {}
+            DoCtrl::Eval { .. } => {}
+            DoCtrl::GetCallStack => {}
+            DoCtrl::GetTrace => {}
+        }
+    }
+
+    fn remap_interceptor_markers_in_interceptor_continuation(
+        continuation: &mut InterceptorContinuation,
+        marker_remap: &HashMap<Marker, Marker>,
+    ) {
+        Self::remap_marker(&mut continuation.marker, marker_remap);
+        let remapped_chain: Vec<Marker> = continuation
+            .chain
+            .iter()
+            .map(|marker| marker_remap.get(marker).copied().unwrap_or(*marker))
+            .collect();
+        continuation.chain = Arc::new(remapped_chain);
+        Self::remap_interceptor_markers_in_doctrl(&mut continuation.original_yielded, marker_remap);
+    }
+
+    fn remap_interceptor_markers_in_eval_return_continuation(
+        continuation: &mut EvalReturnContinuation,
+        marker_remap: &HashMap<Marker, Marker>,
+    ) {
+        match continuation {
+            EvalReturnContinuation::EvalInScopeReturn { continuation } => {
+                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
+            }
+            EvalReturnContinuation::ApplyResolveFunction {
+                args, kwargs, ..
+            }
+            | EvalReturnContinuation::ExpandResolveFactory {
+                args, kwargs, ..
+            } => {
+                for arg in args {
+                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
+                }
+                for (_, kwarg) in kwargs {
+                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
+                }
+            }
+            EvalReturnContinuation::ApplyResolveArg { f, args, kwargs, .. } => {
+                Self::remap_interceptor_markers_in_doctrl(f, marker_remap);
+                for arg in args {
+                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
+                }
+                for (_, kwarg) in kwargs {
+                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
+                }
+            }
+            EvalReturnContinuation::ApplyResolveKwarg { f, args, kwargs, .. } => {
+                Self::remap_interceptor_markers_in_doctrl(f, marker_remap);
+                for arg in args {
+                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
+                }
+                for (_, kwarg) in kwargs {
+                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
+                }
+            }
+            EvalReturnContinuation::ExpandResolveArg {
+                factory,
+                args,
+                kwargs,
+                ..
+            }
+            | EvalReturnContinuation::ExpandResolveKwarg {
+                factory,
+                args,
+                kwargs,
+                ..
+            } => {
+                Self::remap_interceptor_markers_in_doctrl(factory, marker_remap);
+                for arg in args {
+                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
+                }
+                for (_, kwarg) in kwargs {
+                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
+                }
+            }
+            EvalReturnContinuation::FinallyCleanup { .. } => {}
+        }
+    }
+
+    fn remap_interceptor_markers_in_frame(frame: &mut Frame, marker_remap: &HashMap<Marker, Marker>) {
+        match frame {
+            Frame::Program { .. } => {}
+            Frame::InterceptorApply(interceptor_continuation) => {
+                Self::remap_interceptor_markers_in_interceptor_continuation(
+                    interceptor_continuation.as_mut(),
+                    marker_remap,
+                );
+            }
+            Frame::InterceptorEval(interceptor_continuation) => {
+                Self::remap_interceptor_markers_in_interceptor_continuation(
+                    interceptor_continuation.as_mut(),
+                    marker_remap,
+                );
+            }
+            Frame::HandlerDispatch { .. } => {}
+            Frame::EvalReturn(eval_continuation) => {
+                Self::remap_interceptor_markers_in_eval_return_continuation(
+                    eval_continuation.as_mut(),
+                    marker_remap,
+                );
+            }
+            Frame::MapReturn { .. } => {}
+            Frame::FlatMapBindResult => {}
+            Frame::FlatMapBindSource { .. } => {}
+            Frame::InterceptBodyReturn { marker } => {
+                Self::remap_marker(marker, marker_remap);
+            }
+        }
+    }
+
+    fn remap_interceptor_markers_in_continuation(
+        continuation: &mut Continuation,
+        marker_remap: &HashMap<Marker, Marker>,
+    ) {
+        if marker_remap.is_empty() {
+            return;
+        }
+
+        Self::remap_marker(&mut continuation.marker, marker_remap);
+        for marker in &mut continuation.interceptor_skip_stack {
+            Self::remap_marker(marker, marker_remap);
+        }
+
+        match continuation.mode.as_mut() {
+            Mode::HandleYield(yielded) => {
+                Self::remap_interceptor_markers_in_doctrl(yielded, marker_remap);
+            }
+            Mode::Deliver(_) => {}
+            Mode::Throw(_) => {}
+            Mode::Return(_) => {}
+        }
+
+        if let Some(pending) = continuation.pending_python.as_mut() {
+            match pending.as_mut() {
+                PendingPython::RustProgramContinuation { marker, k } => {
+                    Self::remap_marker(marker, marker_remap);
+                    Self::remap_interceptor_markers_in_continuation(k, marker_remap);
+                }
+                PendingPython::EvalExpr { .. } => {}
+                PendingPython::CallFuncReturn { .. } => {}
+                PendingPython::StepUserGenerator { .. } => {}
+                PendingPython::ExpandReturn { .. } => {}
+                PendingPython::AsyncEscape => {}
+            }
+        }
+
+        let mut frames = (*continuation.frames_snapshot).clone();
+        for frame in &mut frames {
+            Self::remap_interceptor_markers_in_frame(frame, marker_remap);
+        }
+        continuation.frames_snapshot = Arc::new(frames);
+
+        if let Some(parent) = continuation.parent.as_ref() {
+            let mut parent_remapped = (**parent).clone();
+            Self::remap_interceptor_markers_in_continuation(&mut parent_remapped, marker_remap);
+            continuation.parent = Some(Arc::new(parent_remapped));
+        }
+    }
+
+    fn remap_interceptor_markers_in_segment(seg: &mut Segment, marker_remap: &HashMap<Marker, Marker>) {
+        if marker_remap.is_empty() {
+            return;
+        }
+        Self::remap_marker(&mut seg.marker, marker_remap);
+        Self::remap_interceptor_skip_markers(seg, marker_remap);
+
+        match &mut seg.mode {
+            Mode::HandleYield(yielded) => {
+                Self::remap_interceptor_markers_in_doctrl(yielded, marker_remap);
+            }
+            Mode::Deliver(_) => {}
+            Mode::Throw(_) => {}
+            Mode::Return(_) => {}
+        }
+
+        if let Some(pending) = &mut seg.pending_python {
+            match pending {
+                PendingPython::RustProgramContinuation { marker, k } => {
+                    Self::remap_marker(marker, marker_remap);
+                    Self::remap_interceptor_markers_in_continuation(k, marker_remap);
+                }
+                PendingPython::EvalExpr { .. } => {}
+                PendingPython::CallFuncReturn { .. } => {}
+                PendingPython::StepUserGenerator { .. } => {}
+                PendingPython::ExpandReturn { .. } => {}
+                PendingPython::AsyncEscape => {}
+            }
+        }
+
+        for frame in &mut seg.frames {
+            Self::remap_interceptor_markers_in_frame(frame, marker_remap);
+        }
+
+        if let SegmentKind::PromptBoundary { handled_marker, .. } = &mut seg.kind {
+            Self::remap_marker(handled_marker, marker_remap);
+        }
+    }
+
+    fn remap_interceptor_markers_in_runtime_state(
+        &mut self,
+        marker_remap: &HashMap<Marker, Marker>,
+    ) {
+        if marker_remap.is_empty() {
+            return;
+        }
+
+        let seg_ids: Vec<SegmentId> = self.segments.iter().map(|(seg_id, _)| seg_id).collect();
+        for seg_id in seg_ids {
+            let Some(seg) = self.segments.get_mut(seg_id) else {
+                continue;
+            };
+            Self::remap_interceptor_markers_in_segment(seg, marker_remap);
+        }
+
+        let dispatch_depth = self.dispatch_state.depth();
+        for idx in 0..dispatch_depth {
+            let Some(ctx) = self.dispatch_state.get_mut(idx) else {
+                continue;
+            };
+            Self::remap_interceptor_markers_in_continuation(&mut ctx.k_origin, marker_remap);
+            Self::remap_interceptor_markers_in_continuation(&mut ctx.k_current, marker_remap);
+        }
+
+        for continuation in self.continuation_registry.values_mut() {
+            Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
         }
     }
 
@@ -2610,7 +2924,17 @@ impl VM {
         let Some(current_seg) = self.segments.get(current_seg_id) else {
             return StepEvent::Error(VMError::internal("EvalInScope current segment not found"));
         };
-        let return_to = Continuation::capture(current_seg, current_seg_id, current_seg.dispatch_id);
+        let mut return_to = Continuation::capture(current_seg, current_seg_id, current_seg.dispatch_id);
+        // Correctness constraint: active interceptor markers are still referenced by
+        // live frames in the current dispatch. We must preserve them as-is for the
+        // replay chain; remapping them would require remapping those live frames,
+        // which are outside the EvalInScope replay scope.
+        let mut active_interceptor_markers: HashSet<Marker> = current_seg
+            .interceptor_skip_stack
+            .iter()
+            .copied()
+            .collect();
+        active_interceptor_markers.insert(current_seg.marker);
 
         let Some(replay_chain_start_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
             return StepEvent::Error(VMError::internal(
@@ -2626,11 +2950,6 @@ impl VM {
         let mut base_seg = Segment::new(Marker::fresh(), None);
         self.copy_interceptor_guard_state(Some(current_seg_id), &mut base_seg);
         self.copy_scope_store_from(Some(current_seg_id), &mut base_seg);
-        base_seg.push_frame(Frame::EvalReturn(Box::new(
-            EvalReturnContinuation::EvalInScopeReturn {
-                continuation: return_to,
-            },
-        )));
         let base_seg_id = self.alloc_segment(base_seg);
         let mut replay_seg_ids = vec![base_seg_id];
 
@@ -2651,10 +2970,6 @@ impl VM {
                     );
                     self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
                     self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
-                    Self::remap_interceptor_skip_markers(
-                        &mut prompt_seg,
-                        &interceptor_marker_remap,
-                    );
                     let prompt_seg_id = self.alloc_segment(prompt_seg);
                     replay_seg_ids.push(prompt_seg_id);
                     self.track_run_handler(&handler);
@@ -2662,24 +2977,25 @@ impl VM {
                     let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
                     self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
                     self.copy_scope_store_from(outside_seg_id, &mut body_seg);
-                    Self::remap_interceptor_skip_markers(
-                        &mut body_seg,
-                        &interceptor_marker_remap,
-                    );
                     let body_seg_id = self.alloc_segment(body_seg);
                     replay_seg_ids.push(body_seg_id);
                     outside_seg_id = Some(body_seg_id);
                 }
                 CallerChainEntry::Interceptor(entry) => {
-                    let interceptor_marker = Marker::fresh();
-                    interceptor_marker_remap.insert(entry.marker, interceptor_marker);
-                    self.interceptor_state.insert(
-                        interceptor_marker,
-                        entry.interceptor.clone(),
-                        entry.types.clone(),
-                        entry.mode,
-                        entry.metadata.clone(),
-                    );
+                    let interceptor_marker = if active_interceptor_markers.contains(&entry.marker) {
+                        entry.marker
+                    } else {
+                        let fresh_marker = Marker::fresh();
+                        interceptor_marker_remap.insert(entry.marker, fresh_marker);
+                        self.interceptor_state.insert(
+                            fresh_marker,
+                            entry.interceptor.clone(),
+                            entry.types.clone(),
+                            entry.mode,
+                            entry.metadata.clone(),
+                        );
+                        fresh_marker
+                    };
 
                     let mut body_seg = Segment::new(interceptor_marker, outside_seg_id);
                     body_seg.kind = SegmentKind::InterceptorBoundary {
@@ -2690,10 +3006,6 @@ impl VM {
                     };
                     self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
                     self.copy_scope_store_from(outside_seg_id, &mut body_seg);
-                    Self::remap_interceptor_skip_markers(
-                        &mut body_seg,
-                        &interceptor_marker_remap,
-                    );
                     let body_seg_id = self.alloc_segment(body_seg);
                     replay_seg_ids.push(body_seg_id);
                     outside_seg_id = Some(body_seg_id);
@@ -2702,12 +3014,24 @@ impl VM {
         }
 
         if !interceptor_marker_remap.is_empty() {
-            for seg_id in replay_seg_ids {
-                let Some(seg) = self.segments.get_mut(seg_id) else {
-                    continue;
-                };
-                Self::remap_interceptor_skip_markers(seg, &interceptor_marker_remap);
-            }
+            Self::remap_interceptor_markers_in_continuation(
+                &mut return_to,
+                &interceptor_marker_remap,
+            );
+            self.remap_interceptor_markers_in_runtime_state(&interceptor_marker_remap);
+        }
+        let Some(base_seg) = self.segments.get_mut(base_seg_id) else {
+            return StepEvent::Error(VMError::invalid_segment(
+                "EvalInScope replay base segment not found",
+            ));
+        };
+        base_seg.push_frame(Frame::EvalReturn(Box::new(
+            EvalReturnContinuation::EvalInScopeReturn {
+                continuation: return_to,
+            },
+        )));
+        for old_marker in interceptor_marker_remap.keys() {
+            self.interceptor_state.remove(*old_marker);
         }
 
         self.current_segment = outside_seg_id;
@@ -3842,7 +4166,7 @@ impl VM {
             frames: (*k.frames_snapshot).clone(),
             caller,
             scope_store: k.scope_store.clone(),
-            kind: SegmentKind::Normal,
+            kind: self.structural_kind_for_marker(k.marker),
             dispatch_id,
             mode: k.mode.as_ref().clone(),
             pending_python: k
@@ -3990,7 +4314,7 @@ impl VM {
             frames: (*k.frames_snapshot).clone(),
             caller,
             scope_store: k.scope_store.clone(),
-            kind: SegmentKind::Normal,
+            kind: self.structural_kind_for_marker(k.marker),
             dispatch_id,
             mode: k.mode.as_ref().clone(),
             pending_python: k
@@ -4138,7 +4462,7 @@ impl VM {
                 frames: outer_frames,
                 caller,
                 scope_store: scope_store.clone(),
-                kind: SegmentKind::Normal,
+                kind: self.structural_kind_for_marker(marker),
                 dispatch_id,
                 mode: Mode::Deliver(Value::Unit),
                 pending_python: None,
