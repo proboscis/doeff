@@ -14,9 +14,15 @@ from doeff.program import GeneratorProgram
 
 
 ROOT = Path(__file__).resolve().parents[2]
+VM_SRC = ROOT / "packages" / "doeff-vm" / "src"
+VM_CORE_SRC = ROOT / "packages" / "doeff-vm-core" / "src"
 
 
 def _read(path: Path) -> str:
+    if not path.exists() and path.parent == VM_SRC:
+        core_path = VM_CORE_SRC / path.name
+        if core_path.exists():
+            path = core_path
     return path.read_text(encoding="utf-8")
 
 
