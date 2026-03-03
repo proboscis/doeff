@@ -12,6 +12,7 @@ from doeff import (
     Pass,
     Program,
     Resume,
+    Tell,
     WithHandler,
     WithIntercept,
     default_handlers,
@@ -1092,7 +1093,9 @@ def test_runtime_marks_rust_builtin_handler_program_frame() -> None:
     rust_handler_frames = [
         entry
         for entry in tb.active_chain
-        if isinstance(entry, ProgramYield) and entry.is_handler and entry.handler_kind == "rust_builtin"
+        if isinstance(entry, ProgramYield)
+        and entry.is_handler
+        and entry.handler_kind == "rust_builtin"
     ]
     assert rust_handler_frames
     rendered = tb.format_default()
@@ -1269,7 +1272,11 @@ def test_runtime_nested_dispatch_preserves_handler_provenance() -> None:
     ]
     assert handler_frames
     assert all(frame.handler_kind == "python" for frame in handler_frames)
-    body_frames = [entry for entry in tb.active_chain if isinstance(entry, ProgramYield) and entry.function_name == "body"]
+    body_frames = [
+        entry
+        for entry in tb.active_chain
+        if isinstance(entry, ProgramYield) and entry.function_name == "body"
+    ]
     assert all(frame.handler_kind is None for frame in body_frames)
 
 
@@ -1474,3 +1481,81 @@ def test_spawn_site_attribution_under_nested_delegate_handlers() -> None:
     rendered = tb.format_default()
     assert f"spawned at parent_nested() {source_file}:{expected_line}" in rendered
     assert "spawned at spawn_intercept_handler()" not in rendered
+
+
+def test_format_default_handler_tell_not_in_traceback() -> None:
+    """Stale Tell dispatch in handler frame must not leak into traceback.
+
+    Handler yields Tell() then Resume(k).  Tell completes instantly but
+    frame_dispatch still maps handler → Tell dispatch.  Handler frame stays
+    on stack (suspended at yield Resume) so the traceback incorrectly shows
+    ``yield Tell(...)`` as an EffectYield.
+    """
+
+    @do
+    def logging_handler(effect: Effect, k: object):
+        if isinstance(effect, StatePutEffect):
+            yield Tell("handler-internal-log")
+            return (yield Resume(k, None))
+        yield Pass()
+
+    @do
+    def body() -> Program[None]:
+        yield Put("key", 1)
+        raise ValueError("boom")
+
+    result = run(
+        WithHandler(logging_handler, body()),
+        handlers=default_handlers(),
+        store={"key": 0},
+    )
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    rendered = tb.format_default()
+
+    assert "Tell(" not in rendered, (
+        f"Handler's stale Tell dispatch leaked into traceback:\n{rendered}"
+    )
+    assert "handler-internal-log" not in rendered
+    assert "ValueError" in rendered
+    assert "boom" in rendered
+
+
+def test_format_default_handler_tell_not_in_traceback_deep() -> None:
+    """Same stale-Tell bug but program continues yielding effects after
+    handler resumes, keeping handler frame on stack longer.
+    """
+
+    @do
+    def logging_handler(effect: Effect, k: object):
+        if isinstance(effect, StatePutEffect):
+            yield Tell("handler-internal-log")
+            return (yield Resume(k, None))
+        yield Pass()
+
+    @do
+    def inner() -> Program[None]:
+        _ = yield Get("key")
+        raise ValueError("deep-boom")
+
+    @do
+    def body() -> Program[None]:
+        yield Put("key", 1)
+        yield inner()
+
+    result = run(
+        WithHandler(logging_handler, body()),
+        handlers=default_handlers(),
+        store={"key": 0},
+    )
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    rendered = tb.format_default()
+
+    assert "Tell(" not in rendered, (
+        f"Handler's stale Tell dispatch leaked into traceback:\n{rendered}"
+    )
+    assert "handler-internal-log" not in rendered
+    assert "deep-boom" in rendered
