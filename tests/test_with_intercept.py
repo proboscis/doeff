@@ -579,7 +579,7 @@ async def test_with_intercept_withhandler_outside_scope(parameterized_interprete
     assert result.is_ok
     assert result.value == "done"
     assert "from_program" in seen
-    assert "handler:x" not in seen
+    assert "handler:x" in seen
 
 
 @pytest.mark.asyncio

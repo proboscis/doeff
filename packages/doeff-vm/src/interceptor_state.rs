@@ -1,6 +1,6 @@
 //! Interceptor-domain state and helper logic for VM composition.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
 
@@ -31,75 +31,70 @@ impl InterceptorState {
         &self,
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
+        dispatch_contexts: &[DispatchContext],
     ) -> Vec<Marker> {
         let mut chain = Vec::new();
-        let mut cursor = current_segment;
-        while let Some(seg_id) = cursor {
-            let Some(seg) = segments.get(seg_id) else {
+        let mut seen = HashSet::new();
+        Self::walk_segment_chain(
+            &self.interceptors,
+            current_segment,
+            segments,
+            &mut chain,
+            &mut seen,
+        );
+        let mut dispatch_id = current_segment
+            .and_then(|sid| segments.get(sid))
+            .and_then(|seg| seg.dispatch_id);
+        while let Some(did) = dispatch_id {
+            let ctx = dispatch_contexts
+                .iter()
+                .rev()
+                .find(|ctx| ctx.dispatch_id == did && !ctx.completed);
+            let Some(ctx) = ctx else {
                 break;
             };
-            if self.interceptors.contains_key(&seg.marker) {
-                chain.push(seg.marker);
-            }
-            cursor = seg.caller;
+            let origin_seg_id = ctx.k_origin.segment_id;
+            Self::walk_segment_chain(
+                &self.interceptors,
+                Some(origin_seg_id),
+                segments,
+                &mut chain,
+                &mut seen,
+            );
+            dispatch_id = segments.get(origin_seg_id).and_then(|seg| seg.dispatch_id);
         }
         chain
     }
 
-    pub(crate) fn visible_to_active_handler(
-        &self,
-        interceptor_marker: Marker,
-        dispatch_stack: &[DispatchContext],
-        current_segment: Option<SegmentId>,
+    fn walk_segment_chain(
+        interceptors: &HashMap<Marker, InterceptorEntry>,
+        start: Option<SegmentId>,
         segments: &SegmentArena,
-    ) -> bool {
-        let Some(top) = dispatch_stack.last() else {
-            return true;
-        };
-        if top.completed {
-            return true;
-        }
-
-        let Some(seg_id) = current_segment else {
-            return true;
-        };
-        let Some(seg) = segments.get(seg_id) else {
-            return true;
-        };
-        let Some(handler_marker) = top.handler_chain.get(top.handler_idx).copied() else {
-            debug_assert!(false, "handler_idx out of bounds");
-            return false;
-        };
-        if seg.marker != handler_marker {
-            return true;
-        }
-
-        let Some(prompt_seg_id) = seg.caller else {
-            return true;
-        };
-        let Some(prompt_seg) = segments.get(prompt_seg_id) else {
-            return true;
-        };
-        if !matches!(
-            prompt_seg.kind,
-            crate::segment::SegmentKind::PromptBoundary { .. }
-        ) {
-            return true;
-        }
-
-        let mut cursor = prompt_seg.caller;
+        chain: &mut Vec<Marker>,
+        seen: &mut HashSet<Marker>,
+    ) {
+        let mut cursor = start;
         while let Some(seg_id) = cursor {
-            let Some(candidate) = segments.get(seg_id) else {
+            let Some(seg) = segments.get(seg_id) else {
                 break;
             };
-            if candidate.marker == interceptor_marker
-                && self.interceptors.contains_key(&interceptor_marker)
-            {
-                return true;
+            if interceptors.contains_key(&seg.marker) && seen.insert(seg.marker) {
+                chain.push(seg.marker);
             }
-            cursor = candidate.caller;
+            cursor = seg.caller;
         }
-        false
+    }
+
+    pub(crate) fn visible_to_active_handler(
+        &self,
+        _interceptor_marker: Marker,
+        _dispatch_stack: &[DispatchContext],
+        _current_segment: Option<SegmentId>,
+        _segments: &SegmentArena,
+    ) -> bool {
+        // WithIntercept sees ALL effects regardless of handler nesting.
+        // Re-entrancy is prevented by the skip stack (is_skipped).
+        true
     }
 
     pub(crate) fn is_skipped(seg: &Segment, marker: Marker) -> bool {

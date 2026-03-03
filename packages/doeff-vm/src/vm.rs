@@ -785,7 +785,7 @@ impl VM {
         self.dispatch_state
             .find_by_dispatch_id(dispatch_id)
             .is_some_and(|ctx| {
-                ctx.k_user.frames_snapshot.iter().any(|frame| match frame {
+                ctx.k_current.frames_snapshot.iter().any(|frame| match frame {
                     Frame::Program {
                         stream: snapshot_stream,
                         ..
@@ -1583,7 +1583,7 @@ impl VM {
                     .get(ctx.handler_idx)
                     .copied()
                     .unwrap_or_else(Marker::fresh);
-                let k = ctx.k_user.clone();
+                let k = ctx.k_current.clone();
                 self.current_seg_mut().pending_python =
                     Some(PendingPython::RustProgramContinuation { marker, k });
                 StepEvent::NeedsPython(call)
@@ -1628,8 +1628,11 @@ impl VM {
     }
 
     fn current_interceptor_chain(&self) -> Vec<Marker> {
-        self.interceptor_state
-            .current_chain(self.current_segment, &self.segments)
+        self.interceptor_state.current_chain(
+            self.current_segment,
+            &self.segments,
+            self.dispatch_state.contexts(),
+        )
     }
 
     fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
@@ -3292,7 +3295,8 @@ impl VM {
             handler_idx,
             active_handler_seg_id: handler_seg_id,
             supports_error_context_conversion,
-            k_user: k_user.clone(),
+            k_origin: k_user.clone(),
+            k_current: k_user.clone(),
             prompt_seg_id,
             completed: false,
             original_exception,
@@ -3973,7 +3977,7 @@ impl VM {
                     ctx.handler_idx + 1,
                     ctx.handler_idx,
                     if kind == ForwardKind::Delegate {
-                        Some(ctx.k_user.clone())
+                        Some(ctx.k_current.clone())
                     } else {
                         None
                     },
@@ -4011,7 +4015,7 @@ impl VM {
                         "Delegate called with missing dispatch context",
                     ));
                 };
-                ctx.k_user = k_new;
+                ctx.k_current = k_new;
             }
             ForwardKind::Pass => {
                 self.clear_segment_frames(inner_seg_id);
@@ -4081,7 +4085,7 @@ impl VM {
                     ctx.active_handler_seg_id = handler_seg_id;
                     ctx.supports_error_context_conversion = supports_error_context_conversion;
                     ctx.effect = effect.clone();
-                    ctx.k_user.clone()
+                    ctx.k_current.clone()
                 };
 
                 self.current_segment = Some(handler_seg_id);
@@ -4176,7 +4180,7 @@ impl VM {
             top_snapshot.dispatch_id,
             handler_name,
             value_repr,
-            &top_snapshot.k_user,
+            &top_snapshot.k_current,
             false,
         );
 
@@ -4204,7 +4208,7 @@ impl VM {
 
             if caller_id == ctx.prompt_seg_id {
                 ctx.completed = true;
-                self.consumed_cont_ids.insert(ctx.k_user.cont_id);
+                self.consumed_cont_ids.insert(ctx.k_current.cont_id);
             }
 
             if ctx.completed {
@@ -4281,7 +4285,7 @@ impl VM {
         let Some(ctx) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
             return StepEvent::Error(VMError::internal("GetContinuation: dispatch not found"));
         };
-        let k = ctx.k_user.clone();
+        let k = ctx.k_current.clone();
         self.register_continuation(k.clone());
         self.current_seg_mut().mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue
@@ -4302,7 +4306,7 @@ impl VM {
         // handlers. Continuation installation handles deduplication when these
         // handlers are reapplied from within active dispatch contexts.
         let handlers = self
-            .handlers_in_caller_chain(ctx.k_user.segment_id)
+            .handlers_in_caller_chain(ctx.k_origin.segment_id)
             .into_iter()
             .map(|entry| entry.handler)
             .collect::<Vec<_>>();
