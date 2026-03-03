@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::do_ctrl::DoCtrl;
+use crate::capture::HandlerKind;
 use crate::ids::{DispatchId, Marker};
 use crate::ir_stream::IRStreamRef;
 use crate::py_shared::PyShared;
@@ -73,6 +74,7 @@ pub struct InterceptorContinuation {
     pub original_obj: PyShared,
     pub emitter_stream: IRStreamRef,
     pub emitter_metadata: Option<CallMetadata>,
+    pub emitter_handler_kind: Option<HandlerKind>,
     pub chain: Arc<Vec<Marker>>,
     pub next_idx: usize,
     pub interceptor_metadata: Option<CallMetadata>,
@@ -141,6 +143,7 @@ pub enum Frame {
     Program {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
+        handler_kind: Option<HandlerKind>,
     },
     InterceptorApply(Box<InterceptorContinuation>),
     InterceptorEval(Box<InterceptorContinuation>),
@@ -164,7 +167,11 @@ pub enum Frame {
 
 impl Frame {
     pub fn program(stream: IRStreamRef, metadata: Option<CallMetadata>) -> Self {
-        Frame::Program { stream, metadata }
+        Frame::Program {
+            stream,
+            metadata,
+            handler_kind: None,
+        }
     }
 
     pub fn is_program(&self) -> bool {

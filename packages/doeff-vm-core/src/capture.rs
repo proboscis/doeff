@@ -8,7 +8,7 @@ use crate::ids::DispatchId;
 pub type FrameId = u64;
 
 /// Handler implementation kind for trace output.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandlerKind {
     Python,
     RustBuiltin,
@@ -111,6 +111,7 @@ pub enum ActiveChainEntry {
         source_file: String,
         source_line: u32,
         sub_program_repr: String,
+        handler_kind: Option<HandlerKind>,
     },
     EffectYield {
         function_name: String,
@@ -151,6 +152,7 @@ pub enum CaptureEvent {
         source_line: u32,
         args_repr: Option<String>,
         program_call_repr: Option<String>,
+        handler_kind: Option<HandlerKind>,
     },
     FrameExited {
         function_name: String,

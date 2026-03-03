@@ -877,6 +877,16 @@ impl VM {
         )
     }
 
+    fn current_program_frame_handler_kind(&self) -> Option<HandlerKind> {
+        // Invariant: when a handler Program frame yields DoCtrl::IRStream via `yield helper()`,
+        // that handler Program frame is on top of the stack. Reading the top Program frame's
+        // provenance correctly propagates handler context to nested sub-program frames.
+        self.current_seg().frames.last().and_then(|frame| match frame {
+            Frame::Program { handler_kind, .. } => *handler_kind,
+            _ => None,
+        })
+    }
+
     fn dispatch_uses_user_continuation_stream(
         &self,
         dispatch_id: DispatchId,
@@ -973,14 +983,16 @@ impl VM {
         }
     }
 
-    fn stream_debug_location(stream: &IRStreamRef) -> Option<crate::ir_stream::StreamLocation> {
-        let guard = stream.lock().expect("IRStream lock poisoned");
-        guard.debug_location()
-    }
-
-    fn maybe_emit_frame_entered(&mut self, metadata: &CallMetadata) {
-        self.trace_state
-            .maybe_emit_frame_entered(metadata, Self::program_call_repr(metadata));
+    fn maybe_emit_frame_entered(
+        &mut self,
+        metadata: &CallMetadata,
+        handler_kind: Option<HandlerKind>,
+    ) {
+        self.trace_state.maybe_emit_frame_entered(
+            metadata,
+            Self::program_call_repr(metadata),
+            handler_kind,
+        );
     }
 
     fn maybe_emit_frame_exited(&mut self, metadata: &CallMetadata) {
@@ -1218,7 +1230,11 @@ impl VM {
         };
 
         match frame {
-            Frame::Program { stream, metadata } => {
+            Frame::Program {
+                stream,
+                metadata,
+                handler_kind,
+            } => {
                 let step = {
                     let Some(seg) = self.segments.get_mut(seg_id) else {
                         return StepEvent::Error(VMError::invalid_segment("segment not found"));
@@ -1231,7 +1247,7 @@ impl VM {
                         _ => unreachable!(),
                     }
                 };
-                self.apply_stream_step(step, stream, metadata)
+                self.apply_stream_step(step, stream, metadata, handler_kind)
             }
             Frame::InterceptorApply(cont) => self.step_interceptor_apply_frame(*cont, mode),
             Frame::InterceptorEval(cont) => self.step_interceptor_eval_frame(*cont, mode),
@@ -1623,9 +1639,12 @@ impl VM {
         step: IRStreamStep,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
+        handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
         match step {
-            IRStreamStep::Yield(yielded) => self.handle_stream_yield(yielded, stream, metadata),
+            IRStreamStep::Yield(yielded) => {
+                self.handle_stream_yield(yielded, stream, metadata, handler_kind)
+            }
             IRStreamStep::Return(value) => {
                 if let Some(ref m) = metadata {
                     self.maybe_emit_frame_exited(m);
@@ -1656,8 +1675,11 @@ impl VM {
                     &call,
                     PythonCall::GenNext | PythonCall::GenSend { .. } | PythonCall::GenThrow { .. }
                 ) {
-                    self.current_seg_mut().pending_python =
-                        Some(PendingPython::StepUserGenerator { stream, metadata });
+                    self.current_seg_mut().pending_python = Some(PendingPython::StepUserGenerator {
+                        stream,
+                        metadata,
+                        handler_kind,
+                    });
                     return StepEvent::NeedsPython(call);
                 }
 
@@ -1667,7 +1689,11 @@ impl VM {
                          (NeedsPython rust continuation)",
                     ));
                 };
-                seg.push_frame(Frame::Program { stream, metadata });
+                seg.push_frame(Frame::Program {
+                    stream,
+                    metadata,
+                    handler_kind,
+                });
                 let Some(dispatch_id) = self.current_dispatch_id() else {
                     return StepEvent::Error(VMError::internal(
                         "RustProgramContinuation outside dispatch",
@@ -1696,10 +1722,17 @@ impl VM {
         yielded: DoCtrl,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
+        handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
         let chain = Arc::new(self.current_interceptor_chain());
-        self.current_seg_mut().mode =
-            self.continue_interceptor_chain_mode(yielded, stream, metadata, chain, 0);
+        self.current_seg_mut().mode = self.continue_interceptor_chain_mode(
+            yielded,
+            stream,
+            metadata,
+            handler_kind,
+            chain,
+            0,
+        );
         StepEvent::Continue
     }
 
@@ -1708,6 +1741,7 @@ impl VM {
         yielded: DoCtrl,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
+        handler_kind: Option<HandlerKind>,
     ) -> Mode {
         let is_terminal = matches!(
             &yielded,
@@ -1715,7 +1749,11 @@ impl VM {
         );
         if !is_terminal {
             match self.current_segment_mut() {
-                Some(seg) => seg.push_frame(Frame::Program { stream, metadata }),
+                Some(seg) => seg.push_frame(Frame::Program {
+                    stream,
+                    metadata,
+                    handler_kind,
+                }),
                 None => {
                     return Mode::Throw(PyException::runtime_error(
                         "current_segment_mut() returned None in apply_stream_step \
@@ -1826,6 +1864,7 @@ impl VM {
         yielded: DoCtrl,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
+        handler_kind: Option<HandlerKind>,
         chain: Arc<Vec<Marker>>,
         start_idx: usize,
     ) -> Mode {
@@ -1865,12 +1904,13 @@ impl VM {
                 yielded_obj,
                 stream,
                 metadata,
+                handler_kind,
                 chain,
                 idx,
             );
         }
 
-        self.finalize_stream_yield_mode(current, stream, metadata)
+        self.finalize_stream_yield_mode(current, stream, metadata, handler_kind)
     }
 
     fn fallback_interceptor_metadata() -> CallMetadata {
@@ -1891,6 +1931,7 @@ impl VM {
         yielded_obj: Py<PyAny>,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
+        handler_kind: Option<HandlerKind>,
         chain: Arc<Vec<Marker>>,
         next_idx: usize,
     ) -> Mode {
@@ -1910,7 +1951,7 @@ impl VM {
             ));
         }
         if let Some(meta) = interceptor_meta.as_ref() {
-            self.maybe_emit_frame_entered(meta);
+            self.maybe_emit_frame_entered(meta, None);
         }
         let continuation = InterceptorContinuation {
             marker,
@@ -1918,6 +1959,7 @@ impl VM {
             original_obj: PyShared::new(yielded_obj_for_continuation),
             emitter_stream: stream,
             emitter_metadata: metadata,
+            emitter_handler_kind: handler_kind,
             chain,
             next_idx,
             interceptor_metadata: interceptor_meta,
@@ -1958,6 +2000,7 @@ impl VM {
             original_obj,
             emitter_stream,
             emitter_metadata,
+            emitter_handler_kind,
             chain,
             next_idx,
             guard_eval_depth,
@@ -1989,6 +2032,7 @@ impl VM {
                 transformed,
                 emitter_stream,
                 emitter_metadata,
+                emitter_handler_kind,
                 chain,
                 next_idx,
             );
@@ -2008,6 +2052,7 @@ impl VM {
                 original_obj,
                 emitter_stream,
                 emitter_metadata,
+                emitter_handler_kind,
                 chain,
                 next_idx,
                 interceptor_metadata: None,
@@ -2037,6 +2082,7 @@ impl VM {
             original_obj,
             emitter_stream,
             emitter_metadata,
+            emitter_handler_kind,
             chain,
             next_idx,
             ..
@@ -2064,6 +2110,7 @@ impl VM {
             transformed,
             emitter_stream,
             emitter_metadata,
+            emitter_handler_kind,
             chain,
             next_idx,
         )
@@ -2155,7 +2202,11 @@ impl VM {
                 kwargs,
                 metadata,
             } => self.handle_yield_expand(*factory, args, kwargs, metadata),
-            DoCtrl::IRStream { stream, metadata } => self.handle_yield_ir_stream(stream, metadata),
+            DoCtrl::IRStream { stream, metadata } => self.handle_yield_ir_stream(
+                stream,
+                metadata,
+                self.current_program_frame_handler_kind(),
+            ),
             DoCtrl::Eval { expr, metadata } => self.handle_yield_eval(expr, metadata),
             DoCtrl::EvalInScope {
                 expr,
@@ -2471,14 +2522,25 @@ impl VM {
                     Python::attach(|py| kleisli.apply_with_run_token(py, args_values, run_token));
                 return match result {
                     Ok(doctrl) => {
-                        if let DoCtrl::IRStream { .. } = &doctrl {
-                            if let Some(dispatch_id) = self
+                        if let DoCtrl::IRStream { stream, metadata } = doctrl {
+                            let maybe_dispatch_id = self
                                 .current_dispatch_id()
-                                .or_else(|| self.current_active_handler_dispatch_id())
-                            {
+                                .or_else(|| self.current_active_handler_dispatch_id());
+                            if let Some(dispatch_id) = maybe_dispatch_id {
                                 self.current_seg_mut()
                                     .push_frame(Frame::HandlerDispatch { dispatch_id });
+                                let handler_kind = if kleisli.is_rust_builtin() {
+                                    HandlerKind::RustBuiltin
+                                } else {
+                                    HandlerKind::Python
+                                };
+                                return self.handle_yield_ir_stream(
+                                    stream,
+                                    metadata,
+                                    Some(handler_kind),
+                                );
                             }
+                            return self.handle_yield_ir_stream(stream, metadata, None);
                         }
                         self.evaluate(doctrl)
                     }
@@ -2509,16 +2571,21 @@ impl VM {
         &mut self,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
+        handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
         if let Some(ref m) = metadata {
-            self.maybe_emit_frame_entered(m);
+            self.maybe_emit_frame_entered(m, handler_kind);
         }
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal(
                 "handle_yield_ir_stream called without current segment",
             ));
         };
-        seg.push_frame(Frame::Program { stream, metadata });
+        seg.push_frame(Frame::Program {
+            stream,
+            metadata,
+            handler_kind,
+        });
         seg.mode = Mode::Deliver(Value::Unit);
         StepEvent::Continue
     }
@@ -2875,9 +2942,11 @@ impl VM {
                 metadata,
                 handler_return,
             } => self.receive_expand_result(metadata, handler_return, outcome),
-            PendingPython::StepUserGenerator { stream, metadata } => {
-                self.receive_step_user_generator_result(stream, metadata, outcome)
-            }
+            PendingPython::StepUserGenerator {
+                stream,
+                metadata,
+                handler_kind,
+            } => self.receive_step_user_generator_result(stream, metadata, handler_kind, outcome),
             PendingPython::RustProgramContinuation { marker, k } => {
                 self.receive_rust_program_result(marker, k, outcome)
             }
@@ -2996,12 +3065,27 @@ impl VM {
                             ));
                             return;
                         };
+                        // ExpandReturn(handler) comes from Python handler call paths.
+                        // Rust builtins do not enter this branch; they route through
+                        // Value::Kleisli handling in handle_yield_expand.
                         let Some(seg) = self.current_segment_mut() else {
                             return;
                         };
                         seg.push_frame(Frame::HandlerDispatch { dispatch_id });
-                        self.current_seg_mut().mode =
-                            Mode::HandleYield(DoCtrl::IRStream { stream, metadata });
+                        match self.handle_yield_ir_stream(stream, metadata, Some(HandlerKind::Python)) {
+                            StepEvent::Continue => {}
+                            StepEvent::Error(err) => {
+                                self.current_seg_mut().mode =
+                                    Mode::Throw(PyException::runtime_error(err.to_string()));
+                            }
+                            _ => {
+                                self.current_seg_mut().mode = Mode::Throw(
+                                    PyException::runtime_error(
+                                        "unexpected StepEvent from handle_yield_ir_stream",
+                                    ),
+                                );
+                            }
+                        }
                     }
                     Err(exception) => {
                         self.current_seg_mut().mode = Mode::Throw(exception);
@@ -3019,8 +3103,20 @@ impl VM {
             Value::Python(generator) => {
                 match Self::extract_doeff_generator(generator, metadata, "ExpandReturn") {
                     Ok((stream, metadata)) => {
-                        self.current_seg_mut().mode =
-                            Mode::HandleYield(DoCtrl::IRStream { stream, metadata });
+                        match self.handle_yield_ir_stream(stream, metadata, None) {
+                            StepEvent::Continue => {}
+                            StepEvent::Error(err) => {
+                                self.current_seg_mut().mode =
+                                    Mode::Throw(PyException::runtime_error(err.to_string()));
+                            }
+                            _ => {
+                                self.current_seg_mut().mode = Mode::Throw(
+                                    PyException::runtime_error(
+                                        "unexpected StepEvent from handle_yield_ir_stream",
+                                    ),
+                                );
+                            }
+                        }
                     }
                     Err(exception) => {
                         self.current_seg_mut().mode = Mode::Throw(exception);
@@ -3065,6 +3161,7 @@ impl VM {
         &mut self,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
+        handler_kind: Option<HandlerKind>,
         outcome: PyCallOutcome,
     ) {
         match outcome {
@@ -3072,7 +3169,7 @@ impl VM {
                 if self.current_segment.is_none() {
                     return;
                 }
-                let _ = self.handle_stream_yield(yielded, stream, metadata);
+                let _ = self.handle_stream_yield(yielded, stream, metadata, handler_kind);
             }
             PyCallOutcome::GenReturn(value) => {
                 if let Some(ref m) = metadata {
