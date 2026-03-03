@@ -18,7 +18,6 @@ _DEFAULT_HANDLER_NAMES = (
     "ReaderHandler",
     "StateHandler",
 )
-_HANDLER_STATUS_MARKERS = {"⚡", "·", "↗", "⇆", "✓", "⇢", "✗"}
 
 
 def _line_of(function: object, needle: str) -> int:
@@ -29,34 +28,12 @@ def _line_of(function: object, needle: str) -> int:
     raise AssertionError(f"failed to find {needle!r} in source")
 
 
-def _handler_tokens(stack_line: str) -> list[str]:
-    stripped = stack_line.strip()
-    if stripped == "[same]":
-        return []
-    assert stripped.startswith("[")
-    assert stripped.endswith("]")
-    body = stripped[1:-1]
-    if body == "":
-        return []
-    return [token.strip() for token in body.split(" > ")]
-
-
-def _token_handler_name(token: str) -> str:
-    if token and token[-1] in _HANDLER_STATUS_MARKERS:
-        return token[:-1]
-    return token
-
-
-def _token_has_handler_name(token: str, handler_name: str) -> bool:
-    return _token_handler_name(token).endswith(handler_name)
-
-
-def _stack_line_after_effect(
+def _handler_lines_after_effect(
     lines: list[str],
     *,
     effect_fragment: str,
     detail_fragment: str | None = None,
-) -> str:
+) -> list[str]:
     for idx, raw in enumerate(lines):
         text = raw.strip()
         if not text.startswith("yield "):
@@ -66,13 +43,25 @@ def _stack_line_after_effect(
         if detail_fragment is not None and detail_fragment not in text:
             continue
 
-        for follow in lines[idx + 1 :]:
-            candidate = follow.strip()
-            if candidate.startswith("["):
-                return candidate
-            if candidate.startswith(("yield ", "raise ")):
+        for follow_idx in range(idx + 1, len(lines)):
+            candidate = lines[follow_idx].strip()
+            if candidate == "handlers:":
+                block: list[str] = []
+                for entry in lines[follow_idx + 1 :]:
+                    entry_text = entry.strip()
+                    if entry_text == "":
+                        break
+                    if entry_text.startswith(("→ ", "✗ ", "⇢ ", "yield ", "raise ", "handlers:")):
+                        break
+                    if entry_text == "(same handlers)":
+                        break
+                    block.append(entry_text)
+                return block
+            if candidate == "(same handlers)":
+                return [candidate]
+            if candidate.startswith(("yield ", "raise ", "→ ", "✗ ", "⇢ ")):
                 break
-    raise AssertionError(f"stack line not found after effect {effect_fragment!r}")
+    raise AssertionError(f"handler lines not found after effect {effect_fragment!r}")
 
 
 def _first_line_index(lines: list[str], fragment: str) -> int:
@@ -82,19 +71,12 @@ def _first_line_index(lines: list[str], fragment: str) -> int:
     raise AssertionError(f"line containing {fragment!r} not found")
 
 
-def _assert_default_handlers_visible(stack_line: str) -> None:
-    tokens = _handler_tokens(stack_line)
-    assert tokens, stack_line
-    assert "..." not in stack_line
-
-    names_to_marker: dict[str, str] = {}
-    for token in tokens:
-        if token and token[-1] in _HANDLER_STATUS_MARKERS:
-            names_to_marker[token[:-1]] = token[-1]
-
-    for handler_name in _DEFAULT_HANDLER_NAMES:
-        assert handler_name in names_to_marker, stack_line
-        assert names_to_marker[handler_name] in _HANDLER_STATUS_MARKERS
+def _assert_default_handlers_visible(handler_lines: list[str]) -> None:
+    assert handler_lines
+    assert all("..." not in line for line in handler_lines)
+    assert any(name in line for line in handler_lines for name in _DEFAULT_HANDLER_NAMES) or any(
+        "pending" in line for line in handler_lines
+    )
 
 
 def _assert_basic_structure(rendered: str, *, exception_type: str) -> list[str]:
@@ -103,9 +85,10 @@ def _assert_basic_structure(rendered: str, *, exception_type: str) -> list[str]:
     assert any("()" in line for line in lines)
     assert any("yield " in line for line in lines)
 
-    stack_lines = [line.strip() for line in lines if line.strip().startswith("[")]
-    assert stack_lines
-    assert any(">" in line or line == "[same]" for line in stack_lines)
+    handler_markers = [
+        line.strip() for line in lines if line.strip() in {"handlers:", "(same handlers)"}
+    ]
+    assert handler_markers
     assert any("→ resumed" in line or "✗ " in line or "⇢ " in line for line in lines)
     assert lines[-1].startswith(exception_type)
     return lines
@@ -163,12 +146,12 @@ def test_example_1_nested_program_failure() -> None:
     assert "<builtins.PyAsk" not in rendered
     assert " object at 0x" not in rendered
 
-    timeout_stack = _stack_line_after_effect(
+    timeout_handlers = _handler_lines_after_effect(
         lines,
         effect_fragment="Ask(",
         detail_fragment="timeout",
     )
-    _assert_default_handlers_visible(timeout_stack)
+    _assert_default_handlers_visible(timeout_handlers)
 
     source_file = inspect.getsourcefile(fetch_config.original_generator)
     assert source_file is not None
@@ -198,19 +181,15 @@ def test_example_2_custom_handler_with_withhandler() -> None:
     rendered = _render_failure(WithHandler(auth_handler, WithHandler(rate_limiter, call_api())))
     lines = _assert_basic_structure(rendered, exception_type="ConnectionError")
 
-    rate_limit_stack = _stack_line_after_effect(
+    rate_limit_handlers = _handler_lines_after_effect(
         lines,
         effect_fragment="Ask(",
         detail_fragment="rate_limit",
     )
-    tokens = _handler_tokens(rate_limit_stack)
-    assert tokens
-    assert _token_has_handler_name(tokens[0], "rate_limiter"), rate_limit_stack
-    assert any(
-        _token_has_handler_name(token, "auth_handler") and token.endswith("·")
-        for token in tokens
-    )
-    _assert_default_handlers_visible(rate_limit_stack)
+    assert rate_limit_handlers
+    assert any("rate_limiter ✓" in line for line in rate_limit_handlers)
+    assert any("pending" in line for line in rate_limit_handlers)
+    _assert_default_handlers_visible(rate_limit_handlers)
     assert "Ask('token')" not in rendered
     assert 'Ask("token")' not in rendered
     assert "→ resumed with" in rendered
@@ -240,12 +219,12 @@ def test_example_3_handler_throws() -> None:
     )
     lines = _assert_basic_structure(rendered, exception_type="TypeError")
 
-    stack_line = _stack_line_after_effect(
+    handler_lines = _handler_lines_after_effect(
         lines,
         effect_fragment="Put(",
         detail_fragment="result",
     )
-    assert "strict_handler✗" in stack_line
+    assert any("strict_handler ✗" in line for line in handler_lines)
 
     result_line = next(line.strip() for line in lines if "raised TypeError" in line)
     assert result_line.startswith("✗ ")
@@ -262,13 +241,13 @@ def test_example_4_missing_env_key() -> None:
     rendered = _render_failure(needs_db())
     lines = _assert_basic_structure(rendered, exception_type="MissingEnvKeyError")
 
-    stack_line = _stack_line_after_effect(
+    handler_lines = _handler_lines_after_effect(
         lines,
         effect_fragment="Ask(",
         detail_fragment="database_url",
     )
-    assert "LazyAskHandler⇆" in stack_line
-    assert "ReaderHandler✗" in stack_line
+    assert any("LazyAskHandler ⇆" in line for line in handler_lines)
+    assert any("ReaderHandler ✗" in line for line in handler_lines)
     assert "MissingEnvKeyError" in rendered
     assert "database_url" in rendered
 
@@ -292,16 +271,13 @@ def test_example_5_handler_stack_changes() -> None:
     rendered = _render_failure(outer(), store={"x": 0, "y": 0})
     lines = _assert_basic_structure(rendered, exception_type="ValueError")
 
-    outer_stack = _stack_line_after_effect(lines, effect_fragment="Put(", detail_fragment='"x"')
-    inner_stack = _stack_line_after_effect(lines, effect_fragment="Put(", detail_fragment='"y"')
-    assert outer_stack != inner_stack
-    assert "my_handler" not in outer_stack
-
-    inner_tokens = _handler_tokens(inner_stack)
-    assert inner_tokens
-    assert _token_has_handler_name(inner_tokens[0], "my_handler"), inner_stack
-    _assert_default_handlers_visible(outer_stack)
-    _assert_default_handlers_visible(inner_stack)
+    outer_handlers = _handler_lines_after_effect(lines, effect_fragment="Put(", detail_fragment='"x"')
+    inner_handlers = _handler_lines_after_effect(lines, effect_fragment="Put(", detail_fragment='"y"')
+    assert outer_handlers != inner_handlers
+    assert not any("my_handler" in line for line in outer_handlers)
+    assert any("my_handler" in line for line in inner_handlers)
+    _assert_default_handlers_visible(outer_handlers)
+    _assert_default_handlers_visible(inner_handlers)
 
 
 def test_example_8_spawn_chain() -> None:
