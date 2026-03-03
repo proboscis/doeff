@@ -14,7 +14,7 @@ use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase};
-use crate::segment::Segment;
+use crate::segment::{Segment, SegmentKind};
 use crate::vm::InterceptorEntry;
 
 #[derive(Clone, Default)]
@@ -78,7 +78,9 @@ impl InterceptorState {
             let Some(seg) = segments.get(seg_id) else {
                 break;
             };
-            if interceptors.contains_key(&seg.marker) && seen.insert(seg.marker) {
+            let is_interceptor_boundary = matches!(seg.kind, SegmentKind::InterceptorBoundary { .. })
+                || interceptors.contains_key(&seg.marker);
+            if is_interceptor_boundary && seen.insert(seg.marker) {
                 chain.push(seg.marker);
             }
             cursor = seg.caller;
@@ -193,9 +195,21 @@ impl InterceptorState {
             VMError::invalid_segment("current segment not found for WithIntercept")
         })?;
 
-        self.insert(interceptor_marker, interceptor, types, mode, metadata);
+        self.insert(
+            interceptor_marker,
+            interceptor.clone(),
+            types.clone(),
+            mode,
+            metadata.clone(),
+        );
 
         let mut body_seg = Segment::new(interceptor_marker, Some(outside_seg_id));
+        body_seg.kind = SegmentKind::InterceptorBoundary {
+            interceptor,
+            types,
+            mode,
+            metadata,
+        };
         // Inherit guard state — see `copy_interceptor_guard_state` doc for why
         // these fields must be copied rather than derived from frames.
         body_seg.interceptor_eval_depth = outside_seg.interceptor_eval_depth;
