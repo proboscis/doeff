@@ -308,7 +308,10 @@ class TestLazyAskSemaphoreContract:
 
     def test_no_os_lock_for_lazy_cache(self) -> None:
         """rust_store.rs must not use Mutex/RwLock for lazy_cache."""
-        source = (ROOT / "packages" / "doeff-vm" / "src" / "rust_store.rs").read_text()
+        rust_store_rs = ROOT / "packages" / "doeff-vm" / "src" / "rust_store.rs"
+        if not rust_store_rs.exists():
+            rust_store_rs = ROOT / "packages" / "doeff-vm-core" / "src" / "rust_store.rs"
+        source = rust_store_rs.read_text()
 
         assert "Mutex<HashMap<String, LazyCacheEntry>>" not in source, (
             "lazy_cache still uses Mutex. Must use semaphore effects."
