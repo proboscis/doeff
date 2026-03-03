@@ -36,7 +36,6 @@ struct ActiveChainFrameState {
     source_file: String,
     source_line: u32,
     sub_program_repr: String,
-    is_handler: bool,
     handler_kind: Option<HandlerKind>,
 }
 
@@ -149,7 +148,6 @@ impl TraceState {
             source_line: metadata.source_line,
             args_repr: metadata.args_repr.clone(),
             program_call_repr,
-            is_handler_frame: handler_kind.is_some(),
             handler_kind,
         });
     }
@@ -250,7 +248,6 @@ impl TraceState {
                     source_line,
                     args_repr,
                     program_call_repr: _,
-                    is_handler_frame: _,
                     handler_kind: _,
                 } => {
                     trace.push(TraceEntry::Frame {
@@ -434,6 +431,7 @@ impl TraceState {
                 let Frame::Program {
                     stream,
                     metadata: Some(metadata),
+                    ..
                 } = frame
                 else {
                     continue;
@@ -518,6 +516,7 @@ impl TraceState {
             if let Frame::Program {
                 stream,
                 metadata: Some(metadata),
+                ..
             } = frame
             {
                 if let Some(location) = Self::stream_debug_location(stream) {
@@ -555,6 +554,7 @@ impl TraceState {
             if let Frame::Program {
                 stream,
                 metadata: Some(metadata),
+                ..
             } = frame
             {
                 let fallback_candidate = (
@@ -860,6 +860,7 @@ impl TraceState {
                 if let Frame::Program {
                     stream,
                     metadata: Some(metadata),
+                    ..
                 } = frame
                 {
                     let (source_file, source_line) = match Self::stream_debug_location(stream) {
@@ -959,7 +960,6 @@ impl TraceState {
                 source_line,
                 args_repr: _,
                 program_call_repr,
-                is_handler_frame,
                 handler_kind,
             } => {
                 state.frame_stack.push(ActiveChainFrameState {
@@ -970,7 +970,6 @@ impl TraceState {
                     sub_program_repr: program_call_repr
                         .clone()
                         .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-                    is_handler: *is_handler_frame,
                     handler_kind: handler_kind.clone(),
                 });
             }
@@ -1182,11 +1181,18 @@ impl TraceState {
                 let Frame::Program {
                     stream,
                     metadata: Some(metadata),
+                    handler_kind,
+                    ..
                 } = frame
                 else {
                     continue;
                 };
-                Self::upsert_frame_state_from_metadata(frame_stack, stream, metadata);
+                Self::upsert_frame_state_from_metadata(
+                    frame_stack,
+                    stream,
+                    metadata,
+                    handler_kind,
+                );
             }
         }
     }
@@ -1209,11 +1215,18 @@ impl TraceState {
             let Frame::Program {
                 stream,
                 metadata: Some(metadata),
+                handler_kind,
+                ..
             } = frame
             else {
                 continue;
             };
-            Self::upsert_frame_state_from_metadata(frame_stack, stream, metadata);
+            Self::upsert_frame_state_from_metadata(
+                frame_stack,
+                stream,
+                metadata,
+                handler_kind,
+            );
         }
     }
 
@@ -1221,6 +1234,7 @@ impl TraceState {
         frame_stack: &mut Vec<ActiveChainFrameState>,
         stream: &IRStreamRef,
         metadata: &CallMetadata,
+        handler_kind: &Option<HandlerKind>,
     ) {
         let line = Self::stream_debug_location(stream)
             .map(|location| location.source_line)
@@ -1235,6 +1249,9 @@ impl TraceState {
                     existing.sub_program_repr = repr;
                 }
             }
+            if existing.handler_kind.is_none() {
+                existing.handler_kind = handler_kind.clone();
+            }
             return;
         }
 
@@ -1245,8 +1262,7 @@ impl TraceState {
             source_line: line,
             sub_program_repr: Self::program_call_repr(metadata)
                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-            is_handler: false,
-            handler_kind: None,
+            handler_kind: handler_kind.clone(),
         });
     }
 
@@ -1384,6 +1400,8 @@ impl TraceState {
                         let Frame::Program {
                             stream,
                             metadata: Some(metadata),
+                            handler_kind,
+                            ..
                         } = frame
                         else {
                             return None;
@@ -1399,8 +1417,7 @@ impl TraceState {
                             source_line: line,
                             sub_program_repr: Self::program_call_repr(metadata)
                                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-                            is_handler: false,
-                            handler_kind: None,
+                            handler_kind: handler_kind.clone(),
                         })
                     })
                     .collect()
@@ -1451,7 +1468,6 @@ impl TraceState {
             source_file: frame.source_file.clone(),
             source_line: frame.source_line,
             sub_program_repr,
-            is_handler: frame.is_handler,
             handler_kind: frame.handler_kind.clone(),
         }
     }
@@ -1477,7 +1493,6 @@ impl TraceState {
                     source_file: lhs_source_file,
                     source_line: lhs_source_line,
                     sub_program_repr: lhs_sub_program_repr,
-                    is_handler: lhs_is_handler,
                     handler_kind: lhs_handler_kind,
                 },
                 ActiveChainEntry::ProgramYield {
@@ -1485,7 +1500,6 @@ impl TraceState {
                     source_file: rhs_source_file,
                     source_line: rhs_source_line,
                     sub_program_repr: rhs_sub_program_repr,
-                    is_handler: rhs_is_handler,
                     handler_kind: rhs_handler_kind,
                 },
             ) => {
@@ -1493,7 +1507,6 @@ impl TraceState {
                     && lhs_source_file == rhs_source_file
                     && lhs_source_line == rhs_source_line
                     && lhs_sub_program_repr == rhs_sub_program_repr
-                    && lhs_is_handler == rhs_is_handler
                     && lhs_handler_kind == rhs_handler_kind
             }
             (

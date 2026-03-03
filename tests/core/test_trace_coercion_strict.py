@@ -88,7 +88,6 @@ def test_coerce_active_chain_rejects_unknown_program_yield_handler_kind() -> Non
                 "source_file": "handlers.py",
                 "source_line": 10,
                 "sub_program_repr": "next()",
-                "is_handler": True,
                 "handler_kind": "mystery_kind",
             }
         )
