@@ -473,7 +473,7 @@ impl VM {
                     metadata: metadata.clone(),
                 })),
                 _ => {
-                    debug_assert!(
+                    assert!(
                         self.interceptor_state.get_entry(seg.marker).is_none(),
                         "normal segment marker {} unexpectedly has interceptor state entry",
                         seg.marker.raw()
@@ -862,14 +862,26 @@ impl VM {
             Self::remap_marker(marker, marker_remap);
         }
 
-        if let Mode::HandleYield(yielded) = continuation.mode.as_mut() {
-            Self::remap_interceptor_markers_in_doctrl(yielded, marker_remap);
+        match continuation.mode.as_mut() {
+            Mode::HandleYield(yielded) => {
+                Self::remap_interceptor_markers_in_doctrl(yielded, marker_remap);
+            }
+            Mode::Deliver(_) => {}
+            Mode::Throw(_) => {}
+            Mode::Return(_) => {}
         }
 
         if let Some(pending) = continuation.pending_python.as_mut() {
-            if let PendingPython::RustProgramContinuation { marker, k } = pending.as_mut() {
-                Self::remap_marker(marker, marker_remap);
-                Self::remap_interceptor_markers_in_continuation(k, marker_remap);
+            match pending.as_mut() {
+                PendingPython::RustProgramContinuation { marker, k } => {
+                    Self::remap_marker(marker, marker_remap);
+                    Self::remap_interceptor_markers_in_continuation(k, marker_remap);
+                }
+                PendingPython::EvalExpr { .. } => {}
+                PendingPython::CallFuncReturn { .. } => {}
+                PendingPython::StepUserGenerator { .. } => {}
+                PendingPython::ExpandReturn { .. } => {}
+                PendingPython::AsyncEscape => {}
             }
         }
 
@@ -893,14 +905,26 @@ impl VM {
         Self::remap_marker(&mut seg.marker, marker_remap);
         Self::remap_interceptor_skip_markers(seg, marker_remap);
 
-        if let Mode::HandleYield(yielded) = &mut seg.mode {
-            Self::remap_interceptor_markers_in_doctrl(yielded, marker_remap);
+        match &mut seg.mode {
+            Mode::HandleYield(yielded) => {
+                Self::remap_interceptor_markers_in_doctrl(yielded, marker_remap);
+            }
+            Mode::Deliver(_) => {}
+            Mode::Throw(_) => {}
+            Mode::Return(_) => {}
         }
 
         if let Some(pending) = &mut seg.pending_python {
-            if let PendingPython::RustProgramContinuation { marker, k } = pending {
-                Self::remap_marker(marker, marker_remap);
-                Self::remap_interceptor_markers_in_continuation(k, marker_remap);
+            match pending {
+                PendingPython::RustProgramContinuation { marker, k } => {
+                    Self::remap_marker(marker, marker_remap);
+                    Self::remap_interceptor_markers_in_continuation(k, marker_remap);
+                }
+                PendingPython::EvalExpr { .. } => {}
+                PendingPython::CallFuncReturn { .. } => {}
+                PendingPython::StepUserGenerator { .. } => {}
+                PendingPython::ExpandReturn { .. } => {}
+                PendingPython::AsyncEscape => {}
             }
         }
 
@@ -2901,6 +2925,10 @@ impl VM {
             return StepEvent::Error(VMError::internal("EvalInScope current segment not found"));
         };
         let mut return_to = Continuation::capture(current_seg, current_seg_id, current_seg.dispatch_id);
+        // Correctness constraint: active interceptor markers are still referenced by
+        // live frames in the current dispatch. We must preserve them as-is for the
+        // replay chain; remapping them would require remapping those live frames,
+        // which are outside the EvalInScope replay scope.
         let mut active_interceptor_markers: HashSet<Marker> = current_seg
             .interceptor_skip_stack
             .iter()
