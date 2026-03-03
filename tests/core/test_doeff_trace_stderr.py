@@ -97,6 +97,6 @@ def test_doeff_trace_renders_active_chain(capsys: pytest.CaptureFixture[str]) ->
     captured = capsys.readouterr()
     assert "exploding_handler" in captured.err
     assert "handler exploded" in captured.err
-    assert "exploding_handler✗" in captured.err
+    assert "exploding_handler ✗" in captured.err
     assert "·" in captured.err
     assert "Boom" in captured.err
