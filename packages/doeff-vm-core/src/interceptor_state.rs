@@ -35,13 +35,7 @@ impl InterceptorState {
     ) -> Vec<Marker> {
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
-        Self::walk_segment_chain(
-            &self.interceptors,
-            current_segment,
-            segments,
-            &mut chain,
-            &mut seen,
-        );
+        Self::walk_segment_chain(current_segment, segments, &mut chain, &mut seen);
         let mut dispatch_id = current_segment
             .and_then(|sid| segments.get(sid))
             .and_then(|seg| seg.dispatch_id);
@@ -54,20 +48,13 @@ impl InterceptorState {
                 break;
             };
             let origin_seg_id = ctx.k_origin.segment_id;
-            Self::walk_segment_chain(
-                &self.interceptors,
-                Some(origin_seg_id),
-                segments,
-                &mut chain,
-                &mut seen,
-            );
+            Self::walk_segment_chain(Some(origin_seg_id), segments, &mut chain, &mut seen);
             dispatch_id = segments.get(origin_seg_id).and_then(|seg| seg.dispatch_id);
         }
         chain
     }
 
     fn walk_segment_chain(
-        interceptors: &HashMap<Marker, InterceptorEntry>,
         start: Option<SegmentId>,
         segments: &SegmentArena,
         chain: &mut Vec<Marker>,
@@ -78,9 +65,9 @@ impl InterceptorState {
             let Some(seg) = segments.get(seg_id) else {
                 break;
             };
-            let is_interceptor_boundary = matches!(seg.kind, SegmentKind::InterceptorBoundary { .. })
-                || interceptors.contains_key(&seg.marker);
-            if is_interceptor_boundary && seen.insert(seg.marker) {
+            if matches!(seg.kind, SegmentKind::InterceptorBoundary { .. })
+                && seen.insert(seg.marker)
+            {
                 chain.push(seg.marker);
             }
             cursor = seg.caller;
@@ -176,6 +163,10 @@ impl InterceptorState {
 
     pub(crate) fn get_entry(&self, marker: Marker) -> Option<InterceptorEntry> {
         self.interceptors.get(&marker).cloned()
+    }
+
+    pub(crate) fn remove(&mut self, marker: Marker) {
+        self.interceptors.remove(&marker);
     }
 
     pub(crate) fn prepare_with_intercept(
