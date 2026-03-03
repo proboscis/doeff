@@ -141,10 +141,7 @@ async def test_with_intercept_and_handler_interleaving_with_local(
     assert result.is_ok
     assert result.value == "handled:x"
     assert "body-log" in seen
-    if w_outside_handler:
-        assert "handler:x" in seen
-    else:
-        assert "handler:x" not in seen
+    assert "handler:x" in seen
 
 
 @pytest.mark.asyncio
