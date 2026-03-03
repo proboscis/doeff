@@ -955,6 +955,40 @@ def test_runtime_handler_cleanup_after_resume_stays_tagged() -> None:
     assert "cleanup boom" in rendered
 
 
+def test_runtime_sub_program_called_from_handler_inherits_handler_kind() -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class SomeEffect(EffectBase):
+        pass
+
+    @do
+    def helper() -> Program[int]:
+        raise RuntimeError("helper boom")
+        yield
+
+    @do
+    def delegating_handler(effect: Effect, k: object):
+        if isinstance(effect, SomeEffect):
+            result = yield helper()
+            return (yield Resume(k, result))
+        yield Pass()
+
+    @do
+    def body() -> Program[int]:
+        return (yield SomeEffect())
+
+    result = run(WithHandler(delegating_handler, body()), handlers=default_handlers())
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    helper_frames = [
+        entry
+        for entry in tb.active_chain
+        if isinstance(entry, ProgramYield) and entry.function_name.endswith("helper")
+    ]
+    assert helper_frames
+    assert all(frame.handler_kind == "python" for frame in helper_frames)
+
+
 def test_runtime_resumed_user_continuation_frame_is_not_handler() -> None:
     @do
     def resume_only_handler(effect: Effect, k: object):
