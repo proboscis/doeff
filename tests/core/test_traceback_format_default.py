@@ -98,17 +98,17 @@ def _render_single_delegated_handler(handler_name: str) -> str:
 
 def test_format_default_shows_sync_await_handler_when_delegated() -> None:
     rendered = _render_single_delegated_handler("sync_await_handler")
-    assert "sync_await_handler⇆" in rendered
+    assert "sync_await_handler ⇆" in rendered
 
 
 def test_format_default_shows_async_await_handler_when_delegated() -> None:
     rendered = _render_single_delegated_handler("async_await_handler")
-    assert "async_await_handler⇆" in rendered
+    assert "async_await_handler ⇆" in rendered
 
 
 def test_format_default_shows_rust_await_handler_when_delegated() -> None:
     rendered = _render_single_delegated_handler("AwaitHandler")
-    assert "AwaitHandler⇆" in rendered
+    assert "AwaitHandler ⇆" in rendered
 
 
 def test_format_default_shows_every_handler_and_status_marker() -> None:
@@ -156,10 +156,15 @@ def test_format_default_shows_every_handler_and_status_marker() -> None:
     )
 
     rendered = tb.format_default()
-    assert (
-        "[h_active⚡ > h_pending· > h_passed↗ > h_delegated⇆ > h_resumed✓ > "
-        "h_transferred⇢ > h_returned✓ > h_threw✗]"
-    ) in rendered
+    assert "handlers:" in rendered
+    assert "h_active ⚡" in rendered
+    assert "· 1 pending" in rendered
+    assert "h_passed ↗" in rendered
+    assert "h_delegated ⇆" in rendered
+    assert "h_resumed ✓" in rendered
+    assert "h_transferred ⇢" in rendered
+    assert "h_returned ✓" in rendered
+    assert "h_threw ✗" in rendered
 
 
 def test_format_default_distinguishes_passed_and_delegated_markers() -> None:
@@ -194,7 +199,9 @@ def test_format_default_distinguishes_passed_and_delegated_markers() -> None:
     )
 
     rendered = tb.format_default()
-    assert "[h_passed↗ > h_delegated⇆ > h_resumed✓]" in rendered
+    assert "h_passed ↗" in rendered
+    assert "h_delegated ⇆" in rendered
+    assert "h_resumed ✓" in rendered
 
 
 def test_format_default_program_yield() -> None:
@@ -246,8 +253,9 @@ def test_format_default_handler_program_yield_python() -> None:
     )
 
     rendered = tb.format_default()
-    assert "⚙ analyze_video_handler()  video.py:164 (python)" in rendered
-    assert "yield _lower_analyze_video()" in rendered
+    assert "⚙ " not in rendered
+    assert "analyze_video_handler()  video.py:164" not in rendered
+    assert "yield _lower_analyze_video()" not in rendered
 
 
 def test_format_default_handler_program_yield_rust_builtin() -> None:
@@ -273,8 +281,9 @@ def test_format_default_handler_program_yield_rust_builtin() -> None:
     )
 
     rendered = tb.format_default()
-    assert "⚙ StateHandler()  <rust>:0 (rust_builtin)" in rendered
-    assert "yield [MISSING] <sub_program>" in rendered
+    assert "⚙ " not in rendered
+    assert "(rust_builtin)" not in rendered
+    assert "yield [MISSING] <sub_program>" not in rendered
 
 
 def test_format_default_effect_yield_with_markers() -> None:
@@ -304,7 +313,8 @@ def test_format_default_effect_yield_with_markers() -> None:
     )
 
     rendered = tb.format_default()
-    assert "[h1⇆ > h2✓]" in rendered
+    assert "h1 ⇆" in rendered
+    assert "h2 ✓" in rendered
     assert "→ resumed with None" in rendered
 
 
@@ -345,9 +355,188 @@ def test_format_default_handler_stack_same() -> None:
     )
 
     rendered = tb.format_default()
-    stack_line = "[h1⇆ > h2✓]"
-    assert rendered.count(stack_line) == 1
-    assert rendered.count("[same]") == 1
+    assert rendered.count("h1 ⇆") == 1
+    assert rendered.count("h2 ✓") == 1
+    assert rendered.count("(same handlers)") == 1
+
+
+def test_format_default_handler_stack_shows_source_locations() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 7,
+                "effect_repr": "Ask('x')",
+                "handler_stack": [
+                    {
+                        "handler_name": "py_handler",
+                        "handler_kind": "python",
+                        "source_file": "handlers/my_handler.py",
+                        "source_line": 42,
+                        "status": "resumed",
+                    },
+                    {
+                        "handler_name": "StateHandler",
+                        "handler_kind": "rust_builtin",
+                        "source_file": None,
+                        "source_line": None,
+                        "status": "threw",
+                    },
+                ],
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "StateHandler",
+                    "exception_repr": "RuntimeError('boom')",
+                },
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 8,
+                "exception_type": "RuntimeError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    assert "handlers:" in rendered
+    assert "py_handler ✓  handlers/my_handler.py:42" in rendered
+    assert "StateHandler ✗  (rust_builtin)" in rendered
+
+
+def test_format_default_handler_stack_collapses_pending_groups() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 9,
+                "effect_repr": "Ping()",
+                "handler_stack": [
+                    {"handler_name": "pending_1", "handler_kind": "python", "status": "pending"},
+                    {"handler_name": "pending_2", "handler_kind": "python", "status": "pending"},
+                    {
+                        "handler_name": "active_handler",
+                        "handler_kind": "python",
+                        "source_file": "handlers/active.py",
+                        "source_line": 10,
+                        "status": "resumed",
+                    },
+                    {"handler_name": "pending_3", "handler_kind": "python", "status": "pending"},
+                    {"handler_name": "pending_4", "handler_kind": "python", "status": "pending"},
+                    {"handler_name": "pending_5", "handler_kind": "python", "status": "pending"},
+                ],
+                "result": {"kind": "resumed", "value_repr": "1"},
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 10,
+                "exception_type": "RuntimeError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    assert "· 2 pending" in rendered
+    assert "active_handler ✓  handlers/active.py:10" in rendered
+    assert "· 3 pending" in rendered
+    assert "pending_1" not in rendered
+    assert "pending_5" not in rendered
+
+
+def test_format_default_handler_stack_all_pending_shows_no_match() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 11,
+                "effect_repr": "Ping()",
+                "handler_stack": [
+                    {"handler_name": "p1", "handler_kind": "python", "status": "pending"},
+                    {"handler_name": "p2", "handler_kind": "python", "status": "pending"},
+                    {"handler_name": "p3", "handler_kind": "python", "status": "pending"},
+                    {"handler_name": "p4", "handler_kind": "python", "status": "pending"},
+                ],
+                "result": {"kind": "active"},
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 12,
+                "exception_type": "RuntimeError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    assert "· 4 pending (no handler matched)" in rendered
+
+
+def test_format_default_handler_stack_mixed_pending_groups_keep_order() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 13,
+                "effect_repr": "Ping()",
+                "handler_stack": [
+                    {"handler_name": "p1", "handler_kind": "python", "status": "pending"},
+                    {
+                        "handler_name": "delegate_handler",
+                        "handler_kind": "python",
+                        "source_file": "handlers/delegate.py",
+                        "source_line": 7,
+                        "status": "delegated",
+                    },
+                    {"handler_name": "p2", "handler_kind": "python", "status": "pending"},
+                    {"handler_name": "p3", "handler_kind": "python", "status": "pending"},
+                    {
+                        "handler_name": "throw_handler",
+                        "handler_kind": "python",
+                        "source_file": "handlers/throw.py",
+                        "source_line": 9,
+                        "status": "threw",
+                    },
+                    {"handler_name": "p4", "handler_kind": "python", "status": "pending"},
+                ],
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "throw_handler",
+                    "exception_repr": "RuntimeError('boom')",
+                },
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 14,
+                "exception_type": "RuntimeError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    first_pending = rendered.index("· 1 pending")
+    delegated = rendered.index("delegate_handler ⇆  handlers/delegate.py:7")
+    middle_pending = rendered.index("· 2 pending")
+    threw = rendered.index("throw_handler ✗  handlers/throw.py:9")
+    trailing_pending = rendered.rindex("· 1 pending")
+    assert first_pending < delegated < middle_pending < threw < trailing_pending
 
 
 def test_format_default_keeps_duplicate_handler_names_from_vm_chain() -> None:
@@ -368,12 +557,7 @@ def test_format_default_keeps_duplicate_handler_names_from_vm_chain() -> None:
     assert result.is_err()
 
     rendered = _tb_from_run_result(result).format_default()
-    handler_stack_line = next(
-        line.strip()
-        for line in rendered.splitlines()
-        if line.strip().startswith("[") and "same_name_handler" in line
-    )
-    assert handler_stack_line.count("same_name_handler↗") == 2
+    assert rendered.count("same_name_handler ↗") >= 2
 
 
 def test_format_default_duplicate_name_throw_marks_correct_handler() -> None:
@@ -403,14 +587,8 @@ def test_format_default_duplicate_name_throw_marks_correct_handler() -> None:
     assert result.is_err()
 
     rendered = _tb_from_run_result(result).format_default()
-    stack_line = next(
-        line.strip()
-        for line in rendered.splitlines()
-        if line.strip().startswith("[") and "handler" in line
-    )
-    assert "handler✗ >" in stack_line
-    assert "> " in stack_line
-    assert "handler·" in stack_line
+    assert "handler ✗" in rendered
+    assert "pending" in rendered
     assert "inner:boom" in rendered
 
 
@@ -453,7 +631,7 @@ def test_format_default_renders_all_handlers() -> None:
     )
 
     rendered = tb.format_default()
-    assert "sync_await_handler⇆" in rendered
+    assert "sync_await_handler ⇆" in rendered
     assert "user_handler" in rendered
 
 
@@ -823,7 +1001,7 @@ def test_format_default_shows_effect_yield_on_handler_throw() -> None:
 
     rendered = _tb_from_run_result(result).format_default()
     assert "yield Boom" in rendered
-    assert "crash_handler✗" in rendered
+    assert "crash_handler ✗" in rendered
     assert "·" in rendered
     assert "raised RuntimeError('handler exploded')" in rendered
     # With typed handler metadata, crash_handler now appears as a proper frame
@@ -858,7 +1036,7 @@ def test_format_default_shows_program_yield_chain() -> None:
     assert "outer()" in rendered
     assert "inner()" in rendered
     assert "yield Boom" in rendered
-    assert "crash_handler✗" in rendered
+    assert "crash_handler ✗" in rendered
     assert "handler exploded" in rendered
     assert source_file in rendered
     assert "crash_handler" in rendered
@@ -889,9 +1067,9 @@ def test_runtime_marks_python_handler_program_frame() -> None:
     assert handler_frames
     assert any(frame.is_handler and frame.handler_kind == "python" for frame in handler_frames)
     rendered = tb.format_default()
-    assert "⚙ " in rendered
-    assert "crash_handler()" in rendered
-    assert "(python)" in rendered
+    assert "⚙ " not in rendered
+    assert "(python)" not in rendered
+    assert "crash_handler ✗" in rendered
 
 
 def test_runtime_marks_rust_builtin_handler_program_frame() -> None:
@@ -918,8 +1096,8 @@ def test_runtime_marks_rust_builtin_handler_program_frame() -> None:
     ]
     assert rust_handler_frames
     rendered = tb.format_default()
-    assert "⚙ " in rendered
-    assert "(rust_builtin)" in rendered
+    assert "⚙ " not in rendered
+    assert "pending" in rendered
 
 
 def test_runtime_handler_cleanup_after_resume_stays_tagged() -> None:
@@ -951,7 +1129,8 @@ def test_runtime_handler_cleanup_after_resume_stays_tagged() -> None:
     assert handler_frames
     assert all(frame.handler_kind == "python" for frame in handler_frames)
     rendered = tb.format_default()
-    assert "⚙ " in rendered
+    assert "⚙ " not in rendered
+    assert "resume_then_cleanup" in rendered
     assert "cleanup boom" in rendered
 
 
@@ -1135,9 +1314,9 @@ def test_format_default_shows_delegation_chain() -> None:
 
     rendered = _tb_from_run_result(result).format_default()
     assert "yield Boom" in rendered
-    assert "inner_delegate_handler↗" in rendered
-    assert "outer_crash_handler✗" in rendered
-    assert "StateHandler·" in rendered
+    assert "inner_delegate_handler ↗" in rendered
+    assert "outer_crash_handler ✗" in rendered
+    assert "pending" in rendered
     assert "delegated boom" in rendered
     assert "outer_crash_handler" in rendered
     assert "\n\nRuntimeError: delegated boom" in rendered
@@ -1180,9 +1359,9 @@ def test_format_default_runtime_distinguishes_passed_and_delegated() -> None:
     assert result.is_err()
 
     rendered = _tb_from_run_result(result).format_default()
-    assert "inner_pass_handler↗" in rendered
-    assert "middle_delegate_handler⇆" in rendered
-    assert "outer_throw_handler✗" in rendered
+    assert "inner_pass_handler ↗" in rendered
+    assert "middle_delegate_handler ⇆" in rendered
+    assert "outer_throw_handler ✗" in rendered
     assert "pass-vs-delegate boom" in rendered
 
 
@@ -1209,7 +1388,7 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     rendered = _tb_from_run_result(result).format_default()
     source_file = str(Path(__file__).resolve())
     assert "yield Boom" in rendered
-    assert "crash_handler✗" in rendered
+    assert "crash_handler ✗" in rendered
     assert "·" in rendered
     assert "child exploded" in rendered
     assert "── in task " in rendered
@@ -1220,20 +1399,13 @@ def test_format_default_spawn_shows_effect_in_child() -> None:
     assert "parent()" in rendered
     assert source_file in rendered
     assert "child()" in rendered
-    assert "crash_handler()" in rendered
+    assert "⚙ crash_handler()" not in rendered
     boundary_pos = rendered.index("── in task ")
     gather_pos = rendered.index("yield Gather(")
     child_pos = rendered.index("  child()")
     assert gather_pos < boundary_pos < child_pos
-    child_stack_line = next(
-        line.strip()
-        for line in rendered.splitlines()
-        if line.strip().startswith("[") and "crash_handler" in line
-    )
-    assert child_stack_line.count("ResultSafeHandler·") >= 2
-    assert child_stack_line.count("WriterHandler·") >= 2
-    assert child_stack_line.count("ReaderHandler·") >= 2
-    assert child_stack_line.count("StateHandler·") >= 2
+    assert "handlers:" in rendered
+    assert "pending" in rendered
 
 
 def test_spawn_site_attribution_under_single_delegate_handler() -> None:
