@@ -47,7 +47,12 @@ doeff Traceback (most recent call last):
 
   <function_name>()  <file>:<line>
     yield <EffectRepr>
-    [handler_a↗ > handler_b↗ > handler_c✓ > handler_d· > handler_e·]
+    handlers:
+      <handler_a> ↗  <source>:<line>
+      <handler_b> ↗  <source>:<line>
+      · <N> pending
+      <handler_c> ✓  <source>:<line>
+      · <M> pending
     → resumed with <value_repr>
 
   <function_name>()  <file>:<line>
@@ -78,11 +83,18 @@ Each handler in the stack is annotated with what it did for that effect:
 
 ### Handler Stack Display Rules
 
-- Show the full handler stack per effect frame, with markers
-- Handlers are ordered left-to-right from innermost (first to see effects) to outermost
-- All handlers are shown — no handler is ever hidden, filtered, or abbreviated based on name, kind, or action
-- No abbreviation protocol exists — every handler is shown by its actual name, never replaced with `...` or similar shorthand
-- When the handler stack is unchanged from the previous effect frame, display `[same]` instead of repeating
+- Show the handler stack per effect frame in a **multi-line indented format**, one handler per line
+- Prefix the block with `handlers:` at 4-space indent; each handler entry at 6-space indent
+- Each handler line shows: `<handler_name> <status_marker>  <source_location>`
+  - Python handlers: `my_handler ✓  handlers/my.py:42`
+  - Rust builtin handlers: `StateHandler ✓  (rust_builtin)`
+- Handlers are listed from innermost (first to see effects) to outermost
+- **Active handlers** (any non-pending status: ✓ ✗ ⇢ ⇆ ↗ ⚡) are always shown individually with source location
+- **Pending handlers** (`·`) are collapsed into count groups:
+  - Consecutive pending handlers are replaced with a single `· N pending` line
+  - This is a display condensation — the full handler stack data is preserved in the trace object
+  - When ALL handlers are pending (no handler participated), show `· N pending (no handler matched)` as a single line
+- When the handler stack is unchanged from the previous effect frame, display `(same handlers)` on a single line instead of repeating the full block
 - On `WithHandler` boundary crossings, show the full updated stack
 
 ### Frame Selection Rules
@@ -97,6 +109,16 @@ This means:
 - Successful sub-program calls from earlier iterations are NOT shown
 - Only the current yield per generator is shown
 - The trace reads like a regular call stack, not an execution log
+
+### Handler Program Frame Suppression
+
+Handler program frames (`ProgramYield` entries where `handler_kind` is not `None`) are **suppressed** in `format_default()`. These frames appear in the active call chain when a handler is suspended waiting on a sub-program, but they add noise without new information:
+
+1. Handler names and source locations are already shown in the handler stack per `EffectYield`
+2. The handler delegation chain is visible from the handler stack ordering
+3. Handler `sub_program_repr` typically just shows the next handler's name (pure delegation)
+
+Handler program frames remain available in `format_chained()` (full chronological view), rendered with the `⚙` prefix for visual distinction. The `handler_kind` field (`python` / `rust_builtin`) on `ProgramYield` entries is preserved in the trace data for programmatic access.
 
 **Exception — Transfer**: When a Transfer severs the caller chain (`caller: None`), the pre-transfer call chain is still shown. Pre-transfer frames are reconstructed from the **capture_log** (chronological event log), not from the live segment walk. The trace shows: pre-transfer chain → transfer (inline `⇢`) → post-transfer chain → crash.
 
@@ -177,7 +199,12 @@ doeff Traceback (most recent call last):
 
   fetch_config()  app.py:5
     yield Ask("timeout")
-    [StateHandler↗ > ReaderHandler↗ > WriterHandler· > ResultSafeHandler· > SchedulerHandler· > LazyAskHandler✓ > sync_await_handler·]
+    handlers:
+      StateHandler ↗  (rust_builtin)
+      ReaderHandler ↗  (rust_builtin)
+      · 3 pending
+      LazyAskHandler ✓  doeff/handlers/lazy_ask.py:42
+      · 1 pending
     → resumed with 30
 
   process_item()  app.py:14
@@ -189,7 +216,7 @@ RuntimeError: Connection refused: https://api.example.com/items/item/2
 Notes:
 - Items 0 and 1 succeeded — not in trace
 - `fetch_config` shows only its last yield before returning (the one active when control returned to `process_item`)
-- All handlers from `default_handlers()` are shown with their actual status
+- Active handlers shown with source locations; 4 pending handlers collapsed into count groups
 - Line numbers are yield sites, not decorator lines
 
 ### Example 2: Custom handler with WithHandler
@@ -223,7 +250,9 @@ doeff Traceback (most recent call last):
 
   call_api()  app.py:16
     yield Ask("rate_limit")
-    [rate_limiter✓ > auth_handler· > StateHandler· > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler· > LazyAskHandler· > sync_await_handler·]
+    handlers:
+      rate_limiter ✓  app.py:6
+      · 8 pending
     → resumed with 100
 
   call_api()  app.py:17
@@ -234,7 +263,7 @@ ConnectionError: timeout
 
 Notes:
 - Handler stack shows `rate_limiter` innermost (added by inner `WithHandler`)
-- `auth_handler` is `·` because `rate_limiter` handled `Ask("rate_limit")` before it
+- `auth_handler` and all other handlers are pending — collapsed into `· 8 pending`
 - Previous `Ask("token")` not shown — only the active yield matters
 
 ### Example 3: Handler throws
@@ -261,7 +290,9 @@ doeff Traceback (most recent call last):
 
   main()  app.py:10
     yield Put("result", "not-an-int")
-    [strict_handler✗ > StateHandler· > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler· > LazyAskHandler· > sync_await_handler·]
+    handlers:
+      strict_handler ✗  app.py:3
+      · 7 pending
     ✗ strict_handler raised TypeError("expected int, got str")
 
 TypeError: expected int, got str
@@ -270,6 +301,7 @@ TypeError: expected int, got str
 Notes:
 - `✗` marker on `strict_handler` — it threw instead of resuming
 - Result line shows `✗ handler raised` instead of `→ resumed with`
+- All downstream handlers are pending (collapsed)
 
 ### Example 4: Missing env key
 
@@ -289,7 +321,12 @@ doeff Traceback (most recent call last):
 
   needs_db()  app.py:3
     yield Ask("database_url")
-    [StateHandler↗ > ReaderHandler↗ > WriterHandler· > ResultSafeHandler· > SchedulerHandler· > LazyAskHandler✗ > sync_await_handler·]
+    handlers:
+      StateHandler ↗  (rust_builtin)
+      ReaderHandler ↗  (rust_builtin)
+      · 3 pending
+      LazyAskHandler ✗  doeff/handlers/lazy_ask.py:42
+      · 1 pending
     ✗ LazyAskHandler raised MissingEnvKeyError("Environment key not found: 'database_url'")
 
 MissingEnvKeyError: Environment key not found: 'database_url'
@@ -317,7 +354,9 @@ doeff Traceback (most recent call last):
 
   outer()  app.py:3
     yield Put("x", 1)
-    [StateHandler✓ > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler· > LazyAskHandler· > sync_await_handler·]
+    handlers:
+      StateHandler ✓  (rust_builtin)
+      · 6 pending
     → resumed with None
 
   outer()  app.py:4
@@ -325,7 +364,10 @@ doeff Traceback (most recent call last):
 
   inner()  app.py:8
     yield Put("y", 2)
-    [my_handler↗ > StateHandler✓ > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler· > LazyAskHandler· > sync_await_handler·]
+    handlers:
+      my_handler ↗  app.py:7
+      StateHandler ✓  (rust_builtin)
+      · 5 pending
     → resumed with None
 
   inner()  app.py:9
@@ -335,8 +377,9 @@ ValueError: inner error
 ```
 
 Notes:
-- `outer` shows stack without `my_handler`
+- `outer` shows stack without `my_handler` — only `StateHandler` active, rest pending (collapsed)
 - `inner` shows stack with `my_handler` prepended (innermost, added by `WithHandler`)
+- Handler stacks differ between the two effect frames — both shown in full
 
 ### Example 6: Handler returns value (⏎ — abandoned continuation)
 
@@ -389,7 +432,9 @@ doeff Traceback (most recent call last):
 
   inner()  app.py:7                                          (abandoned)
     yield Ask("mode")
-    [short_circuit_handler⏎ > StateHandler· > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler· > LazyAskHandler· > sync_await_handler·]
+    handlers:
+      short_circuit_handler ⏎  app.py:3
+      · 7 pending
     ⏎ short_circuit_handler returned "fallback" (continuation abandoned)
 
   outer()  app.py:13
@@ -432,12 +477,16 @@ doeff Traceback (most recent call last):
 
   trigger()  app.py:12
     yield Ask("redirect")
-    [redirect_handler⇢ > StateHandler· > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler· > LazyAskHandler· > sync_await_handler·]
+    handlers:
+      redirect_handler ⇢  app.py:10
+      · 7 pending
     ⇢ redirect_handler transferred to program_a
 
   program_a()  app.py:7
     yield Put("result", "redirected_value")
-    [StateHandler✓ > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler· > LazyAskHandler· > sync_await_handler·]
+    handlers:
+      StateHandler ✓  (rust_builtin)
+      · 6 pending
     → resumed with None
 
   program_a()  app.py:8
@@ -490,14 +539,19 @@ doeff Traceback (most recent call last):
 
   process_batch()  app.py:13
     yield Gather(*tasks)
-    [StateHandler· > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler⇢ > LazyAskHandler· > async_await_handler·]
+    handlers:
+      · 4 pending
+      SchedulerHandler ⇢  (rust_builtin)
+      · 2 pending
     ⇢ task 3 failed during Gather
 
   ── in task 3 (spawned at process_batch() app.py:11) ──
 
   fetch_data("https://api.example.com/item/3")  app.py:3
     yield Await(http_get(url))
-    [StateHandler· > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler· > LazyAskHandler· > async_await_handler✓]
+    handlers:
+      · 6 pending
+      async_await_handler ✓  doeff/effects/future.py:120
     → resumed with Response(status=500)
 
   fetch_data()  app.py:5
@@ -547,14 +601,17 @@ doeff Traceback (most recent call last):
 
   orchestrator()  app.py:16
     yield Gather(*batches)
-    [StateHandler· > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler⇢ > LazyAskHandler· > sync_await_handler·]
+    handlers:
+      · 4 pending
+      SchedulerHandler ⇢  (rust_builtin)
+      · 2 pending
     ⇢ task 2 failed during Gather
 
   ── in task 2 (spawned at orchestrator() app.py:14) ──
 
   batch_worker(1)  app.py:10
     yield Gather(*tasks)
-    [StateHandler· > ReaderHandler· > WriterHandler· > ResultSafeHandler· > SchedulerHandler⇢ > LazyAskHandler· > sync_await_handler·]
+    (same handlers)
     ⇢ task 5 failed during Gather
 
   ── in task 5 (spawned at batch_worker() app.py:8) ──
@@ -671,9 +728,14 @@ When assembling a trace for an error propagated through Gather/Wait/Race:
 
 **There is no concept of "internal" effects or "internal" handlers in doeff.** Every handler is a user-space entity — `sync_await_handler`, `LazyAskHandler`, `ReaderHandler`, `StateHandler` are all handlers the user passes via `default_handlers()` or installs via `WithHandler`. Every effect (`Ask`, `Put`, `Await`, `Spawn`, etc.) is a user-space value yielded by user programs.
 
-**Consequently: neither Rust nor Python may filter, hide, or omit any handler or effect from the traceback.** Every handler present in the handler chain at dispatch time appears in the rendered output. Every effect yielded appears as an effect frame. There are no special cases, no hardcoded name lists, no filtering by action or status, no abbreviation.
+**Consequently: the trace data must contain every handler and effect without omission.** Every handler present in the handler chain at dispatch time is preserved in the trace data. Every effect yielded is recorded as an effect frame. There are no special cases, no hardcoded name lists, no filtering by action or status at the data level.
 
-If the output is noisy, the fix is to change the handler architecture (e.g., don't install the handler), not to filter it after the fact.
+**Display condensation** is permitted at the rendering level for readability:
+- **Pending handler collapsing**: Consecutive pending (`·`) handlers are condensed into `· N pending` count lines. The underlying data retains all entries.
+- **Handler frame suppression**: Handler `ProgramYield` frames are suppressed in `format_default()` since handler source locations are surfaced through the handler stack entries per `EffectYield`. They remain in `format_chained()` with the `⚙` prefix.
+- **Stack deduplication**: Unchanged handler stacks show `(same handlers)` instead of repeating.
+
+These are rendering concerns, not data concerns. Programmatic consumers (e.g., `DoeffTraceback.active_chain`) still see every handler and frame.
 
 ### Effect Creation Site Protocol
 
@@ -711,12 +773,14 @@ Implementation-level notes (what changes in Rust VM, Python projection, etc.) ar
 1. Default stderr output on error shows the new format (via `format_default()`)
 2. Only active call chain frames shown — no historical dispatches
 3. Line numbers match actual yield sites, not decorator lines
-4. Handler stack with status markers shown per effect yield
-5. All handlers shown — no hardcoded filtering or omission of any handler by name, kind, or action
-6. Handler stack diff (`[same]`) used when stack unchanged between consecutive effect frames
-7. Effect repr is human-readable (`Put("key", value)` not `<builtins.PyPut ...>`)
-8. Handler throw shown with `✗` marker and exception info
-9. `format_chained()`, `format_sectioned()`, `format_short()` continue to work unchanged
+4. Handler stack shown per effect yield in multi-line indented format with source locations
+5. Active handlers (non-pending) shown individually with source location; pending handlers collapsed into `· N pending` count groups
+6. Handler `ProgramYield` frames suppressed in `format_default()` — handler source locations surfaced through handler stack entries
+7. Handler stack dedup: `(same handlers)` used when stack unchanged between consecutive effect frames
+8. Effect repr is human-readable (`Put("key", value)` not `<builtins.PyPut ...>`)
+9. Handler throw shown with `✗` marker and exception info
+10. `format_chained()`, `format_sectioned()`, `format_short()` continue to work unchanged
+11. `format_chained()` retains `⚙` prefix for handler program frames (full chronological view)
 
 ### Transfer
 10. Transfer shown inline with `⇢` marker on the handler that transferred
