@@ -197,6 +197,21 @@ struct HandlerChainEntry {
     types: Option<Vec<PyShared>>,
 }
 
+#[derive(Clone)]
+struct InterceptorChainEntry {
+    marker: Marker,
+    interceptor: KleisliRef,
+    types: Option<Vec<PyShared>>,
+    mode: InterceptMode,
+    metadata: Option<CallMetadata>,
+}
+
+#[derive(Clone)]
+enum CallerChainEntry {
+    Handler(HandlerChainEntry),
+    Interceptor(InterceptorChainEntry),
+}
+
 impl Default for DebugConfig {
     fn default() -> Self {
         DebugConfig {
@@ -426,6 +441,56 @@ impl VM {
         chain
     }
 
+    fn chain_entries_in_caller_chain(&self, start_seg_id: SegmentId) -> Vec<CallerChainEntry> {
+        let mut chain = Vec::new();
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            match &seg.kind {
+                SegmentKind::PromptBoundary {
+                    handled_marker,
+                    handler,
+                    types,
+                    ..
+                } => chain.push(CallerChainEntry::Handler(HandlerChainEntry {
+                    marker: *handled_marker,
+                    prompt_seg_id: seg_id,
+                    handler: handler.clone(),
+                    types: types.clone(),
+                })),
+                SegmentKind::InterceptorBoundary {
+                    interceptor,
+                    types,
+                    mode,
+                    metadata,
+                } => chain.push(CallerChainEntry::Interceptor(InterceptorChainEntry {
+                    marker: seg.marker,
+                    interceptor: interceptor.clone(),
+                    types: types.clone(),
+                    mode: *mode,
+                    metadata: metadata.clone(),
+                })),
+                _ => {
+                    // Compatibility fallback: older segments may still be
+                    // `Normal` while interceptor entries remain registered.
+                    if let Some(entry) = self.interceptor_state.get_entry(seg.marker) {
+                        chain.push(CallerChainEntry::Interceptor(InterceptorChainEntry {
+                            marker: seg.marker,
+                            interceptor: entry.interceptor,
+                            types: entry.types,
+                            mode: entry.mode,
+                            metadata: entry.metadata,
+                        }));
+                    }
+                }
+            }
+            cursor = seg.caller;
+        }
+        chain
+    }
+
     fn find_prompt_boundary_in_caller_chain(
         &self,
         start_seg_id: SegmentId,
@@ -463,6 +528,27 @@ impl VM {
             return Vec::new();
         };
         self.handlers_in_caller_chain(seg_id)
+    }
+
+    fn eval_in_scope_chain_start_segment(&self, scope: &Continuation) -> Option<SegmentId> {
+        let mut start_seg_id = scope.segment_id;
+        if self.segments.get(start_seg_id).is_none() {
+            return None;
+        }
+
+        // When EvalInScope is reached through Delegate chains, the continuation
+        // passed to handlers may wrap the original effect-site continuation in
+        // `parent`. Replay should use the origin scope so wrapper interceptors
+        // around the effect site remain visible.
+        let mut cursor = scope.parent.as_deref();
+        while let Some(parent) = cursor {
+            if self.segments.get(parent.segment_id).is_none() {
+                break;
+            }
+            start_seg_id = parent.segment_id;
+            cursor = parent.parent.as_deref();
+        }
+        Some(start_seg_id)
     }
 
     fn prompt_boundary_handler_lookup(&self) -> HashMap<Marker, (KleisliRef, Option<PyShared>)> {
@@ -551,6 +637,20 @@ impl VM {
             return;
         };
         child_seg.scope_store = source_seg.scope_store.clone();
+    }
+
+    fn remap_interceptor_skip_markers(
+        seg: &mut Segment,
+        marker_remap: &HashMap<Marker, Marker>,
+    ) {
+        if marker_remap.is_empty() {
+            return;
+        }
+        for marker in &mut seg.interceptor_skip_stack {
+            if let Some(remapped) = marker_remap.get(marker) {
+                *marker = *remapped;
+            }
+        }
     }
 
     /// Set mode to Throw with a RuntimeError and return Continue.
@@ -2445,13 +2545,13 @@ impl VM {
         };
         let return_to = Continuation::capture(current_seg, current_seg_id, current_seg.dispatch_id);
 
-        if self.segments.get(scope.segment_id).is_none() {
+        let Some(replay_chain_start_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
             return StepEvent::Error(VMError::internal(
                 "EvalInScope received scope from unknown segment",
             ));
-        }
+        };
 
-        let handler_entries = self.handlers_in_caller_chain(scope.segment_id);
+        let chain_entries = self.chain_entries_in_caller_chain(replay_chain_start_seg_id);
 
         // Evaluate in an isolated base segment so active handlers are exactly
         // the scope-site handlers (no duplication with current caller chain),
@@ -2465,29 +2565,82 @@ impl VM {
             },
         )));
         let base_seg_id = self.alloc_segment(base_seg);
+        let mut replay_seg_ids = vec![base_seg_id];
 
         let mut outside_seg_id = Some(base_seg_id);
-        for entry in handler_entries.into_iter().rev() {
-            let handler = entry.handler.clone();
-            let handler_marker = Marker::fresh();
-            let mut prompt_seg = Segment::new_prompt_with_types(
-                handler_marker,
-                outside_seg_id,
-                handler_marker,
-                handler.clone(),
-                entry.types.clone(),
-                None,
-            );
-            self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
-            self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
-            let prompt_seg_id = self.alloc_segment(prompt_seg);
-            self.track_run_handler(&handler);
+        let mut interceptor_marker_remap: HashMap<Marker, Marker> = HashMap::new();
+        for entry in chain_entries.into_iter().rev() {
+            match entry {
+                CallerChainEntry::Handler(entry) => {
+                    let handler = entry.handler.clone();
+                    let handler_marker = Marker::fresh();
+                    let mut prompt_seg = Segment::new_prompt_with_types(
+                        handler_marker,
+                        outside_seg_id,
+                        handler_marker,
+                        handler.clone(),
+                        entry.types.clone(),
+                        None,
+                    );
+                    self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
+                    self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
+                    Self::remap_interceptor_skip_markers(
+                        &mut prompt_seg,
+                        &interceptor_marker_remap,
+                    );
+                    let prompt_seg_id = self.alloc_segment(prompt_seg);
+                    replay_seg_ids.push(prompt_seg_id);
+                    self.track_run_handler(&handler);
 
-            let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-            self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
-            self.copy_scope_store_from(outside_seg_id, &mut body_seg);
-            let body_seg_id = self.alloc_segment(body_seg);
-            outside_seg_id = Some(body_seg_id);
+                    let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
+                    self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
+                    self.copy_scope_store_from(outside_seg_id, &mut body_seg);
+                    Self::remap_interceptor_skip_markers(
+                        &mut body_seg,
+                        &interceptor_marker_remap,
+                    );
+                    let body_seg_id = self.alloc_segment(body_seg);
+                    replay_seg_ids.push(body_seg_id);
+                    outside_seg_id = Some(body_seg_id);
+                }
+                CallerChainEntry::Interceptor(entry) => {
+                    let interceptor_marker = Marker::fresh();
+                    interceptor_marker_remap.insert(entry.marker, interceptor_marker);
+                    self.interceptor_state.insert(
+                        interceptor_marker,
+                        entry.interceptor.clone(),
+                        entry.types.clone(),
+                        entry.mode,
+                        entry.metadata.clone(),
+                    );
+
+                    let mut body_seg = Segment::new(interceptor_marker, outside_seg_id);
+                    body_seg.kind = SegmentKind::InterceptorBoundary {
+                        interceptor: entry.interceptor,
+                        types: entry.types,
+                        mode: entry.mode,
+                        metadata: entry.metadata,
+                    };
+                    self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
+                    self.copy_scope_store_from(outside_seg_id, &mut body_seg);
+                    Self::remap_interceptor_skip_markers(
+                        &mut body_seg,
+                        &interceptor_marker_remap,
+                    );
+                    let body_seg_id = self.alloc_segment(body_seg);
+                    replay_seg_ids.push(body_seg_id);
+                    outside_seg_id = Some(body_seg_id);
+                }
+            }
+        }
+
+        if !interceptor_marker_remap.is_empty() {
+            for seg_id in replay_seg_ids {
+                let Some(seg) = self.segments.get_mut(seg_id) else {
+                    continue;
+                };
+                Self::remap_interceptor_skip_markers(seg, &interceptor_marker_remap);
+            }
         }
 
         self.current_segment = outside_seg_id;
