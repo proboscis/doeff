@@ -348,8 +348,37 @@ else:
                 "returned": "✓",
                 "threw": "✗",
             }
-            parts = [f"{entry.handler_name}{marker.get(entry.status, '?')}" for entry in stack]
-            return f"[{' > '.join(parts)}]" if parts else "[]"
+            lines = ["handlers:"]
+            if not stack:
+                lines.append("  (empty)")
+                return "\n".join(lines)
+
+            all_pending = all(entry.status == "pending" for entry in stack)
+            pending_count = 0
+            for entry in stack:
+                if entry.status == "pending":
+                    pending_count += 1
+                    continue
+
+                if pending_count:
+                    lines.append(f"  · {pending_count} pending")
+                    pending_count = 0
+
+                if entry.source_file is None or entry.source_line is None:
+                    if entry.handler_kind == "rust_builtin":
+                        location = "(rust_builtin)"
+                    else:
+                        location = "(unknown)"
+                else:
+                    location = f"{entry.source_file}:{entry.source_line}"
+
+                lines.append(f"  {entry.handler_name} {marker.get(entry.status, '?')}  {location}")
+
+            if pending_count:
+                suffix = " (no handler matched)" if all_pending else ""
+                lines.append(f"  · {pending_count} pending{suffix}")
+
+            return "\n".join(lines)
 
         def _render_effect_result(
             self,
@@ -383,18 +412,13 @@ else:
             previous_spawn_boundary: SpawnBoundary | None = None
             for entry in self.active_chain:
                 if isinstance(entry, ProgramYield):
+                    if entry.is_handler:
+                        continue
                     previous_handler_stack = None
                     previous_spawn_boundary = None
-                    if entry.is_handler:
-                        kind = entry.handler_kind or "unknown"
-                        lines.append(
-                            f"  ⚙ {entry.function_name}()  "
-                            f"{entry.source_file}:{entry.source_line} ({kind})"
-                        )
-                    else:
-                        lines.append(
-                            f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
-                        )
+                    lines.append(
+                        f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
+                    )
                     lines.append(f"    yield {entry.sub_program_repr}")
                     lines.append("")
                     continue
@@ -404,16 +428,17 @@ else:
                         previous_handler_stack is not None
                         and entry.handler_stack == previous_handler_stack
                     ):
-                        stack_line = "[same]"
+                        stack_lines = ("(same handlers)",)
                     else:
-                        stack_line = self._render_handler_stack(entry.handler_stack)
+                        stack_lines = tuple(self._render_handler_stack(entry.handler_stack).splitlines())
                     previous_handler_stack = entry.handler_stack
                     previous_spawn_boundary = None
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )
                     lines.append(f"    yield {entry.effect_repr}")
-                    lines.append(f"    {stack_line}")
+                    for stack_line in stack_lines:
+                        lines.append(f"    {stack_line}")
                     lines.append(f"    {self._render_effect_result(entry.result)}")
                     lines.append("")
                     continue
