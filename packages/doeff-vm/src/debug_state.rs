@@ -57,7 +57,11 @@ impl DebugState {
     pub(crate) fn truncate_repr(mut text: String) -> String {
         const MAX_REPR_LEN: usize = 200;
         if text.len() > MAX_REPR_LEN {
-            text.truncate(MAX_REPR_LEN);
+            let mut end = MAX_REPR_LEN;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
             text.push_str("...");
         }
         text
