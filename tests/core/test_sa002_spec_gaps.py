@@ -11,12 +11,14 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 RUST_SRC = ROOT / "packages" / "doeff-vm" / "src"
+RUST_CORE_SRC = ROOT / "packages" / "doeff-vm-core" / "src"
 CORE_EFFECTS_SRC = ROOT / "packages" / "doeff-core-effects" / "src"
 
 
 def _read(path: Path) -> str:
     if not path.exists() and path.parent == RUST_SRC:
         fallback = {
+            path.name: RUST_CORE_SRC / path.name,
             "effect.rs": CORE_EFFECTS_SRC / "effects" / "mod.rs",
             "handler.rs": CORE_EFFECTS_SRC / "handlers" / "mod.rs",
             "scheduler.rs": CORE_EFFECTS_SRC / "scheduler" / "mod.rs",
@@ -112,11 +114,11 @@ def test_SA_002_G07_doctrl_pyclasses_extend_base() -> None:
 
 def test_SA_002_G08_expected_vm_module_split_files_exist() -> None:
     expected = [
-        RUST_SRC / "dispatch.rs",
-        RUST_SRC / "do_ctrl.rs",
-        RUST_SRC / "rust_store.rs",
-        RUST_SRC / "python_call.rs",
-        RUST_SRC / "driver.rs",
+        RUST_CORE_SRC / "dispatch.rs",
+        RUST_CORE_SRC / "do_ctrl.rs",
+        RUST_CORE_SRC / "rust_store.rs",
+        RUST_CORE_SRC / "python_call.rs",
+        RUST_CORE_SRC / "driver.rs",
     ]
     missing = [str(p.relative_to(ROOT)) for p in expected if not p.exists()]
     assert not missing, f"missing expected modules: {missing}"
