@@ -289,12 +289,17 @@ impl Value {
                 source_file,
                 source_line,
                 sub_program_repr,
+                handler_kind,
             } => {
                 dict.set_item("kind", "program_yield")?;
                 dict.set_item("function_name", function_name)?;
                 dict.set_item("source_file", source_file)?;
                 dict.set_item("source_line", *source_line)?;
                 dict.set_item("sub_program_repr", sub_program_repr)?;
+                dict.set_item(
+                    "handler_kind",
+                    handler_kind.as_ref().map(Self::handler_kind_to_str),
+                )?;
             }
             ActiveChainEntry::EffectYield {
                 function_name,

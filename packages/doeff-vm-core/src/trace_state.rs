@@ -36,6 +36,7 @@ struct ActiveChainFrameState {
     source_file: String,
     source_line: u32,
     sub_program_repr: String,
+    handler_kind: Option<HandlerKind>,
 }
 
 #[derive(Clone)]
@@ -138,6 +139,7 @@ impl TraceState {
         &mut self,
         metadata: &CallMetadata,
         program_call_repr: Option<String>,
+        handler_kind: Option<HandlerKind>,
     ) {
         self.capture_log.push(CaptureEvent::FrameEntered {
             frame_id: metadata.frame_id as FrameId,
@@ -146,6 +148,7 @@ impl TraceState {
             source_line: metadata.source_line,
             args_repr: metadata.args_repr.clone(),
             program_call_repr,
+            handler_kind,
         });
     }
 
@@ -245,6 +248,7 @@ impl TraceState {
                     source_line,
                     args_repr,
                     program_call_repr: _,
+                    handler_kind: _,
                 } => {
                     trace.push(TraceEntry::Frame {
                         frame_id: *frame_id,
@@ -276,12 +280,12 @@ impl TraceState {
                         dispatch_id: *dispatch_id,
                         effect_repr: effect_repr.clone(),
                         handler_name: handler_name.clone(),
-                        handler_kind: handler_kind.clone(),
+                        handler_kind: *handler_kind,
                         handler_source_file: handler_source_file.clone(),
                         handler_source_line: *handler_source_line,
                         delegation_chain: vec![DelegationEntry {
                             handler_name: handler_name.clone(),
-                            handler_kind: handler_kind.clone(),
+                            handler_kind: *handler_kind,
                             handler_source_file: handler_source_file.clone(),
                             handler_source_line: *handler_source_line,
                         }],
@@ -321,12 +325,12 @@ impl TraceState {
                         } = &mut trace[pos]
                         {
                             *handler_name = to_handler_name.clone();
-                            *handler_kind = to_handler_kind.clone();
+                            *handler_kind = *to_handler_kind;
                             *handler_source_file = to_handler_source_file.clone();
                             *handler_source_line = *to_handler_source_line;
                             delegation_chain.push(DelegationEntry {
                                 handler_name: to_handler_name.clone(),
-                                handler_kind: to_handler_kind.clone(),
+                                handler_kind: *to_handler_kind,
                                 handler_source_file: to_handler_source_file.clone(),
                                 handler_source_line: *to_handler_source_line,
                             });
@@ -427,6 +431,7 @@ impl TraceState {
                 let Frame::Program {
                     stream,
                     metadata: Some(metadata),
+                    ..
                 } = frame
                 else {
                     continue;
@@ -485,7 +490,7 @@ impl TraceState {
                 dispatch_id: ctx.dispatch_id,
                 effect_repr: effect_repr(&ctx.effect),
                 handler_name: handler_name.clone(),
-                handler_kind: handler_kind.clone(),
+                handler_kind,
                 handler_source_file: handler_source_file.clone(),
                 handler_source_line,
                 delegation_chain: vec![DelegationEntry {
@@ -511,6 +516,7 @@ impl TraceState {
             if let Frame::Program {
                 stream,
                 metadata: Some(metadata),
+                ..
             } = frame
             {
                 if let Some(location) = Self::stream_debug_location(stream) {
@@ -548,6 +554,7 @@ impl TraceState {
             if let Frame::Program {
                 stream,
                 metadata: Some(metadata),
+                ..
             } = frame
             {
                 let fallback_candidate = (
@@ -853,6 +860,7 @@ impl TraceState {
                 if let Frame::Program {
                     stream,
                     metadata: Some(metadata),
+                    ..
                 } = frame
                 {
                     let (source_file, source_line) = match Self::stream_debug_location(stream) {
@@ -952,6 +960,7 @@ impl TraceState {
                 source_line,
                 args_repr: _,
                 program_call_repr,
+                handler_kind,
             } => {
                 state.frame_stack.push(ActiveChainFrameState {
                     frame_id: *frame_id,
@@ -961,6 +970,7 @@ impl TraceState {
                     sub_program_repr: program_call_repr
                         .clone()
                         .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
+                    handler_kind: *handler_kind,
                 });
             }
             CaptureEvent::FrameExited { .. } => {
@@ -1121,7 +1131,7 @@ impl TraceState {
             .enumerate()
             .map(|(index, snapshot)| HandlerDispatchEntry {
                 handler_name: snapshot.handler_name.clone(),
-                handler_kind: snapshot.handler_kind.clone(),
+                handler_kind: snapshot.handler_kind,
                 source_file: snapshot.source_file.clone(),
                 source_line: snapshot.source_line,
                 status: if index == 0 {
@@ -1171,11 +1181,18 @@ impl TraceState {
                 let Frame::Program {
                     stream,
                     metadata: Some(metadata),
+                    handler_kind,
+                    ..
                 } = frame
                 else {
                     continue;
                 };
-                Self::upsert_frame_state_from_metadata(frame_stack, stream, metadata);
+                Self::upsert_frame_state_from_metadata(
+                    frame_stack,
+                    stream,
+                    metadata,
+                    handler_kind,
+                );
             }
         }
     }
@@ -1198,11 +1215,18 @@ impl TraceState {
             let Frame::Program {
                 stream,
                 metadata: Some(metadata),
+                handler_kind,
+                ..
             } = frame
             else {
                 continue;
             };
-            Self::upsert_frame_state_from_metadata(frame_stack, stream, metadata);
+            Self::upsert_frame_state_from_metadata(
+                frame_stack,
+                stream,
+                metadata,
+                handler_kind,
+            );
         }
     }
 
@@ -1210,6 +1234,7 @@ impl TraceState {
         frame_stack: &mut Vec<ActiveChainFrameState>,
         stream: &IRStreamRef,
         metadata: &CallMetadata,
+        handler_kind: &Option<HandlerKind>,
     ) {
         let line = Self::stream_debug_location(stream)
             .map(|location| location.source_line)
@@ -1224,6 +1249,16 @@ impl TraceState {
                     existing.sub_program_repr = repr;
                 }
             }
+            debug_assert!(
+                existing.handler_kind.is_none() || existing.handler_kind == *handler_kind,
+                "frame provenance mismatch for frame_id={}: existing={:?}, new={:?}",
+                metadata.frame_id,
+                existing.handler_kind,
+                handler_kind
+            );
+            if existing.handler_kind.is_none() {
+                existing.handler_kind = *handler_kind;
+            }
             return;
         }
 
@@ -1234,6 +1269,7 @@ impl TraceState {
             source_line: line,
             sub_program_repr: Self::program_call_repr(metadata)
                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
+            handler_kind: *handler_kind,
         });
     }
 
@@ -1371,6 +1407,8 @@ impl TraceState {
                         let Frame::Program {
                             stream,
                             metadata: Some(metadata),
+                            handler_kind,
+                            ..
                         } = frame
                         else {
                             return None;
@@ -1386,6 +1424,7 @@ impl TraceState {
                             source_line: line,
                             sub_program_repr: Self::program_call_repr(metadata)
                                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
+                            handler_kind: *handler_kind,
                         })
                     })
                     .collect()
@@ -1436,6 +1475,7 @@ impl TraceState {
             source_file: frame.source_file.clone(),
             source_line: frame.source_line,
             sub_program_repr,
+            handler_kind: frame.handler_kind,
         }
     }
 
@@ -1460,18 +1500,21 @@ impl TraceState {
                     source_file: lhs_source_file,
                     source_line: lhs_source_line,
                     sub_program_repr: lhs_sub_program_repr,
+                    handler_kind: lhs_handler_kind,
                 },
                 ActiveChainEntry::ProgramYield {
                     function_name: rhs_function_name,
                     source_file: rhs_source_file,
                     source_line: rhs_source_line,
                     sub_program_repr: rhs_sub_program_repr,
+                    handler_kind: rhs_handler_kind,
                 },
             ) => {
                 lhs_function_name == rhs_function_name
                     && lhs_source_file == rhs_source_file
                     && lhs_source_line == rhs_source_line
                     && lhs_sub_program_repr == rhs_sub_program_repr
+                    && lhs_handler_kind == rhs_handler_kind
             }
             (
                 ActiveChainEntry::EffectYield {

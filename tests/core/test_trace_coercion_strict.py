@@ -79,6 +79,20 @@ def test_coerce_active_chain_rejects_unknown_effect_result_kind() -> None:
         )
 
 
+def test_coerce_active_chain_rejects_unknown_program_yield_handler_kind() -> None:
+    with pytest.raises(ValueError, match="Unknown handler kind"):
+        coerce_active_chain_entry(
+            {
+                "kind": "program_yield",
+                "function_name": "handler_frame",
+                "source_file": "handlers.py",
+                "source_line": 10,
+                "sub_program_repr": "next()",
+                "handler_kind": "mystery_kind",
+            }
+        )
+
+
 def test_coerce_context_entry_wraps_unknown_payload() -> None:
     entry = coerce_active_chain_entry(
         {"kind": "context_entry", "data": {"kind": "custom", "value": 1}}
