@@ -878,8 +878,11 @@ impl VM {
     }
 
     fn current_program_frame_handler_kind(&self) -> Option<HandlerKind> {
+        // Invariant: when a handler Program frame yields DoCtrl::IRStream via `yield helper()`,
+        // that handler Program frame is on top of the stack. Reading the top Program frame's
+        // provenance correctly propagates handler context to nested sub-program frames.
         self.current_seg().frames.last().and_then(|frame| match frame {
-            Frame::Program { handler_kind, .. } => handler_kind.clone(),
+            Frame::Program { handler_kind, .. } => *handler_kind,
             _ => None,
         })
     }
@@ -2571,7 +2574,7 @@ impl VM {
         handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
         if let Some(ref m) = metadata {
-            self.maybe_emit_frame_entered(m, handler_kind.clone());
+            self.maybe_emit_frame_entered(m, handler_kind);
         }
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal(
@@ -3062,15 +3065,27 @@ impl VM {
                             ));
                             return;
                         };
+                        // ExpandReturn(handler) comes from Python handler call paths.
+                        // Rust builtins do not enter this branch; they route through
+                        // Value::Kleisli handling in handle_yield_expand.
                         let Some(seg) = self.current_segment_mut() else {
                             return;
                         };
                         seg.push_frame(Frame::HandlerDispatch { dispatch_id });
-                        let _ = self.handle_yield_ir_stream(
-                            stream,
-                            metadata,
-                            Some(HandlerKind::Python),
-                        );
+                        match self.handle_yield_ir_stream(stream, metadata, Some(HandlerKind::Python)) {
+                            StepEvent::Continue => {}
+                            StepEvent::Error(err) => {
+                                self.current_seg_mut().mode =
+                                    Mode::Throw(PyException::runtime_error(err.to_string()));
+                            }
+                            _ => {
+                                self.current_seg_mut().mode = Mode::Throw(
+                                    PyException::runtime_error(
+                                        "unexpected StepEvent from handle_yield_ir_stream",
+                                    ),
+                                );
+                            }
+                        }
                     }
                     Err(exception) => {
                         self.current_seg_mut().mode = Mode::Throw(exception);
@@ -3088,7 +3103,20 @@ impl VM {
             Value::Python(generator) => {
                 match Self::extract_doeff_generator(generator, metadata, "ExpandReturn") {
                     Ok((stream, metadata)) => {
-                        let _ = self.handle_yield_ir_stream(stream, metadata, None);
+                        match self.handle_yield_ir_stream(stream, metadata, None) {
+                            StepEvent::Continue => {}
+                            StepEvent::Error(err) => {
+                                self.current_seg_mut().mode =
+                                    Mode::Throw(PyException::runtime_error(err.to_string()));
+                            }
+                            _ => {
+                                self.current_seg_mut().mode = Mode::Throw(
+                                    PyException::runtime_error(
+                                        "unexpected StepEvent from handle_yield_ir_stream",
+                                    ),
+                                );
+                            }
+                        }
                     }
                     Err(exception) => {
                         self.current_seg_mut().mode = Mode::Throw(exception);

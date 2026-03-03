@@ -280,12 +280,12 @@ impl TraceState {
                         dispatch_id: *dispatch_id,
                         effect_repr: effect_repr.clone(),
                         handler_name: handler_name.clone(),
-                        handler_kind: handler_kind.clone(),
+                        handler_kind: *handler_kind,
                         handler_source_file: handler_source_file.clone(),
                         handler_source_line: *handler_source_line,
                         delegation_chain: vec![DelegationEntry {
                             handler_name: handler_name.clone(),
-                            handler_kind: handler_kind.clone(),
+                            handler_kind: *handler_kind,
                             handler_source_file: handler_source_file.clone(),
                             handler_source_line: *handler_source_line,
                         }],
@@ -325,12 +325,12 @@ impl TraceState {
                         } = &mut trace[pos]
                         {
                             *handler_name = to_handler_name.clone();
-                            *handler_kind = to_handler_kind.clone();
+                            *handler_kind = *to_handler_kind;
                             *handler_source_file = to_handler_source_file.clone();
                             *handler_source_line = *to_handler_source_line;
                             delegation_chain.push(DelegationEntry {
                                 handler_name: to_handler_name.clone(),
-                                handler_kind: to_handler_kind.clone(),
+                                handler_kind: *to_handler_kind,
                                 handler_source_file: to_handler_source_file.clone(),
                                 handler_source_line: *to_handler_source_line,
                             });
@@ -490,7 +490,7 @@ impl TraceState {
                 dispatch_id: ctx.dispatch_id,
                 effect_repr: effect_repr(&ctx.effect),
                 handler_name: handler_name.clone(),
-                handler_kind: handler_kind.clone(),
+                handler_kind,
                 handler_source_file: handler_source_file.clone(),
                 handler_source_line,
                 delegation_chain: vec![DelegationEntry {
@@ -970,7 +970,7 @@ impl TraceState {
                     sub_program_repr: program_call_repr
                         .clone()
                         .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-                    handler_kind: handler_kind.clone(),
+                    handler_kind: *handler_kind,
                 });
             }
             CaptureEvent::FrameExited { .. } => {
@@ -1131,7 +1131,7 @@ impl TraceState {
             .enumerate()
             .map(|(index, snapshot)| HandlerDispatchEntry {
                 handler_name: snapshot.handler_name.clone(),
-                handler_kind: snapshot.handler_kind.clone(),
+                handler_kind: snapshot.handler_kind,
                 source_file: snapshot.source_file.clone(),
                 source_line: snapshot.source_line,
                 status: if index == 0 {
@@ -1249,8 +1249,15 @@ impl TraceState {
                     existing.sub_program_repr = repr;
                 }
             }
+            debug_assert!(
+                existing.handler_kind.is_none() || existing.handler_kind == *handler_kind,
+                "frame provenance mismatch for frame_id={}: existing={:?}, new={:?}",
+                metadata.frame_id,
+                existing.handler_kind,
+                handler_kind
+            );
             if existing.handler_kind.is_none() {
-                existing.handler_kind = handler_kind.clone();
+                existing.handler_kind = *handler_kind;
             }
             return;
         }
@@ -1262,7 +1269,7 @@ impl TraceState {
             source_line: line,
             sub_program_repr: Self::program_call_repr(metadata)
                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-            handler_kind: handler_kind.clone(),
+            handler_kind: *handler_kind,
         });
     }
 
@@ -1417,7 +1424,7 @@ impl TraceState {
                             source_line: line,
                             sub_program_repr: Self::program_call_repr(metadata)
                                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-                            handler_kind: handler_kind.clone(),
+                            handler_kind: *handler_kind,
                         })
                     })
                     .collect()
@@ -1468,7 +1475,7 @@ impl TraceState {
             source_file: frame.source_file.clone(),
             source_line: frame.source_line,
             sub_program_repr,
-            handler_kind: frame.handler_kind.clone(),
+            handler_kind: frame.handler_kind,
         }
     }
 
