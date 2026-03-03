@@ -1298,6 +1298,17 @@ impl TraceState {
             let dispatch = dispatch_id.and_then(|id| state.dispatches.get(&id));
             if let Some(dispatch) = dispatch.filter(|dispatch| Self::is_visible_dispatch(dispatch))
             {
+                let dispatch_completed = matches!(
+                    dispatch.result,
+                    EffectResult::Resumed { .. } | EffectResult::Transferred { .. }
+                );
+                if frame.handler_kind.is_some() && dispatch_completed {
+                    active_chain.push(Self::program_yield_entry(
+                        frame,
+                        state.frame_stack.get(index + 1),
+                    ));
+                    continue;
+                }
                 Self::push_effect_yield_entry(&mut active_chain, dispatch, Some(frame));
                 continue;
             }
