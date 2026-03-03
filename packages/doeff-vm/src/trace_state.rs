@@ -1194,7 +1194,7 @@ impl TraceState {
             return;
         };
 
-        for frame in dispatch_ctx.k_user.frames_snapshot.iter() {
+        for frame in dispatch_ctx.k_current.frames_snapshot.iter() {
             let Frame::Program {
                 stream,
                 metadata: Some(metadata),
@@ -1364,7 +1364,7 @@ impl TraceState {
             .find(|ctx| ctx.dispatch_id == dispatch_id)
             .map(|dispatch_ctx| {
                 dispatch_ctx
-                    .k_user
+                    .k_current
                     .frames_snapshot
                     .iter()
                     .filter_map(|frame| {

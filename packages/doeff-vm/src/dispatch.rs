@@ -16,7 +16,8 @@ pub struct DispatchContext {
     /// Used to scope self-dispatch exclusion to handler clause execution only.
     pub active_handler_seg_id: SegmentId,
     pub supports_error_context_conversion: bool,
-    pub k_user: Continuation,
+    pub k_origin: Continuation,
+    pub k_current: Continuation,
     pub prompt_seg_id: SegmentId,
     pub completed: bool,
     pub original_exception: Option<PyException>,

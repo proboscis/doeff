@@ -316,7 +316,7 @@ def test_interceptor_guard_survives_dispatch_prompt_hop() -> None:
     result = run(wrapped, handlers=default_handlers())
     assert _is_ok(result), result.error
     assert result.value == "hop:inner:root:inner"
-    assert seen == ["ping:root"]
+    assert seen == ["ping:root", "inner:root:inner"]
 
 
 def test_interceptor_guard_survives_delegate_pass() -> None:
