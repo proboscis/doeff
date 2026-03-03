@@ -13,11 +13,12 @@ from doeff import (
     Program,
     Resume,
     WithHandler,
+    WithIntercept,
     default_handlers,
     do,
     run,
 )
-from doeff.effects import Put
+from doeff.effects import Get, Put, StatePutEffect
 from doeff.effects.gather import Gather
 from doeff.effects.spawn import Spawn
 from doeff.trace import ProgramYield
@@ -231,7 +232,6 @@ def test_format_default_handler_program_yield_python() -> None:
                 "source_file": "video.py",
                 "source_line": 164,
                 "sub_program_repr": "_lower_analyze_video()",
-                "is_handler": True,
                 "handler_kind": "python",
             },
             {
@@ -259,7 +259,6 @@ def test_format_default_handler_program_yield_rust_builtin() -> None:
                 "source_file": "<rust>",
                 "source_line": 0,
                 "sub_program_repr": "[MISSING] <sub_program>",
-                "is_handler": True,
                 "handler_kind": "rust_builtin",
             },
             {
@@ -802,6 +801,11 @@ class Boom(EffectBase):
     pass
 
 
+@dataclass(frozen=True, kw_only=True)
+class ResumeProbe(EffectBase):
+    value: int
+
+
 def test_format_default_shows_effect_yield_on_handler_throw() -> None:
     @do
     def crash_handler(effect: Effect, _k: object):
@@ -916,6 +920,144 @@ def test_runtime_marks_rust_builtin_handler_program_frame() -> None:
     rendered = tb.format_default()
     assert "⚙ " in rendered
     assert "(rust_builtin)" in rendered
+
+
+def test_runtime_handler_cleanup_after_resume_stays_tagged() -> None:
+    @do
+    def resume_then_cleanup(effect: Effect, k: object):
+        if isinstance(effect, ResumeProbe):
+            resumed_value = yield Resume(k, effect.value + 1)
+            yield Put("after_resume", resumed_value)
+            raise RuntimeError("cleanup boom")
+        yield Pass()
+
+    @do
+    def body() -> Program[int]:
+        return (yield ResumeProbe(value=41))
+
+    result = run(
+        WithHandler(resume_then_cleanup, body()),
+        handlers=default_handlers(),
+        store={"after_resume": 0},
+    )
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    handler_frames = [
+        entry
+        for entry in tb.active_chain
+        if isinstance(entry, ProgramYield) and entry.function_name.endswith("resume_then_cleanup")
+    ]
+    assert handler_frames
+    assert all(frame.handler_kind == "python" for frame in handler_frames)
+    rendered = tb.format_default()
+    assert "⚙ " in rendered
+    assert "cleanup boom" in rendered
+
+
+def test_runtime_resumed_user_continuation_frame_is_not_handler() -> None:
+    @do
+    def resume_only_handler(effect: Effect, k: object):
+        if isinstance(effect, ResumeProbe):
+            return (yield Resume(k, effect.value + 1))
+        yield Pass()
+
+    @do
+    def resumed_inner() -> Program[int]:
+        raise ValueError("resumed body boom")
+        yield
+
+    @do
+    def body() -> Program[int]:
+        _ = yield ResumeProbe(value=1)
+        return (yield resumed_inner())
+
+    result = run(WithHandler(resume_only_handler, body()), handlers=default_handlers())
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    resumed_frames = [
+        entry
+        for entry in tb.active_chain
+        if isinstance(entry, ProgramYield) and entry.function_name == "resumed_inner"
+    ]
+    assert resumed_frames
+    assert all(frame.handler_kind is None for frame in resumed_frames)
+
+
+def test_runtime_interceptor_frame_inside_handler_dispatch_is_not_handler() -> None:
+    @do
+    def put_crash_interceptor(effect: Effect):
+        if isinstance(effect, StatePutEffect):
+            _ = yield Get("intercepted")
+            raise RuntimeError("interceptor boom")
+        return effect
+
+    @do
+    def put_handler(effect: Effect, k: object):
+        if isinstance(effect, ResumeProbe):
+            yield Put("intercepted", 1)
+            return (yield Resume(k, effect.value))
+        yield Pass()
+
+    @do
+    def body() -> Program[int]:
+        return (yield ResumeProbe(value=7))
+
+    wrapped = WithIntercept(
+        put_crash_interceptor,
+        WithHandler(put_handler, body()),
+        (StatePutEffect,),
+        "include",
+    )
+    result = run(wrapped, handlers=default_handlers(), store={"intercepted": 0})
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    interceptor_frames = [
+        entry
+        for entry in tb.active_chain
+        if isinstance(entry, ProgramYield) and entry.function_name.endswith("put_crash_interceptor")
+    ]
+    assert interceptor_frames
+    assert all(frame.handler_kind is None for frame in interceptor_frames)
+
+
+def test_runtime_nested_dispatch_preserves_handler_provenance() -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class Outer(EffectBase):
+        pass
+
+    @dataclass(frozen=True, kw_only=True)
+    class Inner(EffectBase):
+        pass
+
+    @do
+    def nested_handler(effect: Effect, k: object):
+        if isinstance(effect, Outer):
+            _ = yield Inner()
+            raise RuntimeError("nested boom")
+        if isinstance(effect, Inner):
+            return (yield Resume(k, 1))
+        yield Pass()
+
+    @do
+    def body() -> Program[int]:
+        return (yield Outer())
+
+    result = run(WithHandler(nested_handler, body()), handlers=default_handlers())
+    assert result.is_err()
+
+    tb = _tb_from_run_result(result)
+    handler_frames = [
+        entry
+        for entry in tb.active_chain
+        if isinstance(entry, ProgramYield) and entry.function_name.endswith("nested_handler")
+    ]
+    assert handler_frames
+    assert all(frame.handler_kind == "python" for frame in handler_frames)
+    body_frames = [entry for entry in tb.active_chain if isinstance(entry, ProgramYield) and entry.function_name == "body"]
+    assert all(frame.handler_kind is None for frame in body_frames)
 
 
 def test_format_default_includes_resumed_effects() -> None:
