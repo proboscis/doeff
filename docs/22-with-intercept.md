@@ -313,44 +313,21 @@ Here:
 
 ## Scoping Rules
 
-The placement of `WithIntercept` relative to `WithHandler` determines what the interceptor sees.
-
-### WithIntercept wrapping WithHandler
-
-`f` sees handler-emitted effects because the handler is **inside** the observed scope:
+`WithIntercept` sees **all** effects in the causal chain — including effects emitted by handlers that are processing effects from within the interceptor's scope. The placement of `WithIntercept` relative to `WithHandler` does **not** affect visibility.
 
 ```python
-# f sees ping_handler's Tell yields
-WithIntercept(
-    f,
-    WithHandler(ping_handler, user_program()),
-    types=(WriterTellEffect,),
-    mode="include",
-)
+# Both arrangements are equivalent — f sees ping_handler's Tell yields in either case.
+
+# Arrangement A: WithIntercept outside
+WithIntercept(f, WithHandler(ping_handler, user_program()), types=(WriterTellEffect,), mode="include")
+
+# Arrangement B: WithIntercept inside
+WithHandler(ping_handler, WithIntercept(f, user_program(), types=(WriterTellEffect,), mode="include"))
 ```
 
-### WithHandler wrapping WithIntercept
+When `user_program` yields `Ping("x")`, the effect passes through the interceptor (filtered out by `types`) and reaches `ping_handler`. When `ping_handler` internally yields `Tell("handler:x")`, the interceptor sees it because the handler is processing an effect that originated from within the interceptor's scope.
 
-`f` does **not** see handler-emitted effects because the handler is **outside** the observed scope:
-
-```python
-# f does NOT see ping_handler's Tell yields
-WithHandler(
-    ping_handler,
-    WithIntercept(
-        f,
-        user_program(),
-        types=(WriterTellEffect,),
-        mode="include",
-    ),
-)
-```
-
-In this arrangement, `f` only sees yields from `user_program`. The handler's `Tell("handler:foo")` originates outside the `WithIntercept` boundary.
-
-### Rule of Thumb
-
-If you need `f` to see a handler's internal effects, `WithIntercept` must be the **outer** wrapper. If you only care about user-level effects, either arrangement works.
+The only effects `f` does **not** see are its own yields (re-entrancy guard) and effects from completely unrelated dispatch chains.
 
 ## WithIntercept vs Intercept
 
@@ -377,7 +354,7 @@ If you need `f` to see a handler's internal effects, `WithIntercept` must be the
 - **Use `WithIntercept` for observability** — tracing, logging, metrics, auditing. It was designed for cross-cutting concerns.
 - **Filter with `types`** — narrow the interceptor to only the effects it cares about. An unfiltered interceptor on a hot path adds overhead.
 - **Return the original effect** when you only want to observe. Unnecessary transformations make debugging harder.
-- **Place `WithIntercept` outside `WithHandler`** when you need to see handler yields. This is the whole point of the primitive.
+- **Place `WithIntercept` anywhere in the handler stack** — it sees handler-emitted effects regardless of nesting position.
 - **Keep interceptors simple** — an interceptor that yields many effects of its own becomes hard to reason about.
 
 ### DON'T:
@@ -386,7 +363,7 @@ If you need `f` to see a handler's internal effects, `WithIntercept` must be the
 - **Don't rely on execution order between nested interceptors** for correctness — use them for observation, not orchestration.
 - **Don't mutate shared state in `f` without synchronization** if the observed program uses `gather` for concurrency.
 - **Don't use `exclude` mode with empty `types` in production** unless you genuinely need to intercept every single yield. It is useful for debugging but noisy at scale.
-- **Don't forget the scoping rule** — if `WithIntercept` is inside `WithHandler`, it cannot see that handler's yields. This is the most common mistake.
+- **Don't assume nesting order matters for visibility** — `WithIntercept` sees handler-emitted effects regardless of position. Nesting order only affects which interceptor layer sees effects first when multiple `WithIntercept` layers are composed.
 
 ## Summary
 
@@ -395,7 +372,7 @@ If you need `f` to see a handler's internal effects, `WithIntercept` must be the
 | Observe all effects in a scope | `WithIntercept(f, expr, types=(), mode="exclude")` |
 | Observe specific effect types | `WithIntercept(f, expr, types=(Tell, Ping), mode="include")` |
 | Observe everything except certain types | `WithIntercept(f, expr, types=(Tell,), mode="exclude")` |
-| See handler-emitted effects | Wrap `WithHandler` inside `WithIntercept` |
+| See handler-emitted effects | Automatic — `WithIntercept` sees them regardless of nesting |
 | Transform effects before dispatch | Return a different effect from `f` |
 | Emit side effects during observation | `yield` inside `f` |
 | Avoid infinite loops | Automatic — `f`'s yields skip its own interceptor |
