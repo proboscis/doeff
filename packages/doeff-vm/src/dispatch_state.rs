@@ -80,7 +80,7 @@ impl DispatchState {
     ) {
         if let Some(ctx) = self.dispatch_stack.get_mut(idx) {
             ctx.completed = true;
-            consumed_cont_ids.insert(ctx.k_user.cont_id);
+            consumed_cont_ids.insert(ctx.k_current.cont_id);
         }
     }
 
@@ -108,7 +108,7 @@ impl DispatchState {
     pub(crate) fn check_dispatch_completion(&mut self, k: &Continuation) {
         if let Some(dispatch_id) = k.dispatch_id {
             if let Some(ctx) = self.find_mut_by_dispatch_id(dispatch_id) {
-                let mut cursor = Some(ctx.k_user.clone());
+                let mut cursor = Some(ctx.k_current.clone());
                 while let Some(current) = cursor {
                     if current.cont_id == k.cont_id {
                         if current.parent.is_none() {
@@ -163,7 +163,7 @@ impl DispatchState {
             .rev()
             .find(|ctx| ctx.dispatch_id == dispatch_id)?;
         let original = ctx.original_exception.clone()?;
-        let mut cursor = Some(ctx.k_user.clone());
+        let mut cursor = Some(ctx.k_current.clone());
         while let Some(current) = cursor {
             if current.cont_id == k.cont_id {
                 return Some((dispatch_id, original, current.parent.is_none()));
@@ -180,7 +180,7 @@ impl DispatchState {
     ) {
         if let Some(ctx) = self.find_mut_by_dispatch_id(dispatch_id) {
             ctx.completed = true;
-            consumed_cont_ids.insert(ctx.k_user.cont_id);
+            consumed_cont_ids.insert(ctx.k_current.cont_id);
         }
     }
 
@@ -196,7 +196,7 @@ impl DispatchState {
             .find(|ctx| ctx.dispatch_id == dispatch_id)
         {
             ctx.completed = true;
-            consumed_cont_ids.insert(ctx.k_user.cont_id);
+            consumed_cont_ids.insert(ctx.k_current.cont_id);
         }
     }
 
