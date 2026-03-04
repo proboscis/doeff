@@ -1011,15 +1011,17 @@ class _UserEffectStackSection(_BaseSection):
             # First, add frames from the program call stack (outer -> inner call chain).
             if entry.call_stack_snapshot:
                 for call_frame in entry.call_stack_snapshot:
-                    filename = getattr(call_frame, "source_file", None)
-                    if filename is None and isinstance(call_frame, dict):
+                    if isinstance(call_frame, dict):
                         filename = call_frame.get("source_file")
-                    line_no = getattr(call_frame, "source_line", None)
-                    if line_no is None and isinstance(call_frame, dict):
                         line_no = call_frame.get("source_line")
-                    function_name = getattr(call_frame, "function_name", None)
-                    if function_name is None and isinstance(call_frame, dict):
                         function_name = call_frame.get("function_name")
+                    else:
+                        try:
+                            filename = call_frame.source_file
+                            line_no = call_frame.source_line
+                            function_name = call_frame.function_name
+                        except AttributeError:
+                            continue
 
                     if not isinstance(filename, str) or not isinstance(line_no, int):
                         continue
@@ -1131,15 +1133,17 @@ class _ErrorSection(_BaseSection):
             return [self.indent(2, "📍 Raised at: <unknown>")]
 
         for call_frame in reversed(entry.call_stack_snapshot):
-            source_file = getattr(call_frame, "source_file", None)
-            if source_file is None and isinstance(call_frame, dict):
+            if isinstance(call_frame, dict):
                 source_file = call_frame.get("source_file")
-            source_line = getattr(call_frame, "source_line", None)
-            if source_line is None and isinstance(call_frame, dict):
                 source_line = call_frame.get("source_line")
-            function_name = getattr(call_frame, "function_name", None)
-            if function_name is None and isinstance(call_frame, dict):
                 function_name = call_frame.get("function_name")
+            else:
+                try:
+                    source_file = call_frame.source_file
+                    source_line = call_frame.source_line
+                    function_name = call_frame.function_name
+                except AttributeError:
+                    continue
 
             if not isinstance(source_file, str) or not isinstance(source_line, int):
                 continue
