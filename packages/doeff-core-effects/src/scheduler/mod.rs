@@ -344,14 +344,34 @@ fn throw_to_continuation(k: Continuation, error: PyException) -> IRStreamStep {
 
 fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
     match step {
-        IRStreamStep::Yield(DoCtrl::Resume { continuation, .. })
-        | IRStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
-        | IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
-        | IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
-        | IRStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
-            continuation.cont_id == cont_id
-        }
-        _ => false,
+        IRStreamStep::Yield(ctrl) => match ctrl {
+            DoCtrl::Resume { continuation, .. }
+            | DoCtrl::ResumeThrow { continuation, .. }
+            | DoCtrl::Transfer { continuation, .. }
+            | DoCtrl::TransferThrow { continuation, .. }
+            | DoCtrl::ResumeContinuation { continuation, .. } => continuation.cont_id == cont_id,
+            DoCtrl::Pure { .. }
+            | DoCtrl::Map { .. }
+            | DoCtrl::FlatMap { .. }
+            | DoCtrl::Perform { .. }
+            | DoCtrl::WithHandler { .. }
+            | DoCtrl::WithIntercept { .. }
+            | DoCtrl::Finally { .. }
+            | DoCtrl::Delegate { .. }
+            | DoCtrl::Pass { .. }
+            | DoCtrl::GetContinuation
+            | DoCtrl::GetHandlers
+            | DoCtrl::GetTraceback { .. }
+            | DoCtrl::CreateContinuation { .. }
+            | DoCtrl::PythonAsyncSyntaxEscape { .. }
+            | DoCtrl::Apply { .. }
+            | DoCtrl::Expand { .. }
+            | DoCtrl::IRStream { .. }
+            | DoCtrl::Eval { .. }
+            | DoCtrl::EvalInScope { .. }
+            | DoCtrl::GetCallStack => false,
+        },
+        IRStreamStep::Return(_) | IRStreamStep::Throw(_) | IRStreamStep::NeedsPython(_) => false,
     }
 }
 
@@ -1156,7 +1176,7 @@ impl SchedulerState {
         let task_exists = self.tasks.contains_key(&task_id);
         let cont_id = match self.tasks.get(&task_id) {
             Some(TaskState::Pending { cont, .. }) => Some(cont.cont_id),
-            _ => None,
+            Some(TaskState::Done { .. }) | None => None,
         };
         if let Some(cont_id) = cont_id {
             self.clear_waiters_for_owner(Some(task_id), cont_id);
@@ -1214,7 +1234,7 @@ impl SchedulerState {
         let task_id = self.current_task?;
         match self.tasks.get(&task_id) {
             Some(TaskState::Pending { priority, .. }) => Some(*priority),
-            _ => None,
+            Some(TaskState::Done { .. }) | None => None,
         }
     }
 
@@ -1467,7 +1487,7 @@ impl SchedulerState {
                     *pending_log_merge_items = merge_items;
                     *priority
                 }
-                _ => return None,
+                Some(TaskState::Done { .. }) | None => return None,
             };
 
             self.enqueue_ready_task(waiting_task, priority);
@@ -1516,7 +1536,7 @@ impl SchedulerState {
                         Some(current_max) if current_max.priority >= woken.priority => {
                             Some(current_max)
                         }
-                        _ => Some(woken),
+                        Some(_) | None => Some(woken),
                     };
                 }
             }
@@ -1629,7 +1649,7 @@ impl SchedulerState {
     pub fn task_cont(&self, task_id: TaskId) -> Option<Continuation> {
         match self.tasks.get(&task_id) {
             Some(TaskState::Pending { cont, .. }) => Some(cont.clone()),
-            _ => None,
+            Some(TaskState::Done { .. }) | None => None,
         }
     }
 
@@ -1640,13 +1660,13 @@ impl SchedulerState {
                 Waitable::Task(task_id) => match self.tasks.get(task_id) {
                     Some(TaskState::Done { result: Ok(v), .. }) => results.push(v.clone()),
                     Some(TaskState::Done { result: Err(_), .. }) => return None,
-                    _ => return None,
+                    Some(TaskState::Pending { .. }) | None => return None,
                 },
                 Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
                     match self.promises.get(pid) {
                         Some(PromiseState::Done(Ok(v))) => results.push(v.clone()),
                         Some(PromiseState::Done(Err(_))) => return None,
-                        _ => return None,
+                        Some(PromiseState::Pending) | None => return None,
                     }
                 }
             }
@@ -1729,7 +1749,7 @@ impl SchedulerState {
                 Waitable::Task(task_id) => {
                     let task_result = match self.tasks.get(task_id) {
                         Some(TaskState::Done { result, .. }) => result.clone(),
-                        _ => return None,
+                        Some(TaskState::Pending { .. }) | None => return None,
                     };
                     match task_result {
                         Ok(value) => results.push(value),
@@ -1743,7 +1763,7 @@ impl SchedulerState {
                     match self.promises.get(pid) {
                         Some(PromiseState::Done(Ok(v))) => results.push(v.clone()),
                         Some(PromiseState::Done(Err(e))) => return Some(Err(e.clone())),
-                        _ => return None,
+                        Some(PromiseState::Pending) | None => return None,
                     }
                 }
             }
@@ -1758,7 +1778,7 @@ impl SchedulerState {
                 Waitable::Task(task_id) => {
                     let task_result = match self.tasks.get(task_id) {
                         Some(TaskState::Done { result, .. }) => result.clone(),
-                        _ => continue,
+                        Some(TaskState::Pending { .. }) | None => continue,
                     };
                     if task_result.is_err() {
                         self.execution_context_task_override = Some(*task_id);
@@ -2560,7 +2580,22 @@ impl IRStreamProgram for SchedulerProgram {
             SchedulerPhase::SpawnAwaitTraceback { k_user, effect } => {
                 let traceback = match value {
                     Value::Traceback(hops) => hops,
-                    _ => {
+                    Value::Python(_)
+                    | Value::Unit
+                    | Value::Int(_)
+                    | Value::String(_)
+                    | Value::Bool(_)
+                    | Value::None
+                    | Value::Continuation(_)
+                    | Value::Handlers(_)
+                    | Value::Kleisli(_)
+                    | Value::Task(_)
+                    | Value::Promise(_)
+                    | Value::ExternalPromise(_)
+                    | Value::CallStack(_)
+                    | Value::Trace(_)
+                    | Value::ActiveChain(_)
+                    | Value::List(_) => {
                         return IRStreamStep::Throw(PyException::type_error(
                             "scheduler Spawn expected GetTraceback result".to_string(),
                         ));
@@ -2651,7 +2686,22 @@ impl IRStreamProgram for SchedulerProgram {
             } => {
                 let handlers = match value {
                     Value::Handlers(hs) => hs,
-                    _ => {
+                    Value::Python(_)
+                    | Value::Unit
+                    | Value::Int(_)
+                    | Value::String(_)
+                    | Value::Bool(_)
+                    | Value::None
+                    | Value::Continuation(_)
+                    | Value::Kleisli(_)
+                    | Value::Task(_)
+                    | Value::Promise(_)
+                    | Value::ExternalPromise(_)
+                    | Value::CallStack(_)
+                    | Value::Trace(_)
+                    | Value::Traceback(_)
+                    | Value::ActiveChain(_)
+                    | Value::List(_) => {
                         return IRStreamStep::Throw(PyException::type_error(
                             "scheduler Spawn expected GetHandlers result".to_string(),
                         ));
@@ -2683,7 +2733,22 @@ impl IRStreamProgram for SchedulerProgram {
                 // Value should be the continuation created by CreateContinuation
                 let cont = match value {
                     Value::Continuation(c) => c,
-                    _ => {
+                    Value::Python(_)
+                    | Value::Unit
+                    | Value::Int(_)
+                    | Value::String(_)
+                    | Value::Bool(_)
+                    | Value::None
+                    | Value::Handlers(_)
+                    | Value::Kleisli(_)
+                    | Value::Task(_)
+                    | Value::Promise(_)
+                    | Value::ExternalPromise(_)
+                    | Value::CallStack(_)
+                    | Value::Trace(_)
+                    | Value::Traceback(_)
+                    | Value::ActiveChain(_)
+                    | Value::List(_) => {
                         return IRStreamStep::Throw(PyException::type_error(
                             "expected continuation from CreateContinuation, got unexpected type"
                                 .to_string(),
@@ -2780,7 +2845,10 @@ impl IRStreamProgram for SchedulerProgram {
             SchedulerPhase::PreemptiveTransfer { k_user } => {
                 self.continue_preemptive_transfer(Err(exc), k_user, store)
             }
-            _ => IRStreamStep::Throw(exc),
+            SchedulerPhase::Idle
+            | SchedulerPhase::SpawnAwaitTraceback { .. }
+            | SchedulerPhase::SpawnAwaitHandlers { .. }
+            | SchedulerPhase::SpawnAwaitContinuation { .. } => IRStreamStep::Throw(exc),
         }
     }
 }
@@ -2984,16 +3052,15 @@ mod tests {
         let cont_id = cont.cont_id;
         let step = transfer_to_continuation(cont, Value::Int(123));
 
-        match step {
-            IRStreamStep::Yield(DoCtrl::Transfer {
-                continuation,
-                value,
-            }) => {
-                assert_eq!(continuation.cont_id, cont_id);
-                assert_eq!(value.as_int(), Some(123));
-            }
-            _ => panic!("started continuation must emit DoCtrl::Transfer"),
-        }
+        let IRStreamStep::Yield(DoCtrl::Transfer {
+            continuation,
+            value,
+        }) = step
+        else {
+            panic!("started continuation must emit DoCtrl::Transfer");
+        };
+        assert_eq!(continuation.cont_id, cont_id);
+        assert_eq!(value.as_int(), Some(123));
     }
 
     #[test]
@@ -3002,16 +3069,15 @@ mod tests {
         let cont_id = cont.cont_id;
         let step = transfer_to_continuation(cont, Value::Int(456));
 
-        match step {
-            IRStreamStep::Yield(DoCtrl::ResumeContinuation {
-                continuation,
-                value,
-            }) => {
-                assert_eq!(continuation.cont_id, cont_id);
-                assert_eq!(value.as_int(), Some(456));
-            }
-            _ => panic!("unstarted continuation must emit DoCtrl::ResumeContinuation"),
-        }
+        let IRStreamStep::Yield(DoCtrl::ResumeContinuation {
+            continuation,
+            value,
+        }) = step
+        else {
+            panic!("unstarted continuation must emit DoCtrl::ResumeContinuation");
+        };
+        assert_eq!(continuation.cont_id, cont_id);
+        assert_eq!(value.as_int(), Some(456));
     }
 
     #[test]
@@ -3277,23 +3343,23 @@ mod tests {
                 &mut _scope,
             );
 
-            match step {
-                IRStreamStep::Yield(DoCtrl::Resume {
-                    continuation,
-                    value,
-                })
-                | IRStreamStep::Yield(DoCtrl::Transfer {
-                    continuation,
-                    value,
-                })
-                | IRStreamStep::Yield(DoCtrl::ResumeContinuation {
-                    continuation,
-                    value,
-                }) => {
-                    assert_eq!(continuation.cont_id, k_user_id);
-                    assert!(matches!(value, Value::Task(_)));
-                }
-                _ => panic!("expected IRStream Yield(Resume|Transfer|ResumeContinuation)"),
+            if let IRStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            })
+            | IRStreamStep::Yield(DoCtrl::Transfer {
+                continuation,
+                value,
+            })
+            | IRStreamStep::Yield(DoCtrl::ResumeContinuation {
+                continuation,
+                value,
+            }) = step
+            {
+                assert_eq!(continuation.cont_id, k_user_id);
+                assert!(matches!(value, Value::Task(_)));
+            } else {
+                panic!("expected IRStream Yield(Resume|Transfer|ResumeContinuation)");
             }
 
             let location = IRStream::debug_location(&program).expect("scheduler debug location");
@@ -4261,14 +4327,12 @@ mod tests {
             state.enqueue_ready_task(task, PRIORITY_NORMAL);
 
             let step = state.transfer_next_or(scheduler_k.clone(), &mut store);
-            match step {
-                IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. }) => {
-                    assert_eq!(continuation.cont_id, expected_cont);
-                }
-                IRStreamStep::Yield(DoCtrl::Resume { .. }) => {
-                    panic!("task switches must not emit DoCtrl::Resume")
-                }
-                _ => panic!("task switches must emit DoCtrl::Transfer"),
+            if let IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. }) = step {
+                assert_eq!(continuation.cont_id, expected_cont);
+            } else if matches!(step, IRStreamStep::Yield(DoCtrl::Resume { .. })) {
+                panic!("task switches must not emit DoCtrl::Resume");
+            } else {
+                panic!("task switches must emit DoCtrl::Transfer");
             }
 
             // Simulate that the resumed task yielded back to scheduler.
@@ -4303,22 +4367,19 @@ mod tests {
 
         // transfer_next_or should resume whichever waiter is globally ready.
         let step = state.transfer_next_or(waiter.clone(), &mut store);
-        match step {
-            IRStreamStep::Yield(DoCtrl::Transfer {
-                continuation,
-                value,
-            }) => {
-                assert_eq!(continuation.cont_id, waiter.cont_id);
-                match value {
-                    Value::List(values) => {
-                        assert_eq!(values.len(), 1);
-                        assert_eq!(values[0].as_int(), Some(7));
-                    }
-                    _ => panic!("wait completion should resume waiter with gathered value"),
-                }
-            }
-            _ => panic!("completed waiter must resume via DoCtrl::Transfer"),
-        }
+        let IRStreamStep::Yield(DoCtrl::Transfer {
+            continuation,
+            value,
+        }) = step
+        else {
+            panic!("completed waiter must resume via DoCtrl::Transfer");
+        };
+        assert_eq!(continuation.cont_id, waiter.cont_id);
+        let Value::List(values) = value else {
+            panic!("wait completion should resume waiter with gathered value");
+        };
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].as_int(), Some(7));
     }
 
     #[test]
@@ -4360,15 +4421,13 @@ mod tests {
             let parsed = parse_scheduler_python_effect(&PyShared::new(obj), creation_site)
                 .expect("failed to parse effect")
                 .expect("effect should be parsed as scheduler spawn");
-            match parsed {
-                SchedulerEffect::Spawn { creation_site, .. } => {
-                    let site = creation_site.expect("spawn creation site should be captured");
-                    assert_eq!(site.function_name, "parent");
-                    assert_eq!(site.source_file, "/tmp/user_program.py");
-                    assert_eq!(site.source_line, 321);
-                }
-                _ => panic!("expected SchedulerEffect::Spawn"),
-            }
+            let SchedulerEffect::Spawn { creation_site, .. } = parsed else {
+                panic!("expected SchedulerEffect::Spawn");
+            };
+            let site = creation_site.expect("spawn creation site should be captured");
+            assert_eq!(site.function_name, "parent");
+            assert_eq!(site.source_file, "/tmp/user_program.py");
+            assert_eq!(site.source_line, 321);
         });
     }
 
