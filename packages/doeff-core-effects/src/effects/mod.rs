@@ -163,9 +163,6 @@ pub struct PyResultSafeEffect {
     pub sub_program: Py<PyAny>,
 }
 
-#[pyclass(frozen, name = "ProgramTraceEffect", extends=PyEffectBase)]
-pub struct PyProgramTrace;
-
 #[pyclass(frozen, name = "ProgramCallStackEffect", extends=PyEffectBase)]
 pub struct PyProgramCallStack;
 
@@ -579,21 +576,6 @@ impl PyResultSafeEffect {
 }
 
 #[pymethods]
-impl PyProgramTrace {
-    #[new]
-    fn new() -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase {
-            tag: DoExprTag::Effect as u8,
-        })
-        .add_subclass(PyProgramTrace)
-    }
-
-    fn __repr__(&self) -> String {
-        "ProgramTrace()".to_string()
-    }
-}
-
-#[pymethods]
 impl PyProgramCallStack {
     #[new]
     fn new() -> PyClassInitializer<Self> {
@@ -923,7 +905,6 @@ pub fn register_effect_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyReleaseSemaphore>()?;
     m.add_class::<PyPythonAsyncioAwaitEffect>()?;
     m.add_class::<PyResultSafeEffect>()?;
-    m.add_class::<PyProgramTrace>()?;
     m.add_class::<PyProgramCallStack>()?;
     m.add_class::<PyProgramCallFrame>()?;
     Ok(())

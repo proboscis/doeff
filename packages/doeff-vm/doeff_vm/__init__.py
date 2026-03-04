@@ -190,7 +190,6 @@ GetTraceback = _ext.GetTraceback
 GetExecutionContext = _ext.GetExecutionContext
 ExecutionContext = _ext.ExecutionContext
 GetCallStack = _ext.GetCallStack
-GetTrace = _ext.GetTrace
 TraceFrame = _ext.TraceFrame
 TraceHop = _ext.TraceHop
 PythonAsyncSyntaxEscape = _ext.AsyncEscape
@@ -212,7 +211,6 @@ AcquireSemaphoreEffect = _ext.AcquireSemaphoreEffect
 ReleaseSemaphoreEffect = _ext.ReleaseSemaphoreEffect
 PythonAsyncioAwaitEffect = _ext.PythonAsyncioAwaitEffect
 ResultSafeEffect = _ext.ResultSafeEffect
-ProgramTraceEffect = _ext.ProgramTraceEffect
 ProgramCallStackEffect = _ext.ProgramCallStackEffect
 ProgramCallFrameEffect = _ext.ProgramCallFrameEffect
 PyCancelEffect = _ext.PyCancelEffect
@@ -236,7 +234,6 @@ TAG_GET_TRACEBACK = _ext.TAG_GET_TRACEBACK
 TAG_WITH_INTERCEPT = _ext.TAG_WITH_INTERCEPT
 TAG_FINALLY = _ext.TAG_FINALLY
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
-TAG_GET_TRACE = _ext.TAG_GET_TRACE
 TAG_EVAL = _ext.TAG_EVAL
 TAG_EVAL_IN_SCOPE = _ext.TAG_EVAL_IN_SCOPE
 TAG_APPLY = _ext.TAG_APPLY
@@ -302,7 +299,6 @@ __all__ = [
     "ReleaseSemaphoreEffect",
     "PythonAsyncioAwaitEffect",
     "ResultSafeEffect",
-    "ProgramTraceEffect",
     "ProgramCallStackEffect",
     "ProgramCallFrameEffect",
     "TaskCancelEffect",
@@ -327,7 +323,6 @@ __all__ = [
     "CreateContinuation",
     "EvalInScope",
     "GetCallStack",
-    "GetTrace",
     "GetTraceback",
     "GetExecutionContext",
     "ExecutionContext",
@@ -359,7 +354,6 @@ __all__ = [
     "TAG_WITH_INTERCEPT",
     "TAG_FINALLY",
     "TAG_GET_CALL_STACK",
-    "TAG_GET_TRACE",
     "TAG_EVAL",
     "TAG_EVAL_IN_SCOPE",
     "TAG_APPLY",

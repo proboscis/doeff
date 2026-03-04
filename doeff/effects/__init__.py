@@ -106,7 +106,6 @@ from .state import (
     modify,
     put,
 )
-from .trace import ProgramTrace, ProgramTraceEffect
 from .wait import Wait, WaitEffect, wait
 from .writer import (
     Listen,
@@ -178,8 +177,6 @@ __all__ = [
     "ProgramCallFrameEffect",
     "ProgramCallStack",
     "ProgramCallStackEffect",
-    "ProgramTrace",
-    "ProgramTraceEffect",
     "PRIORITY_HIGH",
     "PRIORITY_IDLE",
     "PRIORITY_NORMAL",

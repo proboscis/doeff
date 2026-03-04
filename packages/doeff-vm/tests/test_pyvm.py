@@ -1483,9 +1483,9 @@ def test_tag_attribute_accessible():
     assert doeff_vm.TAG_ASYNC_ESCAPE == 15
     assert doeff_vm.TAG_APPLY == 16
     assert doeff_vm.TAG_EXPAND == 17
-    assert doeff_vm.TAG_GET_TRACE == 18
     assert doeff_vm.TAG_EFFECT == 128
     assert doeff_vm.TAG_UNKNOWN == 255
+    assert not hasattr(doeff_vm, "TAG_GET_TRACE")
 
 
 def test_tag_on_concrete_instances():
@@ -1496,13 +1496,11 @@ def test_tag_on_concrete_instances():
         Expand,
         GetHandlers,
         GetCallStack,
-        GetTrace,
         TAG_PURE,
         TAG_APPLY,
         TAG_EXPAND,
         TAG_GET_HANDLERS,
         TAG_GET_CALL_STACK,
-        TAG_GET_TRACE,
     )
 
     meta = {
@@ -1529,9 +1527,6 @@ def test_tag_on_concrete_instances():
 
     gcs = GetCallStack()
     assert gcs.tag == TAG_GET_CALL_STACK
-
-    gt = GetTrace()
-    assert gt.tag == TAG_GET_TRACE
 
 
 def test_tag_on_effect_base():
