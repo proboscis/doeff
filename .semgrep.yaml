@@ -2060,3 +2060,32 @@ rules:
       incrementally via apply_active_chain_event().
     languages: [rust]
     severity: ERROR
+
+  - id: introspect-no-new-doctrl-introspection
+    pattern-either:
+      - pattern: DoCtrl::GetCallStack
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+      exclude:
+        - "**/packages/doeff-vm-core/src/do_ctrl.rs"
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    message: |
+      DEPRECATED: GetCallStack DoCtrl is deprecated per INTROSPECT-UNIFY-001.
+      Use GetExecutionContext effect instead — it flows through handlers and
+      returns both active_chain (VM data) and entries (handler context).
+    languages: [rust]
+    severity: WARNING
+
+  - id: introspect-no-program-call-stack
+    pattern: from doeff.effects.callstack import ProgramCallStack
+    paths:
+      include:
+        - "**/doeff/**"
+      exclude:
+        - "**/tests/**"
+    message: |
+      DEPRECATED: ProgramCallStack is deprecated per INTROSPECT-UNIFY-001.
+      Use GetExecutionContext() from doeff.effects instead.
+    languages: [python]
+    severity: WARNING

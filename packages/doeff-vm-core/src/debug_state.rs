@@ -145,7 +145,7 @@ impl DebugState {
             DoCtrl::IRStream { .. } => "HandleYield(IRStream)",
             DoCtrl::Eval { .. } => "HandleYield(Eval)",
             DoCtrl::EvalInScope { .. } => "HandleYield(EvalInScope)",
-            DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
+            _ => "HandleYield(GetCallStack)",
         };
         match verbosity {
             ModeFormatVerbosity::Compact | ModeFormatVerbosity::Verbose => formatted,

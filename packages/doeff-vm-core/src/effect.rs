@@ -41,6 +41,8 @@ pub struct PyGetExecutionContext {}
 pub struct PyExecutionContext {
     #[pyo3(get)]
     pub entries: Py<PyList>,
+    #[pyo3(get)]
+    pub active_chain: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -61,6 +63,7 @@ impl PyExecutionContext {
     pub fn new(py: Python<'_>) -> Self {
         PyExecutionContext {
             entries: PyList::empty(py).unbind(),
+            active_chain: None,
         }
     }
 
@@ -68,8 +71,16 @@ impl PyExecutionContext {
         self.entries.bind(py).append(entry.bind(py))
     }
 
+    pub fn set_active_chain(&mut self, active_chain: Option<Py<PyAny>>) {
+        self.active_chain = active_chain;
+    }
+
     fn __repr__(&self, py: Python<'_>) -> String {
-        format!("ExecutionContext(entries={})", self.entries.bind(py).len())
+        let has_active_chain = self.active_chain.is_some();
+        format!(
+            "ExecutionContext(entries={}, active_chain={has_active_chain})",
+            self.entries.bind(py).len()
+        )
     }
 }
 
@@ -99,6 +110,7 @@ pub fn make_execution_context_object(py: Python<'_>) -> PyResult<Py<PyAny>> {
         py,
         PyExecutionContext {
             entries: PyList::empty(py).unbind(),
+            active_chain: None,
         },
     )?;
     Ok(ctx.into_any().unbind())
