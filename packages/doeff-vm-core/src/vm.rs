@@ -1048,6 +1048,28 @@ impl VM {
         DebugState::exception_repr(exception)
     }
 
+    fn value_variant_name(value: &Value) -> &'static str {
+        match value {
+            Value::Python(_) => "Python",
+            Value::Unit => "Unit",
+            Value::Int(_) => "Int",
+            Value::String(_) => "String",
+            Value::Bool(_) => "Bool",
+            Value::None => "None",
+            Value::Continuation(_) => "Continuation",
+            Value::Handlers(_) => "Handlers",
+            Value::Kleisli(_) => "Kleisli",
+            Value::Task(_) => "Task",
+            Value::Promise(_) => "Promise",
+            Value::ExternalPromise(_) => "ExternalPromise",
+            Value::CallStack(_) => "CallStack",
+            Value::Trace(_) => "Trace",
+            Value::Traceback(_) => "Traceback",
+            Value::ActiveChain(_) => "ActiveChain",
+            Value::List(_) => "List",
+        }
+    }
+
     fn effect_repr(effect: &DispatchEffect) -> String {
         DebugState::effect_repr(effect)
     }
@@ -1385,25 +1407,49 @@ impl VM {
         if !self.should_attach_active_chain_for_dispatch(dispatch_id) {
             return Ok(());
         }
-        let Value::Python(context_obj) = value else {
-            return Ok(());
+        let context_obj = match value {
+            Value::Python(obj) => obj,
+            other => {
+                return Err(VMError::python_error(format!(
+                    "GetExecutionContext handler must return ExecutionContext, got {}",
+                    Self::value_variant_name(other)
+                )))
+            }
         };
 
         let mut active_chain = self.assemble_active_chain(None);
         Python::attach(|py| {
             let context_bound = context_obj.bind(py);
             if !context_bound.is_instance_of::<PyExecutionContext>() {
-                return Ok(());
+                let got_type = context_bound
+                    .get_type()
+                    .name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|_| MISSING_UNKNOWN.to_string());
+                return Err(VMError::python_error(format!(
+                    "GetExecutionContext handler must return ExecutionContext, got {got_type}"
+                )));
             }
 
-            if let Ok(entries_obj) = context_bound.getattr("entries") {
-                if let Ok(iter) = entries_obj.try_iter() {
-                    for entry in iter.flatten() {
-                        active_chain.push(ActiveChainEntry::ContextEntry {
-                            data: entry.unbind(),
-                        });
-                    }
-                }
+            let entries_obj = context_bound.getattr("entries").map_err(|err| {
+                VMError::python_error(format!(
+                    "GetExecutionContext handler returned invalid ExecutionContext.entries: {err}"
+                ))
+            })?;
+            let iter = entries_obj.try_iter().map_err(|err| {
+                VMError::python_error(format!(
+                    "GetExecutionContext handler returned non-iterable ExecutionContext.entries: {err}"
+                ))
+            })?;
+            for entry_result in iter {
+                let entry = entry_result.map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to iterate ExecutionContext.entries while attaching active_chain: {err}"
+                    ))
+                })?;
+                active_chain.push(ActiveChainEntry::ContextEntry {
+                    data: entry.unbind(),
+                });
             }
 
             let active_chain_obj = Value::ActiveChain(active_chain).to_pyobject(py).map_err(|err| {
