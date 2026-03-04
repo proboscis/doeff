@@ -3,7 +3,17 @@ import inspect
 import types as py_types
 import warnings
 from collections.abc import Sequence
-from typing import Annotated, Any, ForwardRef, Union, get_args, get_origin, get_type_hints
+from typing import (
+    Annotated,
+    Any,
+    ForwardRef,
+    Protocol,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+    runtime_checkable,
+)
 
 
 def _vm() -> Any:
@@ -203,15 +213,30 @@ def _resolve_handler_effect_types(annotation: Any) -> tuple[type[Any], ...] | No
     return None
 
 
+@runtime_checkable
+class _HandlerWithFunc(Protocol):
+    func: Any
+
+
+@runtime_checkable
+class _HandlerWithSignature(Protocol):
+    __signature__: inspect.Signature
+
+
+@runtime_checkable
+class _HandlerWithMetadataSource(Protocol):
+    _metadata_source: Any
+
+
 def _extract_handler_effect_types(handler: Any) -> tuple[type[Any], ...] | None:
     """Extract effect filter types from a handler's first parameter annotation.
 
     Returns None when the annotation implies "handle all effects" or cannot be
     resolved safely.
     """
-    func = getattr(handler, "func", handler)
+    func = handler.func if isinstance(handler, _HandlerWithFunc) else handler
 
-    signature = getattr(handler, "__signature__", None)
+    signature = handler.__signature__ if isinstance(handler, _HandlerWithSignature) else None
     if signature is None:
         signature = _safe_signature(func) or _safe_signature(handler)
     if signature is None:
@@ -222,7 +247,9 @@ def _extract_handler_effect_types(handler: Any) -> tuple[type[Any], ...] | None:
         return None
 
     effect_param = params[0]
-    metadata_source = getattr(handler, "_metadata_source", None)
+    metadata_source = (
+        handler._metadata_source if isinstance(handler, _HandlerWithMetadataSource) else None
+    )
     type_hints = _safe_get_type_hints(metadata_source)
     if not type_hints:
         type_hints = _safe_get_type_hints(func)
