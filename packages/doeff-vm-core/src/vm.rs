@@ -3142,13 +3142,44 @@ impl VM {
                         Frame::Program {
                             metadata: Some(m), ..
                         } => stack.push(m.clone()),
+                        Frame::Program { metadata: None, .. } => {
+                            // no metadata
+                        }
                         Frame::InterceptorApply(continuation)
                         | Frame::InterceptorEval(continuation) => {
                             if let Some(metadata) = continuation.emitter_metadata.as_ref() {
                                 stack.push(metadata.clone());
                             }
                         }
-                        _ => {}
+                        Frame::HandlerDispatch { .. } => {
+                            // no metadata
+                        }
+                        Frame::EvalReturn(continuation) => match continuation.as_ref() {
+                            EvalReturnContinuation::ApplyResolveFunction { metadata, .. }
+                            | EvalReturnContinuation::ApplyResolveArg { metadata, .. }
+                            | EvalReturnContinuation::ApplyResolveKwarg { metadata, .. }
+                            | EvalReturnContinuation::ExpandResolveFactory { metadata, .. }
+                            | EvalReturnContinuation::ExpandResolveArg { metadata, .. }
+                            | EvalReturnContinuation::ExpandResolveKwarg { metadata, .. } => {
+                                stack.push(metadata.clone());
+                            }
+                            EvalReturnContinuation::EvalInScopeReturn { .. } => {
+                                // no metadata
+                            }
+                            EvalReturnContinuation::FinallyCleanup { .. } => {
+                                // no metadata
+                            }
+                        },
+                        Frame::MapReturn { mapper_meta, .. } => stack.push(mapper_meta.clone()),
+                        Frame::FlatMapBindResult => {
+                            // no metadata
+                        }
+                        Frame::FlatMapBindSource { binder_meta, .. } => {
+                            stack.push(binder_meta.clone());
+                        }
+                        Frame::InterceptBodyReturn { .. } => {
+                            // no metadata
+                        }
                     }
                 }
                 seg_id = seg.caller;
