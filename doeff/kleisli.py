@@ -248,9 +248,10 @@ def _register_vm_kleisli_types() -> None:
     except Exception:
         return
 
-    if not hasattr(vm, "PyKleisli"):
+    try:
+        py_kleisli = vm.PyKleisli
+    except AttributeError:
         return
-    py_kleisli = vm.PyKleisli
     try:
         KleisliProgram.register(py_kleisli)
     except Exception:
