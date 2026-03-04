@@ -277,7 +277,7 @@ class DoYieldFunction(KleisliProgram[P, T]):
         if signature is not None:
             self.__signature__ = signature
 
-        self.__doeff_do_decorated__ = True
+        object.__setattr__(self, "__doeff_do_decorated__", True)
         object.__setattr__(self, "_is_do_decorated", True)
 
         strategy = _build_auto_unwrap_strategy(self)
