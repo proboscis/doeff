@@ -411,7 +411,11 @@ impl VM {
                     types,
                     ..
                 } if *handled_marker == marker => Some((seg_id, handler.clone(), types.clone())),
-                _ => None,
+                SegmentKind::PromptBoundary { .. }
+                | SegmentKind::Normal
+                | SegmentKind::InterceptorBoundary { .. }
+                | SegmentKind::MaskBoundary { .. }
+                | SegmentKind::FinallyBoundary { .. } => None,
             })
     }
 
@@ -472,7 +476,9 @@ impl VM {
                     mode: *mode,
                     metadata: metadata.clone(),
                 })),
-                _ => {
+                SegmentKind::Normal
+                | SegmentKind::MaskBoundary { .. }
+                | SegmentKind::FinallyBoundary { .. } => {
                     assert!(
                         self.interceptor_state.get_entry(seg.marker).is_none(),
                         "normal segment marker {} unexpectedly has interceptor state entry",
@@ -1203,7 +1209,14 @@ impl VM {
         // provenance correctly propagates handler context to nested sub-program frames.
         self.current_seg().frames.last().and_then(|frame| match frame {
             Frame::Program { handler_kind, .. } => *handler_kind,
-            _ => None,
+            Frame::InterceptorApply(_)
+            | Frame::InterceptorEval(_)
+            | Frame::HandlerDispatch { .. }
+            | Frame::EvalReturn(_)
+            | Frame::MapReturn { .. }
+            | Frame::FlatMapBindResult
+            | Frame::FlatMapBindSource { .. }
+            | Frame::InterceptBodyReturn { .. } => None,
         })
     }
 
@@ -1220,7 +1233,14 @@ impl VM {
                         stream: snapshot_stream,
                         ..
                     } => Arc::ptr_eq(snapshot_stream, stream),
-                    _ => false,
+                    Frame::InterceptorApply(_)
+                    | Frame::InterceptorEval(_)
+                    | Frame::HandlerDispatch { .. }
+                    | Frame::EvalReturn(_)
+                    | Frame::MapReturn { .. }
+                    | Frame::FlatMapBindResult
+                    | Frame::FlatMapBindSource { .. }
+                    | Frame::InterceptBodyReturn { .. } => false,
                 })
             })
     }
@@ -1585,7 +1605,7 @@ impl VM {
                         Mode::Throw(exc) => {
                             self.begin_finally_cleanup(cleanup, FinallyOutcome::Throw(exc))
                         }
-                        _ => StepEvent::Error(VMError::internal(
+                        Mode::HandleYield(_) | Mode::Return(_) => StepEvent::Error(VMError::internal(
                             "invalid mode while resolving FinallyBoundary",
                         )),
                     };
@@ -1721,7 +1741,18 @@ impl VM {
                     ..
                 },
             ) => Python::attach(|py| lhs_value.bind(py).as_ptr() == rhs_value.bind(py).as_ptr()),
-            _ => false,
+            (
+                PyException::Materialized { .. },
+                PyException::RuntimeError { .. } | PyException::TypeError { .. },
+            )
+            | (
+                PyException::RuntimeError { .. } | PyException::TypeError { .. },
+                PyException::Materialized { .. },
+            )
+            | (PyException::RuntimeError { .. }, PyException::RuntimeError { .. })
+            | (PyException::RuntimeError { .. }, PyException::TypeError { .. })
+            | (PyException::TypeError { .. }, PyException::RuntimeError { .. })
+            | (PyException::TypeError { .. }, PyException::TypeError { .. }) => false,
         }
     }
 
@@ -3200,7 +3231,10 @@ impl VM {
         let prompt_seg = self.segments.get_mut(prompt_seg_id)?;
         match &mut prompt_seg.kind {
             SegmentKind::PromptBoundary { return_clause, .. } => return_clause.take(),
-            _ => None,
+            SegmentKind::Normal
+            | SegmentKind::InterceptorBoundary { .. }
+            | SegmentKind::MaskBoundary { .. }
+            | SegmentKind::FinallyBoundary { .. } => None,
         }
     }
 
@@ -3413,7 +3447,7 @@ impl VM {
                 self.current_seg_mut().mode =
                     self.mode_after_generror(GenErrorSite::CallFuncReturn, exception, false);
             }
-            _ => {
+            PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
                 self.receive_unexpected_outcome();
             }
         }
@@ -3456,7 +3490,7 @@ impl VM {
             PyCallOutcome::GenError(exception) => {
                 self.receive_expand_gen_error(handler_return, exception);
             }
-            _ => {
+            PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
                 self.receive_unexpected_outcome();
             }
         }
@@ -3490,7 +3524,7 @@ impl VM {
                                 self.current_seg_mut().mode =
                                     Mode::Throw(PyException::runtime_error(err.to_string()));
                             }
-                            _ => {
+                            StepEvent::NeedsPython(_) | StepEvent::Done(_) => {
                                 self.current_seg_mut().mode = Mode::Throw(
                                     PyException::runtime_error(
                                         "unexpected StepEvent from handle_yield_ir_stream",
@@ -3521,7 +3555,7 @@ impl VM {
                                 self.current_seg_mut().mode =
                                     Mode::Throw(PyException::runtime_error(err.to_string()));
                             }
-                            _ => {
+                            StepEvent::NeedsPython(_) | StepEvent::Done(_) => {
                                 self.current_seg_mut().mode = Mode::Throw(
                                     PyException::runtime_error(
                                         "unexpected StepEvent from handle_yield_ir_stream",
@@ -3657,7 +3691,7 @@ impl VM {
                     false,
                 );
             }
-            _ => {
+            PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
                 self.receive_unexpected_outcome();
             }
         }
@@ -3672,7 +3706,7 @@ impl VM {
                 self.current_seg_mut().mode =
                     self.mode_after_generror(GenErrorSite::AsyncEscape, exception, false);
             }
-            _ => {
+            PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
                 self.receive_unexpected_outcome();
             }
         }
@@ -4196,7 +4230,10 @@ impl VM {
                     cleanups.push(cleanup.clone());
                     cursor = seg.caller;
                 }
-                _ => break,
+                SegmentKind::Normal
+                | SegmentKind::PromptBoundary { .. }
+                | SegmentKind::InterceptorBoundary { .. }
+                | SegmentKind::MaskBoundary { .. } => break,
             }
         }
         cleanups

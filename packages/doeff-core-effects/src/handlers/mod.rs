@@ -1111,7 +1111,22 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 let Some(semaphore) = semaphore else {
                     let semaphore = match value {
                         Value::Python(_) => value,
-                        _ => {
+                        Value::Unit
+                        | Value::Int(_)
+                        | Value::String(_)
+                        | Value::Bool(_)
+                        | Value::None
+                        | Value::Continuation(_)
+                        | Value::Handlers(_)
+                        | Value::Kleisli(_)
+                        | Value::Task(_)
+                        | Value::Promise(_)
+                        | Value::ExternalPromise(_)
+                        | Value::CallStack(_)
+                        | Value::Trace(_)
+                        | Value::Traceback(_)
+                        | Value::ActiveChain(_)
+                        | Value::List(_) => {
                             return IRStreamStep::Throw(PyException::type_error(
                                 "CreateSemaphore must return a semaphore handle".to_string(),
                             ));
