@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 from doeff import Program, do
+from doeff.effects import ProgramCallStack
 from doeff.rust_vm import default_handlers, run
 
 
@@ -61,3 +64,56 @@ def test_flat_map_runs_with_plain_function_binder() -> None:
     result = run(body(), handlers=default_handlers())
     assert result.is_ok(), result.error
     assert result.value == 2
+
+
+def test_callstack_includes_map_metadata() -> None:
+    def mapper(stack: object) -> list[str]:
+        if not isinstance(stack, list):
+            return []
+        return [
+            entry["function_name"]
+            for entry in stack
+            if isinstance(entry, dict) and isinstance(entry.get("function_name"), str)
+        ]
+
+    @do
+    def source():
+        return (yield ProgramCallStack())
+
+    @do
+    def body():
+        mapped = Program.map(source(), mapper)
+        return (yield mapped)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        result = run(body(), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    assert mapper.__name__ in result.value
+
+
+def test_callstack_includes_flatmap_metadata() -> None:
+    def binder(stack: object):
+        if not isinstance(stack, list):
+            return Program.pure([])
+        function_names = [
+            entry["function_name"]
+            for entry in stack
+            if isinstance(entry, dict) and isinstance(entry.get("function_name"), str)
+        ]
+        return Program.pure(function_names)
+
+    @do
+    def source():
+        return (yield ProgramCallStack())
+
+    @do
+    def body():
+        bound = Program.flat_map(source(), binder)
+        return (yield bound)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        result = run(body(), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    assert binder.__name__ in result.value
