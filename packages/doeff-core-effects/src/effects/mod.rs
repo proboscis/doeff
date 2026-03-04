@@ -720,6 +720,7 @@ pub fn make_execution_context_object(py: Python<'_>) -> PyResult<Py<PyAny>> {
         py,
         PyExecutionContext {
             entries: PyList::empty(py).unbind(),
+            active_chain: None,
         },
     )?;
     Ok(ctx.into_any().unbind())

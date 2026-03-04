@@ -601,14 +601,16 @@ impl TraceState {
 
     pub(crate) fn assemble_active_chain(
         &self,
-        exception: &PyException,
+        exception: Option<&PyException>,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[DispatchContext],
     ) -> Vec<ActiveChainEntry> {
         let mut state = self.active_chain_state.clone();
         self.merge_live_frame_state(&mut state, segments, current_segment, dispatch_stack);
-        Self::finalize_unresolved_dispatches_as_threw(&mut state, exception);
+        if let Some(exception) = exception {
+            Self::finalize_unresolved_dispatches_as_threw(&mut state, exception);
+        }
         let entries = self.entries_from_active_chain_state(&state, dispatch_stack);
         let entries = Self::dedup_adjacent(entries);
         Self::inject_context(entries, exception)
@@ -1274,6 +1276,7 @@ impl TraceState {
             function_name: frame.function_name.clone(),
             source_file: frame.source_file.clone(),
             source_line: frame.source_line,
+            args_repr: frame.args_repr.clone(),
             sub_program_repr,
             handler_kind: frame.handler_kind,
         }
@@ -1350,6 +1353,7 @@ impl TraceState {
                     function_name: lhs_function_name,
                     source_file: lhs_source_file,
                     source_line: lhs_source_line,
+                    args_repr: lhs_args_repr,
                     sub_program_repr: lhs_sub_program_repr,
                     handler_kind: lhs_handler_kind,
                 },
@@ -1357,6 +1361,7 @@ impl TraceState {
                     function_name: rhs_function_name,
                     source_file: rhs_source_file,
                     source_line: rhs_source_line,
+                    args_repr: rhs_args_repr,
                     sub_program_repr: rhs_sub_program_repr,
                     handler_kind: rhs_handler_kind,
                 },
@@ -1364,6 +1369,7 @@ impl TraceState {
                 lhs_function_name == rhs_function_name
                     && lhs_source_file == rhs_source_file
                     && lhs_source_line == rhs_source_line
+                    && lhs_args_repr == rhs_args_repr
                     && lhs_sub_program_repr == rhs_sub_program_repr
                     && lhs_handler_kind == rhs_handler_kind
             }
@@ -1420,13 +1426,17 @@ impl TraceState {
 
     fn inject_context(
         mut active_chain: Vec<ActiveChainEntry>,
-        exception: &PyException,
+        exception: Option<&PyException>,
     ) -> Vec<ActiveChainEntry> {
-        let context_entries = Self::context_entries_from_exception(exception);
+        let context_entries = exception.map_or_else(Vec::new, Self::context_entries_from_exception);
         let has_context_entries = !context_entries.is_empty();
         for data in context_entries {
             active_chain.push(ActiveChainEntry::ContextEntry { data });
         }
+
+        let Some(exception) = exception else {
+            return active_chain;
+        };
 
         let exception_site = Self::exception_site(exception);
         let exception_function_name = match &exception_site {

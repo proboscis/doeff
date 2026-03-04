@@ -110,6 +110,7 @@ pub enum ActiveChainEntry {
         function_name: String,
         source_file: String,
         source_line: u32,
+        args_repr: Option<String>,
         sub_program_repr: String,
         handler_kind: Option<HandlerKind>,
     },
