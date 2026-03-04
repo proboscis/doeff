@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyList, PyTuple};
 
 use crate::arena::SegmentArena;
 use crate::capture::{
@@ -21,7 +21,7 @@ use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
     dispatch_ref_as_python, dispatch_to_pyobject, make_get_execution_context_effect,
-    DispatchEffect, PyGetExecutionContext,
+    DispatchEffect, PyExecutionContext, PyGetExecutionContext,
 };
 #[cfg(test)]
 use crate::effect::{Effect, PySpawn};
@@ -1048,6 +1048,28 @@ impl VM {
         DebugState::exception_repr(exception)
     }
 
+    fn value_variant_name(value: &Value) -> &'static str {
+        match value {
+            Value::Python(_) => "Python",
+            Value::Unit => "Unit",
+            Value::Int(_) => "Int",
+            Value::String(_) => "String",
+            Value::Bool(_) => "Bool",
+            Value::None => "None",
+            Value::Continuation(_) => "Continuation",
+            Value::Handlers(_) => "Handlers",
+            Value::Kleisli(_) => "Kleisli",
+            Value::Task(_) => "Task",
+            Value::Promise(_) => "Promise",
+            Value::ExternalPromise(_) => "ExternalPromise",
+            Value::CallStack(_) => "CallStack",
+            Value::Trace(_) => "Trace",
+            Value::Traceback(_) => "Traceback",
+            Value::ActiveChain(_) => "ActiveChain",
+            Value::List(_) => "List",
+        }
+    }
+
     fn effect_repr(effect: &DispatchEffect) -> String {
         DebugState::effect_repr(effect)
     }
@@ -1359,13 +1381,103 @@ impl VM {
         TraceState::enrich_original_exception_with_context(original, context_value)
     }
 
-    pub fn assemble_active_chain(&self, exception: &PyException) -> Vec<ActiveChainEntry> {
+    pub fn assemble_active_chain(&self, exception: Option<&PyException>) -> Vec<ActiveChainEntry> {
         self.trace_state.assemble_active_chain(
             exception,
             &self.segments,
             self.current_segment,
             self.dispatch_state.contexts(),
         )
+    }
+
+    fn should_attach_active_chain_for_dispatch(&self, dispatch_id: DispatchId) -> bool {
+        self.dispatch_state
+            .find_by_dispatch_id(dispatch_id)
+            .is_some_and(|ctx| ctx.is_execution_context_effect && ctx.original_exception.is_none())
+    }
+
+    fn maybe_attach_active_chain_to_execution_context(
+        &mut self,
+        dispatch_id: Option<DispatchId>,
+        value: &mut Value,
+    ) -> Result<(), VMError> {
+        let Some(dispatch_id) = dispatch_id else {
+            return Ok(());
+        };
+        if !self.should_attach_active_chain_for_dispatch(dispatch_id) {
+            return Ok(());
+        }
+        let context_obj = match value {
+            Value::Python(obj) => obj,
+            other => {
+                return Err(VMError::python_error(format!(
+                    "GetExecutionContext handler must return ExecutionContext, got {}",
+                    Self::value_variant_name(other)
+                )))
+            }
+        };
+
+        let mut active_chain = self.assemble_active_chain(None);
+        Python::attach(|py| {
+            let context_bound = context_obj.bind(py);
+            if !context_bound.is_instance_of::<PyExecutionContext>() {
+                let got_type = context_bound
+                    .get_type()
+                    .name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|_| MISSING_UNKNOWN.to_string());
+                return Err(VMError::python_error(format!(
+                    "GetExecutionContext handler must return ExecutionContext, got {got_type}"
+                )));
+            }
+
+            let entries_obj = context_bound.getattr("entries").map_err(|err| {
+                VMError::python_error(format!(
+                    "GetExecutionContext handler returned invalid ExecutionContext.entries: {err}"
+                ))
+            })?;
+            let iter = entries_obj.try_iter().map_err(|err| {
+                VMError::python_error(format!(
+                    "GetExecutionContext handler returned non-iterable ExecutionContext.entries: {err}"
+                ))
+            })?;
+            for entry_result in iter {
+                let entry = entry_result.map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to iterate ExecutionContext.entries while attaching active_chain: {err}"
+                    ))
+                })?;
+                active_chain.push(ActiveChainEntry::ContextEntry {
+                    data: entry.unbind(),
+                });
+            }
+
+            let active_chain_obj = Value::ActiveChain(active_chain).to_pyobject(py).map_err(|err| {
+                VMError::python_error(format!(
+                    "failed to convert active_chain snapshot to Python object: {err}"
+                ))
+            })?;
+            let active_chain_list = active_chain_obj.cast::<PyList>().map_err(|err| {
+                VMError::python_error(format!(
+                    "active_chain snapshot serialization did not produce list: {err}"
+                ))
+            })?;
+            let active_chain_tuple = PyTuple::new(py, active_chain_list.iter()).map_err(|err| {
+                VMError::python_error(format!(
+                    "failed to convert active_chain snapshot to tuple: {err}"
+                ))
+            })?;
+
+            let mut context_ref = context_bound
+                .extract::<PyRefMut<'_, PyExecutionContext>>()
+                .map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to access ExecutionContext for active_chain assignment: {err}"
+                    ))
+                })?;
+            context_ref.set_active_chain(Some(active_chain_tuple.into_any().unbind()));
+            Ok(())
+        })
     }
 
     pub fn step(&mut self) -> StepEvent {
@@ -1494,7 +1606,7 @@ impl VM {
                         } else {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_traceback_entries(&exc);
-                            let active_chain = self.assemble_active_chain(&exc);
+                            let active_chain = self.assemble_active_chain(Some(&exc));
                             self.segments.reparent_children(seg_id, None);
                             self.segments.free(seg_id);
                             return StepEvent::Error(VMError::uncaught_exception(
@@ -4168,7 +4280,7 @@ impl VM {
         &mut self,
         kind: ContinuationActivationKind,
         k: Continuation,
-        value: Value,
+        mut value: Value,
     ) -> StepEvent {
         if !k.started {
             return self.throw_runtime_error(kind.unstarted_error_message());
@@ -4183,6 +4295,10 @@ impl VM {
         self.lazy_pop_completed();
         let error_dispatch = self.error_dispatch_for_continuation(&k);
         self.record_continuation_activation(kind, &k, &value);
+        if let Err(err) = self.maybe_attach_active_chain_to_execution_context(k.dispatch_id, &mut value)
+        {
+            return StepEvent::Error(err);
+        }
 
         if let Some((dispatch_id, original_exception, terminal)) = error_dispatch {
             if terminal {
@@ -4670,7 +4786,7 @@ impl VM {
         self.handle_forward(ForwardKind::Pass, effect)
     }
 
-    fn handle_handler_return(&mut self, value: Value) -> StepEvent {
+    fn handle_handler_return(&mut self, mut value: Value) -> StepEvent {
         self.lazy_pop_completed();
 
         if let Value::Python(obj) = &value {
@@ -4711,6 +4827,11 @@ impl VM {
             self.current_seg_mut().mode = Mode::Deliver(value);
             return StepEvent::Continue;
         };
+        if let Err(err) =
+            self.maybe_attach_active_chain_to_execution_context(Some(dispatch_id), &mut value)
+        {
+            return StepEvent::Error(err);
+        }
 
         let Some((handler_index, handler_name)) =
             self.current_handler_identity_for_dispatch(top_snapshot.dispatch_id)

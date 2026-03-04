@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from doeff import Effect, Gather, Program, Spawn, do
+from doeff._types_internal import EffectBase
+from doeff.effects import ProgramCallStack
 from doeff.rust_vm import (
     Delegate,
     GetExecutionContext,
@@ -14,6 +18,7 @@ from doeff.rust_vm import (
     default_handlers,
     run,
 )
+from doeff.traceback import build_doeff_traceback
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -151,6 +156,140 @@ def test_user_can_yield_get_execution_context_directly() -> None:
     context = result.value
     assert type(context).__name__ == "ExecutionContext"
     assert isinstance(context.entries, list)
+
+
+def _active_chain_entries(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [entry for entry in value if isinstance(entry, dict)]
+
+
+def test_get_execution_context_returns_active_chain() -> None:
+    @do
+    def program() -> Program[object]:
+        return (yield GetExecutionContext())
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    context = result.value
+    active_chain = getattr(context, "active_chain", None)
+    entries = _active_chain_entries(active_chain)
+    assert active_chain is not None
+    assert any(entry.get("kind") == "program_yield" for entry in entries)
+
+
+def test_get_execution_context_active_chain_has_args_repr() -> None:
+    @do
+    def with_args(x: int, *, y: int) -> Program[object]:
+        return (yield GetExecutionContext())
+
+    result = run(with_args(7, y=11), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    entries = _active_chain_entries(getattr(result.value, "active_chain", None))
+    program_entries = [entry for entry in entries if entry.get("kind") == "program_yield"]
+    assert program_entries
+    assert any(entry.get("args_repr") is not None for entry in program_entries)
+
+
+def test_get_execution_context_active_chain_shows_active_dispatches() -> None:
+    captured: dict[str, Any] = {}
+
+    @dataclass(frozen=True, kw_only=True)
+    class ProbeEffect(EffectBase):
+        pass
+
+    @do
+    def inspector(effect: Effect, k: object):
+        if isinstance(effect, ProbeEffect):
+            captured["context"] = yield GetExecutionContext()
+            return (yield Resume(k, "ok"))
+        yield Pass()
+
+    @do
+    def program() -> Program[str]:
+        return (yield ProbeEffect())
+
+    result = run(program(), handlers=[*default_handlers(), inspector])
+    assert result.is_ok(), result.error
+    context = captured.get("context")
+    assert context is not None
+    entries = _active_chain_entries(getattr(context, "active_chain", None))
+    effect_entries = [entry for entry in entries if entry.get("kind") == "effect_yield"]
+    assert any(
+        entry.get("result", {}).get("kind") == "active"
+        for entry in effect_entries
+        if isinstance(entry.get("result"), dict)
+    )
+
+
+def test_get_execution_context_active_chain_no_exception_site() -> None:
+    @do
+    def program() -> Program[object]:
+        return (yield GetExecutionContext())
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    entries = _active_chain_entries(getattr(result.value, "active_chain", None))
+    assert not any(entry.get("kind") == "exception_site" for entry in entries)
+
+
+def test_get_execution_context_on_error_still_works() -> None:
+    @do
+    def enrich(effect: Effect, k: object):
+        if isinstance(effect, GetExecutionContext):
+            context = yield Delegate()
+            context.add({"kind": "test_marker", "value": "enriched"})
+            return (yield Resume(k, context))
+        yield Pass()
+
+    @do
+    def failing_program() -> Program[None]:
+        raise ValueError("boom")
+
+    result = run(failing_program(), handlers=[*default_handlers(), enrich])
+    assert result.is_err()
+    assert isinstance(result.error, ValueError)
+    entries = _entries_from_error(result.error)
+    assert any(isinstance(entry, dict) and entry.get("kind") == "test_marker" for entry in entries)
+
+
+def test_get_execution_context_active_chain_renderable() -> None:
+    @do
+    def program() -> Program[object]:
+        return (yield GetExecutionContext())
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    context = result.value
+    active_chain = getattr(context, "active_chain", ())
+    tb = build_doeff_traceback(
+        RuntimeError("active-chain snapshot"),
+        trace_entries=[],
+        active_chain_entries=active_chain,
+        allow_active=True,
+    )
+    rendered = tb.format_default()
+    assert "doeff Traceback (most recent call last):" in rendered
+
+
+def test_program_call_stack_deprecation_warning() -> None:
+    @do
+    def body() -> Program[object]:
+        stack = yield ProgramCallStack()
+        return stack
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = run(body(), handlers=default_handlers())
+
+    assert result.is_ok(), result.error
+    warning_messages = [str(item.message) for item in caught]
+    assert any(
+        issubclass(item.category, DeprecationWarning)
+        and "GetExecutionContext" in str(item.message)
+        for item in caught
+    )
+    assert warning_messages
 
 
 def test_cross_task_propagation_accumulates_spawn_boundaries() -> None:
