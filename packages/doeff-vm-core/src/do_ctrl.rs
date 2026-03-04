@@ -141,7 +141,6 @@ pub enum DoCtrl {
         metadata: Option<CallMetadata>,
     },
     GetCallStack,
-    GetTrace,
 }
 
 impl DoCtrl {
@@ -298,7 +297,6 @@ impl DoCtrl {
                 metadata: metadata.clone(),
             },
             DoCtrl::GetCallStack => DoCtrl::GetCallStack,
-            DoCtrl::GetTrace => DoCtrl::GetTrace,
         }
     }
 }
@@ -409,7 +407,7 @@ mod tests {
         let enum_body = doctrl_enum_body(src);
         let variant_count = count_top_level_variants(enum_body);
         assert_eq!(
-            variant_count, 26,
+            variant_count, 25,
             "DoCtrl variant count changed! New variants require explicit human approval."
         );
     }

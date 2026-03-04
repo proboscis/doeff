@@ -24,7 +24,6 @@ from doeff import (
     Effect,
     EffectBase,
     EffectGenerator,
-    ProgramTrace,
     WriterTellEffect,
     default_handlers,
     do,
@@ -53,9 +52,9 @@ class AnalyzeFx(EffectBase):
 
 @do
 def slog_interceptor(effect: Effect):
-    """Intercepts WriterTellEffect, yields ProgramTrace (side effect), returns original."""
+    """Intercepts WriterTellEffect, yields GetCallStack (side effect), returns original."""
     if isinstance(effect, WriterTellEffect) and isinstance(effect.message, dict):
-        yield ProgramTrace()
+        yield doeff_vm.GetCallStack()
     return effect
 
 
