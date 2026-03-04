@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::capture::{CaptureEvent, HandlerAction};
 use crate::continuation::Continuation;
 use crate::dispatch::DispatchContext;
 use crate::effect::DispatchEffect;
@@ -10,6 +9,7 @@ use crate::error::VMError;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::step::PyException;
+use crate::trace_state::ActiveChainAssemblyState;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DispatchState {
@@ -203,20 +203,9 @@ impl DispatchState {
     pub(crate) fn dispatch_has_terminal_handler_action(
         &self,
         dispatch_id: DispatchId,
-        capture_log: &[CaptureEvent],
+        active_chain_state: &ActiveChainAssemblyState,
     ) -> bool {
-        capture_log.iter().rev().any(|event| match event {
-            CaptureEvent::HandlerCompleted {
-                dispatch_id: event_dispatch_id,
-                action:
-                    HandlerAction::Resumed { .. }
-                    | HandlerAction::Transferred { .. }
-                    | HandlerAction::Returned { .. }
-                    | HandlerAction::Threw { .. },
-                ..
-            } => *event_dispatch_id == dispatch_id,
-            _ => false,
-        })
+        active_chain_state.dispatch_has_terminal_result(dispatch_id)
     }
 
     pub(crate) fn prepare_with_handler(
