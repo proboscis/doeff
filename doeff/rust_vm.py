@@ -75,16 +75,13 @@ def _coerce_handler(
     role: str,
 ) -> Any:
     vm = _vm()
-    rust_handler_type = getattr(vm, "RustHandler", None)
-    if rust_handler_type is not None and isinstance(handler, rust_handler_type):
+    if hasattr(vm, "RustHandler") and isinstance(handler, vm.RustHandler):
         return handler
 
-    py_kleisli_type = getattr(vm, "PyKleisli", None)
-    if py_kleisli_type is not None and isinstance(handler, py_kleisli_type):
+    if hasattr(vm, "PyKleisli") and isinstance(handler, vm.PyKleisli):
         return handler
 
-    doeff_generator_fn_type = getattr(vm, "DoeffGeneratorFn", None)
-    if doeff_generator_fn_type is not None and isinstance(handler, doeff_generator_fn_type):
+    if hasattr(vm, "DoeffGeneratorFn") and isinstance(handler, vm.DoeffGeneratorFn):
         return handler
     raise TypeError(_format_handler_type_error(api_name=api_name, role=role, value=handler))
 
@@ -97,8 +94,7 @@ def _coerce_program(program: Any) -> Any:
     if isinstance(program, vm.DoExpr):
         return program
 
-    doeff_generator_type = getattr(vm, "DoeffGenerator", None)
-    if doeff_generator_type is not None and isinstance(program, doeff_generator_type):
+    if hasattr(vm, "DoeffGenerator") and isinstance(program, vm.DoeffGenerator):
         raise TypeError(
             "program must be DoExpr; got DoeffGenerator. "
             "Pass the DoExpr program object (not .to_generator())."
@@ -230,8 +226,12 @@ def _with_intercept_metadata(interceptor: Any) -> dict[str, Any]:
 
 def _unhandled_effect_error_types(vm: Any) -> tuple[type[BaseException], ...]:
     error_types: list[type[BaseException]] = []
-    for name in ("UnhandledEffectError", "NoMatchingHandlerError"):
-        error_type = getattr(vm, name, None)
+    if hasattr(vm, "UnhandledEffectError"):
+        error_type = vm.UnhandledEffectError
+        if isinstance(error_type, type) and issubclass(error_type, BaseException):
+            error_types.append(error_type)
+    if hasattr(vm, "NoMatchingHandlerError"):
+        error_type = vm.NoMatchingHandlerError
         if isinstance(error_type, type) and issubclass(error_type, BaseException):
             error_types.append(error_type)
     return tuple(error_types)
@@ -250,13 +250,22 @@ def _raise_unhandled_effect_if_present(run_result: Any, *, raise_unhandled: bool
 
 
 def _build_doeff_traceback_if_present(run_result: Any) -> Any | None:
-    is_err = getattr(run_result, "is_err", None)
+    try:
+        is_err = run_result.is_err
+    except AttributeError:
+        return None
     if not callable(is_err) or not is_err():
         return None
-    error = getattr(run_result, "error", None)
+    try:
+        error = run_result.error
+    except AttributeError:
+        return None
     if not isinstance(error, BaseException):
         return None
-    traceback_data = getattr(run_result, "traceback_data", None)
+    try:
+        traceback_data = run_result.traceback_data
+    except AttributeError:
+        return None
     if traceback_data is None:
         return None
     try:
@@ -343,13 +352,21 @@ async def _call_async_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) 
 def _core_handler_sentinels(vm: Any) -> list[Any]:
     """Return the shared core handler sentinel stack from doeff_vm."""
     required = ("state", "reader", "writer", "result_safe", "scheduler", "lazy_ask")
-    if all(hasattr(vm, name) for name in required):
-        return [getattr(vm, name) for name in required]
-    missing = [name for name in required if not hasattr(vm, name)]
-    missing_txt = ", ".join(missing)
-    raise RuntimeError(
-        f"Installed doeff_vm module is missing required handler sentinels: {missing_txt}"
-    )
+    try:
+        return [
+            vm.state,
+            vm.reader,
+            vm.writer,
+            vm.result_safe,
+            vm.scheduler,
+            vm.lazy_ask,
+        ]
+    except AttributeError as exc:
+        missing = [name for name in required if not hasattr(vm, name)]
+        missing_txt = ", ".join(missing)
+        raise RuntimeError(
+            f"Installed doeff_vm module is missing required handler sentinels: {missing_txt}"
+        ) from exc
 
 
 def default_handlers() -> list[Any]:
@@ -401,9 +418,10 @@ def run(
     print_doeff_trace: bool = True,
 ) -> Any:
     vm = _vm()
-    run_fn = getattr(vm, "run", None)
-    if run_fn is None:
-        raise RuntimeError("Installed doeff_vm module does not expose run()")
+    try:
+        run_fn = vm.run
+    except AttributeError as exc:
+        raise RuntimeError("Installed doeff_vm module does not expose run()") from exc
     raise_unhandled = isinstance(program, vm.EffectBase)
     program = _coerce_program(program)
     program = _wrap_handlers(program, handlers, api_name="run()")
@@ -428,9 +446,10 @@ async def async_run(
     print_doeff_trace: bool = True,
 ) -> Any:
     vm = _vm()
-    run_fn = getattr(vm, "async_run", None)
-    if run_fn is None:
-        raise RuntimeError("Installed doeff_vm module does not expose async_run()")
+    try:
+        run_fn = vm.async_run
+    except AttributeError as exc:
+        raise RuntimeError("Installed doeff_vm module does not expose async_run()") from exc
     raise_unhandled = isinstance(program, vm.EffectBase)
     program = _coerce_program(program)
     program = _wrap_handlers(program, handlers, api_name="async_run()")
@@ -480,12 +499,75 @@ def WithIntercept(
     )
 
 
+def _get_vm_lazy_export(vm: Any, name: str) -> Any:
+    if name == "RunResult":
+        return vm.RunResult
+    if name == "DoeffTracebackData":
+        return vm.DoeffTracebackData
+    if name == "Pure":
+        return vm.Pure
+    if name == "Apply":
+        return vm.Apply
+    if name == "Expand":
+        return vm.Expand
+    if name == "Eval":
+        return vm.Eval
+    if name == "EvalInScope":
+        return vm.EvalInScope
+    if name == "Perform":
+        return vm.Perform
+    if name == "Finally":
+        return vm.Finally
+    if name == "Pass":
+        return vm.Pass
+    if name == "Resume":
+        return vm.Resume
+    if name == "Delegate":
+        return vm.Delegate
+    if name == "Transfer":
+        return vm.Transfer
+    if name == "ResumeContinuation":
+        return vm.ResumeContinuation
+    if name == "GetTraceback":
+        return vm.GetTraceback
+    if name == "GetExecutionContext":
+        return vm.GetExecutionContext
+    if name == "ExecutionContext":
+        return vm.ExecutionContext
+    if name == "TraceFrame":
+        return vm.TraceFrame
+    if name == "TraceHop":
+        return vm.TraceHop
+    if name == "PythonAsyncSyntaxEscape":
+        return vm.PythonAsyncSyntaxEscape
+    if name == "UnhandledEffectError":
+        return vm.UnhandledEffectError
+    if name == "NoMatchingHandlerError":
+        return vm.NoMatchingHandlerError
+    if name == "K":
+        return vm.K
+    if name == "state":
+        return vm.state
+    if name == "reader":
+        return vm.reader
+    if name == "writer":
+        return vm.writer
+    if name == "result_safe":
+        return vm.result_safe
+    if name == "lazy_ask":
+        return vm.lazy_ask
+    if name == "await_handler":
+        return vm.await_handler
+    raise AttributeError(name)
+
+
 def __getattr__(name: str) -> Any:
     if name == "pass_":
         vm = _vm()
-        if not hasattr(vm, "Pass"):
-            raise AttributeError("doeff_vm has no attribute 'Pass'")
-        return vm.Pass
+        try:
+            return vm.Pass
+        except AttributeError as exc:
+            raise AttributeError("doeff_vm has no attribute 'Pass'") from exc
     if name in {
         "RunResult",
         "DoeffTracebackData",
@@ -518,9 +600,10 @@ def __getattr__(name: str) -> Any:
         "await_handler",
     }:
         vm = _vm()
-        if not hasattr(vm, name):
-            raise AttributeError(f"doeff_vm has no attribute '{name}'")
-        return getattr(vm, name)
+        try:
+            return _get_vm_lazy_export(vm, name)
+        except AttributeError as exc:
+            raise AttributeError(f"doeff_vm has no attribute '{name}'") from exc
     raise AttributeError(name)
 
 
