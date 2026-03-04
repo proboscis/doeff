@@ -12,6 +12,7 @@ Tests the ConductorAPI Python interface:
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -439,6 +440,49 @@ def workflow(issue, custom_param=None):
             assert handle is not None
         except Exception:
             pass
+
+    def test_run_workflow_extracts_pr_url_from_real_run_result(self, api: ConductorAPI, tmp_path: Path):
+        workflow_file = tmp_path / "pr_url_workflow.py"
+        workflow_file.write_text("""
+from types import SimpleNamespace
+from doeff import Pure, do
+
+@do
+def workflow():
+    return (yield Pure(SimpleNamespace(url="runresult-url")))
+""")
+
+        handle = api.run_workflow(str(workflow_file))
+
+        assert handle.status == WorkflowStatus.DONE
+        assert handle.pr_url == "runresult-url"
+
+    def test_run_workflow_does_not_unwrap_non_run_result_value_objects(
+        self,
+        api: ConductorAPI,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        workflow_file = tmp_path / "non_run_result_workflow.py"
+        workflow_file.write_text("""
+from doeff import Program, do
+
+@do
+def workflow():
+    return Program.pure("ignored")
+""")
+
+        class NonRunResultWithValue:
+            def __init__(self) -> None:
+                self.value = SimpleNamespace(url="inner-url")
+                self.url = "outer-url"
+
+        monkeypatch.setattr("doeff.run", lambda *args, **kwargs: NonRunResultWithValue())
+
+        handle = api.run_workflow(str(workflow_file))
+
+        assert handle.status == WorkflowStatus.DONE
+        assert handle.pr_url == "outer-url"
 
 
 class TestWorkflowHandleSerialization:

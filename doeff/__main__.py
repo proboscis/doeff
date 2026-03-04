@@ -500,11 +500,6 @@ def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
         return result.value, None
     if isinstance(value, RunResult):
         return _unwrap_run_result(value), value
-    if hasattr(value, "is_ok") and hasattr(value, "value"):
-        try:
-            return value.value, None
-        except Exception as exc:
-            raise RuntimeError("Program execution failed") from exc
     return value, None
 
 
