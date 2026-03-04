@@ -641,9 +641,15 @@ impl IRStreamProgram for StateHandlerProgram {
         }
         // Modify case: store modifier result but resume caller with OLD value.
         // SPEC-008 L1271: Modify is read-then-modify, returns the old value.
-        let key = self.pending_key.take().unwrap();
-        let continuation = self.pending_k.take().unwrap();
-        let old_value = self.pending_old_value.take().unwrap();
+        let key = self.pending_key.take().expect(
+            "StateHandler Modify invariant violated: pending key missing during resume",
+        );
+        let continuation = self.pending_k.take().expect(
+            "StateHandler Modify invariant violated: pending continuation missing during resume",
+        );
+        let old_value = self.pending_old_value.take().expect(
+            "StateHandler Modify invariant violated: pending old_value missing during resume",
+        );
         store.put(key, value);
         IRStreamStep::Yield(DoCtrl::Resume {
             continuation,
@@ -1909,6 +1915,21 @@ mod tests {
         assert_eq!(store.get("count").and_then(Value::as_int), Some(8));
         let location = IRStream::debug_location(&program).expect("state debug location");
         assert_eq!(location.phase.as_deref(), Some("Idle"));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "StateHandler Modify invariant violated: pending continuation missing during resume"
+    )]
+    fn test_state_modify_resume_invariant_message_for_missing_continuation() {
+        let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
+        let mut program = StateHandlerProgram::new();
+
+        program.pending_key = Some("count".to_string());
+        program.pending_old_value = Some(Value::Int(5));
+
+        let _ = IRStream::resume(&mut program, Value::Int(8), &mut store, &mut scope);
     }
 
     #[test]
