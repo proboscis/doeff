@@ -73,7 +73,9 @@ impl ActiveChainAssemblyState {
         self.dispatches.get(&dispatch_id).is_some_and(|dispatch| {
             matches!(
                 dispatch.result,
-                EffectResult::Resumed { .. } | EffectResult::Transferred { .. } | EffectResult::Threw { .. }
+                EffectResult::Resumed { .. }
+                    | EffectResult::Transferred { .. }
+                    | EffectResult::Threw { .. }
             )
         })
     }
@@ -377,7 +379,18 @@ impl TraceState {
                     ..
                 },
             ) => Python::attach(|py| lhs_value.bind(py).as_ptr() == rhs_value.bind(py).as_ptr()),
-            _ => false,
+            (
+                PyException::Materialized { .. },
+                PyException::RuntimeError { .. } | PyException::TypeError { .. },
+            )
+            | (
+                PyException::RuntimeError { .. } | PyException::TypeError { .. },
+                PyException::Materialized { .. },
+            )
+            | (PyException::RuntimeError { .. }, PyException::RuntimeError { .. })
+            | (PyException::RuntimeError { .. }, PyException::TypeError { .. })
+            | (PyException::TypeError { .. }, PyException::RuntimeError { .. })
+            | (PyException::TypeError { .. }, PyException::TypeError { .. }) => false,
         }
     }
 
@@ -994,12 +1007,7 @@ impl TraceState {
                 else {
                     continue;
                 };
-                Self::upsert_frame_state_from_metadata(
-                    frame_stack,
-                    stream,
-                    metadata,
-                    handler_kind,
-                );
+                Self::upsert_frame_state_from_metadata(frame_stack, stream, metadata, handler_kind);
             }
         }
     }
@@ -1028,12 +1036,7 @@ impl TraceState {
             else {
                 continue;
             };
-            Self::upsert_frame_state_from_metadata(
-                frame_stack,
-                stream,
-                metadata,
-                handler_kind,
-            );
+            Self::upsert_frame_state_from_metadata(frame_stack, stream, metadata, handler_kind);
         }
     }
 
@@ -1179,14 +1182,19 @@ impl TraceState {
                 }
             })
             .or_else(|| {
-                state.dispatch_order.iter().rev().copied().find_map(|dispatch_id| {
-                    let dispatch = state.dispatches.get(&dispatch_id)?;
-                    if Self::is_visible_dispatch(dispatch) {
-                        Some(dispatch_id)
-                    } else {
-                        None
-                    }
-                })
+                state
+                    .dispatch_order
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find_map(|dispatch_id| {
+                        let dispatch = state.dispatches.get(&dispatch_id)?;
+                        if Self::is_visible_dispatch(dispatch) {
+                            Some(dispatch_id)
+                        } else {
+                            None
+                        }
+                    })
             })
     }
 
@@ -1308,7 +1316,12 @@ impl TraceState {
             })
             .or_else(|| dispatch.handler_stack.last());
         let Some(handler) = handler else {
-            return (MISSING_UNKNOWN.to_string(), HandlerKind::RustBuiltin, None, None);
+            return (
+                MISSING_UNKNOWN.to_string(),
+                HandlerKind::RustBuiltin,
+                None,
+                None,
+            );
         };
         (
             handler.handler_name.clone(),
@@ -1347,16 +1360,15 @@ impl TraceState {
     }
 
     fn is_adjacent_duplicate(lhs: &ActiveChainEntry, rhs: &ActiveChainEntry) -> bool {
-        match (lhs, rhs) {
-            (
-                ActiveChainEntry::ProgramYield {
-                    function_name: lhs_function_name,
-                    source_file: lhs_source_file,
-                    source_line: lhs_source_line,
-                    args_repr: lhs_args_repr,
-                    sub_program_repr: lhs_sub_program_repr,
-                    handler_kind: lhs_handler_kind,
-                },
+        match lhs {
+            ActiveChainEntry::ProgramYield {
+                function_name: lhs_function_name,
+                source_file: lhs_source_file,
+                source_line: lhs_source_line,
+                args_repr: lhs_args_repr,
+                sub_program_repr: lhs_sub_program_repr,
+                handler_kind: lhs_handler_kind,
+            } => match rhs {
                 ActiveChainEntry::ProgramYield {
                     function_name: rhs_function_name,
                     source_file: rhs_source_file,
@@ -1364,24 +1376,26 @@ impl TraceState {
                     args_repr: rhs_args_repr,
                     sub_program_repr: rhs_sub_program_repr,
                     handler_kind: rhs_handler_kind,
-                },
-            ) => {
-                lhs_function_name == rhs_function_name
-                    && lhs_source_file == rhs_source_file
-                    && lhs_source_line == rhs_source_line
-                    && lhs_args_repr == rhs_args_repr
-                    && lhs_sub_program_repr == rhs_sub_program_repr
-                    && lhs_handler_kind == rhs_handler_kind
-            }
-            (
-                ActiveChainEntry::EffectYield {
-                    function_name: lhs_function_name,
-                    source_file: lhs_source_file,
-                    source_line: lhs_source_line,
-                    effect_repr: lhs_effect_repr,
-                    handler_stack: lhs_handler_stack,
-                    result: lhs_result,
-                },
+                } => {
+                    lhs_function_name == rhs_function_name
+                        && lhs_source_file == rhs_source_file
+                        && lhs_source_line == rhs_source_line
+                        && lhs_args_repr == rhs_args_repr
+                        && lhs_sub_program_repr == rhs_sub_program_repr
+                        && lhs_handler_kind == rhs_handler_kind
+                }
+                ActiveChainEntry::EffectYield { .. }
+                | ActiveChainEntry::ContextEntry { .. }
+                | ActiveChainEntry::ExceptionSite { .. } => false,
+            },
+            ActiveChainEntry::EffectYield {
+                function_name: lhs_function_name,
+                source_file: lhs_source_file,
+                source_line: lhs_source_line,
+                effect_repr: lhs_effect_repr,
+                handler_stack: lhs_handler_stack,
+                result: lhs_result,
+            } => match rhs {
                 ActiveChainEntry::EffectYield {
                     function_name: rhs_function_name,
                     source_file: rhs_source_file,
@@ -1389,38 +1403,43 @@ impl TraceState {
                     effect_repr: rhs_effect_repr,
                     handler_stack: rhs_handler_stack,
                     result: rhs_result,
-                },
-            ) => {
-                lhs_function_name == rhs_function_name
-                    && lhs_source_file == rhs_source_file
-                    && lhs_source_line == rhs_source_line
-                    && lhs_effect_repr == rhs_effect_repr
-                    && lhs_handler_stack == rhs_handler_stack
-                    && lhs_result == rhs_result
-            }
-            (
-                ActiveChainEntry::ExceptionSite {
-                    function_name: lhs_function_name,
-                    source_file: lhs_source_file,
-                    source_line: lhs_source_line,
-                    exception_type: lhs_exception_type,
-                    message: lhs_message,
-                },
+                } => {
+                    lhs_function_name == rhs_function_name
+                        && lhs_source_file == rhs_source_file
+                        && lhs_source_line == rhs_source_line
+                        && lhs_effect_repr == rhs_effect_repr
+                        && lhs_handler_stack == rhs_handler_stack
+                        && lhs_result == rhs_result
+                }
+                ActiveChainEntry::ProgramYield { .. }
+                | ActiveChainEntry::ContextEntry { .. }
+                | ActiveChainEntry::ExceptionSite { .. } => false,
+            },
+            ActiveChainEntry::ContextEntry { .. } => false,
+            ActiveChainEntry::ExceptionSite {
+                function_name: lhs_function_name,
+                source_file: lhs_source_file,
+                source_line: lhs_source_line,
+                exception_type: lhs_exception_type,
+                message: lhs_message,
+            } => match rhs {
                 ActiveChainEntry::ExceptionSite {
                     function_name: rhs_function_name,
                     source_file: rhs_source_file,
                     source_line: rhs_source_line,
                     exception_type: rhs_exception_type,
                     message: rhs_message,
-                },
-            ) => {
-                lhs_function_name == rhs_function_name
-                    && lhs_source_file == rhs_source_file
-                    && lhs_source_line == rhs_source_line
-                    && lhs_exception_type == rhs_exception_type
-                    && lhs_message == rhs_message
-            }
-            _ => false,
+                } => {
+                    lhs_function_name == rhs_function_name
+                        && lhs_source_file == rhs_source_file
+                        && lhs_source_line == rhs_source_line
+                        && lhs_exception_type == rhs_exception_type
+                        && lhs_message == rhs_message
+                }
+                ActiveChainEntry::ProgramYield { .. }
+                | ActiveChainEntry::EffectYield { .. }
+                | ActiveChainEntry::ContextEntry { .. } => false,
+            },
         }
     }
 
@@ -1439,10 +1458,10 @@ impl TraceState {
         };
 
         let exception_site = Self::exception_site(exception);
-        let exception_function_name = match &exception_site {
-            ActiveChainEntry::ExceptionSite { function_name, .. } => function_name.as_str(),
-            _ => "",
+        let ActiveChainEntry::ExceptionSite { function_name, .. } = &exception_site else {
+            unreachable!("exception_site() must return ActiveChainEntry::ExceptionSite")
         };
+        let exception_function_name = function_name.as_str();
         let exception_function_is_visible = active_chain.iter().any(|entry| match entry {
             ActiveChainEntry::ProgramYield { function_name, .. }
             | ActiveChainEntry::EffectYield { function_name, .. }
