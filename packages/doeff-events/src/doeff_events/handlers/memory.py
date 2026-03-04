@@ -4,17 +4,17 @@
 from typing import Any
 
 from doeff import Effect, Pass, Resume, do
-from doeff.effects import CreateExternalPromise, ExternalPromise, Wait
+from doeff.effects import CompletePromise, CreatePromise, Promise, Wait
 from doeff_events.effects import PublishEffect, WaitForEventEffect
 
-ListenerMap = dict[type[Any], list[ExternalPromise[Any]]]
+ListenerMap = dict[type[Any], list[Promise[Any]]]
 
 
 def _matching_promises(
     listeners: ListenerMap,
     event: Any,
-) -> dict[int, ExternalPromise[Any]]:
-    matched: dict[int, ExternalPromise[Any]] = {}
+) -> dict[int, Promise[Any]]:
+    matched: dict[int, Promise[Any]] = {}
     for event_type, queued in listeners.items():
         if not isinstance(event, event_type):
             continue
@@ -51,7 +51,7 @@ def event_handler():
     @do
     def handler(effect: Effect, k: Any):
         if isinstance(effect, WaitForEventEffect):
-            promise = yield CreateExternalPromise()
+            promise = yield CreatePromise()
 
             for event_type in effect.event_types:
                 listeners.setdefault(event_type, []).append(promise)
@@ -69,7 +69,7 @@ def event_handler():
             _remove_promises(listeners, set(matched))
 
             for promise in matched.values():
-                promise.complete(event)
+                yield CompletePromise(promise, event)
 
             return (yield Resume(k, None))
 
