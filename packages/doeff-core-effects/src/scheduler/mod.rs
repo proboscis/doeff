@@ -351,7 +351,31 @@ fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
         | IRStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
             continuation.cont_id == cont_id
         }
-        _ => false,
+        IRStreamStep::Yield(
+            DoCtrl::Pure { .. }
+            | DoCtrl::Map { .. }
+            | DoCtrl::FlatMap { .. }
+            | DoCtrl::Perform { .. }
+            | DoCtrl::WithHandler { .. }
+            | DoCtrl::WithIntercept { .. }
+            | DoCtrl::Finally { .. }
+            | DoCtrl::Delegate { .. }
+            | DoCtrl::Pass { .. }
+            | DoCtrl::GetContinuation
+            | DoCtrl::GetHandlers
+            | DoCtrl::GetTraceback { .. }
+            | DoCtrl::CreateContinuation { .. }
+            | DoCtrl::PythonAsyncSyntaxEscape { .. }
+            | DoCtrl::Apply { .. }
+            | DoCtrl::Expand { .. }
+            | DoCtrl::IRStream { .. }
+            | DoCtrl::Eval { .. }
+            | DoCtrl::EvalInScope { .. }
+            | DoCtrl::GetCallStack,
+        )
+        | IRStreamStep::Return(_)
+        | IRStreamStep::Throw(_)
+        | IRStreamStep::NeedsPython(_) => false,
     }
 }
 
@@ -1156,7 +1180,7 @@ impl SchedulerState {
         let task_exists = self.tasks.contains_key(&task_id);
         let cont_id = match self.tasks.get(&task_id) {
             Some(TaskState::Pending { cont, .. }) => Some(cont.cont_id),
-            _ => None,
+            Some(TaskState::Done { .. }) | None => None,
         };
         if let Some(cont_id) = cont_id {
             self.clear_waiters_for_owner(Some(task_id), cont_id);
@@ -1214,7 +1238,7 @@ impl SchedulerState {
         let task_id = self.current_task?;
         match self.tasks.get(&task_id) {
             Some(TaskState::Pending { priority, .. }) => Some(*priority),
-            _ => None,
+            Some(TaskState::Done { .. }) | None => None,
         }
     }
 
@@ -1467,7 +1491,7 @@ impl SchedulerState {
                     *pending_log_merge_items = merge_items;
                     *priority
                 }
-                _ => return None,
+                Some(TaskState::Done { .. }) | None => return None,
             };
 
             self.enqueue_ready_task(waiting_task, priority);
@@ -1516,7 +1540,7 @@ impl SchedulerState {
                         Some(current_max) if current_max.priority >= woken.priority => {
                             Some(current_max)
                         }
-                        _ => Some(woken),
+                        Some(_) | None => Some(woken),
                     };
                 }
             }
@@ -1629,7 +1653,7 @@ impl SchedulerState {
     pub fn task_cont(&self, task_id: TaskId) -> Option<Continuation> {
         match self.tasks.get(&task_id) {
             Some(TaskState::Pending { cont, .. }) => Some(cont.clone()),
-            _ => None,
+            Some(TaskState::Done { .. }) | None => None,
         }
     }
 
@@ -1640,13 +1664,13 @@ impl SchedulerState {
                 Waitable::Task(task_id) => match self.tasks.get(task_id) {
                     Some(TaskState::Done { result: Ok(v), .. }) => results.push(v.clone()),
                     Some(TaskState::Done { result: Err(_), .. }) => return None,
-                    _ => return None,
+                    Some(TaskState::Pending { .. }) | None => return None,
                 },
                 Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
                     match self.promises.get(pid) {
                         Some(PromiseState::Done(Ok(v))) => results.push(v.clone()),
                         Some(PromiseState::Done(Err(_))) => return None,
-                        _ => return None,
+                        Some(PromiseState::Pending) | None => return None,
                     }
                 }
             }
@@ -1729,7 +1753,7 @@ impl SchedulerState {
                 Waitable::Task(task_id) => {
                     let task_result = match self.tasks.get(task_id) {
                         Some(TaskState::Done { result, .. }) => result.clone(),
-                        _ => return None,
+                        Some(TaskState::Pending { .. }) | None => return None,
                     };
                     match task_result {
                         Ok(value) => results.push(value),
@@ -1743,7 +1767,7 @@ impl SchedulerState {
                     match self.promises.get(pid) {
                         Some(PromiseState::Done(Ok(v))) => results.push(v.clone()),
                         Some(PromiseState::Done(Err(e))) => return Some(Err(e.clone())),
-                        _ => return None,
+                        Some(PromiseState::Pending) | None => return None,
                     }
                 }
             }
@@ -1758,7 +1782,7 @@ impl SchedulerState {
                 Waitable::Task(task_id) => {
                     let task_result = match self.tasks.get(task_id) {
                         Some(TaskState::Done { result, .. }) => result.clone(),
-                        _ => continue,
+                        Some(TaskState::Pending { .. }) | None => continue,
                     };
                     if task_result.is_err() {
                         self.execution_context_task_override = Some(*task_id);
@@ -2560,7 +2584,22 @@ impl IRStreamProgram for SchedulerProgram {
             SchedulerPhase::SpawnAwaitTraceback { k_user, effect } => {
                 let traceback = match value {
                     Value::Traceback(hops) => hops,
-                    _ => {
+                    Value::Python(_)
+                    | Value::Unit
+                    | Value::Int(_)
+                    | Value::String(_)
+                    | Value::Bool(_)
+                    | Value::None
+                    | Value::Continuation(_)
+                    | Value::Handlers(_)
+                    | Value::Kleisli(_)
+                    | Value::Task(_)
+                    | Value::Promise(_)
+                    | Value::ExternalPromise(_)
+                    | Value::CallStack(_)
+                    | Value::Trace(_)
+                    | Value::ActiveChain(_)
+                    | Value::List(_) => {
                         return IRStreamStep::Throw(PyException::type_error(
                             "scheduler Spawn expected GetTraceback result".to_string(),
                         ));
@@ -2651,7 +2690,22 @@ impl IRStreamProgram for SchedulerProgram {
             } => {
                 let handlers = match value {
                     Value::Handlers(hs) => hs,
-                    _ => {
+                    Value::Python(_)
+                    | Value::Unit
+                    | Value::Int(_)
+                    | Value::String(_)
+                    | Value::Bool(_)
+                    | Value::None
+                    | Value::Continuation(_)
+                    | Value::Kleisli(_)
+                    | Value::Task(_)
+                    | Value::Promise(_)
+                    | Value::ExternalPromise(_)
+                    | Value::CallStack(_)
+                    | Value::Trace(_)
+                    | Value::Traceback(_)
+                    | Value::ActiveChain(_)
+                    | Value::List(_) => {
                         return IRStreamStep::Throw(PyException::type_error(
                             "scheduler Spawn expected GetHandlers result".to_string(),
                         ));
@@ -2683,7 +2737,22 @@ impl IRStreamProgram for SchedulerProgram {
                 // Value should be the continuation created by CreateContinuation
                 let cont = match value {
                     Value::Continuation(c) => c,
-                    _ => {
+                    Value::Python(_)
+                    | Value::Unit
+                    | Value::Int(_)
+                    | Value::String(_)
+                    | Value::Bool(_)
+                    | Value::None
+                    | Value::Handlers(_)
+                    | Value::Kleisli(_)
+                    | Value::Task(_)
+                    | Value::Promise(_)
+                    | Value::ExternalPromise(_)
+                    | Value::CallStack(_)
+                    | Value::Trace(_)
+                    | Value::Traceback(_)
+                    | Value::ActiveChain(_)
+                    | Value::List(_) => {
                         return IRStreamStep::Throw(PyException::type_error(
                             "expected continuation from CreateContinuation, got unexpected type"
                                 .to_string(),
@@ -2780,7 +2849,10 @@ impl IRStreamProgram for SchedulerProgram {
             SchedulerPhase::PreemptiveTransfer { k_user } => {
                 self.continue_preemptive_transfer(Err(exc), k_user, store)
             }
-            _ => IRStreamStep::Throw(exc),
+            SchedulerPhase::Idle
+            | SchedulerPhase::SpawnAwaitTraceback { .. }
+            | SchedulerPhase::SpawnAwaitHandlers { .. }
+            | SchedulerPhase::SpawnAwaitContinuation { .. } => IRStreamStep::Throw(exc),
         }
     }
 }
