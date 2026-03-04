@@ -2122,6 +2122,18 @@ rules:
     languages: [rust]
     severity: ERROR
 
+  - id: vm-core-no-wildcard-unreachable-on-match
+    pattern-regex: '_\s*=>\s*unreachable!\s*\('
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    message: |
+      BANNED: wildcard `_ => unreachable!(...)` disables exhaustiveness checking on enum matches.
+      List explicit variants and keep `unreachable!` only inside explicit variant arms when needed.
+      Ref: VM-UNREACHABLE-EXHAUSTIVE-001.
+    languages: [rust]
+    severity: ERROR
+
   - id: introspect-no-new-doctrl-introspection
     pattern-either:
       - pattern: DoCtrl::GetCallStack

@@ -1526,7 +1526,7 @@ impl VM {
             0 => self.step_deliver_or_throw(),
             1 => self.step_handle_yield(),
             2 => self.step_return(),
-            _ => unreachable!(),
+            other => unreachable!("invalid mode discriminator in VM::step: {other}"),
         };
 
         if self.debug.is_enabled() {
@@ -1636,7 +1636,14 @@ impl VM {
                             ));
                         }
                     }
-                    _ => unreachable!(),
+                    Mode::HandleYield(yielded) => {
+                        unreachable!(
+                            "segment without frames cannot be in HandleYield mode: {yielded:?}"
+                        )
+                    }
+                    Mode::Return(value) => {
+                        unreachable!("segment without frames cannot be in Return mode: {value:?}")
+                    }
                 }
             }
         }
@@ -1672,7 +1679,14 @@ impl VM {
                     match mode {
                         Mode::Deliver(value) => guard.resume(value, &mut self.rust_store, scope),
                         Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store, scope),
-                        _ => unreachable!(),
+                        Mode::HandleYield(yielded) => {
+                            unreachable!(
+                                "Program frame resumed with HandleYield mode: {yielded:?}"
+                            )
+                        }
+                        Mode::Return(value) => {
+                            unreachable!("Program frame resumed with Return mode: {value:?}")
+                        }
                     }
                 };
                 self.apply_stream_step(step, stream, metadata, handler_kind)
@@ -1716,7 +1730,12 @@ impl VM {
             FinallyOutcome::Deliver(value) => match cleanup_mode {
                 Mode::Deliver(_) => Mode::Deliver(value),
                 Mode::Throw(cleanup_exception) => Mode::Throw(cleanup_exception),
-                _ => unreachable!(),
+                Mode::HandleYield(yielded) => {
+                    unreachable!("finally cleanup produced HandleYield mode: {yielded:?}")
+                }
+                Mode::Return(value) => {
+                    unreachable!("finally cleanup produced Return mode: {value:?}")
+                }
             },
             FinallyOutcome::Throw(original_exception) => match cleanup_mode {
                 Mode::Deliver(_) => Mode::Throw(original_exception),
@@ -1724,7 +1743,12 @@ impl VM {
                     Self::chain_exception_context(&original_exception, &cleanup_exception);
                     Mode::Throw(original_exception)
                 }
-                _ => unreachable!(),
+                Mode::HandleYield(yielded) => {
+                    unreachable!("finally cleanup produced HandleYield mode: {yielded:?}")
+                }
+                Mode::Return(value) => {
+                    unreachable!("finally cleanup produced Return mode: {value:?}")
+                }
             },
         }
     }
@@ -1793,7 +1817,12 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            _ => unreachable!(),
+            Mode::HandleYield(yielded) => {
+                unreachable!("interceptor apply frame received HandleYield mode: {yielded:?}")
+            }
+            Mode::Return(value) => {
+                unreachable!("interceptor apply frame received Return mode: {value:?}")
+            }
         }
     }
 
@@ -1815,7 +1844,12 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            _ => unreachable!(),
+            Mode::HandleYield(yielded) => {
+                unreachable!("interceptor eval frame received HandleYield mode: {yielded:?}")
+            }
+            Mode::Return(value) => {
+                unreachable!("interceptor eval frame received Return mode: {value:?}")
+            }
         }
     }
 
@@ -1827,7 +1861,12 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            _ => unreachable!(),
+            Mode::HandleYield(yielded) => {
+                unreachable!("handler dispatch frame received HandleYield mode: {yielded:?}")
+            }
+            Mode::Return(value) => {
+                unreachable!("handler dispatch frame received Return mode: {value:?}")
+            }
         }
     }
 
@@ -1850,7 +1889,12 @@ impl VM {
                     continuation,
                     exception,
                 }),
-                _ => unreachable!(),
+                Mode::HandleYield(yielded) => {
+                    unreachable!("EvalInScope return continuation received HandleYield mode: {yielded:?}")
+                }
+                Mode::Return(value) => {
+                    unreachable!("EvalInScope return continuation received Return mode: {value:?}")
+                }
             };
             return StepEvent::Continue;
         }
@@ -1864,7 +1908,12 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            _ => unreachable!(),
+            Mode::HandleYield(yielded) => {
+                unreachable!("eval return frame received HandleYield mode: {yielded:?}")
+            }
+            Mode::Return(value) => {
+                unreachable!("eval return frame received Return mode: {value:?}")
+            }
         }
     }
 
@@ -2012,7 +2061,12 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            _ => unreachable!(),
+            Mode::HandleYield(yielded) => {
+                unreachable!("map return frame received HandleYield mode: {yielded:?}")
+            }
+            Mode::Return(value) => {
+                unreachable!("map return frame received Return mode: {value:?}")
+            }
         }
     }
 
@@ -2026,7 +2080,12 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            _ => unreachable!(),
+            Mode::HandleYield(yielded) => {
+                unreachable!("flat_map bind result frame received HandleYield mode: {yielded:?}")
+            }
+            Mode::Return(value) => {
+                unreachable!("flat_map bind result frame received Return mode: {value:?}")
+            }
         }
     }
 
@@ -2058,7 +2117,12 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            _ => unreachable!(),
+            Mode::HandleYield(yielded) => {
+                unreachable!("flat_map bind source frame received HandleYield mode: {yielded:?}")
+            }
+            Mode::Return(value) => {
+                unreachable!("flat_map bind source frame received Return mode: {value:?}")
+            }
         }
     }
 
@@ -2069,7 +2133,12 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-            _ => unreachable!(),
+            Mode::HandleYield(yielded) => {
+                unreachable!("intercept body return frame received HandleYield mode: {yielded:?}")
+            }
+            Mode::Return(value) => {
+                unreachable!("intercept body return frame received Return mode: {value:?}")
+            }
         }
     }
 
@@ -3241,7 +3310,32 @@ impl VM {
         for arg in args {
             match arg {
                 DoCtrl::Pure { value } => values.push(value),
-                _ => unreachable!(),
+                non_pure @ DoCtrl::Map { .. }
+                | non_pure @ DoCtrl::FlatMap { .. }
+                | non_pure @ DoCtrl::Perform { .. }
+                | non_pure @ DoCtrl::Resume { .. }
+                | non_pure @ DoCtrl::Transfer { .. }
+                | non_pure @ DoCtrl::TransferThrow { .. }
+                | non_pure @ DoCtrl::ResumeThrow { .. }
+                | non_pure @ DoCtrl::WithHandler { .. }
+                | non_pure @ DoCtrl::WithIntercept { .. }
+                | non_pure @ DoCtrl::Finally { .. }
+                | non_pure @ DoCtrl::Delegate { .. }
+                | non_pure @ DoCtrl::Pass { .. }
+                | non_pure @ DoCtrl::GetContinuation
+                | non_pure @ DoCtrl::GetHandlers
+                | non_pure @ DoCtrl::GetTraceback { .. }
+                | non_pure @ DoCtrl::CreateContinuation { .. }
+                | non_pure @ DoCtrl::ResumeContinuation { .. }
+                | non_pure @ DoCtrl::PythonAsyncSyntaxEscape { .. }
+                | non_pure @ DoCtrl::Apply { .. }
+                | non_pure @ DoCtrl::Expand { .. }
+                | non_pure @ DoCtrl::IRStream { .. }
+                | non_pure @ DoCtrl::Eval { .. }
+                | non_pure @ DoCtrl::EvalInScope { .. }
+                | non_pure @ DoCtrl::GetCallStack => {
+                    unreachable!("collect_value_args requires DoCtrl::Pure values, got {non_pure:?}")
+                }
             }
         }
         values
@@ -3252,7 +3346,34 @@ impl VM {
         for (key, value) in kwargs {
             match value {
                 DoCtrl::Pure { value } => values.push((key, value)),
-                _ => unreachable!(),
+                non_pure @ DoCtrl::Map { .. }
+                | non_pure @ DoCtrl::FlatMap { .. }
+                | non_pure @ DoCtrl::Perform { .. }
+                | non_pure @ DoCtrl::Resume { .. }
+                | non_pure @ DoCtrl::Transfer { .. }
+                | non_pure @ DoCtrl::TransferThrow { .. }
+                | non_pure @ DoCtrl::ResumeThrow { .. }
+                | non_pure @ DoCtrl::WithHandler { .. }
+                | non_pure @ DoCtrl::WithIntercept { .. }
+                | non_pure @ DoCtrl::Finally { .. }
+                | non_pure @ DoCtrl::Delegate { .. }
+                | non_pure @ DoCtrl::Pass { .. }
+                | non_pure @ DoCtrl::GetContinuation
+                | non_pure @ DoCtrl::GetHandlers
+                | non_pure @ DoCtrl::GetTraceback { .. }
+                | non_pure @ DoCtrl::CreateContinuation { .. }
+                | non_pure @ DoCtrl::ResumeContinuation { .. }
+                | non_pure @ DoCtrl::PythonAsyncSyntaxEscape { .. }
+                | non_pure @ DoCtrl::Apply { .. }
+                | non_pure @ DoCtrl::Expand { .. }
+                | non_pure @ DoCtrl::IRStream { .. }
+                | non_pure @ DoCtrl::Eval { .. }
+                | non_pure @ DoCtrl::EvalInScope { .. }
+                | non_pure @ DoCtrl::GetCallStack => {
+                    unreachable!(
+                        "collect_value_kwargs requires DoCtrl::Pure values, got {non_pure:?}"
+                    )
+                }
             }
         }
         values
