@@ -16,6 +16,7 @@ from doeff.analysis import EffectCallTree
 from doeff.cli.profiling import is_profiling_enabled, print_profiling_status, profile
 from doeff.cli.runbox import maybe_create_runbox_record
 from doeff.kleisli import KleisliProgram
+from doeff.rust_vm import RunResult as VmRunResult
 from doeff.rust_vm import default_handlers
 from doeff.rust_vm import run as vm_run
 from doeff.types import capture_traceback
@@ -498,13 +499,8 @@ def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
     if isinstance(value, ProgramType):
         result = vm_run(value, handlers=default_handlers(), print_doeff_trace=False)
         return result.value, None
-    if isinstance(value, RunResult):
+    if isinstance(value, VmRunResult):
         return _unwrap_run_result(value), value
-    if hasattr(value, "is_ok") and hasattr(value, "value"):
-        try:
-            return value.value, None
-        except Exception as exc:
-            raise RuntimeError("Program execution failed") from exc
     return value, None
 
 

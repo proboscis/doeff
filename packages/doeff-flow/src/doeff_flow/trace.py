@@ -29,6 +29,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from doeff.rust_vm import RunResult as VmRunResult
+
 
 def get_default_trace_dir() -> Path:
     """Get the default trace directory following XDG Base Directory Specification.
@@ -200,21 +202,28 @@ def write_terminal_trace(
     trace_file.parent.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now().isoformat()
-    is_ok = bool(run_result.is_ok()) if hasattr(run_result, "is_ok") else True
     error = None
     result_repr = None
 
-    if is_ok:
-        try:
-            result_repr = _safe_repr(run_result.value)
-        except Exception:
-            result_repr = None
+    if isinstance(run_result, VmRunResult):
+        is_ok = bool(run_result.is_ok())
+        if is_ok:
+            try:
+                result_repr = _safe_repr(run_result.value)
+            except Exception:
+                result_repr = None
+        else:
+            try:
+                err = run_result.error
+                error = f"{type(err).__name__}: {err}"
+            except Exception:
+                error = "UnknownError"
     else:
         try:
-            err = run_result.error
-            error = f"{type(err).__name__}: {err}"
+            result_repr = _safe_repr(run_result)
         except Exception:
-            error = "UnknownError"
+            result_repr = None
+        is_ok = True
 
     trace = LiveTrace(
         workflow_id=workflow_id,
