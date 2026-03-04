@@ -33,6 +33,12 @@ from .debug import (
     GetDebugContext,
     GetDebugContextEffect,
 )
+from .execution_context import (
+    ActiveChainSnapshot,
+    ExecutionContext,
+    GetExecutionContext,
+    snapshot_active_chain,
+)
 from .external_promise import (
     CreateExternalPromise,
     CreateExternalPromiseEffect,
@@ -82,10 +88,10 @@ from .semaphore import (
     release_semaphore,
 )
 from .spawn import (
-    Future,
     PRIORITY_HIGH,
     PRIORITY_IDLE,
     PRIORITY_NORMAL,
+    Future,
     Promise,
     Spawn,
     SpawnEffect,
@@ -126,8 +132,12 @@ capture = capture_graph
 
 
 __all__ = [
+    "PRIORITY_HIGH",
+    "PRIORITY_IDLE",
+    "PRIORITY_NORMAL",
     "AcquireSemaphore",
     "AcquireSemaphoreEffect",
+    "ActiveChainSnapshot",
     "Annotate",
     "Ask",
     "AskEffect",
@@ -153,6 +163,7 @@ __all__ = [
     "CreatePromiseEffect",
     "CreateSemaphore",
     "CreateSemaphoreEffect",
+    "ExecutionContext",
     "ExternalPromise",
     "FailPromise",
     "FailPromiseEffect",
@@ -162,6 +173,7 @@ __all__ = [
     "Get",
     "GetDebugContext",
     "GetDebugContextEffect",
+    "GetExecutionContext",
     "GraphAnnotateEffect",
     "GraphCaptureEffect",
     "GraphSnapshotEffect",
@@ -172,14 +184,11 @@ __all__ = [
     "LocalEffect",
     "Log",
     "Modify",
-    "Promise",
     "ProgramCallFrame",
     "ProgramCallFrameEffect",
     "ProgramCallStack",
     "ProgramCallStackEffect",
-    "PRIORITY_HIGH",
-    "PRIORITY_IDLE",
-    "PRIORITY_NORMAL",
+    "Promise",
     "Pure",
     "PureEffect",
     "Put",
@@ -233,6 +242,7 @@ __all__ = [
     "release_semaphore",
     "slog",
     "snapshot",
+    "snapshot_active_chain",
     "spawn",
     "step",
     "tell",

@@ -28,11 +28,11 @@ def ProgramCallStack() -> ProgramCallStackEffect:
     """Create an effect that yields the current call stack as a tuple.
 
     Deprecated:
-        Use ``GetTraceback(k)`` for continuation traceback introspection.
+        Use ``GetExecutionContext()`` for handler-aware execution snapshots.
     """
 
     warnings.warn(
-        "ProgramCallStack is deprecated; use GetTraceback(k)",
+        "ProgramCallStack is deprecated; use GetExecutionContext()",
         DeprecationWarning,
         stacklevel=2,
     )

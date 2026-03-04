@@ -107,6 +107,7 @@ class ProgramYield:
     source_file: str
     source_line: int
     sub_program_repr: str
+    args_repr: str | None = None
     handler_kind: TraceHandlerKind | None = None
 
     @property
@@ -335,6 +336,7 @@ def coerce_active_chain_entry(entry: Any) -> ActiveChainEntry:
             function_name=str(entry.get("function_name", "<unknown>")),
             source_file=str(entry.get("source_file", "<unknown>")),
             source_line=int(entry.get("source_line", 0)),
+            args_repr=entry.get("args_repr"),
             sub_program_repr=str(entry.get("sub_program_repr", "<sub_program>")),
             handler_kind=handler_kind,
         )

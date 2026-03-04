@@ -288,6 +288,7 @@ impl Value {
                 function_name,
                 source_file,
                 source_line,
+                args_repr,
                 sub_program_repr,
                 handler_kind,
             } => {
@@ -295,6 +296,7 @@ impl Value {
                 dict.set_item("function_name", function_name)?;
                 dict.set_item("source_file", source_file)?;
                 dict.set_item("source_line", *source_line)?;
+                dict.set_item("args_repr", args_repr.clone())?;
                 dict.set_item("sub_program_repr", sub_program_repr)?;
                 dict.set_item(
                     "handler_kind",
