@@ -146,7 +146,6 @@ impl DebugState {
             DoCtrl::Eval { .. } => "HandleYield(Eval)",
             DoCtrl::EvalInScope { .. } => "HandleYield(EvalInScope)",
             DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
-            DoCtrl::GetTrace => "HandleYield(GetTrace)",
         };
         match verbosity {
             ModeFormatVerbosity::Compact | ModeFormatVerbosity::Verbose => formatted,

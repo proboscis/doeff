@@ -1,15 +1,12 @@
 """Trace introspection effects."""
 
 
-import doeff_vm
+def ProgramTrace():
+    """Removed in TRACE-CAPTURE-LOG-SEPARATION."""
 
-ProgramTraceEffect = doeff_vm.ProgramTraceEffect
-
-
-def ProgramTrace() -> ProgramTraceEffect:
-    """Create an effect that yields VM trace entries."""
-
-    return ProgramTraceEffect()
+    raise NotImplementedError(
+        "ProgramTrace was removed. Use GetTraceback(k) for handler-scoped introspection."
+    )
 
 
-__all__ = ["ProgramTrace", "ProgramTraceEffect"]
+__all__: list[str] = []

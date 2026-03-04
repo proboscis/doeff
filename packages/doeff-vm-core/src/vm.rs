@@ -10,8 +10,8 @@ use pyo3::types::{PyDict, PyTuple};
 
 use crate::arena::SegmentArena;
 use crate::capture::{
-    ActiveChainEntry, CaptureEvent, EffectCreationSite, HandlerAction, HandlerKind,
-    HandlerSnapshotEntry, TraceEntry,
+    ActiveChainEntry, EffectCreationSite, HandlerAction, HandlerKind, HandlerSnapshotEntry,
+    TraceEntry,
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
@@ -549,21 +549,6 @@ impl VM {
         Some(start_seg_id)
     }
 
-    fn prompt_boundary_handler_lookup(&self) -> HashMap<Marker, (KleisliRef, Option<PyShared>)> {
-        let mut handlers = HashMap::new();
-        for (_seg_id, seg) in self.segments.iter() {
-            if let SegmentKind::PromptBoundary {
-                handled_marker,
-                handler,
-                ..
-            } = &seg.kind
-            {
-                handlers.insert(*handled_marker, (handler.clone(), handler.py_identity()));
-            }
-        }
-        handlers
-    }
-
     fn structural_kind_for_marker(&self, marker: Marker) -> SegmentKind {
         let Some(entry) = self.interceptor_state.get_entry(marker) else {
             return SegmentKind::Normal;
@@ -737,7 +722,6 @@ impl VM {
             DoCtrl::IRStream { .. } => {}
             DoCtrl::Eval { .. } => {}
             DoCtrl::GetCallStack => {}
-            DoCtrl::GetTrace => {}
         }
     }
 
@@ -1297,23 +1281,23 @@ impl VM {
         }
     }
 
-    fn maybe_emit_frame_entered(
+    fn emit_frame_entered(
         &mut self,
         metadata: &CallMetadata,
         handler_kind: Option<HandlerKind>,
     ) {
-        self.trace_state.maybe_emit_frame_entered(
+        self.trace_state.emit_frame_entered(
             metadata,
             Self::program_call_repr(metadata),
             handler_kind,
         );
     }
 
-    fn maybe_emit_frame_exited(&mut self, metadata: &CallMetadata) {
-        self.trace_state.maybe_emit_frame_exited(metadata);
+    fn emit_frame_exited(&mut self, metadata: &CallMetadata) {
+        self.trace_state.emit_frame_exited(metadata);
     }
 
-    fn maybe_emit_handler_threw_for_dispatch(
+    fn emit_handler_threw_for_dispatch(
         &mut self,
         dispatch_id: DispatchId,
         exc: &PyException,
@@ -1333,7 +1317,7 @@ impl VM {
         let Some((handler_index, handler_name)) = handler_identity else {
             return;
         };
-        self.trace_state.maybe_emit_handler_threw_for_dispatch(
+        self.trace_state.emit_handler_threw_for_dispatch(
             dispatch_id,
             handler_name,
             handler_index,
@@ -1341,7 +1325,7 @@ impl VM {
         );
     }
 
-    fn maybe_emit_resume_event(
+    fn emit_resume_event(
         &mut self,
         dispatch_id: DispatchId,
         handler_name: String,
@@ -1349,7 +1333,7 @@ impl VM {
         continuation: &Continuation,
         transferred: bool,
     ) {
-        self.trace_state.maybe_emit_resume_event(
+        self.trace_state.emit_resume_event(
             dispatch_id,
             handler_name,
             value_repr,
@@ -1359,14 +1343,12 @@ impl VM {
         );
     }
 
-    pub fn assemble_trace(&self) -> Vec<TraceEntry> {
-        let handlers = self.prompt_boundary_handler_lookup();
-        self.trace_state.assemble_trace(
+    pub fn assemble_traceback_entries(&self, exception: &PyException) -> Vec<TraceEntry> {
+        self.trace_state.assemble_traceback_entries(
+            exception,
             &self.segments,
             self.current_segment,
             self.dispatch_state.contexts(),
-            &handlers,
-            Self::effect_repr,
         )
     }
 
@@ -1511,7 +1493,7 @@ impl VM {
                             return StepEvent::Continue;
                         } else {
                             self.finalize_active_dispatches_as_threw(&exc);
-                            let trace = self.assemble_trace();
+                            let trace = self.assemble_traceback_entries(&exc);
                             let active_chain = self.assemble_active_chain(&exc);
                             self.segments.reparent_children(seg_id, None);
                             self.segments.free(seg_id);
@@ -1655,7 +1637,7 @@ impl VM {
             seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_sub(1);
         }
         if let Some(metadata) = continuation.interceptor_metadata.as_ref() {
-            self.maybe_emit_frame_exited(metadata);
+            self.emit_frame_exited(metadata);
         }
         match mode {
             Mode::Deliver(value) => {
@@ -1961,7 +1943,7 @@ impl VM {
             }
             IRStreamStep::Return(value) => {
                 if let Some(ref m) = metadata {
-                    self.maybe_emit_frame_exited(m);
+                    self.emit_frame_exited(m);
                 }
                 self.handle_handler_return(value)
             }
@@ -1978,7 +1960,7 @@ impl VM {
                     }
                 });
                 if let Some(dispatch_id) = dispatch_id {
-                    self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &exc);
+                    self.emit_handler_threw_for_dispatch(dispatch_id, &exc);
                     self.mark_dispatch_threw(dispatch_id);
                 }
                 self.current_seg_mut().mode = Mode::Throw(exc);
@@ -2265,7 +2247,7 @@ impl VM {
             ));
         }
         if let Some(meta) = interceptor_meta.as_ref() {
-            self.maybe_emit_frame_entered(meta, None);
+            self.emit_frame_entered(meta, None);
         }
         let continuation = InterceptorContinuation {
             marker,
@@ -2528,7 +2510,6 @@ impl VM {
                 metadata,
             } => self.handle_yield_eval_in_scope(expr, scope, metadata),
             DoCtrl::GetCallStack => self.handle_yield_get_call_stack(),
-            DoCtrl::GetTrace => self.handle_yield_get_trace(),
         }
     }
 
@@ -2888,7 +2869,7 @@ impl VM {
         handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
         if let Some(ref m) = metadata {
-            self.maybe_emit_frame_entered(m, handler_kind);
+            self.emit_frame_entered(m, handler_kind);
         }
         let Some(seg) = self.current_segment_mut() else {
             return StepEvent::Error(VMError::internal(
@@ -3064,11 +3045,6 @@ impl VM {
             }
         }
         self.current_seg_mut().mode = Mode::Deliver(Value::CallStack(stack));
-        StepEvent::Continue
-    }
-
-    fn handle_yield_get_trace(&mut self) -> StepEvent {
-        self.current_seg_mut().mode = Mode::Deliver(Value::Trace(self.assemble_trace()));
         StepEvent::Continue
     }
 
@@ -3469,7 +3445,7 @@ impl VM {
                 if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
                     TraceState::set_exception_cause(&exception, &original);
                 }
-                self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
                 self.mark_dispatch_threw(dispatch_id);
             }
             self.current_seg_mut().mode =
@@ -3497,7 +3473,7 @@ impl VM {
             }
             PyCallOutcome::GenReturn(value) => {
                 if let Some(ref m) = metadata {
-                    self.maybe_emit_frame_exited(m);
+                    self.emit_frame_exited(m);
                 }
                 self.current_seg_mut().mode = Mode::Deliver(value);
             }
@@ -3540,7 +3516,7 @@ impl VM {
                         if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
                             TraceState::set_exception_cause(&exception, &original);
                         }
-                        self.maybe_emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                        self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
                         self.mark_dispatch_threw(dispatch_id);
                     }
                 }
@@ -3936,8 +3912,10 @@ impl VM {
     }
 
     fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
-        self.dispatch_state
-            .dispatch_has_terminal_handler_action(dispatch_id, self.trace_state.events())
+        self.dispatch_state.dispatch_has_terminal_handler_action(
+            dispatch_id,
+            self.trace_state.active_chain_state(),
+        )
     }
 
     fn finalize_active_dispatches_as_threw(&mut self, exception: &PyException) {
@@ -4042,7 +4020,7 @@ impl VM {
                     handler_index,
                     kind.handler_action(value_repr.clone()),
                 );
-                self.maybe_emit_resume_event(
+                self.emit_resume_event(
                     dispatch_id,
                     handler_name,
                     value_repr,
@@ -4497,7 +4475,7 @@ impl VM {
         }
     }
 
-    fn maybe_emit_forward_capture_event(
+    fn emit_forward_active_chain_event(
         &mut self,
         kind: ForwardKind,
         dispatch_id: DispatchId,
@@ -4514,29 +4492,28 @@ impl VM {
         if let (Some(from_name), Some((to_name, to_kind, to_source_file, to_source_line))) =
             (from_name, to_info)
         {
-            let event = match kind {
-                ForwardKind::Delegate => CaptureEvent::Delegated {
+            match kind {
+                ForwardKind::Delegate => self.trace_state.emit_delegated(
                     dispatch_id,
-                    from_handler_name: from_name,
-                    from_handler_index: from_idx,
-                    to_handler_name: to_name,
-                    to_handler_index: to_idx,
-                    to_handler_kind: to_kind,
-                    to_handler_source_file: to_source_file,
-                    to_handler_source_line: to_source_line,
-                },
-                ForwardKind::Pass => CaptureEvent::Passed {
+                    from_name,
+                    from_idx,
+                    to_name,
+                    to_idx,
+                    to_kind,
+                    to_source_file,
+                    to_source_line,
+                ),
+                ForwardKind::Pass => self.trace_state.emit_passed(
                     dispatch_id,
-                    from_handler_name: from_name,
-                    from_handler_index: from_idx,
-                    to_handler_name: to_name,
-                    to_handler_index: to_idx,
-                    to_handler_kind: to_kind,
-                    to_handler_source_file: to_source_file,
-                    to_handler_source_line: to_source_line,
-                },
-            };
-            self.trace_state.emit_capture(event);
+                    from_name,
+                    from_idx,
+                    to_name,
+                    to_idx,
+                    to_kind,
+                    to_source_file,
+                    to_source_line,
+                ),
+            }
         }
     }
 
@@ -4634,7 +4611,7 @@ impl VM {
                     continue;
                 }
                 let supports_error_context_conversion = handler.supports_error_context_conversion();
-                self.maybe_emit_forward_capture_event(
+                self.emit_forward_active_chain_event(
                     kind,
                     dispatch_id,
                     &handler_chain,
@@ -4750,7 +4727,7 @@ impl VM {
                 value_repr: value_repr.clone(),
             },
         );
-        self.maybe_emit_resume_event(
+        self.emit_resume_event(
             top_snapshot.dispatch_id,
             handler_name,
             value_repr,

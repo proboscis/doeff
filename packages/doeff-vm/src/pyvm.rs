@@ -11,7 +11,7 @@ use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
     dispatch_from_shared, dispatch_ref_as_python, PyExecutionContext, PyGetExecutionContext,
-    PyProgramCallStack, PyProgramTrace,
+    PyProgramCallStack,
 };
 use crate::ir_stream::{IRStream, PythonGeneratorStream};
 use doeff_vm_core::{
@@ -1381,19 +1381,6 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 .into_any()
                 .unbind(),
             ),
-            DoCtrl::GetTrace => Some(
-                Bound::new(
-                    py,
-                    PyClassInitializer::from(PyDoExprBase)
-                        .add_subclass(PyDoCtrlBase {
-                            tag: DoExprTag::GetTrace as u8,
-                        })
-                        .add_subclass(PyGetTrace),
-                )
-                .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                .into_any()
-                .unbind(),
-            ),
         };
 
         Ok(obj)
@@ -1696,7 +1683,6 @@ pub(crate) fn classify_yielded_bound(
                 Ok(DoCtrl::GetTraceback { continuation: k })
             }
             DoExprTag::GetCallStack => Ok(DoCtrl::GetCallStack),
-            DoExprTag::GetTrace => Ok(DoCtrl::GetTrace),
             DoExprTag::Eval => {
                 let eval: PyRef<'_, PyEval> = obj.extract()?;
                 let expr = eval.expr.clone_ref(py);
@@ -1770,9 +1756,6 @@ pub(crate) fn classify_yielded_bound(
 
     // Fallback: bare effect -> auto-lift to Perform (R14-C)
     if is_effect_base_like(py, obj)? {
-        if obj.is_instance_of::<PyProgramTrace>() {
-            return Ok(DoCtrl::GetTrace);
-        }
         if obj.is_instance_of::<PyProgramCallStack>() {
             return Ok(DoCtrl::GetCallStack);
         }
@@ -2772,22 +2755,6 @@ impl PyGetCallStack {
                 tag: DoExprTag::GetCallStack as u8,
             })
             .add_subclass(PyGetCallStack)
-    }
-}
-
-/// Request the current unified execution trace.
-#[pyclass(name = "GetTrace", extends=PyDoCtrlBase)]
-pub struct PyGetTrace;
-
-#[pymethods]
-impl PyGetTrace {
-    #[new]
-    fn new() -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyDoExprBase)
-            .add_subclass(PyDoCtrlBase {
-                tag: DoExprTag::GetTrace as u8,
-            })
-            .add_subclass(PyGetTrace)
     }
 }
 
@@ -3980,7 +3947,6 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGetHandlers>()?;
     m.add_class::<PyGetTraceback>()?;
     m.add_class::<PyGetCallStack>()?;
-    m.add_class::<PyGetTrace>()?;
     m.add_class::<PyAsyncEscape>()?;
     m.add_class::<NestingStep>()?;
     m.add_class::<NestingGenerator>()?;
@@ -4005,7 +3971,6 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_WITH_INTERCEPT", DoExprTag::WithIntercept as u8)?;
     m.add("TAG_FINALLY", DoExprTag::Finally as u8)?;
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
-    m.add("TAG_GET_TRACE", DoExprTag::GetTrace as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;
     m.add("TAG_EVAL_IN_SCOPE", DoExprTag::EvalInScope as u8)?;
     m.add("TAG_APPLY", DoExprTag::Apply as u8)?;
