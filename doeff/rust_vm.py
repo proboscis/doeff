@@ -75,14 +75,24 @@ def _coerce_handler(
     role: str,
 ) -> Any:
     vm = _vm()
-    if hasattr(vm, "RustHandler") and isinstance(handler, vm.RustHandler):
-        return handler
+    try:
+        if isinstance(handler, vm.RustHandler):
+            return handler
+    except AttributeError:
+        pass
 
-    if hasattr(vm, "PyKleisli") and isinstance(handler, vm.PyKleisli):
-        return handler
+    try:
+        if isinstance(handler, vm.PyKleisli):
+            return handler
+    except AttributeError:
+        pass
 
-    if hasattr(vm, "DoeffGeneratorFn") and isinstance(handler, vm.DoeffGeneratorFn):
-        return handler
+    try:
+        if isinstance(handler, vm.DoeffGeneratorFn):
+            return handler
+    except AttributeError:
+        pass
+
     raise TypeError(_format_handler_type_error(api_name=api_name, role=role, value=handler))
 
 
@@ -94,7 +104,12 @@ def _coerce_program(program: Any) -> Any:
     if isinstance(program, vm.DoExpr):
         return program
 
-    if hasattr(vm, "DoeffGenerator") and isinstance(program, vm.DoeffGenerator):
+    try:
+        doeff_generator_type = vm.DoeffGenerator
+    except AttributeError:
+        doeff_generator_type = None
+
+    if doeff_generator_type is not None and isinstance(program, doeff_generator_type):
         raise TypeError(
             "program must be DoExpr; got DoeffGenerator. "
             "Pass the DoExpr program object (not .to_generator())."
@@ -226,14 +241,20 @@ def _with_intercept_metadata(interceptor: Any) -> dict[str, Any]:
 
 def _unhandled_effect_error_types(vm: Any) -> tuple[type[BaseException], ...]:
     error_types: list[type[BaseException]] = []
-    if hasattr(vm, "UnhandledEffectError"):
+    try:
         error_type = vm.UnhandledEffectError
         if isinstance(error_type, type) and issubclass(error_type, BaseException):
             error_types.append(error_type)
-    if hasattr(vm, "NoMatchingHandlerError"):
+    except AttributeError:
+        pass
+
+    try:
         error_type = vm.NoMatchingHandlerError
         if isinstance(error_type, type) and issubclass(error_type, BaseException):
             error_types.append(error_type)
+    except AttributeError:
+        pass
+
     return tuple(error_types)
 
 
@@ -499,66 +520,37 @@ def WithIntercept(
     )
 
 
-def _get_vm_lazy_export(vm: Any, name: str) -> Any:
-    if name == "RunResult":
-        return vm.RunResult
-    if name == "DoeffTracebackData":
-        return vm.DoeffTracebackData
-    if name == "Pure":
-        return vm.Pure
-    if name == "Apply":
-        return vm.Apply
-    if name == "Expand":
-        return vm.Expand
-    if name == "Eval":
-        return vm.Eval
-    if name == "EvalInScope":
-        return vm.EvalInScope
-    if name == "Perform":
-        return vm.Perform
-    if name == "Finally":
-        return vm.Finally
-    if name == "Pass":
-        return vm.Pass
-    if name == "Resume":
-        return vm.Resume
-    if name == "Delegate":
-        return vm.Delegate
-    if name == "Transfer":
-        return vm.Transfer
-    if name == "ResumeContinuation":
-        return vm.ResumeContinuation
-    if name == "GetTraceback":
-        return vm.GetTraceback
-    if name == "GetExecutionContext":
-        return vm.GetExecutionContext
-    if name == "ExecutionContext":
-        return vm.ExecutionContext
-    if name == "TraceFrame":
-        return vm.TraceFrame
-    if name == "TraceHop":
-        return vm.TraceHop
-    if name == "PythonAsyncSyntaxEscape":
-        return vm.PythonAsyncSyntaxEscape
-    if name == "UnhandledEffectError":
-        return vm.UnhandledEffectError
-    if name == "NoMatchingHandlerError":
-        return vm.NoMatchingHandlerError
-    if name == "K":
-        return vm.K
-    if name == "state":
-        return vm.state
-    if name == "reader":
-        return vm.reader
-    if name == "writer":
-        return vm.writer
-    if name == "result_safe":
-        return vm.result_safe
-    if name == "lazy_ask":
-        return vm.lazy_ask
-    if name == "await_handler":
-        return vm.await_handler
-    raise AttributeError(name)
+_VM_LAZY_EXPORT_NAMES = {
+    "RunResult",
+    "DoeffTracebackData",
+    "Pure",
+    "Apply",
+    "Expand",
+    "Eval",
+    "EvalInScope",
+    "Perform",
+    "Finally",
+    "Pass",
+    "Resume",
+    "Delegate",
+    "Transfer",
+    "ResumeContinuation",
+    "GetTraceback",
+    "GetExecutionContext",
+    "ExecutionContext",
+    "TraceFrame",
+    "TraceHop",
+    "PythonAsyncSyntaxEscape",
+    "UnhandledEffectError",
+    "NoMatchingHandlerError",
+    "K",
+    "state",
+    "reader",
+    "writer",
+    "result_safe",
+    "lazy_ask",
+    "await_handler",
+}
 
 
 def __getattr__(name: str) -> Any:
@@ -568,40 +560,10 @@ def __getattr__(name: str) -> Any:
             return vm.Pass
         except AttributeError as exc:
             raise AttributeError("doeff_vm has no attribute 'Pass'") from exc
-    if name in {
-        "RunResult",
-        "DoeffTracebackData",
-        "Pure",
-        "Apply",
-        "Expand",
-        "Eval",
-        "EvalInScope",
-        "Perform",
-        "Finally",
-        "Pass",
-        "Resume",
-        "Delegate",
-        "Transfer",
-        "ResumeContinuation",
-        "GetTraceback",
-        "GetExecutionContext",
-        "ExecutionContext",
-        "TraceFrame",
-        "TraceHop",
-        "PythonAsyncSyntaxEscape",
-        "UnhandledEffectError",
-        "NoMatchingHandlerError",
-        "K",
-        "state",
-        "reader",
-        "writer",
-        "result_safe",
-        "lazy_ask",
-        "await_handler",
-    }:
+    if name in _VM_LAZY_EXPORT_NAMES:
         vm = _vm()
         try:
-            return _get_vm_lazy_export(vm, name)
+            return getattr(vm, name)
         except AttributeError as exc:
             raise AttributeError(f"doeff_vm has no attribute '{name}'") from exc
     raise AttributeError(name)
