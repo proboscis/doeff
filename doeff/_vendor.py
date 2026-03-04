@@ -64,16 +64,18 @@ class Result(Generic[T_co]):
         if isinstance(self, Ok):
             return self.value
 
+        err = cast(Err, self)
         if message:
-            raise RuntimeError(f"{message}: {self.error}") from self.error
-        raise self.error
+            raise RuntimeError(f"{message}: {err.error}") from err.error
+        raise err.error
 
     def unwrap(self) -> T_co:
         """Return the value or raise the stored error."""
 
         if isinstance(self, Ok):
             return self.value
-        raise self.error
+        err = cast(Err, self)
+        raise err.error
 
     def unwrap_err(self) -> Exception:
         """Return the error or raise ``RuntimeError`` if this is a success."""
@@ -111,7 +113,8 @@ class Result(Generic[T_co]):
 
         if isinstance(self, Ok):
             return self.value
-        return default_fn(self.error)
+        err = cast(Err, self)
+        return default_fn(err.error)
 
     def and_then(self, f: "Callable[[T_co], Result[U]]") -> "Result[U]":
         """Chain computations that return ``Result``."""
@@ -144,7 +147,8 @@ class Result(Generic[T_co]):
         if isinstance(self, Ok):
             return kleisli(self.value)
 
-        error = self.error
+        err = cast(Err, self)
+        error = err.error
 
         def fail_generator() -> Any:
             raise error
@@ -172,7 +176,8 @@ class Result(Generic[T_co]):
 
         if isinstance(self, Ok):
             return Program.pure(self.value)
-        return kleisli(self.error)
+        err = cast(Err, self)
+        return kleisli(err.error)
 
     def recover(self, f: Callable[[Exception], T_co]) -> "Result[T_co]":
         """Recover from an error by computing a new value.
@@ -187,7 +192,8 @@ class Result(Generic[T_co]):
         """
         if isinstance(self, Ok):
             return self
-        return Ok(f(self.error))
+        err = cast(Err, self)
+        return Ok(f(err.error))
 
     def or_program(self, fallback: "Program[T_co]") -> "Program[T_co]":
         """Use a fallback program if this is an error.
