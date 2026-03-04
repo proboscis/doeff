@@ -9,14 +9,15 @@ import os
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, cast, runtime_checkable
 
 from doeff import Program, RunResult
 from doeff.analysis import EffectCallTree
 from doeff.cli.profiling import is_profiling_enabled, print_profiling_status, profile
 from doeff.cli.runbox import maybe_create_runbox_record
 from doeff.kleisli import KleisliProgram
-from doeff.rust_vm import default_handlers, run as vm_run
+from doeff.rust_vm import default_handlers
+from doeff.rust_vm import run as vm_run
 from doeff.types import capture_traceback
 
 sync_handlers_preset = default_handlers()
@@ -69,6 +70,41 @@ class RunExecutionResult:
     final_value: Any
     run_result: RunResult[Any] | None
     call_tree_ascii: str | None
+
+
+class RunArgs(argparse.Namespace):
+    command: str
+    func: Callable[["RunArgs"], int]
+    program: str | None
+    code: str | None
+    interpreter: str | None
+    envs: list[str] | None
+    apply: str | None
+    transform: list[str] | None
+    format: str
+    report: bool
+    report_verbose: bool
+    no_runbox: bool
+    script: str | None
+
+
+@runtime_checkable
+class _RunResultWithEffectObservations(Protocol):
+    effect_observations: list[Any] | None
+
+
+@runtime_checkable
+class _EffectObservationContext(Protocol):
+    effect_observations: list[Any] | None
+
+
+@runtime_checkable
+class _RunResultWithContext(Protocol):
+    context: _EffectObservationContext | None
+
+
+class _RunResultReportable(Protocol):
+    def display(self, *, verbose: bool = False) -> str: ...
 
 
 class SymbolResolver:
@@ -374,34 +410,8 @@ def _render_run_output(context: ResolvedRunContext, execution: RunExecutionResul
 
 
 def _run_result_report(run_result: RunResult[Any], *, verbose: bool) -> str:
-    display = getattr(run_result, "display", None)
-    if callable(display):
-        return display(verbose=verbose)
-
-    status = "ok" if run_result.is_ok() else "error"
-    lines = [f"RunResult status: {status}"]
-
-    if run_result.is_ok():
-        lines.append(f"Value: {run_result.value!r}")
-    else:
-        error_value = getattr(run_result, "error", None)
-        if isinstance(error_value, BaseException):
-            lines.append(f"Error: {error_value!r}")
-        else:
-            lines.append("Error: unavailable")
-
-    if verbose:
-        log_entries = getattr(run_result, "log", None)
-        trace_entries = getattr(run_result, "trace", None)
-        store = getattr(run_result, "raw_store", None)
-        if isinstance(log_entries, list):
-            lines.append(f"Log entries: {len(log_entries)}")
-        if isinstance(trace_entries, list):
-            lines.append(f"Trace entries: {len(trace_entries)}")
-        if isinstance(store, dict):
-            lines.append(f"Store entries: {len(store)}")
-
-    return "\n".join(lines)
+    reportable = cast(_RunResultReportable, run_result)
+    return reportable.display(verbose=verbose)
 
 
 def _import_symbol(path: str) -> Any:
@@ -507,7 +517,7 @@ def _unwrap_run_result(result: RunResult[Any]) -> Any:
 
             doeff_tb = attach_doeff_traceback(
                 exc,
-                traceback_data=getattr(result, "traceback_data", None),
+                traceback_data=result.traceback_data,
             )
             if doeff_tb is not None:
                 setattr(exc, "doeff_traceback", doeff_tb)
@@ -526,10 +536,13 @@ def _json_safe(value: Any) -> Any:
 
 
 def _call_tree_ascii(run_result: RunResult[Any]) -> str | None:
-    observations = getattr(run_result, "effect_observations", None)
-    if observations is None:
-        context = getattr(run_result, "context", None)
-        observations = getattr(context, "effect_observations", None)
+    observations: list[Any] | None = None
+    if isinstance(run_result, _RunResultWithEffectObservations):
+        observations = run_result.effect_observations
+    if observations is None and isinstance(run_result, _RunResultWithContext):
+        context = run_result.context
+        if context is not None:
+            observations = context.effect_observations
     if not observations:
         return None
 
@@ -642,7 +655,7 @@ def _detect_cwd_package() -> str | None:
     return None
 
 
-def handle_run_code(args: argparse.Namespace) -> int:
+def handle_run_code(args: RunArgs) -> int:
     from doeff.cli.code_runner import execute_doeff_code
 
     code = args.code
@@ -654,7 +667,7 @@ def handle_run_code(args: argparse.Namespace) -> int:
         return 1
 
     # Create runbox record before execution (if runbox CLI is available)
-    skip_runbox = getattr(args, "no_runbox", False)
+    skip_runbox = args.no_runbox
     maybe_create_runbox_record(skip_runbox=skip_runbox)
     program: Program[Any] = execute_doeff_code(code, filename="<doeff-code>")
 
@@ -663,11 +676,11 @@ def handle_run_code(args: argparse.Namespace) -> int:
         program_instance=program,
         interpreter_path=args.interpreter,
         env_paths=args.envs or [],
-        apply_path=getattr(args, "apply", None),
-        transformer_paths=getattr(args, "transform", None) or [],
+        apply_path=args.apply,
+        transformer_paths=args.transform or [],
         output_format=args.format,
-        report=getattr(args, "report", False),
-        report_verbose=getattr(args, "report_verbose", False),
+        report=args.report,
+        report_verbose=args.report_verbose,
     )
 
     command = RunCommand(context)
@@ -676,17 +689,17 @@ def handle_run_code(args: argparse.Namespace) -> int:
     return 0
 
 
-def handle_run(args: argparse.Namespace) -> int:
-    code_arg = getattr(args, "code", None)
+def handle_run(args: RunArgs) -> int:
+    code_arg = args.code
     if code_arg is not None:
         return handle_run_code(args)
 
-    if not getattr(args, "program", None):
+    if not args.program:
         print("Error: --program is required when not using -c", file=sys.stderr)
         return 1
 
     # Create runbox record before execution (if runbox CLI is available)
-    skip_runbox = getattr(args, "no_runbox", False)
+    skip_runbox = args.no_runbox
     maybe_create_runbox_record(skip_runbox=skip_runbox)
     context = RunContext(
         program_path=args.program,
@@ -696,11 +709,11 @@ def handle_run(args: argparse.Namespace) -> int:
         apply_path=args.apply,
         transformer_paths=args.transform or [],
         output_format=args.format,
-        report=getattr(args, "report", False),
-        report_verbose=getattr(args, "report_verbose", False),
+        report=args.report,
+        report_verbose=args.report_verbose,
     )
 
-    script = getattr(args, "script", None)
+    script = args.script
     if script == "-" or (script is not None and script.strip()):
         return handle_run_with_script(context, script)
 
@@ -819,7 +832,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Iterable[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args = cast(RunArgs, parser.parse_args(list(argv) if argv is not None else None, RunArgs()))
     try:
         return args.func(args)
     except Exception as exc:
@@ -829,7 +842,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             if cause is not None:
                 doeff_tb = getattr(cause, "doeff_traceback", None)
         captured = capture_traceback(exc)
-        if getattr(args, "format", "text") == "json":
+        if args.format == "json":
             payload = {
                 "status": "error",
                 "error": exc.__class__.__name__,
