@@ -2,7 +2,7 @@
 
 ## Overview
 
-This spec defines the **default error traceback format** for doeff — what users see when a program fails. The current implementation dumps the full chronological event log, which is noisy and hard to read. This spec replaces it with a **call-stack-at-crash-time** view that shows only what matters.
+This spec defines the **default error traceback format** for doeff — what users see when a program fails. The VM now maintains incremental active-chain state and assembles traceback entries on-demand. This spec defines the **call-stack-at-crash-time** view shown to users.
 
 ---
 
@@ -23,6 +23,57 @@ This spec defines the **default error traceback format** for doeff — what user
 - Use **human-readable effect repr** (not `<builtins.PyPut object at 0x...>`)
 - **No hardcoded filtering or omission** — every handler in the chain is shown, regardless of name or action
 - No Python traceback section (the doeff trace IS the trace)
+
+---
+
+## Current VM Architecture
+
+### Runtime State (`TraceState`)
+
+The VM stores traceback capture state in `VM.trace_state: TraceState`. `TraceState` owns
+`ActiveChainAssemblyState`, which tracks:
+
+- `frame_stack`: active `Program` frame snapshots (`function_name`, `source_file`, `source_line`, args, etc.)
+- `dispatches`: per-dispatch `effect_repr`, handler stack, and terminal/non-terminal result
+- `frame_dispatch`: mapping from frame id to the dispatch currently associated with that frame
+- `transfer_targets`: transfer destination text keyed by `dispatch_id`
+- `dispatch_order`: dispatch ids in start order
+
+There is no persisted event-log field on `VM` for traceback assembly. State is reset per run via
+`VM::begin_run_session()` -> `trace_state.clear()`.
+
+### `CaptureEvent` Role (Transient)
+
+`CaptureEvent` is still the mutation carrier between VM control flow and
+`ActiveChainAssemblyState`, but it is transient:
+
+1. VM emitters (`emit_frame_entered`, `emit_dispatch_started`, `emit_handler_completed`, etc.) construct a `CaptureEvent`
+2. `TraceState::apply_capture_event()` immediately applies it with `apply_active_chain_event(...)`
+3. The event object is dropped (not retained in a chronological log)
+
+### `assemble_active_chain()` Algorithm
+
+`VM::assemble_active_chain()` delegates to `TraceState::assemble_active_chain(...)`, which:
+
+1. Clones the current `ActiveChainAssemblyState`
+2. Merges live line/stack data from current segments and visible dispatch snapshots
+3. If an exception is present, finalizes unresolved visible dispatches as `EffectResult::Threw`
+4. Builds ordered `ActiveChainEntry` values (`ProgramYield`, `EffectYield`, `ContextEntry`, `ExceptionSite`)
+5. Deduplicates adjacent identical entries
+6. Injects execution-context entries and exception-site metadata
+
+### `GetExecutionContext` Integration
+
+`GetExecutionContext` dispatches are marked `is_execution_context_effect` and hidden from visible
+trace entries. When a handler resumes with `ExecutionContext`, VM calls
+`maybe_attach_active_chain_to_execution_context(...)`:
+
+1. Assemble active chain snapshot (`assemble_active_chain(None)`)
+2. Append existing `ExecutionContext.entries` as `ContextEntry`
+3. Store the tuple on `ExecutionContext.active_chain`
+
+During error enrichment, merged `ExecutionContext.entries` are attached to the original exception
+(`doeff_execution_context`), and later injected back into the rendered active chain.
 
 ---
 
@@ -76,10 +127,10 @@ Each handler in the stack is annotated with what it did for that effect:
 | `·` | Pending | handler never saw this effect (downstream of the handler that resolved it) |
 
 > **Note**: Handler `return` (⏎ — abandon continuation) is not shown in the default format.
-> By the time a trace is captured (error or `GetStackTrace`), a handler return has already
+> By the time a trace is captured (error or `GetTraceback` / `GetExecutionContext`), a handler return has already
 > completed — the `WithHandler` delivered its value, the parent continued. The return is
-> historical, never in the active call chain. It only appears in the full chronological
-> event log (`format_chained()`).
+> historical, never in the active call chain. It only appears in the historical chained
+> projection (`format_chained()`).
 
 ### Handler Stack Display Rules
 
@@ -120,7 +171,10 @@ Handler program frames (`ProgramYield` entries where `handler_kind` is not `None
 
 Handler program frames remain available in `format_chained()` (full chronological view), rendered with the `⚙` prefix for visual distinction. The `handler_kind` field (`python` / `rust_builtin`) on `ProgramYield` entries is preserved in the trace data for programmatic access.
 
-**Exception — Transfer**: When a Transfer severs the caller chain (`caller: None`), the pre-transfer call chain is still shown. Pre-transfer frames are reconstructed from the **capture_log** (chronological event log), not from the live segment walk. The trace shows: pre-transfer chain → transfer (inline `⇢`) → post-transfer chain → crash.
+**Exception — Transfer**: When a Transfer severs the caller chain (`caller: None`), the pre-transfer
+call chain is still shown. Pre-transfer frames come from the incremental
+`ActiveChainAssemblyState` (`frame_stack` + dispatch snapshots), not from a chronological log scan.
+The trace shows: pre-transfer chain → transfer (inline `⇢`) → post-transfer chain → crash.
 
 **Exception — Spawn chain**: When a spawned task crashes, the trace includes:
 1. The **spawn chain** from root to the waiting site (Gather/Wait/Race)
@@ -500,7 +554,7 @@ Notes:
 - The pre-transfer chain (`trigger()`) is shown because the user needs to see how control arrived at `program_a`
 - The trace reads top-to-bottom: original chain → transfer → post-transfer execution → crash
 - No `── transfer ──` separator — Transfer is a regular handler action, shown inline
-- Pre-transfer frames come from **capture_log** (chronological), not from live segment walk (which stops at `caller: None`)
+- Pre-transfer frames come from incremental active-chain state, not from live segment walk alone (which stops at `caller: None`)
 
 ### Example 8: Spawn chain — task crash during Gather
 
@@ -662,50 +716,54 @@ def error_wrapper(effect, k):
 
 To render this format, the following data is needed per frame:
 
-### Active call chain (from live VM state)
+### Incremental active-chain state
 
-For each generator on the active segment chain:
-- `function_name` — from generator `__qualname__` or `__name__`
-- `source_file` — from generator `co_filename`
-- `source_line` — from generator **live `f_lineno`** (NOT `co_firstlineno`)
-- `current_yield_repr` — repr of what was yielded (effect or sub-program)
+`TraceState` stores an `ActiveChainAssemblyState` snapshot that is mutated incrementally. It
+contains:
 
-### Effect creation site (from effect object)
+- Active frame snapshots (`frame_stack`)
+- Per-dispatch snapshots (`dispatches`) including `effect_repr`, handler stack, and result
+- Frame->dispatch links (`frame_dispatch`)
+- Transfer destination text (`transfer_targets`)
+- Dispatch ordering (`dispatch_order`)
 
-Every effect carries its Python-side creation location via `EffectBase.created_at: EffectCreationContext`. This is set by `create_effect_with_trace()` at construction time and captures:
-- `function` — the function that constructed the effect (e.g., the user's `@do` function)
-- `filename` — source file path
-- `line` — line number of the constructor call
+This state is the source of truth for active-chain rendering.
 
-The VM reads `created_at` from every dispatched Python effect object at dispatch time. This is a **generic protocol** — it applies uniformly to all effects, not just specific ones like Spawn. The creation site is stored in `CaptureEvent::DispatchStarted` alongside the effect repr and handler chain snapshot.
+### Live frame supplement
 
-Consumers of the creation site:
-- **Spawn chain**: the scheduler reads the creation site from the Spawn effect's dispatch to populate `TaskMetadata.spawn_site` — no frame walking or positional heuristics needed
-- **Traceback rendering**: effect frames can show where the effect was constructed
-- **Capture log**: richer trace data for debugging
+Before rendering, `assemble_active_chain()` merges live runtime state into a clone of
+`ActiveChainAssemblyState`:
 
-### Last effect dispatch per frame (from capture log)
+- Segment caller chain (`SegmentArena` + `current_segment`) for active program frames
+- Visible dispatch continuation snapshots (`dispatch_stack`) as fallback when frame stack is empty
+- Live stream debug locations for accurate yield-site line numbers
+
+### Effect dispatch snapshot fields
 
 For the most recent effect yielded by each active generator:
+
 - `effect_repr` — human-readable repr of the effect
-- `effect_creation_site` — where the effect was constructed (from `created_at`)
-- `handler_stack` — ordered list of handler names from innermost to outermost
-- `handler_status` — per-handler: passed / delegated / resumed / threw / transferred / pending
-- `resume_value_repr` — value returned to the generator (if resumed)
+- `handler_stack` — ordered handler list with status (`active`/`pending`/`passed`/`delegated`/`resumed`/`transferred`/`returned`/`threw`)
+- `result` — `EffectResult::{Active, Resumed, Threw, Transferred}`
+- `function_name` / `source_file` / `source_line` for effect-site rendering
 
-### Transfer chain (from capture log)
+`CaptureEvent::DispatchStarted` currently also carries optional `creation_site` metadata, but
+active-chain rendering is driven by the dispatch snapshot fields above.
 
-When a Transfer severs the caller chain, pre-transfer frames are not reachable from the live segment walk (`caller: None`). The capture_log retains the full chronological history:
-- `CaptureEvent::Transferred` links the dispatch to the transfer target via `dispatch_id`
-- Pre-transfer frames are reconstructed by walking the capture_log backwards from the Transfer event
-- Multiple transfers create multiple segments in the trace, each linked by the Transfer event
+### Transfer chain reconstruction
+
+When Transfer severs the live caller chain (`caller: None`):
+
+- `CaptureEvent::Transferred` stores destination text in `transfer_targets[dispatch_id]`
+- Terminal handler completion sets `EffectResult::Transferred { target_repr, ... }`
+- Pre-transfer frames come from incremental frame/dispatch snapshots kept in `ActiveChainAssemblyState`
 
 ### Spawn chain
 
 To show the full path from root to a crashing spawned task, the VM must track:
 
 - `parent_task: Option<TaskId>` — which task spawned this one (stored at spawn time)
-- `spawn_site` — from the Spawn effect's `created_at` (see "Effect creation site" above). The scheduler reads the creation site from the dispatched SpawnEffect at task creation time and stores it in `TaskMetadata`. No frame walking or positional heuristics.
+- `spawn_site` — derived from traceback hops (`GetTraceback`) and stored in scheduler task metadata
 - `task_trace: Vec<TraceEntry>` — when a task fails, its assembled trace is captured and attached to the exception (via `__doeff_traceback_data__` or similar mechanism)
 
 When assembling a trace for an error propagated through Gather/Wait/Race:
@@ -737,15 +795,15 @@ When assembling a trace for an error propagated through Gather/Wait/Race:
 
 These are rendering concerns, not data concerns. Programmatic consumers (e.g., `DoeffTraceback.active_chain`) still see every handler and frame.
 
-### Effect Creation Site Protocol
+### Effect Dispatch Site Protocol
 
-Effect location metadata flows through a single, generic protocol — not per-effect-type heuristics:
+Dispatch-site metadata is captured from continuation/frame state, not from effect-object creation metadata:
 
-1. **Python**: `create_effect_with_trace()` captures the user's call site into `EffectBase.created_at` at construction time
-2. **Rust VM**: At dispatch time, reads `created_at` from the Python effect object and extracts `(function, filename, line)`
-3. **Consumers**: Any VM subsystem that needs to know where an effect was created reads it from the dispatch context
+1. **Rust VM**: At dispatch start, resolve site info from continuation snapshots (`TraceState::effect_site_from_continuation`)
+2. **Dispatch snapshot**: Store function/file/line on dispatch state (`CaptureEvent::DispatchStarted`)
+3. **Consumers**: Use dispatch snapshots and traceback hops for rendering/spawn-site attribution
 
-This protocol replaces any frame-walking, position-skipping, or continuation-inspection heuristics. The effect object is the single source of truth for its creation location. If a subsystem needs the creation site (e.g., scheduler for spawn site), it reads it from the dispatched effect — it does not reconstruct it from stack frames.
+This avoids per-effect object contracts and keeps traceback assembly sourced from VM execution state.
 
 ### No Hardcoded Handler/Effect Name Matching in VM Logic
 
@@ -784,7 +842,7 @@ Implementation-level notes (what changes in Rust VM, Python projection, etc.) ar
 
 ### Transfer
 10. Transfer shown inline with `⇢` marker on the handler that transferred
-11. Pre-transfer call chain included in trace (reconstructed from capture_log)
+11. Pre-transfer call chain included in trace (reconstructed from incremental active-chain state)
 12. No visual separator for Transfer — it's a regular handler action
 
 ### Spawn chain
