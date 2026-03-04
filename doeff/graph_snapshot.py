@@ -49,127 +49,118 @@ def build_graph_snapshot(
     node_ids: dict[int, int] = {}  # Map WNode id() to node ID
     node_lookup: dict[int, dict[str, Any]] = {}
 
+    def _label_for(value: Any, meta: dict[str, Any], fallback: str) -> str:
+        label = str(value) if value is not None else fallback
+        meta_label = meta.get("label")
+        if meta_label is not None:
+            label = str(meta_label)
+        if len(label) > 30:
+            return label[:27] + "..."
+        return label
+
     # First pass: create nodes for all steps
-    if hasattr(graph, "steps"):
-        for step in graph.steps:
-            node_id = node_counter
-            node_counter += 1
+    for step in graph.steps:
+        node_id = node_counter
+        node_counter += 1
 
-            # Map output node to ID
-            if hasattr(step, "output"):
-                node_ids[id(step.output)] = node_id
+        # Map output node to ID
+        node_ids[id(step.output)] = node_id
 
-            # WStep has output (WNode) which has value
-            value = step.output.value if hasattr(step, "output") and hasattr(step.output, "value") else None
+        value = step.output.value
+        label = _label_for(value, step.meta, f"Step {node_id}")
 
-            # Try to get a label from value or meta
-            label = str(value) if value is not None else f"Step {node_id}"
-            if hasattr(step, "meta") and step.meta and "label" in step.meta:
-                label = step.meta["label"]
-
-            # Truncate label if too long
-            if len(label) > 30:
-                label = label[:27] + "..."
-
-            node_data = {
-                "id": node_id,
-                "label": label,
-                "title": repr(value) if value is not None else "",  # Tooltip
-                "color": {
-                    "background": "#dbeafe",
-                    "border": "#60a5fa"
-                }
+        node_data = {
+            "id": node_id,
+            "label": label,
+            "title": repr(value) if value is not None else "",  # Tooltip
+            "color": {
+                "background": "#dbeafe",
+                "border": "#60a5fa"
             }
+        }
 
-            nodes.append(node_data)
-            node_lookup[node_id] = node_data
+        nodes.append(node_data)
+        node_lookup[node_id] = node_data
 
     # Process last node (which is also a WStep)
-    if hasattr(graph, "last") and graph.last:
-        # Check if last node already exists
-        if hasattr(graph.last, "output") and id(graph.last.output) in node_ids:
-            last_node_id = node_ids[id(graph.last.output)]
-            # Mark existing node as last
-            for node in nodes:
-                if node["id"] == last_node_id:
-                    if mark_success:
-                        node["color"] = {
-                            "background": "#bbf7d0",
-                            "border": "#16a34a"
-                        }
-                    node["font"] = {"bold": True}
-                    break
-        else:
-            # Create new node for last
-            node_id = node_counter
-            last_node_id = node_id
+    last_step = graph.last
+    # Check if last node already exists
+    if id(last_step.output) in node_ids:
+        last_node_id = node_ids[id(last_step.output)]
+        # Mark existing node as last
+        for node in nodes:
+            if node["id"] == last_node_id:
+                if mark_success:
+                    node["color"] = {
+                        "background": "#bbf7d0",
+                        "border": "#16a34a"
+                    }
+                node["font"] = {"bold": True}
+                break
+    else:
+        # Create new node for last
+        node_id = node_counter
+        last_node_id = node_id
 
-            # Map output node to ID
-            if hasattr(graph.last, "output"):
-                node_ids[id(graph.last.output)] = node_id
+        # Map output node to ID
+        node_ids[id(last_step.output)] = node_id
 
-            value = graph.last.output.value if hasattr(graph.last, "output") and hasattr(graph.last.output, "value") else None
+        value = last_step.output.value
+        label = _label_for(value, last_step.meta, "Complete")
 
-            label = str(value) if value is not None else "Complete"
-            if hasattr(graph.last, "meta") and graph.last.meta and "label" in graph.last.meta:
-                label = graph.last.meta["label"]
+        node_data = {
+            "id": node_id,
+            "label": label,
+            "title": repr(value) if value is not None else "",
+            "font": {"bold": True}
+        }
 
-            if len(label) > 30:
-                label = label[:27] + "..."
-
-            node_data = {
-                "id": node_id,
-                "label": label,
-                "title": repr(value) if value is not None else "",
-                "font": {"bold": True}
+        if mark_success:
+            node_data["color"] = {
+                "background": "#bbf7d0",
+                "border": "#16a34a"
             }
 
-            if mark_success:
-                node_data["color"] = {
-                    "background": "#bbf7d0",
-                    "border": "#16a34a"
-                }
-
-            nodes.append(node_data)
-            node_lookup[node_id] = node_data
+        nodes.append(node_data)
+        node_lookup[node_id] = node_data
 
     # Second pass: create edges and determine levels
     # Build edges list first
-    edges_list: list[dict[str, int]] = []
+    edges_list: list[dict[str, Any]] = []
     seen_edges: set[tuple[int, int]] = set()
 
-    if hasattr(graph, "steps"):
-        for step in graph.steps:
-            if hasattr(step, "output") and hasattr(step, "inputs"):
-                target_id = node_ids.get(id(step.output))
-                if target_id:
-                    for input_node in step.inputs:
-                        source_id = node_ids.get(id(input_node))
-                        if source_id:
-                            key = (source_id, target_id)
-                            if key not in seen_edges:
-                                seen_edges.add(key)
-                                edges_list.append({
-                                    "from": source_id,
-                                    "to": target_id
-                                })
+    for step in graph.steps:
+        target_id = node_ids.get(id(step.output))
+        if target_id is None:
+            continue
+        for input_node in step.inputs:
+            source_id = node_ids.get(id(input_node))
+            if source_id is None:
+                continue
+            key = (source_id, target_id)
+            if key not in seen_edges:
+                seen_edges.add(key)
+                edges_list.append({
+                    "from": source_id,
+                    "to": target_id
+                })
 
     # Add edges for last node
-    if hasattr(graph, "last") and hasattr(graph.last, "inputs"):
-        included_in_steps = hasattr(graph, "steps") and graph.last in graph.steps
-        if not included_in_steps:
-            target_id = node_ids.get(id(graph.last.output))
-            if target_id:
-                for input_node in graph.last.inputs:
-                    source_id = node_ids.get(id(input_node))
-                    if source_id:
-                        key = (source_id, target_id)
-                        if key not in seen_edges:
-                            seen_edges.add(key)
-                            edges_list.append({
-                                "from": source_id,
-                                "to": target_id
-                            })
+    included_in_steps = last_step in graph.steps
+    if not included_in_steps:
+        target_id = node_ids.get(id(last_step.output))
+        if target_id is not None:
+            for input_node in last_step.inputs:
+                source_id = node_ids.get(id(input_node))
+                if source_id is None:
+                    continue
+                key = (source_id, target_id)
+                if key not in seen_edges:
+                    seen_edges.add(key)
+                    edges_list.append({
+                        "from": source_id,
+                        "to": target_id
+                    })
 
     # Build adjacency for deterministic layout
     adjacency: dict[int, set[int]] = {node["id"]: set() for node in nodes}
