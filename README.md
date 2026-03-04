@@ -81,7 +81,7 @@ Core categories include:
 - Result/cache: `Safe`, `CacheGet`, `CachePut`, `CacheExists`, `CacheDelete`
 - Scheduler: `Await`, `Spawn`, `Wait`, `Gather`, `Race`, `Future`, `Task`
 - External bridging: `CreateExternalPromise`, `ExternalPromise`
-- Tracing/graph: `ProgramTrace`, `Step`, `Annotate`, `Snapshot`, `CaptureGraph`
+- Tracing/graph: `GetExecutionContext`, `Step`, `Annotate`, `Snapshot`, `CaptureGraph`
 
 Writer convenience helpers:
 - `StructuredLog(**entries)` and `slog(**entries)` are shorthand for `Tell({**entries})`.
