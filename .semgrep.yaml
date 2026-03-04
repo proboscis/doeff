@@ -30,6 +30,77 @@ rules:
         - /packages/**/tests/**
         - /packages/**/python/temporal-sdk*/**
 
+  - id: no-lazy-getattr-cli-runresult-owned-types
+    languages: [python]
+    severity: ERROR
+    message: >
+      BANNED: lazy getattr fallback on RunResult in CLI code hides typing regressions.
+      Access typed attributes directly. (GETATTR-LAZY-CLEANUP-001)
+    pattern-either:
+      - pattern: getattr(run_result, "display", $DEFAULT)
+      - pattern: getattr(run_result, "error", $DEFAULT)
+      - pattern: getattr(run_result, "log", $DEFAULT)
+      - pattern: getattr(run_result, "trace", $DEFAULT)
+      - pattern: getattr(run_result, "raw_store", $DEFAULT)
+      - pattern: getattr(run_result, "effect_observations", $DEFAULT)
+      - pattern: getattr(run_result, "context", $DEFAULT)
+      - pattern: getattr(context, "effect_observations", $DEFAULT)
+      - pattern: getattr(result, "traceback_data", $DEFAULT)
+    paths:
+      include:
+        - "**/doeff/__main__.py"
+
+  - id: no-lazy-getattr-cli-argparse-owned-namespace
+    languages: [python]
+    severity: ERROR
+    message: >
+      BANNED: argparse Namespace values in CLI handlers should be accessed directly once
+      arguments are declared in build_parser(). (GETATTR-LAZY-CLEANUP-001)
+    pattern-either:
+      - pattern: getattr(args, "no_runbox", $DEFAULT)
+      - pattern: getattr(args, "apply", $DEFAULT)
+      - pattern: getattr(args, "transform", $DEFAULT)
+      - pattern: getattr(args, "report", $DEFAULT)
+      - pattern: getattr(args, "report_verbose", $DEFAULT)
+      - pattern: getattr(args, "code", $DEFAULT)
+      - pattern: getattr(args, "program", $DEFAULT)
+      - pattern: getattr(args, "script", $DEFAULT)
+      - pattern: getattr(args, "format", $DEFAULT)
+    paths:
+      include:
+        - "**/doeff/__main__.py"
+
+  - id: no-lazy-getattr-kleisli-owned-state
+    languages: [python]
+    severity: ERROR
+    message: >
+      BANNED: KleisliProgram internal state must use typed attributes, not lazy getattr defaults.
+      (GETATTR-LAZY-CLEANUP-001)
+    pattern-either:
+      - pattern: getattr(self, "__doeff_do_decorated__", $DEFAULT)
+      - pattern: getattr(self, "_auto_unwrap_strategy", $DEFAULT)
+      - pattern: getattr(self, "_metadata_source", $DEFAULT)
+      - pattern: getattr(self, "__name__", $DEFAULT)
+      - pattern: getattr(self, "_is_do_decorated", $DEFAULT)
+      - pattern: getattr(self, "_doeff_generator_factory", $DEFAULT)
+    paths:
+      include:
+        - "**/doeff/kleisli.py"
+
+  - id: no-lazy-getattr-rust-vm-handler-metadata
+    languages: [python]
+    severity: ERROR
+    message: >
+      BANNED: rust_vm handler metadata extraction must use typed handler narrowing,
+      not lazy getattr fallbacks. (GETATTR-LAZY-CLEANUP-001)
+    pattern-either:
+      - pattern: getattr(handler, "func", $DEFAULT)
+      - pattern: getattr(handler, "__signature__", $DEFAULT)
+      - pattern: getattr(handler, "_metadata_source", $DEFAULT)
+    paths:
+      include:
+        - "**/doeff/rust_vm.py"
+
   - id: no-make-typed-handler
     languages: [python]
     severity: ERROR
