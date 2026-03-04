@@ -2036,18 +2036,18 @@ rules:
     languages: [rust]
     severity: ERROR
 
-  - id: trace-no-program-trace-import
-    pattern-regex: 'from\s+doeff\.effects\.trace\s+import\s+.*\bProgramTrace\b'
-    paths:
-      include:
-        - "**/doeff/**"
-      exclude:
-        - "**/tests/**"
-    message: |
-      BANNED: ProgramTrace effect was removed in TRACE-CAPTURE-LOG-SEPARATION.
-      Use GetTraceback(k) inside handlers for traceback introspection.
+  - id: ban-program-trace-import
     languages: [python]
     severity: ERROR
+    message: >
+      ProgramTrace is removed. Use GetExecutionContext() instead.
+      Ref: TRACE-TOMBSTONE-001.
+    pattern-either:
+      - pattern: from doeff.effects.trace import ProgramTrace
+      - pattern: from doeff import ProgramTrace
+    paths:
+      exclude:
+        - tests/
 
   - id: trace-no-assemble-trace
     pattern-regex: 'fn\s+assemble_trace\s*\('
