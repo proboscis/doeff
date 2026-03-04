@@ -97,8 +97,16 @@ fn build_traceback_data_pyobject(
 
 fn vmerror_to_pyerr_with_traceback_data(py: Python<'_>, e: VMError) -> (PyErr, Option<Py<PyAny>>) {
     match e {
+        VMError::OneShotViolation { .. } => (PyRuntimeError::new_err(e.to_string()), None),
         VMError::UnhandledEffect { .. } => (UnhandledEffectError::new_err(e.to_string()), None),
         VMError::NoMatchingHandler { .. } => (NoMatchingHandlerError::new_err(e.to_string()), None),
+        VMError::DelegateNoOuterHandler { .. } => {
+            (NoMatchingHandlerError::new_err(e.to_string()), None)
+        }
+        VMError::HandlerNotFound { .. } => (NoMatchingHandlerError::new_err(e.to_string()), None),
+        VMError::InvalidSegment { .. } => (PyRuntimeError::new_err(e.to_string()), None),
+        VMError::PythonError { .. } => (PyRuntimeError::new_err(e.to_string()), None),
+        VMError::InternalError { .. } => (PyRuntimeError::new_err(e.to_string()), None),
         VMError::TypeError { .. } => (PyTypeError::new_err(e.to_string()), None),
         VMError::UncaughtException {
             exception,
@@ -112,7 +120,6 @@ fn vmerror_to_pyerr_with_traceback_data(py: Python<'_>, e: VMError) -> (PyErr, O
                 traceback_data,
             )
         }
-        _ => (PyRuntimeError::new_err(e.to_string()), None),
     }
 }
 
@@ -811,7 +818,12 @@ impl PyVM {
                 };
                 Ok(generator.clone_ref(py))
             }
-            _ => Err(PyRuntimeError::new_err(
+            Some(PendingPython::EvalExpr { .. })
+            | Some(PendingPython::CallFuncReturn { .. })
+            | Some(PendingPython::ExpandReturn { .. })
+            | Some(PendingPython::RustProgramContinuation { .. })
+            | Some(PendingPython::AsyncEscape)
+            | None => Err(PyRuntimeError::new_err(
                 "GenNext/GenSend/GenThrow: expected StepUserGenerator in pending_python",
             )),
         }
@@ -867,7 +879,22 @@ impl PyVM {
         match value {
             // Runtime callback arguments must receive the opaque K handle.
             Value::Continuation(k) => Ok(Bound::new(py, PyK::from_cont_id(k.cont_id))?.into_any()),
-            _ => value.to_pyobject(py),
+            Value::Python(_)
+            | Value::Unit
+            | Value::Int(_)
+            | Value::String(_)
+            | Value::Bool(_)
+            | Value::None
+            | Value::Handlers(_)
+            | Value::Kleisli(_)
+            | Value::Task(_)
+            | Value::Promise(_)
+            | Value::ExternalPromise(_)
+            | Value::CallStack(_)
+            | Value::Trace(_)
+            | Value::Traceback(_)
+            | Value::ActiveChain(_)
+            | Value::List(_) => value.to_pyobject(py),
         }
     }
 }
@@ -3782,6 +3809,109 @@ mod tests {
             !runtime_src.contains(".import(\"doeff.traceback\")"),
             "VM-PROTO-004 FAIL: doeff.traceback import still present"
         );
+    }
+
+    #[test]
+    fn test_pyvm_runtime_has_no_enum_catchall_match_arms() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+
+        let vmerror_fn = runtime_src
+            .split("fn vmerror_to_pyerr_with_traceback_data")
+            .nth(1)
+            .expect("missing vmerror_to_pyerr_with_traceback_data")
+            .split("fn vmerror_to_pyerr")
+            .next()
+            .expect("missing vmerror_to_pyerr boundary");
+        assert!(
+            !vmerror_fn.contains("_ =>"),
+            "PYVM-CATCHALL-001 FAIL: VMError match must not use `_ =>` fallback"
+        );
+        let vmerror_variants = [
+            "VMError::OneShotViolation",
+            "VMError::UnhandledEffect",
+            "VMError::NoMatchingHandler",
+            "VMError::DelegateNoOuterHandler",
+            "VMError::HandlerNotFound",
+            "VMError::InvalidSegment",
+            "VMError::PythonError",
+            "VMError::InternalError",
+            "VMError::TypeError",
+            "VMError::UncaughtException",
+        ];
+        for variant in vmerror_variants {
+            assert!(
+                vmerror_fn.contains(variant),
+                "PYVM-CATCHALL-001 FAIL: VMError mapping must mention {} explicitly",
+                variant
+            );
+        }
+
+        let pending_fn = runtime_src
+            .split("fn pending_generator")
+            .nth(1)
+            .expect("missing pending_generator")
+            .split("fn step_generator")
+            .next()
+            .expect("missing step_generator boundary");
+        assert!(
+            !pending_fn.contains("_ =>"),
+            "PYVM-CATCHALL-001 FAIL: PendingPython match must not use `_ =>` fallback"
+        );
+        let pending_variants = [
+            "PendingPython::EvalExpr",
+            "PendingPython::CallFuncReturn",
+            "PendingPython::StepUserGenerator",
+            "PendingPython::ExpandReturn",
+            "PendingPython::RustProgramContinuation",
+            "PendingPython::AsyncEscape",
+            "None =>",
+        ];
+        for variant in pending_variants {
+            assert!(
+                pending_fn.contains(variant),
+                "PYVM-CATCHALL-001 FAIL: PendingPython mapping must mention {} explicitly",
+                variant
+            );
+        }
+
+        let value_fn = runtime_src
+            .split("fn value_to_runtime_pyobject")
+            .nth(1)
+            .expect("missing value_to_runtime_pyobject")
+            .split("fn call_metadata_to_dict")
+            .next()
+            .expect("missing call_metadata_to_dict boundary");
+        assert!(
+            !value_fn.contains("_ =>"),
+            "PYVM-CATCHALL-001 FAIL: Value match must not use `_ =>` fallback"
+        );
+        let value_variants = [
+            "Value::Python",
+            "Value::Unit",
+            "Value::Int",
+            "Value::String",
+            "Value::Bool",
+            "Value::None",
+            "Value::Continuation",
+            "Value::Handlers",
+            "Value::Kleisli",
+            "Value::Task",
+            "Value::Promise",
+            "Value::ExternalPromise",
+            "Value::CallStack",
+            "Value::Trace",
+            "Value::Traceback",
+            "Value::ActiveChain",
+            "Value::List",
+        ];
+        for variant in value_variants {
+            assert!(
+                value_fn.contains(variant),
+                "PYVM-CATCHALL-001 FAIL: Value mapping must mention {} explicitly",
+                variant
+            );
+        }
     }
 }
 

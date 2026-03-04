@@ -1496,6 +1496,41 @@ rules:
       include:
         - "**/packages/doeff-vm/src/pyvm.rs"
 
+  - id: doeff-pyvm-no-enum-catchall-arms
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-inside: |
+                  fn vmerror_to_pyerr_with_traceback_data(...) {
+                      ...
+                  }
+              - pattern-regex: '_\s*=>'
+          - patterns:
+              - pattern-inside: |
+                  fn pending_generator(...) {
+                      ...
+                  }
+              - pattern-regex: '_\s*=>'
+          - patterns:
+              - pattern-inside: |
+                  fn value_to_runtime_pyobject(...) {
+                      ...
+                  }
+              - pattern-regex: '_\s*=>'
+    message: |
+      PYVM-CATCHALL-001: `_ =>` catch-all arms are forbidden in pyvm.rs runtime
+      matches over VMError, PendingPython, and Value.
+      Enumerate all variants explicitly to preserve exhaustiveness checks.
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: architecture
+      issue: PYVM-CATCHALL-001
+      rationale: "Catch-all enum arms hide new variants and weaken fail-fast behavior."
+
   # ---------------------------------------------------------------------------
   # SPEC AUDIT SA-001: GAP ENFORCEMENT RULES
   # ---------------------------------------------------------------------------
