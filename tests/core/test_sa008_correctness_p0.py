@@ -51,3 +51,8 @@ def test_p0_python_run_boundary_no_to_generator_duck_accept() -> None:
     src = _read("doeff/rust_vm.py")
     assert 'inspect.getattr_static(program, "to_generator", None)' not in src
     assert "if callable(to_gen):" not in src
+
+
+def test_p0_graph_snapshot_has_no_hasattr_duck_checks() -> None:
+    src = _read("doeff/graph_snapshot.py")
+    assert "hasattr(" not in src

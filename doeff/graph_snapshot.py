@@ -7,6 +7,7 @@ using vis.js Network, which is simpler and more reliable than Cytoscape.
 
 import asyncio
 import json
+import heapq
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,20 @@ from typing import Any
 from loguru import logger
 
 from doeff import Await, do
-from doeff.types import WGraph
+from doeff.types import WGraph, WStep
+
+
+def _step_value(step: WStep) -> Any | None:
+    output = step.output
+    return output.value if output is not None else None
+
+
+def _step_label(step: WStep, value: Any | None, fallback: str) -> str:
+    if step.meta:
+        maybe_label = step.meta.get("label")
+        if maybe_label is not None:
+            return str(maybe_label)
+    return str(value) if value is not None else fallback
 
 
 def escape_html(text: str) -> str:
@@ -48,47 +62,44 @@ def build_graph_snapshot(
     node_counter = 1
     node_ids: dict[int, int] = {}  # Map WNode id() to node ID
     node_lookup: dict[int, dict[str, Any]] = {}
+    steps = tuple(graph.steps)
+    last_step = graph.last
 
     # First pass: create nodes for all steps
-    if hasattr(graph, "steps"):
-        for step in graph.steps:
-            node_id = node_counter
-            node_counter += 1
+    for step in steps:
+        node_id = node_counter
+        node_counter += 1
 
-            # Map output node to ID
-            if hasattr(step, "output"):
-                node_ids[id(step.output)] = node_id
+        output = step.output
+        if output is not None:
+            node_ids[id(output)] = node_id
 
-            # WStep has output (WNode) which has value
-            value = step.output.value if hasattr(step, "output") and hasattr(step.output, "value") else None
+        value = _step_value(step)
+        label = _step_label(step, value, f"Step {node_id}")
 
-            # Try to get a label from value or meta
-            label = str(value) if value is not None else f"Step {node_id}"
-            if hasattr(step, "meta") and step.meta and "label" in step.meta:
-                label = step.meta["label"]
+        # Truncate label if too long
+        if len(label) > 30:
+            label = label[:27] + "..."
 
-            # Truncate label if too long
-            if len(label) > 30:
-                label = label[:27] + "..."
-
-            node_data = {
-                "id": node_id,
-                "label": label,
-                "title": repr(value) if value is not None else "",  # Tooltip
-                "color": {
-                    "background": "#dbeafe",
-                    "border": "#60a5fa"
-                }
+        node_data = {
+            "id": node_id,
+            "label": label,
+            "title": repr(value) if value is not None else "",  # Tooltip
+            "color": {
+                "background": "#dbeafe",
+                "border": "#60a5fa"
             }
+        }
 
-            nodes.append(node_data)
-            node_lookup[node_id] = node_data
+        nodes.append(node_data)
+        node_lookup[node_id] = node_data
 
     # Process last node (which is also a WStep)
-    if hasattr(graph, "last") and graph.last:
+    if last_step is not None:
+        last_output = last_step.output
         # Check if last node already exists
-        if hasattr(graph.last, "output") and id(graph.last.output) in node_ids:
-            last_node_id = node_ids[id(graph.last.output)]
+        if last_output is not None and id(last_output) in node_ids:
+            last_node_id = node_ids[id(last_output)]
             # Mark existing node as last
             for node in nodes:
                 if node["id"] == last_node_id:
@@ -105,14 +116,12 @@ def build_graph_snapshot(
             last_node_id = node_id
 
             # Map output node to ID
-            if hasattr(graph.last, "output"):
-                node_ids[id(graph.last.output)] = node_id
+            if last_output is not None:
+                node_ids[id(last_output)] = node_id
 
-            value = graph.last.output.value if hasattr(graph.last, "output") and hasattr(graph.last.output, "value") else None
+            value = _step_value(last_step)
 
-            label = str(value) if value is not None else "Complete"
-            if hasattr(graph.last, "meta") and graph.last.meta and "label" in graph.last.meta:
-                label = graph.last.meta["label"]
+            label = _step_label(last_step, value, "Complete")
 
             if len(label) > 30:
                 label = label[:27] + "..."
@@ -135,54 +144,47 @@ def build_graph_snapshot(
 
     # Second pass: create edges and determine levels
     # Build edges list first
-    edges_list: list[dict[str, int]] = []
+    edges_list: list[tuple[int, int]] = []
     seen_edges: set[tuple[int, int]] = set()
 
-    if hasattr(graph, "steps"):
-        for step in graph.steps:
-            if hasattr(step, "output") and hasattr(step, "inputs"):
-                target_id = node_ids.get(id(step.output))
+    for step in steps:
+        output = step.output
+        if output is None:
+            continue
+        target_id = node_ids.get(id(output))
+        if target_id:
+            for input_node in step.inputs:
+                source_id = node_ids.get(id(input_node))
+                if source_id:
+                    key = (source_id, target_id)
+                    if key not in seen_edges:
+                        seen_edges.add(key)
+                        edges_list.append((source_id, target_id))
+
+    # Add edges for last node
+    if last_step is not None:
+        included_in_steps = last_step in steps
+        if not included_in_steps:
+            last_output = last_step.output
+            if last_output is not None:
+                target_id = node_ids.get(id(last_output))
                 if target_id:
-                    for input_node in step.inputs:
+                    for input_node in last_step.inputs:
                         source_id = node_ids.get(id(input_node))
                         if source_id:
                             key = (source_id, target_id)
                             if key not in seen_edges:
                                 seen_edges.add(key)
-                                edges_list.append({
-                                    "from": source_id,
-                                    "to": target_id
-                                })
-
-    # Add edges for last node
-    if hasattr(graph, "last") and hasattr(graph.last, "inputs"):
-        included_in_steps = hasattr(graph, "steps") and graph.last in graph.steps
-        if not included_in_steps:
-            target_id = node_ids.get(id(graph.last.output))
-            if target_id:
-                for input_node in graph.last.inputs:
-                    source_id = node_ids.get(id(input_node))
-                    if source_id:
-                        key = (source_id, target_id)
-                        if key not in seen_edges:
-                            seen_edges.add(key)
-                            edges_list.append({
-                                "from": source_id,
-                                "to": target_id
-                            })
+                                edges_list.append((source_id, target_id))
 
     # Build adjacency for deterministic layout
     adjacency: dict[int, set[int]] = {node["id"]: set() for node in nodes}
     indegree: dict[int, int] = {node["id"]: 0 for node in nodes}
 
-    for edge in edges_list:
-        source_id = edge["from"]
-        target_id = edge["to"]
+    for source_id, target_id in edges_list:
         if target_id not in adjacency[source_id]:
             adjacency[source_id].add(target_id)
             indegree[target_id] += 1
-
-    import heapq
 
     level_map: dict[int, int] = {}
     topo_order: list[int] = []
@@ -242,9 +244,8 @@ def build_graph_snapshot(
     nodes.sort(key=lambda node: (node.get("level", 0), node.get("x", 0)))
 
     # Add arrows to edges
-    for edge in edges_list:
-        edge["arrows"] = "to"
-        edges.append(edge)
+    for source_id, target_id in edges_list:
+        edges.append({"from": source_id, "to": target_id, "arrows": "to"})
 
     return {
         "nodes": nodes,
