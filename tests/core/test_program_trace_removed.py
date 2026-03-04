@@ -1,21 +1,17 @@
 from __future__ import annotations
 
-import doeff
 import doeff_vm
-import pytest
+
+import doeff
 
 
 def test_program_trace_effect_removed() -> None:
-    import doeff.effects as effects
+    from doeff import effects
+    from doeff.effects import trace as trace_effects
 
     assert not hasattr(doeff, "ProgramTrace")
     assert not hasattr(effects, "ProgramTrace")
-
-    import doeff.effects.trace as trace_effects
-
-    if hasattr(trace_effects, "ProgramTrace"):
-        with pytest.raises(NotImplementedError):
-            trace_effects.ProgramTrace()
+    assert not hasattr(trace_effects, "ProgramTrace")
 
 
 def test_get_trace_doctrl_removed() -> None:
