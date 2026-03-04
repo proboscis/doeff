@@ -104,23 +104,6 @@ class _RunResultWithContext(Protocol):
 
 
 class _RunResultReportable(Protocol):
-    @property
-    def value(self) -> Any: ...
-
-    @property
-    def error(self) -> BaseException: ...
-
-    @property
-    def raw_store(self) -> dict[str, Any]: ...
-
-    @property
-    def log(self) -> Any: ...
-
-    @property
-    def trace(self) -> Any: ...
-
-    def is_ok(self) -> bool: ...
-
     def display(self, *, verbose: bool = False) -> str: ...
 
 
@@ -428,34 +411,7 @@ def _render_run_output(context: ResolvedRunContext, execution: RunExecutionResul
 
 def _run_result_report(run_result: RunResult[Any], *, verbose: bool) -> str:
     reportable = cast(_RunResultReportable, run_result)
-    display = reportable.display
-    if callable(display):
-        return display(verbose=verbose)
-
-    status = "ok" if reportable.is_ok() else "error"
-    lines = [f"RunResult status: {status}"]
-
-    if reportable.is_ok():
-        lines.append(f"Value: {reportable.value!r}")
-    else:
-        error_value = reportable.error
-        if isinstance(error_value, BaseException):
-            lines.append(f"Error: {error_value!r}")
-        else:
-            lines.append("Error: unavailable")
-
-    if verbose:
-        log_entries = reportable.log
-        trace_entries = reportable.trace
-        store = reportable.raw_store
-        if isinstance(log_entries, list):
-            lines.append(f"Log entries: {len(log_entries)}")
-        if isinstance(trace_entries, list):
-            lines.append(f"Trace entries: {len(trace_entries)}")
-        if isinstance(store, dict):
-            lines.append(f"Store entries: {len(store)}")
-
-    return "\n".join(lines)
+    return reportable.display(verbose=verbose)
 
 
 def _import_symbol(path: str) -> Any:
