@@ -124,7 +124,7 @@ class ConductorAPI:
             self._save_workflow(handle)
 
             # Execute the workflow
-            from doeff import Effect, Pass, default_handlers, do, run
+            from doeff import Effect, Pass, RunResult, default_handlers, do, run
 
             # Build kwargs
             kwargs = params or {}
@@ -197,7 +197,7 @@ class ConductorAPI:
                 program,
                 handlers=[conductor_handler, *default_handlers()],
             )
-            result_value = result.value if hasattr(result, "value") else result
+            result_value = result.value if isinstance(result, RunResult) else result
 
             # Update workflow status
             handle = WorkflowHandle(
