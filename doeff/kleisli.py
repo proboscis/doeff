@@ -13,7 +13,7 @@ from collections.abc import Callable
 from collections.abc import Callable as TypingCallable
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Generic, ParamSpec, TypeVar, get_type_hints
+from typing import Any, ClassVar, Generic, ParamSpec, TypeVar, get_type_hints
 
 from doeff.program import (
     Program,
@@ -52,11 +52,16 @@ class KleisliProgram(ABC, Generic[P, T]):
     """
 
     func: Callable[P, Program[T]]
+    __doeff_do_decorated__: ClassVar[bool] = False
+    _auto_unwrap_strategy: ClassVar[Any] = None
+    _metadata_source: ClassVar[Any] = None
+    _is_do_decorated: ClassVar[bool] = False
+    _doeff_generator_factory: ClassVar[Any] = None
 
     def __post_init__(self) -> None:
         wrapped = getattr(self.func, "__wrapped__", self.func)
         object.__setattr__(self, "_metadata_source", wrapped)
-        is_do_decorated = bool(getattr(self, "__doeff_do_decorated__", False))
+        is_do_decorated = bool(self.__doeff_do_decorated__)
         object.__setattr__(self, "_is_do_decorated", is_do_decorated)
 
         signature = _safe_signature(wrapped) or _safe_signature(self.func)
@@ -88,7 +93,7 @@ class KleisliProgram(ABC, Generic[P, T]):
 
         from doeff.types import EffectBase
 
-        strategy = getattr(self, "_auto_unwrap_strategy", None)
+        strategy = self._auto_unwrap_strategy
         if strategy is None:
             strategy = _build_auto_unwrap_strategy(self)
             object.__setattr__(self, "_auto_unwrap_strategy", strategy)
@@ -110,11 +115,12 @@ class KleisliProgram(ABC, Generic[P, T]):
             for key, value in kwargs.items()
         }
 
-        metadata_source = getattr(self, "_metadata_source", self.func)
+        metadata_source = self._metadata_source or self.func
         code_obj = getattr(metadata_source, "__code__", None)
-        function_name = getattr(
-            self, "__name__", getattr(metadata_source, "__name__", "<anonymous>")
-        )
+        try:
+            function_name = self.__name__
+        except AttributeError:
+            function_name = getattr(metadata_source, "__name__", "<anonymous>")
         metadata = {
             "function_name": function_name,
             "source_file": getattr(code_obj, "co_filename", "<unknown>"),
@@ -123,8 +129,8 @@ class KleisliProgram(ABC, Generic[P, T]):
             "program_call": None,
         }
 
-        if bool(getattr(self, "_is_do_decorated", False)):
-            generator_factory = getattr(self, "_doeff_generator_factory", None)
+        if bool(self._is_do_decorated):
+            generator_factory = self._doeff_generator_factory
             if generator_factory is None:
                 raise TypeError(
                     "@do KleisliProgram is missing _doeff_generator_factory (DoeffGeneratorFn)"

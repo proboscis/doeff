@@ -277,7 +277,7 @@ class DoYieldFunction(KleisliProgram[P, T]):
         if signature is not None:
             self.__signature__ = signature
 
-        self.__doeff_do_decorated__ = True
+        object.__setattr__(self, "__doeff_do_decorated__", True)
         object.__setattr__(self, "_is_do_decorated", True)
 
         strategy = _build_auto_unwrap_strategy(self)
@@ -411,9 +411,13 @@ def do(
     kleisli.__wrapped__ = func
     kleisli.original_func = func
     kleisli.original_generator = func
-    kleisli.__doeff_do_decorated__ = True
-    kleisli._is_do_decorated = True
-    kleisli._doeff_generator_factory = getattr(do_yield_fn, "_doeff_generator_factory", None)
+    object.__setattr__(kleisli, "__doeff_do_decorated__", True)
+    object.__setattr__(kleisli, "_is_do_decorated", True)
+    object.__setattr__(
+        kleisli,
+        "_doeff_generator_factory",
+        getattr(do_yield_fn, "_doeff_generator_factory", None),
+    )
 
     return cast(KleisliProgram[P, T], kleisli)
 
