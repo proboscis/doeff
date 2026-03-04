@@ -143,6 +143,10 @@ pub enum HandlerAction {
 }
 
 /// Low-level control-flow event appended by the VM.
+// TODO(TRACE-CAPTURE-LOG-SEPARATION follow-up): CaptureEvent is currently transient
+// in the incremental path. Emitters construct an event, apply it to live
+// ActiveChainAssemblyState, then drop it. Remove this enum by mutating
+// ActiveChainAssemblyState directly from emit_* methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureEvent {
     FrameEntered {

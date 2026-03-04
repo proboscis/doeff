@@ -491,7 +491,7 @@ rules:
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
   - id: doctrl-variants-require-approval
-    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|WithHandler\b|WithIntercept\b|Finally\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|GetCallStack\b|GetTrace\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
+    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|WithHandler\b|WithIntercept\b|Finally\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|GetCallStack\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
       include:
         - "**/packages/doeff-vm/src/do_ctrl.rs"
@@ -2008,3 +2008,55 @@ rules:
     message: |
       CallArg has been removed (SPEC-VM-017 R1-K).
       Apply/Expand args are Vec<DoExpr>. Use DoExpr::Pure { value } for resolved values.
+
+  - id: trace-no-capture-log
+    pattern: capture_log
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/trace_state.rs"
+    message: |
+      BANNED: capture_log was removed in TRACE-CAPTURE-LOG-SEPARATION.
+      Active-chain state is maintained incrementally. There is no event log.
+      If you need debug tracing, use debug_state.trace_enabled.
+    languages: [rust]
+    severity: ERROR
+
+  - id: trace-no-get-trace-doctrl
+    pattern-either:
+      - pattern: DoCtrl::GetTrace
+      - pattern: DoExprTag::GetTrace
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+        - "**/packages/doeff-vm/src/**"
+    message: |
+      BANNED: GetTrace/ProgramTrace was removed in TRACE-CAPTURE-LOG-SEPARATION.
+      The full execution log is no longer maintained. Use GetTraceback(k) for
+      handler-scoped traceback introspection.
+    languages: [rust]
+    severity: ERROR
+
+  - id: trace-no-program-trace-import
+    pattern-regex: 'from\s+doeff\.effects\.trace\s+import\s+.*\bProgramTrace\b'
+    paths:
+      include:
+        - "**/doeff/**"
+      exclude:
+        - "**/tests/**"
+    message: |
+      BANNED: ProgramTrace effect was removed in TRACE-CAPTURE-LOG-SEPARATION.
+      Use GetTraceback(k) inside handlers for traceback introspection.
+    languages: [python]
+    severity: ERROR
+
+  - id: trace-no-assemble-trace
+    pattern-regex: 'fn\s+assemble_trace\s*\('
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+    message: |
+      BANNED: assemble_trace() was removed in TRACE-CAPTURE-LOG-SEPARATION.
+      There is no full event log to assemble from. Active-chain is maintained
+      incrementally via apply_active_chain_event().
+    languages: [rust]
+    severity: ERROR

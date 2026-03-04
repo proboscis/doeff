@@ -5,15 +5,10 @@ from dataclasses import dataclass
 
 from doeff import Effect, Program, do
 from doeff._types_internal import EffectBase
-from doeff.effects import ProgramCallStack, ProgramTrace, Put, slog
+from doeff.effects import ProgramCallStack, Put
 from doeff.rust_vm import Delegate, Pass, Resume, WithHandler, default_handlers, run
-from doeff.trace import TraceDispatch, TraceFrame
+from doeff.trace import TraceDispatch
 from doeff.traceback import attach_doeff_traceback
-
-
-@dataclass(frozen=True, kw_only=True)
-class Ping(EffectBase):
-    value: int
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -24,70 +19,6 @@ class NeedsHandler(EffectBase):
 @dataclass(frozen=True, kw_only=True)
 class Explode(EffectBase):
     pass
-
-
-def test_program_trace_from_do_function_and_transparency_invariant() -> None:
-    @do
-    def program() -> Program[tuple[int, list[object]]]:
-        before = yield ProgramTrace()
-        yield Put("counter", 1)
-        after = yield ProgramTrace()
-        return len(before), after
-
-    result = run(program(), handlers=default_handlers(), store={"counter": 0})
-    assert result.is_ok(), result.error
-
-    before_len, trace_entries = result.value
-    assert before_len >= 1
-
-    dispatches = [entry for entry in trace_entries if isinstance(entry, TraceDispatch)]
-    assert dispatches, "ProgramTrace should return dispatch entries"
-    assert all("ProgramTrace" not in dispatch.effect_repr for dispatch in dispatches)
-
-
-def test_slog_dispatch_effect_repr_contains_payload() -> None:
-    @do
-    def body() -> Program[tuple[list[object], list[object]]]:
-        before = yield ProgramTrace()
-        yield slog(msg="validation_failed", level="warn")
-        after = yield ProgramTrace()
-        return before, after
-
-    result = run(body(), handlers=default_handlers())
-    assert result.is_ok(), result.error
-    before_trace, after_trace = result.value
-
-    assert isinstance(before_trace, list)
-    assert isinstance(after_trace, list)
-    assert len(after_trace) > len(before_trace)
-
-    dispatches = [entry for entry in after_trace if isinstance(entry, TraceDispatch)]
-    assert any(
-        "validation_failed" in entry.effect_repr and "level" in entry.effect_repr
-        for entry in dispatches
-    ), dispatches
-
-
-def test_program_trace_from_python_handler() -> None:
-    @do
-    def handler(effect: Effect, k):
-        if isinstance(effect, Ping):
-            handler_view = yield ProgramTrace()
-            resumed = yield Resume(k, effect.value + 1)
-            return resumed, handler_view
-        yield Pass()
-
-    @do
-    def body() -> Program[int]:
-        value = yield Ping(value=41)
-        return value
-
-    result = run(WithHandler(handler, body()), handlers=default_handlers())
-    assert result.is_ok(), result.error
-
-    resumed_value, handler_trace = result.value
-    assert resumed_value == 42
-    assert any(isinstance(entry, TraceDispatch) for entry in handler_trace)
 
 
 def test_program_callstack_still_works_with_deprecation_warning() -> None:
@@ -162,34 +93,6 @@ def test_delegation_chain_routes_to_outer_handler() -> None:
     result = run(wrapped, handlers=default_handlers())
     assert result.is_ok(), result.error
     assert result.value == 7
-
-
-def test_recursive_frames_preserve_frame_id_and_args_repr() -> None:
-    @do
-    def recursive(n: int) -> Program[list[object]]:
-        if n <= 0:
-            return (yield ProgramTrace())
-        return (yield recursive(n - 1))
-
-    result = run(recursive(3), handlers=default_handlers())
-    assert result.is_ok(), result.error
-
-    recursive_frames = [
-        entry
-        for entry in result.value
-        if isinstance(entry, TraceFrame) and entry.function_name == "recursive"
-    ]
-    assert recursive_frames
-
-    first_frame_by_id: dict[int, TraceFrame] = {}
-    for frame in recursive_frames:
-        first_frame_by_id.setdefault(frame.frame_id, frame)
-
-    assert len(first_frame_by_id) >= 4
-    assert all(
-        frame.args_repr is None or "n=" in frame.args_repr or "args=" in frame.args_repr
-        for frame in first_frame_by_id.values()
-    )
 
 
 def test_handler_sources_and_exception_repr_for_thrown_handler() -> None:

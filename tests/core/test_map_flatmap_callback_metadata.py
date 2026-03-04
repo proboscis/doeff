@@ -3,9 +3,7 @@ from __future__ import annotations
 import pytest
 
 from doeff import Program, do
-from doeff.effects import ProgramTrace
 from doeff.rust_vm import default_handlers, run
-from doeff.trace import TraceFrame
 
 
 def test_map_stores_mapper_metadata_at_construction_time() -> None:
