@@ -30,5 +30,56 @@ When using `orch` to manage agent runs, **NEVER stop a run that is in `wait` or 
 | `failed` / `unknown` | OK to `orch stop` + `orch continue` |
 | `done` / `cancel` | Already terminated |
 
+## TDD + Semgrep Enforcement Strategy
+
+Every issue that adds, removes, or changes an architectural invariant MUST follow this protocol:
+
+### Phase 1: Write Failing Tests (TDD)
+1. Write tests that assert the NEW expected behavior FIRST
+2. Run them — they MUST fail (proves the test is meaningful)
+3. Commit the failing tests to the branch (they belong to the issue)
+
+### Phase 2: Write Semgrep Guard Rules
+If the change introduces a ban (removed API, forbidden pattern, layer boundary):
+1. Write a semgrep rule in `.semgrep.yaml` that bans the OLD pattern (severity: `ERROR`)
+2. Run it — it SHOULD fire on existing code (confirms the rule works)
+3. The rule stays permanently as a regression guard after migration
+
+For NEW patterns worth protecting:
+1. Identify the invariant: "what would break if someone did X?"
+2. Write a semgrep rule banning X
+3. Include the "why" in the `message:` field with spec/issue reference
+
+### Phase 3: Implement
+1. Make the code changes that satisfy both the tests and the semgrep rules
+2. All tests pass, `make lint` clean (including the new semgrep rules)
+
+### Why This Order Matters
+- Tests prove the change works (regression guard at runtime)
+- Semgrep rules prevent the old pattern from creeping back (regression guard at lint time)
+- Writing them first forces precise thinking about what exactly is changing
+- Agents that skip this produce unverifiable work
+
+### Issue Template Pattern
+Issues SHOULD include:
+```
+## Failing Tests (commit first)
+- test_foo_new_behavior: asserts X
+- test_bar_rejects_old_api: asserts Y is gone
+
+## Semgrep Rules (commit with tests or with fix)
+- rule-id: ban-old-pattern — bans Z in paths P
+
+## Implementation
+- change A in file B
+- remove C from file D
+
+## Acceptance Criteria
+1. Failing tests now pass
+2. Semgrep rules pass (no violations)
+3. All existing tests still pass
+4. `make lint` clean
+```
+
 ## Commit & Pull Request Guidelines
 Recent history favors concise, imperative summaries (for example, `Fix cache invalidation` or `Add Gemini structured support`). Reference related issues in the body, note behavioral risks, and list validation commands you ran. Pull requests should describe the effect on core `doeff/` APIs versus optional `packages/` integrations, attach screenshots or traces when diagnostics change, and mention follow-up work in a checklist so maintainers can track it.
