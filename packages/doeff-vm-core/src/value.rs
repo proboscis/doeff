@@ -14,8 +14,8 @@ use crate::capture::{
 use crate::frame::CallMetadata;
 use crate::ids::{PromiseId, TaskId};
 use crate::kleisli::KleisliRef;
-use crate::pyvm::{PyTraceFrame, PyTraceHop};
 use crate::py_shared::PyShared;
+use crate::pyvm::{PyTraceFrame, PyTraceHop};
 
 /// Opaque handle to a spawned task.
 #[derive(Clone, Copy, Debug)]
@@ -489,7 +489,22 @@ impl Value {
     pub fn as_int(&self) -> Option<i64> {
         match self {
             Value::Int(i) => Some(*i),
-            _ => None,
+            Value::Python(_)
+            | Value::Unit
+            | Value::String(_)
+            | Value::Bool(_)
+            | Value::None
+            | Value::Continuation(_)
+            | Value::Handlers(_)
+            | Value::Kleisli(_)
+            | Value::Task(_)
+            | Value::Promise(_)
+            | Value::ExternalPromise(_)
+            | Value::CallStack(_)
+            | Value::Trace(_)
+            | Value::Traceback(_)
+            | Value::ActiveChain(_)
+            | Value::List(_) => None,
         }
     }
 
@@ -497,7 +512,22 @@ impl Value {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::String(s) => Some(s),
-            _ => None,
+            Value::Python(_)
+            | Value::Unit
+            | Value::Int(_)
+            | Value::Bool(_)
+            | Value::None
+            | Value::Continuation(_)
+            | Value::Handlers(_)
+            | Value::Kleisli(_)
+            | Value::Task(_)
+            | Value::Promise(_)
+            | Value::ExternalPromise(_)
+            | Value::CallStack(_)
+            | Value::Trace(_)
+            | Value::Traceback(_)
+            | Value::ActiveChain(_)
+            | Value::List(_) => None,
         }
     }
 
@@ -505,7 +535,22 @@ impl Value {
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Value::Bool(b) => Some(*b),
-            _ => None,
+            Value::Python(_)
+            | Value::Unit
+            | Value::Int(_)
+            | Value::String(_)
+            | Value::None
+            | Value::Continuation(_)
+            | Value::Handlers(_)
+            | Value::Kleisli(_)
+            | Value::Task(_)
+            | Value::Promise(_)
+            | Value::ExternalPromise(_)
+            | Value::CallStack(_)
+            | Value::Trace(_)
+            | Value::Traceback(_)
+            | Value::ActiveChain(_)
+            | Value::List(_) => None,
         }
     }
 
@@ -513,7 +558,22 @@ impl Value {
     pub fn as_handlers(&self) -> Option<&[KleisliRef]> {
         match self {
             Value::Handlers(h) => Some(h),
-            _ => None,
+            Value::Python(_)
+            | Value::Unit
+            | Value::Int(_)
+            | Value::String(_)
+            | Value::Bool(_)
+            | Value::None
+            | Value::Continuation(_)
+            | Value::Kleisli(_)
+            | Value::Task(_)
+            | Value::Promise(_)
+            | Value::ExternalPromise(_)
+            | Value::CallStack(_)
+            | Value::Trace(_)
+            | Value::Traceback(_)
+            | Value::ActiveChain(_)
+            | Value::List(_) => None,
         }
     }
 }
