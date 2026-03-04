@@ -1111,7 +1111,22 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 let Some(semaphore) = semaphore else {
                     let semaphore = match value {
                         Value::Python(_) => value,
-                        _ => {
+                        Value::Unit
+                        | Value::Int(_)
+                        | Value::String(_)
+                        | Value::Bool(_)
+                        | Value::None
+                        | Value::Continuation(_)
+                        | Value::Handlers(_)
+                        | Value::Kleisli(_)
+                        | Value::Task(_)
+                        | Value::Promise(_)
+                        | Value::ExternalPromise(_)
+                        | Value::CallStack(_)
+                        | Value::Trace(_)
+                        | Value::Traceback(_)
+                        | Value::ActiveChain(_)
+                        | Value::List(_) => {
                             return IRStreamStep::Throw(PyException::type_error(
                                 "CreateSemaphore must return a semaphore handle".to_string(),
                             ));
@@ -1847,16 +1862,15 @@ mod tests {
         assert_eq!(location.phase.as_deref(), Some("AwaitBridgeResult"));
 
         let step = IRStream::resume(&mut program, Value::Int(12), &mut store, &mut scope);
-        match step {
-            IRStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value,
-            }) => {
-                assert_eq!(continuation.cont_id, continuation_id);
-                assert_eq!(value.as_int(), Some(12));
-            }
-            _ => panic!("expected IRStream Yield(Resume)"),
-        }
+        let IRStreamStep::Yield(DoCtrl::Resume {
+            continuation,
+            value,
+        }) = step
+        else {
+            panic!("expected IRStream Yield(Resume)");
+        };
+        assert_eq!(continuation.cont_id, continuation_id);
+        assert_eq!(value.as_int(), Some(12));
 
         let location = IRStream::debug_location(&program).expect("await debug location");
         assert_eq!(location.phase.as_deref(), Some("Idle"));
@@ -1880,16 +1894,15 @@ mod tests {
         assert_eq!(location.phase.as_deref(), Some("ModifyApply"));
 
         let step = IRStream::resume(&mut program, Value::Int(8), &mut store, &mut scope);
-        match step {
-            IRStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value,
-            }) => {
-                assert_eq!(continuation.cont_id, continuation_id);
-                assert_eq!(value.as_int(), Some(5));
-            }
-            _ => panic!("expected IRStream Yield(Resume)"),
-        }
+        let IRStreamStep::Yield(DoCtrl::Resume {
+            continuation,
+            value,
+        }) = step
+        else {
+            panic!("expected IRStream Yield(Resume)");
+        };
+        assert_eq!(continuation.cont_id, continuation_id);
+        assert_eq!(value.as_int(), Some(5));
 
         assert_eq!(store.get("count").and_then(Value::as_int), Some(8));
         let location = IRStream::debug_location(&program).expect("state debug location");
@@ -1951,16 +1964,15 @@ mod tests {
         assert_eq!(location.phase.as_deref(), Some("AwaitRelease"));
 
         let step = IRStream::resume(&mut program, Value::Unit, &mut store, &mut scope);
-        match step {
-            IRStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value,
-            }) => {
-                assert_eq!(continuation.cont_id, continuation_id);
-                assert_eq!(value.as_int(), Some(44));
-            }
-            _ => panic!("expected IRStream Yield(Resume)"),
-        }
+        let IRStreamStep::Yield(DoCtrl::Resume {
+            continuation,
+            value,
+        }) = step
+        else {
+            panic!("expected IRStream Yield(Resume)");
+        };
+        assert_eq!(continuation.cont_id, continuation_id);
+        assert_eq!(value.as_int(), Some(44));
     }
 
     #[test]
@@ -2060,15 +2072,13 @@ mod tests {
                     &mut scope,
                 )
             };
-            match step {
-                IRStreamStep::Yield(DoCtrl::Resume { value, .. }) => {
-                    assert_eq!(value.as_int(), Some(42));
-                }
-                _ => panic!(
+            let IRStreamStep::Yield(DoCtrl::Resume { value, .. }) = step else {
+                panic!(
                     "Expected Yield(Resume), got {:?}",
                     std::mem::discriminant(&step)
-                ),
-            }
+                );
+            };
+            assert_eq!(value.as_int(), Some(42));
         });
     }
 
@@ -2126,13 +2136,11 @@ mod tests {
                     &mut scope,
                 )
             };
-            match step {
-                IRStreamStep::NeedsPython(PythonCall::CallFunc { args, .. }) => {
-                    assert_eq!(args.len(), 1);
-                    assert_eq!(args[0].as_int(), Some(10));
-                }
-                _ => panic!("Expected NeedsPython(CallFunc)"),
-            }
+            let IRStreamStep::NeedsPython(PythonCall::CallFunc { args, .. }) = step else {
+                panic!("Expected NeedsPython(CallFunc)");
+            };
+            assert_eq!(args.len(), 1);
+            assert_eq!(args[0].as_int(), Some(10));
         });
     }
 
@@ -2165,12 +2173,10 @@ mod tests {
                 let mut guard = program_ref.lock().unwrap();
                 guard.resume(Value::Int(20), &mut store, &mut scope)
             };
-            match step {
-                IRStreamStep::Yield(DoCtrl::Resume { value, .. }) => {
-                    assert_eq!(value.as_int(), Some(10)); // old_value returned (SPEC-008 L1271)
-                }
-                _ => panic!("Expected Yield(Resume) with old_value"),
-            }
+            let IRStreamStep::Yield(DoCtrl::Resume { value, .. }) = step else {
+                panic!("Expected Yield(Resume) with old_value");
+            };
+            assert_eq!(value.as_int(), Some(10)); // old_value returned (SPEC-008 L1271)
             assert_eq!(store.get("key").unwrap().as_int(), Some(20)); // new value stored
         });
     }
@@ -2221,12 +2227,10 @@ mod tests {
                     &mut scope,
                 )
             };
-            match step {
-                IRStreamStep::Yield(DoCtrl::Resume { value, .. }) => {
-                    assert_eq!(value.as_str(), Some("value"));
-                }
-                _ => panic!("Expected Yield(Resume)"),
-            }
+            let IRStreamStep::Yield(DoCtrl::Resume { value, .. }) = step else {
+                panic!("Expected Yield(Resume)");
+            };
+            assert_eq!(value.as_str(), Some("value"));
         });
     }
 
@@ -2349,19 +2353,18 @@ mod tests {
                 let mut guard = ok_program.lock().unwrap();
                 guard.resume(Value::Int(42), &mut store, &mut scope)
             };
-            match ok_step {
-                IRStreamStep::Yield(DoCtrl::Resume {
-                    value: Value::Python(obj),
-                    ..
-                }) => {
-                    let bound = obj.bind(py);
-                    let is_ok: bool = bound.call_method0("is_ok").unwrap().extract().unwrap();
-                    let inner = bound.getattr("value").unwrap();
-                    assert!(is_ok);
-                    assert_eq!(inner.extract::<i64>().unwrap(), 42);
-                }
-                _ => panic!("expected Resume with Ok(value)"),
-            }
+            let IRStreamStep::Yield(DoCtrl::Resume {
+                value: Value::Python(obj),
+                ..
+            }) = ok_step
+            else {
+                panic!("expected Resume with Ok(value)");
+            };
+            let bound = obj.bind(py);
+            let is_ok: bool = bound.call_method0("is_ok").unwrap().extract().unwrap();
+            let inner = bound.getattr("value").unwrap();
+            assert!(is_ok);
+            assert_eq!(inner.extract::<i64>().unwrap(), 42);
 
             let err_program = ResultSafeHandlerFactory.create_program();
             let _ = {
@@ -2374,20 +2377,19 @@ mod tests {
                 guard.throw(PyException::runtime_error("boom"), &mut store, &mut scope)
             };
 
-            match err_step {
-                IRStreamStep::Yield(DoCtrl::Resume {
-                    value: Value::Python(obj),
-                    ..
-                }) => {
-                    let bound = obj.bind(py);
-                    let is_err: bool = bound.call_method0("is_err").unwrap().extract().unwrap();
-                    let error = bound.getattr("error").unwrap();
-                    let msg = error.str().unwrap().to_str().unwrap().to_string();
-                    assert!(is_err);
-                    assert!(msg.contains("boom"));
-                }
-                _ => panic!("expected Resume with Err(exception)"),
-            }
+            let IRStreamStep::Yield(DoCtrl::Resume {
+                value: Value::Python(obj),
+                ..
+            }) = err_step
+            else {
+                panic!("expected Resume with Err(exception)");
+            };
+            let bound = obj.bind(py);
+            let is_err: bool = bound.call_method0("is_err").unwrap().extract().unwrap();
+            let error = bound.getattr("error").unwrap();
+            let msg = error.str().unwrap().to_str().unwrap().to_string();
+            assert!(is_err);
+            assert!(msg.contains("boom"));
         });
     }
 
@@ -2443,13 +2445,11 @@ mod tests {
                 let mut guard = program_ref.lock().unwrap();
                 guard.resume(Value::Int(200), &mut store, &mut scope)
             };
-            match step3 {
-                IRStreamStep::Yield(DoCtrl::Resume { value, .. }) => {
-                    // 100 + 200 = 300
-                    assert_eq!(value.as_int(), Some(300));
-                }
-                _ => panic!("Expected Yield(Resume) with combined value 300"),
-            }
+            let IRStreamStep::Yield(DoCtrl::Resume { value, .. }) = step3 else {
+                panic!("Expected Yield(Resume) with combined value 300");
+            };
+            // 100 + 200 = 300
+            assert_eq!(value.as_int(), Some(300));
         });
     }
 }
