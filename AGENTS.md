@@ -81,5 +81,23 @@ Issues SHOULD include:
 4. `make lint` clean
 ```
 
+## PR Review Workflow (CRITICAL)
+When reviewing a PR created by an `orch` agent run, **NEVER fix issues directly on the branch**. Always send feedback via `orch send <RUN_REF> "message"` and wait for the agent to apply the fix. This preserves the agent's ownership of its branch, avoids merge conflicts from concurrent edits, and ensures the agent understands the feedback for future work.
+
+| Situation | Action |
+|-----------|--------|
+| Found smell/hack in agent PR | `orch send` with specific feedback |
+| Agent's fix is wrong | `orch send` with correction |
+| Trivial typo in agent PR | `orch send` — still don't fix directly |
+| Agent run is dead/out of budget | Only then: fix directly or create new run |
+
+## Coding Anti-Patterns (Banned)
+The following patterns are banned in production code. Agents must avoid these; reviewers must flag them.
+
+- **`getattr(obj, "attr", default)`**: Silent fallback that hides type errors. Use direct attribute access on properly typed objects. If the type is uncertain, narrow it first (`isinstance` check), don't paper over it with `getattr`.
+- **`as any` / `@ts-ignore` / `@ts-expect-error`**: Type suppression.
+- **Empty `except:` or `except Exception:` without re-raise**: Silent error swallowing.
+- **`_ =>` catch-all match arms in Rust**: Use exhaustive matches. Every variant must be named.
+
 ## Commit & Pull Request Guidelines
 Recent history favors concise, imperative summaries (for example, `Fix cache invalidation` or `Add Gemini structured support`). Reference related issues in the body, note behavioral risks, and list validation commands you ran. Pull requests should describe the effect on core `doeff/` APIs versus optional `packages/` integrations, attach screenshots or traces when diagnostics change, and mention follow-up work in a checklist so maintainers can track it.
