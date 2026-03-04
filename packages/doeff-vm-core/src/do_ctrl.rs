@@ -140,6 +140,7 @@ pub enum DoCtrl {
         scope: Continuation,
         metadata: Option<CallMetadata>,
     },
+    // DEPRECATED (INTROSPECT-UNIFY-001): use GetExecutionContext for handler-aware introspection.
     GetCallStack,
 }
 

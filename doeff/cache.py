@@ -12,7 +12,7 @@ from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
-from doeff.effects.callstack import ProgramCallStack
+from doeff.effects.execution_context import GetExecutionContext
 from doeff.effects.result import Try
 from doeff.effects.writer import slog
 from doeff.kleisli import KleisliProgram
@@ -105,9 +105,21 @@ def _call_site_from_program_frames(call_stack: list[Any] | tuple[Any, ...]) -> C
     fallback: CacheCallSite | None = None
 
     for frame in reversed(call_stack):
-        source_file = frame.get("source_file") if isinstance(frame, dict) else None
-        source_line = frame.get("source_line") if isinstance(frame, dict) else None
-        function_name = frame.get("function_name") if isinstance(frame, dict) else None
+        source_file: str | None = None
+        source_line: int | None = None
+        function_name: str | None = None
+
+        if isinstance(frame, dict):
+            kind = frame.get("kind")
+            if kind is not None and kind != "program_yield":
+                continue
+            source_file = frame.get("source_file")
+            source_line = frame.get("source_line")
+            function_name = frame.get("function_name")
+        else:
+            source_file = getattr(frame, "source_file", None)
+            source_line = getattr(frame, "source_line", None)
+            function_name = getattr(frame, "function_name", None)
 
         if not isinstance(source_file, str) or not isinstance(source_line, int):
             continue
@@ -310,7 +322,8 @@ def cache(
 
         @do
         def wrapper(*args, **kwargs) -> EffectGenerator[T]:
-            call_stack = yield ProgramCallStack()
+            context = yield GetExecutionContext()
+            call_stack = getattr(context, "active_chain", ())
             stack_frames: list[Any]
             if isinstance(call_stack, (list, tuple)):
                 stack_frames = list(call_stack)
