@@ -9,7 +9,7 @@ import os
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from doeff import Program, RunResult
 from doeff.analysis import EffectCallTree
@@ -374,9 +374,11 @@ def _render_run_output(context: ResolvedRunContext, execution: RunExecutionResul
 
 
 def _run_result_report(run_result: RunResult[Any], *, verbose: bool) -> str:
-    display = getattr(run_result, "display", None)
+    run_result_any = cast(Any, run_result)
+    display = run_result_any.display if hasattr(run_result_any, "display") else None
     if callable(display):
-        return display(verbose=verbose)
+        rendered = display(verbose=verbose)
+        return rendered if isinstance(rendered, str) else str(rendered)
 
     status = "ok" if run_result.is_ok() else "error"
     lines = [f"RunResult status: {status}"]
@@ -384,16 +386,16 @@ def _run_result_report(run_result: RunResult[Any], *, verbose: bool) -> str:
     if run_result.is_ok():
         lines.append(f"Value: {run_result.value!r}")
     else:
-        error_value = getattr(run_result, "error", None)
+        error_value = run_result_any.error if hasattr(run_result_any, "error") else None
         if isinstance(error_value, BaseException):
             lines.append(f"Error: {error_value!r}")
         else:
             lines.append("Error: unavailable")
 
     if verbose:
-        log_entries = getattr(run_result, "log", None)
-        trace_entries = getattr(run_result, "trace", None)
-        store = getattr(run_result, "raw_store", None)
+        log_entries = run_result_any.log if hasattr(run_result_any, "log") else None
+        trace_entries = run_result_any.trace if hasattr(run_result_any, "trace") else None
+        store = run_result_any.raw_store if hasattr(run_result_any, "raw_store") else None
         if isinstance(log_entries, list):
             lines.append(f"Log entries: {len(log_entries)}")
         if isinstance(trace_entries, list):
@@ -505,9 +507,13 @@ def _unwrap_run_result(result: RunResult[Any]) -> Any:
         try:
             from doeff.traceback import attach_doeff_traceback
 
+            result_any = cast(Any, result)
+            traceback_data = (
+                result_any.traceback_data if hasattr(result_any, "traceback_data") else None
+            )
             doeff_tb = attach_doeff_traceback(
                 exc,
-                traceback_data=getattr(result, "traceback_data", None),
+                traceback_data=traceback_data,
             )
             if doeff_tb is not None:
                 setattr(exc, "doeff_traceback", doeff_tb)
@@ -526,10 +532,18 @@ def _json_safe(value: Any) -> Any:
 
 
 def _call_tree_ascii(run_result: RunResult[Any]) -> str | None:
-    observations = getattr(run_result, "effect_observations", None)
+    run_result_any = cast(Any, run_result)
+    observations = (
+        run_result_any.effect_observations
+        if hasattr(run_result_any, "effect_observations")
+        else None
+    )
     if observations is None:
-        context = getattr(run_result, "context", None)
-        observations = getattr(context, "effect_observations", None)
+        context = run_result_any.context if hasattr(run_result_any, "context") else None
+        if context is not None:
+            observations = (
+                context.effect_observations if hasattr(context, "effect_observations") else None
+            )
     if not observations:
         return None
 
