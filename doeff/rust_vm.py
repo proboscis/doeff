@@ -383,7 +383,12 @@ def _core_handler_sentinels(vm: Any) -> list[Any]:
             vm.lazy_ask,
         ]
     except AttributeError as exc:
-        missing = [name for name in required if not hasattr(vm, name)]
+        missing: list[str] = []
+        for name in required:
+            try:
+                getattr(vm, name)
+            except AttributeError:
+                missing.append(name)
         missing_txt = ", ".join(missing)
         raise RuntimeError(
             f"Installed doeff_vm module is missing required handler sentinels: {missing_txt}"
