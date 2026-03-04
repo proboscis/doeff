@@ -47,6 +47,21 @@ rules:
       include:
         - packages/
 
+  - id: no-runresult-hasattr-duck-typing
+    languages: [python]
+    severity: ERROR
+    message: >
+      RunResult narrowing must use typed checks (for example isinstance(..., RunResult)),
+      not hasattr(..., "is_ok"/"value") duck-typing fallbacks.
+    pattern-either:
+      - pattern: hasattr($X, "is_ok")
+      - pattern: hasattr($X, "value")
+    paths:
+      include:
+        - /doeff/__main__.py
+        - /packages/doeff-flow/src/doeff_flow/trace.py
+        - /packages/doeff-conductor/src/doeff_conductor/api.py
+
   - id: no-raise-on-unknown-effect-in-handler
     languages: [python]
     severity: WARNING

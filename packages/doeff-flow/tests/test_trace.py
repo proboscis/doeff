@@ -133,6 +133,24 @@ class TestWriteTerminalTrace:
         assert entries[0]["status"] == "failed"
         assert "ValueError" in entries[0]["error"]
 
+    def test_non_run_result_with_is_ok_method_is_treated_as_plain_value(self, tmp_path):
+        class DuckResultLike:
+            value = "inner-value"
+
+            def is_ok(self) -> bool:
+                return False
+
+            def __repr__(self) -> str:
+                return "DuckResultLike(outer-value)"
+
+        write_terminal_trace("terminal-duck", tmp_path, DuckResultLike())
+
+        entries = _read_trace_entries(tmp_path, "terminal-duck")
+        assert len(entries) == 1
+        assert entries[0]["status"] == "completed"
+        assert entries[0]["result"] == "DuckResultLike(outer-value)"
+        assert entries[0]["error"] is None
+
 
 class TestRunWorkflow:
     """Tests for the run_workflow wrapper."""
