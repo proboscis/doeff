@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from doeff import RunResult
+from doeff.rust_vm import RunResult as VmRunResult
 
 
 def get_default_trace_dir() -> Path:
@@ -205,7 +205,7 @@ def write_terminal_trace(
     error = None
     result_repr = None
 
-    if isinstance(run_result, RunResult):
+    if isinstance(run_result, VmRunResult):
         is_ok = bool(run_result.is_ok())
         if is_ok:
             try:

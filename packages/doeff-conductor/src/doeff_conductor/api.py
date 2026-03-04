@@ -124,7 +124,8 @@ class ConductorAPI:
             self._save_workflow(handle)
 
             # Execute the workflow
-            from doeff import Effect, Pass, RunResult, default_handlers, do, run
+            from doeff import Effect, Pass, default_handlers, do, run
+            from doeff.rust_vm import RunResult as VmRunResult
 
             # Build kwargs
             kwargs = params or {}
@@ -197,7 +198,7 @@ class ConductorAPI:
                 program,
                 handlers=[conductor_handler, *default_handlers()],
             )
-            result_value = result.value if isinstance(result, RunResult) else result
+            result_value = result.value if isinstance(result, VmRunResult) else result
 
             # Update workflow status
             handle = WorkflowHandle(
