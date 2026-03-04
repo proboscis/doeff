@@ -117,9 +117,12 @@ def _call_site_from_program_frames(call_stack: list[Any] | tuple[Any, ...]) -> C
             source_line = frame.get("source_line")
             function_name = frame.get("function_name")
         else:
-            source_file = getattr(frame, "source_file", None)
-            source_line = getattr(frame, "source_line", None)
-            function_name = getattr(frame, "function_name", None)
+            try:
+                source_file = frame.source_file
+                source_line = frame.source_line
+                function_name = frame.function_name
+            except AttributeError:
+                continue
 
         if not isinstance(source_file, str) or not isinstance(source_line, int):
             continue
