@@ -256,6 +256,17 @@ rules:
         - "**/packages/doeff-vm/src/handler.rs"
         - "**/packages/doeff-vm/src/scheduler.rs"
 
+  - id: no-state-handler-take-unwrap
+    pattern: $X.take().unwrap()
+    message: >
+      BANNED: StateHandler Modify resume invariants must use explicit expect messages,
+      not ambiguous Option::unwrap panic text. See HANDLER-UNWRAP-SAFETY-001.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - "**/packages/doeff-core-effects/src/handlers/mod.rs"
+
   - id: no-python-effect-class-shadowing
     pattern-either:
       - pattern: |
