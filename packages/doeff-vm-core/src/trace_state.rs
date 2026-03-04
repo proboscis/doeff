@@ -33,6 +33,7 @@ struct ActiveChainFrameState {
     function_name: String,
     source_file: String,
     source_line: u32,
+    args_repr: Option<String>,
     sub_program_repr: String,
     handler_kind: Option<HandlerKind>,
 }
@@ -267,6 +268,8 @@ impl TraceState {
         });
     }
 
+    // TODO(TRACE-CAPTURE-LOG-SEPARATION follow-up): remove transient CaptureEvent
+    // construction in emit_* paths and mutate active_chain_state directly.
     fn apply_capture_event(&mut self, event: CaptureEvent) {
         Self::apply_active_chain_event(&mut self.active_chain_state, &event);
     }
@@ -629,7 +632,7 @@ impl TraceState {
                 function_name: frame.function_name.clone(),
                 source_file: frame.source_file.clone(),
                 source_line: frame.source_line,
-                args_repr: None,
+                args_repr: frame.args_repr.clone(),
             });
         }
 
@@ -758,7 +761,7 @@ impl TraceState {
                 function_name,
                 source_file,
                 source_line,
-                args_repr: _,
+                args_repr,
                 program_call_repr,
                 handler_kind,
             } => {
@@ -767,6 +770,7 @@ impl TraceState {
                     function_name: function_name.clone(),
                     source_file: source_file.clone(),
                     source_line: *source_line,
+                    args_repr: args_repr.clone(),
                     sub_program_repr: program_call_repr
                         .clone()
                         .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
@@ -806,9 +810,7 @@ impl TraceState {
                         }
                     }
                 }
-                if !state.dispatch_order.contains(dispatch_id) {
-                    state.dispatch_order.push(*dispatch_id);
-                }
+                state.dispatch_order.push(*dispatch_id);
 
                 state.dispatches.insert(
                     *dispatch_id,
@@ -1047,6 +1049,9 @@ impl TraceState {
             .find(|entry| entry.frame_id == metadata.frame_id)
         {
             existing.source_line = line;
+            if existing.args_repr.is_none() {
+                existing.args_repr = metadata.args_repr.clone();
+            }
             if existing.sub_program_repr == MISSING_SUB_PROGRAM {
                 if let Some(repr) = Self::program_call_repr(metadata) {
                     existing.sub_program_repr = repr;
@@ -1070,6 +1075,7 @@ impl TraceState {
             function_name: metadata.function_name.clone(),
             source_file: metadata.source_file.clone(),
             source_line: line,
+            args_repr: metadata.args_repr.clone(),
             sub_program_repr: Self::program_call_repr(metadata)
                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
             handler_kind: *handler_kind,
@@ -1215,6 +1221,7 @@ impl TraceState {
                             function_name: metadata.function_name.clone(),
                             source_file: metadata.source_file.clone(),
                             source_line: line,
+                            args_repr: metadata.args_repr.clone(),
                             sub_program_repr: Self::program_call_repr(metadata)
                                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
                             handler_kind: *handler_kind,
