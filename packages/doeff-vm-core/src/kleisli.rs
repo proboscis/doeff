@@ -346,7 +346,22 @@ impl PyKleisli {
             Value::Continuation(k) => Bound::new(py, PyK::from_cont_id(k.cont_id))
                 .map(|obj| obj.into_any())
                 .map_err(Self::map_pyerr),
-            _ => value.to_pyobject(py).map_err(Self::map_pyerr),
+            Value::Python(_)
+            | Value::Unit
+            | Value::Int(_)
+            | Value::String(_)
+            | Value::Bool(_)
+            | Value::None
+            | Value::Handlers(_)
+            | Value::Kleisli(_)
+            | Value::Task(_)
+            | Value::Promise(_)
+            | Value::ExternalPromise(_)
+            | Value::CallStack(_)
+            | Value::Trace(_)
+            | Value::Traceback(_)
+            | Value::ActiveChain(_)
+            | Value::List(_) => value.to_pyobject(py).map_err(Self::map_pyerr),
         }
     }
 }
