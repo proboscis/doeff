@@ -11,17 +11,8 @@ from typing import TypeVar, cast
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff import (
-    Effect,
-    Program,
-    RunResult,
-    WithHandler,
-    WithIntercept,
-    async_run,
-    default_async_handlers,
-    do,
-)
-from doeff.effects import AskEffect, GraphAnnotateEffect, GraphStepEffect, Pure
+from doeff import Effect, Program, RunResult, WithHandler, async_run, default_async_handlers, do
+from doeff.effects import AskEffect, GraphAnnotateEffect, GraphStepEffect, Intercept, Pure
 from doeff_pinjected.effects import PinjectedResolve
 from doeff_pinjected.handlers import production_handlers
 
@@ -62,8 +53,8 @@ def _program_with_dependency_interception(
         return prog.intercept(_transform)
 
     # Compatibility fallback for runtimes where Program lacks `.intercept()`.
-    @do
-    def _compat_transform(effect: Effect) -> Effect | Program:
+    # Intercept(...) expects None for the "delegate unchanged" case.
+    def _compat_transform(effect: Effect) -> Effect | Program | None:
         if isinstance(effect, AskEffect):
             ask_effect = cast(AskEffect, effect)
             key = ask_effect.key
@@ -71,9 +62,9 @@ def _program_with_dependency_interception(
             return PinjectedResolve(key=key)
         if isinstance(effect, (GraphStepEffect, GraphAnnotateEffect)):
             return Pure(None)
-        return effect
+        return None
 
-    return WithIntercept(_compat_transform, prog)
+    return Intercept(prog, _compat_transform)
 
 
 def program_to_injected(prog: Program[T]) -> Injected[T]:
