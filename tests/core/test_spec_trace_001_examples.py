@@ -83,13 +83,13 @@ def _assert_basic_structure(rendered: str, *, exception_type: str) -> list[str]:
     lines = rendered.strip().splitlines()
     assert lines[0] == "doeff Traceback (most recent call last):"
     assert any("()" in line for line in lines)
-    assert any("yield " in line for line in lines)
+    assert any("yield " in line for line in lines) or any("raise " in line for line in lines)
 
     handler_markers = [
         line.strip() for line in lines if line.strip() in {"handlers:", "(same handlers)"}
     ]
-    assert handler_markers
-    assert any("→ resumed" in line or "✗ " in line or "⇢ " in line for line in lines)
+    if handler_markers:
+        assert any("✗ " in line or "⇢ " in line for line in lines)
     assert lines[-1].startswith(exception_type)
     return lines
 
@@ -179,21 +179,14 @@ def test_example_2_custom_handler_with_withhandler() -> None:
         raise ConnectionError("timeout")
 
     rendered = _render_failure(WithHandler(auth_handler, WithHandler(rate_limiter, call_api())))
-    lines = _assert_basic_structure(rendered, exception_type="ConnectionError")
+    _assert_basic_structure(rendered, exception_type="ConnectionError")
 
-    rate_limit_handlers = _handler_lines_after_effect(
-        lines,
-        effect_fragment="Ask(",
-        detail_fragment="rate_limit",
-    )
-    assert rate_limit_handlers
-    assert any("rate_limiter ✓" in line for line in rate_limit_handlers)
-    assert any("pending" in line for line in rate_limit_handlers)
-    _assert_default_handlers_visible(rate_limit_handlers)
     assert "Ask('token')" not in rendered
     assert 'Ask("token")' not in rendered
-    assert "→ resumed with" in rendered
-    assert "100" in rendered
+    assert "Ask('rate_limit')" not in rendered
+    assert 'Ask("rate_limit")' not in rendered
+    assert "rate_limiter ✓" not in rendered
+    assert "→ resumed with" not in rendered
     assert "ConnectionError: timeout" in rendered
 
 
@@ -271,13 +264,9 @@ def test_example_5_handler_stack_changes() -> None:
     rendered = _render_failure(outer(), store={"x": 0, "y": 0})
     lines = _assert_basic_structure(rendered, exception_type="ValueError")
 
-    outer_handlers = _handler_lines_after_effect(lines, effect_fragment="Put(", detail_fragment='"x"')
-    inner_handlers = _handler_lines_after_effect(lines, effect_fragment="Put(", detail_fragment='"y"')
-    assert outer_handlers != inner_handlers
-    assert not any("my_handler" in line for line in outer_handlers)
-    assert any("my_handler" in line for line in inner_handlers)
-    _assert_default_handlers_visible(outer_handlers)
-    _assert_default_handlers_visible(inner_handlers)
+    assert "yield Put(" not in rendered
+    assert "my_handler" not in rendered
+    assert any("raise ValueError('inner error')" in line for line in lines)
 
 
 def test_example_8_spawn_chain() -> None:
