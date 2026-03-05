@@ -283,56 +283,48 @@ def cancel_and_join():
     return joined.value
 ```
 
-## Intercept
+## WithIntercept
 
-`Intercept` transforms effects yielded by a program in a scoped way. The runtime does this through an
-`InterceptFrame` pushed onto the continuation stack.
+`WithIntercept` is the canonical interception primitive. It observes or rewrites yielded effects
+within a scoped subtree (including child dispatch in that scope).
 
-```python
-program.intercept(transform)
-# same as:
-Intercept(program, transform)
-```
-
-### InterceptFrame Transform Contract
+### Interceptor Contract
 
 ```python
-from doeff import Effect, Program
+from doeff import Effect, Program, do
 
-def transform(effect: Effect) -> Effect | Program | None:
+@do
+def interceptor(effect: Effect) -> Effect | Program:
     ...
 ```
 
-- `None`: pass through to the next transform (or the original effect).
-- `Effect`: substitute with that effect (it is not re-transformed by the same `InterceptFrame`).
-- `Program`: replace the effect by executing that program under the current intercept scope.
-- First non-`None` transform wins.
-- If a transform raises an exception, that transform exception propagates and
-  Intercept evaluation fails for that step.
-- Raised exceptions from the intercepted program are not rewritten by `Intercept`; they bubble through
-  the `InterceptFrame` unchanged.
+- Return the original effect to pass through unchanged.
+- Return a replacement `Effect` or `Program` to rewrite that dispatch step.
+- If the interceptor raises, that error propagates.
+- Program exceptions inside the intercepted subtree still propagate unless wrapped (for example by `Try`).
 
 ### Child Propagation
 
-`InterceptFrame` is inherited by child execution contexts:
+`WithIntercept` applies to scoped child execution contexts:
 
-- `Gather` branches run under the parent intercept scope.
-- `Spawn` tasks (including background tasks) run under the parent intercept scope.
+- `Gather` branches run under the intercept scope.
+- `Spawn` tasks created inside the scope inherit the scope.
 
-In parallel contexts, transform observation order is not guaranteed.
+In parallel contexts, observation order is not guaranteed.
 
 ```python
-from doeff import Ask, AskEffect, Gather, Intercept, Program, Spawn, do
+from doeff import Ask, AskEffect, Gather, Spawn, WithIntercept, do
 
 @do
 def fallback_user():
     value = yield Ask("fallback_user")
     return f"user:{value}"
 
-def transform(effect):
+@do
+def interceptor(effect):
     if isinstance(effect, AskEffect) and effect.key == "user":
-        return fallback_user()  # Program replacement
-    return None
+        return fallback_user()
+    return effect
 
 @do
 def child():
@@ -342,17 +334,13 @@ def child():
 def run_with_intercept():
     t1 = yield Spawn(child())
     t2 = yield Spawn(child())
-    return (yield Intercept(Gather(t1, t2), transform))
+    return (yield WithIntercept(interceptor, Gather(t1, t2), types=(AskEffect,), mode="include"))
 ```
 
-### Chained Intercepts
+### Nested Interceptors
 
 ```python
-program.intercept(f).intercept(g)
-# per yielded effect:
-# 1) try f
-# 2) if f returns None, try g
-# 3) if both return None, run original effect
+WithIntercept(outer, WithIntercept(inner, program(), types=(), mode="exclude"))
 ```
 
 ## Custom Control Effects with Frames
@@ -461,16 +449,16 @@ This does not require adding `__interpreter__` to your environment.
 - Skip `ReleaseSemaphore` on error paths
 - Use huge permit counts as a substitute for backpressure design
 
-### When to Use Intercept
+### When to Use WithIntercept
 
 **DO:**
 - Rewrite or short-circuit selected effects in a scoped subtree
 - Inject fallback programs for missing data or policy checks
-- Layer transforms with clear first-match precedence
+- Use `types`/`mode` filters to scope observation cost
 
 **DON'T:**
-- Assume deterministic transform order across parallel child effects
-- Return replacement programs that recursively trigger the same transform without a stop condition
+- Assume deterministic observation order across parallel child effects
+- Return replacement programs that recursively trigger the same interceptor without a stop condition
 
 ## Summary
 
@@ -480,7 +468,7 @@ This does not require adding `__interpreter__` to your environment.
 | `Spawn(prog)` | Background execution | Non-blocking tasks |
 | `Race(*waitables)` | First-completion wait | Fastest-response selection |
 | `task.cancel()` | Cooperative task cancellation | Stop non-winning/background work |
-| `Intercept(prog, *transforms)` | Scoped effect transformation | Policy injection, effect rewriting |
+| `WithIntercept(f, expr, types, mode)` | Scoped effect transformation | Policy injection, tracing, effect rewriting |
 | `Modify(key, fn)` | Atomic read-modify-write | Shared-state updates |
 | `CreateSemaphore / AcquireSemaphore / ReleaseSemaphore` | Cooperative concurrency limit | Rate limiting, mutex, pools |
 | `Delay / GetTime / WaitUntil` | Runtime-aware time control | Time-based workflows |

@@ -58,7 +58,6 @@ from .graph import (
     graph,
 )
 from .graph import capture as capture_graph
-from .intercept import Intercept
 from .promise import (
     CompletePromise,
     CompletePromiseEffect,
@@ -178,7 +177,6 @@ __all__ = [
     "GraphCaptureEffect",
     "GraphSnapshotEffect",
     "GraphStepEffect",
-    "Intercept",
     "Listen",
     "Local",
     "LocalEffect",

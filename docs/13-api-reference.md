@@ -515,30 +515,28 @@ value = yield Pure({"status": "ok"})
 
 ---
 
-### Intercept(program, transform)
+### WithIntercept(f, expr, types=None, mode="include")
 
-Run a program under effect interception. Each yielded effect is offered to `transform`.
+Run a scoped program under interception. Each matched yielded value is offered to `f`.
 
 ```python
+@do
 def transform(effect):
     if isinstance(effect, AskEffect) and effect.key == "timeout":
         return Pure(30)
-    return None
+    return effect
 
-result = yield Intercept(worker(), transform)
+result = yield WithIntercept(transform, worker(), types=(AskEffect,), mode="include")
 ```
 
 **Signature:**
-`Intercept(program: Program[T], transform: Callable[[Effect], Effect | Program | None])`
+`WithIntercept(f: HandlerFn, expr: DoExpr[T], types: Iterable[type] | None = None, mode: str = "include")`
 
-**Transform contract:**
+**Interceptor contract:**
 
-- Return `None` to pass through unchanged.
-- Return an `Effect` to substitute that effect.
-- Return a `Program` to execute replacement logic.
-
-For multiple transforms, pass additional transform functions to `Intercept(...)`; first non-`None`
-result wins.
+- Return the original effect to pass through unchanged.
+- Return an `Effect` or `Program` to replace that step.
+- Interceptor errors propagate.
 
 Interception propagates to child execution contexts (for example `Gather`, `Try`, and `Spawn`).
 
@@ -888,7 +886,7 @@ path = run(write_graph_html(graph, "output.html"), handlers=default_handlers()).
 | **Writer** | Tell, Listen, StructuredLog, slog |
 | **Async/Concurrency** | Await, Spawn, Wait, Gather, Race, Task.cancel, TaskCancelledError |
 | **Semaphore** | CreateSemaphore, AcquireSemaphore, ReleaseSemaphore |
-| **Control** | Pure, Intercept |
+| **Control** | Pure, WithIntercept |
 | **Error** | Try, Ok, Err |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
@@ -915,7 +913,7 @@ from doeff.effects import TaskCancelledError  # raised on Wait/Gather/Race for c
 from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
 
 # Control
-from doeff import Pure, Intercept
+from doeff import Pure, WithIntercept
 
 # Error handling
 from doeff import Try, Ok, Err
