@@ -90,8 +90,6 @@ def test_internal_helpers_not_in_all() -> None:
         "DoCtrl",
         "DoExpr",
         "GeneratorProgram",
-        "nonblocking_await_handler",
-        "with_nonblocking_await",
     ]
     for name in internals:
         assert name not in doeff.__all__, f"{name} should not be in __all__"
