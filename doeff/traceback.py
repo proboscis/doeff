@@ -395,6 +395,28 @@ else:
                 return f"⇢ {result.handler_name} transferred to {result.target_repr}"
             return "⇢ active"
 
+        def _is_final_exception_type(self, exception_repr: str) -> bool:
+            rendered_type = exception_repr.split("(", 1)[0].strip()
+            if not rendered_type:
+                # Keep ambiguous rows visible rather than hiding potentially relevant context.
+                return True
+
+            final_type = type(self.exception)
+            final_name = final_type.__name__
+            final_qualified = f"{final_type.__module__}.{final_type.__qualname__}"
+            return (
+                rendered_type in (final_name, final_qualified)
+                or rendered_type.endswith(f".{final_name}")
+            )
+
+        def _should_render_effect_entry(self, entry: EffectYield) -> bool:
+            result = entry.result
+            if isinstance(result, EffectResultResumed):
+                return False
+            if isinstance(result, EffectResultThrew):
+                return self._is_final_exception_type(result.exception_repr)
+            return True
+
         @staticmethod
         def _format_spawn_boundary(boundary: SpawnBoundary) -> str:
             if boundary.spawn_site is not None:
@@ -424,6 +446,8 @@ else:
                     continue
 
                 if isinstance(entry, EffectYield):
+                    if not self._should_render_effect_entry(entry):
+                        continue
                     if (
                         previous_handler_stack is not None
                         and entry.handler_stack == previous_handler_stack
