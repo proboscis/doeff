@@ -6,7 +6,7 @@ import math
 import time
 from collections.abc import Callable
 from io import BytesIO
-from typing import Any
+from typing import Any, cast
 
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
@@ -31,7 +31,11 @@ from doeff_gemini.effects import (
     GeminiStreamingChat,
     GeminiStructuredOutput,
 )
-from doeff_gemini.structured_llm import edit_image__gemini, structured_llm__gemini
+from doeff_gemini.structured_llm import (
+    GeminiContentPart,
+    edit_image__gemini,
+    structured_llm__gemini,
+)
 
 ProtocolHandler = Callable[[Any, Any], Any]
 GEMINI_MODEL_PREFIXES = ("gemini-",)
@@ -62,6 +66,7 @@ _ALLOWED_ASPECT_RATIOS = {
     "16:9",
     "21:9",
 }
+_MEDIA_PART_TYPES = {"video", "image", "audio", "file"}
 
 
 def _is_gemini_image_model(model: str) -> bool:
@@ -102,17 +107,20 @@ def _is_media_content_part(content: dict[str, Any]) -> bool:
         return True
 
     uri_value = content.get("uri")
-    return bool(isinstance(uri_value, str) and uri_value)
+    if isinstance(uri_value, str) and uri_value:
+        media_type = content.get("type")
+        return isinstance(media_type, str) and media_type.lower() in _MEDIA_PART_TYPES
+    return False
 
 
-def _content_to_text_and_parts(content: Any) -> tuple[str, list[dict[str, Any]]]:  # noqa: PLR0911
+def _content_to_text_and_parts(content: Any) -> tuple[str, list[GeminiContentPart]]:  # noqa: PLR0911
     if content is None:
         return "", []
     if isinstance(content, str):
         return content, []
     if isinstance(content, dict):
         if _is_media_content_part(content):
-            return "", [dict(content)]
+            return "", [cast(GeminiContentPart, dict(content))]
 
         text = content.get("text")
         if isinstance(text, str):
@@ -123,7 +131,7 @@ def _content_to_text_and_parts(content: Any) -> tuple[str, list[dict[str, Any]]]
             return str(content), []
     if isinstance(content, list):
         text_parts: list[str] = []
-        content_parts: list[dict[str, Any]] = []
+        content_parts: list[GeminiContentPart] = []
         for part in content:
             text_value, part_content_parts = _content_to_text_and_parts(part)
             if text_value:
@@ -133,9 +141,11 @@ def _content_to_text_and_parts(content: Any) -> tuple[str, list[dict[str, Any]]]
     return str(content), []
 
 
-def _messages_to_prompt_and_parts(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+def _messages_to_prompt_and_parts(
+    messages: list[dict[str, Any]],
+) -> tuple[str, list[GeminiContentPart]]:
     lines: list[str] = []
-    content_parts: list[dict[str, Any]] = []
+    content_parts: list[GeminiContentPart] = []
     for message in messages:
         role = str(message.get("role", "user"))
         content_text, message_parts = _content_to_text_and_parts(message.get("content"))
