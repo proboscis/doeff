@@ -1,8 +1,9 @@
-"""Regression coverage for Await(asyncio.Semaphore) + Spawn/Gather under sync run().
+"""Regression coverage for loop-affine asyncio primitives under doeff run modes.
 
-Historically this pattern deadlocked because semaphore.acquire() ran on the
-background asyncio loop while semaphore.release() was invoked from the sync
-scheduler thread. This file locks in the fixed behavior.
+Await(asyncio.Semaphore.acquire()) in sync run() + Spawn/Gather is rejected
+with a RuntimeError and migration guidance to native semaphore effects.
+Under async_run(), the same pattern works correctly because awaitables execute
+on the caller's event loop.
 """
 
 from __future__ import annotations
@@ -114,13 +115,15 @@ class TestAwaitAsyncioSemaphoreDeadlock:
         assert result.is_ok(), f"Native semaphore should work: {result.display()}"
         assert result.value == [i * 2 for i in range(50)]
 
-    def test_asyncio_semaphore_deadlocks(self) -> None:
+    def test_asyncio_semaphore_raises_error(self) -> None:
         programs = [_worker(n=i) for i in range(50)]
         p = _throttled_gather_asyncio(programs, concurrency=10)
         result = _run_with_timeout(p)
 
-        assert result.is_ok(), f"Await(asyncio.Semaphore) should complete: {result.display()}"
-        assert result.value == [i * 2 for i in range(50)]
+        assert not result.is_ok(), "Expected RuntimeError for asyncio.Semaphore in sync mode"
+        assert isinstance(result.error, RuntimeError)
+        assert "not safe with sync run()" in str(result.error)
+        assert "CreateSemaphore" in str(result.error)
 
     @pytest.mark.asyncio
     async def test_asyncio_semaphore_works_in_async_mode(self) -> None:
