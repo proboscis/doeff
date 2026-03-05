@@ -823,28 +823,6 @@ rules:
   # LAYER BOUNDARIES
   # ---------------------------------------------------------------------------
 
-  - id: doeff-no-handler-definition-in-effects
-    patterns:
-      - pattern-inside: |
-          @do
-          def $FUNC(...):
-              ...
-      - metavariable-regex:
-          metavariable: $FUNC
-          regex: ".*_handler$"
-    paths:
-      include:
-        - "**/doeff/effects/"
-    message: |
-      Handlers must not be defined in doeff/effects/.
-      Effects define WHAT operations are available; handlers define HOW to execute them.
-      Move handler implementations to doeff/handlers/.
-    languages: [python]
-    severity: ERROR
-    metadata:
-      category: architecture
-      rationale: "EFFECTS-ORG-002: enforce effects/handlers separation"
-
   - id: doeff-no-handler-import-in-effects
     patterns:
       - pattern-inside: |
@@ -865,6 +843,41 @@ rules:
     metadata:
       category: architecture
       rationale: "Effects layer must not depend on handlers layer"
+
+  - id: doeff-no-handler-def-in-effects
+    patterns:
+      - pattern: |
+          @do
+          def $HANDLER_NAME(effect: $EFFECT_TYPE, k: $K_TYPE):
+              ...
+    paths:
+      include:
+        - "**/doeff/effects/"
+    message: |
+      Handler functions must not be defined in doeff/effects/.
+      Effects define WHAT operations are available (pure data).
+      Handlers define HOW to execute them (behavior).
+      Move this handler to doeff/handlers/ instead.
+      See EFFECTS-ORG-002 for the architectural decision.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Effects/handlers layer separation"
+
+  - id: doeff-no-handler-def-in-effects-untyped
+    pattern-regex: "(?s)@do\\s*\\ndef\\s+[A-Za-z_][A-Za-z0-9_]*\\(\\s*effect\\s*,\\s*k\\s*\\):"
+    paths:
+      include:
+        - "**/doeff/effects/"
+    message: |
+      Handler functions must not be defined in doeff/effects/.
+      Move this handler to doeff/handlers/ instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Effects/handlers layer separation"
 
   - id: doeff-no-runtime-import-in-effects
     patterns:
