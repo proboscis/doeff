@@ -54,13 +54,20 @@ impl DebugState {
         self.step_counter += 1;
     }
 
-    pub(crate) fn truncate_repr(mut text: String) -> String {
+    pub(crate) fn truncate_repr(text: String) -> String {
         const MAX_REPR_LEN: usize = 200;
-        if text.len() > MAX_REPR_LEN {
-            text.truncate(MAX_REPR_LEN);
-            text.push_str("...");
+        if text.len() <= MAX_REPR_LEN {
+            return text;
         }
-        text
+
+        let mut end = MAX_REPR_LEN;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+
+        let mut truncated = text[..end].to_string();
+        truncated.push_str("...");
+        truncated
     }
 
     pub(crate) fn value_repr(value: &Value) -> Option<String> {
