@@ -163,12 +163,12 @@ This section summarizes the composition guarantees from
 
 ### Effect Combination Matrix
 
-| Outer / Inner | Ask | Get | Put | Tell | Try | Local | Listen | Intercept | Gather |
+| Outer / Inner | Ask | Get | Put | Tell | Try | Local | Listen | WithIntercept | Gather |
 |---------------|-----|-----|-----|------|------|-------|--------|-----------|--------|
 | **Local**     | Scoped | Propagates | Propagates | Propagates | Propagates | Scoped | Propagates | Propagates | Propagates |
 | **Listen**    | - | - | - | Captured* | - | - | Nested | - | All captured* |
 | **Try**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
-| **Intercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
+| **WithIntercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
 | **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
 
 Matrix key:
@@ -197,7 +197,7 @@ The following laws from SPEC-EFF-100 apply to all compositions:
 3. **Listen Capture Law**: `Listen` captures `Tell` output ONLY on success; on error it propagates the error.
 4. **Try Non-Rollback Law**: `Try` does NOT roll back state on error.
 5. **Try Environment Restoration Law**: `Try` restores environment context, but not state.
-6. **Intercept Transformation Law**: `Intercept` transforms effects in nested programs, including `Gather` children.
+6. **WithIntercept Transformation Law**: `WithIntercept` transforms effects in nested programs, including `Gather` children.
 7. **Gather Environment Inheritance Law**: `Gather` children inherit parent environment snapshot at invocation.
 8. **Gather Store Sharing Law**: Store sharing under `Gather` is runtime-dependent.
 9. **Gather Error Propagation Law**: First child error propagates; sibling behavior is runtime-dependent.
