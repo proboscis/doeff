@@ -697,7 +697,68 @@ def test_format_default_handler_throws() -> None:
     )
 
     rendered = tb.format_default()
-    assert "✗ h raised RuntimeError('handler exploded')" in rendered
+    assert "✗ h raised RuntimeError" in rendered
+    assert "✗ h raised RuntimeError('handler exploded')" not in rendered
+
+
+def _render_throw_traceback(message: str) -> str:
+    tb = build_doeff_traceback(
+        RuntimeError(message),
+        [],
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "_lower_analyze_video",
+                "source_file": "video.py",
+                "source_line": 123,
+                "effect_repr": "ProbeAsset(...)",
+                "handler_stack": [
+                    {
+                        "handler_name": "probe_asset_handler",
+                        "handler_kind": "python",
+                        "status": "threw",
+                    }
+                ],
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "probe_asset_handler",
+                    "exception_repr": f"RuntimeError({message!r})",
+                },
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "probe_asset_handler",
+                "source_file": "probe.py",
+                "source_line": 62,
+                "exception_type": "RuntimeError",
+                "message": message,
+            },
+        ],
+    )
+    return tb.format_default()
+
+
+def test_traceback_intermediate_frames_show_type_only() -> None:
+    message = "yt-dlp metadata probe failed (exit 1): WARNING: [youtube] retry #3"
+    rendered = _render_throw_traceback(message)
+
+    throw_line = next(
+        line for line in rendered.splitlines() if "✗ probe_asset_handler raised " in line
+    )
+    assert throw_line.endswith("RuntimeError")
+    assert message not in throw_line
+
+
+def test_traceback_bottom_line_shows_full_message() -> None:
+    message = "yt-dlp metadata probe failed (exit 1): WARNING: [youtube] retry #3"
+    rendered = _render_throw_traceback(message)
+    assert rendered.splitlines()[-1] == f"RuntimeError: {message}"
+
+
+def test_traceback_exception_site_shows_full_message() -> None:
+    message = "yt-dlp metadata probe failed (exit 1): WARNING: [youtube] retry #3"
+    rendered = _render_throw_traceback(message)
+    assert f"raise RuntimeError({message!r})" in rendered
 
 
 def test_format_default_transfer_inline() -> None:
@@ -1004,7 +1065,8 @@ def test_format_default_shows_effect_yield_on_handler_throw() -> None:
     assert "yield Boom" in rendered
     assert "crash_handler ✗" in rendered
     assert "·" in rendered
-    assert "raised RuntimeError('handler exploded')" in rendered
+    assert "raised RuntimeError" in rendered
+    assert "raised RuntimeError('handler exploded')" not in rendered
     # With typed handler metadata, crash_handler now appears as a proper frame
     assert "crash_handler" in rendered
     assert "/doeff/do.py:52" not in rendered

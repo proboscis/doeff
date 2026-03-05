@@ -390,7 +390,7 @@ else:
             if isinstance(result, EffectResultResumed):
                 return f"→ resumed with {self._truncate_result_repr(result.value_repr)}"
             if isinstance(result, EffectResultThrew):
-                return f"✗ {result.handler_name} raised {result.exception_repr}"
+                return f"✗ {result.handler_name} raised {result.exception_type}"
             if isinstance(result, EffectResultTransferred):
                 return f"⇢ {result.handler_name} transferred to {result.target_repr}"
             return "⇢ active"
