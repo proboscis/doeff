@@ -1497,7 +1497,7 @@ def _intercept_value(value: Any, transform: Callable[[Effect], "Effect | Program
     elif isinstance(value, dict):
         result = _intercept_mapping(value, transform)
     elif isinstance(value, tuple):
-        # Intercept tuple items directly (inlined to avoid tuple return)
+        # Traverse tuple items directly (inlined to avoid tuple return)
         new_items = tuple(_intercept_value(item, transform) for item in value)
         result = new_items if new_items != value else value
     elif isinstance(value, list):

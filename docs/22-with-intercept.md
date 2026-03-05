@@ -22,7 +22,7 @@ Consider a writer handler that consumes `Tell`, and a handler_A that internally 
 
 The user program's `Tell` passes through the printer on its way up, so the printer sees it. But handler_A's `Tell` originates *above* the printer and goes further up — the printer is never in the path.
 
-This means `Intercept` (the existing Python-level mechanism) cannot implement cross-cutting concerns like "log every `Tell` in this subtree, regardless of who emits it." `WithIntercept` solves this by operating at the VM level, where it sees yields from handlers inside its scope.
+The legacy `Intercept` API was removed because it could not implement cross-cutting concerns like "log every `Tell` in this subtree, regardless of who emits it." `WithIntercept` solves this by operating at the VM level, where it sees yields from handlers inside its scope.
 
 ## API
 
@@ -74,7 +74,7 @@ The interceptor `log_all` sees each `Tell` as it passes through, records it, and
 
 ## Cross-Cutting Observation
 
-This is the key property that distinguishes `WithIntercept` from `Intercept`.
+This is the key property that distinguishes `WithIntercept` from legacy interception wrappers.
 
 When a handler inside the scope yields effects of its own, `WithIntercept` sees those too. This enables true cross-cutting observation — you get a complete trace of every effect in the subtree, not just the ones the user program directly yields.
 
@@ -126,7 +126,7 @@ run(observed_program, handlers=default_handlers)
 # seen == ["from-user", "handler:foo", "after-ping"]
 #                        ^^^^^^^^^^^
 #          This one comes from ping_handler, not user_program.
-#          Intercept would miss it. WithIntercept catches it.
+#          WithIntercept catches it because interception is VM-scoped.
 ```
 
 ## Type Filtering
@@ -154,7 +154,7 @@ WithIntercept(f, expr, types=(), mode="include")
 All effects fire `f` **except** those matching the listed types:
 
 ```python
-# Intercept everything EXCEPT Tell
+# Observe everything EXCEPT Tell
 WithIntercept(f, expr, types=(WriterTellEffect,), mode="exclude")
 ```
 
@@ -329,9 +329,9 @@ When `user_program` yields `Ping("x")`, the effect passes through the intercepto
 
 The only effects `f` does **not** see are its own yields (re-entrancy guard) and effects from completely unrelated dispatch chains.
 
-## WithIntercept vs Intercept
+## WithIntercept vs Legacy Intercept (Removed)
 
-| Aspect | `Intercept` | `WithIntercept` |
+| Aspect | Legacy `Intercept` (removed) | `WithIntercept` |
 |--------|-------------|-----------------|
 | Level | Python InterceptFrame | VM-level `DoCtrl` node |
 | Sees handler yields | No | Yes |
@@ -343,9 +343,7 @@ The only effects `f` does **not** see are its own yields (re-entrancy guard) and
 | Propagates to Gather/Spawn | Yes | Scoped to `expr` subtree |
 | Composability | First non-None transform wins | All layers compose independently |
 
-**When to use `Intercept`**: Simple effect substitution in user-level code where you don't need to see handler internals.
-
-**When to use `WithIntercept`**: Cross-cutting observation, tracing, auditing, or any case where handler-emitted effects must be visible.
+The legacy `Intercept` API is removed. Use `WithIntercept` for scoped interception.
 
 ## Best Practices
 
