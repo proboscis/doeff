@@ -62,6 +62,25 @@ rules:
         - /packages/doeff-flow/src/doeff_flow/trace.py
         - /packages/doeff-conductor/src/doeff_conductor/api.py
 
+  - id: doeff-pinjected-no-intercept
+    languages: [python]
+    severity: ERROR
+    message: >
+      doeff-pinjected must not import or call Intercept.
+      Use WithIntercept and return the original effect for passthrough cases.
+      Ref: ISSUE-PKG-030.
+    pattern-either:
+      - pattern: from doeff import Intercept
+      - pattern: from doeff import Intercept as $ALIAS
+      - pattern: from doeff.effects import Intercept
+      - pattern: from doeff.effects import Intercept as $ALIAS
+      - pattern-regex: '\bfrom\s+doeff(?:\.effects)?\s+import\s+[^\n#]*,\s*Intercept\b'
+      - pattern-regex: '(?s)\bfrom\s+doeff(?:\.effects)?\s+import\s*\((?:(?!\)).)*\bIntercept\b(?:(?!\)).)*\)'
+      - pattern: Intercept(...)
+    paths:
+      include:
+        - "**/packages/doeff-pinjected/src/**"
+
   - id: no-raise-on-unknown-effect-in-handler
     languages: [python]
     severity: WARNING
