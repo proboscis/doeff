@@ -3,20 +3,33 @@
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
+import os
 import random
 import textwrap
 import time
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any, Literal, TypeAlias
+from urllib.parse import unquote, urlparse
 
 import PIL.Image
 from pydantic import BaseModel, ValidationError
 
+try:
+    from typing import NotRequired, TypedDict
+except ImportError:  # pragma: no cover - Python 3.10 fallback
+    from typing_extensions import NotRequired, TypedDict
+
 from doeff import (
     Ask,
     Await,
+    CacheGet,
+    CacheLifecycle,
+    CachePut,
+    CacheStorage,
     EffectGenerator,
     Tell,
     Try,
@@ -35,6 +48,32 @@ class GeminiStructuredOutputError(ValueError):
         super().__init__(message)
         self.format_name = format_name
         self.raw_content = raw_content
+
+
+class LocalFileContentPart(TypedDict):
+    local_path: str
+    mime_type: NotRequired[str]
+    type: NotRequired[str]
+
+
+class FileUriContentPart(TypedDict):
+    file_uri: str
+    mime_type: NotRequired[str]
+    type: NotRequired[str]
+
+
+class UriContentPart(TypedDict):
+    uri: str
+    mime_type: NotRequired[str]
+    type: NotRequired[str]
+
+
+class TextContentPart(TypedDict):
+    text: str
+    type: NotRequired[str]
+
+
+GeminiContentPart: TypeAlias = LocalFileContentPart | FileUriContentPart | UriContentPart | TextContentPart
 
 
 def _stringify_for_log(content: Any, limit: int = 500) -> str:
@@ -59,6 +98,10 @@ _DEFAULT_JSON_FIX_MODEL = "gemini-2.5-pro"
 _DEFAULT_JSON_FIX_MAX_OUTPUT_TOKENS = 2048
 _RANDOM_BACKOFF_MIN_DELAY_SECONDS = 1.0
 _RANDOM_BACKOFF_MAX_DELAY_SECONDS = 30.0
+_GEMINI_FILE_UPLOAD_CACHE_PREFIX = "gemini_file_upload"
+_GEMINI_FILE_UPLOAD_TTL_SECONDS = 172800
+_GEMINI_FILE_POLL_INTERVAL_SECONDS = 1.0
+_GEMINI_FILE_MAX_POLL_ATTEMPTS = 120
 
 
 def _gemini_random_backoff(attempt: int, error: Exception | None) -> float:
@@ -215,21 +258,200 @@ def _extract_json_payload_from_response(response: Any) -> Any | None:
     return None
 
 
+def _gemini_file_cache_key(local_path: str) -> tuple[str, str]:
+    resolved = Path(local_path).expanduser().resolve()
+    stats = resolved.stat()
+    signature = f"{resolved.as_posix()}|{stats.st_mtime_ns}|{stats.st_size}"
+    digest = hashlib.sha256(signature.encode("utf-8")).hexdigest()
+    return (_GEMINI_FILE_UPLOAD_CACHE_PREFIX, digest)
+
+
+def _normalize_file_state(state: Any) -> str | None:
+    if state is None:
+        return None
+
+    if isinstance(state, str):
+        value = state
+    elif hasattr(state, "value"):
+        candidate = state.value
+        value = candidate if isinstance(candidate, str) else str(candidate)
+    elif hasattr(state, "name"):
+        value = str(state.name)
+    else:
+        value = str(state)
+
+    normalized = value.upper()
+    if "." in normalized:
+        normalized = normalized.split(".")[-1]
+    return normalized
+
+
+def _read_field(value: Any, field: str) -> Any | None:
+    if isinstance(value, Mapping):
+        return value.get(field)
+    if hasattr(value, field):
+        return getattr(value, field)
+    return None
+
+
+def _file_uri_to_local_path(file_uri: str) -> str:
+    parsed = urlparse(file_uri)
+    if parsed.scheme.lower() != "file":
+        raise ValueError(f"Unsupported file URI: {file_uri}")
+
+    decoded_path = unquote(parsed.path)
+    if parsed.netloc and parsed.netloc not in ("", "localhost"):
+        decoded_path = f"//{parsed.netloc}{decoded_path}"
+
+    if (
+        os.name == "nt"
+        and decoded_path.startswith("/")
+        and len(decoded_path) > 2
+        and decoded_path[2] == ":"
+    ):
+        decoded_path = decoded_path[1:]
+
+    return decoded_path
+
+
+@do
+def _cache_get_optional(key: Any) -> EffectGenerator[Any | None]:
+    @do
+    def _lookup() -> EffectGenerator[Any]:
+        return (yield CacheGet(key))
+
+    safe_result = yield Try(_lookup())
+    if safe_result.is_ok():
+        return safe_result.value
+    return None
+
+
+@do
+def _wait_for_file_active(async_client: Any, uploaded_file: Any) -> EffectGenerator[Any]:
+    current_file = uploaded_file
+
+    for _ in range(_GEMINI_FILE_MAX_POLL_ATTEMPTS):
+        state = _normalize_file_state(_read_field(current_file, "state"))
+        if state == "ACTIVE":
+            return current_file
+        if state == "FAILED":
+            raise ValueError("Gemini file upload failed and entered FAILED state")
+
+        file_name = _read_field(current_file, "name")
+        if not isinstance(file_name, str) or not file_name:
+            raise ValueError("Gemini file upload response is missing file name")
+
+        yield Await(asyncio.sleep(_GEMINI_FILE_POLL_INTERVAL_SECONDS))
+        current_file = yield Await(async_client.files.get(name=file_name))
+
+    raise TimeoutError("Timed out waiting for Gemini file upload to become ACTIVE")
+
+
+@do
+def _build_part_from_local_file(local_path: str, mime_type: str | None) -> EffectGenerator[Any]:
+    from google.genai import types
+
+    cache_key = _gemini_file_cache_key(local_path)
+    cached_entry = yield _cache_get_optional(cache_key)
+
+    if isinstance(cached_entry, Mapping):
+        cached_uri = cached_entry.get("uri")
+        if isinstance(cached_uri, str) and cached_uri:
+            resolved_mime_type = mime_type or cached_entry.get("mime_type")
+            if isinstance(resolved_mime_type, str) and resolved_mime_type:
+                return types.Part.from_uri(file_uri=cached_uri, mime_type=resolved_mime_type)
+            return types.Part.from_uri(file_uri=cached_uri)
+
+    client = yield get_gemini_client()
+    async_client = client.async_client
+
+    upload_kwargs: dict[str, Any] = {"file": local_path}
+    if isinstance(mime_type, str) and mime_type:
+        upload_kwargs["config"] = {"mime_type": mime_type}
+
+    uploaded_file = yield Await(async_client.files.upload(**upload_kwargs))
+    active_file = yield _wait_for_file_active(async_client, uploaded_file)
+
+    active_uri = _read_field(active_file, "uri")
+    if not isinstance(active_uri, str) or not active_uri:
+        raise ValueError("Gemini uploaded file is missing URI")
+
+    cache_payload = {
+        "name": _read_field(active_file, "name"),
+        "uri": active_uri,
+        "mime_type": _read_field(active_file, "mime_type") or mime_type,
+    }
+    yield CachePut(
+        cache_key,
+        cache_payload,
+        ttl=_GEMINI_FILE_UPLOAD_TTL_SECONDS,
+        lifecycle=CacheLifecycle.PERSISTENT,
+        storage=CacheStorage.DISK,
+    )
+
+    resolved_mime_type = mime_type or cache_payload.get("mime_type")
+    if isinstance(resolved_mime_type, str) and resolved_mime_type:
+        return types.Part.from_uri(file_uri=active_uri, mime_type=resolved_mime_type)
+    return types.Part.from_uri(file_uri=active_uri)
+
+
+@do
+def _content_part_to_gemini_part(content_part: GeminiContentPart) -> EffectGenerator[Any | None]:
+    from google.genai import types
+
+    local_path = content_part.get("local_path")
+    if isinstance(local_path, str) and local_path:
+        return (yield _build_part_from_local_file(local_path, content_part.get("mime_type")))
+
+    file_uri = content_part.get("file_uri")
+    if not isinstance(file_uri, str) or not file_uri:
+        uri_value = content_part.get("uri")
+        if isinstance(uri_value, str) and uri_value:
+            file_uri = uri_value
+
+    if isinstance(file_uri, str) and file_uri:
+        mime_type = content_part.get("mime_type")
+        if file_uri.startswith("file://"):
+            local_uri_path = _file_uri_to_local_path(file_uri)
+            return (yield _build_part_from_local_file(local_uri_path, mime_type))
+        if isinstance(mime_type, str) and mime_type:
+            return types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
+        return types.Part.from_uri(file_uri=file_uri)
+
+    text_value = content_part.get("text")
+    if isinstance(text_value, str) and text_value:
+        return types.Part.from_text(text=text_value)
+
+    return None
+
+
 @do
 def build_contents(
     text: str,
     images: list["PIL.Image.Image"] | None = None,
+    content_parts: list[GeminiContentPart] | None = None,
 ) -> EffectGenerator[list[Any]]:
     """Prepare the list of :mod:`google.genai` contents to feed into Gemini."""
     from google.genai import types
 
     image_count = len(images) if images else 0
-    yield Tell(f"Building Gemini prompt with {image_count} image(s)")
+    content_part_count = len(content_parts) if content_parts else 0
+    yield Tell(
+        f"Building Gemini prompt with {image_count} image(s) and {content_part_count} content part(s)"
+    )
     parts: list[Any] = []
     if images:
         for idx, image in enumerate(images):
             yield Tell(f"Embedding image {idx + 1}/{image_count}")
             parts.append(_image_to_part(image))
+
+    if content_parts:
+        for idx, content_part in enumerate(content_parts):
+            yield Tell(f"Embedding content part {idx + 1}/{content_part_count}")
+            converted = yield _content_part_to_gemini_part(content_part)
+            if converted is not None:
+                parts.append(converted)
+
     parts.append(types.Part.from_text(text=text))
     contents = [types.Content(role="user", parts=parts)]
     return contents
@@ -704,6 +926,7 @@ def structured_llm__gemini(
     text: str,
     model: str = "gemini-2.5-pro",
     images: list["PIL.Image.Image"] | None = None,
+    content_parts: list[GeminiContentPart] | None = None,
     response_format: type[BaseModel] | None = None,
     max_output_tokens: int = 2048,
     temperature: float = 0.7,
@@ -723,7 +946,7 @@ def structured_llm__gemini(
     client = yield get_gemini_client()
     async_client = client.async_client
 
-    contents = yield build_contents(text=text, images=images)
+    contents = yield build_contents(text=text, images=images, content_parts=content_parts)
 
     generation_config = yield build_generation_config(
         temperature=temperature,
@@ -763,6 +986,7 @@ def structured_llm__gemini(
     request_payload = {
         "text": text,
         "images": images or [],
+        "content_parts": list(content_parts) if content_parts else [],
         "generation_config": {
             key: value for key, value in generation_config_payload.items() if value is not None
         },
@@ -772,6 +996,7 @@ def structured_llm__gemini(
         "operation": "generate_content",
         "model": model,
         "has_images": bool(images),
+        "has_content_parts": bool(content_parts),
         "candidate_count": candidate_count,
         "response_schema": response_format.__name__ if response_format else None,
     }
@@ -1064,6 +1289,11 @@ image_edit__gemini = edit_image__gemini
 
 
 __all__ = [
+    "FileUriContentPart",
+    "GeminiContentPart",
+    "LocalFileContentPart",
+    "TextContentPart",
+    "UriContentPart",
     "build_contents",
     "build_generation_config",
     "edit_image__gemini",
