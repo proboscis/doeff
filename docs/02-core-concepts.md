@@ -207,18 +207,14 @@ Handlers interpret effects with this shape:
 If a host handler returns an effect value, runtime normalizes it through `Perform(effect)`
 before continuing.
 
-## Intercept Transform Contract
+## WithIntercept Contract
 
-`Intercept(program, *transforms)` installs scoped transforms for yielded effects.
-Each transform is called with the current effect and may return:
+`WithIntercept(f, expr, types=None, mode="include")` installs scoped interception for yielded values.
+The interceptor `f` receives the matched yield and must return a `DoExpr`:
 
-- `None`: pass through to the next transform (or to normal effect handling if none match)
-- `Effect`: replace the original effect with that effect
-- `Program`: replace the original effect by running that program
-
-Transforms are evaluated in declaration order, and the first non-`None` result wins.
-This contract defines interception as effect-to-effect/program rewriting at the
-`Perform(effect)` boundary, not as a separate control-node family.
+- return the original effect/control value to pass through unchanged
+- return a different `Effect` or `Program` to replace dispatch for that step
+- `f` may yield effects itself; those yields skip the same interceptor layer (re-entrancy guard)
 
 ## Composition
 
