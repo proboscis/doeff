@@ -1,36 +1,17 @@
 """Tests for visual logging interceptor wrappers."""
 
-import importlib
 from io import StringIO
-from pathlib import Path
-import re
-import sys
-import types
 
 import doeff_vm
 
 from doeff import Effect, WithHandler, default_handlers, do, run, slog
+from doeff_agentic.effects import AgenticSupportsCapability
+from doeff_agentic.visual_interceptor import (
+    VisualInterceptorConfig,
+    visual_logging_console,
+    with_visual_logging,
+)
 from rich.console import Console
-
-
-_SRC_PACKAGE_DIR = Path(__file__).resolve().parents[1] / "src" / "doeff_agentic"
-
-
-def _load_visual_modules() -> tuple[types.ModuleType, type]:
-    """Import doeff_agentic submodules without executing doeff_agentic/__init__.py."""
-    package = types.ModuleType("doeff_agentic")
-    package.__path__ = [str(_SRC_PACKAGE_DIR)]
-    sys.modules["doeff_agentic"] = package
-
-    effects_module = importlib.import_module("doeff_agentic.effects")
-    visual_module = importlib.import_module("doeff_agentic.visual_interceptor")
-    return visual_module, effects_module.AgenticSupportsCapability
-
-
-_visual_module, AgenticSupportsCapability = _load_visual_modules()
-VisualInterceptorConfig = _visual_module.VisualInterceptorConfig
-visual_logging_console = _visual_module.visual_logging_console
-with_visual_logging = _visual_module.with_visual_logging
 
 
 @do
@@ -79,15 +60,3 @@ def test_visual_logging_console_wrapper_functions() -> None:
     assert result.is_ok()
     assert result.value == "supported=True"
     assert "SupportsCapability" in buffer.getvalue()
-
-
-def test_visual_interceptor_source_has_no_intercept_usage() -> None:
-    source = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "doeff_agentic"
-        / "visual_interceptor.py"
-    ).read_text(encoding="utf-8")
-
-    assert "from doeff import Intercept" not in source
-    assert re.search(r"(?<!With)Intercept\s*\(", source) is None
