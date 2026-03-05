@@ -1713,6 +1713,23 @@ rules:
     metadata:
       category: public-api-removed
 
+  - id: doeff-agentic-no-legacy-intercept
+    patterns:
+      - pattern-either:
+          - pattern-regex: 'from\s+doeff\s+import[^\n#]*\bIntercept\b'
+          - pattern: Intercept($X, ...)
+    paths:
+      include:
+        - "**/packages/doeff-agentic/src/**"
+    message: |
+      doeff-agentic must use WithIntercept(...) instead of legacy Intercept(...).
+      This preserves typed filtering and effectful interceptor flow expected by the VM.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: interceptor-migration
+      issue: ISSUE-AGENTIC-007
+
   - id: doeff-no-handler-map-run-helpers
     pattern-regex: '\b(run_with_handler_map|async_run_with_handler_map|_wrap_with_handler_map|merge_handler_maps)\b'
     paths:
