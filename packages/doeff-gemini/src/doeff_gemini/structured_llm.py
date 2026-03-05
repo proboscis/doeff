@@ -12,11 +12,16 @@ import textwrap
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 from urllib.parse import unquote, urlparse
 
 import PIL.Image
 from pydantic import BaseModel, ValidationError
+
+try:
+    from typing import NotRequired, TypedDict
+except ImportError:  # pragma: no cover - Python 3.10 fallback
+    from typing_extensions import NotRequired, TypedDict
 
 from doeff import (
     Ask,
@@ -43,6 +48,32 @@ class GeminiStructuredOutputError(ValueError):
         super().__init__(message)
         self.format_name = format_name
         self.raw_content = raw_content
+
+
+class LocalFileContentPart(TypedDict):
+    local_path: str
+    mime_type: NotRequired[str]
+    type: NotRequired[str]
+
+
+class FileUriContentPart(TypedDict):
+    file_uri: str
+    mime_type: NotRequired[str]
+    type: NotRequired[str]
+
+
+class UriContentPart(TypedDict):
+    uri: str
+    mime_type: NotRequired[str]
+    type: NotRequired[str]
+
+
+class TextContentPart(TypedDict):
+    text: str
+    type: NotRequired[str]
+
+
+GeminiContentPart: TypeAlias = LocalFileContentPart | FileUriContentPart | UriContentPart | TextContentPart
 
 
 def _stringify_for_log(content: Any, limit: int = 500) -> str:
@@ -257,8 +288,7 @@ def _normalize_file_state(state: Any) -> str | None:
 
 def _read_field(value: Any, field: str) -> Any | None:
     if isinstance(value, Mapping):
-        candidate = value.get(field)
-        return candidate
+        return value.get(field)
     if hasattr(value, field):
         return getattr(value, field)
     return None
@@ -297,27 +327,6 @@ def _cache_get_optional(key: Any) -> EffectGenerator[Any | None]:
 
 
 @do
-def _refresh_cached_upload(async_client: Any, cached_entry: Mapping[str, Any]) -> EffectGenerator[Any | None]:
-    cached_name = cached_entry.get("name")
-    if not isinstance(cached_name, str) or not cached_name:
-        return None
-
-    @do
-    def _fetch() -> EffectGenerator[Any]:
-        return (yield Await(async_client.files.get(name=cached_name)))
-
-    safe_result = yield Try(_fetch())
-    if safe_result.is_err():
-        return None
-
-    remote_file = safe_result.value
-    state = _normalize_file_state(_read_field(remote_file, "state"))
-    if state != "ACTIVE":
-        return None
-    return remote_file
-
-
-@do
 def _wait_for_file_active(async_client: Any, uploaded_file: Any) -> EffectGenerator[Any]:
     current_file = uploaded_file
 
@@ -345,22 +354,16 @@ def _build_part_from_local_file(local_path: str, mime_type: str | None) -> Effec
     cache_key = _gemini_file_cache_key(local_path)
     cached_entry = yield _cache_get_optional(cache_key)
 
+    if isinstance(cached_entry, Mapping):
+        cached_uri = cached_entry.get("uri")
+        if isinstance(cached_uri, str) and cached_uri:
+            resolved_mime_type = mime_type or cached_entry.get("mime_type")
+            if isinstance(resolved_mime_type, str) and resolved_mime_type:
+                return types.Part.from_uri(file_uri=cached_uri, mime_type=resolved_mime_type)
+            return types.Part.from_uri(file_uri=cached_uri)
+
     client = yield get_gemini_client()
     async_client = client.async_client
-
-    if isinstance(cached_entry, Mapping):
-        refreshed = yield _refresh_cached_upload(async_client, cached_entry)
-        if refreshed is not None:
-            refreshed_uri = _read_field(refreshed, "uri")
-            if isinstance(refreshed_uri, str) and refreshed_uri:
-                resolved_mime_type = (
-                    mime_type
-                    or _read_field(refreshed, "mime_type")
-                    or cached_entry.get("mime_type")
-                )
-                if isinstance(resolved_mime_type, str) and resolved_mime_type:
-                    return types.Part.from_uri(file_uri=refreshed_uri, mime_type=resolved_mime_type)
-                return types.Part.from_uri(file_uri=refreshed_uri)
 
     upload_kwargs: dict[str, Any] = {"file": local_path}
     if isinstance(mime_type, str) and mime_type:
@@ -393,7 +396,7 @@ def _build_part_from_local_file(local_path: str, mime_type: str | None) -> Effec
 
 
 @do
-def _content_part_to_gemini_part(content_part: Mapping[str, Any]) -> EffectGenerator[Any | None]:
+def _content_part_to_gemini_part(content_part: GeminiContentPart) -> EffectGenerator[Any | None]:
     from google.genai import types
 
     local_path = content_part.get("local_path")
@@ -426,7 +429,7 @@ def _content_part_to_gemini_part(content_part: Mapping[str, Any]) -> EffectGener
 def build_contents(
     text: str,
     images: list["PIL.Image.Image"] | None = None,
-    content_parts: list[Mapping[str, Any]] | None = None,
+    content_parts: list[GeminiContentPart] | None = None,
 ) -> EffectGenerator[list[Any]]:
     """Prepare the list of :mod:`google.genai` contents to feed into Gemini."""
     from google.genai import types
@@ -923,7 +926,7 @@ def structured_llm__gemini(
     text: str,
     model: str = "gemini-2.5-pro",
     images: list["PIL.Image.Image"] | None = None,
-    content_parts: list[Mapping[str, Any]] | None = None,
+    content_parts: list[GeminiContentPart] | None = None,
     response_format: type[BaseModel] | None = None,
     max_output_tokens: int = 2048,
     temperature: float = 0.7,
@@ -1286,6 +1289,11 @@ image_edit__gemini = edit_image__gemini
 
 
 __all__ = [
+    "FileUriContentPart",
+    "GeminiContentPart",
+    "LocalFileContentPart",
+    "TextContentPart",
+    "UriContentPart",
     "build_contents",
     "build_generation_config",
     "edit_image__gemini",

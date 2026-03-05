@@ -259,7 +259,7 @@ async def test_build_contents_uploads_local_file_and_caches_result(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_build_contents_reuses_active_cached_upload(tmp_path: Path) -> None:
-    """Cache hit + ACTIVE file should reuse URI and skip upload."""
+    """Cache hit should reuse URI directly and skip upload/refresh network calls."""
 
     local_file = tmp_path / "clip.mp4"
     local_file.write_bytes(b"fake-video")
@@ -275,13 +275,13 @@ async def test_build_contents_reuses_active_cached_upload(tmp_path: Path) -> Non
         None,
     )
 
-    active_uri = "https://new.example/files/cached"
+    cached_uri = "https://old.example/files/cached"
     async_files = SimpleNamespace(
         upload=AsyncMock(),
         get=AsyncMock(
             return_value=SimpleNamespace(
                 name="files/cached",
-                uri=active_uri,
+                uri="https://new.example/files/cached",
                 state="ACTIVE",
                 mime_type="video/mp4",
             )
@@ -308,9 +308,9 @@ async def test_build_contents_reuses_active_cached_upload(tmp_path: Path) -> Non
 
     assert result.is_ok()
     contents = result.value
-    assert _extract_file_uri(contents[0].parts[0]) == active_uri
+    assert _extract_file_uri(contents[0].parts[0]) == cached_uri
     async_files.upload.assert_not_called()
-    async_files.get.assert_awaited_once()
+    async_files.get.assert_not_called()
 
 
 @pytest.mark.asyncio

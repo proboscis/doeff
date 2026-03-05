@@ -285,6 +285,55 @@ def test_message_parser_extracts_local_file_parts() -> None:
     ]
 
 
+def test_message_parser_does_not_treat_bare_uri_as_media() -> None:
+    from doeff_gemini.handlers import production as production_module
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "uri": "https://example.com",
+                    "text": "click here",
+                }
+            ],
+        }
+    ]
+
+    prompt, content_parts = production_module._messages_to_prompt_and_parts(messages)
+
+    assert "click here" in prompt
+    assert content_parts == []
+
+
+def test_message_parser_accepts_typed_uri_media_part() -> None:
+    from doeff_gemini.handlers import production as production_module
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "video",
+                    "uri": "https://example.com/video.mp4",
+                    "mime_type": "video/mp4",
+                }
+            ],
+        }
+    ]
+
+    prompt, content_parts = production_module._messages_to_prompt_and_parts(messages)
+
+    assert prompt == ""
+    assert content_parts == [
+        {
+            "type": "video",
+            "uri": "https://example.com/video.mp4",
+            "mime_type": "video/mp4",
+        }
+    ]
+
+
 @do
 def _unified_image_program() -> EffectGenerator[ImageResult]:
     generated = yield UnifiedImageGenerate(
