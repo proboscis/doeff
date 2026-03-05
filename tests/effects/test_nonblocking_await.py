@@ -16,6 +16,7 @@ import pytest
 from doeff import Await, Gather, Spawn, async_run, default_handlers, do, run
 from doeff.nonblocking_await import (
     get_loop,
+    nonblocking_await_handler,
     with_nonblocking_await,
 )
 
@@ -251,3 +252,29 @@ class TestNonblockingAwaitWithAsyncRun:
         result = await async_run(wrapped, handlers=default_handlers())
         assert result.is_ok
         assert result.value == 99
+
+
+class TestNonblockingAwaitBackwardCompat:
+    """Backward-compat contracts for doeff.nonblocking_await aliases."""
+
+    def test_handler_aliases_sync_await_handler(self) -> None:
+        from doeff.effects.future import sync_await_handler
+
+        assert nonblocking_await_handler is sync_await_handler
+
+    def test_get_loop_uses_shared_background_loop(self) -> None:
+        from doeff.effects.future import _ensure_background_loop
+
+        assert get_loop() is _ensure_background_loop()
+
+    def test_wrapper_installs_alias_handler(self) -> None:
+        @do
+        def program():
+            if False:  # pragma: no cover
+                yield Await(asyncio.sleep(0))
+            return 1
+
+        expr = program()
+        wrapped = with_nonblocking_await(expr)
+        assert wrapped.handler is nonblocking_await_handler
+        assert wrapped.expr is expr
