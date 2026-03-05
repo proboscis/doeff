@@ -86,6 +86,7 @@ class EffectResultResumed:
 class EffectResultThrew:
     handler_name: str
     exception_repr: str
+    exception_type: str = "Exception"
     kind: Literal["threw"] = "threw"
 
 
@@ -275,6 +276,20 @@ def _coerce_handler_stack_entry(entry: Any) -> HandlerStackEntry:
     raise TypeError(f"Unsupported handler stack entry type: {type(entry).__name__}")
 
 
+def _extract_exception_type(exception_repr: str) -> str:
+    text = exception_repr.strip()
+    if not text:
+        return "Exception"
+
+    for delimiter in ("(", ":"):
+        if delimiter in text:
+            text = text.split(delimiter, 1)[0].strip()
+
+    if not text or (text.startswith("<") and text.endswith(">")):
+        return "Exception"
+    return text
+
+
 def _coerce_effect_result(result: Any) -> EffectResult:
     if isinstance(
         result,
@@ -290,9 +305,17 @@ def _coerce_effect_result(result: Any) -> EffectResult:
     if kind == "resumed":
         return EffectResultResumed(value_repr=str(result.get("value_repr", "None")))
     if kind == "threw":
+        exception_repr = str(result.get("exception_repr", "<exception>"))
+        exception_type_raw = result.get("exception_type")
+        exception_type = (
+            str(exception_type_raw)
+            if exception_type_raw is not None
+            else _extract_exception_type(exception_repr)
+        )
         return EffectResultThrew(
             handler_name=str(result.get("handler_name", "<handler>")),
-            exception_repr=str(result.get("exception_repr", "<exception>")),
+            exception_repr=exception_repr,
+            exception_type=exception_type,
         )
     if kind == "transferred":
         return EffectResultTransferred(
