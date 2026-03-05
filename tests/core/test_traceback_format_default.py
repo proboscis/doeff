@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import inspect
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,12 +27,37 @@ from doeff.trace import ProgramYield
 from doeff.traceback import attach_doeff_traceback, build_doeff_traceback
 
 
+def _exception_for_chain(active_chain: list[dict[str, object]]) -> BaseException:
+    for entry in reversed(active_chain):
+        if entry.get("kind") != "exception_site":
+            continue
+        exception_type = str(entry.get("exception_type", "ValueError"))
+        message = str(entry.get("message", "boom"))
+        exception_class = getattr(builtins, exception_type, None)
+        if isinstance(exception_class, type) and issubclass(exception_class, BaseException):
+            return exception_class(message)
+        return ValueError(message)
+    return ValueError("boom")
+
+
 def _tb(
     active_chain: list[dict[str, object]],
     trace: list[dict[str, object]] | None = None,
 ) -> object:
     return build_doeff_traceback(
-        ValueError("boom"),
+        _exception_for_chain(active_chain),
+        trace or [],
+        active_chain,
+    )
+
+
+def _tb_with_exception(
+    exception: BaseException,
+    active_chain: list[dict[str, object]],
+    trace: list[dict[str, object]] | None = None,
+) -> object:
+    return build_doeff_traceback(
+        exception,
         trace or [],
         active_chain,
     )
@@ -79,10 +105,14 @@ def _render_single_delegated_handler(handler_name: str) -> str:
                     {
                         "handler_name": "user_handler",
                         "handler_kind": "python",
-                        "status": "resumed",
+                        "status": "threw",
                     },
                 ],
-                "result": {"kind": "resumed", "value_repr": "1"},
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "user_handler",
+                    "exception_repr": "RuntimeError('boom')",
+                },
             },
             {
                 "kind": "exception_site",
@@ -186,7 +216,7 @@ def test_format_default_distinguishes_passed_and_delegated_markers() -> None:
                     },
                     {"handler_name": "h_resumed", "handler_kind": "python", "status": "resumed"},
                 ],
-                "result": {"kind": "resumed", "value_repr": "1"},
+                "result": {"kind": "active"},
             },
             {
                 "kind": "exception_site",
@@ -298,9 +328,13 @@ def test_format_default_effect_yield_with_markers() -> None:
                 "effect_repr": 'Put("key", 1)',
                 "handler_stack": [
                     {"handler_name": "h1", "handler_kind": "python", "status": "delegated"},
-                    {"handler_name": "h2", "handler_kind": "python", "status": "resumed"},
+                    {"handler_name": "h2", "handler_kind": "python", "status": "threw"},
                 ],
-                "result": {"kind": "resumed", "value_repr": "None"},
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "h2",
+                    "exception_repr": "ValueError('boom')",
+                },
             },
             {
                 "kind": "exception_site",
@@ -315,8 +349,8 @@ def test_format_default_effect_yield_with_markers() -> None:
 
     rendered = tb.format_default()
     assert "h1 ⇆" in rendered
-    assert "h2 ✓" in rendered
-    assert "→ resumed with None" in rendered
+    assert "h2 ✗" in rendered
+    assert "✗ h2 raised ValueError('boom')" in rendered
 
 
 def test_format_default_handler_stack_same() -> None:
@@ -333,7 +367,7 @@ def test_format_default_handler_stack_same() -> None:
                 "source_line": 1,
                 "effect_repr": "Ping()",
                 "handler_stack": stack,
-                "result": {"kind": "resumed", "value_repr": "1"},
+                "result": {"kind": "active"},
             },
             {
                 "kind": "effect_yield",
@@ -342,7 +376,7 @@ def test_format_default_handler_stack_same() -> None:
                 "source_line": 2,
                 "effect_repr": "Ping()",
                 "handler_stack": stack,
-                "result": {"kind": "resumed", "value_repr": "2"},
+                "result": {"kind": "active"},
             },
             {
                 "kind": "exception_site",
@@ -432,7 +466,7 @@ def test_format_default_handler_stack_collapses_pending_groups() -> None:
                     {"handler_name": "pending_4", "handler_kind": "python", "status": "pending"},
                     {"handler_name": "pending_5", "handler_kind": "python", "status": "pending"},
                 ],
-                "result": {"kind": "resumed", "value_repr": "1"},
+                "result": {"kind": "active"},
             },
             {
                 "kind": "exception_site",
@@ -540,7 +574,7 @@ def test_format_default_handler_stack_mixed_pending_groups_keep_order() -> None:
     assert first_pending < delegated < middle_pending < threw < trailing_pending
 
 
-def test_format_default_keeps_duplicate_handler_names_from_vm_chain() -> None:
+def test_format_default_filters_resumed_effects_with_duplicate_handler_names() -> None:
     @do
     def same_name_handler(_effect: Effect, _k: object):
         yield Pass()
@@ -558,7 +592,9 @@ def test_format_default_keeps_duplicate_handler_names_from_vm_chain() -> None:
     assert result.is_err()
 
     rendered = _tb_from_run_result(result).format_default()
-    assert rendered.count("same_name_handler ↗") >= 2
+    assert "same_name_handler" not in rendered
+    assert "yield Put(" not in rendered
+    assert "raise ValueError('boom')" in rendered
 
 
 def test_format_default_duplicate_name_throw_marks_correct_handler() -> None:
@@ -636,7 +672,7 @@ def test_format_default_renders_all_handlers() -> None:
     assert "user_handler" in rendered
 
 
-def test_format_default_resume_value_truncated_80() -> None:
+def test_format_default_filters_resumed_effect_with_long_value() -> None:
     long_value = "x" * 120
     tb = _tb(
         [
@@ -663,7 +699,8 @@ def test_format_default_resume_value_truncated_80() -> None:
     )
 
     rendered = tb.format_default()
-    assert "..." in rendered
+    assert "yield Ping()" not in rendered
+    assert "→ resumed with" not in rendered
     assert long_value not in rendered
 
 
@@ -938,6 +975,157 @@ def test_format_default_effect_repr_human_readable() -> None:
     assert 'yield Put("key", 1)' in tb.format_default()
 
 
+def test_traceback_filters_resumed_effects() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "frame_one",
+                "source_file": "trace.py",
+                "source_line": 10,
+                "effect_repr": "FirstEffect()",
+                "handler_stack": [
+                    {"handler_name": "h1", "handler_kind": "python", "status": "threw"}
+                ],
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "h1",
+                    "exception_repr": "ValueError('boom')",
+                },
+            },
+            {
+                "kind": "effect_yield",
+                "function_name": "frame_two",
+                "source_file": "trace.py",
+                "source_line": 11,
+                "effect_repr": "NoisyCompletedEffect()",
+                "handler_stack": [
+                    {"handler_name": "h2", "handler_kind": "python", "status": "resumed"}
+                ],
+                "result": {"kind": "resumed", "value_repr": "123"},
+            },
+            {
+                "kind": "effect_yield",
+                "function_name": "frame_three",
+                "source_file": "trace.py",
+                "source_line": 12,
+                "effect_repr": "LastEffect()",
+                "handler_stack": [
+                    {"handler_name": "h3", "handler_kind": "python", "status": "threw"}
+                ],
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "h3",
+                    "exception_repr": "ValueError('boom')",
+                },
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "frame_three",
+                "source_file": "trace.py",
+                "source_line": 13,
+                "exception_type": "ValueError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    assert "yield FirstEffect()" in rendered
+    assert "yield LastEffect()" in rendered
+    assert "NoisyCompletedEffect()" not in rendered
+    assert "→ resumed with" not in rendered
+
+
+def test_traceback_filters_recovered_exceptions() -> None:
+    class GeminiStructuredOutputError(Exception):
+        pass
+
+    tb = _tb_with_exception(
+        GeminiStructuredOutputError("non-json"),
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "ask",
+                "source_file": "client.py",
+                "source_line": 213,
+                "effect_repr": "Ask('gemini_api_key')",
+                "handler_stack": [
+                    {"handler_name": "ReaderHandler", "handler_kind": "rust_builtin", "status": "threw"}
+                ],
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "ReaderHandler",
+                    "exception_repr": "MissingEnvKeyError('gemini_api_key')",
+                },
+            },
+            {
+                "kind": "effect_yield",
+                "function_name": "_lower_analyze_video",
+                "source_file": "video.py",
+                "source_line": 160,
+                "effect_repr": "LLMStructuredQuery(...)",
+                "handler_stack": [
+                    {
+                        "handler_name": "gemini_production_handler",
+                        "handler_kind": "python",
+                        "status": "threw",
+                    }
+                ],
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "gemini_production_handler",
+                    "exception_repr": "GeminiStructuredOutputError('non-json')",
+                },
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "process_structured_response",
+                "source_file": "structured_llm.py",
+                "source_line": 585,
+                "exception_type": "GeminiStructuredOutputError",
+                "message": "non-json",
+            },
+        ],
+    )
+
+    rendered = tb.format_default()
+    assert "Ask('gemini_api_key')" not in rendered
+    assert "MissingEnvKeyError" not in rendered
+    assert "yield LLMStructuredQuery(...)" in rendered
+    assert "GeminiStructuredOutputError: non-json" in rendered
+
+
+def test_traceback_keeps_active_effects() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "effect_yield",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 50,
+                "effect_repr": "InFlightEffect()",
+                "handler_stack": [
+                    {"handler_name": "h_active", "handler_kind": "python", "status": "active"}
+                ],
+                "result": {"kind": "active"},
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "runner",
+                "source_file": "program.py",
+                "source_line": 51,
+                "exception_type": "ValueError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    assert "yield InFlightEffect()" in rendered
+    assert "⇢ active" in rendered
+
+
 def test_existing_formats_unchanged() -> None:
     trace = [
         {
@@ -1096,7 +1284,7 @@ def test_format_default_shows_program_yield_chain() -> None:
 
     rendered = _tb_from_run_result(result).format_default()
     source_file = str(Path(__file__).resolve())
-    assert "outer()" in rendered
+    assert "outer()" not in rendered
     assert "inner()" in rendered
     assert "yield Boom" in rendered
     assert "crash_handler ✗" in rendered
@@ -1342,7 +1530,7 @@ def test_runtime_nested_dispatch_preserves_handler_provenance() -> None:
     assert all(frame.handler_kind is None for frame in body_frames)
 
 
-def test_format_default_includes_resumed_effects() -> None:
+def test_format_default_filters_resumed_effects_by_default() -> None:
     @do
     def body() -> Program[int]:
         yield Put("k", 1)
@@ -1353,8 +1541,8 @@ def test_format_default_includes_resumed_effects() -> None:
     assert result.is_err()
 
     rendered = _tb_from_run_result(result).format_default()
-    assert "yield Put(" in rendered
-    assert "→ resumed with" in rendered
+    assert "yield Put(" not in rendered
+    assert "→ resumed with" not in rendered
     assert "raise ValueError('boom')" in rendered
     assert "/doeff/do.py:52" not in rendered
 
