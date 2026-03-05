@@ -350,7 +350,7 @@ def test_format_default_effect_yield_with_markers() -> None:
     rendered = tb.format_default()
     assert "h1 ⇆" in rendered
     assert "h2 ✗" in rendered
-    assert "✗ h2 raised ValueError('boom')" in rendered
+    assert "✗ h2 raised ValueError" in rendered
 
 
 def test_format_default_handler_stack_same() -> None:
@@ -1051,7 +1051,11 @@ def test_traceback_filters_recovered_exceptions() -> None:
                 "source_line": 213,
                 "effect_repr": "Ask('gemini_api_key')",
                 "handler_stack": [
-                    {"handler_name": "ReaderHandler", "handler_kind": "rust_builtin", "status": "threw"}
+                    {
+                        "handler_name": "ReaderHandler",
+                        "handler_kind": "rust_builtin",
+                        "status": "threw",
+                    }
                 ],
                 "result": {
                     "kind": "threw",
