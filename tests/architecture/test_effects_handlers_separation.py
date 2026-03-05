@@ -3,14 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 EFFECTS_DIR = Path(__file__).resolve().parents[2] / "doeff" / "effects"
-LEGACY_HANDLER_DEFINITIONS = {
-    ("future.py", "sync_await_handler"),
-    ("future.py", "async_await_handler"),
-    ("spawn.py", "spawn_intercept_handler"),
-}
 
 
 def _handler_definitions_in_effects() -> list[tuple[str, str, int]]:
@@ -25,21 +18,14 @@ def _handler_definitions_in_effects() -> list[tuple[str, str, int]]:
             arg_names = [arg.arg for arg in node.args.args]
             if "effect" not in arg_names or "k" not in arg_names:
                 continue
-            if any(isinstance(decorator, ast.Name) and decorator.id == "do" for decorator in node.decorator_list):
+            if any(
+                isinstance(decorator, ast.Name) and decorator.id == "do"
+                for decorator in node.decorator_list
+            ):
                 violations.append((py_file.name, node.name, node.lineno))
     return sorted(violations)
 
 
-def _legacy_handlers_still_present() -> bool:
-    found = {(filename, function_name) for filename, function_name, _ in _handler_definitions_in_effects()}
-    return LEGACY_HANDLER_DEFINITIONS.issubset(found)
-
-
-@pytest.mark.xfail(
-    condition=_legacy_handlers_still_present(),
-    reason="Known legacy handlers remain in doeff/effects until EFFECTS-ORG-002 migration lands.",
-    strict=True,
-)
 def test_no_handler_functions_in_effects_directory() -> None:
     """No module-level @do handlers (effect, k) should live in effects/."""
     violations = [

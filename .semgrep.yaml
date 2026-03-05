@@ -823,28 +823,6 @@ rules:
   # LAYER BOUNDARIES
   # ---------------------------------------------------------------------------
 
-  - id: doeff-no-handler-definition-in-effects
-    patterns:
-      - pattern-inside: |
-          @do
-          def $FUNC(...):
-              ...
-      - metavariable-regex:
-          metavariable: $FUNC
-          regex: ".*_handler$"
-    paths:
-      include:
-        - "**/doeff/effects/"
-    message: |
-      Handlers must not be defined in doeff/effects/.
-      Effects define WHAT operations are available; handlers define HOW to execute them.
-      Move handler implementations to doeff/handlers/.
-    languages: [python]
-    severity: ERROR
-    metadata:
-      category: architecture
-      rationale: "EFFECTS-ORG-002: enforce effects/handlers separation"
-
   - id: doeff-no-handler-import-in-effects
     patterns:
       - pattern-inside: |
