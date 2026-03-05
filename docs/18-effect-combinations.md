@@ -16,12 +16,12 @@ contracts.
 
 The matrix below follows `SPEC-EFF-100` outer/inner structure.
 
-| Outer / Inner | Ask | Get | Put | Log | Try | Local | Listen | Intercept | Gather |
+| Outer / Inner | Ask | Get | Put | Log | Try | Local | Listen | WithIntercept | Gather |
 |---------------|-----|-----|-----|-----|------|-------|--------|-----------|--------|
 | **Local**     | Scoped | Propagates | Propagates | Propagates | Propagates | Scoped | Propagates | Propagates | Propagates |
 | **Listen**    | - | - | - | Captured* | - | - | Nested | - | All captured* |
 | **Try**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
-| **Intercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
+| **WithIntercept** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
 | **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
 
 `*` Listen captures logs only on success paths. On error, the error propagates and logs are not
@@ -37,7 +37,7 @@ wrapped in `ListenResult`.[^D5]
 - `Persists`: Side effects persist even when errors are caught.
 - `Wrapped`: Result is wrapped in outer effect type.
 - `Restores`: Environment restores to pre-scope value.
-- `Transform`: Effect can be transformed by `Intercept` (including nested programs).[^D1]
+- `Transform`: Effect can be transformed by `WithIntercept` (including nested programs).[^D1]
 - `Isolated`: Error handling remains per-branch while parent receives failing outcome.
 - `Inherit`: Child inherits parent environment snapshot at invocation time.
 - `Shared`: All branches use the same underlying resource.
@@ -109,9 +109,9 @@ def test_law_5():
     # Environment is restored after Try exits
 ```
 
-### Law 6: Intercept Transformation Law
+### Law 6: WithIntercept Transformation Law
 
-`Intercept` transforms effects in the intercepted program, including nested program values in
+`WithIntercept` transforms effects in the intercepted program, including nested program values in
 payloads (for example `Gather` children and `Local`/`Listen` sub-programs).[^D1]
 
 ```python
@@ -128,7 +128,7 @@ def test_law_6():
     def child():
         return (yield Ask("key"))
 
-    _ = yield Gather(child(), child()).intercept(transform)
+    _ = yield WithIntercept(transform, Gather(child(), child()), types=(AskEffect,), mode="include")
     assert seen[0] == 2
 ```
 
@@ -210,8 +210,8 @@ race-sensitive async state updates.
 
 ## Design Decision Notes
 
-[^D1]: **D1 Intercept Scope**: Intercept applies structural rewriting to nested programs in
-effect payloads. Intercept scope across task boundaries is runtime-dependent; in current
+[^D1]: **D1 WithIntercept Scope**: WithIntercept applies structural rewriting to nested programs in
+effect payloads. Scope across task boundaries is runtime-dependent; in current
 implementation, it does not reach independently spawned tasks that do not share the parent
 continuation stack.
 
