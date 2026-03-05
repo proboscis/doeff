@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 
@@ -18,6 +20,28 @@ def test_removed_api_not_importable(name: str) -> None:
 
     assert name not in doeff.__all__
     assert not hasattr(doeff, name)
+
+
+def test_intercept_removed_from_root_api() -> None:
+    """Intercept must not be importable from doeff root API."""
+    import doeff
+
+    assert "Intercept" not in doeff.__all__
+    assert not hasattr(doeff, "Intercept")
+
+
+def test_intercept_removed_from_effects_api() -> None:
+    """Intercept must not be importable from doeff.effects API."""
+    from doeff import effects
+
+    assert "Intercept" not in effects.__all__
+    assert not hasattr(effects, "Intercept")
+
+
+def test_intercept_module_not_importable() -> None:
+    """Legacy intercept module path must be absent."""
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("doeff.effects.intercept")
 
 
 def test_try_importable() -> None:

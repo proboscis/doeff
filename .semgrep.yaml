@@ -1307,6 +1307,28 @@ rules:
       category: doexpr-hierarchy
       rationale: "canonical WithHandler signature is (handler, expr: DoExpr)"
 
+  - id: no-legacy-intercept-api
+    pattern-either:
+      - pattern-regex: (?m)^from\s+doeff\s+import\s+.*\bIntercept\b
+      - pattern-regex: (?m)^from\s+doeff\.effects\s+import\s+.*\bIntercept\b
+      - pattern: Intercept($X, ...)
+    paths:
+      include:
+        - "**/doeff/**/*.py"
+        - "**/packages/**/*.py"
+        - "**/examples/**/*.py"
+      exclude:
+        - "**/tests/**/*.py"
+    message: |
+      Intercept API is removed (ISSUE-CORE-519).
+      Use WithIntercept(...) as the canonical interception primitive.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: api-removal
+      issue: ISSUE-CORE-519
+      rationale: "WithIntercept is the only supported interception API"
+
   - id: no-withintercept-python-type-wrapper
     patterns:
       - pattern-inside: |

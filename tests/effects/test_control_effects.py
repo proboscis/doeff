@@ -1,21 +1,21 @@
 """Tests for Control effects composition rules (SPEC-EFF-004).
 
-This module tests the composition behavior of Pure, Try, and Intercept effects
+This module tests the composition behavior of Pure, Try, and WithIntercept effects
 as defined in specs/effects/SPEC-EFF-004-control.md.
 
 Composition Rules Tested:
 - Try + Local: Environment restored even on caught error
 - Try + Put: State persists on caught error
 - Nested Try: Inner catches first
-- Intercept + Intercept: Composition order
-- Intercept + Gather: Scope rules
+- WithIntercept: Composition and transform behavior
+- WithIntercept + Gather: Scope rules
 
 Reference: gh#177
 """
 
 import pytest
 
-from doeff import Intercept, Program, Spawn, do
+from doeff import Program, Spawn, WithIntercept, do
 from doeff.effects import (
     Ask,
     Gather,
@@ -23,10 +23,25 @@ from doeff.effects import (
     Local,
     Pure,
     Put,
-    Tell,
     Try,
 )
 from doeff.effects.reader import AskEffect
+
+
+def _with_legacy_intercept_chain(program: Program, *transforms):
+    """Model legacy transform-chain behavior on top of WithIntercept in tests."""
+    if not transforms:
+        raise ValueError("Intercept requires at least one transform function")
+
+    @do
+    def intercept(effect):
+        for transform in transforms:
+            candidate = transform(effect)
+            if candidate is not None:
+                return candidate
+        return effect
+
+    return WithIntercept(intercept, program)
 
 # ============================================================================
 # Pure Effect Tests
@@ -258,7 +273,7 @@ class TestNestedSafe:
 
 
 class TestInterceptComposition:
-    """Tests for Intercept + Intercept: Composition order."""
+    """Tests for legacy transform-chain semantics via WithIntercept."""
 
     @pytest.mark.asyncio
     async def test_intercept_first_non_none_wins(self, parameterized_interpreter) -> None:
@@ -281,7 +296,7 @@ class TestInterceptComposition:
         @do
         def program():
             # f is applied first (innermost), should win
-            result = yield Intercept(inner_program(), transform_f, transform_g)
+            result = yield _with_legacy_intercept_chain(inner_program(), transform_f, transform_g)
             return result
 
         result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
@@ -310,7 +325,7 @@ class TestInterceptComposition:
         @do
         def program():
             # f passes through, g intercepts
-            result = yield Intercept(inner_program(), transform_f, transform_g)
+            result = yield _with_legacy_intercept_chain(inner_program(), transform_f, transform_g)
             return result
 
         result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
@@ -333,7 +348,7 @@ class TestInterceptComposition:
 
         @do
         def program():
-            result = yield Intercept(inner_program(), transform_f, transform_g)
+            result = yield _with_legacy_intercept_chain(inner_program(), transform_f, transform_g)
             return result
 
         result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
@@ -344,14 +359,9 @@ class TestInterceptComposition:
     async def test_intercept_returns_program(self, parameterized_interpreter) -> None:
         """Transform returning Program executes that Program."""
 
-        @do
-        def replacement_program():
-            yield Tell("replacement executed")
-            return "from_replacement"
-
         def transform(e):
             if isinstance(e, AskEffect):
-                return replacement_program()
+                return Program.pure("from_replacement")
             return None
 
         @do
@@ -360,7 +370,7 @@ class TestInterceptComposition:
 
         @do
         def program():
-            result = yield Intercept(inner_program(), transform)
+            result = yield _with_legacy_intercept_chain(inner_program(), transform)
             return result
 
         result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
@@ -374,7 +384,7 @@ class TestInterceptComposition:
 
 
 class TestInterceptErrorHandling:
-    """Tests for error handling in Intercept."""
+    """Tests for error handling in scoped interception."""
 
     @pytest.mark.asyncio
     async def test_intercept_transform_exception_propagates(
@@ -391,7 +401,7 @@ class TestInterceptErrorHandling:
 
         @do
         def program():
-            result = yield Intercept(inner_program(), bad_transform)
+            result = yield _with_legacy_intercept_chain(inner_program(), bad_transform)
             return result
 
         result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
@@ -413,7 +423,7 @@ class TestInterceptErrorHandling:
 
         @do
         def program():
-            result = yield Intercept(failing_program(), passthrough)
+            result = yield _with_legacy_intercept_chain(failing_program(), passthrough)
             return result
 
         result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
@@ -435,7 +445,7 @@ class TestInterceptErrorHandling:
 
         @do
         def program():
-            result = yield Try(Intercept(failing_program(), passthrough))
+            result = yield Try(_with_legacy_intercept_chain(failing_program(), passthrough))
             return result
 
         result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
@@ -472,7 +482,10 @@ class TestCombinedComposition:
         def program():
             # Try wraps Local wraps intercepted program
             result = yield Try(
-                Local({"key": "modified"}, Intercept(inner_program(), intercept_ask))
+                Local(
+                    {"key": "modified"},
+                    _with_legacy_intercept_chain(inner_program(), intercept_ask),
+                )
             )
             stored = yield Get("result")
             outer_key = yield Ask("key")
