@@ -8,7 +8,7 @@ from typing import Any
 
 from rich.console import Console
 
-from doeff import Intercept, Program, do, slog
+from doeff import Program, Pure, WithIntercept, do, slog
 
 from .effects import (
     AgenticAbortSession,
@@ -47,6 +47,7 @@ EFFECT_CONFIG: dict[type, dict[str, Any]] = {
 }
 
 _WRITER_TELL_EFFECT = type(slog())
+_INTERCEPT_TYPES: tuple[type[Any], ...] = tuple(EFFECT_CONFIG) + (_WRITER_TELL_EFFECT,)
 
 
 @dataclass
@@ -158,6 +159,7 @@ def create_visual_interceptor(
     cfg = config or VisualInterceptorConfig()
     console = cfg.console or Console()
 
+    @do
     def transform(effect: Any) -> Any:
         effect_type = type(effect)
 
@@ -166,11 +168,11 @@ def create_visual_interceptor(
                 timestamp = f"[dim][{_get_timestamp()}][/dim] " if cfg.show_timestamps else ""
                 slog_text = _format_slog(effect.message, cfg)
                 console.print(f"{timestamp}[yellow]---[/yellow] {slog_text}")
-            return None
+            return effect
 
         effect_config = EFFECT_CONFIG.get(effect_type)
         if effect_config is None:
-            return None
+            return effect
 
         icon = effect_config["icon"]
         color = effect_config["color"]
@@ -181,25 +183,18 @@ def create_visual_interceptor(
         details_str = f" {details}" if details else ""
 
         console.print(f"{timestamp}[{color}]{icon}[/{color}] [bold]{name}[/bold]{details_str}")
+        start_time = time.time()
+        result = yield effect
+        elapsed = time.time() - start_time
 
-        @do
-        def logged_effect():
-            start_time = time.time()
-            result = yield effect
-            elapsed = time.time() - start_time
+        if cfg.show_duration:
+            duration_str = f" [dim]({elapsed:.1f}s)[/dim]"
+        else:
+            duration_str = ""
 
-            if cfg.show_duration:
-                duration_str = f" [dim]({elapsed:.1f}s)[/dim]"
-            else:
-                duration_str = ""
-
-            result_str = _format_result(result)
-            console.print(
-                f"{timestamp}[dim {color}]<-[/dim {color}] [dim]{result_str}{duration_str}[/dim]"
-            )
-            return result
-
-        return logged_effect()
+        result_str = _format_result(result)
+        console.print(f"{timestamp}[dim {color}]<-[/dim {color}] [dim]{result_str}{duration_str}[/dim]")
+        return Pure(result)
 
     return transform, console
 
@@ -210,7 +205,7 @@ def with_visual_logging(
 ) -> Program:
     """Wrap a program with visual effect logging for examples and debugging."""
     transform, _ = create_visual_interceptor(config)
-    return Intercept(program, transform)  # type: ignore[return-value]
+    return WithIntercept(transform, program, _INTERCEPT_TYPES, "include")
 
 
 def visual_logging_console(
@@ -220,7 +215,7 @@ def visual_logging_console(
     transform, console = create_visual_interceptor(config)
 
     def wrapper(program: Program) -> Program:
-        return Intercept(program, transform)  # type: ignore[return-value]
+        return WithIntercept(transform, program, _INTERCEPT_TYPES, "include")
 
     return wrapper, console
 
