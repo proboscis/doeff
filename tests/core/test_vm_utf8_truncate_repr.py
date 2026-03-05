@@ -49,7 +49,7 @@ def _dispatch_from_trace(text: str) -> TraceDispatch:
 def _assert_truncated_utf8(text: str) -> None:
     dispatch = _dispatch_from_trace(text)
     assert dispatch.effect_repr.endswith("...")
-    assert len(dispatch.effect_repr) <= 203
+    assert len(dispatch.effect_repr.encode("utf-8")) <= 203
     assert dispatch.effect_repr.encode("utf-8").decode("utf-8") == dispatch.effect_repr
 
 

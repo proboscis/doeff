@@ -2195,9 +2195,23 @@ rules:
     severity: ERROR
     message: >
       String::truncate(n) panics if n is not a UTF-8 char boundary.
+      This rule is String-specific; Vec::truncate is safe.
       Use floor_char_boundary(n) or chars().take(n).collect() instead.
       See VM-UTF8-001.
-    pattern: $S.truncate($N)
+    patterns:
+      - pattern: $S.truncate($N)
+      - pattern-not-inside: |
+          let $S: Vec<$T> = $INIT;
+          ...
+      - pattern-not-inside: |
+          let mut $S: Vec<$T> = $INIT;
+          ...
+      - pattern-not-inside: |
+          let $S: std::vec::Vec<$T> = $INIT;
+          ...
+      - pattern-not-inside: |
+          let mut $S: std::vec::Vec<$T> = $INIT;
+          ...
     paths:
       include:
         - "**/packages/doeff-vm-core/src/**/*.rs"
