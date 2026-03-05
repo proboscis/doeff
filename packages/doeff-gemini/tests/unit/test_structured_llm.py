@@ -4,6 +4,7 @@
 import importlib
 import json
 import math
+import os
 import sys
 import time
 from io import BytesIO
@@ -47,6 +48,7 @@ genai_types = google_genai.types
 from pydantic import BaseModel
 
 from doeff import EffectGenerator, async_run, default_handlers, do
+from doeff.effects.cache import CacheGetEffect, CachePutEffect
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
@@ -57,6 +59,62 @@ async def _run_with_default_cost(program: Any, *, env: dict[str, Any] | None = N
         handlers=[default_gemini_cost_handler, *default_handlers()],
         env=env,
     )
+
+
+class _InMemoryTTLCache:
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.entries: dict[Any, tuple[Any, float | None]] = {}
+        self.get_keys: list[Any] = []
+        self.put_effects: list[CachePutEffect] = []
+
+    def make_handler(self):
+        cache = self
+
+        @do
+        def handler(effect: CacheGetEffect | CachePutEffect, k: Any) -> EffectGenerator[Any]:
+            if isinstance(effect, CacheGetEffect):
+                cache.get_keys.append(effect.key)
+                entry = cache.entries.get(effect.key)
+                if entry is None:
+                    raise KeyError(effect.key)
+                value, expires_at = entry
+                if expires_at is not None and cache.now >= expires_at:
+                    cache.entries.pop(effect.key, None)
+                    raise KeyError(effect.key)
+                from doeff import Resume
+
+                return (yield Resume(k, value))
+
+            if isinstance(effect, CachePutEffect):
+                cache.put_effects.append(effect)
+                ttl = effect.policy.ttl
+                expires_at = None if ttl is None else cache.now + ttl
+                cache.entries[effect.key] = (effect.value, expires_at)
+                from doeff import Resume
+
+                return (yield Resume(k, None))
+
+        return handler
+
+
+async def _run_with_cache(program: Any, cache: _InMemoryTTLCache, *, env: dict[str, Any] | None = None):
+    from doeff import WithHandler
+
+    return await _run_with_default_cost(WithHandler(cache.make_handler(), program), env=env)
+
+
+def _extract_file_uri(part: Any) -> str | None:
+    file_data = getattr(part, "file_data", None)
+    if file_data is None and isinstance(part, dict):
+        file_data = part.get("file_data")
+    if file_data is None:
+        return None
+    if isinstance(file_data, dict):
+        value = file_data.get("file_uri")
+        return str(value) if value else None
+    value = getattr(file_data, "file_uri", None)
+    return str(value) if value else None
 
 
 class SimpleResponse(BaseModel):
@@ -136,6 +194,310 @@ async def test_build_contents_text_only() -> None:
     assert content.role == "user"
     assert len(content.parts) == 1
     assert content.parts[0].text == "Hello Gemini"
+
+
+@pytest.mark.asyncio
+async def test_build_contents_uploads_local_file_and_caches_result(tmp_path: Path) -> None:
+    """Local files should auto-upload and be persisted via CachePut with 48h TTL."""
+
+    local_file = tmp_path / "clip.mp4"
+    local_file.write_bytes(b"fake-video")
+
+    uploaded_uri = "https://generativelanguage.googleapis.com/v1beta/files/abc"
+    async_files = SimpleNamespace(
+        upload=AsyncMock(
+            return_value=SimpleNamespace(
+                name="files/abc",
+                uri=uploaded_uri,
+                state="PROCESSING",
+                mime_type="video/mp4",
+            )
+        ),
+        get=AsyncMock(
+            return_value=SimpleNamespace(
+                name="files/abc",
+                uri=uploaded_uri,
+                state="ACTIVE",
+                mime_type="video/mp4",
+            )
+        ),
+    )
+    client = SimpleNamespace(async_client=SimpleNamespace(files=async_files))
+    cache = _InMemoryTTLCache()
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (
+            yield build_contents(
+                text="Summarize this clip",
+                content_parts=[
+                    {
+                        "type": "video",
+                        "local_path": local_file.as_posix(),
+                        "mime_type": "video/mp4",
+                    }
+                ],
+            )
+        )
+
+    result = await _run_with_cache(flow(), cache, env={"gemini_client": client})
+
+    assert result.is_ok()
+    contents = result.value
+    assert len(contents) == 1
+    part = contents[0].parts[0]
+    assert _extract_file_uri(part) == uploaded_uri
+
+    async_files.upload.assert_awaited_once()
+    async_files.get.assert_awaited_once()
+
+    assert cache.put_effects
+    assert cache.put_effects[0].policy.ttl == 172800
+    assert cache.put_effects[0].policy.lifecycle.value == "persistent"
+    assert cache.put_effects[0].policy.resolved_storage().value == "disk"
+
+
+@pytest.mark.asyncio
+async def test_build_contents_reuses_active_cached_upload(tmp_path: Path) -> None:
+    """Cache hit + ACTIVE file should reuse URI and skip upload."""
+
+    local_file = tmp_path / "clip.mp4"
+    local_file.write_bytes(b"fake-video")
+
+    cache = _InMemoryTTLCache()
+    cache_key = structured_llm_module._gemini_file_cache_key(local_file.as_posix())
+    cache.entries[cache_key] = (
+        {
+            "name": "files/cached",
+            "uri": "https://old.example/files/cached",
+            "mime_type": "video/mp4",
+        },
+        None,
+    )
+
+    active_uri = "https://new.example/files/cached"
+    async_files = SimpleNamespace(
+        upload=AsyncMock(),
+        get=AsyncMock(
+            return_value=SimpleNamespace(
+                name="files/cached",
+                uri=active_uri,
+                state="ACTIVE",
+                mime_type="video/mp4",
+            )
+        ),
+    )
+    client = SimpleNamespace(async_client=SimpleNamespace(files=async_files))
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (
+            yield build_contents(
+                text="Reuse",
+                content_parts=[
+                    {
+                        "type": "video",
+                        "local_path": local_file.as_posix(),
+                        "mime_type": "video/mp4",
+                    }
+                ],
+            )
+        )
+
+    result = await _run_with_cache(flow(), cache, env={"gemini_client": client})
+
+    assert result.is_ok()
+    contents = result.value
+    assert _extract_file_uri(contents[0].parts[0]) == active_uri
+    async_files.upload.assert_not_called()
+    async_files.get.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_build_contents_reuploads_when_cache_entry_expired(tmp_path: Path) -> None:
+    """Expired cache entry should trigger a new upload."""
+
+    local_file = tmp_path / "clip.mp4"
+    local_file.write_bytes(b"fake-video")
+
+    upload_uris = [
+        "https://example.com/files/first",
+        "https://example.com/files/second",
+    ]
+    async_files = SimpleNamespace(
+        upload=AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    name="files/first",
+                    uri=upload_uris[0],
+                    state="PROCESSING",
+                    mime_type="video/mp4",
+                ),
+                SimpleNamespace(
+                    name="files/second",
+                    uri=upload_uris[1],
+                    state="PROCESSING",
+                    mime_type="video/mp4",
+                ),
+            ]
+        ),
+        get=AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    name="files/first",
+                    uri=upload_uris[0],
+                    state="ACTIVE",
+                    mime_type="video/mp4",
+                ),
+                SimpleNamespace(
+                    name="files/second",
+                    uri=upload_uris[1],
+                    state="ACTIVE",
+                    mime_type="video/mp4",
+                ),
+            ]
+        ),
+    )
+    client = SimpleNamespace(async_client=SimpleNamespace(files=async_files))
+    cache = _InMemoryTTLCache()
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (
+            yield build_contents(
+                text="Summarize",
+                content_parts=[
+                    {
+                        "type": "video",
+                        "local_path": local_file.as_posix(),
+                        "mime_type": "video/mp4",
+                    }
+                ],
+            )
+        )
+
+    first = await _run_with_cache(flow(), cache, env={"gemini_client": client})
+    assert first.is_ok()
+    assert _extract_file_uri(first.value[0].parts[0]) == upload_uris[0]
+
+    cache.now += 172801.0
+
+    second = await _run_with_cache(flow(), cache, env={"gemini_client": client})
+    assert second.is_ok()
+    assert _extract_file_uri(second.value[0].parts[0]) == upload_uris[1]
+
+    assert async_files.upload.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_build_contents_reuploads_when_file_signature_changes(tmp_path: Path) -> None:
+    """Changed mtime/size should produce a new cache key and trigger re-upload."""
+
+    local_file = tmp_path / "clip.mp4"
+    local_file.write_bytes(b"first-version")
+
+    upload_uris = [
+        "https://example.com/files/v1",
+        "https://example.com/files/v2",
+    ]
+    async_files = SimpleNamespace(
+        upload=AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    name="files/v1",
+                    uri=upload_uris[0],
+                    state="PROCESSING",
+                    mime_type="video/mp4",
+                ),
+                SimpleNamespace(
+                    name="files/v2",
+                    uri=upload_uris[1],
+                    state="PROCESSING",
+                    mime_type="video/mp4",
+                ),
+            ]
+        ),
+        get=AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    name="files/v1",
+                    uri=upload_uris[0],
+                    state="ACTIVE",
+                    mime_type="video/mp4",
+                ),
+                SimpleNamespace(
+                    name="files/v2",
+                    uri=upload_uris[1],
+                    state="ACTIVE",
+                    mime_type="video/mp4",
+                ),
+            ]
+        ),
+    )
+    client = SimpleNamespace(async_client=SimpleNamespace(files=async_files))
+    cache = _InMemoryTTLCache()
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (
+            yield build_contents(
+                text="Summarize",
+                content_parts=[
+                    {
+                        "type": "video",
+                        "local_path": local_file.as_posix(),
+                        "mime_type": "video/mp4",
+                    }
+                ],
+            )
+        )
+
+    first = await _run_with_cache(flow(), cache, env={"gemini_client": client})
+    assert first.is_ok()
+    assert _extract_file_uri(first.value[0].parts[0]) == upload_uris[0]
+
+    local_file.write_bytes(b"second-version-with-different-size")
+    stat = local_file.stat()
+    os.utime(local_file, (stat.st_atime + 1, stat.st_mtime + 1))
+
+    second = await _run_with_cache(flow(), cache, env={"gemini_client": client})
+    assert second.is_ok()
+    assert _extract_file_uri(second.value[0].parts[0]) == upload_uris[1]
+
+    assert async_files.upload.await_count == 2
+    assert len(cache.get_keys) >= 2
+    assert cache.get_keys[0] != cache.get_keys[1]
+
+
+@pytest.mark.asyncio
+async def test_build_contents_passes_through_https_uri_without_upload() -> None:
+    """HTTPS URIs should pass through untouched and avoid File API upload."""
+
+    async_files = SimpleNamespace(upload=AsyncMock(), get=AsyncMock())
+    client = SimpleNamespace(async_client=SimpleNamespace(files=async_files))
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (
+            yield build_contents(
+                text="Summarize",
+                content_parts=[
+                    {
+                        "type": "video",
+                        "file_uri": "https://example.com/media/video.mp4",
+                        "mime_type": "video/mp4",
+                    }
+                ],
+            )
+        )
+
+    result = await _run_with_default_cost(flow(), env={"gemini_client": client})
+
+    assert result.is_ok()
+    part = result.value[0].parts[0]
+    assert _extract_file_uri(part) == "https://example.com/media/video.mp4"
+    async_files.upload.assert_not_called()
+    async_files.get.assert_not_called()
 
 
 @pytest.mark.asyncio

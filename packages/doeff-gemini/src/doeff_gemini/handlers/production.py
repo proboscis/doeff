@@ -24,8 +24,8 @@ from doeff.effects.base import Effect, EffectBase
 from doeff_gemini.client import get_gemini_client, track_api_call
 from doeff_gemini.costs import calculate_known_model_cost
 from doeff_gemini.effects import (
-    GeminiChat,
     GeminiCalculateCost,
+    GeminiChat,
     GeminiEmbedding,
     GeminiImageEdit,
     GeminiStreamingChat,
@@ -92,38 +92,62 @@ def _image_size_from_size(size: tuple[int, int] | None) -> str | None:
     return "4K"
 
 
-def _content_to_text(content: Any) -> str:  # noqa: PLR0911
+def _is_media_content_part(content: dict[str, Any]) -> bool:
+    local_path = content.get("local_path")
+    if isinstance(local_path, str) and local_path:
+        return True
+
+    file_uri = content.get("file_uri")
+    if isinstance(file_uri, str) and file_uri:
+        return True
+
+    uri_value = content.get("uri")
+    return bool(isinstance(uri_value, str) and uri_value)
+
+
+def _content_to_text_and_parts(content: Any) -> tuple[str, list[dict[str, Any]]]:  # noqa: PLR0911
     if content is None:
-        return ""
+        return "", []
     if isinstance(content, str):
-        return content
+        return content, []
     if isinstance(content, dict):
+        if _is_media_content_part(content):
+            return "", [dict(content)]
+
         text = content.get("text")
         if isinstance(text, str):
-            return text
+            return text, []
         try:
-            return json.dumps(content)
+            return json.dumps(content), []
         except TypeError:
-            return str(content)
+            return str(content), []
     if isinstance(content, list):
-        parts = [_content_to_text(part) for part in content]
-        return "\n".join(part for part in parts if part)
-    return str(content)
+        text_parts: list[str] = []
+        content_parts: list[dict[str, Any]] = []
+        for part in content:
+            text_value, part_content_parts = _content_to_text_and_parts(part)
+            if text_value:
+                text_parts.append(text_value)
+            content_parts.extend(part_content_parts)
+        return "\n".join(part for part in text_parts if part), content_parts
+    return str(content), []
 
 
-def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
+def _messages_to_prompt_and_parts(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     lines: list[str] = []
+    content_parts: list[dict[str, Any]] = []
     for message in messages:
         role = str(message.get("role", "user"))
-        content = _content_to_text(message.get("content"))
-        if content:
-            lines.append(f"{role}: {content}")
-    return "\n".join(lines).strip()
+        content_text, message_parts = _content_to_text_and_parts(message.get("content"))
+        if content_text:
+            lines.append(f"{role}: {content_text}")
+        content_parts.extend(message_parts)
+    return "\n".join(lines).strip(), content_parts
 
 
 @do
 def _chat_impl(effect: LLMChat) -> EffectGenerator[str]:
-    prompt = _messages_to_prompt(effect.messages)
+    prompt, content_parts = _messages_to_prompt_and_parts(effect.messages)
     max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
     return (
         yield structured_llm__gemini(
@@ -131,6 +155,7 @@ def _chat_impl(effect: LLMChat) -> EffectGenerator[str]:
             model=effect.model,
             temperature=effect.temperature,
             max_output_tokens=max_output_tokens,
+            content_parts=content_parts or None,
             response_format=None,
         )
     )
@@ -138,7 +163,7 @@ def _chat_impl(effect: LLMChat) -> EffectGenerator[str]:
 
 @do
 def _streaming_chat_impl(effect: LLMStreamingChat | LLMChat) -> EffectGenerator[str]:
-    prompt = _messages_to_prompt(effect.messages)
+    prompt, content_parts = _messages_to_prompt_and_parts(effect.messages)
     max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
     return (
         yield structured_llm__gemini(
@@ -146,6 +171,7 @@ def _streaming_chat_impl(effect: LLMStreamingChat | LLMChat) -> EffectGenerator[
             model=effect.model,
             temperature=effect.temperature,
             max_output_tokens=max_output_tokens,
+            content_parts=content_parts or None,
             response_format=None,
         )
     )
@@ -153,7 +179,7 @@ def _streaming_chat_impl(effect: LLMStreamingChat | LLMChat) -> EffectGenerator[
 
 @do
 def _structured_impl(effect: LLMStructuredQuery) -> EffectGenerator[Any]:
-    prompt = _messages_to_prompt(effect.messages)
+    prompt, content_parts = _messages_to_prompt_and_parts(effect.messages)
     max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
     return (
         yield structured_llm__gemini(
@@ -161,6 +187,7 @@ def _structured_impl(effect: LLMStructuredQuery) -> EffectGenerator[Any]:
             model=effect.model,
             temperature=effect.temperature,
             max_output_tokens=max_output_tokens,
+            content_parts=content_parts or None,
             response_format=effect.response_format,
         )
     )

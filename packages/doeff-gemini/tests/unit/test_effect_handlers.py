@@ -256,6 +256,35 @@ def test_gemini_handler_delegates_unsupported_models() -> None:
     assert result.value == "fallback-chat"
 
 
+def test_message_parser_extracts_local_file_parts() -> None:
+    from doeff_gemini.handlers import production as production_module
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "video",
+                    "local_path": "/tmp/demo.mp4",
+                    "mime_type": "video/mp4",
+                },
+                {"type": "text", "text": "Summarize this video"},
+            ],
+        }
+    ]
+
+    prompt, content_parts = production_module._messages_to_prompt_and_parts(messages)
+
+    assert "Summarize this video" in prompt
+    assert content_parts == [
+        {
+            "type": "video",
+            "local_path": "/tmp/demo.mp4",
+            "mime_type": "video/mp4",
+        }
+    ]
+
+
 @do
 def _unified_image_program() -> EffectGenerator[ImageResult]:
     generated = yield UnifiedImageGenerate(
