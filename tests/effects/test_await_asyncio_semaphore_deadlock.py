@@ -1,11 +1,8 @@
-"""Await(asyncio.Semaphore) + Spawn/Gather deadlocks under sync run().
+"""Regression coverage for Await(asyncio.Semaphore) + Spawn/Gather under sync run().
 
-sync_await_handler creates ExternalPromise for each Await(coroutine).
-When spawned tasks contend on the same asyncio.Semaphore, the scheduler
-cannot interleave acquire/release, causing a deadlock.
-
-Native CreateSemaphore/AcquireSemaphore/ReleaseSemaphore are handled
-by the Rust VM scheduler directly and work correctly.
+Historically this pattern deadlocked because semaphore.acquire() ran on the
+background asyncio loop while semaphore.release() was invoked from the sync
+scheduler thread. This file locks in the fixed behavior.
 """
 
 from __future__ import annotations
@@ -122,10 +119,8 @@ class TestAwaitAsyncioSemaphoreDeadlock:
         p = _throttled_gather_asyncio(programs, concurrency=10)
         result = _run_with_timeout(p)
 
-        assert not result.is_ok(), (
-            "Expected deadlock with Await(asyncio.Semaphore) + Spawn/Gather under sync run(), "
-            "but it succeeded — if this passes, the runtime fixed the interaction"
-        )
+        assert result.is_ok(), f"Await(asyncio.Semaphore) should complete: {result.display()}"
+        assert result.value == [i * 2 for i in range(50)]
 
     @pytest.mark.asyncio
     async def test_asyncio_semaphore_works_in_async_mode(self) -> None:

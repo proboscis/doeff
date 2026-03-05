@@ -4,7 +4,7 @@ import asyncio
 import atexit
 import threading
 from collections.abc import Awaitable
-from typing import Any
+from typing import Any, cast
 
 import doeff_vm
 
@@ -18,6 +18,8 @@ PythonAsyncioAwaitEffect = doeff_vm.PythonAsyncioAwaitEffect
 _loop_lock = threading.Lock()
 _loop_thread: threading.Thread | None = None
 _loop: asyncio.AbstractEventLoop | None = None
+_RELEASE_BRIDGE_LOOP_ATTR = "_doeff_bridge_release_loop"
+_RELEASE_BRIDGE_ORIGINAL_ATTR = "_doeff_bridge_release_original"
 
 
 def _shutdown_background_loop() -> None:
@@ -64,8 +66,63 @@ def _ensure_background_loop() -> asyncio.AbstractEventLoop:
         return loop
 
 
+def _extract_asyncio_semaphore(awaitable: Awaitable[Any]) -> asyncio.Semaphore | None:
+    if not asyncio.iscoroutine(awaitable):
+        return None
+
+    coroutine = cast(Any, awaitable)
+    frame = coroutine.cr_frame
+    if frame is None:
+        return None
+
+    if coroutine.cr_code.co_name != "acquire":
+        return None
+
+    candidate = frame.f_locals.get("self")
+    if isinstance(candidate, asyncio.Semaphore):
+        return candidate
+    return None
+
+
+def _install_threadsafe_release_bridge(
+    semaphore: asyncio.Semaphore,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    state = semaphore.__dict__
+    if state.get(_RELEASE_BRIDGE_LOOP_ATTR) is loop:
+        return
+
+    release_impl = state.get(_RELEASE_BRIDGE_ORIGINAL_ATTR)
+    if not callable(release_impl):
+        release_impl = semaphore.release
+        state[_RELEASE_BRIDGE_ORIGINAL_ATTR] = release_impl
+
+    def _release() -> None:
+        try:
+            if asyncio.get_running_loop() is loop:
+                release_impl()
+                return
+        except RuntimeError:
+            pass
+
+        if loop.is_closed():
+            release_impl()
+            return
+
+        try:
+            loop.call_soon_threadsafe(release_impl)
+        except RuntimeError:
+            release_impl()
+
+    semaphore.release = _release  # type: ignore[method-assign]
+    state[_RELEASE_BRIDGE_LOOP_ATTR] = loop
+
+
 def _submit_awaitable(awaitable: Awaitable[Any], promise: Any) -> None:
     loop = _ensure_background_loop()
+    semaphore = _extract_asyncio_semaphore(awaitable)
+    if semaphore is not None:
+        _install_threadsafe_release_bridge(semaphore, loop)
 
     async def _run() -> object:
         return await awaitable
