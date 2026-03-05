@@ -5,7 +5,7 @@ does not own handler semantics.
 
 Provides: state, reader, writer, result_safe, scheduler, lazy_ask, await_handler.
 Default Await behavior for run()/async_run() comes from Python handlers in
-doeff.effects.future via default handler presets.
+doeff.handlers.await_handlers via default handler presets.
 """
 
 
@@ -32,4 +32,4 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["state", "reader", "writer", "result_safe", "scheduler", "lazy_ask", "await_handler"]
+__all__ = ["await_handler", "lazy_ask", "reader", "result_safe", "scheduler", "state", "writer"]

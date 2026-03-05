@@ -429,8 +429,8 @@ def default_handlers() -> list[Any]:
     do not mutate this list.
     """
     vm = _vm()
-    from doeff.effects.future import sync_await_handler
-    from doeff.effects.spawn import spawn_intercept_handler
+    from doeff.handlers.await_handlers import sync_await_handler
+    from doeff.handlers.spawn_handler import spawn_intercept_handler
 
     return [
         *_core_handler_sentinels(vm),
@@ -442,8 +442,8 @@ def default_handlers() -> list[Any]:
 def default_async_handlers() -> list[Any]:
     """Default async preset using event-loop aware Await handling."""
     vm = _vm()
-    from doeff.effects.future import async_await_handler
-    from doeff.effects.spawn import spawn_intercept_handler
+    from doeff.handlers.await_handlers import async_await_handler
+    from doeff.handlers.spawn_handler import spawn_intercept_handler
 
     return [
         *_core_handler_sentinels(vm),

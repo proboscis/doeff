@@ -11,10 +11,11 @@ Design Decisions (from spec):
 
 
 from dataclasses import dataclass, field
-from typing import Any, Generic, TypeVar, runtime_checkable, Protocol
+from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 import doeff_vm
-from doeff.do import do
+
+from doeff.handlers.spawn_handler import spawn_intercept_handler
 
 from ._program_types import ProgramLike
 from ._validators import ensure_dict_str_any, ensure_program_like
@@ -186,14 +187,6 @@ def normalize_waitable(value: Any) -> Waitable[Any]:
     )
 
 
-@do
-def spawn_intercept_handler(effect: Effect, k: Any):
-    if isinstance(effect, SpawnEffect):
-        raw = yield doeff_vm.Delegate()
-        return (yield doeff_vm.Resume(k, coerce_task_handle(raw)))
-    yield doeff_vm.Pass()
-
-
 def spawn(
     program: ProgramLike,
     priority: int = PRIORITY_NORMAL,
@@ -257,11 +250,11 @@ def _validate_priority(priority: int) -> int:
 
 
 __all__ = [
-    "Future",
-    "Promise",
     "PRIORITY_HIGH",
     "PRIORITY_IDLE",
     "PRIORITY_NORMAL",
+    "Future",
+    "Promise",
     "Spawn",
     "SpawnEffect",
     "Task",
