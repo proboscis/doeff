@@ -8,8 +8,8 @@ from doeff_image.types import ImageResult
 from .client import GeminiClient, get_gemini_client, track_api_call
 from .costs import calculate_cost, gemini_cost_calculator__default
 from .effects import (
-    GeminiChat,
     GeminiCalculateCost,
+    GeminiChat,
     GeminiEmbedding,
     GeminiImageEdit,
     GeminiStreamingChat,
@@ -24,6 +24,11 @@ from .handlers import (
     production_handlers,
 )
 from .structured_llm import (
+    FileUriContentPart,
+    GeminiContentPart,
+    LocalFileContentPart,
+    TextContentPart,
+    UriContentPart,
     build_contents,
     build_generation_config,
     edit_image__gemini,
@@ -49,16 +54,21 @@ __all__ = [
     "GeminiChat",
     "GeminiCalculateCost",
     "GeminiClient",
+    "GeminiContentPart",
     "GeminiCostEstimate",
     "GeminiEmbedding",
     "GeminiImageEdit",
     "GeminiImageEditResult",
     "GeminiStreamingChat",
     "GeminiStructuredOutput",
+    "FileUriContentPart",
     "ImageEdit",
     "ImageGenerate",
     "ImageResult",
+    "LocalFileContentPart",
+    "TextContentPart",
     "TokenUsage",
+    "UriContentPart",
     "__version__",
     "build_contents",
     "build_generation_config",
