@@ -25,7 +25,9 @@ from doeff.effects import (
     Put,
     Try,
 )
+from doeff.effects.cache import CacheGet
 from doeff.effects.reader import AskEffect
+from doeff.rust_vm import NoMatchingHandlerError
 
 
 def _with_legacy_intercept_chain(program: Program, *transforms):
@@ -265,6 +267,103 @@ class TestNestedSafe:
         inner_result = outer.value
         assert inner_result.is_ok()
         assert inner_result.value == 42
+
+
+class TestTryNoMatchingHandler:
+    """Tests for Try catching missing-handler failures inside EvalInScope."""
+
+    @pytest.mark.asyncio
+    async def test_try_catches_no_matching_handler(self, parameterized_interpreter) -> None:
+        """Try wraps a missing-handler failure in Result.Err instead of crashing the run."""
+
+        @do
+        def program():
+            return (yield Try(CacheGet("missing-key")))
+
+        result = await parameterized_interpreter.run_async(program())
+        assert result.is_ok
+
+        safe_result = result.value
+        assert safe_result.is_err()
+        assert isinstance(safe_result.error, NoMatchingHandlerError)
+
+    @pytest.mark.asyncio
+    async def test_try_catches_unhandled_inside_spawn(self, parameterized_interpreter) -> None:
+        """Try still catches missing-handler failures inside spawned children."""
+
+        @do
+        def child():
+            return (yield Try(CacheGet("spawned-missing-key")))
+
+        @do
+        def program():
+            task = yield Spawn(child())
+            results = yield Gather(task)
+            return results[0]
+
+        result = await parameterized_interpreter.run_async(program())
+        assert result.is_ok
+
+        child_result = result.value
+        assert child_result.is_err()
+        assert isinstance(child_result.error, NoMatchingHandlerError)
+
+    @pytest.mark.asyncio
+    async def test_nested_try_catches_unhandled(self, parameterized_interpreter) -> None:
+        """The innermost Try catches the missing-handler failure first."""
+
+        @do
+        def program():
+            return (yield Try(Try(CacheGet("nested-missing-key"))))
+
+        result = await parameterized_interpreter.run_async(program())
+        assert result.is_ok
+
+        outer_result = result.value
+        assert outer_result.is_ok()
+        inner_result = outer_result.value
+        assert inner_result.is_err()
+        assert isinstance(inner_result.error, NoMatchingHandlerError)
+
+    @pytest.mark.asyncio
+    async def test_unhandled_at_top_level_still_fatal(self, parameterized_interpreter) -> None:
+        """Without Try, missing-handler failures still terminate the program."""
+
+        @do
+        def program():
+            return (yield CacheGet("top-level-missing-key"))
+
+        result = await parameterized_interpreter.run_async(program())
+        assert result.is_err()
+        assert isinstance(result.error, NoMatchingHandlerError)
+
+    @pytest.mark.asyncio
+    async def test_cache_get_inside_try_returns_error(self, parameterized_interpreter) -> None:
+        """CacheGet inside Try returns Err for the cache-missing-handler path."""
+
+        @do
+        def program():
+            safe_cache_get = yield Try(CacheGet("cache-key"))
+            return safe_cache_get
+
+        result = await parameterized_interpreter.run_async(program())
+        assert result.is_ok
+        assert result.value.is_err()
+
+    @pytest.mark.asyncio
+    async def test_try_error_type_is_no_matching_handler(self, parameterized_interpreter) -> None:
+        """Try preserves the precise NoMatchingHandlerError type in Result.Err."""
+
+        @do
+        def program():
+            return (yield Try(CacheGet("typed-missing-key")))
+
+        result = await parameterized_interpreter.run_async(program())
+        assert result.is_ok
+
+        safe_result = result.value
+        assert safe_result.is_err()
+        assert type(safe_result.error) is NoMatchingHandlerError
 
 
 # ============================================================================

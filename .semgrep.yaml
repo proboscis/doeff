@@ -2282,3 +2282,24 @@ rules:
       Use GetExecutionContext() from doeff.effects instead.
     languages: [python]
     severity: WARNING
+
+  - id: vm-eval-in-scope-no-fatal-start-dispatch
+    languages: [rust]
+    severity: ERROR
+    message: |
+      ISSUE-VM-007: handle_yield_effect() must not return StepEvent::Error directly
+      from start_dispatch(). Missing-handler dispatch failures inside EvalInScope
+      have to re-enter the frame stack as Mode::Throw so Try/ResultSafeHandler can catch them.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    patterns:
+      - pattern-inside: |
+          fn handle_yield_effect(&mut self, $EFFECT: DispatchEffect) -> StepEvent {
+              ...
+          }
+      - pattern: |
+          match self.start_dispatch($EFFECT) {
+              Ok($EVENT) => $EVENT,
+              Err($ERROR) => StepEvent::Error($ERROR),
+          }
