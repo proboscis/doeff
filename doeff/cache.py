@@ -57,6 +57,32 @@ class CacheComputationError(RuntimeError):
 T = TypeVar("T")
 
 
+def _result_is_ok(result: Any) -> bool:
+    probe = result.is_ok
+    return bool(probe()) if callable(probe) else bool(probe)
+
+
+def _result_is_err(result: Any) -> bool:
+    probe = result.is_err
+    return bool(probe()) if callable(probe) else bool(probe)
+
+
+def _result_value(result: Any) -> Any:
+    if isinstance(result, Result):
+        return result.unwrap()
+    return result.value
+
+
+def _result_error(result: Any) -> BaseException:
+    if isinstance(result, Result):
+        return result.unwrap_err()
+    return result.error
+
+
+def _is_result_like(value: Any) -> bool:
+    return hasattr(value, "is_ok") and hasattr(value, "is_err")
+
+
 def _function_identifier(target: Any) -> str:
     """Return a descriptive identifier for a callable or callable-like object."""
     module = getattr(target, "__module__", None)
@@ -154,7 +180,6 @@ def _truncate_for_log(obj: Any, max_len: int = 200) -> str:
 
     half = (max_len - 5) // 2  # Reserve 5 chars for "..."
     return f"{repr_str[:half]}...{repr_str[-half:]}"
-
 
 @do_wrapper
 def cache(
@@ -351,7 +376,7 @@ def cache(
                 program_call = wrapped_func(*args, **kwargs)
                 result: Result = yield Try(program_call)
 
-                if result.is_ok():
+                if _result_is_ok(result):
                     yield ensure_serializable(cache_key_obj)
                     yield CachePut(
                         cache_key_obj,
@@ -363,10 +388,10 @@ def cache(
                         policy=policy,
                     )
                     yield slog(msg=f"Cache: stored result for {func_name}", level="DEBUG")
-                    return result.unwrap()
+                    return _result_value(result)
 
                 yield slog(msg=f"Computation for {func_name} failed, not caching.", level="error")
-                error = result.unwrap_err()
+                error = _result_error(result)
                 raise CacheComputationError(
                     func_name,
                     args,
@@ -385,8 +410,10 @@ def cache(
             else:
                 result = yield compute_and_cache()
 
-            if isinstance(result, Result):
-                return result.unwrap()
+            if _is_result_like(result):
+                if _result_is_err(result):
+                    raise _result_error(result)
+                return _result_value(result)
             return result
 
         try:
