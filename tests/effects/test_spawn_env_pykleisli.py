@@ -1,9 +1,4 @@
-"""PyKleisli values stored in reader env return None when retrieved via Ask.
-
-Plain callables survive env round-trip through Ask, but PyKleisli
-(@do decorated) values come back as None. This affects both Local env
-and run() env parameter, regardless of Spawn.
-"""
+"""PyKleisli values stored in reader env survive Ask round-trip."""
 
 from __future__ import annotations
 
@@ -31,7 +26,7 @@ class TestAskEnvPyKleisli:
         assert result.is_ok(), result.display()
         assert result.value == 420
 
-    def test_pykleisli_in_env_via_ask_returns_none(self) -> None:
+    def test_pykleisli_in_env_via_ask(self) -> None:
         @do
         def program():
             func = yield Ask("injected")
@@ -43,7 +38,16 @@ class TestAskEnvPyKleisli:
         assert result.is_ok(), f"PyKleisli in env should survive Ask round-trip: {result.display()}"
         assert result.value == 420
 
-    def test_pykleisli_in_local_env_via_ask_returns_none(self) -> None:
+    def test_pykleisli_in_env_preserves_identity(self) -> None:
+        @do
+        def program():
+            return (yield Ask("injected"))
+
+        result = run(program(), handlers=default_handlers(), env={"injected": _kleisli_func})
+        assert result.is_ok(), result.display()
+        assert result.value is _kleisli_func
+
+    def test_pykleisli_in_local_env_via_ask(self) -> None:
         @do
         def program():
             func = yield Ask("injected")
@@ -76,7 +80,7 @@ class TestSpawnEnvPyKleisli:
         assert result.is_ok(), result.display()
         assert result.value == 420
 
-    def test_pykleisli_in_spawn_returns_none(self) -> None:
+    def test_pykleisli_in_spawn(self) -> None:
         @do
         def child():
             func = yield Ask("injected")

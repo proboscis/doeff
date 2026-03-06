@@ -2,8 +2,6 @@
 //!
 //! Values can be either Rust-native (for optimization) or Python objects.
 
-use std::sync::Arc;
-
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString};
 
@@ -367,7 +365,9 @@ impl Value {
                 }
                 Ok(list.into_any())
             }
-            Value::Kleisli(_) => Ok(py.None().into_bound(py)),
+            Value::Kleisli(_) => unreachable!(
+                "Value::Kleisli should never be converted to Python object — it is consumed internally by Apply/Expand"
+            ),
             Value::Task(handle) => {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("type", "Task")?;
@@ -451,6 +451,11 @@ impl Value {
         }
     }
 
+    /// Preserve a Python object as-is without VM-side type coercion.
+    pub fn from_python_opaque(obj: &Bound<'_, PyAny>) -> Self {
+        Value::Python(obj.clone().unbind())
+    }
+
     pub fn from_pyobject(obj: &Bound<'_, PyAny>) -> Self {
         if obj.is_none() {
             return Value::None;
@@ -463,9 +468,6 @@ impl Value {
         }
         if let Ok(s) = obj.extract::<String>() {
             return Value::String(s);
-        }
-        if let Ok(kleisli) = obj.extract::<PyRef<'_, crate::kleisli::PyKleisli>>() {
-            return Value::Kleisli(Arc::new(kleisli.clone()));
         }
         Value::Python(obj.clone().unbind())
     }
