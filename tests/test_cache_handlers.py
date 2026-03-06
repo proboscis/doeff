@@ -80,6 +80,8 @@ def test_cache_decorator_with_handler(tmp_path: Path) -> None:
     @cache(lifecycle="persistent")
     @do
     def expensive(value: int) -> EffectGenerator[int]:
+        if False:
+            yield CacheGet("__typecheck__")
         calls["count"] += 1
         return value * 2
 
@@ -100,6 +102,8 @@ def test_cache_decorator_miss_then_hit() -> None:
     @cache()
     @do
     def expensive(value: int) -> EffectGenerator[int]:
+        if False:
+            yield CacheGet("__typecheck__")
         calls["count"] += 1
         return value * 3
 

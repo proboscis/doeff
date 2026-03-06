@@ -37,6 +37,14 @@ from doeff.cache import (
 )
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.do import do
+from doeff.handlers.cache_handlers import (
+    cache_handler,
+    content_address,
+    in_memory_cache_handler,
+    make_memo_rewriter,
+    memo_rewriters,
+    sqlite_cache_handler,
+)
 from doeff.effects import (
     AcquireSemaphore,
     AcquireSemaphoreEffect,
@@ -333,6 +341,7 @@ __all__ = [
     "await_",
     "build_graph_snapshot",
     "cache",
+    "cache_handler",
     "cache_1hour",
     "cache_1min",
     "cache_5min",
@@ -340,6 +349,7 @@ __all__ = [
     "cache_exists",
     "cache_forever",
     "cache_get",
+    "content_address",
     "cache_key",
     "cache_put",
     "capture",
@@ -353,8 +363,11 @@ __all__ = [
     "get",
     "graph_to_html",
     "graph_to_html_async",
+    "in_memory_cache_handler",
     "listen",
     "local",
+    "make_memo_rewriter",
+    "memo_rewriters",
     "modify",
     "persistent_cache_path",
     "put",
@@ -363,6 +376,7 @@ __all__ = [
     "run",
     "slog",
     "snapshot",
+    "sqlite_cache_handler",
     "spawn",
     "step",
     "tell",
