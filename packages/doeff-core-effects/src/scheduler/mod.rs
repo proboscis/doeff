@@ -31,7 +31,7 @@ use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
 use crate::segment::ScopeStore;
-use crate::step::{DoCtrl, PyException};
+use crate::step::{DoCtrl, PyException, PythonCall};
 use crate::value::{ExternalPromise, PromiseHandle, TaskHandle, Value};
 use crate::vm::RustStore;
 
@@ -39,6 +39,19 @@ pub const SCHEDULER_HANDLER_NAME: &str = "SchedulerHandler";
 pub const PRIORITY_IDLE: u32 = 0;
 pub const PRIORITY_NORMAL: u32 = 10;
 pub const PRIORITY_HIGH: u32 = 20;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExternalWaitMode {
+    Blocking,
+    AsyncYield,
+}
+
+#[derive(Debug)]
+enum TransferNextOutcome {
+    Step(IRStreamStep),
+    AwaitExternal,
+    None,
+}
 
 /// Effect variants handled by the scheduler.
 #[derive(Debug, Clone)]
@@ -190,6 +203,40 @@ struct WaitRequest {
     mode: WaitMode,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
+}
+
+static RUN_EXTERNAL_WAIT_MODES: OnceLock<Mutex<HashMap<u64, ExternalWaitMode>>> = OnceLock::new();
+
+fn run_external_wait_modes() -> &'static Mutex<HashMap<u64, ExternalWaitMode>> {
+    RUN_EXTERNAL_WAIT_MODES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn set_run_external_wait_mode(run_token: u64, mode: ExternalWaitMode) {
+    let mut modes = run_external_wait_modes()
+        .lock()
+        .expect("Scheduler lock poisoned");
+    modes.insert(run_token, mode);
+}
+
+fn external_wait_mode_for_run(run_token: Option<u64>) -> ExternalWaitMode {
+    let Some(token) = run_token else {
+        return ExternalWaitMode::Blocking;
+    };
+
+    let modes = run_external_wait_modes()
+        .lock()
+        .expect("Scheduler lock poisoned");
+    modes
+        .get(&token)
+        .copied()
+        .unwrap_or(ExternalWaitMode::Blocking)
+}
+
+fn clear_run_external_wait_mode(run_token: u64) {
+    let mut modes = run_external_wait_modes()
+        .lock()
+        .expect("Scheduler lock poisoned");
+    modes.remove(&run_token);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -418,6 +465,7 @@ pub struct SchedulerState {
     next_ready_sequence: u64,
     pub current_task: Option<TaskId>,
     execution_context_task_override: Option<TaskId>,
+    external_wait_mode: ExternalWaitMode,
     state_id: u64,
 }
 
@@ -854,12 +902,35 @@ fn scheduler_internal_error(message: impl Into<String>) -> PyException {
     PyException::runtime_error(format!("scheduler internal error: {}", message.into()))
 }
 
+fn make_async_external_wait_step() -> Result<IRStreamStep, PyException> {
+    Python::attach(|py| {
+        let asyncio = py.import("asyncio").map_err(|err| {
+            PyException::runtime_error(format!(
+                "failed to import asyncio for async external wait bridge: {err}"
+            ))
+        })?;
+        let sleep = asyncio.getattr("sleep").map_err(|err| {
+            PyException::runtime_error(format!(
+                "failed to resolve asyncio.sleep for async external wait bridge: {err}"
+            ))
+        })?;
+        Ok(IRStreamStep::NeedsPython(PythonCall::CallAsync {
+            func: PyShared::new(sleep.unbind()),
+            args: vec![Value::Int(0)],
+        }))
+    })
+}
+
 // ---------------------------------------------------------------------------
 // SchedulerState implementation
 // ---------------------------------------------------------------------------
 
 impl SchedulerState {
     pub fn new() -> Self {
+        Self::with_external_wait_mode(ExternalWaitMode::Blocking)
+    }
+
+    pub fn with_external_wait_mode(external_wait_mode: ExternalWaitMode) -> Self {
         SchedulerState {
             ready: ReadySet::Priority(BinaryHeap::new()),
             ready_task_ids: HashSet::new(),
@@ -877,6 +948,7 @@ impl SchedulerState {
             next_ready_sequence: 0,
             current_task: None,
             execution_context_task_override: None,
+            external_wait_mode,
             state_id: NEXT_SCHEDULER_STATE_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -1827,12 +1899,12 @@ impl SchedulerState {
     ///
     /// Per spec (SPEC-008 L1434-1447): saves the current task's store before
     /// switching and loads the new task's store after switching.
-    pub fn transfer_next(&mut self, store: &mut RustStore) -> Option<IRStreamStep> {
+    fn transfer_next(&mut self, store: &mut RustStore) -> TransferNextOutcome {
         loop {
             self.process_semaphore_drop_notifications();
 
             if let Err(error) = self.drain_external_completions_nonblocking() {
-                return Some(IRStreamStep::Throw(error));
+                return TransferNextOutcome::Step(IRStreamStep::Throw(error));
             }
 
             let mut selected_ready = None;
@@ -1883,12 +1955,12 @@ impl SchedulerState {
                                     (continuation, outcome, pending_merge)
                                 }
                                 Some(TaskState::Done { .. }) | None => {
-                                    return Some(IRStreamStep::Throw(scheduler_internal_error(
-                                        format!(
+                                    return TransferNextOutcome::Step(IRStreamStep::Throw(
+                                        scheduler_internal_error(format!(
                                             "transfer_next: ready task {} has no continuation",
                                             task_id.raw()
-                                        ),
-                                    )))
+                                        )),
+                                    ))
                                 }
                             };
 
@@ -1896,24 +1968,35 @@ impl SchedulerState {
                         if let Some(old_id) = self.current_task {
                             if old_id != task_id {
                                 if let Err(error) = self.save_task_store(old_id, store) {
-                                    return Some(IRStreamStep::Throw(error));
+                                    return TransferNextOutcome::Step(IRStreamStep::Throw(error));
                                 }
                             }
                         }
                         // Load new task's store.
                         if let Err(error) = self.load_task_store(task_id, store) {
-                            return Some(IRStreamStep::Throw(error));
+                            return TransferNextOutcome::Step(IRStreamStep::Throw(error));
                         }
                         self.current_task = Some(task_id);
                         if let Some(items) = merge_items.as_ref() {
                             self.merge_gather_logs(items, store);
                         }
                         match resume_outcome {
-                            Some(Err(error)) => return Some(throw_to_continuation(task_k, error)),
-                            Some(Ok(value)) => return Some(resume_to_continuation(task_k, value)),
+                            Some(Err(error)) => {
+                                return TransferNextOutcome::Step(throw_to_continuation(
+                                    task_k, error,
+                                ))
+                            }
+                            Some(Ok(value)) => {
+                                return TransferNextOutcome::Step(resume_to_continuation(
+                                    task_k, value,
+                                ))
+                            }
                             None => {}
                         }
-                        return Some(transfer_to_continuation(task_k, Value::Unit));
+                        return TransferNextOutcome::Step(transfer_to_continuation(
+                            task_k,
+                            Value::Unit,
+                        ));
                     }
                     ReadyTarget::Root(cont_id) => {
                         let Some(ready_root) = self.ready_root_resumes.remove(&cont_id) else {
@@ -1925,7 +2008,7 @@ impl SchedulerState {
                         );
                         if let Some(waiting_task) = ready_root.waiting_task {
                             if let Err(error) = self.load_task_store(waiting_task, store) {
-                                return Some(IRStreamStep::Throw(error));
+                                return TransferNextOutcome::Step(IRStreamStep::Throw(error));
                             }
                             self.current_task = Some(waiting_task);
                         } else {
@@ -1935,7 +2018,7 @@ impl SchedulerState {
                         if let Some(items) = &ready_root.merge_items {
                             self.merge_gather_logs(items, store);
                         }
-                        return Some(match ready_root.outcome {
+                        return TransferNextOutcome::Step(match ready_root.outcome {
                             Ok(value) => resume_to_continuation(ready_root.continuation, value),
                             Err(error) => throw_to_continuation(ready_root.continuation, error),
                         });
@@ -1944,20 +2027,28 @@ impl SchedulerState {
             }
 
             if self.ready.is_empty() && self.has_external_waiters() {
+                if self.external_wait_mode == ExternalWaitMode::AsyncYield {
+                    return TransferNextOutcome::AwaitExternal;
+                }
                 if let Err(error) = self.block_until_external_completion() {
-                    return Some(IRStreamStep::Throw(error));
+                    return TransferNextOutcome::Step(IRStreamStep::Throw(error));
                 }
                 continue;
             }
 
             // No ready tasks.
-            return None;
+            return TransferNextOutcome::None;
         }
     }
 
     pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> IRStreamStep {
-        self.transfer_next(store)
-            .unwrap_or_else(|| resume_to_continuation(k, Value::Unit))
+        match self.transfer_next(store) {
+            TransferNextOutcome::Step(step) => step,
+            TransferNextOutcome::AwaitExternal => {
+                make_async_external_wait_step().unwrap_or_else(IRStreamStep::Throw)
+            }
+            TransferNextOutcome::None => resume_to_continuation(k, Value::Unit),
+        }
     }
 }
 
@@ -2001,6 +2092,22 @@ enum SchedulerPhase {
     PreemptiveTransfer {
         k_user: Continuation,
     },
+    AwaitSimpleTransfer {
+        k_user: Continuation,
+    },
+    AwaitTransferWithDeadlock {
+        deadlock_message: String,
+    },
+    AwaitWaitTransfer {
+        owner: WaitOwner,
+        deadlock_message: String,
+    },
+    AwaitPreemptiveTransfer {
+        k_user: Continuation,
+    },
+    AwaitDrivingTransfer {
+        owner: WaitOwner,
+    },
     Driving {
         owner: WaitOwner,
         running_task: TaskId,
@@ -2039,7 +2146,184 @@ impl SchedulerProgram {
             SchedulerPhase::SpawnAwaitHandlers { .. } => "SpawnAwaitHandlers",
             SchedulerPhase::SpawnAwaitContinuation { .. } => "SpawnAwaitContinuation",
             SchedulerPhase::PreemptiveTransfer { .. } => "PreemptiveTransfer",
+            SchedulerPhase::AwaitSimpleTransfer { .. } => "AwaitSimpleTransfer",
+            SchedulerPhase::AwaitTransferWithDeadlock { .. } => "AwaitTransferWithDeadlock",
+            SchedulerPhase::AwaitWaitTransfer { .. } => "AwaitWaitTransfer",
+            SchedulerPhase::AwaitPreemptiveTransfer { .. } => "AwaitPreemptiveTransfer",
+            SchedulerPhase::AwaitDrivingTransfer { .. } => "AwaitDrivingTransfer",
             SchedulerPhase::Driving { .. } => "Driving",
+        }
+    }
+
+    fn async_external_wait_step(&self) -> IRStreamStep {
+        make_async_external_wait_step().unwrap_or_else(IRStreamStep::Throw)
+    }
+
+    fn continue_simple_transfer(
+        &mut self,
+        k_user: Continuation,
+        store: &mut RustStore,
+    ) -> IRStreamStep {
+        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        match state.transfer_next(store) {
+            TransferNextOutcome::Step(step) => {
+                self.phase = SchedulerPhase::Idle;
+                step
+            }
+            TransferNextOutcome::AwaitExternal => {
+                drop(state);
+                self.phase = SchedulerPhase::AwaitSimpleTransfer { k_user };
+                self.async_external_wait_step()
+            }
+            TransferNextOutcome::None => {
+                self.phase = SchedulerPhase::Idle;
+                resume_to_continuation(k_user, Value::Unit)
+            }
+        }
+    }
+
+    fn continue_transfer_with_deadlock(
+        &mut self,
+        deadlock_message: String,
+        store: &mut RustStore,
+    ) -> IRStreamStep {
+        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        match state.transfer_next(store) {
+            TransferNextOutcome::Step(step) => {
+                self.phase = SchedulerPhase::Idle;
+                step
+            }
+            TransferNextOutcome::AwaitExternal => {
+                drop(state);
+                self.phase = SchedulerPhase::AwaitTransferWithDeadlock { deadlock_message };
+                self.async_external_wait_step()
+            }
+            TransferNextOutcome::None => {
+                self.phase = SchedulerPhase::Idle;
+                IRStreamStep::Throw(scheduler_internal_error(deadlock_message))
+            }
+        }
+    }
+
+    fn continue_wait_transfer(
+        &mut self,
+        owner: WaitOwner,
+        deadlock_message: String,
+        store: &mut RustStore,
+    ) -> IRStreamStep {
+        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        match state.transfer_next(store) {
+            TransferNextOutcome::Step(step) => {
+                let next_running_task = state.current_task;
+                let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
+                let keep_driving = next_running_task.is_some()
+                    && !resumed_waiting_owner
+                    && step_switches_into_task_body(&step);
+                drop(state);
+                if keep_driving {
+                    self.phase = SchedulerPhase::Driving {
+                        owner,
+                        running_task: next_running_task
+                            .expect("keep_driving requires running task"),
+                    };
+                } else {
+                    self.phase = SchedulerPhase::Idle;
+                }
+                step
+            }
+            TransferNextOutcome::AwaitExternal => {
+                drop(state);
+                self.phase = SchedulerPhase::AwaitWaitTransfer {
+                    owner,
+                    deadlock_message,
+                };
+                self.async_external_wait_step()
+            }
+            TransferNextOutcome::None => {
+                self.phase = SchedulerPhase::Idle;
+                IRStreamStep::Throw(scheduler_internal_error(deadlock_message))
+            }
+        }
+    }
+
+    fn continue_preemptive_transfer_step(
+        &mut self,
+        k_user: Continuation,
+        store: &mut RustStore,
+    ) -> IRStreamStep {
+        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        match state.transfer_next(store) {
+            TransferNextOutcome::Step(raw_step) => {
+                let step = match raw_step {
+                    IRStreamStep::Yield(DoCtrl::TransferThrow {
+                        continuation,
+                        exception,
+                    }) => IRStreamStep::Yield(DoCtrl::ResumeThrow {
+                        continuation,
+                        exception,
+                    }),
+                    other => other,
+                };
+                let next_running_task = state.current_task;
+                let resumed_preempted_caller = step_targets_cont_id(&step, k_user.cont_id);
+                let switched_into_task_body = step_switches_into_task_body(&step);
+                let keep_preemptive_transfer = next_running_task.is_some()
+                    && switched_into_task_body
+                    && !resumed_preempted_caller;
+                drop(state);
+                if keep_preemptive_transfer {
+                    self.phase = SchedulerPhase::PreemptiveTransfer { k_user };
+                } else {
+                    self.phase = SchedulerPhase::Idle;
+                }
+                step
+            }
+            TransferNextOutcome::AwaitExternal => {
+                drop(state);
+                self.phase = SchedulerPhase::AwaitPreemptiveTransfer { k_user };
+                self.async_external_wait_step()
+            }
+            TransferNextOutcome::None => {
+                self.phase = SchedulerPhase::Idle;
+                resume_to_continuation(k_user, Value::Unit)
+            }
+        }
+    }
+
+    fn continue_driving_transfer(
+        &mut self,
+        owner: WaitOwner,
+        store: &mut RustStore,
+    ) -> IRStreamStep {
+        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        match state.transfer_next(store) {
+            TransferNextOutcome::Step(step) => {
+                let next_running_task = state.current_task;
+                let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
+                let keep_driving = next_running_task.is_some()
+                    && !resumed_waiting_owner
+                    && step_switches_into_task_body(&step);
+                drop(state);
+                if keep_driving {
+                    self.phase = SchedulerPhase::Driving {
+                        owner,
+                        running_task: next_running_task
+                            .expect("keep_driving requires running task"),
+                    };
+                } else {
+                    self.phase = SchedulerPhase::Idle;
+                }
+                step
+            }
+            TransferNextOutcome::AwaitExternal => {
+                drop(state);
+                self.phase = SchedulerPhase::AwaitDrivingTransfer { owner };
+                self.async_external_wait_step()
+            }
+            TransferNextOutcome::None => {
+                self.phase = SchedulerPhase::Idle;
+                IRStreamStep::Return(Value::Unit)
+            }
         }
     }
 
@@ -2079,27 +2363,12 @@ impl SchedulerProgram {
                 cont_id: k_user.cont_id,
             },
         };
-
-        let Some(step) = state.transfer_next(store) else {
-            self.phase = SchedulerPhase::Idle;
-            return IRStreamStep::Throw(scheduler_internal_error(
-                "deadlock: Gather blocked with no runnable tasks".to_string(),
-            ));
-        };
-
-        let running_task = state.current_task;
-        let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
-        let keep_driving =
-            running_task.is_some() && !resumed_waiting_owner && step_switches_into_task_body(&step);
-        if keep_driving {
-            self.phase = SchedulerPhase::Driving {
-                owner,
-                running_task: running_task.expect("keep_driving requires running task"),
-            };
-        } else {
-            self.phase = SchedulerPhase::Idle;
-        }
-        step
+        drop(state);
+        self.continue_wait_transfer(
+            owner,
+            "deadlock: Gather blocked with no runnable tasks".to_string(),
+            store,
+        )
     }
 
     fn handle_race(
@@ -2133,27 +2402,12 @@ impl SchedulerProgram {
                 cont_id: k_user.cont_id,
             },
         };
-
-        let Some(step) = state.transfer_next(store) else {
-            self.phase = SchedulerPhase::Idle;
-            return IRStreamStep::Throw(scheduler_internal_error(
-                "deadlock: Race blocked with no runnable tasks".to_string(),
-            ));
-        };
-
-        let running_task = state.current_task;
-        let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
-        let keep_driving =
-            running_task.is_some() && !resumed_waiting_owner && step_switches_into_task_body(&step);
-        if keep_driving {
-            self.phase = SchedulerPhase::Driving {
-                owner,
-                running_task: running_task.expect("keep_driving requires running task"),
-            };
-        } else {
-            self.phase = SchedulerPhase::Idle;
-        }
-        step
+        drop(state);
+        self.continue_wait_transfer(
+            owner,
+            "deadlock: Race blocked with no runnable tasks".to_string(),
+            store,
+        )
     }
 
     fn handle_get_execution_context(&mut self, k_user: Continuation) -> IRStreamStep {
@@ -2241,30 +2495,6 @@ impl SchedulerProgram {
         })
     }
 
-    fn transfer_next_after_preemption_step(
-        state: &mut SchedulerState,
-        k_user: Continuation,
-        store: &mut RustStore,
-    ) -> (IRStreamStep, bool) {
-        let raw_step = state.transfer_next_or(k_user.clone(), store);
-        let step = match raw_step {
-            IRStreamStep::Yield(DoCtrl::TransferThrow {
-                continuation,
-                exception,
-            }) => IRStreamStep::Yield(DoCtrl::ResumeThrow {
-                continuation,
-                exception,
-            }),
-            other => other,
-        };
-        let next_running_task = state.current_task;
-        let resumed_preempted_caller = step_targets_cont_id(&step, k_user.cont_id);
-        let switched_into_task_body = step_switches_into_task_body(&step);
-        let keep_preemptive_transfer =
-            next_running_task.is_some() && switched_into_task_body && !resumed_preempted_caller;
-        (step, keep_preemptive_transfer)
-    }
-
     fn continue_preemptive_transfer(
         &mut self,
         outcome: Result<Value, PyException>,
@@ -2287,16 +2517,8 @@ impl SchedulerProgram {
             return IRStreamStep::Throw(error);
         }
         state.wake_waiters(Waitable::Task(task_id));
-        let (step, keep_preemptive_transfer) =
-            Self::transfer_next_after_preemption_step(&mut state, k_user.clone(), store);
         drop(state);
-        if keep_preemptive_transfer {
-            self.phase = SchedulerPhase::PreemptiveTransfer { k_user };
-            step
-        } else {
-            self.phase = SchedulerPhase::Idle;
-            step
-        }
+        self.continue_preemptive_transfer_step(k_user, store)
     }
 
     fn handle_promise_resolution(
@@ -2321,15 +2543,8 @@ impl SchedulerProgram {
             if let Err(error) = state.park_current_with_value(k_user.clone(), Value::Unit) {
                 return IRStreamStep::Throw(error);
             }
-            let (step, keep_preemptive_transfer) =
-                Self::transfer_next_after_preemption_step(&mut state, k_user.clone(), store);
             drop(state);
-            if keep_preemptive_transfer {
-                self.phase = SchedulerPhase::PreemptiveTransfer { k_user };
-            } else {
-                self.phase = SchedulerPhase::Idle;
-            }
-            step
+            self.continue_preemptive_transfer_step(k_user, store)
         } else {
             resume_to_continuation(k_user, Value::Unit)
         }
@@ -2381,32 +2596,41 @@ impl SchedulerProgram {
             state.wake_waiters(Waitable::Task(running_task));
         }
 
-        let Some(step) = state.transfer_next(store) else {
-            self.phase = SchedulerPhase::Idle;
-            if !owner_still_waiting {
-                return match outcome_for_fallback {
-                    Ok(value) => IRStreamStep::Return(value),
-                    Err(error) => IRStreamStep::Throw(error),
-                };
+        match state.transfer_next(store) {
+            TransferNextOutcome::Step(step) => {
+                let next_running_task = state.current_task;
+                let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
+                let keep_driving = next_running_task.is_some()
+                    && !resumed_waiting_owner
+                    && step_switches_into_task_body(&step);
+                drop(state);
+                if keep_driving {
+                    self.phase = SchedulerPhase::Driving {
+                        owner,
+                        running_task: next_running_task
+                            .expect("keep_driving requires running task"),
+                    };
+                } else {
+                    self.phase = SchedulerPhase::Idle;
+                }
+                step
             }
-            return IRStreamStep::Return(Value::Unit);
-        };
-
-        let next_running_task = state.current_task;
-        let resumed_waiting_owner = step_targets_cont_id(&step, owner.cont_id());
-        let keep_driving = owner_still_waiting
-            && next_running_task.is_some()
-            && !resumed_waiting_owner
-            && step_switches_into_task_body(&step);
-        if keep_driving {
-            self.phase = SchedulerPhase::Driving {
-                owner,
-                running_task: next_running_task.expect("keep_driving requires running task"),
-            };
-        } else {
-            self.phase = SchedulerPhase::Idle;
+            TransferNextOutcome::AwaitExternal => {
+                drop(state);
+                self.phase = SchedulerPhase::AwaitDrivingTransfer { owner };
+                self.async_external_wait_step()
+            }
+            TransferNextOutcome::None => {
+                self.phase = SchedulerPhase::Idle;
+                if !owner_still_waiting {
+                    return match outcome_for_fallback {
+                        Ok(value) => IRStreamStep::Return(value),
+                        Err(error) => IRStreamStep::Throw(error),
+                    };
+                }
+                IRStreamStep::Return(Value::Unit)
+            }
         }
-        step
     }
 }
 
@@ -2423,7 +2647,8 @@ impl IRStreamProgram for SchedulerProgram {
             let mut state = self.state.lock().expect("Scheduler lock poisoned");
             state.process_semaphore_drop_notifications();
             if state.apply_running_task_cancellation_if_requested() {
-                return state.transfer_next_or(k_user, store);
+                drop(state);
+                return self.continue_simple_transfer(k_user, store);
             }
         }
 
@@ -2478,7 +2703,8 @@ impl IRStreamProgram for SchedulerProgram {
                     return IRStreamStep::Throw(error);
                 }
                 state.wake_waiters(Waitable::Task(task));
-                state.transfer_next_or(k_user, store)
+                drop(state);
+                self.continue_simple_transfer(k_user, store)
             }
 
             SchedulerEffect::Gather { items } => self.handle_gather(k_user, items, store),
@@ -2551,12 +2777,11 @@ impl IRStreamProgram for SchedulerProgram {
                             }
                         }
                         state.wait_on_any(&items, k_user.clone(), store);
-                        state.transfer_next(store).unwrap_or_else(|| {
-                            IRStreamStep::Throw(scheduler_internal_error(
-                                "deadlock: AcquireSemaphore blocked with no runnable tasks"
-                                    .to_string(),
-                            ))
-                        })
+                        drop(state);
+                        self.continue_transfer_with_deadlock(
+                            "deadlock: AcquireSemaphore blocked with no runnable tasks".to_string(),
+                            store,
+                        )
                     }
                     None => resume_to_continuation(k_user, Value::Unit),
                 }
@@ -2804,24 +3029,29 @@ impl IRStreamProgram for SchedulerProgram {
                     if let Err(error) = state.park_current_with_value(k_user.clone(), task_value) {
                         return IRStreamStep::Throw(error);
                     }
-                    let (step, keep_preemptive_transfer) =
-                        Self::transfer_next_after_preemption_step(
-                            &mut state,
-                            k_user.clone(),
-                            store,
-                        );
                     drop(state);
-                    if keep_preemptive_transfer {
-                        self.phase = SchedulerPhase::PreemptiveTransfer { k_user };
-                    } else {
-                        self.phase = SchedulerPhase::Idle;
-                    }
-                    step
+                    self.continue_preemptive_transfer_step(k_user, store)
                 } else {
                     resume_to_continuation(k_user, task_value)
                 }
             }
 
+            SchedulerPhase::AwaitSimpleTransfer { k_user } => {
+                self.continue_simple_transfer(k_user, store)
+            }
+            SchedulerPhase::AwaitTransferWithDeadlock { deadlock_message } => {
+                self.continue_transfer_with_deadlock(deadlock_message, store)
+            }
+            SchedulerPhase::AwaitWaitTransfer {
+                owner,
+                deadlock_message,
+            } => self.continue_wait_transfer(owner, deadlock_message, store),
+            SchedulerPhase::AwaitPreemptiveTransfer { k_user } => {
+                self.continue_preemptive_transfer_step(k_user, store)
+            }
+            SchedulerPhase::AwaitDrivingTransfer { owner } => {
+                self.continue_driving_transfer(owner, store)
+            }
             SchedulerPhase::PreemptiveTransfer { k_user } => {
                 self.continue_preemptive_transfer(Ok(value), k_user, store)
             }
@@ -2849,7 +3079,12 @@ impl IRStreamProgram for SchedulerProgram {
             SchedulerPhase::PreemptiveTransfer { k_user } => {
                 self.continue_preemptive_transfer(Err(exc), k_user, store)
             }
-            SchedulerPhase::Idle
+            SchedulerPhase::AwaitSimpleTransfer { .. }
+            | SchedulerPhase::AwaitTransferWithDeadlock { .. }
+            | SchedulerPhase::AwaitWaitTransfer { .. }
+            | SchedulerPhase::AwaitPreemptiveTransfer { .. }
+            | SchedulerPhase::AwaitDrivingTransfer { .. }
+            | SchedulerPhase::Idle
             | SchedulerPhase::SpawnAwaitTraceback { .. }
             | SchedulerPhase::SpawnAwaitHandlers { .. }
             | SchedulerPhase::SpawnAwaitContinuation { .. } => IRStreamStep::Throw(exc),
@@ -2919,7 +3154,9 @@ impl SchedulerHandler {
                 states
                     .entry(token)
                     .or_insert_with(|| {
-                        let state = Arc::new(Mutex::new(SchedulerState::new()));
+                        let mode = external_wait_mode_for_run(Some(token));
+                        let state =
+                            Arc::new(Mutex::new(SchedulerState::with_external_wait_mode(mode)));
                         register_scheduler_state(&state);
                         state
                     })
@@ -2961,6 +3198,7 @@ impl IRStreamFactory for SchedulerHandler {
     fn on_run_end(&self, run_token: u64) {
         let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
         states.remove(&run_token);
+        clear_run_external_wait_mode(run_token);
     }
 
     fn supports_error_context_conversion(&self) -> bool {

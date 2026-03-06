@@ -13,15 +13,10 @@ use crate::effect::{
     dispatch_from_shared, dispatch_ref_as_python, PyExecutionContext, PyGetExecutionContext,
     PyProgramCallStack,
 };
-use crate::ir_stream::{IRStream, PythonGeneratorStream};
-use doeff_vm_core::{
-    install_vm_hooks, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr,
-    PyResultOk, PyTraceFrame, PyTraceHop, VmHooks,
-};
-use doeff_core_effects::sentinels::PyRustHandlerSentinel;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::ids::Marker;
+use crate::ir_stream::{IRStream, PythonGeneratorStream};
 use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
@@ -30,6 +25,12 @@ use crate::segment::{Segment, SegmentKind};
 use crate::step::{Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent};
 use crate::value::Value;
 use crate::vm::VM;
+use doeff_core_effects::scheduler::{set_run_external_wait_mode, ExternalWaitMode};
+use doeff_core_effects::sentinels::PyRustHandlerSentinel;
+use doeff_vm_core::{
+    install_vm_hooks, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr,
+    PyResultOk, PyTraceFrame, PyTraceHop, VmHooks,
+};
 
 fn ensure_vm_core_hooks_installed() {
     install_vm_hooks(VmHooks {
@@ -666,7 +667,6 @@ impl PyVM {
             .receive_python_result(PyCallOutcome::GenError(py_exc));
         Ok(())
     }
-
 }
 
 impl PyVM {
@@ -3988,6 +3988,9 @@ fn async_run<'py>(
     }
 
     vm.start_with_expr(py, program)?;
+    if let Some(run_token) = vm.vm.current_run_token() {
+        set_run_external_wait_mode(run_token, ExternalWaitMode::AsyncYield);
+    }
 
     let py_vm = Bound::new(py, vm)?;
 
