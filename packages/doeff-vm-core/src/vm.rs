@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
 
 use crate::arena::SegmentArena;
 use crate::capture::{
@@ -530,6 +530,112 @@ impl VM {
         self.handlers_in_caller_chain(seg_id)
     }
 
+    fn continuation_chain_contains_eval_in_scope_return(continuation: &Continuation) -> bool {
+        let mut cursor = Some(continuation);
+        while let Some(current) = cursor {
+            if current.frames_snapshot.iter().any(|frame| {
+                matches!(
+                    frame,
+                    Frame::EvalReturn(eval_return)
+                        if matches!(
+                            eval_return.as_ref(),
+                            EvalReturnContinuation::EvalInScopeReturn { .. }
+                        )
+                )
+            }) {
+                return true;
+            }
+            cursor = current.parent.as_deref();
+        }
+        false
+    }
+
+    fn is_inside_eval_in_scope_subtopology(&self) -> bool {
+        let mut seg_id = self.current_segment;
+        while let Some(id) = seg_id {
+            let Some(seg) = self.segments.get(id) else {
+                break;
+            };
+            if seg.frames.iter().any(|frame| {
+                matches!(
+                    frame,
+                    Frame::EvalReturn(continuation)
+                        if matches!(
+                            continuation.as_ref(),
+                            EvalReturnContinuation::EvalInScopeReturn { .. }
+                        )
+                )
+            }) {
+                return true;
+            }
+            seg_id = seg.caller;
+        }
+        let Some(dispatch_id) = self.current_segment_dispatch_id_any() else {
+            return false;
+        };
+        let Some(ctx) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
+            return false;
+        };
+        Self::continuation_chain_contains_eval_in_scope_return(&ctx.k_current)
+            || Self::continuation_chain_contains_eval_in_scope_return(&ctx.k_origin)
+    }
+
+    fn materialize_vm_error_exception(module_attr: &str, message: &str) -> Option<PyException> {
+        Python::attach(|py| {
+            for module_name in ["doeff_vm", "doeff_vm.doeff_vm"] {
+                let Ok(module) = PyModule::import(py, module_name) else {
+                    continue;
+                };
+                let Ok(exc_type) = module.getattr(module_attr) else {
+                    continue;
+                };
+                let Ok(exc_value) = exc_type.call1((message,)) else {
+                    continue;
+                };
+                return Some(PyException::new(
+                    exc_type.clone().unbind(),
+                    exc_value.unbind(),
+                    None,
+                ));
+            }
+            None
+        })
+    }
+
+    fn recoverable_eval_in_scope_dispatch_exception(&self, error: &VMError) -> Option<PyException> {
+        if !self.is_inside_eval_in_scope_subtopology() {
+            return None;
+        }
+
+        let message = error.to_string();
+        match error {
+            VMError::UnhandledEffect { .. } => {
+                Self::materialize_vm_error_exception("UnhandledEffectError", &message)
+                    .or_else(|| Some(PyException::type_error(message)))
+            }
+            VMError::NoMatchingHandler { .. }
+            | VMError::DelegateNoOuterHandler { .. }
+            | VMError::HandlerNotFound { .. } => {
+                Self::materialize_vm_error_exception("NoMatchingHandlerError", &message)
+                    .or_else(|| Some(PyException::type_error(message)))
+            }
+            VMError::OneShotViolation { .. }
+            | VMError::InvalidSegment { .. }
+            | VMError::PythonError { .. }
+            | VMError::InternalError { .. }
+            | VMError::TypeError { .. }
+            | VMError::UncaughtException { .. } => None,
+        }
+    }
+
+    fn dispatch_fatal_error_event(&mut self, error: VMError) -> StepEvent {
+        if let Some(exception) = self.recoverable_eval_in_scope_dispatch_exception(&error) {
+            self.current_seg_mut().mode = Mode::Throw(exception);
+            return StepEvent::Continue;
+        }
+        StepEvent::Error(error)
+    }
+
     fn eval_in_scope_chain_start_segment(&self, scope: &Continuation) -> Option<SegmentId> {
         let mut start_seg_id = scope.segment_id;
         if self.segments.get(start_seg_id).is_none() {
@@ -640,10 +746,7 @@ impl VM {
         child_seg.scope_store = source_seg.scope_store.clone();
     }
 
-    fn remap_interceptor_skip_markers(
-        seg: &mut Segment,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
+    fn remap_interceptor_skip_markers(seg: &mut Segment, marker_remap: &HashMap<Marker, Marker>) {
         if marker_remap.is_empty() {
             return;
         }
@@ -660,7 +763,10 @@ impl VM {
         }
     }
 
-    fn remap_interceptor_markers_in_doctrl(ctrl: &mut DoCtrl, marker_remap: &HashMap<Marker, Marker>) {
+    fn remap_interceptor_markers_in_doctrl(
+        ctrl: &mut DoCtrl,
+        marker_remap: &HashMap<Marker, Marker>,
+    ) {
         match ctrl {
             DoCtrl::Pure { .. } => {}
             DoCtrl::Map { .. } => {}
@@ -753,12 +859,8 @@ impl VM {
             EvalReturnContinuation::EvalInScopeReturn { continuation } => {
                 Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
             }
-            EvalReturnContinuation::ApplyResolveFunction {
-                args, kwargs, ..
-            }
-            | EvalReturnContinuation::ExpandResolveFactory {
-                args, kwargs, ..
-            } => {
+            EvalReturnContinuation::ApplyResolveFunction { args, kwargs, .. }
+            | EvalReturnContinuation::ExpandResolveFactory { args, kwargs, .. } => {
                 for arg in args {
                     Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
                 }
@@ -766,7 +868,9 @@ impl VM {
                     Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
                 }
             }
-            EvalReturnContinuation::ApplyResolveArg { f, args, kwargs, .. } => {
+            EvalReturnContinuation::ApplyResolveArg {
+                f, args, kwargs, ..
+            } => {
                 Self::remap_interceptor_markers_in_doctrl(f, marker_remap);
                 for arg in args {
                     Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
@@ -775,7 +879,9 @@ impl VM {
                     Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
                 }
             }
-            EvalReturnContinuation::ApplyResolveKwarg { f, args, kwargs, .. } => {
+            EvalReturnContinuation::ApplyResolveKwarg {
+                f, args, kwargs, ..
+            } => {
                 Self::remap_interceptor_markers_in_doctrl(f, marker_remap);
                 for arg in args {
                     Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
@@ -808,7 +914,10 @@ impl VM {
         }
     }
 
-    fn remap_interceptor_markers_in_frame(frame: &mut Frame, marker_remap: &HashMap<Marker, Marker>) {
+    fn remap_interceptor_markers_in_frame(
+        frame: &mut Frame,
+        marker_remap: &HashMap<Marker, Marker>,
+    ) {
         match frame {
             Frame::Program { .. } => {}
             Frame::InterceptorApply(interceptor_continuation) => {
@@ -888,7 +997,10 @@ impl VM {
         }
     }
 
-    fn remap_interceptor_markers_in_segment(seg: &mut Segment, marker_remap: &HashMap<Marker, Marker>) {
+    fn remap_interceptor_markers_in_segment(
+        seg: &mut Segment,
+        marker_remap: &HashMap<Marker, Marker>,
+    ) {
         if marker_remap.is_empty() {
             return;
         }
@@ -1207,17 +1319,20 @@ impl VM {
         // Invariant: when a handler Program frame yields DoCtrl::IRStream via `yield helper()`,
         // that handler Program frame is on top of the stack. Reading the top Program frame's
         // provenance correctly propagates handler context to nested sub-program frames.
-        self.current_seg().frames.last().and_then(|frame| match frame {
-            Frame::Program { handler_kind, .. } => *handler_kind,
-            Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
-            | Frame::HandlerDispatch { .. }
-            | Frame::EvalReturn(_)
-            | Frame::MapReturn { .. }
-            | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
-        })
+        self.current_seg()
+            .frames
+            .last()
+            .and_then(|frame| match frame {
+                Frame::Program { handler_kind, .. } => *handler_kind,
+                Frame::InterceptorApply(_)
+                | Frame::InterceptorEval(_)
+                | Frame::HandlerDispatch { .. }
+                | Frame::EvalReturn(_)
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. }
+                | Frame::InterceptBodyReturn { .. } => None,
+            })
     }
 
     fn dispatch_uses_user_continuation_stream(
@@ -1228,20 +1343,23 @@ impl VM {
         self.dispatch_state
             .find_by_dispatch_id(dispatch_id)
             .is_some_and(|ctx| {
-                ctx.k_current.frames_snapshot.iter().any(|frame| match frame {
-                    Frame::Program {
-                        stream: snapshot_stream,
-                        ..
-                    } => Arc::ptr_eq(snapshot_stream, stream),
-                    Frame::InterceptorApply(_)
-                    | Frame::InterceptorEval(_)
-                    | Frame::HandlerDispatch { .. }
-                    | Frame::EvalReturn(_)
-                    | Frame::MapReturn { .. }
-                    | Frame::FlatMapBindResult
-                    | Frame::FlatMapBindSource { .. }
-                    | Frame::InterceptBodyReturn { .. } => false,
-                })
+                ctx.k_current
+                    .frames_snapshot
+                    .iter()
+                    .any(|frame| match frame {
+                        Frame::Program {
+                            stream: snapshot_stream,
+                            ..
+                        } => Arc::ptr_eq(snapshot_stream, stream),
+                        Frame::InterceptorApply(_)
+                        | Frame::InterceptorEval(_)
+                        | Frame::HandlerDispatch { .. }
+                        | Frame::EvalReturn(_)
+                        | Frame::MapReturn { .. }
+                        | Frame::FlatMapBindResult
+                        | Frame::FlatMapBindSource { .. }
+                        | Frame::InterceptBodyReturn { .. } => false,
+                    })
             })
     }
 
@@ -1323,11 +1441,7 @@ impl VM {
         }
     }
 
-    fn emit_frame_entered(
-        &mut self,
-        metadata: &CallMetadata,
-        handler_kind: Option<HandlerKind>,
-    ) {
+    fn emit_frame_entered(&mut self, metadata: &CallMetadata, handler_kind: Option<HandlerKind>) {
         self.trace_state.emit_frame_entered(
             metadata,
             Self::program_call_repr(metadata),
@@ -1339,11 +1453,7 @@ impl VM {
         self.trace_state.emit_frame_exited(metadata);
     }
 
-    fn emit_handler_threw_for_dispatch(
-        &mut self,
-        dispatch_id: DispatchId,
-        exc: &PyException,
-    ) {
+    fn emit_handler_threw_for_dispatch(&mut self, dispatch_id: DispatchId, exc: &PyException) {
         let handler_identity = self
             .current_handler_identity_for_dispatch(dispatch_id)
             .or_else(|| {
@@ -1472,11 +1582,14 @@ impl VM {
                 });
             }
 
-            let active_chain_obj = Value::ActiveChain(active_chain).to_pyobject(py).map_err(|err| {
-                VMError::python_error(format!(
-                    "failed to convert active_chain snapshot to Python object: {err}"
-                ))
-            })?;
+            let active_chain_obj =
+                Value::ActiveChain(active_chain)
+                    .to_pyobject(py)
+                    .map_err(|err| {
+                        VMError::python_error(format!(
+                            "failed to convert active_chain snapshot to Python object: {err}"
+                        ))
+                    })?;
             let active_chain_list = active_chain_obj.cast::<PyList>().map_err(|err| {
                 VMError::python_error(format!(
                     "active_chain snapshot serialization did not produce list: {err}"
@@ -1605,9 +1718,9 @@ impl VM {
                         Mode::Throw(exc) => {
                             self.begin_finally_cleanup(cleanup, FinallyOutcome::Throw(exc))
                         }
-                        Mode::HandleYield(_) | Mode::Return(_) => StepEvent::Error(VMError::internal(
-                            "invalid mode while resolving FinallyBoundary",
-                        )),
+                        Mode::HandleYield(_) | Mode::Return(_) => StepEvent::Error(
+                            VMError::internal("invalid mode while resolving FinallyBoundary"),
+                        ),
                     };
                 }
                 match mode {
@@ -1680,9 +1793,7 @@ impl VM {
                         Mode::Deliver(value) => guard.resume(value, &mut self.rust_store, scope),
                         Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store, scope),
                         Mode::HandleYield(yielded) => {
-                            unreachable!(
-                                "Program frame resumed with HandleYield mode: {yielded:?}"
-                            )
+                            unreachable!("Program frame resumed with HandleYield mode: {yielded:?}")
                         }
                         Mode::Return(value) => {
                             unreachable!("Program frame resumed with Return mode: {value:?}")
@@ -1890,7 +2001,9 @@ impl VM {
                     exception,
                 }),
                 Mode::HandleYield(yielded) => {
-                    unreachable!("EvalInScope return continuation received HandleYield mode: {yielded:?}")
+                    unreachable!(
+                        "EvalInScope return continuation received HandleYield mode: {yielded:?}"
+                    )
                 }
                 Mode::Return(value) => {
                     unreachable!("EvalInScope return continuation received Return mode: {value:?}")
@@ -2183,11 +2296,12 @@ impl VM {
                     &call,
                     PythonCall::GenNext | PythonCall::GenSend { .. } | PythonCall::GenThrow { .. }
                 ) {
-                    self.current_seg_mut().pending_python = Some(PendingPython::StepUserGenerator {
-                        stream,
-                        metadata,
-                        handler_kind,
-                    });
+                    self.current_seg_mut().pending_python =
+                        Some(PendingPython::StepUserGenerator {
+                            stream,
+                            metadata,
+                            handler_kind,
+                        });
                     return StepEvent::NeedsPython(call);
                 }
 
@@ -2233,14 +2347,8 @@ impl VM {
         handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
         let chain = Arc::new(self.current_interceptor_chain());
-        self.current_seg_mut().mode = self.continue_interceptor_chain_mode(
-            yielded,
-            stream,
-            metadata,
-            handler_kind,
-            chain,
-            0,
-        );
+        self.current_seg_mut().mode =
+            self.continue_interceptor_chain_mode(yielded, stream, metadata, handler_kind, chain, 0);
         StepEvent::Continue
     }
 
@@ -2751,7 +2859,7 @@ impl VM {
     fn handle_yield_effect(&mut self, effect: DispatchEffect) -> StepEvent {
         match self.start_dispatch(effect) {
             Ok(event) => event,
-            Err(e) => StepEvent::Error(e),
+            Err(error) => self.dispatch_fatal_error_event(error),
         }
     }
 
@@ -3117,16 +3225,14 @@ impl VM {
         let Some(current_seg) = self.segments.get(current_seg_id) else {
             return StepEvent::Error(VMError::internal("EvalInScope current segment not found"));
         };
-        let mut return_to = Continuation::capture(current_seg, current_seg_id, current_seg.dispatch_id);
+        let mut return_to =
+            Continuation::capture(current_seg, current_seg_id, current_seg.dispatch_id);
         // Correctness constraint: active interceptor markers are still referenced by
         // live frames in the current dispatch. We must preserve them as-is for the
         // replay chain; remapping them would require remapping those live frames,
         // which are outside the EvalInScope replay scope.
-        let mut active_interceptor_markers: HashSet<Marker> = current_seg
-            .interceptor_skip_stack
-            .iter()
-            .copied()
-            .collect();
+        let mut active_interceptor_markers: HashSet<Marker> =
+            current_seg.interceptor_skip_stack.iter().copied().collect();
         active_interceptor_markers.insert(current_seg.marker);
 
         let Some(replay_chain_start_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
@@ -3334,7 +3440,9 @@ impl VM {
                 | non_pure @ DoCtrl::Eval { .. }
                 | non_pure @ DoCtrl::EvalInScope { .. }
                 | non_pure @ DoCtrl::GetCallStack => {
-                    unreachable!("collect_value_args requires DoCtrl::Pure values, got {non_pure:?}")
+                    unreachable!(
+                        "collect_value_args requires DoCtrl::Pure values, got {non_pure:?}"
+                    )
                 }
             }
         }
@@ -3670,18 +3778,21 @@ impl VM {
                             return;
                         };
                         seg.push_frame(Frame::HandlerDispatch { dispatch_id });
-                        match self.handle_yield_ir_stream(stream, metadata, Some(HandlerKind::Python)) {
+                        match self.handle_yield_ir_stream(
+                            stream,
+                            metadata,
+                            Some(HandlerKind::Python),
+                        ) {
                             StepEvent::Continue => {}
                             StepEvent::Error(err) => {
                                 self.current_seg_mut().mode =
                                     Mode::Throw(PyException::runtime_error(err.to_string()));
                             }
                             StepEvent::NeedsPython(_) | StepEvent::Done(_) => {
-                                self.current_seg_mut().mode = Mode::Throw(
-                                    PyException::runtime_error(
+                                self.current_seg_mut().mode =
+                                    Mode::Throw(PyException::runtime_error(
                                         "unexpected StepEvent from handle_yield_ir_stream",
-                                    ),
-                                );
+                                    ));
                             }
                         }
                     }
@@ -3708,11 +3819,10 @@ impl VM {
                                     Mode::Throw(PyException::runtime_error(err.to_string()));
                             }
                             StepEvent::NeedsPython(_) | StepEvent::Done(_) => {
-                                self.current_seg_mut().mode = Mode::Throw(
-                                    PyException::runtime_error(
+                                self.current_seg_mut().mode =
+                                    Mode::Throw(PyException::runtime_error(
                                         "unexpected StepEvent from handle_yield_ir_stream",
-                                    ),
-                                );
+                                    ));
                             }
                         }
                     }
@@ -4484,7 +4594,8 @@ impl VM {
         self.lazy_pop_completed();
         let error_dispatch = self.error_dispatch_for_continuation(&k);
         self.record_continuation_activation(kind, &k, &value);
-        if let Err(err) = self.maybe_attach_active_chain_to_execution_context(k.dispatch_id, &mut value)
+        if let Err(err) =
+            self.maybe_attach_active_chain_to_execution_context(k.dispatch_id, &mut value)
         {
             return StepEvent::Error(err);
         }
@@ -4964,7 +5075,7 @@ impl VM {
             return StepEvent::Continue;
         }
 
-        StepEvent::Error(VMError::delegate_no_outer_handler(effect))
+        self.dispatch_fatal_error_event(VMError::delegate_no_outer_handler(effect))
     }
 
     fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
