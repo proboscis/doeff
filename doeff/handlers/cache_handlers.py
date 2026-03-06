@@ -49,7 +49,9 @@ def _normalize_for_hash(value: Any) -> Any:
         normalized = [_normalize_for_hash(item) for item in value]
     elif isinstance(value, Set) and not isinstance(value, (str, bytes, bytearray)):
         normalized = [_normalize_for_hash(item) for item in value]
-        normalized = {"__set__": sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True))}
+        normalized = {
+            "__set__": sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True))
+        }
     elif isinstance(value, Path):
         normalized = {"__path__": str(value)}
     elif isinstance(value, bytes):
@@ -69,10 +71,20 @@ def _storage_key(key: Any) -> str:
 
 
 def _stored_value(value: Any) -> Any:
-    if hasattr(value, "is_ok") and callable(value.is_ok) and value.is_ok() and hasattr(value, "value"):
+    if (
+        hasattr(value, "is_ok")
+        and callable(value.is_ok)
+        and value.is_ok()
+        and hasattr(value, "value")
+    ):
         return PyOk(value.value)
 
-    if hasattr(value, "is_err") and callable(value.is_err) and value.is_err() and hasattr(value, "error"):
+    if (
+        hasattr(value, "is_err")
+        and callable(value.is_err)
+        and value.is_err()
+        and hasattr(value, "error")
+    ):
         return PyErr(value.error)
 
     return value
@@ -84,7 +96,9 @@ def content_address(effect: Any) -> str:
     try:
         payload = _dumps(effect)
     except Exception:
-        payload = json.dumps(_normalize_for_hash(effect), sort_keys=True, default=repr).encode("utf-8")
+        payload = json.dumps(_normalize_for_hash(effect), sort_keys=True, default=repr).encode(
+            "utf-8"
+        )
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -93,6 +107,10 @@ def cache_handler(storage: DurableStorage) -> Any:
 
     @do
     def handler(effect: CacheGetEffect | CachePutEffect, k: Any):
+        if not isinstance(effect, (CacheGetEffect, CachePutEffect)):
+            yield doeff_vm.Pass()
+            return
+
         key = _storage_key(effect.key)
 
         if isinstance(effect, CacheGetEffect):
