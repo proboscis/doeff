@@ -1,6 +1,5 @@
 """Await handlers for sync and async VM drivers."""
 
-
 import asyncio
 import atexit
 import threading
@@ -96,17 +95,19 @@ def sync_await_handler(effect: Effect, k: Any):
 
 @do
 def async_await_handler(effect: Effect, k: Any):
-    """Handle Await effects in async execution via non-blocking kickoff.
-
-    Uses PythonAsyncSyntaxEscape to kick off awaitable submission without
-    blocking the async VM driver, then bridges completion through
-    ExternalPromise + Wait.
-    """
+    """Handle Await effects in async execution on the caller event loop."""
     if isinstance(effect, PythonAsyncioAwaitEffect):
         promise = yield CreateExternalPromise()
 
+        async def _run_and_complete() -> None:
+            try:
+                result = await effect.awaitable
+                promise.complete(result)
+            except BaseException as exc:
+                promise.fail(exc)
+
         async def _kickoff() -> None:
-            _submit_awaitable(effect.awaitable, promise)
+            asyncio.get_running_loop().create_task(_run_and_complete())
 
         _ = yield doeff_vm.PythonAsyncSyntaxEscape(action=_kickoff)
         value = yield Wait(promise.future)
