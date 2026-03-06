@@ -13,6 +13,7 @@ use crate::effect::{
     dispatch_from_shared, dispatch_ref_as_python, PyExecutionContext, PyGetExecutionContext,
     PyProgramCallStack,
 };
+
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::ids::Marker;
@@ -470,7 +471,7 @@ impl PyVM {
         self.vm
             .rust_store
             .env
-            .insert(env_key, Value::from_pyobject(value));
+            .insert(env_key, Value::from_python_opaque(value));
         Ok(())
     }
 
@@ -3941,7 +3942,10 @@ fn run(
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
             let k = HashedPyKey::from_bound(&key)?;
-            vm.vm.rust_store.env.insert(k, Value::from_pyobject(&value));
+            vm.vm
+                .rust_store
+                .env
+                .insert(k, Value::from_python_opaque(&value));
         }
     }
 
@@ -3976,7 +3980,10 @@ fn async_run<'py>(
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
             let k = HashedPyKey::from_bound(&key)?;
-            vm.vm.rust_store.env.insert(k, Value::from_pyobject(&value));
+            vm.vm
+                .rust_store
+                .env
+                .insert(k, Value::from_python_opaque(&value));
         }
     }
 

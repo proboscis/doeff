@@ -103,7 +103,7 @@ fn parse_local_python_effect(effect: &PyShared) -> Result<Option<ParsedLocalEffe
         for (key, value) in env_update.iter() {
             let key = HashedPyKey::from_bound(&key)
                 .map_err(|e| format!("Local env key is not hashable: {e}"))?;
-            overrides.insert(key, Value::from_pyobject(&value));
+            overrides.insert(key, Value::from_python_opaque(&value));
         }
 
         let sub_program = obj.getattr("sub_program").map_err(|e| e.to_string())?;
