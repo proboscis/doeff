@@ -2769,6 +2769,7 @@ impl IRStreamProgram for SchedulerProgram {
                     Some(promise_id) => {
                         let mut state = self.state.lock().expect("Scheduler lock poisoned");
                         let items = [Waitable::Promise(promise_id)];
+                        let waiting_task = state.current_task;
                         if let Some(waiting_task) = state.current_task {
                             if let Err(error) =
                                 state.suspend_task_for_wait(waiting_task, k_user.clone())
@@ -2777,8 +2778,27 @@ impl IRStreamProgram for SchedulerProgram {
                             }
                         }
                         state.wait_on_any(&items, k_user.clone(), store);
+                        let owner = match (&self.phase, waiting_task) {
+                            (
+                                SchedulerPhase::Driving {
+                                    owner,
+                                    running_task,
+                                },
+                                Some(task_id),
+                            ) if *running_task == task_id => *owner,
+                            _ => match waiting_task {
+                                Some(task_id) => WaitOwner::Task {
+                                    task_id,
+                                    cont_id: k_user.cont_id,
+                                },
+                                None => WaitOwner::Root {
+                                    cont_id: k_user.cont_id,
+                                },
+                            },
+                        };
                         drop(state);
-                        self.continue_transfer_with_deadlock(
+                        self.continue_wait_transfer(
+                            owner,
                             "deadlock: AcquireSemaphore blocked with no runnable tasks".to_string(),
                             store,
                         )
@@ -3254,6 +3274,24 @@ mod tests {
             .into_any()
     }
 
+    fn make_semaphore_object(py: Python<'_>, semaphore_id: u64) -> Py<PyAny> {
+        let types_mod = py
+            .import("types")
+            .expect("failed to import Python types module");
+        let namespace = types_mod
+            .getattr("SimpleNamespace")
+            .expect("types.SimpleNamespace must exist");
+        let kwargs = PyDict::new(py);
+        kwargs
+            .set_item("id", semaphore_id)
+            .expect("namespace should accept semaphore id");
+        namespace
+            .call((), Some(&kwargs))
+            .expect("failed to construct semaphore-like object")
+            .unbind()
+            .into_any()
+    }
+
     fn make_complete_promise_effect(
         py: Python<'_>,
         promise: Py<PyAny>,
@@ -3284,6 +3322,19 @@ mod tests {
             .add_subclass(PyFailPromise { promise, error }),
         )
         .expect("failed to construct FailPromiseEffect")
+        .into_any();
+        dispatch_from_shared(PyShared::new(effect))
+    }
+
+    fn make_acquire_semaphore_effect(py: Python<'_>, semaphore: Py<PyAny>) -> DispatchEffect {
+        let effect = Py::new(
+            py,
+            PyClassInitializer::from(PyEffectBase {
+                tag: DoExprTag::Effect as u8,
+            })
+            .add_subclass(PyAcquireSemaphore { semaphore }),
+        )
+        .expect("failed to construct AcquireSemaphoreEffect")
         .into_any();
         dispatch_from_shared(PyShared::new(effect))
     }
@@ -4859,6 +4910,101 @@ mod tests {
         state.process_semaphore_drop_notifications();
 
         assert!(!state.semaphores.contains_key(&semaphore_id));
+    }
+
+    #[test]
+    fn test_blocked_acquire_preserves_outer_driving_owner() {
+        Python::attach(|py| {
+            let state = Arc::new(Mutex::new(SchedulerState::new()));
+            let mut program = SchedulerProgram::new(state.clone());
+            let mut store = RustStore::new();
+            let mut _scope = ScopeStore::default();
+
+            let gather_owner_k = make_test_continuation();
+            let waiter_k = make_test_continuation();
+            let runnable_k = make_test_continuation();
+            let driver_k = make_test_continuation();
+
+            let (semaphore_id, waiting_task, runnable_task) = {
+                let mut guard = state.lock().expect("Scheduler lock poisoned");
+                let semaphore_id = guard.create_semaphore(1);
+
+                let holder_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    holder_task,
+                    TaskState::Pending {
+                        cont: make_test_continuation(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.current_task = Some(holder_task);
+                let acquired = guard
+                    .acquire_semaphore(semaphore_id)
+                    .expect("first acquire should succeed immediately");
+                assert!(acquired.is_none(), "first acquire should not block");
+
+                let waiting_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    waiting_task,
+                    TaskState::Pending {
+                        cont: waiter_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+
+                let runnable_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    runnable_task,
+                    TaskState::Pending {
+                        cont: runnable_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.enqueue_ready_task(runnable_task, PRIORITY_NORMAL);
+                guard.current_task = Some(waiting_task);
+
+                (semaphore_id, waiting_task, runnable_task)
+            };
+
+            program.phase = SchedulerPhase::Driving {
+                owner: WaitOwner::Root {
+                    cont_id: gather_owner_k.cont_id,
+                },
+                running_task: waiting_task,
+            };
+
+            let step = IRStreamProgram::start(
+                &mut program,
+                py,
+                make_acquire_semaphore_effect(py, make_semaphore_object(py, semaphore_id)),
+                driver_k,
+                &mut store,
+                &mut _scope,
+            );
+
+            assert!(
+                step_targets_cont_id(&step, runnable_k.cont_id),
+                "blocked acquire should transfer into another runnable task, got {:?}",
+                step
+            );
+            assert!(matches!(
+                &program.phase,
+                SchedulerPhase::Driving {
+                    owner: WaitOwner::Root { cont_id },
+                    running_task,
+                } if *cont_id == gather_owner_k.cont_id
+                    && *running_task == runnable_task
+            ));
+        });
     }
 
     // -----------------------------------------------------------------------

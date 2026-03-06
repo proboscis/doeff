@@ -125,10 +125,6 @@ class TestSpawnGatherWithoutSemaphore:
 
 
 class TestSpawnGatherWithNativeSemaphore:
-    @pytest.mark.xfail(
-        reason="BUG: Gather returns scalar instead of list when tasks wrapped with native semaphore",
-        strict=True,
-    )
     def test_throttled_spawn_gather_sync(self) -> None:
         programs = [_worker_with_await(i) for i in range(20)]
         result = _run_sync_with_timeout(_throttled_spawn_gather(programs, concurrency=5))
@@ -138,10 +134,6 @@ class TestSpawnGatherWithNativeSemaphore:
         )
         assert result.value == [i * 10 for i in range(20)]
 
-    @pytest.mark.xfail(
-        reason="BUG: Gather returns scalar instead of list when tasks wrapped with native semaphore",
-        strict=True,
-    )
     @pytest.mark.asyncio
     async def test_throttled_spawn_gather_async(self) -> None:
         programs = [_worker_with_await(i) for i in range(20)]
@@ -157,26 +149,3 @@ class TestSpawnGatherWithNativeSemaphore:
             f"Gather should return list but got {type(result.value).__name__}: {result.value}"
         )
         assert result.value == [i * 10 for i in range(20)]
-
-    def test_throttled_spawn_gather_sync_documents_bug(self) -> None:
-        programs = [_worker_with_await(i) for i in range(5)]
-        result = _run_sync_with_timeout(_throttled_spawn_gather(programs, concurrency=3))
-        assert result.is_ok(), result.display()
-        assert not isinstance(result.value, list), (
-            "Bug is fixed! Remove xfail markers from sibling tests."
-        )
-
-    @pytest.mark.asyncio
-    async def test_throttled_spawn_gather_async_documents_bug(self) -> None:
-        programs = [_worker_with_await(i) for i in range(5)]
-        result = await asyncio.wait_for(
-            async_run(
-                _throttled_spawn_gather(programs, concurrency=3),
-                handlers=default_async_handlers(),
-            ),
-            timeout=TIMEOUT_SECONDS,
-        )
-        assert result.is_ok(), result.display()
-        assert not isinstance(result.value, list), (
-            "Bug is fixed! Remove xfail markers from sibling tests."
-        )
