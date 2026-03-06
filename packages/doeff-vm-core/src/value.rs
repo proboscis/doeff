@@ -13,7 +13,7 @@ use crate::capture::{
 };
 use crate::frame::CallMetadata;
 use crate::ids::{PromiseId, TaskId};
-use crate::kleisli::KleisliRef;
+use crate::kleisli::{KleisliRef, RoundtripKleisli};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyTraceFrame, PyTraceHop};
 
@@ -367,7 +367,13 @@ impl Value {
                 }
                 Ok(list.into_any())
             }
-            Value::Kleisli(_) => Ok(py.None().into_bound(py)),
+            Value::Kleisli(kleisli) => {
+                if let Some(value) = kleisli.py_roundtrip_value() {
+                    Ok(value.bind(py).clone())
+                } else {
+                    Ok(py.None().into_bound(py))
+                }
+            }
             Value::Task(handle) => {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("type", "Task")?;
@@ -465,7 +471,11 @@ impl Value {
             return Value::String(s);
         }
         if let Ok(kleisli) = obj.extract::<PyRef<'_, crate::kleisli::PyKleisli>>() {
-            return Value::Kleisli(Arc::new(kleisli.clone()));
+            let inner: KleisliRef = Arc::new(kleisli.clone());
+            return Value::Kleisli(Arc::new(RoundtripKleisli::new(
+                inner,
+                PyShared::new(obj.clone().unbind()),
+            )));
         }
         Value::Python(obj.clone().unbind())
     }

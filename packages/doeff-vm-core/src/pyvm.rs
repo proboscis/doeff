@@ -8,8 +8,8 @@ use pyo3::types::{PyDict, PyTuple};
 
 use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
-use crate::vm::VM;
 pub use crate::effect::PyEffectBase;
+use crate::vm::VM;
 
 /// Discriminant stored as `tag: u8` on control/effect base classes.
 #[repr(u8)]
@@ -156,7 +156,7 @@ pub struct PyDoCtrlBase {
 #[pymethods]
 impl PyDoCtrlBase {
     #[new]
-    fn new() -> PyClassInitializer<Self> {
+    pub fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyDoExprBase).add_subclass(PyDoCtrlBase {
             tag: DoExprTag::Unknown as u8,
         })
@@ -312,7 +312,8 @@ pub fn is_effect_base_like(obj: &Bound<'_, PyAny>) -> bool {
 }
 
 pub fn is_doexpr_like(obj: &Bound<'_, PyAny>) -> bool {
-    obj.is_instance_of::<PyDoExprBase>() || obj.is_instance_of::<crate::doeff_generator::DoeffGenerator>()
+    obj.is_instance_of::<PyDoExprBase>()
+        || obj.is_instance_of::<crate::doeff_generator::DoeffGenerator>()
 }
 
 pub fn doctrl_tag(obj: &Bound<'_, PyAny>) -> Option<DoExprTag> {
@@ -321,11 +322,8 @@ pub fn doctrl_tag(obj: &Bound<'_, PyAny>) -> Option<DoExprTag> {
         .and_then(|base| DoExprTag::try_from(base.tag).ok())
 }
 
-pub type ClassifyYieldedHook = for<'py> fn(
-    &VM,
-    Python<'py>,
-    &Bound<'py, PyAny>,
-) -> Result<DoCtrl, PyException>;
+pub type ClassifyYieldedHook =
+    for<'py> fn(&VM, Python<'py>, &Bound<'py, PyAny>) -> Result<DoCtrl, PyException>;
 
 pub type DoctrlToPyexprHook = fn(&DoCtrl) -> Result<Option<Py<PyAny>>, PyException>;
 

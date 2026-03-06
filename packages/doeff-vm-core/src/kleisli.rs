@@ -65,6 +65,11 @@ pub trait Kleisli: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// Optional Python object used when a Kleisli is resumed back to Python as a value.
+    fn py_roundtrip_value(&self) -> Option<PyShared> {
+        None
+    }
+
     /// Whether this handler is a Rust builtin handler.
     fn is_rust_builtin(&self) -> bool {
         false
@@ -120,6 +125,66 @@ impl Kleisli for IdentityKleisli {
 
     fn py_identity(&self) -> Option<PyShared> {
         Some(self.identity.clone())
+    }
+
+    fn py_roundtrip_value(&self) -> Option<PyShared> {
+        self.inner.py_roundtrip_value()
+    }
+
+    fn is_rust_builtin(&self) -> bool {
+        self.inner.is_rust_builtin()
+    }
+
+    fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
+        self.inner.can_handle(effect)
+    }
+
+    fn supports_error_context_conversion(&self) -> bool {
+        self.inner.supports_error_context_conversion()
+    }
+
+    fn on_run_end(&self, run_token: u64) {
+        self.inner.on_run_end(run_token);
+    }
+}
+
+/// Kleisli wrapper that preserves a Python object for value round-tripping only.
+#[derive(Debug, Clone)]
+pub struct RoundtripKleisli {
+    inner: KleisliRef,
+    value: PyShared,
+}
+
+impl RoundtripKleisli {
+    pub fn new(inner: KleisliRef, value: PyShared) -> Self {
+        Self { inner, value }
+    }
+}
+
+impl Kleisli for RoundtripKleisli {
+    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        self.inner.apply(py, args)
+    }
+
+    fn apply_with_run_token(
+        &self,
+        py: Python<'_>,
+        args: Vec<Value>,
+        run_token: Option<u64>,
+    ) -> Result<DoCtrl, VMError> {
+        self.inner.apply_with_run_token(py, args, run_token)
+    }
+
+    fn debug_info(&self) -> KleisliDebugInfo {
+        self.inner.debug_info()
+    }
+
+    fn py_identity(&self) -> Option<PyShared> {
+        self.inner.py_identity()
+    }
+
+    fn py_roundtrip_value(&self) -> Option<PyShared> {
+        Some(self.value.clone())
     }
 
     fn is_rust_builtin(&self) -> bool {

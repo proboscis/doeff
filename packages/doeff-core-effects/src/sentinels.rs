@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 /// Opaque sentinel wrapping a Rust handler factory.
 #[pyclass(frozen, name = "RustHandler")]
 pub struct PyRustHandlerSentinel {
-    kleisli: KleisliRef,
+    pub kleisli: KleisliRef,
 }
 
 impl PyRustHandlerSentinel {
