@@ -14,12 +14,16 @@ import asyncio
 import signal
 from typing import Any
 
+import pytest
+
 from doeff import (
     AcquireSemaphore,
     CreateSemaphore,
     Gather,
     ReleaseSemaphore,
     Spawn,
+    async_run,
+    default_async_handlers,
     default_handlers,
     do,
     run,
@@ -122,3 +126,18 @@ class TestAwaitAsyncioSemaphoreDeadlock:
             "Expected deadlock with Await(asyncio.Semaphore) + Spawn/Gather under sync run(), "
             "but it succeeded — if this passes, the runtime fixed the interaction"
         )
+
+    @pytest.mark.asyncio
+    async def test_asyncio_semaphore_works_in_async_mode(self) -> None:
+        programs = [_worker(n=i) for i in range(50)]
+        p = _throttled_gather_asyncio(programs, concurrency=10)
+        result = await asyncio.wait_for(
+            async_run(p, handlers=default_async_handlers()),
+            timeout=DEADLOCK_TIMEOUT_SECONDS,
+        )
+
+        assert result.is_ok(), (
+            "Await(asyncio.Semaphore) + Spawn/Gather should succeed under async_run() "
+            "when awaitables stay on the caller event loop"
+        )
+        assert result.value == [i * 2 for i in range(50)]
