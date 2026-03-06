@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
 
 use crate::arena::SegmentArena;
 use crate::capture::{
@@ -528,6 +528,87 @@ impl VM {
             return Vec::new();
         };
         self.handlers_in_caller_chain(seg_id)
+    }
+
+    fn is_inside_eval_in_scope_subtopology(&self) -> bool {
+        let mut seg_id = self.current_segment;
+        while let Some(id) = seg_id {
+            let Some(seg) = self.segments.get(id) else {
+                break;
+            };
+            if seg.frames.iter().any(|frame| {
+                matches!(
+                    frame,
+                    Frame::EvalReturn(continuation)
+                        if matches!(
+                            continuation.as_ref(),
+                            EvalReturnContinuation::EvalInScopeReturn { .. }
+                        )
+                )
+            }) {
+                return true;
+            }
+            seg_id = seg.caller;
+        }
+        false
+    }
+
+    fn materialize_vm_error_exception(module_attr: &str, message: &str) -> Option<PyException> {
+        Python::attach(|py| {
+            for module_name in ["doeff_vm", "doeff_vm.doeff_vm"] {
+                let Ok(module) = PyModule::import(py, module_name) else {
+                    continue;
+                };
+                let Ok(exc_type) = module.getattr(module_attr) else {
+                    continue;
+                };
+                let Ok(exc_value) = exc_type.call1((message,)) else {
+                    continue;
+                };
+                return Some(PyException::new(
+                    exc_type.clone().unbind(),
+                    exc_value.unbind(),
+                    None,
+                ));
+            }
+            None
+        })
+    }
+
+    fn recoverable_eval_in_scope_dispatch_exception(&self, error: &VMError) -> Option<PyException> {
+        if !self.is_inside_eval_in_scope_subtopology() {
+            return None;
+        }
+
+        let message = error.to_string();
+        match error {
+            VMError::UnhandledEffect { .. } => Self::materialize_vm_error_exception(
+                "UnhandledEffectError",
+                &message,
+            )
+            .or_else(|| Some(PyException::type_error(message))),
+            VMError::NoMatchingHandler { .. }
+            | VMError::DelegateNoOuterHandler { .. }
+            | VMError::HandlerNotFound { .. } => Self::materialize_vm_error_exception(
+                "NoMatchingHandlerError",
+                &message,
+            )
+            .or_else(|| Some(PyException::type_error(message))),
+            VMError::OneShotViolation { .. }
+            | VMError::InvalidSegment { .. }
+            | VMError::PythonError { .. }
+            | VMError::InternalError { .. }
+            | VMError::TypeError { .. }
+            | VMError::UncaughtException { .. } => None,
+        }
+    }
+
+    fn dispatch_fatal_error_event(&mut self, error: VMError) -> StepEvent {
+        if let Some(exception) = self.recoverable_eval_in_scope_dispatch_exception(&error) {
+            self.current_seg_mut().mode = Mode::Throw(exception);
+            return StepEvent::Continue;
+        }
+        StepEvent::Error(error)
     }
 
     fn eval_in_scope_chain_start_segment(&self, scope: &Continuation) -> Option<SegmentId> {
@@ -2751,7 +2832,7 @@ impl VM {
     fn handle_yield_effect(&mut self, effect: DispatchEffect) -> StepEvent {
         match self.start_dispatch(effect) {
             Ok(event) => event,
-            Err(e) => StepEvent::Error(e),
+            Err(error) => self.dispatch_fatal_error_event(error),
         }
     }
 
@@ -4964,7 +5045,7 @@ impl VM {
             return StepEvent::Continue;
         }
 
-        StepEvent::Error(VMError::delegate_no_outer_handler(effect))
+        self.dispatch_fatal_error_event(VMError::delegate_no_outer_handler(effect))
     }
 
     fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
