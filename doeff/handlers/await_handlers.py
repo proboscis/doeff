@@ -18,6 +18,18 @@ PythonAsyncioAwaitEffect = doeff_vm.PythonAsyncioAwaitEffect
 _loop_lock = threading.Lock()
 _loop_thread: threading.Thread | None = None
 _loop: asyncio.AbstractEventLoop | None = None
+_ASYNCIO_LOOP_AFFINE_CLASSES = frozenset(
+    {
+        "Semaphore",
+        "BoundedSemaphore",
+        "Lock",
+        "Event",
+        "Condition",
+        "Queue",
+        "PriorityQueue",
+        "LifoQueue",
+    }
+)
 
 
 def _shutdown_background_loop() -> None:
@@ -64,8 +76,40 @@ def _ensure_background_loop() -> asyncio.AbstractEventLoop:
         return loop
 
 
+def _detect_asyncio_loop_affine(awaitable: Awaitable[Any]) -> str | None:
+    # Coroutines from class methods like Semaphore.acquire or Lock.acquire.
+    if not asyncio.iscoroutine(awaitable):
+        if isinstance(awaitable, asyncio.Future):
+            return "asyncio.Future"
+        return None
+
+    qualname = getattr(awaitable, "__qualname__", "") or ""
+    parts = qualname.split(".")
+    if len(parts) >= 2 and parts[0] in _ASYNCIO_LOOP_AFFINE_CLASSES:
+        return qualname
+
+    if isinstance(awaitable, asyncio.Future):
+        return "asyncio.Future"
+
+    return None
+
+
 def _submit_awaitable(awaitable: Awaitable[Any], promise: Any) -> None:
     loop = _ensure_background_loop()
+    detected = _detect_asyncio_loop_affine(awaitable)
+    if detected is not None:
+        if asyncio.iscoroutine(awaitable):
+            awaitable.close()
+        raise RuntimeError(
+            f"Await({detected}) is not safe under Spawn/Gather. "
+            "asyncio synchronization primitives have thread-affine sync methods "
+            "(release/set/notify/cancel) that silently break when called from a "
+            "different thread than their event loop. "
+            "Use doeff native effects instead:\n"
+            "  sem = yield CreateSemaphore(n)\n"
+            "  yield AcquireSemaphore(sem)\n"
+            "  yield ReleaseSemaphore(sem)"
+        )
 
     async def _run() -> object:
         return await awaitable
