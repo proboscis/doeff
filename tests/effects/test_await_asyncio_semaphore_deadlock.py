@@ -122,7 +122,7 @@ class TestAwaitAsyncioSemaphoreDeadlock:
 
         assert not result.is_ok(), "Expected RuntimeError for asyncio.Semaphore in sync mode"
         assert isinstance(result.error, RuntimeError)
-        assert "not safe with sync run()" in str(result.error)
+        assert "not safe under Spawn/Gather" in str(result.error)
         assert "CreateSemaphore" in str(result.error)
 
     @pytest.mark.asyncio

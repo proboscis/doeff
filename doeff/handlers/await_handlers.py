@@ -101,14 +101,14 @@ def _submit_awaitable(awaitable: Awaitable[Any], promise: Any) -> None:
         if asyncio.iscoroutine(awaitable):
             awaitable.close()
         raise RuntimeError(
-            f"Await({detected}) is not safe with sync run() + Spawn/Gather. "
+            f"Await({detected}) is not safe under Spawn/Gather. "
             "asyncio synchronization primitives have thread-affine sync methods "
-            "(release/set/notify/cancel) that deadlock when called from the "
-            "scheduler thread. Use doeff native effects instead:\n"
+            "(release/set/notify/cancel) that silently break when called from a "
+            "different thread than their event loop. "
+            "Use doeff native effects instead:\n"
             "  sem = yield CreateSemaphore(n)\n"
             "  yield AcquireSemaphore(sem)\n"
-            "  yield ReleaseSemaphore(sem)\n"
-            "Or use async_run() with default_async_handlers()."
+            "  yield ReleaseSemaphore(sem)"
         )
 
     async def _run() -> object:
