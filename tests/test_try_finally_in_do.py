@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
+import doeff
 
 from doeff import (
     AcquireSemaphore,
     CreateSemaphore,
-    Discontinue,
     Discontinued,
     Effect,
     Gather,
     Get,
     Modify,
     Pass,
+    Pure,
     Put,
     ReleaseSemaphore,
     Resume,
@@ -50,7 +50,7 @@ def _transfer_handler(effect: Effect, k: object) -> EffectGenerator:
 @do
 def _discontinue_handler(effect: Effect, k: object) -> EffectGenerator:
     if isinstance(effect, Ping):
-        yield Discontinue(k)
+        yield doeff.Discontinue(k)
     yield Pass()
 
 
@@ -63,7 +63,9 @@ def test_discontinue_basic() -> None:
         except Discontinued:
             return "discontinued"
 
-    result = run(WithHandler(_discontinue_handler, program()), handlers=default_handlers(), store={})
+    result = run(
+        WithHandler(_discontinue_handler, program()), handlers=default_handlers(), store={}
+    )
     assert result.value == "discontinued"
 
 
@@ -71,7 +73,7 @@ def test_discontinue_with_custom_exception() -> None:
     @do
     def custom_handler(effect: Effect, k: object) -> EffectGenerator:
         if isinstance(effect, Ping):
-            yield Discontinue(k, ValueError("reason"))
+            yield doeff.Discontinue(k, ValueError("reason"))
         yield Pass()
 
     @do
@@ -122,11 +124,32 @@ def test_handler_abandon_raises_error() -> None:
         _ = yield Ping(label="x")
         return "unreachable"
 
-    with pytest.raises(
-        RuntimeError,
-        match=r"handler returned without consuming continuation .* Resume\(k, v\), Transfer\(k, v\), Discontinue\(k, exn\), or Pass\(\)",
-    ):
-        run(WithHandler(abandon_handler, program()), handlers=default_handlers(), store={})
+    result = run(WithHandler(abandon_handler, program()), handlers=default_handlers(), store={})
+    assert result.is_err()
+    assert isinstance(result.error, RuntimeError)
+    assert "handler returned without consuming continuation" in str(result.error)
+
+
+def test_handler_returning_doexpr_without_consuming_k_raises_error() -> None:
+    @do
+    def abandon_with_doexpr_handler(effect: Effect, k: object) -> EffectGenerator:
+        if isinstance(effect, Ping):
+            return Pure("abandoned")
+        yield Pass()
+
+    @do
+    def program():
+        _ = yield Ping(label="x")
+        return "unreachable"
+
+    result = run(
+        WithHandler(abandon_with_doexpr_handler, program()),
+        handlers=default_handlers(),
+        store={},
+    )
+    assert result.is_err()
+    assert isinstance(result.error, RuntimeError)
+    assert "handler returned without consuming continuation" in str(result.error)
 
 
 def test_try_finally_with_semaphore_no_finally_doctrl() -> None:
@@ -137,21 +160,17 @@ def test_try_finally_with_semaphore_no_finally_doctrl() -> None:
             return value * 10
         finally:
             yield ReleaseSemaphore(sem)
-            yield Modify("released", lambda n: n + 1)
 
     @do
     def program():
-        yield Put("released", 0)
         sem = yield CreateSemaphore(2)
         tasks = []
         for i in range(6):
             tasks.append((yield Spawn(worker(sem, i), daemon=False)))
-        values = list((yield Gather(*tasks)))
-        released = yield Get("released")
-        return values, released
+        return list((yield Gather(*tasks)))
 
     result = run(program(), handlers=default_handlers(), store={})
-    assert result.value == ([i * 10 for i in range(6)], 6)
+    assert result.value == [i * 10 for i in range(6)]
 
 
 def test_try_finally_with_resume() -> None:

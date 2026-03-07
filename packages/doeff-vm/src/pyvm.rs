@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
+use pyo3::exceptions::{PyBaseException, PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
@@ -1037,6 +1037,31 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                     .unbind(),
                 )
             }
+            DoCtrl::Discontinue {
+                continuation,
+                exception,
+            } => {
+                let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind();
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::Discontinue as u8,
+                            })
+                            .add_subclass(PyDiscontinue {
+                                continuation: k,
+                                exception: exception.value_clone_ref(py),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
             DoCtrl::TransferThrow { .. } | DoCtrl::ResumeThrow { .. } => None,
             DoCtrl::WithHandler {
                 handler,
@@ -1113,21 +1138,6 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                     .unbind(),
                 )
             }
-            DoCtrl::Finally { cleanup } => Some(
-                Bound::new(
-                    py,
-                    PyClassInitializer::from(PyDoExprBase)
-                        .add_subclass(PyDoCtrlBase {
-                            tag: DoExprTag::Finally as u8,
-                        })
-                        .add_subclass(PyFinally {
-                            cleanup: cleanup.clone_ref(py),
-                        }),
-                )
-                .map_err(|err| PyException::runtime_error(format!("{err}")))?
-                .into_any()
-                .unbind(),
-            ),
             DoCtrl::Delegate { .. } => Some(
                 Bound::new(
                     py,
@@ -1513,10 +1523,29 @@ pub(crate) fn classify_yielded_bound(
                     metadata: call_metadata_from_optional_meta(py, &wi.meta, "WithIntercept")?,
                 })
             }
-            DoExprTag::Finally => {
-                let f: PyRef<'_, PyFinally> = obj.extract()?;
-                Ok(DoCtrl::Finally {
-                    cleanup: PyShared::new(f.cleanup.clone_ref(py)),
+            DoExprTag::Discontinue => {
+                let d: PyRef<'_, PyDiscontinue> = obj.extract()?;
+                let k_pyobj = d.continuation.bind(py).cast::<PyK>().map_err(|_| {
+                    PyTypeError::new_err(
+                        "Discontinue.continuation must be K (opaque continuation handle)",
+                    )
+                })?;
+                let cont_id = k_pyobj.borrow().cont_id;
+                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                    PyRuntimeError::new_err(format!(
+                        "Discontinue with unknown continuation id {}",
+                        cont_id.raw()
+                    ))
+                })?;
+                let bound_exception = d.exception.bind(py);
+                if !bound_exception.is_instance_of::<PyBaseException>() {
+                    return Err(PyTypeError::new_err(
+                        "Discontinue.exception must be a BaseException instance",
+                    ));
+                }
+                Ok(DoCtrl::Discontinue {
+                    continuation: k,
+                    exception: pyerr_to_exception(py, PyErr::from_value(bound_exception.clone()))?,
                 })
             }
             DoExprTag::Pure => {
@@ -1809,6 +1838,13 @@ fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
     let exc_value = e.value(py).clone().into_any().unbind();
     let exc_tb = e.traceback(py).map(|tb| tb.into_any().unbind());
     Ok(PyException::new(exc_type, exc_value, exc_tb))
+}
+
+fn default_discontinued_exception(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    py.import("doeff.errors")?
+        .getattr("Discontinued")?
+        .call0()
+        .map(|value| value.into_any().unbind())
 }
 
 fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
@@ -2257,25 +2293,47 @@ impl PyWithIntercept {
     }
 }
 
-#[pyclass(name = "Finally", extends=PyDoCtrlBase)]
-pub struct PyFinally {
+#[pyclass(name = "Discontinue", extends=PyDoCtrlBase)]
+pub struct PyDiscontinue {
     #[pyo3(get)]
-    pub cleanup: Py<PyAny>,
+    pub continuation: Py<PyAny>,
+    #[pyo3(get)]
+    pub exception: Py<PyAny>,
 }
 
 #[pymethods]
-impl PyFinally {
+impl PyDiscontinue {
     #[new]
-    fn new(py: Python<'_>, cleanup: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let cleanup = lift_effect_to_perform_expr(py, cleanup)?;
-        if !cleanup.bind(py).is_instance_of::<PyDoExprBase>() {
-            return Err(PyTypeError::new_err("Finally.cleanup must be DoExpr"));
+    #[pyo3(signature = (continuation, exception=None))]
+    fn new(
+        py: Python<'_>,
+        continuation: Py<PyAny>,
+        exception: Option<Py<PyAny>>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        if !continuation.bind(py).is_instance_of::<PyK>() {
+            return Err(PyTypeError::new_err(
+                "Discontinue.continuation must be K (opaque continuation handle)",
+            ));
         }
+        let exception = match exception {
+            Some(exception) => {
+                if !exception.bind(py).is_instance_of::<PyBaseException>() {
+                    return Err(PyTypeError::new_err(
+                        "Discontinue.exception must be a BaseException instance",
+                    ));
+                }
+                exception
+            }
+            None => default_discontinued_exception(py)?,
+        };
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
-                tag: DoExprTag::Finally as u8,
+                tag: DoExprTag::Discontinue as u8,
             })
-            .add_subclass(PyFinally { cleanup }))
+            .add_subclass(PyDiscontinue {
+                continuation,
+                exception,
+            }))
     }
 }
 
@@ -4140,7 +4198,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTraceHop>()?;
     m.add_class::<PyWithHandler>()?;
     m.add_class::<PyWithIntercept>()?;
-    m.add_class::<PyFinally>()?;
+    m.add_class::<PyDiscontinue>()?;
     m.add_class::<PyPure>()?;
     m.add_class::<PyApply>()?;
     m.add_class::<PyExpand>()?;
@@ -4181,7 +4239,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_GET_HANDLERS", DoExprTag::GetHandlers as u8)?;
     m.add("TAG_GET_TRACEBACK", DoExprTag::GetTraceback as u8)?;
     m.add("TAG_WITH_INTERCEPT", DoExprTag::WithIntercept as u8)?;
-    m.add("TAG_FINALLY", DoExprTag::Finally as u8)?;
+    m.add("TAG_DISCONTINUE", DoExprTag::Discontinue as u8)?;
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;
     m.add("TAG_EVAL_IN_SCOPE", DoExprTag::EvalInScope as u8)?;

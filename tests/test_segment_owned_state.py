@@ -98,8 +98,7 @@ def scope_probe_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopeProbe):
         yield Pass()
         return
-    # Return DoExpr directly so VM must evaluate handler return in nested context.
-    return Pure(f"handled:{effect.label}")
+    return (yield Resume(k, f"handled:{effect.label}"))
 
 
 @do
@@ -389,7 +388,7 @@ def test_effectful_interceptor_no_double_eval_during_dispatch() -> None:
         if not isinstance(effect, EvalProbe):
             yield Pass()
             return
-        return Pure(f"probe:{effect.label}")
+        return (yield Resume(k, Pure(f"probe:{effect.label}")))
 
     @do
     def interceptor(effect: Effect) -> EffectGenerator[object]:

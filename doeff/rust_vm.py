@@ -322,7 +322,7 @@ def _build_doeff_traceback_if_present(run_result: Any) -> Any | None:
         doeff_tb = attach_doeff_traceback(error, traceback_data=traceback_data)
         if doeff_tb is not None:
             try:
-                setattr(error, "doeff_traceback", doeff_tb)
+                error.doeff_traceback = doeff_tb
             except Exception as exc:
                 warnings.warn(
                     f"Failed to attach doeff traceback to {type(error).__name__}: {exc}",
@@ -561,7 +561,7 @@ _VM_LAZY_EXPORT_NAMES = {
     "Eval",
     "EvalInScope",
     "Perform",
-    "Finally",
+    "Discontinue",
     "Pass",
     "Resume",
     "Delegate",
@@ -603,16 +603,17 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "Apply",
-    "Expand",
-    "DoeffTracebackData",
     "Delegate",
+    "Discontinue",
+    "DoeffTracebackData",
     "Eval",
     "EvalInScope",
-    "Finally",
-    "GetTraceback",
-    "GetExecutionContext",
     "ExecutionContext",
+    "Expand",
+    "GetExecutionContext",
+    "GetTraceback",
     "K",
+    "NoMatchingHandlerError",
     "Pass",
     "Perform",
     "Pure",
@@ -620,11 +621,10 @@ __all__ = [
     "Resume",
     "ResumeContinuation",
     "RunResult",
-    "UnhandledEffectError",
-    "NoMatchingHandlerError",
     "TraceFrame",
     "TraceHop",
     "Transfer",
+    "UnhandledEffectError",
     "WithHandler",
     "WithIntercept",
     "async_run",
@@ -632,10 +632,10 @@ __all__ = [
     "default_async_handlers",
     "default_handlers",
     "lazy_ask",
+    "pass_",
     "reader",
     "result_safe",
     "run",
-    "pass_",
     "state",
     "writer",
 ]
