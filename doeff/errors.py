@@ -1,4 +1,3 @@
-
 from typing import Any
 
 
@@ -13,4 +12,8 @@ class MissingEnvKeyError(KeyError):
         )
 
 
-__all__ = ["MissingEnvKeyError"]
+class Discontinued(Exception):
+    """Raised when a continuation is discontinued without a custom exception."""
+
+
+__all__ = ["Discontinued", "MissingEnvKeyError"]

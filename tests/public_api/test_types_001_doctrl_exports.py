@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import doeff as doeff_module
 import pytest
 
+import doeff as doeff_module
 from doeff import (
     Apply,
     Ask,
@@ -29,7 +29,7 @@ def test_doctrl_exports_are_available() -> None:
     assert Discontinue is not None
     assert ResumeContinuation is not None
     with pytest.raises(AttributeError):
-        getattr(doeff_module, "Finally")
+        doeff_module.Finally
 
 
 def _meta() -> dict[str, object]:
