@@ -391,6 +391,34 @@ def test_handler_transforms_resume_result():
     assert result == 45
 
 
+def test_handler_return_after_resume_delivers_raw_doexpr():
+    """Handler return should deliver raw DoExpr values after consuming k."""
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+
+    @do
+    def raw_doexpr_handler(effect: Effect, k):
+        if isinstance(effect, CustomEffect):
+            resume_value = yield doeff_vm.Resume(k, effect.value * 2)
+            return doeff_vm.Pure(f"wrapped:{resume_value}")
+        yield doeff_vm.Delegate()
+
+    @do
+    def body() -> Program[int]:
+        value = yield CustomEffect(10)
+        return value + 1
+
+    @do
+    def main():
+        result = yield doeff_vm.WithHandler(raw_doexpr_handler, body())
+        return result
+
+    result = vm.run(main())
+    assert isinstance(result, doeff_vm.Pure)
+    assert result.value == "wrapped:21"
+
+
 def test_handler_abandon_continuation():
     """Handler returns without consuming the continuation: raise immediately."""
     from doeff_vm import PyVM

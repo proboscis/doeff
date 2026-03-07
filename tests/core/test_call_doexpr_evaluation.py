@@ -1,6 +1,18 @@
 from __future__ import annotations
 
-from doeff import Ask, Get, Program, default_handlers, do, run
+import doeff_vm
+
+from doeff import Apply, Ask, Effect, Get, Program, Pure, default_handlers, do, run
+from doeff.program import ProgramBase
+
+
+def _meta(fn):
+    code = fn.__code__
+    return {
+        "function_name": code.co_name,
+        "source_file": code.co_filename,
+        "source_line": code.co_firstlineno,
+    }
 
 
 def test_run_resolves_plain_value_arg_before_kernel_call() -> None:
@@ -71,3 +83,58 @@ def test_program_annotated_arg_arrives_as_program_not_wrapped_doexpr() -> None:
     result = run(keep_program(inner()), handlers=default_handlers())
     assert result.value is True
     assert type(seen["p"]).__name__ != "Pure"
+
+
+def test_apply_delivers_program_result_as_value() -> None:
+    @do
+    def inner():
+        return 10
+
+    def make_program():
+        return inner()
+
+    result = run(Apply(Pure(make_program), [], {}, _meta(make_program)), handlers=[])
+    assert isinstance(result.value, ProgramBase)
+
+
+def test_apply_delivers_effect_result_as_value() -> None:
+    expected = Ask("token")
+
+    def make_effect():
+        return expected
+
+    result = run(
+        Apply(Pure(make_effect), [], {}, _meta(make_effect)),
+        handlers=default_handlers(),
+        env={"token": "secret"},
+    )
+    assert type(result.value) is type(expected)
+    assert result.value.key == "token"
+
+
+def test_handler_return_delivers_effect_result_as_value() -> None:
+    expected = Ask("token")
+
+    class Echo(doeff_vm.EffectBase):
+        def __init__(self, value: int):
+            self.value = value
+
+    @do
+    def handler(effect: Effect, k):
+        if isinstance(effect, Echo):
+            _ = yield doeff_vm.Resume(k, effect.value)
+            return expected
+        yield doeff_vm.Pass()
+
+    @do
+    def body():
+        value = yield Echo(7)
+        return value
+
+    result = run(
+        doeff_vm.WithHandler(handler, body()),
+        handlers=default_handlers(),
+        env={"token": "secret"},
+    )
+    assert type(result.value) is type(expected)
+    assert result.value.key == "token"
