@@ -33,7 +33,10 @@ use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStrea
 use crate::kleisli::{IdentityKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::pyvm::{classify_yielded_for_vm, doctrl_to_pyexpr_for_vm, PyDoExprBase, PyEffectBase};
+use crate::pyvm::{
+    classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, DoExprTag, PyDoExprBase,
+    PyEffectBase,
+};
 use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::TraceState;
 use crate::value::Value;
@@ -456,8 +459,7 @@ impl VM {
                     mode: *mode,
                     metadata: metadata.clone(),
                 })),
-                SegmentKind::Normal
-                | SegmentKind::MaskBoundary { .. } => {
+                SegmentKind::Normal | SegmentKind::MaskBoundary { .. } => {
                     assert!(
                         self.interceptor_state.get_entry(seg.marker).is_none(),
                         "normal segment marker {} unexpectedly has interceptor state entry",
@@ -2634,17 +2636,14 @@ impl VM {
             next_idx,
             ..
         } = continuation;
-        let transformed = match self.classify_interceptor_eval_result(
-            value,
-            &original_obj,
-            original_yielded,
-        ) {
-            Ok(expr) => expr,
-            Err(exc) => {
-                self.pop_interceptor_skip(marker);
-                return Mode::Throw(exc);
-            }
-        };
+        let transformed =
+            match self.classify_interceptor_eval_result(value, &original_obj, original_yielded) {
+                Ok(expr) => expr,
+                Err(exc) => {
+                    self.pop_interceptor_skip(marker);
+                    return Mode::Throw(exc);
+                }
+            };
         self.pop_interceptor_skip(marker);
         self.continue_interceptor_chain_mode(
             transformed,
@@ -2701,7 +2700,7 @@ impl VM {
                 body,
                 types,
                 return_clause,
-            } => self.handle_yield_with_handler(handler, *body, types, return_clause),
+            } => self.handle_with_handler(handler, *body, types, return_clause),
             DoCtrl::WithIntercept {
                 interceptor,
                 body,
@@ -2820,16 +2819,6 @@ impl VM {
         exception: PyException,
     ) -> StepEvent {
         self.handle_transfer_throw_non_terminal(continuation, exception)
-    }
-
-    fn handle_yield_with_handler(
-        &mut self,
-        handler: KleisliRef,
-        body: DoCtrl,
-        types: Option<Vec<PyShared>>,
-        return_clause: Option<PyShared>,
-    ) -> StepEvent {
-        self.handle_with_handler(handler, body, types, return_clause)
     }
 
     fn handle_yield_with_intercept(
@@ -3608,6 +3597,28 @@ impl VM {
         }
     }
 
+    fn returned_control_primitive_signature(value: &Value) -> Option<&'static str> {
+        let Value::Python(result_obj) = value else {
+            return None;
+        };
+
+        Python::attach(|py| match doctrl_tag(result_obj.bind(py)) {
+            Some(DoExprTag::Pass) => Some("Pass()"),
+            Some(DoExprTag::Resume) => Some("Resume(k, value)"),
+            Some(DoExprTag::Delegate) => Some("Delegate()"),
+            Some(DoExprTag::Transfer) => Some("Transfer(k, value)"),
+            Some(DoExprTag::Discontinue) => Some("Discontinue(k, exn)"),
+            Some(DoExprTag::ResumeContinuation) => Some("ResumeContinuation(k, value)"),
+            _ => None,
+        })
+    }
+
+    fn returned_control_primitive_exception(value: &Value) -> Option<PyException> {
+        let signature = Self::returned_control_primitive_signature(value)?;
+        Some(PyException::runtime_error(format!(
+            "Handler returned {signature} but control primitives must be yielded, not returned.\n  Change: return {signature}  ->  yield {signature}"
+        )))
+    }
     fn receive_expand_result(
         &mut self,
         metadata: Option<CallMetadata>,
@@ -3766,6 +3777,12 @@ impl VM {
             PyCallOutcome::GenReturn(value) => {
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
+                }
+                if handler_kind == Some(HandlerKind::Python) {
+                    if let Some(exception) = Self::returned_control_primitive_exception(&value) {
+                        self.current_seg_mut().mode = Mode::Throw(exception);
+                        return;
+                    }
                 }
                 self.current_seg_mut().mode = Mode::Deliver(value);
             }
@@ -4825,10 +4842,15 @@ impl VM {
             let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
             let marker = *ctx.handler_chain.get(ctx.handler_idx)?;
             let (_, kind, _, _) = self.marker_handler_trace_info(marker)?;
-            Some((dispatch_id, kind == HandlerKind::Python, ctx.k_current.cont_id))
+            Some((
+                dispatch_id,
+                kind == HandlerKind::Python,
+                ctx.k_current.cont_id,
+            ))
         });
         if let Some((_dispatch_id, true, cont_id)) = active_python_handler {
-            if self.continuation_registry.contains_key(&cont_id) && !self.is_one_shot_consumed(cont_id)
+            if self.continuation_registry.contains_key(&cont_id)
+                && !self.is_one_shot_consumed(cont_id)
             {
                 self.mark_one_shot_consumed(cont_id);
                 return self.throw_runtime_error(&format!(
