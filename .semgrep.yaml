@@ -536,7 +536,7 @@ rules:
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
   - id: doctrl-variants-require-approval
-    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|WithHandler\b|WithIntercept\b|Finally\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|GetCallStack\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
+    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|Discontinue\b|WithHandler\b|WithIntercept\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|GetCallStack\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
       include:
         - "**/packages/doeff-vm/src/do_ctrl.rs"
@@ -548,6 +548,20 @@ rules:
     metadata:
       category: architecture
       rationale: "DoCtrl surface area is intentionally fixed and review-gated."
+
+  - id: doeff-ban-finally-doctrl
+    pattern: Finally(...)
+    paths:
+      include:
+        - "**/*.py"
+    message: |
+      Finally DoCtrl was removed by R18-A / ISSUE-VM-DISCONTINUE-001.
+      Use Python try/finally and yield cleanup in the finally block instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Cleanup must use Python stack unwinding, not the removed Finally DoCtrl."
 
   - id: doeff-cancel-must-be-effectful
     patterns:
