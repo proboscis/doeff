@@ -522,3 +522,26 @@ rules:
       include:
         - "**/doeff-vm/src/lib.rs"
         - "**/doeff-vm/src/pyvm.rs"
+
+  # ---------------------------------------------------------------------------
+  # ISSUE-VM-APPLY-AUTOEVAL: Apply/handler return must stay raw
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-vm-no-implicit-auto-eval-in-apply-or-handler-return
+    pattern-regex: "(?s)fn (classify_apply_result_as_doctrl|handle_handler_return)\\b.*?(is_instance_of::<PyDoExprBase>|is_instance_of::<DoeffGenerator>|is_instance_of::<PyEffectBase>)"
+    message: |
+      SPEC VIOLATION (ISSUE-VM-APPLY-AUTOEVAL): Apply results and handler
+      returns must be delivered as raw values. Do not inspect runtime Python
+      types in Apply/handler-return paths to auto-evaluate DoExpr, EffectBase,
+      or DoeffGenerator results.
+
+      If evaluation is intended, use Expand at the call site instead of
+      introducing implicit flatMap behavior in the VM core.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm-core/src/vm.rs"
+    metadata:
+      category: spec-enforcement
+      issue: ISSUE-VM-APPLY-AUTOEVAL
