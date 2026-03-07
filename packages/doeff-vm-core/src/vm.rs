@@ -2431,32 +2431,18 @@ impl VM {
         })
     }
 
-    fn classify_interceptor_result_value(
+    fn classify_interceptor_eval_result(
         &self,
         value: Value,
         original_obj: &PyShared,
         original_yielded: DoCtrl,
     ) -> Result<DoCtrl, PyException> {
-        match value {
-            Value::Python(result_obj) => Python::attach(|py| {
-                let bound = result_obj.bind(py);
-                let is_expression_like = bound.is_instance_of::<PyDoExprBase>()
-                    || bound.is_instance_of::<DoeffGenerator>()
-                    || bound.is_instance_of::<PyEffectBase>();
-                if !is_expression_like {
-                    return Ok(DoCtrl::Pure {
-                        value: Value::Python(result_obj),
-                    });
-                }
-
-                if bound.as_ptr() == original_obj.bind(py).as_ptr() {
-                    return Ok(original_yielded);
-                }
-
-                classify_yielded_for_vm(self, py, bound)
-            }),
-            other => Ok(DoCtrl::Pure { value: other }),
-        }
+        let Value::Python(result_obj) = value else {
+            return Err(PyException::type_error(
+                "WithIntercept effectful interceptor must resolve to DoExpr",
+            ));
+        };
+        self.classify_interceptor_result_object(result_obj, original_obj, original_yielded)
     }
 
     fn should_invoke_interceptor(
@@ -2657,24 +2643,6 @@ impl VM {
             ));
         };
 
-        // If the interceptor returns the exact same DoExpr object it was given,
-        // keep the original DoCtrl instead of evaluating the round-tripped Python
-        // object again. This preserves nested Pure-wrapped Apply/Expand args.
-        let returned_original = Python::attach(|py| {
-            result_obj.bind(py).as_ptr() == original_obj.bind(py).as_ptr()
-        });
-        if returned_original {
-            self.pop_interceptor_skip(marker);
-            return self.continue_interceptor_chain_mode(
-                original_yielded,
-                emitter_stream,
-                emitter_metadata,
-                emitter_handler_kind,
-                chain,
-                next_idx,
-            );
-        }
-
         let (is_direct_expr, is_doexpr) = InterceptorState::classify_result_shape(&result_obj);
 
         if is_direct_expr {
@@ -2749,7 +2717,7 @@ impl VM {
             next_idx,
             ..
         } = continuation;
-        let transformed = match self.classify_interceptor_result_value(
+        let transformed = match self.classify_interceptor_eval_result(
             value,
             &original_obj,
             original_yielded,
