@@ -87,11 +87,13 @@ def test_withhandler_rejects_return_clause_keyword() -> None:
     @do
     def body():
         return "ok"
+        yield
 
+    with_handler = cast(Any, WithHandler)
     kwargs = {"return_clause": lambda value: value}
 
     with pytest.raises(TypeError, match=r"return_clause|unexpected keyword"):
-        WithHandler(handler, body(), **kwargs)
+        with_handler(handler, body(), **kwargs)
 
 
 def test_doeff_vm_withhandler_rejects_return_clause_keyword() -> None:
@@ -104,11 +106,13 @@ def test_doeff_vm_withhandler_rejects_return_clause_keyword() -> None:
     @do
     def body():
         return "ok"
+        yield
 
+    with_handler = cast(Any, doeff_vm.WithHandler)
     kwargs = {"return_clause": lambda value: value}
 
     with pytest.raises(TypeError, match=r"return_clause|unexpected keyword"):
-        doeff_vm.WithHandler(handler, body(), **kwargs)
+        with_handler(handler, body(), **kwargs)
 
 
 def test_withhandler_rejects_third_positional_argument() -> None:
@@ -117,9 +121,10 @@ def test_withhandler_rejects_third_positional_argument() -> None:
         yield Delegate()
 
     args = (handler, Perform(Ask("key")), lambda value: value)
+    with_handler = cast(Any, WithHandler)
 
     with pytest.raises(TypeError, match=r"positional arguments|given"):
-        WithHandler(*args)
+        with_handler(*args)
 
 
 def test_resume_transfer_require_real_k() -> None:

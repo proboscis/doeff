@@ -292,7 +292,6 @@ HandlerLike: TypeAlias = Any
 def WithHandler(
     handler: HandlerLike,
     expr: Any,
-    return_clause: Callable[[Any], Any] | None = None,
     *,
     types: Iterable[type[Any]] | None = None,
 ) -> Any: ...
