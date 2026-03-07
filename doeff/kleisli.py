@@ -90,7 +90,7 @@ class KleisliProgram(ABC, Generic[P, T]):
         return types.MethodType(self, instance)
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Program[T]:
-        from doeff_vm import Apply, DoCtrlBase, Perform, Pure
+        from doeff_vm import DoCtrlBase, Expand, Perform, Pure
 
         from doeff.types import EffectBase
 
@@ -138,8 +138,8 @@ class KleisliProgram(ABC, Generic[P, T]):
                 raise TypeError(
                     "@do KleisliProgram is missing _doeff_generator_factory (DoeffGeneratorFn)"
                 )
-            return Apply(Pure(generator_factory), positional_args, keyword_args, metadata)
-        return Apply(Pure(self.func), positional_args, keyword_args, metadata)
+            return Expand(Pure(generator_factory), positional_args, keyword_args, metadata)
+        return Expand(Pure(self.func), positional_args, keyword_args, metadata)
 
     def partial(self, /, *args: P.args, **kwargs: P.kwargs) -> "PartiallyAppliedKleisliProgram[P, T]":
         return PartiallyAppliedKleisliProgram(self, args, kwargs)
