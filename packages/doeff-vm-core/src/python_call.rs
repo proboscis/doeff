@@ -38,10 +38,7 @@ pub enum PendingPython {
     EvalExpr {
         metadata: Option<CallMetadata>,
     },
-    CallFuncReturn {
-        metadata: Option<CallMetadata>,
-        evaluate_result: bool,
-    },
+    CallFuncReturn,
     StepUserGenerator {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
