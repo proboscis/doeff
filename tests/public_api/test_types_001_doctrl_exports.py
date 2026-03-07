@@ -64,6 +64,48 @@ def test_pure_apply_eval_execute() -> None:
     assert perform_result.value == "perform-value"
 
 
+def test_apply_delivers_doexpr_result_as_raw_value() -> None:
+    returned = Pure(123)
+
+    def return_program() -> Pure:
+        return returned
+
+    result = run(Apply(Pure(return_program), [], {}, _meta()))
+    assert result.value is returned
+
+
+def test_apply_delivers_effect_result_as_raw_value() -> None:
+    returned = Ask("k")
+
+    def return_effect():
+        return returned
+
+    result = run(
+        Apply(Pure(return_effect), [], {}, _meta()),
+        handlers=default_handlers(),
+        env={"k": "value"},
+    )
+    assert result.value is returned
+
+
+def test_expand_evaluates_doexpr_result() -> None:
+    def return_program() -> Pure:
+        return Pure(456)
+
+    result = run(Expand(Pure(return_program), [], {}, _meta()))
+    assert result.value == 456
+
+
+def test_expand_rejects_plain_value_result() -> None:
+    def return_value() -> int:
+        return 456
+
+    result = run(Expand(Pure(return_value), [], {}, _meta()))
+    assert result.is_err()
+    assert isinstance(result.error, TypeError)
+    assert "ExpandReturn: expected DoeffGenerator, DoExpr, or EffectBase" in str(result.error)
+
+
 def test_apply_requires_meta() -> None:
     def add(a: int, b: int) -> int:
         return a + b

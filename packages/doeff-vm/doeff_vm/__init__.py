@@ -1,3 +1,4 @@
+from functools import wraps
 from importlib import import_module
 
 _ext = import_module("doeff_vm.doeff_vm")
@@ -55,6 +56,20 @@ def _coerce_handlers(handlers, *, api_name: str):
     return [_coerce_handler(handler, api_name=api_name, role="handler") for handler in handlers]
 
 
+def _wrap_return_clause(return_clause):
+    if return_clause is None or not callable(return_clause):
+        return return_clause
+
+    program_mod = import_module("doeff.program")
+    program_base = program_mod.ProgramBase
+
+    @wraps(return_clause)
+    def lifted_return_clause(value):
+        return program_base.lift(return_clause(value))
+
+    return lifted_return_clause
+
+
 def _install_validated_runtime_api() -> None:
     if bool(getattr(_ext, "__doeff_handler_validation_patched__", False)):
         return
@@ -72,7 +87,7 @@ def _install_validated_runtime_api() -> None:
         return raw_with_handler(
             coerced_handler,
             expr,
-            return_clause=return_clause,
+            return_clause=_wrap_return_clause(return_clause),
             types=types,
         )
 

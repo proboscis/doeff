@@ -957,7 +957,7 @@ impl VM {
                     Self::remap_interceptor_markers_in_continuation(k, marker_remap);
                 }
                 PendingPython::EvalExpr { .. } => {}
-                PendingPython::CallFuncReturn { .. } => {}
+                PendingPython::CallFuncReturn => {}
                 PendingPython::StepUserGenerator { .. } => {}
                 PendingPython::ExpandReturn { .. } => {}
                 PendingPython::AsyncEscape => {}
@@ -1003,7 +1003,7 @@ impl VM {
                     Self::remap_interceptor_markers_in_continuation(k, marker_remap);
                 }
                 PendingPython::EvalExpr { .. } => {}
-                PendingPython::CallFuncReturn { .. } => {}
+                PendingPython::CallFuncReturn => {}
                 PendingPython::StepUserGenerator { .. } => {}
                 PendingPython::ExpandReturn { .. } => {}
                 PendingPython::AsyncEscape => {}
@@ -2334,10 +2334,6 @@ impl VM {
         InterceptorState::push_skip(self.current_seg_mut(), marker);
     }
 
-    fn is_interceptor_eval_idle(&self) -> bool {
-        self.current_seg().interceptor_eval_depth == 0
-    }
-
     fn classify_interceptor_result_object(
         &self,
         result_obj: Py<PyAny>,
@@ -2983,10 +2979,7 @@ impl VM {
             }
         };
 
-        self.current_seg_mut().pending_python = Some(PendingPython::CallFuncReturn {
-            metadata: Some(metadata),
-            evaluate_result,
-        });
+        self.current_seg_mut().pending_python = Some(PendingPython::CallFuncReturn);
         StepEvent::NeedsPython(PythonCall::CallFunc {
             func,
             args: Self::collect_value_args(args),
@@ -3485,8 +3478,8 @@ impl VM {
 
     fn invoke_prompt_return_clause(&mut self, return_clause: PyShared, value: Value) -> StepEvent {
         let callable = Python::attach(|py| return_clause.clone_ref(py));
-        self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
-            f: Box::new(DoCtrl::Pure {
+        self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Expand {
+            factory: Box::new(DoCtrl::Pure {
                 value: Value::Python(callable),
             }),
             args: vec![DoCtrl::Pure { value }],
@@ -3498,7 +3491,6 @@ impl VM {
                 None,
                 None,
             ),
-            evaluate_result: true,
         });
         StepEvent::Continue
     }
@@ -3565,10 +3557,7 @@ impl VM {
             PendingPython::EvalExpr { metadata } => {
                 self.receive_eval_expr_result(metadata, outcome)
             }
-            PendingPython::CallFuncReturn {
-                metadata,
-                evaluate_result,
-            } => self.receive_call_func_result(metadata, evaluate_result, outcome),
+            PendingPython::CallFuncReturn => self.receive_call_func_result(outcome),
             PendingPython::ExpandReturn {
                 metadata,
                 handler_return,
@@ -3604,29 +3593,10 @@ impl VM {
         }
     }
 
-    fn receive_call_func_result(
-        &mut self,
-        _metadata: Option<CallMetadata>,
-        evaluate_result: bool,
-        outcome: PyCallOutcome,
-    ) {
+    fn receive_call_func_result(&mut self, outcome: PyCallOutcome) {
         match outcome {
             PyCallOutcome::Value(value) => {
-                if evaluate_result {
-                    match self.classify_apply_result_as_doctrl(&value) {
-                        Ok(Some(doctrl)) => {
-                            self.current_seg_mut().mode = Mode::HandleYield(doctrl);
-                        }
-                        Ok(None) => {
-                            self.current_seg_mut().mode = Mode::Deliver(value);
-                        }
-                        Err(exception) => {
-                            self.current_seg_mut().mode = Mode::Throw(exception);
-                        }
-                    }
-                } else {
-                    self.current_seg_mut().mode = Mode::Deliver(value);
-                }
+                self.current_seg_mut().mode = Mode::Deliver(value);
             }
             PyCallOutcome::GenError(exception) => {
                 self.current_seg_mut().mode =
@@ -3636,26 +3606,6 @@ impl VM {
                 self.receive_unexpected_outcome();
             }
         }
-    }
-
-    fn classify_apply_result_as_doctrl(
-        &self,
-        value: &Value,
-    ) -> Result<Option<DoCtrl>, PyException> {
-        let Value::Python(result_obj) = value else {
-            return Ok(None);
-        };
-
-        Python::attach(|py| {
-            let result_bound = result_obj.bind(py);
-            let is_expression_like = result_bound.is_instance_of::<PyDoExprBase>()
-                || result_bound.is_instance_of::<DoeffGenerator>()
-                || result_bound.is_instance_of::<PyEffectBase>();
-            if !is_expression_like {
-                return Ok(None);
-            }
-            classify_yielded_for_vm(self, py, result_bound).map(Some)
-        })
     }
 
     fn receive_expand_result(
@@ -3696,9 +3646,6 @@ impl VM {
                             ));
                             return;
                         };
-                        // ExpandReturn(handler) comes from Python handler call paths.
-                        // Rust builtins do not enter this branch; they route through
-                        // Value::Kleisli handling in handle_yield_expand.
                         let Some(seg) = self.current_segment_mut() else {
                             return;
                         };
@@ -3733,35 +3680,47 @@ impl VM {
     }
 
     fn receive_expand_program_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
-        match value {
-            Value::Python(generator) => {
-                match Self::extract_doeff_generator(generator, metadata, "ExpandReturn") {
-                    Ok((stream, metadata)) => {
-                        match self.handle_yield_ir_stream(stream, metadata, None) {
-                            StepEvent::Continue => {}
-                            StepEvent::Error(err) => {
-                                self.current_seg_mut().mode =
-                                    Mode::Throw(PyException::runtime_error(err.to_string()));
-                            }
-                            StepEvent::NeedsPython(_) | StepEvent::Done(_) => {
-                                self.current_seg_mut().mode =
-                                    Mode::Throw(PyException::runtime_error(
-                                        "unexpected StepEvent from handle_yield_ir_stream",
-                                    ));
-                            }
-                        }
-                    }
-                    Err(exception) => {
-                        self.current_seg_mut().mode = Mode::Throw(exception);
-                    }
-                }
+        match self.classify_expand_result_as_doctrl(metadata, value, "ExpandReturn") {
+            Ok(doctrl) => {
+                self.current_seg_mut().mode = Mode::HandleYield(doctrl);
             }
-            other => {
-                self.current_seg_mut().mode = Mode::Throw(PyException::type_error(format!(
-                    "ExpandReturn: expected DoeffGenerator, got {other:?}"
-                )));
+            Err(exception) => {
+                self.current_seg_mut().mode = Mode::Throw(exception);
             }
         }
+    }
+
+    fn classify_expand_result_as_doctrl(
+        &self,
+        metadata: Option<CallMetadata>,
+        value: Value,
+        context: &str,
+    ) -> Result<DoCtrl, PyException> {
+        let Value::Python(result_obj) = value else {
+            return Err(PyException::type_error(format!(
+                "{context}: expected DoeffGenerator, DoExpr, or EffectBase, got {value:?}"
+            )));
+        };
+
+        Python::attach(|py| {
+            let bound = result_obj.bind(py);
+            if bound.is_instance_of::<DoeffGenerator>() {
+                let (stream, metadata) =
+                    Self::extract_doeff_generator(result_obj.clone_ref(py), metadata, context)?;
+                return Ok(DoCtrl::IRStream { stream, metadata });
+            }
+            if bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<PyEffectBase>() {
+                return classify_yielded_for_vm(self, py, bound);
+            }
+            let ty = bound
+                .get_type()
+                .name()
+                .map(|name| name.to_string())
+                .unwrap_or_else(|_| MISSING_UNKNOWN.to_string());
+            Err(PyException::type_error(format!(
+                "{context}: expected DoeffGenerator, DoExpr, or EffectBase, got {ty}"
+            )))
+        })
     }
 
     fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
@@ -4876,32 +4835,6 @@ impl VM {
                     "handler returned without consuming continuation {}; use Resume(k, v), Transfer(k, v), Discontinue(k, exn), or Pass()",
                     cont_id.raw(),
                 ));
-            }
-        }
-
-        if let Value::Python(obj) = &value {
-            let should_eval = Python::attach(|py| {
-                let bound = obj.bind(py);
-                bound.is_instance_of::<PyDoExprBase>()
-                    || bound.is_instance_of::<DoeffGenerator>()
-                    || bound.is_instance_of::<PyEffectBase>()
-            });
-
-            if should_eval && self.is_interceptor_eval_idle() {
-                let expr = Python::attach(|py| PyShared::new(obj.clone_ref(py)));
-                let marker = self.current_seg().marker;
-                let Some(seg) = self.current_segment_mut() else {
-                    return StepEvent::Error(VMError::internal(
-                        "current_segment_mut() returned None in handle_handler_return \
-                         while scheduling Eval callback",
-                    ));
-                };
-                seg.push_frame(Frame::InterceptBodyReturn { marker });
-                self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Eval {
-                    expr,
-                    metadata: None,
-                });
-                return StepEvent::Continue;
             }
         }
 
