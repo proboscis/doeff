@@ -107,17 +107,14 @@ impl InterceptorState {
     pub(crate) fn classify_result_shape(result_obj: &Py<PyAny>) -> (bool, bool) {
         Python::attach(|py| {
             let bound = result_obj.bind(py);
-            let doctrl_tag = bound
-                .extract::<PyRef<'_, PyDoCtrlBase>>()
-                .ok()
-                .and_then(|base| crate::pyvm::DoExprTag::try_from(base.tag).ok());
             let is_effect_base = bound.is_instance_of::<PyEffectBase>();
+            let is_py_doexpr = bound.is_instance_of::<PyDoExprBase>();
             let is_doexpr =
-                bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<DoeffGenerator>();
-            let is_direct_expr = is_effect_base
-                || doctrl_tag.is_some_and(|tag| {
-                    tag != crate::pyvm::DoExprTag::Expand && tag != crate::pyvm::DoExprTag::Apply
-                });
+                is_py_doexpr || bound.is_instance_of::<DoeffGenerator>();
+            // Interceptor return values that are already DoExpr objects should be
+            // re-classified directly, not eagerly evaluated. The extra Eval step is
+            // only for generator-like results that still need to resolve to a DoExpr.
+            let is_direct_expr = is_effect_base || is_py_doexpr;
             (is_direct_expr, is_doexpr)
         })
     }
