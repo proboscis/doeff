@@ -178,16 +178,14 @@ def test_spec_example_6_handler_return_abandons_inner_chain() -> None:
 
     @do
     def outer() -> Program[None]:
-        result = yield WithHandler(short_circuit_handler, inner())
-        raise ValueError(f"Unexpected: {result}")
+        _ = yield WithHandler(short_circuit_handler, inner())
+        return None
 
     rendered = _render_failure(outer(), store={"result": ""})
-    assert "yield Ask(" not in rendered
-    assert "short_circuit_handler ✓" not in rendered
+    assert "yield Ask(" in rendered
     assert "inner()" in rendered
-    assert "raise ValueError(" in rendered
-    assert "Unexpected: fallback" in rendered
-    assert "ValueError: Unexpected: fallback" in rendered
+    assert "short_circuit_handler" in rendered
+    assert "RuntimeError: handler returned without consuming continuation" in rendered
 
 
 def test_spec_example_8_spawn_chain_during_gather() -> None:

@@ -26,9 +26,7 @@ use crate::effect::{
 #[cfg(test)]
 use crate::effect::{Effect, PySpawn};
 use crate::error::VMError;
-use crate::frame::{
-    CallMetadata, EvalReturnContinuation, FinallyOutcome, Frame, InterceptorContinuation,
-};
+use crate::frame::{CallMetadata, EvalReturnContinuation, Frame, InterceptorContinuation};
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::interceptor_state::InterceptorState;
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
@@ -258,7 +256,6 @@ pub struct VM {
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
     pub continuation_registry: HashMap<ContId, Continuation>,
-    continuation_finally_registry: HashMap<ContId, Vec<PyShared>>,
     pub active_run_token: Option<u64>,
 }
 
@@ -277,7 +274,6 @@ impl VM {
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
             continuation_registry: HashMap::new(),
-            continuation_finally_registry: HashMap::new(),
             active_run_token: None,
         }
     }
@@ -313,24 +309,9 @@ impl VM {
         for handler in &self.run_handlers {
             handler.on_run_end(run_token);
         }
-        self.warn_abandoned_finally_continuations();
         self.run_handlers.clear();
         self.continuation_registry.clear();
-        self.continuation_finally_registry.clear();
         self.consumed_cont_ids.clear();
-    }
-
-    fn warn_abandoned_finally_continuations(&self) {
-        for (cont_id, cleanups) in &self.continuation_finally_registry {
-            if cleanups.is_empty() {
-                continue;
-            }
-            eprintln!(
-                "warning: continuation {} dropped without resumption; {} pending Finally cleanup(s) were abandoned",
-                cont_id.raw(),
-                cleanups.len()
-            );
-        }
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -414,8 +395,7 @@ impl VM {
                 SegmentKind::PromptBoundary { .. }
                 | SegmentKind::Normal
                 | SegmentKind::InterceptorBoundary { .. }
-                | SegmentKind::MaskBoundary { .. }
-                | SegmentKind::FinallyBoundary { .. } => None,
+                | SegmentKind::MaskBoundary { .. } => None,
             })
     }
 
@@ -477,8 +457,7 @@ impl VM {
                     metadata: metadata.clone(),
                 })),
                 SegmentKind::Normal
-                | SegmentKind::MaskBoundary { .. }
-                | SegmentKind::FinallyBoundary { .. } => {
+                | SegmentKind::MaskBoundary { .. } => {
                     assert!(
                         self.interceptor_state.get_entry(seg.marker).is_none(),
                         "normal segment marker {} unexpectedly has interceptor state entry",
@@ -790,7 +769,9 @@ impl VM {
             DoCtrl::WithIntercept { body, .. } => {
                 Self::remap_interceptor_markers_in_doctrl(body, marker_remap);
             }
-            DoCtrl::Finally { .. } => {}
+            DoCtrl::Discontinue { continuation, .. } => {
+                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
+            }
             DoCtrl::Delegate { .. } => {}
             DoCtrl::Pass { .. } => {}
             DoCtrl::GetContinuation => {}
@@ -910,7 +891,6 @@ impl VM {
                     Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
                 }
             }
-            EvalReturnContinuation::FinallyCleanup { .. } => {}
         }
     }
 
@@ -1707,22 +1687,8 @@ impl VM {
 
             if !segment.has_frames() {
                 let caller = segment.caller;
-                let kind = segment.kind.clone();
                 let mode =
                     std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit));
-                if let SegmentKind::FinallyBoundary { cleanup } = kind {
-                    return match mode {
-                        Mode::Deliver(value) => {
-                            self.begin_finally_cleanup(cleanup, FinallyOutcome::Deliver(value))
-                        }
-                        Mode::Throw(exc) => {
-                            self.begin_finally_cleanup(cleanup, FinallyOutcome::Throw(exc))
-                        }
-                        Mode::HandleYield(_) | Mode::Return(_) => StepEvent::Error(
-                            VMError::internal("invalid mode while resolving FinallyBoundary"),
-                        ),
-                    };
-                }
                 match mode {
                     Mode::Deliver(value) => {
                         // Don't free here — step_return reads the segment's caller.
@@ -1820,47 +1786,6 @@ impl VM {
             Frame::InterceptBodyReturn { marker } => {
                 self.step_intercept_body_return_frame(marker, mode)
             }
-        }
-    }
-
-    fn begin_finally_cleanup(&mut self, cleanup: PyShared, original: FinallyOutcome) -> StepEvent {
-        let seg = self.current_seg_mut();
-        seg.kind = SegmentKind::Normal;
-        seg.push_frame(Frame::EvalReturn(Box::new(
-            EvalReturnContinuation::FinallyCleanup { original },
-        )));
-        seg.mode = Mode::HandleYield(DoCtrl::Eval {
-            expr: cleanup,
-            metadata: None,
-        });
-        StepEvent::Continue
-    }
-
-    fn mode_after_finally_cleanup(original: FinallyOutcome, cleanup_mode: Mode) -> Mode {
-        match original {
-            FinallyOutcome::Deliver(value) => match cleanup_mode {
-                Mode::Deliver(_) => Mode::Deliver(value),
-                Mode::Throw(cleanup_exception) => Mode::Throw(cleanup_exception),
-                Mode::HandleYield(yielded) => {
-                    unreachable!("finally cleanup produced HandleYield mode: {yielded:?}")
-                }
-                Mode::Return(value) => {
-                    unreachable!("finally cleanup produced Return mode: {value:?}")
-                }
-            },
-            FinallyOutcome::Throw(original_exception) => match cleanup_mode {
-                Mode::Deliver(_) => Mode::Throw(original_exception),
-                Mode::Throw(cleanup_exception) => {
-                    Self::chain_exception_context(&original_exception, &cleanup_exception);
-                    Mode::Throw(original_exception)
-                }
-                Mode::HandleYield(yielded) => {
-                    unreachable!("finally cleanup produced HandleYield mode: {yielded:?}")
-                }
-                Mode::Return(value) => {
-                    unreachable!("finally cleanup produced Return mode: {value:?}")
-                }
-            },
         }
     }
 
@@ -1986,10 +1911,6 @@ impl VM {
         continuation: EvalReturnContinuation,
         mode: Mode,
     ) -> StepEvent {
-        if let EvalReturnContinuation::FinallyCleanup { original } = continuation {
-            self.current_seg_mut().mode = Self::mode_after_finally_cleanup(original, mode);
-            return StepEvent::Continue;
-        }
         if let EvalReturnContinuation::EvalInScopeReturn { continuation } = continuation {
             self.current_seg_mut().mode = match mode {
                 Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Transfer {
@@ -2144,9 +2065,6 @@ impl VM {
             }
             EvalReturnContinuation::EvalInScopeReturn { .. } => {
                 unreachable!("EvalInScopeReturn continuation is handled before value dispatch")
-            }
-            EvalReturnContinuation::FinallyCleanup { .. } => {
-                unreachable!("FinallyCleanup continuation is handled before value dispatch")
             }
         }
     }
@@ -2361,7 +2279,10 @@ impl VM {
     ) -> Mode {
         let is_terminal = matches!(
             &yielded,
-            DoCtrl::Transfer { .. } | DoCtrl::TransferThrow { .. } | DoCtrl::Pass { .. }
+            DoCtrl::Transfer { .. }
+                | DoCtrl::TransferThrow { .. }
+                | DoCtrl::Discontinue { .. }
+                | DoCtrl::Pass { .. }
         );
         if !is_terminal {
             match self.current_segment_mut() {
@@ -2792,7 +2713,10 @@ impl VM {
                 mode,
                 metadata,
             } => self.handle_yield_with_intercept(interceptor, *body, types, mode, metadata),
-            DoCtrl::Finally { cleanup } => self.handle_yield_finally(cleanup),
+            DoCtrl::Discontinue {
+                continuation,
+                exception,
+            } => self.handle_yield_discontinue(continuation, exception),
             DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
             DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
             DoCtrl::GetContinuation => self.handle_yield_get_continuation(),
@@ -2886,6 +2810,14 @@ impl VM {
         self.handle_transfer_throw(continuation, exception)
     }
 
+    fn handle_yield_discontinue(
+        &mut self,
+        continuation: Continuation,
+        exception: PyException,
+    ) -> StepEvent {
+        self.handle_transfer_throw(continuation, exception)
+    }
+
     fn handle_yield_resume_throw(
         &mut self,
         continuation: Continuation,
@@ -2913,16 +2845,6 @@ impl VM {
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         self.handle_with_intercept(interceptor, body, types, mode, metadata)
-    }
-
-    fn handle_yield_finally(&mut self, cleanup: PyShared) -> StepEvent {
-        match self.register_finally_boundary(cleanup) {
-            Ok(()) => {
-                self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
-                StepEvent::Continue
-            }
-            Err(err) => StepEvent::Error(err),
-        }
     }
 
     fn handle_yield_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
@@ -3379,9 +3301,6 @@ impl VM {
                             EvalReturnContinuation::EvalInScopeReturn { .. } => {
                                 // no metadata
                             }
-                            EvalReturnContinuation::FinallyCleanup { .. } => {
-                                // no metadata
-                            }
                         },
                         Frame::MapReturn { mapper_meta, .. } => stack.push(mapper_meta.clone()),
                         Frame::FlatMapBindResult => {
@@ -3432,7 +3351,7 @@ impl VM {
                 | non_pure @ DoCtrl::ResumeThrow { .. }
                 | non_pure @ DoCtrl::WithHandler { .. }
                 | non_pure @ DoCtrl::WithIntercept { .. }
-                | non_pure @ DoCtrl::Finally { .. }
+                | non_pure @ DoCtrl::Discontinue { .. }
                 | non_pure @ DoCtrl::Delegate { .. }
                 | non_pure @ DoCtrl::Pass { .. }
                 | non_pure @ DoCtrl::GetContinuation
@@ -3470,7 +3389,7 @@ impl VM {
                 | non_pure @ DoCtrl::ResumeThrow { .. }
                 | non_pure @ DoCtrl::WithHandler { .. }
                 | non_pure @ DoCtrl::WithIntercept { .. }
-                | non_pure @ DoCtrl::Finally { .. }
+                | non_pure @ DoCtrl::Discontinue { .. }
                 | non_pure @ DoCtrl::Delegate { .. }
                 | non_pure @ DoCtrl::Pass { .. }
                 | non_pure @ DoCtrl::GetContinuation
@@ -3500,8 +3419,7 @@ impl VM {
             SegmentKind::PromptBoundary { return_clause, .. } => return_clause.take(),
             SegmentKind::Normal
             | SegmentKind::InterceptorBoundary { .. }
-            | SegmentKind::MaskBoundary { .. }
-            | SegmentKind::FinallyBoundary { .. } => None,
+            | SegmentKind::MaskBoundary { .. } => None,
         }
     }
 
@@ -3994,18 +3912,9 @@ impl VM {
     pub fn mark_one_shot_consumed(&mut self, cont_id: ContId) {
         self.consumed_cont_ids.insert(cont_id);
         self.continuation_registry.remove(&cont_id);
-        self.continuation_finally_registry.remove(&cont_id);
     }
 
     pub fn register_continuation(&mut self, k: Continuation) {
-        let finally_cleanups =
-            self.gather_finally_cleanups_from_caller(self.continuation_caller_segment(&k));
-        if finally_cleanups.is_empty() {
-            self.continuation_finally_registry.remove(&k.cont_id);
-        } else {
-            self.continuation_finally_registry
-                .insert(k.cont_id, finally_cleanups);
-        }
         self.continuation_registry.insert(k.cont_id, k);
     }
 
@@ -4482,75 +4391,6 @@ impl VM {
             })
     }
 
-    fn continuation_caller_segment(&self, k: &Continuation) -> Option<SegmentId> {
-        self.segments
-            .get(k.segment_id)
-            .and_then(|source_seg| source_seg.caller)
-    }
-
-    fn gather_finally_cleanups_from_caller(&self, mut cursor: Option<SegmentId>) -> Vec<PyShared> {
-        let mut cleanups = Vec::new();
-        while let Some(seg_id) = cursor {
-            let Some(seg) = self.segments.get(seg_id) else {
-                break;
-            };
-            match &seg.kind {
-                SegmentKind::FinallyBoundary { cleanup } => {
-                    cleanups.push(cleanup.clone());
-                    cursor = seg.caller;
-                }
-                SegmentKind::Normal
-                | SegmentKind::PromptBoundary { .. }
-                | SegmentKind::InterceptorBoundary { .. }
-                | SegmentKind::MaskBoundary { .. } => break,
-            }
-        }
-        cleanups
-    }
-
-    fn continuation_finally_cleanups(&self, k: &Continuation) -> Vec<PyShared> {
-        if let Some(cleanups) = self.continuation_finally_registry.get(&k.cont_id) {
-            return cleanups.clone();
-        }
-        self.gather_finally_cleanups_from_caller(self.continuation_caller_segment(k))
-    }
-
-    fn graft_continuation_finally_boundaries(
-        &mut self,
-        k: &Continuation,
-        caller: Option<SegmentId>,
-    ) -> Option<SegmentId> {
-        let cleanups = self.continuation_finally_cleanups(k);
-        if cleanups.is_empty() {
-            return caller;
-        }
-
-        let mut tail = caller;
-        for cleanup in cleanups.iter().rev() {
-            let mut finally_seg = Segment::new(k.marker, tail);
-            finally_seg.kind = SegmentKind::FinallyBoundary {
-                cleanup: cleanup.clone(),
-            };
-            finally_seg.scope_store = k.scope_store.clone();
-            let seg_id = self.alloc_segment(finally_seg);
-            tail = Some(seg_id);
-        }
-        tail
-    }
-
-    fn continuation_resume_caller(
-        &mut self,
-        kind: ContinuationActivationKind,
-        k: &Continuation,
-        caller: Option<SegmentId>,
-    ) -> Option<SegmentId> {
-        match kind {
-            ContinuationActivationKind::Resume | ContinuationActivationKind::Transfer => {
-                self.graft_continuation_finally_boundaries(k, caller)
-            }
-        }
-    }
-
     fn enter_continuation_segment_with_dispatch(
         &mut self,
         k: &Continuation,
@@ -4624,7 +4464,6 @@ impl VM {
                         self.segments.get(k.segment_id).and_then(|seg| seg.caller)
                     }
                 };
-                let caller = self.continuation_resume_caller(kind, &k, caller);
                 self.enter_continuation_segment_with_dispatch(&k, caller, None);
                 self.current_seg_mut().mode = Mode::Throw(enriched_exception);
                 return StepEvent::Continue;
@@ -4638,7 +4477,6 @@ impl VM {
                 self.segments.get(k.segment_id).and_then(|seg| seg.caller)
             }
         };
-        let caller = self.continuation_resume_caller(kind, &k, caller);
         self.enter_continuation_segment(&k, caller);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
@@ -4668,7 +4506,7 @@ impl VM {
     ) -> StepEvent {
         if !k.started {
             return self.throw_runtime_error(
-                "TransferThrow on unstarted continuation; use ResumeContinuation",
+                "cannot throw into an unstarted continuation; use ResumeContinuation",
             );
         }
         if self.is_one_shot_consumed(k.cont_id) {
@@ -4708,7 +4546,9 @@ impl VM {
 
         let dispatch_id: Option<DispatchId> = None;
         let caller = self
-            .continuation_caller_segment(&k)
+            .segments
+            .get(k.segment_id)
+            .and_then(|seg| seg.caller)
             .or(self.current_segment);
         let exec_seg = Segment {
             marker: k.marker,
@@ -4814,80 +4654,6 @@ impl VM {
 
         self.current_segment = Some(body_seg_id);
         self.evaluate(program)
-    }
-
-    fn register_finally_boundary(&mut self, cleanup: PyShared) -> Result<(), VMError> {
-        let current_seg_id = self
-            .current_segment
-            .ok_or_else(|| VMError::internal("Finally outside current segment"))?;
-        let (
-            marker,
-            caller,
-            dispatch_id,
-            scope_store,
-            interceptor_eval_depth,
-            interceptor_skip_stack,
-            outer_frames,
-        ) = {
-            let current_seg = self
-                .segments
-                .get_mut(current_seg_id)
-                .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
-            let marker = current_seg.marker;
-            let caller = current_seg.caller;
-            let dispatch_id = current_seg.dispatch_id;
-            let scope_store = current_seg.scope_store.clone();
-            let interceptor_eval_depth = current_seg.interceptor_eval_depth;
-            let interceptor_skip_stack = current_seg.interceptor_skip_stack.clone();
-
-            let mut frames = std::mem::take(&mut current_seg.frames);
-            let top_frame = frames.pop();
-            current_seg.frames = top_frame.into_iter().collect();
-
-            (
-                marker,
-                caller,
-                dispatch_id,
-                scope_store,
-                interceptor_eval_depth,
-                interceptor_skip_stack,
-                frames,
-            )
-        };
-
-        let caller = if outer_frames.is_empty() {
-            caller
-        } else {
-            let outer_seg = Segment {
-                marker,
-                frames: outer_frames,
-                caller,
-                scope_store: scope_store.clone(),
-                kind: self.structural_kind_for_marker(marker),
-                dispatch_id,
-                mode: Mode::Deliver(Value::Unit),
-                pending_python: None,
-                pending_error_context: None,
-                interceptor_eval_depth,
-                interceptor_skip_stack: interceptor_skip_stack.clone(),
-            };
-            Some(self.alloc_segment(outer_seg))
-        };
-
-        let mut finally_seg = Segment::new(marker, caller);
-        finally_seg.kind = SegmentKind::FinallyBoundary { cleanup };
-        finally_seg.scope_store = scope_store;
-        finally_seg.dispatch_id = dispatch_id;
-        finally_seg.interceptor_eval_depth = interceptor_eval_depth;
-        finally_seg.interceptor_skip_stack = interceptor_skip_stack;
-        let finally_seg_id = self.alloc_segment(finally_seg);
-
-        let current_seg = self
-            .segments
-            .get_mut(current_seg_id)
-            .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
-        current_seg.caller = Some(finally_seg_id);
-        Ok(())
     }
 
     fn clear_segment_frames(&mut self, segment_id: Option<SegmentId>) {
@@ -5096,6 +4862,23 @@ impl VM {
     fn handle_handler_return(&mut self, mut value: Value) -> StepEvent {
         self.lazy_pop_completed();
 
+        let active_python_handler = self.current_dispatch_id().and_then(|dispatch_id| {
+            let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+            let marker = *ctx.handler_chain.get(ctx.handler_idx)?;
+            let (_, kind, _, _) = self.marker_handler_trace_info(marker)?;
+            Some((dispatch_id, kind == HandlerKind::Python, ctx.k_current.cont_id))
+        });
+        if let Some((_dispatch_id, true, cont_id)) = active_python_handler {
+            if self.continuation_registry.contains_key(&cont_id) && !self.is_one_shot_consumed(cont_id)
+            {
+                self.mark_one_shot_consumed(cont_id);
+                return self.throw_runtime_error(&format!(
+                    "handler returned without consuming continuation {}; use Resume(k, v), Transfer(k, v), Discontinue(k, exn), or Pass()",
+                    cont_id.raw(),
+                ));
+            }
+        }
+
         if let Value::Python(obj) = &value {
             let should_eval = Python::attach(|py| {
                 let bound = obj.bind(py);
@@ -5140,6 +4923,22 @@ impl VM {
             return StepEvent::Error(err);
         }
 
+        let Some(seg_id) = self.current_segment else {
+            return StepEvent::Error(VMError::internal(
+                "current_segment missing in handle_handler_return while dispatch active",
+            ));
+        };
+        let Some(seg) = self.segments.get(seg_id) else {
+            return StepEvent::Error(VMError::internal(
+                "current segment not found in handle_handler_return while dispatch active",
+            ));
+        };
+        let Some(caller_id) = seg.caller else {
+            return StepEvent::Error(VMError::internal(
+                "handler segment missing caller in handle_handler_return",
+            ));
+        };
+
         let Some((handler_index, handler_name)) =
             self.current_handler_identity_for_dispatch(top_snapshot.dispatch_id)
         else {
@@ -5162,22 +4961,6 @@ impl VM {
             &top_snapshot.k_current,
             false,
         );
-
-        let Some(seg_id) = self.current_segment else {
-            return StepEvent::Error(VMError::internal(
-                "current_segment missing in handle_handler_return while dispatch active",
-            ));
-        };
-        let Some(seg) = self.segments.get(seg_id) else {
-            return StepEvent::Error(VMError::internal(
-                "current segment not found in handle_handler_return while dispatch active",
-            ));
-        };
-        let Some(caller_id) = seg.caller else {
-            return StepEvent::Error(VMError::internal(
-                "handler segment missing caller in handle_handler_return",
-            ));
-        };
 
         let original_exception = {
             let Some(ctx) = self.dispatch_state.find_mut_by_dispatch_id(dispatch_id) else {

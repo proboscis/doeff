@@ -394,6 +394,7 @@ fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
         IRStreamStep::Yield(DoCtrl::Resume { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::ResumeThrow { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::Transfer { continuation, .. })
+        | IRStreamStep::Yield(DoCtrl::Discontinue { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::TransferThrow { continuation, .. })
         | IRStreamStep::Yield(DoCtrl::ResumeContinuation { continuation, .. }) => {
             continuation.cont_id == cont_id
@@ -405,7 +406,6 @@ fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
             | DoCtrl::Perform { .. }
             | DoCtrl::WithHandler { .. }
             | DoCtrl::WithIntercept { .. }
-            | DoCtrl::Finally { .. }
             | DoCtrl::Delegate { .. }
             | DoCtrl::Pass { .. }
             | DoCtrl::GetContinuation

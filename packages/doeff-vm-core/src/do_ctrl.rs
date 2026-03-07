@@ -88,8 +88,9 @@ pub enum DoCtrl {
         mode: InterceptMode,
         metadata: Option<CallMetadata>,
     },
-    Finally {
-        cleanup: PyShared,
+    Discontinue {
+        continuation: Continuation,
+        exception: PyException,
     },
     Delegate {
         effect: DispatchEffect,
@@ -223,8 +224,12 @@ impl DoCtrl {
                 mode: *mode,
                 metadata: metadata.clone(),
             },
-            DoCtrl::Finally { cleanup } => DoCtrl::Finally {
-                cleanup: cleanup.clone(),
+            DoCtrl::Discontinue {
+                continuation,
+                exception,
+            } => DoCtrl::Discontinue {
+                continuation: continuation.clone(),
+                exception: exception.clone_ref(py),
             },
             DoCtrl::Delegate { effect } => DoCtrl::Delegate {
                 effect: effect.clone(),
@@ -393,10 +398,10 @@ mod tests {
     }
 
     #[test]
-    fn test_doctrl_includes_resume_throw() {
+    fn test_doctrl_includes_discontinue() {
         assert!(
-            runtime_src().contains("ResumeThrow"),
-            "ResumeThrow must exist in DoCtrl enum"
+            runtime_src().contains("Discontinue"),
+            "Discontinue must exist in DoCtrl enum"
         );
     }
 

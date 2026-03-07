@@ -32,9 +32,6 @@ pub enum SegmentKind {
         masked_effects: Vec<PyShared>,
         behind: bool,
     },
-    FinallyBoundary {
-        cleanup: PyShared,
-    },
 }
 
 /// Per-segment scope state used by Local/Ask resolution.
@@ -155,8 +152,7 @@ impl Segment {
             SegmentKind::PromptBoundary { handled_marker, .. } => Some(*handled_marker),
             SegmentKind::Normal
             | SegmentKind::InterceptorBoundary { .. }
-            | SegmentKind::MaskBoundary { .. }
-            | SegmentKind::FinallyBoundary { .. } => None,
+            | SegmentKind::MaskBoundary { .. } => None,
         }
     }
 }

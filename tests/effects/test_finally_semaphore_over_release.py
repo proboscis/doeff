@@ -24,7 +24,6 @@ from doeff import (
     AcquireSemaphore,
     CreateSemaphore,
     Effect,
-    Finally,
     Gather,
     Pass,
     ReleaseSemaphore,
@@ -79,26 +78,30 @@ def _worker_with_tell(n: int):
     return result
 
 
-def _wrap_with_semaphore_finally(program, sem):
+def _wrap_with_semaphore_cleanup(program, sem):
     @do
     def _impl():
         yield AcquireSemaphore(sem)
-        yield Finally(ReleaseSemaphore(sem))
-        result = yield program
-        return result
+        try:
+            result = yield program
+            return result
+        finally:
+            yield ReleaseSemaphore(sem)
 
     return _impl()
 
 
-def _wrap_with_semaphore_finally_and_tell(program, sem):
+def _wrap_with_semaphore_cleanup_and_tell(program, sem):
     @do
     def _impl():
         yield Tell("acquiring semaphore")
         yield AcquireSemaphore(sem)
-        yield Finally(ReleaseSemaphore(sem))
-        yield Tell("semaphore acquired")
-        result = yield program
-        return result
+        try:
+            yield Tell("semaphore acquired")
+            result = yield program
+            return result
+        finally:
+            yield ReleaseSemaphore(sem)
 
     return _impl()
 
@@ -119,7 +122,7 @@ def _throttled(programs: list, concurrency: int, with_tell: bool = False):
     @do
     def _impl():
         sem = yield CreateSemaphore(concurrency)
-        wrap = _wrap_with_semaphore_finally_and_tell if with_tell else _wrap_with_semaphore_finally
+        wrap = _wrap_with_semaphore_cleanup_and_tell if with_tell else _wrap_with_semaphore_cleanup
         wrapped = [wrap(p, sem) for p in programs]
         return list((yield _spawn_gather(wrapped)))
 
