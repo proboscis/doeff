@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import doeff
 import pytest
 
 from doeff import (
@@ -83,6 +84,8 @@ def test_resume_transfer_require_real_k() -> None:
         Resume("not_k", Ask("x"))
     with pytest.raises(TypeError, match=r"K"):
         Transfer("not_k", Ask("x"))
+    with pytest.raises(TypeError, match=r"K"):
+        getattr(doeff, "Discontinue")("not_k")
 
 
 def test_python_handler_receives_k_for_resume() -> None:

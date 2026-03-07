@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import doeff as doeff_module
 import pytest
 
 from doeff import (
     Apply,
     Ask,
+    Discontinue,
     Eval,
     EvalInScope,
     Expand,
-    Finally,
     Perform,
     Pure,
     ResumeContinuation,
@@ -25,8 +26,10 @@ def test_doctrl_exports_are_available() -> None:
     assert Eval is not None
     assert EvalInScope is not None
     assert Perform is not None
-    assert Finally is not None
+    assert Discontinue is not None
     assert ResumeContinuation is not None
+    with pytest.raises(AttributeError):
+        getattr(doeff_module, "Finally")
 
 
 def _meta() -> dict[str, object]:
