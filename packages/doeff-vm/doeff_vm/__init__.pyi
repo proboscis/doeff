@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
 from types import ModuleType
-from typing import Any, Generic, Literal, TypeAlias, TypeVar, TypedDict
+from typing import Any, Generic, Literal, TypeAlias, TypedDict, TypeVar
 
 from doeff.program import ProgramBase as _ProgramBase
 
 _T = TypeVar("_T")
-
 
 class CallFrame(TypedDict, total=False):
     frame_id: int
@@ -17,28 +16,22 @@ class CallFrame(TypedDict, total=False):
     args_repr: str | None
     program_call: object | None
 
-
 class DoExpr(_ProgramBase[_T], Generic[_T]):
     def __init__(self, *_args: Any, **_kwargs: Any) -> None: ...
     def to_generator(self) -> DoeffGenerator: ...
-
 
 class EffectBase:
     tag: int
     def __init__(self, *_args: Any, **_kwargs: Any) -> None: ...
 
-
 class DoCtrlBase(DoExpr[Any]):
     tag: int
     def __init__(self) -> None: ...
 
-
 DoThunkBase: type[Any] | None
-
 
 class K:
     def __repr__(self) -> str: ...
-
 
 class TraceFrame:
     func_name: str
@@ -46,18 +39,15 @@ class TraceFrame:
     source_line: int
     def __init__(self, func_name: str, source_file: str, source_line: int) -> None: ...
 
-
 class TraceHop:
     frames: list[TraceFrame]
     def __init__(self, frames: list[TraceFrame]) -> None: ...
-
 
 class Ok(Generic[_T]):
     value: _T
     def __init__(self, value: _T) -> None: ...
     def is_ok(self) -> bool: ...
     def is_err(self) -> bool: ...
-
 
 class Err:
     error: BaseException
@@ -66,14 +56,11 @@ class Err:
     def is_ok(self) -> bool: ...
     def is_err(self) -> bool: ...
 
-
 ResultOk = Ok[Any]
 ResultErr = Err
 
-
 class RustHandler:
     def __repr__(self) -> str: ...
-
 
 class PyKleisli:
     __dict__: dict[str, Any]
@@ -91,7 +78,6 @@ class PyKleisli:
     def and_then_k(self, binder: Callable[..., Any]) -> Any: ...
     def fmap(self, mapper: Callable[..., Any]) -> Any: ...
 
-
 class DoeffGeneratorFn:
     callable: Callable[..., Any]
     function_name: str
@@ -107,7 +93,6 @@ class DoeffGeneratorFn:
         get_frame: Callable[[Any], Any],
     ) -> None: ...
     def __call__(self, *args: Any, **kwargs: Any) -> DoeffGenerator: ...
-
 
 class DoeffGenerator:
     generator: Any
@@ -131,15 +116,12 @@ class DoeffGenerator:
     @property
     def source_line(self) -> int: ...
 
-
 class DoeffTracebackData:
     entries: Any
     active_chain: Any
     def __init__(self, entries: Any, active_chain: Any | None = None) -> None: ...
 
-
 RunResultValue: TypeAlias = Ok[_T] | Err
-
 
 class RunResult(Generic[_T]):
     traceback_data: DoeffTracebackData | None
@@ -158,7 +140,6 @@ class RunResult(Generic[_T]):
     def is_ok(self) -> bool: ...
     def is_err(self) -> bool: ...
     def display(self, verbose: bool = False) -> str: ...
-
 
 class PyVM:
     def __init__(self) -> None: ...
@@ -191,11 +172,9 @@ class PyVM:
     def feed_async_result(self, value: Any) -> None: ...
     def feed_async_error(self, error_value: BaseException) -> None: ...
 
-
 class Pure(DoCtrlBase):
     value: Any
     def __init__(self, value: Any) -> None: ...
-
 
 class Apply(DoCtrlBase):
     f: Callable[..., Any]
@@ -212,7 +191,6 @@ class Apply(DoCtrlBase):
         evaluate_result: bool = True,
     ) -> None: ...
 
-
 class Expand(DoCtrlBase):
     factory: Callable[..., Any]
     args: Iterable[Any]
@@ -226,7 +204,6 @@ class Expand(DoCtrlBase):
         meta: dict[str, Any] | None = None,
     ) -> None: ...
 
-
 class Map(DoCtrlBase):
     source: DoExpr[Any]
     mapper: Callable[[Any], Any]
@@ -237,7 +214,6 @@ class Map(DoCtrlBase):
         mapper: Callable[[Any], Any],
         mapper_meta: dict[str, Any] | None = None,
     ) -> None: ...
-
 
 class FlatMap(DoCtrlBase):
     source: DoExpr[Any]
@@ -250,84 +226,68 @@ class FlatMap(DoCtrlBase):
         binder_meta: dict[str, Any] | None = None,
     ) -> None: ...
 
-
 class Eval(DoCtrlBase):
     expr: DoExpr[Any] | EffectBase
     def __init__(self, expr: DoExpr[Any] | EffectBase) -> None: ...
-
 
 class EvalInScope(DoCtrlBase):
     expr: DoExpr[Any] | EffectBase
     scope: K
     def __init__(self, expr: DoExpr[Any] | EffectBase, scope: K) -> None: ...
 
-
 class Perform(DoCtrlBase):
     effect: EffectBase
     def __init__(self, effect: EffectBase) -> None: ...
 
-
-class Finally(DoCtrlBase):
-    cleanup: DoExpr[Any]
-    def __init__(self, cleanup: DoExpr[Any] | EffectBase) -> None: ...
-
+class Discontinue(DoCtrlBase):
+    continuation: K
+    exception: BaseException | None
+    def __init__(self, continuation: K, exception: BaseException | None = None) -> None: ...
 
 class Resume(DoCtrlBase):
     continuation: K
     value: Any
     def __init__(self, continuation: K, value: Any) -> None: ...
 
-
 class Delegate(DoCtrlBase):
     def __init__(self) -> None: ...
 
-
 class Pass(DoCtrlBase):
     def __init__(self) -> None: ...
-
 
 class Transfer(DoCtrlBase):
     continuation: K
     value: Any
     def __init__(self, continuation: K, value: Any) -> None: ...
 
-
 class ResumeContinuation(DoCtrlBase):
     continuation: K
     value: Any
     def __init__(self, continuation: K, value: Any) -> None: ...
-
 
 class CreateContinuation(DoCtrlBase):
     program: DoExpr[Any] | EffectBase
     handlers: Sequence[Any]
     def __init__(self, program: DoExpr[Any] | EffectBase, handlers: Sequence[Any]) -> None: ...
 
-
 class GetTraceback(DoCtrlBase):
     continuation: K
     def __init__(self, continuation: K) -> None: ...
 
-
 class GetContinuation(DoCtrlBase):
     def __init__(self) -> None: ...
-
 
 class GetHandlers(DoCtrlBase):
     def __init__(self) -> None: ...
 
-
 class GetCallStack(DoCtrlBase):
     def __init__(self) -> None: ...
-
 
 class AsyncEscape(DoCtrlBase):
     action: Callable[..., Awaitable[Any]]
     def __init__(self, action: Callable[..., Awaitable[Any]]) -> None: ...
 
-
 HandlerLike: TypeAlias = Any
-
 
 def WithHandler(
     handler: HandlerLike,
@@ -336,8 +296,6 @@ def WithHandler(
     *,
     types: Iterable[type[Any]] | None = None,
 ) -> Any: ...
-
-
 def WithIntercept(
     f: HandlerLike,
     expr: Any,
@@ -346,39 +304,32 @@ def WithIntercept(
     meta: dict[str, Any] | None = None,
 ) -> Any: ...
 
-
 class PyGet(EffectBase):
     key: str
     def __init__(self, key: str) -> None: ...
-
 
 class PyPut(EffectBase):
     key: str
     value: Any
     def __init__(self, key: str, value: Any) -> None: ...
 
-
 class PyModify(EffectBase):
     key: str
     func: Callable[[Any], Any]
     def __init__(self, key: str, func: Callable[[Any], Any]) -> None: ...
 
-
 class PyAsk(EffectBase):
     key: Any
     def __init__(self, key: Any) -> None: ...
-
 
 class PyLocal(EffectBase):
     env_update: Any
     sub_program: DoExpr[Any] | EffectBase
     def __init__(self, env_update: Any, sub_program: DoExpr[Any] | EffectBase) -> None: ...
 
-
 class PyTell(EffectBase):
     message: Any
     def __init__(self, message: Any) -> None: ...
-
 
 class SpawnEffect(EffectBase):
     program: DoExpr[Any] | EffectBase
@@ -395,42 +346,34 @@ class SpawnEffect(EffectBase):
         priority: Any | None = None,
     ) -> None: ...
 
-
 class GatherEffect(EffectBase):
     items: Any
     _partial_results: Any
     def __init__(self, items: Any, _partial_results: Any | None = None) -> None: ...
 
-
 class RaceEffect(EffectBase):
     futures: Any
     def __init__(self, futures: Any) -> None: ...
 
-
 class CreatePromiseEffect(EffectBase):
     def __init__(self) -> None: ...
-
 
 class CompletePromiseEffect(EffectBase):
     promise: Any
     value: Any
     def __init__(self, promise: Any, value: Any) -> None: ...
 
-
 class FailPromiseEffect(EffectBase):
     promise: Any
     error: BaseException | Any
     def __init__(self, promise: Any, error: BaseException | Any) -> None: ...
 
-
 class CreateExternalPromiseEffect(EffectBase):
     def __init__(self) -> None: ...
-
 
 class PyCancelEffect(EffectBase):
     task: Any
     def __init__(self, task: Any) -> None: ...
-
 
 class _SchedulerTaskCompleted(EffectBase):
     task: Any
@@ -446,47 +389,37 @@ class _SchedulerTaskCompleted(EffectBase):
         result: Any | None = None,
     ) -> None: ...
 
-
 class TaskCancelledError(RuntimeError): ...
-
 
 class CreateSemaphoreEffect(EffectBase):
     permits: int
     def __init__(self, permits: int) -> None: ...
 
-
 class AcquireSemaphoreEffect(EffectBase):
     semaphore: Any
     def __init__(self, semaphore: Any) -> None: ...
-
 
 class ReleaseSemaphoreEffect(EffectBase):
     semaphore: Any
     def __init__(self, semaphore: Any) -> None: ...
 
-
 class PythonAsyncioAwaitEffect(EffectBase):
     awaitable: Awaitable[Any] | Any
     def __init__(self, awaitable: Awaitable[Any] | Any) -> None: ...
-
 
 class ResultSafeEffect(EffectBase):
     sub_program: DoExpr[Any] | EffectBase
     def __init__(self, sub_program: DoExpr[Any] | EffectBase) -> None: ...
 
-
 class ProgramCallStackEffect(EffectBase):
     def __init__(self) -> None: ...
-
 
 class ProgramCallFrameEffect(EffectBase):
     depth: int
     def __init__(self, depth: int = 0) -> None: ...
 
-
 class GetExecutionContext(EffectBase):
     def __init__(self) -> None: ...
-
 
 class ExecutionContext:
     entries: list[Any]
@@ -495,22 +428,18 @@ class ExecutionContext:
     def add(self, entry: Any) -> None: ...
     def set_active_chain(self, active_chain: Any | None) -> None: ...
 
-
 def run(
     program: Any,
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
     trace: bool = False,
 ) -> RunResult[Any]: ...
-
-
 def async_run(
     program: Any,
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
     trace: bool = False,
 ) -> Coroutine[Any, Any, RunResult[Any]]: ...
-
 
 state: RustHandler
 reader: RustHandler
@@ -520,10 +449,8 @@ scheduler: RustHandler
 lazy_ask: RustHandler
 await_handler: RustHandler
 
-
 def _notify_semaphore_handle_dropped(state_id: int, semaphore_id: int) -> None: ...
 def _debug_scheduler_semaphore_count(state_id: int) -> int | None: ...
-
 
 TAG_PURE: int
 TAG_MAP: int
@@ -538,7 +465,7 @@ TAG_GET_CONTINUATION: int
 TAG_GET_HANDLERS: int
 TAG_GET_TRACEBACK: int
 TAG_WITH_INTERCEPT: int
-TAG_FINALLY: int
+TAG_DISCONTINUE: int
 TAG_GET_CALL_STACK: int
 TAG_EVAL: int
 TAG_EVAL_IN_SCOPE: int
@@ -549,7 +476,6 @@ TAG_RESUME_CONTINUATION: int
 TAG_ASYNC_ESCAPE: int
 TAG_EFFECT: int
 TAG_UNKNOWN: int
-
 
 PythonAsyncSyntaxEscape = AsyncEscape
 PySpawn = SpawnEffect
@@ -562,12 +488,9 @@ PyCreateExternalPromise = CreateExternalPromiseEffect
 TaskCancelEffect = PyCancelEffect
 PyTaskCompleted = _SchedulerTaskCompleted
 
-
 class UnhandledEffectError(TypeError): ...
 class NoMatchingHandlerError(UnhandledEffectError): ...
 
-
 doeff_vm: ModuleType
-
 
 __all__: list[str]
