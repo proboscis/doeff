@@ -15,6 +15,7 @@ over-release.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 import signal
 from typing import Any
 
@@ -33,17 +34,21 @@ from doeff import (
     WithHandler,
     WithIntercept,
     async_run,
+    cache,
     default_async_handlers,
     default_handlers,
     do,
     run,
 )
-from doeff.effects import Await
+from doeff.effects import Await, GetExecutionContext
+from doeff.handlers import in_memory_cache_handler, sqlite_cache_handler
 from doeff.types import EffectGenerator
 
 TIMEOUT_SECONDS = 10
 TASK_COUNT = 20
 CONCURRENCY = 5
+LAYER5_TASK_COUNT = 85
+LAYER5_CONCURRENCY = 40
 
 
 def _timeout_handler(signum: int, frame: Any) -> None:
@@ -77,6 +82,26 @@ def _worker_with_tell(n: int):
     result = yield Await(_fake_api_call(n))
     yield Tell(f"done {n}")
     return result
+
+
+@do
+def _worker_with_execution_context(n: int):
+    _context = yield GetExecutionContext()
+    result = yield Await(_fake_api_call(n))
+    return result
+
+
+@do
+def _leaf_with_execution_context(n: int):
+    _context = yield GetExecutionContext()
+    result = yield Await(_fake_api_call(n))
+    return result
+
+
+@do
+def _nested_worker_with_execution_context(n: int):
+    first = yield _leaf_with_execution_context(n)
+    return first + n
 
 
 def _wrap_with_semaphore_finally(program, sem):
@@ -272,3 +297,60 @@ class TestLayer4FullStack:
         )
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(TASK_COUNT)]
+
+
+# -- Layer 5: + Transfer from GetExecutionContext inside throttled spawned tasks --
+
+
+class TestLayer5WithHandlerResume:
+    def test_minimal_get_execution_context_semaphore_bug(self) -> None:
+        programs = [_worker_with_execution_context(i) for i in range(LAYER5_TASK_COUNT)]
+        result = _run_sync_with_timeout(_throttled(programs, LAYER5_CONCURRENCY))
+        assert result.is_ok(), result.display()
+        assert result.value == [i * 10 for i in range(LAYER5_TASK_COUNT)]
+
+    def test_cache_decorator_in_memory_high_concurrency_sync(self) -> None:
+        calls = {"count": 0}
+
+        @cache()
+        @do
+        def _cached_worker(n: int):
+            calls["count"] += 1
+            return (yield Await(_fake_api_call(n)))
+
+        programs = [_cached_worker(i) for i in range(LAYER5_TASK_COUNT)]
+        program = WithHandler(in_memory_cache_handler(), _throttled(programs, LAYER5_CONCURRENCY))
+        result = _run_sync_with_timeout(program)
+        assert result.is_ok(), result.display()
+        assert result.value == [i * 10 for i in range(LAYER5_TASK_COUNT)]
+        assert calls["count"] == LAYER5_TASK_COUNT
+
+    def test_cache_decorator_nested_kleisli_high_concurrency_sync(self, tmp_path: Path) -> None:
+        calls = {"count": 0}
+
+        @cache()
+        @do
+        def _cached_leaf(n: int):
+            calls["count"] += 1
+            return (yield Await(_fake_api_call(n)))
+
+        @do
+        def _nested_worker(n: int):
+            first = yield _cached_leaf(n)
+            second = yield _cached_leaf(n)
+            return first + second
+
+        programs = [_nested_worker(i) for i in range(LAYER5_TASK_COUNT)]
+        db_path = tmp_path / "layer5_cache.sqlite3"
+        program = WithHandler(sqlite_cache_handler(db_path), _throttled(programs, LAYER5_CONCURRENCY))
+        result = _run_sync_with_timeout(program)
+        assert result.is_ok(), result.display()
+        assert result.value == [i * 20 for i in range(LAYER5_TASK_COUNT)]
+        assert calls["count"] == LAYER5_TASK_COUNT
+        assert db_path.exists()
+
+    def test_get_execution_context_in_nested_kleisli_high_concurrency_sync(self) -> None:
+        programs = [_nested_worker_with_execution_context(i) for i in range(LAYER5_TASK_COUNT)]
+        result = _run_sync_with_timeout(_throttled(programs, LAYER5_CONCURRENCY))
+        assert result.is_ok(), result.display()
+        assert result.value == [i * 11 for i in range(LAYER5_TASK_COUNT)]
