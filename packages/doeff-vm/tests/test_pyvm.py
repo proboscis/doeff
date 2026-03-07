@@ -934,16 +934,8 @@ class UnknownThing:
         self.value = value
 
 
-def test_handler_returning_program_base():
-    """G1: CallHandler should call to_generator on the handler's return value.
-
-    If the handler is a regular function (not a generator function) that
-    returns a @do-decorated ProgramBase, the VM must call to_generator()
-    on it before pushing it as a PythonGenerator frame.
-
-    Currently fails because CallHandler wraps the result as-is, so the
-    VM tries to call __next__ on a ProgramBase object.
-    """
+def test_handler_returning_program_base_violates_linearity():
+    """G1: handler return no longer auto-evaluates returned ProgramBase values."""
     from doeff_vm import PyVM
 
     vm = PyVM()
@@ -969,8 +961,8 @@ def test_handler_returning_program_base():
         result = yield doeff_vm.WithHandler(handler_func, body())
         return result
 
-    result = vm.run(main())
-    assert result == 42
+    with pytest.raises(RuntimeError, match="handler returned without consuming continuation"):
+        vm.run(main())
 
 
 def test_get_handlers_uses_dispatch_handler_chain():

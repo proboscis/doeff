@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import doeff_vm
 
-from doeff import Apply, Ask, Effect, Get, Program, Pure, default_handlers, do, run
+from doeff import Apply, Ask, Effect, Get, KleisliProgram, Program, Pure, default_handlers, do, run
 from doeff.program import ProgramBase
 
 
@@ -138,3 +138,11 @@ def test_handler_return_delivers_effect_result_as_value() -> None:
     )
     assert type(result.value) is type(expected)
     assert result.value.key == "token"
+
+
+def test_manual_kleisli_program_call_uses_expand_for_program_results() -> None:
+    kleisli = KleisliProgram(lambda: Pure(33))
+
+    result = run(kleisli(), handlers=[])
+
+    assert result.value == 33
