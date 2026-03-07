@@ -1,4 +1,4 @@
-"""Bug reproduction: *programs: Program variadic args are auto-unwrapped under WithIntercept.
+"""Regression tests for preserving Program args through WithIntercept round-trips.
 
 KD-06 tests single `p: Program[int]` args and passes. The real-world bug
 surfaces when a @do function uses `*programs: Program` (VAR_POSITIONAL) and is
@@ -12,12 +12,11 @@ Root cause (per Oracle analysis):
   unchanged, the VM re-classifies it via classify_call_expr, sees bare Apply
   objects as non-Pure args, and evaluates them via ApplyResolveArg.
 
-Without WithIntercept, everything works correctly.
 """
 
 from __future__ import annotations
 
-import pytest
+from doeff_vm import WithIntercept
 
 from doeff import (
     Effect,
@@ -28,7 +27,6 @@ from doeff import (
     run,
 )
 from doeff.program import DoCtrl
-from doeff_vm import WithIntercept
 
 
 @do
@@ -37,7 +35,7 @@ def _identity_interceptor(effect: Effect):
 
 
 class TestWithInterceptVariadicProgramNoUnwrap:
-    """WithIntercept causes *programs: Program args to be resolved."""
+    """WithIntercept must preserve Program-annotated args as opaque programs."""
 
     def test_without_intercept_works(self) -> None:
         """Baseline: without WithIntercept, varargs Program works."""
@@ -66,10 +64,6 @@ class TestWithInterceptVariadicProgramNoUnwrap:
         result = run(main(), handlers=default_handlers())
         assert result.value == [10, 20, 30]
 
-    @pytest.mark.xfail(
-        reason="WithIntercept round-trip strips Pure wrappers from Apply args",
-        strict=True,
-    )
     def test_with_intercept_unwraps_varargs(self) -> None:
         """BUG: WithIntercept causes *programs: Program to be resolved.
 
@@ -102,10 +96,6 @@ class TestWithInterceptVariadicProgramNoUnwrap:
         result = run(p, handlers=default_handlers())
         assert result.value == [10, 20, 30]
 
-    @pytest.mark.xfail(
-        reason="WithIntercept round-trip strips Pure wrappers from Apply args",
-        strict=True,
-    )
     def test_with_intercept_single_program_arg(self) -> None:
         """Check if single Program[T] annotation is also affected."""
 
@@ -130,10 +120,6 @@ class TestWithInterceptVariadicProgramNoUnwrap:
         result = run(p, handlers=default_handlers())
         assert result.value == 142
 
-    @pytest.mark.xfail(
-        reason="WithIntercept round-trip strips Pure wrappers from Apply args",
-        strict=True,
-    )
     def test_with_intercept_mixed_args(self) -> None:
         """Program *args + plain kwargs under WithIntercept."""
 
