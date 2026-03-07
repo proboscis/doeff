@@ -79,6 +79,49 @@ def test_withhandler_accepts_rust_effect_expr() -> None:
     assert type(ctrl).__name__ == "WithHandler"
 
 
+def test_withhandler_rejects_return_clause_keyword() -> None:
+    @do
+    def handler(_effect: Effect, _k):
+        yield Delegate()
+
+    @do
+    def body():
+        return "ok"
+
+    kwargs = {"return_clause": lambda value: value}
+
+    with pytest.raises(TypeError, match=r"return_clause|unexpected keyword"):
+        WithHandler(handler, body(), **kwargs)
+
+
+def test_doeff_vm_withhandler_rejects_return_clause_keyword() -> None:
+    import doeff_vm
+
+    @do
+    def handler(_effect: Effect, _k):
+        yield Delegate()
+
+    @do
+    def body():
+        return "ok"
+
+    kwargs = {"return_clause": lambda value: value}
+
+    with pytest.raises(TypeError, match=r"return_clause|unexpected keyword"):
+        doeff_vm.WithHandler(handler, body(), **kwargs)
+
+
+def test_withhandler_rejects_third_positional_argument() -> None:
+    @do
+    def handler(_effect: Effect, _k):
+        yield Delegate()
+
+    args = (handler, Perform(Ask("key")), lambda value: value)
+
+    with pytest.raises(TypeError, match=r"positional arguments|given"):
+        WithHandler(*args)
+
+
 def test_resume_transfer_require_real_k() -> None:
     with pytest.raises(TypeError, match=r"K"):
         Resume("not_k", Ask("x"))
