@@ -181,14 +181,12 @@ class Apply(DoCtrlBase):
     args: Iterable[Any]
     kwargs: dict[str, Any]
     meta: dict[str, Any] | None
-    evaluate_result: bool
     def __init__(
         self,
         f: Callable[..., Any],
         args: Iterable[Any],
         kwargs: dict[str, Any],
         meta: dict[str, Any] | None = None,
-        evaluate_result: bool = True,
     ) -> None: ...
 
 class Expand(DoCtrlBase):
