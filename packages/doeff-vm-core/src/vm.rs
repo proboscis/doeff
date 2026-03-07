@@ -4515,6 +4515,24 @@ impl VM {
         self.gather_finally_cleanups_from_caller(self.continuation_caller_segment(k))
     }
 
+    fn skip_existing_finally_boundaries(&self, mut cursor: Option<SegmentId>) -> Option<SegmentId> {
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                return None;
+            };
+            match &seg.kind {
+                SegmentKind::FinallyBoundary { .. } => {
+                    cursor = seg.caller;
+                }
+                SegmentKind::Normal
+                | SegmentKind::PromptBoundary { .. }
+                | SegmentKind::InterceptorBoundary { .. }
+                | SegmentKind::MaskBoundary { .. } => break,
+            }
+        }
+        cursor
+    }
+
     fn graft_continuation_finally_boundaries(
         &mut self,
         k: &Continuation,
@@ -4545,8 +4563,10 @@ impl VM {
         caller: Option<SegmentId>,
     ) -> Option<SegmentId> {
         match kind {
-            ContinuationActivationKind::Resume | ContinuationActivationKind::Transfer => {
-                self.graft_continuation_finally_boundaries(k, caller)
+            ContinuationActivationKind::Resume => self.graft_continuation_finally_boundaries(k, caller),
+            ContinuationActivationKind::Transfer => {
+                let base = self.skip_existing_finally_boundaries(caller);
+                self.graft_continuation_finally_boundaries(k, base)
             }
         }
     }
