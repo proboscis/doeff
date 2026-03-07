@@ -233,6 +233,50 @@ rules:
       category: architecture
       issue: MIGRATE-PASS-005
 
+  - id: doeff-no-return-control-primitives-in-handlers
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              @do
+              def $HANDLER($EFFECT, $K):
+                  ...
+          - pattern-inside: |
+              @do
+              def $HANDLER($EFFECT: $EFFECT_T, $K: $K_T):
+                  ...
+      - pattern-either:
+          - pattern: return Pass()
+          - pattern: return $MOD.Pass()
+          - pattern: return Resume($K, $VALUE)
+          - pattern: return $MOD.Resume($K, $VALUE)
+          - pattern: return Delegate()
+          - pattern: return $MOD.Delegate()
+          - pattern: return Transfer($K, $VALUE)
+          - pattern: return $MOD.Transfer($K, $VALUE)
+          - pattern: return Discontinue($K)
+          - pattern: return $MOD.Discontinue($K)
+          - pattern: return Discontinue($K, $EXN)
+          - pattern: return $MOD.Discontinue($K, $EXN)
+          - pattern: return ResumeContinuation($K, $VALUE)
+          - pattern: return $MOD.ResumeContinuation($K, $VALUE)
+    paths:
+      include:
+        - /doeff/**
+        - /packages/**
+      exclude:
+        - /tests/**
+        - /packages/**/tests/**
+    message: |
+      Control primitives must be yielded from @do handlers, not returned.
+      Change `return Pass()/Resume()/Delegate()/Transfer()/Discontinue()/ResumeContinuation()`
+      to `yield ...` so the VM processes the directive instead of treating it as
+      the handler's return value. See ISSUE-VM-008.
+    metadata:
+      category: architecture
+      issue: ISSUE-VM-008
+
   - id: doeff-no-python-side-cancel-state
     patterns:
       - pattern-either:

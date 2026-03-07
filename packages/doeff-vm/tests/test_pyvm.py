@@ -449,6 +449,62 @@ def test_handler_abandon_continuation():
         vm.run(main())
 
 
+@pytest.mark.parametrize(
+    ("primitive_name", "expected_snippet"),
+    [
+        ("Pass", "return Pass()  ->  yield Pass()"),
+        ("Resume", "return Resume(k, value)  ->  yield Resume(k, value)"),
+        ("Delegate", "return Delegate()  ->  yield Delegate()"),
+        ("Transfer", "return Transfer(k, value)  ->  yield Transfer(k, value)"),
+        ("Discontinue", "return Discontinue(k, exn)  ->  yield Discontinue(k, exn)"),
+        (
+            "ResumeContinuation",
+            "return ResumeContinuation(k, value)  ->  yield ResumeContinuation(k, value)",
+        ),
+    ],
+)
+def test_handler_returning_control_primitive_raises_clear_error(
+    primitive_name: str, expected_snippet: str
+) -> None:
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+
+    @do
+    def bad_handler(effect: Effect, k):
+        if isinstance(effect, CustomEffect):
+            if primitive_name == "Pass":
+                return doeff_vm.Pass()
+            if primitive_name == "Resume":
+                return doeff_vm.Resume(k, effect.value * 2)
+            if primitive_name == "Delegate":
+                return doeff_vm.Delegate()
+            if primitive_name == "Transfer":
+                return doeff_vm.Transfer(k, effect.value * 3)
+            if primitive_name == "Discontinue":
+                return doeff_vm.Discontinue(k, ValueError("reason"))
+            if primitive_name == "ResumeContinuation":
+                return doeff_vm.ResumeContinuation(k, effect.value * 4)
+            raise AssertionError(f"unexpected primitive {primitive_name}")
+        yield doeff_vm.Delegate()
+
+    @do
+    def body() -> Program[int]:
+        return (yield CustomEffect(7))
+
+    @do
+    def main() -> Program[int]:
+        return (yield doeff_vm.WithHandler(bad_handler, body()))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        vm.run(main())
+
+    message = str(exc_info.value)
+    assert f"Handler returned {primitive_name}" in message
+    assert "control primitives must be yielded, not returned" in message
+    assert expected_snippet in message
+
+
 def test_discontinue_basic():
     from doeff_vm import PyVM
 
@@ -919,7 +975,6 @@ def test_run_rejects_raw_generator():
 
 class GetHandlers:
     """Control primitive: request the current handler chain."""
-
 
 
 class UnknownThing:
