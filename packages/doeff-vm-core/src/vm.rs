@@ -1962,13 +1962,11 @@ impl VM {
                 args,
                 kwargs,
                 metadata,
-                evaluate_result,
             } => Mode::HandleYield(DoCtrl::Apply {
                 f: Box::new(DoCtrl::Pure { value }),
                 args,
                 kwargs,
                 metadata,
-                evaluate_result,
             }),
             EvalReturnContinuation::ApplyResolveArg {
                 f,
@@ -1976,7 +1974,6 @@ impl VM {
                 kwargs,
                 arg_idx,
                 metadata,
-                evaluate_result,
             } => {
                 let Some(slot) = args.get_mut(arg_idx) else {
                     return Mode::Throw(PyException::runtime_error(
@@ -1989,7 +1986,6 @@ impl VM {
                     args,
                     kwargs,
                     metadata,
-                    evaluate_result,
                 })
             }
             EvalReturnContinuation::ApplyResolveKwarg {
@@ -1998,7 +1994,6 @@ impl VM {
                 mut kwargs,
                 kwarg_idx,
                 metadata,
-                evaluate_result,
             } => {
                 let Some((_, slot)) = kwargs.get_mut(kwarg_idx) else {
                     return Mode::Throw(PyException::runtime_error(
@@ -2011,7 +2006,6 @@ impl VM {
                     args,
                     kwargs,
                     metadata,
-                    evaluate_result,
                 })
             }
             EvalReturnContinuation::ExpandResolveFactory {
@@ -2085,7 +2079,6 @@ impl VM {
                     args: vec![DoCtrl::Pure { value }],
                     kwargs: vec![],
                     metadata: mapper_meta,
-                    evaluate_result: false,
                 });
                 StepEvent::Continue
             }
@@ -2533,7 +2526,6 @@ impl VM {
             }],
             kwargs: vec![],
             metadata: apply_metadata,
-            evaluate_result: false,
         })
     }
 
@@ -2733,8 +2725,7 @@ impl VM {
                 args,
                 kwargs,
                 metadata,
-                evaluate_result,
-            } => self.handle_yield_apply(*f, args, kwargs, metadata, evaluate_result),
+            } => self.handle_yield_apply(*f, args, kwargs, metadata),
             // PendingPython::ExpandReturn is set in handle_yield_expand.
             DoCtrl::Expand {
                 factory,
@@ -2881,7 +2872,6 @@ impl VM {
         args: Vec<DoCtrl>,
         kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
-        evaluate_result: bool,
     ) -> StepEvent {
         if !matches!(&f, DoCtrl::Pure { .. }) {
             return self.eval_then_reenter_call(
@@ -2890,7 +2880,6 @@ impl VM {
                     args,
                     kwargs,
                     metadata,
-                    evaluate_result,
                 },
             );
         }
@@ -2904,7 +2893,6 @@ impl VM {
                     kwargs,
                     arg_idx,
                     metadata,
-                    evaluate_result,
                 },
             );
         }
@@ -2918,7 +2906,6 @@ impl VM {
                     kwargs,
                     kwarg_idx: kwargs_idx,
                     metadata,
-                    evaluate_result,
                 },
             );
         }
@@ -2950,10 +2937,7 @@ impl VM {
                 let result =
                     Python::attach(|py| kleisli.apply_with_run_token(py, args_values, run_token));
                 return match result {
-                    Ok(doctrl) => {
-                        let _ = evaluate_result;
-                        self.evaluate(doctrl)
-                    }
+                    Ok(doctrl) => self.evaluate(doctrl),
                     Err(vm_err) => StepEvent::Error(vm_err),
                 };
             }
