@@ -2317,3 +2317,46 @@ rules:
               Ok($EVENT) => $EVENT,
               Err($ERROR) => StepEvent::Error($ERROR),
           }
+
+  - id: vm-no-apply-auto-eval-type-probing
+    languages: [rust]
+    severity: ERROR
+    message: |
+      ISSUE-VM-APPLY-AUTOEVAL: Apply must deliver raw results.
+      Do not inspect Python return types or re-enter classify_yielded_for_vm()
+      from classify_apply_result_as_doctrl(). Use Expand when the caller intends
+      to evaluate a returned DoExpr/Effect/Generator.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    patterns:
+      - pattern-inside: |
+          fn classify_apply_result_as_doctrl(&self, $VALUE: &Value) -> Result<Option<DoCtrl>, PyException> {
+              ...
+          }
+      - pattern-either:
+          - pattern: classify_yielded_for_vm(...)
+          - pattern: $OBJ.is_instance_of::<PyDoExprBase>()
+          - pattern: $OBJ.is_instance_of::<DoeffGenerator>()
+          - pattern: $OBJ.is_instance_of::<PyEffectBase>()
+
+  - id: vm-no-handler-return-auto-eval-type-probing
+    languages: [rust]
+    severity: ERROR
+    message: |
+      ISSUE-VM-APPLY-AUTOEVAL: handler return must deliver the raw value.
+      Do not inspect returned Python values in handle_handler_return() to
+      auto-evaluate DoExpr/Effect/DoeffGenerator results.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    patterns:
+      - pattern-inside: |
+          fn handle_handler_return(&mut self, $VALUE: Value) -> StepEvent {
+              ...
+          }
+      - pattern-either:
+          - pattern: $OBJ.is_instance_of::<PyDoExprBase>()
+          - pattern: $OBJ.is_instance_of::<DoeffGenerator>()
+          - pattern: $OBJ.is_instance_of::<PyEffectBase>()
+          - pattern: self.is_interceptor_eval_idle()
