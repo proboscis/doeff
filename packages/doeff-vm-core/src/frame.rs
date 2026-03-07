@@ -3,8 +3,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::do_ctrl::DoCtrl;
 use crate::capture::HandlerKind;
+use crate::do_ctrl::DoCtrl;
 use crate::ids::{DispatchId, Marker};
 use crate::ir_stream::IRStreamRef;
 use crate::py_shared::PyShared;
@@ -86,7 +86,6 @@ pub enum EvalReturnContinuation {
         args: Vec<DoCtrl>,
         kwargs: Vec<(String, DoCtrl)>,
         metadata: CallMetadata,
-        evaluate_result: bool,
     },
     ApplyResolveArg {
         f: DoCtrl,
@@ -94,7 +93,6 @@ pub enum EvalReturnContinuation {
         kwargs: Vec<(String, DoCtrl)>,
         arg_idx: usize,
         metadata: CallMetadata,
-        evaluate_result: bool,
     },
     ApplyResolveKwarg {
         f: DoCtrl,
@@ -102,7 +100,6 @@ pub enum EvalReturnContinuation {
         kwargs: Vec<(String, DoCtrl)>,
         kwarg_idx: usize,
         metadata: CallMetadata,
-        evaluate_result: bool,
     },
     ExpandResolveFactory {
         args: Vec<DoCtrl>,

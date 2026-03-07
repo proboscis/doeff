@@ -1289,7 +1289,6 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 args,
                 kwargs,
                 metadata,
-                evaluate_result,
             } => {
                 let py_args = PyList::empty(py);
                 for arg in args {
@@ -1315,7 +1314,6 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                                 args: py_args.into_any().unbind(),
                                 kwargs: py_kwargs.into_any().unbind(),
                                 meta: Some(call_metadata_to_dict(py, metadata)?),
-                                evaluate_result: *evaluate_result,
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1565,7 +1563,6 @@ pub(crate) fn classify_yielded_bound(
                     args,
                     kwargs,
                     metadata: call_metadata_from_pyapply(py, &a)?,
-                    evaluate_result: a.evaluate_result,
                 })
             }
             DoExprTag::Expand => {
@@ -2356,21 +2353,18 @@ pub struct PyApply {
     pub kwargs: Py<PyAny>,
     #[pyo3(get)]
     pub meta: Option<Py<PyAny>>,
-    #[pyo3(get)]
-    pub evaluate_result: bool,
 }
 
 #[pymethods]
 impl PyApply {
     #[new]
-    #[pyo3(signature = (f, args, kwargs, meta=None, evaluate_result=true))]
+    #[pyo3(signature = (f, args, kwargs, meta=None))]
     fn new(
         py: Python<'_>,
         f: Py<PyAny>,
         args: Py<PyAny>,
         kwargs: Py<PyAny>,
         meta: Option<Py<PyAny>>,
-        evaluate_result: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
         if args.bind(py).try_iter().is_err() {
             return Err(PyTypeError::new_err("Apply.args must be iterable"));
@@ -2393,7 +2387,6 @@ Program/Kleisli call sites must pass {'function_name', 'source_file', 'source_li
                 args,
                 kwargs,
                 meta,
-                evaluate_result,
             }))
     }
 }
@@ -3572,14 +3565,12 @@ mod tests {
             let kwargs = PyDict::new(py).into_any().unbind();
             let obj = Bound::new(
                 py,
-                PyApply::new(py, f, args, kwargs, Some(make_meta()), true).unwrap(),
+                PyApply::new(py, f, args, kwargs, Some(make_meta())).unwrap(),
             )
             .unwrap()
             .into_any();
             let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
             assert_eq!(base.tag, DoExprTag::Apply as u8);
-            let apply: PyRef<'_, PyApply> = obj.extract().unwrap();
-            assert!(apply.evaluate_result);
 
             // Expand
             let factory = py.eval(c"lambda x: x", None, None).unwrap().unbind();
@@ -3714,19 +3705,13 @@ mod tests {
             let kwargs = PyDict::new(py).into_any().unbind();
             let apply_obj = Bound::new(
                 py,
-                PyApply::new(py, f, args, kwargs, Some(make_meta()), true).unwrap(),
+                PyApply::new(py, f, args, kwargs, Some(make_meta())).unwrap(),
             )
             .unwrap()
             .into_any();
             let yielded = pyvm.classify_yielded(py, &apply_obj).unwrap();
             assert!(
-                matches!(
-                    yielded,
-                    DoCtrl::Apply {
-                        evaluate_result: true,
-                        ..
-                    }
-                ),
+                matches!(yielded, DoCtrl::Apply { .. }),
                 "Apply tag dispatch failed, got {:?}",
                 yielded
             );
@@ -3772,44 +3757,6 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_evaluate_result_round_trip() {
-        Python::attach(|py| {
-            let pyvm = PyVM { vm: VM::new() };
-            let f = py.eval(c"lambda x: x", None, None).unwrap().unbind();
-            let apply = DoCtrl::Apply {
-                f: Box::new(DoCtrl::Pure {
-                    value: Value::Python(f),
-                }),
-                args: vec![],
-                kwargs: vec![],
-                metadata: CallMetadata::new(
-                    "test_apply_round_trip".to_string(),
-                    "test.py".to_string(),
-                    1,
-                    None,
-                    None,
-                ),
-                evaluate_result: false,
-            };
-
-            let py_obj = doctrl_to_pyexpr_for_vm(&apply)
-                .expect("Apply should convert to PyDoExpr")
-                .expect("Apply conversion should produce object");
-            let py_apply: PyRef<'_, PyApply> = py_obj.bind(py).extract().unwrap();
-            assert!(!py_apply.evaluate_result);
-
-            let round_tripped = pyvm.classify_yielded(py, py_obj.bind(py)).unwrap();
-            assert!(matches!(
-                round_tripped,
-                DoCtrl::Apply {
-                    evaluate_result: false,
-                    ..
-                }
-            ));
-        });
-    }
-
-    #[test]
     fn test_apply_round_trip_preserves_pure_wrapped_program_arg() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
@@ -3831,7 +3778,6 @@ mod tests {
                     None,
                     None,
                 ),
-                evaluate_result: true,
             };
             let inner_program = doctrl_to_pyexpr_for_vm(&inner_apply)
                 .expect("inner Apply should convert to PyDoExpr")
@@ -3851,7 +3797,6 @@ mod tests {
                     None,
                     None,
                 ),
-                evaluate_result: true,
             };
 
             let py_obj = doctrl_to_pyexpr_for_vm(&outer_apply)
