@@ -915,10 +915,6 @@ fn call_metadata_to_dict(py: Python<'_>, metadata: &CallMetadata) -> PyResult<Py
 }
 
 fn call_expr_to_pyobject(py: Python<'_>, expr: &DoCtrl) -> PyResult<Py<PyAny>> {
-    if let DoCtrl::Pure { value } = expr {
-        return Ok(value.to_pyobject(py)?.unbind());
-    }
-
     match doctrl_to_pyexpr_for_vm(expr) {
         Ok(Some(obj)) => Ok(obj),
         Ok(None) => Err(PyTypeError::new_err(
@@ -3773,6 +3769,82 @@ mod tests {
                     ..
                 }
             ));
+        });
+    }
+
+    #[test]
+    fn test_apply_round_trip_preserves_pure_wrapped_program_arg() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let outer_f = py
+                .eval(c"lambda program: program", None, None)
+                .unwrap()
+                .unbind();
+            let inner_f = py.eval(c"lambda: 7", None, None).unwrap().unbind();
+            let inner_apply = DoCtrl::Apply {
+                f: Box::new(DoCtrl::Pure {
+                    value: Value::Python(inner_f),
+                }),
+                args: vec![],
+                kwargs: vec![],
+                metadata: CallMetadata::new(
+                    "inner_program".to_string(),
+                    "test.py".to_string(),
+                    1,
+                    None,
+                    None,
+                ),
+                evaluate_result: true,
+            };
+            let inner_program = doctrl_to_pyexpr_for_vm(&inner_apply)
+                .expect("inner Apply should convert to PyDoExpr")
+                .expect("inner Apply conversion should produce object");
+            let outer_apply = DoCtrl::Apply {
+                f: Box::new(DoCtrl::Pure {
+                    value: Value::Python(outer_f),
+                }),
+                args: vec![DoCtrl::Pure {
+                    value: Value::Python(inner_program.clone_ref(py)),
+                }],
+                kwargs: vec![],
+                metadata: CallMetadata::new(
+                    "outer_program".to_string(),
+                    "test.py".to_string(),
+                    2,
+                    None,
+                    None,
+                ),
+                evaluate_result: true,
+            };
+
+            let py_obj = doctrl_to_pyexpr_for_vm(&outer_apply)
+                .expect("outer Apply should convert to PyDoExpr")
+                .expect("outer Apply conversion should produce object");
+            let py_apply: PyRef<'_, PyApply> = py_obj.bind(py).extract().unwrap();
+            let first_arg = py_apply
+                .args
+                .bind(py)
+                .cast::<PyList>()
+                .unwrap()
+                .get_item(0)
+                .unwrap();
+            assert!(first_arg.is_instance_of::<PyPure>());
+
+            let round_tripped = pyvm.classify_yielded(py, py_obj.bind(py)).unwrap();
+            match round_tripped {
+                DoCtrl::Apply { args, .. } => {
+                    assert!(matches!(args.as_slice(), [DoCtrl::Pure { .. }]));
+                    match &args[0] {
+                        DoCtrl::Pure {
+                            value: Value::Python(program),
+                        } => {
+                            assert!(program.bind(py).is_instance_of::<PyApply>());
+                        }
+                        other => panic!("expected pure-wrapped Python program arg, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Apply after round-trip, got {other:?}"),
+            }
         });
     }
 
