@@ -207,7 +207,7 @@ class TestLayer3WithHandler:
     def test_with_handler_sync(self) -> None:
         @do
         def _passthrough_handler(effect: Effect, k) -> EffectGenerator:
-            return Pass()
+            yield Pass()
 
         programs = [_worker_simple(i) for i in range(TASK_COUNT)]
         body = _throttled(programs, CONCURRENCY)
@@ -219,7 +219,7 @@ class TestLayer3WithHandler:
     def test_with_handler_and_intercept_sync(self) -> None:
         @do
         def _passthrough_handler(effect: Effect, k) -> EffectGenerator:
-            return Pass()
+            yield Pass()
 
         @do
         def _interceptor(expr):
@@ -240,7 +240,7 @@ class TestLayer4FullStack:
     def test_full_stack_sync(self) -> None:
         @do
         def _passthrough_handler(effect: Effect, k) -> EffectGenerator:
-            return Pass()
+            yield Pass()
 
         @do
         def _interceptor(expr):
@@ -257,7 +257,7 @@ class TestLayer4FullStack:
     async def test_full_stack_async(self) -> None:
         @do
         def _passthrough_handler(effect: Effect, k) -> EffectGenerator:
-            return Pass()
+            yield Pass()
 
         @do
         def _interceptor(expr):
