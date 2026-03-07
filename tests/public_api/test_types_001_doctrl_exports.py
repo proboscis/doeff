@@ -96,6 +96,16 @@ def test_expand_evaluates_doexpr_result() -> None:
     assert result.value == 456
 
 
+def test_expand_rejects_plain_value_result() -> None:
+    def return_value() -> int:
+        return 456
+
+    result = run(Expand(Pure(return_value), [], {}, _meta()))
+    assert result.is_err()
+    assert isinstance(result.error, TypeError)
+    assert "ExpandReturn: expected DoeffGenerator, DoExpr, or EffectBase" in str(result.error)
+
+
 def test_apply_requires_meta() -> None:
     def add(a: int, b: int) -> int:
         return a + b

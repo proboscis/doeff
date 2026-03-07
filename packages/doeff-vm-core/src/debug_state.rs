@@ -177,7 +177,7 @@ impl DebugState {
             .as_ref()
             .map(|p| match p {
                 PendingPython::EvalExpr { .. } => "EvalExpr",
-                PendingPython::CallFuncReturn { .. } => "CallFuncReturn",
+                PendingPython::CallFuncReturn => "CallFuncReturn",
                 PendingPython::ExpandReturn { .. } => "ExpandReturn",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
                 PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
