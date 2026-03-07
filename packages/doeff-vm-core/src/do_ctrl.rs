@@ -79,7 +79,6 @@ pub enum DoCtrl {
         handler: KleisliRef,
         body: Box<DoCtrl>,
         types: Option<Vec<PyShared>>,
-        return_clause: Option<PyShared>,
     },
     WithIntercept {
         interceptor: KleisliRef,
@@ -204,12 +203,10 @@ impl DoCtrl {
                 handler,
                 body,
                 types,
-                return_clause,
             } => DoCtrl::WithHandler {
                 handler: handler.clone(),
                 body: body.clone(),
                 types: types.clone(),
-                return_clause: return_clause.clone(),
             },
             DoCtrl::WithIntercept {
                 interceptor,
