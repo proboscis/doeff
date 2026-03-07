@@ -154,6 +154,33 @@ def test_finally_travels_with_transferred_continuation() -> None:
     assert result.value == ("handled:x", True)
 
 
+def test_transfer_does_not_duplicate_finally_cleanup() -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class Ping(EffectBase):
+        label: str
+
+    @do
+    def ping_handler(effect: Effect, k: object):
+        if isinstance(effect, Ping):
+            yield Transfer(k, f"handled:{effect.label}")
+        yield Pass()
+
+    @do
+    def program():
+        yield Put("cleanup_count", 0)
+        yield Finally(Modify("cleanup_count", lambda n: (n or 0) + 1))
+        return (yield Ping(label="x"))
+
+    @do
+    def wrapper():
+        value = yield WithHandler(ping_handler, program())
+        cleanup_count = yield Get("cleanup_count")
+        return value, cleanup_count
+
+    result = run(wrapper(), handlers=default_handlers(), store={})
+    assert result.value == ("handled:x", 1)
+
+
 def test_abandoned_continuation_with_finally_logs_warning(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
