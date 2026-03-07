@@ -6,9 +6,7 @@ _HANDLER_HELP_URL = "https://docs.doeff.dev/handlers"
 
 def _validate_do_handler_annotations(handlers) -> None:
     kleisli_mod = import_module("doeff.kleisli")
-    validate_do_handler_effect_annotation = getattr(
-        kleisli_mod, "validate_do_handler_effect_annotation"
-    )
+    validate_do_handler_effect_annotation = kleisli_mod.validate_do_handler_effect_annotation
     for handler in handlers:
         if callable(handler):
             validate_do_handler_effect_annotation(handler)
@@ -109,15 +107,15 @@ def _install_validated_runtime_api() -> None:
         assert raw_nesting_to_generator is not None
         return make_doeff_generator(raw_nesting_to_generator(self))
 
-    setattr(_ext, "WithHandler", validated_with_handler)
-    setattr(_ext, "WithIntercept", validated_with_intercept)
-    setattr(_ext, "run", validated_run)
-    setattr(_ext, "async_run", validated_async_run)
-    setattr(_ext.DoExpr, "to_generator", validated_doexpr_to_generator)
+    _ext.WithHandler = validated_with_handler
+    _ext.WithIntercept = validated_with_intercept
+    _ext.run = validated_run
+    _ext.async_run = validated_async_run
+    _ext.DoExpr.to_generator = validated_doexpr_to_generator
     nesting_cls = getattr(_ext, "_NestingStep", None)
     if nesting_cls is not None and raw_nesting_to_generator is not None:
-        setattr(nesting_cls, "to_generator", validated_nesting_to_generator)
-    setattr(_ext, "__doeff_handler_validation_patched__", True)
+        nesting_cls.to_generator = validated_nesting_to_generator
+    _ext.__doeff_handler_validation_patched__ = True
 
 
 _install_validated_runtime_api()
@@ -161,7 +159,7 @@ FlatMap = _ext.FlatMap
 Eval = _ext.Eval
 EvalInScope = _ext.EvalInScope
 Perform = _ext.Perform
-Finally = _ext.Finally
+Discontinue = _ext.Discontinue
 Resume = _ext.Resume
 Delegate = _ext.Delegate
 Pass = _ext.Pass
@@ -232,7 +230,7 @@ TAG_GET_CONTINUATION = _ext.TAG_GET_CONTINUATION
 TAG_GET_HANDLERS = _ext.TAG_GET_HANDLERS
 TAG_GET_TRACEBACK = _ext.TAG_GET_TRACEBACK
 TAG_WITH_INTERCEPT = _ext.TAG_WITH_INTERCEPT
-TAG_FINALLY = _ext.TAG_FINALLY
+TAG_DISCONTINUE = _ext.TAG_DISCONTINUE
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
 TAG_EVAL = _ext.TAG_EVAL
 TAG_EVAL_IN_SCOPE = _ext.TAG_EVAL_IN_SCOPE
@@ -257,112 +255,112 @@ PyTaskCompleted = _SchedulerTaskCompleted
 TaskCancelledError = _ext.TaskCancelledError
 
 __all__ = [
-    "K",
-    "Delegate",
-    "Pass",
-    "Apply",
-    "Expand",
-    "Eval",
-    "EvalInScope",
-    "Perform",
-    "Finally",
-    "Map",
-    "FlatMap",
-    "DoCtrlBase",
-    "DoExpr",
-    "DoeffGenerator",
-    "DoeffGeneratorFn",
-    "PyKleisli",
-    "DoThunkBase",
-    "EffectBase",
-    "PyAsk",
-    "PyLocal",
-    "PyGet",
-    "PySpawn",
-    "PyGather",
-    "PyRace",
-    "PyCreatePromise",
-    "PyCompletePromise",
-    "PyFailPromise",
-    "PyCreateExternalPromise",
-    "PyCancelEffect",
-    "PyTaskCompleted",
-    "SpawnEffect",
-    "GatherEffect",
-    "RaceEffect",
-    "CreatePromiseEffect",
-    "CompletePromiseEffect",
-    "FailPromiseEffect",
-    "CreateExternalPromiseEffect",
-    "CreateSemaphoreEffect",
-    "AcquireSemaphoreEffect",
-    "ReleaseSemaphoreEffect",
-    "PythonAsyncioAwaitEffect",
-    "ResultSafeEffect",
-    "ProgramCallStackEffect",
-    "ProgramCallFrameEffect",
-    "TaskCancelEffect",
-    "TaskCancelledError",
-    "_SchedulerTaskCompleted",
-    "PyModify",
-    "PyPut",
-    "PyVM",
-    "PyTell",
-    "Pure",
-    "Resume",
-    "ResumeContinuation",
-    "RunResult",
-    "DoeffTracebackData",
-    "UnhandledEffectError",
-    "NoMatchingHandlerError",
-    "RustHandler",
-    "Transfer",
-    "WithHandler",
-    "WithIntercept",
-    "PythonAsyncSyntaxEscape",
-    "CreateContinuation",
-    "EvalInScope",
-    "GetCallStack",
-    "GetTraceback",
-    "GetExecutionContext",
-    "ExecutionContext",
-    "GetContinuation",
-    "GetHandlers",
-    "TraceFrame",
-    "TraceHop",
-    "async_run",
-    "reader",
-    "run",
-    "scheduler",
-    "lazy_ask",
-    "state",
-    "result_safe",
-    "await_handler",
-    "writer",
-    "TAG_PURE",
-    "TAG_MAP",
-    "TAG_FLAT_MAP",
-    "TAG_WITH_HANDLER",
-    "TAG_PERFORM",
-    "TAG_RESUME",
-    "TAG_TRANSFER",
+    "TAG_APPLY",
+    "TAG_ASYNC_ESCAPE",
+    "TAG_CREATE_CONTINUATION",
     "TAG_DELEGATE",
-    "TAG_PASS",
+    "TAG_DISCONTINUE",
+    "TAG_EFFECT",
+    "TAG_EVAL",
+    "TAG_EVAL_IN_SCOPE",
+    "TAG_EXPAND",
+    "TAG_FLAT_MAP",
+    "TAG_GET_CALL_STACK",
     "TAG_GET_CONTINUATION",
     "TAG_GET_HANDLERS",
     "TAG_GET_TRACEBACK",
-    "TAG_WITH_INTERCEPT",
-    "TAG_FINALLY",
-    "TAG_GET_CALL_STACK",
-    "TAG_EVAL",
-    "TAG_EVAL_IN_SCOPE",
-    "TAG_APPLY",
-    "TAG_EXPAND",
-    "TAG_CREATE_CONTINUATION",
+    "TAG_MAP",
+    "TAG_PASS",
+    "TAG_PERFORM",
+    "TAG_PURE",
+    "TAG_RESUME",
     "TAG_RESUME_CONTINUATION",
-    "TAG_ASYNC_ESCAPE",
-    "TAG_EFFECT",
+    "TAG_TRANSFER",
     "TAG_UNKNOWN",
+    "TAG_WITH_HANDLER",
+    "TAG_WITH_INTERCEPT",
+    "AcquireSemaphoreEffect",
+    "Apply",
+    "CompletePromiseEffect",
+    "CreateContinuation",
+    "CreateExternalPromiseEffect",
+    "CreatePromiseEffect",
+    "CreateSemaphoreEffect",
+    "Delegate",
+    "Discontinue",
+    "DoCtrlBase",
+    "DoExpr",
+    "DoThunkBase",
+    "DoeffGenerator",
+    "DoeffGeneratorFn",
+    "DoeffTracebackData",
+    "EffectBase",
+    "Eval",
+    "EvalInScope",
+    "EvalInScope",
+    "ExecutionContext",
+    "Expand",
+    "FailPromiseEffect",
+    "FlatMap",
+    "GatherEffect",
+    "GetCallStack",
+    "GetContinuation",
+    "GetExecutionContext",
+    "GetHandlers",
+    "GetTraceback",
+    "K",
+    "Map",
+    "NoMatchingHandlerError",
+    "Pass",
+    "Perform",
+    "ProgramCallFrameEffect",
+    "ProgramCallStackEffect",
+    "Pure",
+    "PyAsk",
+    "PyCancelEffect",
+    "PyCompletePromise",
+    "PyCreateExternalPromise",
+    "PyCreatePromise",
+    "PyFailPromise",
+    "PyGather",
+    "PyGet",
+    "PyKleisli",
+    "PyLocal",
+    "PyModify",
+    "PyPut",
+    "PyRace",
+    "PySpawn",
+    "PyTaskCompleted",
+    "PyTell",
+    "PyVM",
+    "PythonAsyncSyntaxEscape",
+    "PythonAsyncioAwaitEffect",
+    "RaceEffect",
+    "ReleaseSemaphoreEffect",
+    "ResultSafeEffect",
+    "Resume",
+    "ResumeContinuation",
+    "RunResult",
+    "RustHandler",
+    "SpawnEffect",
+    "TaskCancelEffect",
+    "TaskCancelledError",
+    "TraceFrame",
+    "TraceHop",
+    "Transfer",
+    "UnhandledEffectError",
+    "WithHandler",
+    "WithIntercept",
+    "_SchedulerTaskCompleted",
+    "async_run",
+    "await_handler",
+    "lazy_ask",
+    "reader",
+    "result_safe",
+    "run",
+    "scheduler",
+    "state",
+    "writer",
 ]
 
 if ResultOk is not None:

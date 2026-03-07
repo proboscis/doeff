@@ -493,4 +493,6 @@ class TestHP11DoDecoratedHandler:
             return result
 
         result = run(_prog(main), handlers=default_handlers())
-        assert result.value == "wrapped:x"
+        assert result.is_err()
+        assert isinstance(result.error, RuntimeError)
+        assert "handler returned without consuming continuation" in str(result.error)

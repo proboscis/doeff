@@ -105,11 +105,7 @@ class TestDoeff13HangRegression:
     """
 
     def test_do_handler_path_completes_within_3s(self) -> None:
-        """A @do-decorated handler that plain-returns should NOT hang.
-
-        Post-fix behavior: @do handlers execute as Kleisli handlers and can
-        plain-return values without hanging.
-        """
+        """A @do-decorated handler that plain-returns must fail fast."""
 
         @do
         def handler(effect: Effect, _k):
@@ -126,17 +122,12 @@ class TestDoeff13HangRegression:
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main))
-        assert run_result.value == "wrapped:x"
+        assert run_result.is_err()
+        assert isinstance(run_result.error, RuntimeError)
+        assert "handler returned without consuming continuation" in str(run_result.error)
 
     def test_nested_do_handler_path_completes_within_3s(self) -> None:
-        """Two nested @do-decorated handlers should NOT hang.
-
-        The outer handler delegates unknown effects; the inner handler
-        intercepts ``_CustomEffect``.  Pre-fix both layers trigger re-entry.
-
-        Nested @do handlers should no longer hang and should produce the
-        delegated inner-handler value.
-        """
+        """Nested plain-return @do handlers must also fail fast."""
 
         @do
         def inner_handler(effect: Effect, _k):
@@ -162,18 +153,12 @@ class TestDoeff13HangRegression:
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main))
-        assert run_result.value == "inner:hello"
+        assert run_result.is_err()
+        assert isinstance(run_result.error, RuntimeError)
+        assert "handler returned without consuming continuation" in str(run_result.error)
 
     def test_no_infinite_reentry_on_custom_handler(self) -> None:
-        """A @do handler that yields an effect INSIDE the handler must not loop.
-
-        The handler intercepts ``_CustomEffect`` and internally yields a
-        ``Get`` (state read) — an operation that requires the default
-        handlers.  If the KPC path re-enters the handler stack this becomes
-        an infinite loop.
-
-        Post-fix: this path must complete and return the state value.
-        """
+        """A handler that does inner work but still plain-returns must fail fast."""
         from doeff import Get
 
         @do
@@ -194,7 +179,9 @@ class TestDoeff13HangRegression:
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main), store={"sentinel": "fallback"})
-        assert run_result.value == "got:x:fallback"
+        assert run_result.is_err()
+        assert isinstance(run_result.error, RuntimeError)
+        assert "handler returned without consuming continuation" in str(run_result.error)
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,6 @@ use crate::capture::HandlerKind;
 use crate::ids::{DispatchId, Marker};
 use crate::ir_stream::IRStreamRef;
 use crate::py_shared::PyShared;
-use crate::step::PyException;
 use crate::value::Value;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
@@ -127,15 +126,6 @@ pub enum EvalReturnContinuation {
     EvalInScopeReturn {
         continuation: crate::continuation::Continuation,
     },
-    FinallyCleanup {
-        original: FinallyOutcome,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum FinallyOutcome {
-    Deliver(Value),
-    Throw(PyException),
 }
 
 #[derive(Debug, Clone)]
