@@ -521,12 +521,11 @@ async def async_run(
 def WithHandler(
     handler: Any,
     expr: Any,
-    return_clause: Any = None,
 ) -> Any:
     handler = _coerce_handler(handler, api_name="WithHandler", role="handler")
     types = _extract_handler_effect_types(handler)
     vm = _vm()
-    return vm.WithHandler(handler, expr, types=types, return_clause=return_clause)
+    return vm.WithHandler(handler, expr, types=types)
 
 
 def WithIntercept(

@@ -1400,6 +1400,27 @@ rules:
       category: doexpr-hierarchy
       rationale: "canonical WithHandler signature is (handler, expr: DoExpr)"
 
+  - id: doeff-withhandler-no-return-clause
+    pattern-either:
+      - pattern: WithHandler(..., return_clause=$RETURN, ...)
+      - pattern: WithHandler($HANDLER, $EXPR, $RETURN, ...)
+      - pattern: $VM.WithHandler(..., return_clause=$RETURN, ...)
+      - pattern: $VM.WithHandler($HANDLER, $EXPR, $RETURN, ...)
+    paths:
+      include:
+        - "**/doeff/**/*.py"
+        - "**/packages/**/*.py"
+        - "**/examples/**/*.py"
+        - "**/tests/**/*.py"
+    message: |
+      WithHandler no longer supports return_clause (ISSUE-VM-DROP-RETURN-CLAUSE).
+      Compose after `WithHandler(...)` with `@do` instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: doexpr-hierarchy
+      rationale: "return_clause was removed; post-process handler results via ordinary @do composition"
+
   - id: no-legacy-intercept-api
     pattern-either:
       - pattern-regex: (?m)^from\s+doeff\s+import\s+.*\bIntercept\b
