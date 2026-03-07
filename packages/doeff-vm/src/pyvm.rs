@@ -1067,7 +1067,6 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 handler,
                 body,
                 types,
-                return_clause,
             } => {
                 let debug = handler.debug_info();
                 let handler_obj = handler
@@ -1088,9 +1087,6 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                                 handler: handler_obj,
                                 expr: body_obj,
                                 types: handler_types_to_pyobj(py, types)?,
-                                return_clause: return_clause
-                                    .as_ref()
-                                    .map(|clause| clause.clone_ref(py)),
                                 handler_name: Some(debug.name),
                                 handler_file: debug.file,
                                 handler_line: debug.line,
@@ -1503,10 +1499,6 @@ pub(crate) fn classify_yielded_bound(
                     handler,
                     body: Box::new(body),
                     types,
-                    return_clause: wh
-                        .return_clause
-                        .as_ref()
-                        .map(|clause| PyShared::new(clause.clone_ref(py))),
                 })
             }
             DoExprTag::WithIntercept => {
@@ -2158,8 +2150,6 @@ pub struct PyWithHandler {
     #[pyo3(get)]
     pub types: Option<Py<PyAny>>,
     #[pyo3(get)]
-    pub return_clause: Option<Py<PyAny>>,
-    #[pyo3(get)]
     pub handler_name: Option<String>,
     #[pyo3(get)]
     pub handler_file: Option<String>,
@@ -2170,12 +2160,11 @@ pub struct PyWithHandler {
 #[pymethods]
 impl PyWithHandler {
     #[new]
-    #[pyo3(signature = (handler, expr, return_clause=None, *, types=None, handler_name=None, handler_file=None, handler_line=None))]
+    #[pyo3(signature = (handler, expr, *, types=None, handler_name=None, handler_file=None, handler_line=None))]
     fn new(
         py: Python<'_>,
         handler: Py<PyAny>,
         expr: Py<PyAny>,
-        return_clause: Option<Py<PyAny>>,
         types: Option<Py<PyAny>>,
         handler_name: Option<String>,
         handler_file: Option<String>,
@@ -2200,13 +2189,6 @@ impl PyWithHandler {
         if !expr_obj.is_instance_of::<PyDoExprBase>() {
             return Err(PyTypeError::new_err("WithHandler.expr must be DoExpr"));
         }
-        if let Some(return_clause_obj) = return_clause.as_ref() {
-            if !return_clause_obj.bind(py).is_callable() {
-                return Err(PyTypeError::new_err(
-                    "WithHandler.return_clause must be callable",
-                ));
-            }
-        }
 
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
@@ -2216,7 +2198,6 @@ impl PyWithHandler {
                 handler,
                 expr,
                 types: normalized_types,
-                return_clause,
                 handler_name,
                 handler_file,
                 handler_line,
@@ -2923,7 +2904,6 @@ impl NestingGenerator {
             handler,
             expr: inner,
             types: None,
-            return_clause: None,
             handler_name: None,
             handler_file: None,
             handler_line: None,
@@ -3037,7 +3017,6 @@ mod tests {
                         handler: sentinel.clone_ref(py),
                         expr: pure_expr,
                         types: None,
-                        return_clause: None,
                         handler_name: None,
                         handler_file: None,
                         handler_line: None,

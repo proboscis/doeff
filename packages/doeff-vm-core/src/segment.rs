@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::do_ctrl::InterceptMode;
-use crate::frame::Frame;
 use crate::frame::CallMetadata;
+use crate::frame::Frame;
 use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
@@ -20,7 +20,6 @@ pub enum SegmentKind {
         handled_marker: Marker,
         handler: KleisliRef,
         types: Option<Vec<PyShared>>,
-        return_clause: Option<PyShared>,
     },
     InterceptorBoundary {
         interceptor: KleisliRef,
@@ -77,7 +76,6 @@ impl Segment {
         caller: Option<SegmentId>,
         handled_marker: Marker,
         handler: KleisliRef,
-        return_clause: Option<PyShared>,
     ) -> Self {
         Segment {
             marker,
@@ -88,7 +86,6 @@ impl Segment {
                 handled_marker,
                 handler,
                 types: None,
-                return_clause,
             },
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
@@ -105,7 +102,6 @@ impl Segment {
         handled_marker: Marker,
         handler: KleisliRef,
         types: Option<Vec<PyShared>>,
-        return_clause: Option<PyShared>,
     ) -> Self {
         Segment {
             marker,
@@ -116,7 +112,6 @@ impl Segment {
                 handled_marker,
                 handler,
                 types,
-                return_clause,
             },
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),

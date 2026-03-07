@@ -394,22 +394,21 @@ def test_with_intercept_do_decorated() -> None:
 
 
 @pytest.mark.phase3_baseline
-def test_with_handler_return_clause() -> None:
+def test_with_handler_post_composition() -> None:
     @do
     def handler(_effect: Effect, _k):
         yield Pass()
-
-    def return_clause(value):
-        return f"ret:{value}"
 
     @do
     def body():
         return "done"
 
-    result = run(
-        WithHandler(handler, body(), return_clause),
-        handlers=default_handlers(),
-    )
+    @do
+    def combined():
+        value = yield WithHandler(handler, body())
+        return f"ret:{value}"
+
+    result = run(combined(), handlers=default_handlers())
     assert result.value == "ret:done"
 
 
