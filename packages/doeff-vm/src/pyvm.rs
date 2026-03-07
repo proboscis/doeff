@@ -820,7 +820,7 @@ impl PyVM {
                 Ok(generator.clone_ref(py))
             }
             Some(PendingPython::EvalExpr { .. })
-            | Some(PendingPython::CallFuncReturn { .. })
+            | Some(PendingPython::CallFuncReturn)
             | Some(PendingPython::ExpandReturn { .. })
             | Some(PendingPython::RustProgramContinuation { .. })
             | Some(PendingPython::AsyncEscape)

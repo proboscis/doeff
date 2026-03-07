@@ -17,6 +17,7 @@ from doeff import (
     Get,
     Pass,
     Put,
+    Pure,
     Resume,
     WithHandler,
     default_handlers,
@@ -141,6 +142,29 @@ class TestHP03BReturnEffect:
         assert result.is_err()
         assert isinstance(result.error, TypeError)
         assert "@do" in str(result.error)
+
+
+class TestHP03CReturnRawDoExpr:
+    def test_handler_returning_doexpr_after_resume_is_not_auto_evaluated(self) -> None:
+        @do
+        def handler(effect: Effect, k):
+            if isinstance(effect, _CustomEffect):
+                resume_value = yield Resume(k, effect.value)
+                return Pure(resume_value * 3)
+            else:
+                yield Delegate()
+
+        def body():
+            x = yield _CustomEffect(10)
+            return x + 5
+
+        def main():
+            result = yield WithHandler(handler=handler, expr=_prog(body))
+            return result
+
+        result = run(_prog(main), handlers=default_handlers())
+        assert isinstance(result.value, Pure)
+        assert result.value.value == 45
 
 
 # ---------------------------------------------------------------------------
