@@ -13,6 +13,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 def is_runbox_available() -> bool:
@@ -96,6 +97,25 @@ class RunboxRecordResult:
     error_message: str | None = None
 
 
+def normalize_argv_for_replay(argv: Sequence[str]) -> list[str]:
+    """Normalize argv into a replayable executable form.
+
+    When doeff is launched as `python -m doeff ...`, Python exposes
+    `sys.argv[0]` as the package's `__main__.py` path. That path is not
+    directly executable, so convert it back into an explicit interpreter
+    invocation for replay.
+    """
+    normalized = list(argv)
+    if not normalized:
+        return normalized
+
+    argv0 = Path(normalized[0])
+    if argv0.name == "__main__.py" and argv0.parent.name == "doeff":
+        return [sys.executable, "-m", "doeff", *normalized[1:]]
+
+    return normalized
+
+
 def create_runbox_record(
     argv: Sequence[str],
     cwd: str | None = None,
@@ -126,10 +146,12 @@ def create_runbox_record(
     if cwd is None:
         cwd = os.getcwd()
 
+    normalized_argv = normalize_argv_for_replay(argv)
+
     # Build the record JSON
     record: dict = {
         "command": {
-            "argv": list(argv),
+            "argv": normalized_argv,
             "cwd": cwd,
         },
         "source": "doeff",
