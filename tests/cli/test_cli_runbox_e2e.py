@@ -53,6 +53,39 @@ def run_cli(
     )
 
 
+def run_cli_module(
+    *args: str, env_override: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run doeff CLI through `python -m doeff run`."""
+    command = ["uv", "run", "python", "-m", "doeff", "run", *args]
+    pythonpath = str(PROJECT_ROOT)
+    if "PYTHONPATH" in os.environ:
+        pythonpath = f"{PROJECT_ROOT}{os.pathsep}{os.environ['PYTHONPATH']}"
+
+    env = {
+        "PYTHONPATH": pythonpath,
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "DOEFF_DISABLE_DEFAULT_ENV": "1",
+        "DOEFF_DISABLE_PROFILE": "1",
+    }
+    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV"):
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+    if env_override:
+        env.update(env_override)
+
+    return subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+
 def is_runbox_available() -> bool:
     """Check if runbox CLI is available in PATH."""
     return shutil.which("runbox") is not None
@@ -248,6 +281,39 @@ class TestRunboxIntegrationE2E:
         commit = record_data["git_state"]["commit"]
         assert len(commit) == 40, f"Commit should be 40 chars, got {len(commit)}"
         assert all(c in "0123456789abcdef" for c in commit.lower()), "Commit should be hex"
+
+    @pytest.mark.e2e
+    @pytest.mark.skipif(not is_runbox_available(), reason="runbox CLI not installed")
+    def test_python_module_invocation_records_replayable_argv(self) -> None:
+        """Test that `python -m doeff` records an executable argv."""
+        result = run_cli_module(
+            "--program",
+            "tests.cli_assets.sample_program",
+            "--interpreter",
+            "tests.cli_assets.sync_interpreter",
+        )
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        record_id = None
+        for line in result.stderr.split("\n"):
+            if "[runbox] Record stored:" in line:
+                parts = line.split("rec_")
+                if len(parts) > 1:
+                    record_id = "rec_" + parts[1].split()[0]
+                    break
+
+        assert record_id is not None
+
+        record_file = get_runbox_records_dir() / f"{record_id}.json"
+        with open(record_file) as f:
+            record_data = json.load(f)
+
+        argv = record_data["command"]["argv"]
+        assert len(argv) >= 4
+        assert Path(argv[0]).name.startswith(
+            "python"
+        ), f"Expected python executable, got {argv[0]}"
+        assert argv[1:4] == ["-m", "doeff", "run"]
 
 
 class TestRunboxUnitIntegration:
