@@ -17,6 +17,7 @@ from doeff.cli.runbox import (
     is_runbox_available,
     log_runbox_record,
     maybe_create_runbox_record,
+    normalize_argv_for_replay,
 )
 
 
@@ -184,6 +185,34 @@ class TestCreateRunboxRecord:
             input_json = json.loads(mock_run.call_args[1]["input"])
             assert input_json["git_state"]["diff"] == "+added line"
 
+    def test_normalizes_module_invocation_for_replay(self) -> None:
+        """Test that python -m doeff invocations are recorded as replayable argv."""
+        mock_runbox_result = MagicMock()
+        mock_runbox_result.returncode = 0
+        mock_runbox_result.stdout = "Created record: rec_12345\n  Short ID: 12345"
+
+        with (
+            patch("doeff.cli.runbox.is_runbox_available", return_value=True),
+            patch("doeff.cli.runbox.get_head_commit", return_value="abc123"),
+            patch("doeff.cli.runbox.get_repo_url", return_value=None),
+            patch("doeff.cli.runbox.get_uncommitted_diff", return_value=None),
+            patch("doeff.cli.runbox.sys.executable", "/venv/bin/python"),
+            patch("subprocess.run", return_value=mock_runbox_result) as mock_run,
+        ):
+            create_runbox_record(
+                ["/venv/lib/python3.12/site-packages/doeff/__main__.py", "run", "--program", "x"]
+            )
+
+            input_json = json.loads(mock_run.call_args[1]["input"])
+            assert input_json["command"]["argv"] == [
+                "/venv/bin/python",
+                "-m",
+                "doeff",
+                "run",
+                "--program",
+                "x",
+            ]
+
     def test_handles_runbox_failure(self) -> None:
         """Test handling of runbox CLI failure."""
         mock_runbox_result = MagicMock()
@@ -295,3 +324,19 @@ class TestMaybeCreateRunboxRecord:
             mock_create.assert_called_once_with(
                 ["doeff", "run", "--program", "test.prog"], tags=None
             )
+
+
+class TestNormalizeArgvForReplay:
+    """Tests for replay argv normalization."""
+
+    def test_keeps_normal_executable_argv(self) -> None:
+        assert normalize_argv_for_replay(["/venv/bin/doeff", "run"]) == [
+            "/venv/bin/doeff",
+            "run",
+        ]
+
+    def test_rewrites_module_entrypoint_to_python_m(self) -> None:
+        with patch("doeff.cli.runbox.sys.executable", "/venv/bin/python"):
+            assert normalize_argv_for_replay(
+                ["/venv/lib/python3.12/site-packages/doeff/__main__.py", "run", "--program", "x"]
+            ) == ["/venv/bin/python", "-m", "doeff", "run", "--program", "x"]
