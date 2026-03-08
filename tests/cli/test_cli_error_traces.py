@@ -233,7 +233,7 @@ def test_cli_text_prints_doeff_traceback_once() -> None:
         "-c",
         "from doeff import Ask, do\n@do\ndef f():\n    yield Ask('x')\n    return 1\nf()",
         "--interpreter",
-        "tests.cli.cli_assets.sync_interpreter",
+        "tests.cli.cli_assets.runresult_interpreter",
     )
 
     assert result.returncode == 1
