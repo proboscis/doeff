@@ -226,3 +226,15 @@ def test_cli_text_uses_doeff_traceback() -> None:
 
     assert result.returncode == 1
     assert "doeff Traceback" in result.stderr
+
+
+def test_cli_text_prints_doeff_traceback_once() -> None:
+    result = run_cli(
+        "-c",
+        "from doeff import Ask, do\n@do\ndef f():\n    yield Ask('x')\n    return 1\nf()",
+        "--interpreter",
+        "tests.cli.cli_assets.sync_interpreter",
+    )
+
+    assert result.returncode == 1
+    assert result.stderr.count("doeff Traceback (most recent call last):") == 1
