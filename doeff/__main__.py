@@ -498,16 +498,27 @@ def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
 
     if isinstance(value, ProgramType):
         result = vm_run(value, handlers=default_handlers(), print_doeff_trace=False)
-        return result.value, None
+        return _unwrap_run_result(result), None
     if isinstance(value, VmRunResult):
         return _unwrap_run_result(value), value
     return value, None
+
+
+def _exception_doeff_traceback(exc: BaseException | None) -> Any | None:
+    if exc is None:
+        return None
+    try:
+        return exc.doeff_traceback
+    except AttributeError:
+        return None
 
 
 def _unwrap_run_result(result: RunResult[Any]) -> Any:
     try:
         return result.value
     except Exception as exc:
+        already_attached = _exception_doeff_traceback(exc) is not None
+        doeff_tb = None
         try:
             from doeff.traceback import attach_doeff_traceback
 
@@ -516,10 +527,12 @@ def _unwrap_run_result(result: RunResult[Any]) -> Any:
                 traceback_data=result.traceback_data,
             )
             if doeff_tb is not None:
-                setattr(exc, "doeff_traceback", doeff_tb)
+                exc.doeff_traceback = doeff_tb
         except Exception:
             # Best-effort decoration for CLI rendering.
             pass
+        if doeff_tb is not None and not already_attached:
+            print(doeff_tb.format_default(), file=sys.stderr)
         raise RuntimeError("Program execution failed") from exc
 
 
@@ -832,11 +845,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         return args.func(args)
     except Exception as exc:
-        doeff_tb = getattr(exc, "doeff_traceback", None)
+        doeff_tb = _exception_doeff_traceback(exc)
         if doeff_tb is None:
             cause = exc.__cause__
             if cause is not None:
-                doeff_tb = getattr(cause, "doeff_traceback", None)
+                doeff_tb = _exception_doeff_traceback(cause)
         captured = capture_traceback(exc)
         if args.format == "json":
             payload = {
@@ -849,11 +862,9 @@ def main(argv: Iterable[str] | None = None) -> int:
             elif captured is not None:
                 payload["traceback"] = captured.format(condensed=False, max_lines=200)
             print(json.dumps(payload))
-        elif doeff_tb is not None:
-            print(doeff_tb.format_default(), file=sys.stderr)
-        elif captured is not None:
+        elif doeff_tb is None and captured is not None:
             print(captured.format(condensed=False, max_lines=200), file=sys.stderr)
-        else:
+        elif doeff_tb is None:
             print(f"Error: {exc}", file=sys.stderr)
         return 1
 

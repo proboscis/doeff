@@ -26,6 +26,14 @@ class CacheCallSite:
     function_name: str
 
     def format_location(self) -> str:
+        if self.source_file == "<rust>":
+            if self.function_name != "<unknown>":
+                return f"{self.function_name} (rust_builtin)"
+            return "(rust_builtin)"
+        if self.source_file == "<unknown>":
+            if self.function_name != "<unknown>":
+                return self.function_name
+            return "(unknown)"
         return f"{self.source_file}:{self.source_line} in {self.function_name}"
 
 
@@ -180,6 +188,20 @@ def _truncate_for_log(obj: Any, max_len: int = 200) -> str:
 
     half = (max_len - 5) // 2  # Reserve 5 chars for "..."
     return f"{repr_str[:half]}...{repr_str[-half:]}"
+
+
+def _cache_error_note(
+    func_name: str,
+    call_args: tuple[Any, ...],
+    call_kwargs: dict[str, Any],
+    call_site: CacheCallSite | None,
+) -> str:
+    location_suffix = f" at {call_site.format_location()}" if call_site is not None else ""
+    return (
+        f"During cache computation for {func_name}"
+        f" with args={call_args!r} kwargs={call_kwargs!r}{location_suffix}"
+    )
+
 
 @do_wrapper
 def cache(
@@ -352,11 +374,7 @@ def cache(
         def wrapper(*args, **kwargs) -> EffectGenerator[T]:
             context = yield GetExecutionContext()
             call_stack = getattr(context, "active_chain", ())
-            stack_frames: list[Any]
-            if isinstance(call_stack, (list, tuple)):
-                stack_frames = list(call_stack)
-            else:
-                stack_frames = []
+            stack_frames = list(call_stack) if isinstance(call_stack, (list, tuple)) else []
             call_site = _call_site_from_program_frames(stack_frames)
 
             args_for_key, kwargs_for_key = yield build_key_inputs(tuple(args), dict(kwargs))
@@ -392,12 +410,9 @@ def cache(
 
                 yield slog(msg=f"Computation for {func_name} failed, not caching.", level="error")
                 error = _result_error(result)
-                raise CacheComputationError(
-                    func_name,
-                    args,
-                    dict(kwargs),
-                    call_site,
-                ) from error
+                if hasattr(error, "add_note"):
+                    error.add_note(_cache_error_note(func_name, args, dict(kwargs), call_site))
+                raise error
 
             @do
             def try_cache_get() -> EffectGenerator[T]:
