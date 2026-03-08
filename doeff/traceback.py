@@ -354,15 +354,22 @@ else:
                 return "\n".join(lines)
 
             all_pending = all(entry.status == "pending" for entry in stack)
-            pending_count = 0
+            pending_entries: list[HandlerStackEntry] = []
+
+            def flush_pending_group(*, no_match_suffix: bool = False) -> None:
+                if not pending_entries:
+                    return
+                names = ", ".join(entry.handler_name for entry in pending_entries)
+                suffix = " (no handler matched)" if no_match_suffix else ""
+                lines.append(f"  · {len(pending_entries)} pending: {names}{suffix}")
+                pending_entries.clear()
+
             for entry in stack:
                 if entry.status == "pending":
-                    pending_count += 1
+                    pending_entries.append(entry)
                     continue
 
-                if pending_count:
-                    lines.append(f"  · {pending_count} pending")
-                    pending_count = 0
+                flush_pending_group()
 
                 if entry.source_file is None or entry.source_line is None:
                     if entry.handler_kind == "rust_builtin":
@@ -374,9 +381,7 @@ else:
 
                 lines.append(f"  {entry.handler_name} {marker.get(entry.status, '?')}  {location}")
 
-            if pending_count:
-                suffix = " (no handler matched)" if all_pending else ""
-                lines.append(f"  · {pending_count} pending{suffix}")
+            flush_pending_group(no_match_suffix=all_pending)
 
             return "\n".join(lines)
 

@@ -142,9 +142,9 @@ Each handler in the stack is annotated with what it did for that effect:
 - Handlers are listed from innermost (first to see effects) to outermost
 - **Active handlers** (any non-pending status: ✓ ✗ ⇢ ⇆ ↗ ⚡) are always shown individually with source location
 - **Pending handlers** (`·`) are collapsed into count groups:
-  - Consecutive pending handlers are replaced with a single `· N pending` line
+  - Consecutive pending handlers are replaced with a single `· N pending: Name1, Name2, ...` line
   - This is a display condensation — the full handler stack data is preserved in the trace object
-  - When ALL handlers are pending (no handler participated), show `· N pending (no handler matched)` as a single line
+  - When ALL handlers are pending (no handler participated), show `· N pending: Name1, Name2, ... (no handler matched)` as a single line
 - When the handler stack is unchanged from the previous effect frame, display `(same handlers)` on a single line instead of repeating the full block
 - On `WithHandler` boundary crossings, show the full updated stack
 
@@ -256,9 +256,9 @@ doeff Traceback (most recent call last):
     handlers:
       StateHandler ↗  (rust_builtin)
       ReaderHandler ↗  (rust_builtin)
-      · 3 pending
+      · 3 pending: WriterHandler, ResultHandler, SchedulerHandler
       LazyAskHandler ✓  doeff/handlers/lazy_ask.py:42
-      · 1 pending
+      · 1 pending: sync_await_handler
     → resumed with 30
 
   process_item()  app.py:14
@@ -270,7 +270,7 @@ RuntimeError: Connection refused: https://api.example.com/items/item/2
 Notes:
 - Items 0 and 1 succeeded — not in trace
 - `fetch_config` shows only its last yield before returning (the one active when control returned to `process_item`)
-- Active handlers shown with source locations; 4 pending handlers collapsed into count groups
+- Active handlers shown with source locations; 4 pending handlers collapsed into named count groups
 - Line numbers are yield sites, not decorator lines
 
 ### Example 2: Custom handler with WithHandler
@@ -306,7 +306,7 @@ doeff Traceback (most recent call last):
     yield Ask("rate_limit")
     handlers:
       rate_limiter ✓  app.py:6
-      · 8 pending
+      · 8 pending: auth_handler, StateHandler, ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     → resumed with 100
 
   call_api()  app.py:17
@@ -317,7 +317,7 @@ ConnectionError: timeout
 
 Notes:
 - Handler stack shows `rate_limiter` innermost (added by inner `WithHandler`)
-- `auth_handler` and all other handlers are pending — collapsed into `· 8 pending`
+- `auth_handler` and all other handlers are pending — collapsed into a named pending group
 - Previous `Ask("token")` not shown — only the active yield matters
 
 ### Example 3: Handler throws
@@ -346,7 +346,7 @@ doeff Traceback (most recent call last):
     yield Put("result", "not-an-int")
     handlers:
       strict_handler ✗  app.py:3
-      · 7 pending
+      · 7 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     ✗ strict_handler raised TypeError("expected int, got str")
 
 TypeError: expected int, got str
@@ -378,9 +378,9 @@ doeff Traceback (most recent call last):
     handlers:
       StateHandler ↗  (rust_builtin)
       ReaderHandler ↗  (rust_builtin)
-      · 3 pending
+      · 3 pending: WriterHandler, ResultHandler, SchedulerHandler
       LazyAskHandler ✗  doeff/handlers/lazy_ask.py:42
-      · 1 pending
+      · 1 pending: sync_await_handler
     ✗ LazyAskHandler raised MissingEnvKeyError("Environment key not found: 'database_url'")
 
 MissingEnvKeyError: Environment key not found: 'database_url'
@@ -410,7 +410,7 @@ doeff Traceback (most recent call last):
     yield Put("x", 1)
     handlers:
       StateHandler ✓  (rust_builtin)
-      · 6 pending
+      · 6 pending: ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     → resumed with None
 
   outer()  app.py:4
@@ -421,7 +421,7 @@ doeff Traceback (most recent call last):
     handlers:
       my_handler ↗  app.py:7
       StateHandler ✓  (rust_builtin)
-      · 5 pending
+      · 5 pending: ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler
     → resumed with None
 
   inner()  app.py:9
@@ -488,7 +488,7 @@ doeff Traceback (most recent call last):
     yield Ask("mode")
     handlers:
       short_circuit_handler ⏎  app.py:3
-      · 7 pending
+      · 7 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     ⏎ short_circuit_handler returned "fallback" (continuation abandoned)
 
   outer()  app.py:13
@@ -533,14 +533,14 @@ doeff Traceback (most recent call last):
     yield Ask("redirect")
     handlers:
       redirect_handler ⇢  app.py:10
-      · 7 pending
+      · 7 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     ⇢ redirect_handler transferred to program_a
 
   program_a()  app.py:7
     yield Put("result", "redirected_value")
     handlers:
       StateHandler ✓  (rust_builtin)
-      · 6 pending
+      · 6 pending: ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     → resumed with None
 
   program_a()  app.py:8
@@ -594,9 +594,9 @@ doeff Traceback (most recent call last):
   process_batch()  app.py:13
     yield Gather(*tasks)
     handlers:
-      · 4 pending
+      · 4 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler
       SchedulerHandler ⇢  (rust_builtin)
-      · 2 pending
+      · 2 pending: spawn_intercept_handler, sync_await_handler
     ⇢ task 3 failed during Gather
 
   ── in task 3 (spawned at process_batch() app.py:11) ──
@@ -604,7 +604,7 @@ doeff Traceback (most recent call last):
   fetch_data("https://api.example.com/item/3")  app.py:3
     yield Await(http_get(url))
     handlers:
-      · 6 pending
+      · 6 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, spawn_intercept_handler
       async_await_handler ✓  doeff/effects/future.py:120
     → resumed with Response(status=500)
 
@@ -656,9 +656,9 @@ doeff Traceback (most recent call last):
   orchestrator()  app.py:16
     yield Gather(*batches)
     handlers:
-      · 4 pending
+      · 4 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler
       SchedulerHandler ⇢  (rust_builtin)
-      · 2 pending
+      · 2 pending: spawn_intercept_handler, sync_await_handler
     ⇢ task 2 failed during Gather
 
   ── in task 2 (spawned at orchestrator() app.py:14) ──
@@ -789,7 +789,7 @@ When assembling a trace for an error propagated through Gather/Wait/Race:
 **Consequently: the trace data must contain every handler and effect without omission.** Every handler present in the handler chain at dispatch time is preserved in the trace data. Every effect yielded is recorded as an effect frame. There are no special cases, no hardcoded name lists, no filtering by action or status at the data level.
 
 **Display condensation** is permitted at the rendering level for readability:
-- **Pending handler collapsing**: Consecutive pending (`·`) handlers are condensed into `· N pending` count lines. The underlying data retains all entries.
+- **Pending handler collapsing**: Consecutive pending (`·`) handlers are condensed into `· N pending: Name1, Name2, ...` lines. The underlying data retains all entries.
 - **Handler frame suppression**: Handler `ProgramYield` frames are suppressed in `format_default()` since handler source locations are surfaced through the handler stack entries per `EffectYield`. They remain in `format_chained()` with the `⚙` prefix.
 - **Stack deduplication**: Unchanged handler stacks show `(same handlers)` instead of repeating.
 
@@ -832,7 +832,7 @@ Implementation-level notes (what changes in Rust VM, Python projection, etc.) ar
 2. Only active call chain frames shown — no historical dispatches
 3. Line numbers match actual yield sites, not decorator lines
 4. Handler stack shown per effect yield in multi-line indented format with source locations
-5. Active handlers (non-pending) shown individually with source location; pending handlers collapsed into `· N pending` count groups
+5. Active handlers (non-pending) shown individually with source location; pending handlers collapsed into `· N pending: Name1, Name2, ...` groups
 6. Handler `ProgramYield` frames suppressed in `format_default()` — handler source locations surfaced through handler stack entries
 7. Handler stack dedup: `(same handlers)` used when stack unchanged between consecutive effect frames
 8. Effect repr is human-readable (`Put("key", value)` not `<builtins.PyPut ...>`)
