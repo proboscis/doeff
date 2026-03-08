@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from doeff import (
+    Ask,
     CacheGet,
     CachePut,
     Effect,
@@ -17,9 +18,11 @@ from doeff import (
     do,
     run,
 )
+from doeff.cache import CacheCallSite, CacheComputationError
 from doeff.handlers import cache_handler, in_memory_cache_handler, sqlite_cache_handler
 from doeff.handlers.cache_handlers import content_address, make_memo_rewriter, memo_rewriters
 from doeff.storage import InMemoryStorage
+from doeff.traceback import attach_doeff_traceback
 
 
 def _run_with_handlers(program: object, *handlers: object):
@@ -120,6 +123,57 @@ def test_cache_decorator_miss_then_hit() -> None:
     assert calls["count"] == 1
 
 
+def test_cache_computation_error_hides_rust_and_unknown_sentinel_locations() -> None:
+    rust_error = CacheComputationError(
+        "expensive",
+        (),
+        {},
+        CacheCallSite("<rust>", 0, "SchedulerHandler"),
+    )
+    unknown_error = CacheComputationError(
+        "expensive",
+        (),
+        {},
+        CacheCallSite("<unknown>", 0, "mystery_handler"),
+    )
+
+    assert "<rust>:0" not in str(rust_error)
+    assert "<unknown>" not in str(unknown_error)
+    assert "(rust_builtin)" in str(rust_error)
+    assert ":0" not in str(unknown_error)
+
+
+def test_cache_decorator_reraises_original_error_with_cache_note() -> None:
+    @cache()
+    @do
+    def expensive() -> EffectGenerator[int]:
+        _ = yield Ask("cache_missing_key")
+        return 1
+
+    result = run(
+        WithHandler(in_memory_cache_handler(), expensive()),
+        handlers=default_handlers(),
+        print_doeff_trace=False,
+    )
+
+    assert result.is_err()
+    error = result.error
+    assert type(error).__name__ == "MissingEnvKeyError"
+    assert not isinstance(error, CacheComputationError)
+
+    notes = getattr(error, "__notes__", ())
+    if hasattr(error, "add_note"):
+        assert any("During cache computation for" in note for note in notes)
+
+    doeff_tb = attach_doeff_traceback(error, traceback_data=result.traceback_data)
+    assert doeff_tb is not None
+
+    rendered = doeff_tb.format_default()
+    assert "MissingEnvKeyError" in rendered
+    assert "CacheComputationError" not in rendered
+    assert "cache_missing_key" in rendered
+
+
 def test_in_memory_cache_handler() -> None:
     @do
     def workflow() -> EffectGenerator[str]:
@@ -163,3 +217,47 @@ def test_memo_rewriter() -> None:
     assert result.value == (15, 15)
     assert calls["count"] == 1
     assert content_address(MultiplyFx(3)) == content_address(MultiplyFx(3))
+
+
+def test_cache_call_site_formats_rust_builtin_location() -> None:
+    location = CacheCallSite(
+        source_file="<rust>",
+        source_line=0,
+        function_name="SchedulerHandler",
+    ).format_location()
+
+    assert "<rust>" not in location
+    assert ":0" not in location
+    assert "(rust_builtin)" in location
+    assert "SchedulerHandler" in location
+
+
+def test_cache_decorator_reraises_original_error_with_cache_context() -> None:
+    @cache()
+    @do
+    def exploding(value: int) -> EffectGenerator[int]:
+        if False:
+            yield CacheGet("__typecheck__")
+        raise ValueError(f"boom {value}")
+
+    result = run(
+        WithHandler(in_memory_cache_handler(), exploding(7)),
+        handlers=default_handlers(),
+        print_doeff_trace=False,
+    )
+
+    assert result.is_err()
+    assert isinstance(result.error, ValueError)
+    assert not isinstance(result.error, CacheComputationError)
+
+    if hasattr(result.error, "__notes__"):
+        joined_notes = "\n".join(result.error.__notes__)
+        assert "During cache computation for" in joined_notes
+        assert "exploding" in joined_notes
+
+    doeff_tb = attach_doeff_traceback(result.error, traceback_data=result.traceback_data)
+    assert doeff_tb is not None
+    rendered = doeff_tb.format_default()
+    assert "exploding()" in rendered
+    assert "raise ValueError('boom 7')" in rendered
+    assert "CacheComputationError" not in rendered
