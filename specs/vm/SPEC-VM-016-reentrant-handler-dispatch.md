@@ -196,7 +196,8 @@ def counting_handler(effect, k):
 ### 2.5 Brief References (Detailed in SPEC-008 R17)
 
 - **`return(x)` clause**: A `PromptBoundary` handler may define a `return` clause that transforms the final value when the handled body completes normally. See SPEC-008 R17 §return-clause.
-- **`Finally(cleanup: DoExpr)`**: A DoCtrl that guarantees `cleanup` runs whether the body completes normally or is abandoned. See SPEC-008 R17 §finally.
+- **`Finally(cleanup: DoExpr)`**: [SUPERSEDED BY R18-A — removed. Use Python `try/finally` for cleanup. See SPEC-008 R18.] ~~A DoCtrl that guarantees `cleanup` runs whether the body completes normally or is abandoned.~~
+- **`Discontinue(k, exn?)`**: [R18-B] Throws exception into continuation `k` for cleanup. Like Transfer but delivers an exception. Python `try/finally` fires. See SPEC-008 R18.
 
 ---
 
