@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 from doeff import (
     Ask,
@@ -18,7 +19,7 @@ from doeff import (
     do,
     run,
 )
-from doeff.cache import CacheCallSite, CacheComputationError
+from doeff.cache import CacheCallSite
 from doeff.handlers import cache_handler, in_memory_cache_handler, sqlite_cache_handler
 from doeff.handlers.cache_handlers import content_address, make_memo_rewriter, memo_rewriters
 from doeff.storage import InMemoryStorage
@@ -123,24 +124,12 @@ def test_cache_decorator_miss_then_hit() -> None:
     assert calls["count"] == 1
 
 
-def test_cache_computation_error_hides_rust_and_unknown_sentinel_locations() -> None:
-    rust_error = CacheComputationError(
-        "expensive",
-        (),
-        {},
-        CacheCallSite("<rust>", 0, "SchedulerHandler"),
-    )
-    unknown_error = CacheComputationError(
-        "expensive",
-        (),
-        {},
-        CacheCallSite("<unknown>", 0, "mystery_handler"),
-    )
+def test_cache_call_site_formats_rust_and_unknown_sentinel_locations() -> None:
+    rust_site = CacheCallSite("<rust>", 0, "SchedulerHandler")
+    unknown_site = CacheCallSite("<unknown>", 0, "mystery_handler")
 
-    assert "<rust>:0" not in str(rust_error)
-    assert "<unknown>" not in str(unknown_error)
-    assert "(rust_builtin)" in str(rust_error)
-    assert ":0" not in str(unknown_error)
+    assert rust_site.format_location() == "SchedulerHandler (rust_builtin)"
+    assert unknown_site.format_location() == "mystery_handler"
 
 
 def test_cache_decorator_reraises_original_error_with_cache_note() -> None:
@@ -159,18 +148,17 @@ def test_cache_decorator_reraises_original_error_with_cache_note() -> None:
     assert result.is_err()
     error = result.error
     assert type(error).__name__ == "MissingEnvKeyError"
-    assert not isinstance(error, CacheComputationError)
 
     notes = getattr(error, "__notes__", ())
-    if hasattr(error, "add_note"):
+    if sys.version_info >= (3, 11):
         assert any("During cache computation for" in note for note in notes)
+        assert any("SchedulerHandler (rust_builtin)" in note for note in notes)
 
     doeff_tb = attach_doeff_traceback(error, traceback_data=result.traceback_data)
     assert doeff_tb is not None
 
     rendered = doeff_tb.format_default()
     assert "MissingEnvKeyError" in rendered
-    assert "CacheComputationError" not in rendered
     assert "cache_missing_key" in rendered
 
 

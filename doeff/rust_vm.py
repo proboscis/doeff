@@ -317,12 +317,12 @@ def _build_doeff_traceback_if_present(run_result: Any) -> Any | None:
     if traceback_data is None:
         return None
     try:
-        from doeff.traceback import attach_doeff_traceback
+        from doeff.traceback import attach_doeff_traceback, set_attached_doeff_traceback
 
         doeff_tb = attach_doeff_traceback(error, traceback_data=traceback_data)
         if doeff_tb is not None:
             try:
-                error.doeff_traceback = doeff_tb
+                set_attached_doeff_traceback(error, doeff_tb)
             except Exception as exc:
                 warnings.warn(
                     f"Failed to attach doeff traceback to {type(error).__name__}: {exc}",
