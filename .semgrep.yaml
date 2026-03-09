@@ -1712,17 +1712,14 @@ rules:
       - pattern-either:
           - pattern: $OBJ.getattr(...)
           - pattern: $OBJ.hasattr(...)
+      - pattern-not: $ERR.value($PY).getattr("value")
       - pattern-not-inside: |
           #[cfg(test)]
           mod tests {
               ...
           }
       - pattern-not-inside: |
-          fn format_traceback_data_preview($...ARGS) -> String {
-              ...
-          }
-      - pattern-not-inside: |
-          fn extract_stop_iteration_value($...ARGS) {
+          fn extract_stop_iteration_value($...ARGS) -> $RET {
               ...
           }
     paths:
