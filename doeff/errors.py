@@ -1,11 +1,6 @@
 from typing import Any
 
-try:
-    from doeff_vm import Discontinued
-except ImportError:  # pragma: no cover - docs/type tooling without native module
-
-    class Discontinued(Exception):
-        """Raised when a continuation is discontinued without a custom exception."""
+from doeff_vm import Discontinued
 
 
 class MissingEnvKeyError(KeyError):
