@@ -33,6 +33,8 @@ DoThunkBase: type[Any] | None
 class K:
     def __repr__(self) -> str: ...
 
+class Discontinued(Exception): ...
+
 class TraceFrame:
     func_name: str
     source_file: str
