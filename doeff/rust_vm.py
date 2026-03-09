@@ -317,12 +317,12 @@ def _build_doeff_traceback_if_present(run_result: Any) -> Any | None:
     if traceback_data is None:
         return None
     try:
-        from doeff.traceback import attach_doeff_traceback
+        from doeff.traceback import attach_doeff_traceback, set_attached_doeff_traceback
 
         doeff_tb = attach_doeff_traceback(error, traceback_data=traceback_data)
         if doeff_tb is not None:
             try:
-                error.doeff_traceback = doeff_tb
+                set_attached_doeff_traceback(error, doeff_tb)
             except Exception as exc:
                 warnings.warn(
                     f"Failed to attach doeff traceback to {type(error).__name__}: {exc}",
@@ -335,9 +335,8 @@ def _build_doeff_traceback_if_present(run_result: Any) -> Any | None:
         return None
 
 
-def _print_doeff_trace_if_present(run_result: Any) -> None:
-    """Best-effort stderr printing for DoeffTraceback on error results."""
-    doeff_tb = _build_doeff_traceback_if_present(run_result)
+def _print_doeff_trace(doeff_tb: Any | None) -> None:
+    """Best-effort stderr printing for a built DoeffTraceback."""
     if doeff_tb is None:
         return
     try:
@@ -468,7 +467,7 @@ def run(
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
     trace: bool = False,
-    print_doeff_trace: bool = True,
+    print_doeff_trace: bool = False,
 ) -> Any:
     vm = _vm()
     try:
@@ -485,8 +484,9 @@ def run(
         trace=trace,
     )
     result = _call_run_fn(run_fn, program, kwargs)
+    doeff_tb = _build_doeff_traceback_if_present(result)
     if print_doeff_trace:
-        _print_doeff_trace_if_present(result)
+        _print_doeff_trace(doeff_tb)
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
@@ -496,7 +496,7 @@ async def async_run(
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
     trace: bool = False,
-    print_doeff_trace: bool = True,
+    print_doeff_trace: bool = False,
 ) -> Any:
     vm = _vm()
     try:
@@ -513,8 +513,9 @@ async def async_run(
         trace=trace,
     )
     result = await _call_async_run_fn(run_fn, program, kwargs)
+    doeff_tb = _build_doeff_traceback_if_present(result)
     if print_doeff_trace:
-        _print_doeff_trace_if_present(result)
+        _print_doeff_trace(doeff_tb)
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 

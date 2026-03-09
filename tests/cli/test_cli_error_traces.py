@@ -71,6 +71,7 @@ failing()
     )
 
     assert result.returncode == 1
+    assert result.stderr == ""
     payload = parse_json(result.stdout)
     assert payload["status"] == "error"
     assert payload["error"] == "MissingEnvKeyError"
@@ -136,6 +137,7 @@ WithHandler(bad_handler, body())
     )
 
     assert result.returncode == 1
+    assert result.stderr == ""
     payload = parse_json(result.stdout)
     assert payload["status"] == "error"
     assert payload["error"] == "RuntimeError"
@@ -212,6 +214,7 @@ def test_cli_json_uses_doeff_traceback() -> None:
     )
 
     assert result.returncode == 1
+    assert result.stderr == ""
     payload = parse_json(result.stdout)
     assert "doeff Traceback" in str(payload.get("traceback", ""))
 
@@ -225,4 +228,56 @@ def test_cli_text_uses_doeff_traceback() -> None:
     )
 
     assert result.returncode == 1
-    assert "doeff Traceback" in result.stderr
+    assert result.stderr.count("doeff Traceback (most recent call last):") == 1
+
+
+def test_cli_text_prints_doeff_traceback_once() -> None:
+    result = run_cli(
+        "-c",
+        "from doeff import Ask, do\n@do\ndef f():\n    yield Ask('x')\n    return 1\nf()",
+        "--interpreter",
+        "tests.cli.cli_assets.runresult_interpreter",
+    )
+
+    assert result.returncode == 1
+    assert result.stderr.count("doeff Traceback (most recent call last):") == 1
+
+
+def test_cli_text_renders_traceback_for_silent_runresult_interpreter() -> None:
+    result = run_cli(
+        "-c",
+        "from doeff import Ask, do\n@do\ndef f():\n    yield Ask('x')\n    return 1\nf()",
+        "--interpreter",
+        "tests.cli.cli_assets.silent_runresult_interpreter",
+    )
+
+    assert result.returncode == 1
+    assert result.stderr.count("doeff Traceback (most recent call last):") == 1
+
+
+def test_cli_builtin_sync_run_prints_doeff_traceback_once() -> None:
+    result = run_cli(
+        "--program",
+        "tests.cli.cli_assets.ask_program",
+        "--interpreter",
+        "doeff.__main__.sync_run",
+    )
+
+    assert result.returncode == 1
+    assert result.stderr.count("doeff Traceback (most recent call last):") == 1
+
+
+def test_cli_json_sync_run_keeps_stderr_clean() -> None:
+    result = run_cli(
+        "--program",
+        "tests.cli.cli_assets.ask_program",
+        "--interpreter",
+        "doeff.__main__.sync_run",
+        "--format",
+        "json",
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == ""
+    payload = parse_json(result.stdout)
+    assert "doeff Traceback" in str(payload.get("traceback", ""))

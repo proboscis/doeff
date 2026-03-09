@@ -1,4 +1,3 @@
-
 import argparse
 import asyncio
 import importlib
@@ -493,15 +492,28 @@ def _call_interpreter(func: Callable[..., Any], program: Program[Any]) -> Any:
     return result
 
 
-def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
+def _finalize_result(
+    value: Any,
+) -> tuple[Any, RunResult[Any] | None]:
     from doeff.program import Program as ProgramType
 
     if isinstance(value, ProgramType):
-        result = vm_run(value, handlers=default_handlers(), print_doeff_trace=False)
-        return result.value, None
+        result = vm_run(value, handlers=default_handlers())
+        return _unwrap_run_result(result), None
     if isinstance(value, VmRunResult):
         return _unwrap_run_result(value), value
     return value, None
+
+
+class _RunResultExecutionError(RuntimeError):
+    """Internal wrapper used when unwrapping a failing RunResult."""
+
+
+def _reported_exception(exc: BaseException) -> BaseException:
+    cause = exc.__cause__
+    if isinstance(exc, _RunResultExecutionError) and isinstance(cause, BaseException):
+        return cause
+    return exc
 
 
 def _unwrap_run_result(result: RunResult[Any]) -> Any:
@@ -509,18 +521,20 @@ def _unwrap_run_result(result: RunResult[Any]) -> Any:
         return result.value
     except Exception as exc:
         try:
-            from doeff.traceback import attach_doeff_traceback
-
-            doeff_tb = attach_doeff_traceback(
-                exc,
-                traceback_data=result.traceback_data,
+            from doeff.traceback import (
+                attach_doeff_traceback,
+                get_attached_doeff_traceback,
+                set_attached_doeff_traceback,
             )
-            if doeff_tb is not None:
-                setattr(exc, "doeff_traceback", doeff_tb)
+
+            if get_attached_doeff_traceback(exc) is None:
+                doeff_tb = attach_doeff_traceback(exc, traceback_data=result.traceback_data)
+                if doeff_tb is not None:
+                    set_attached_doeff_traceback(exc, doeff_tb)
         except Exception:
             # Best-effort decoration for CLI rendering.
             pass
-        raise RuntimeError("Program execution failed") from exc
+        raise _RunResultExecutionError("Program execution failed") from exc
 
 
 def _json_safe(value: Any) -> Any:
@@ -832,17 +846,16 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         return args.func(args)
     except Exception as exc:
-        doeff_tb = getattr(exc, "doeff_traceback", None)
-        if doeff_tb is None:
-            cause = exc.__cause__
-            if cause is not None:
-                doeff_tb = getattr(cause, "doeff_traceback", None)
-        captured = capture_traceback(exc)
+        from doeff.traceback import get_attached_doeff_traceback
+
+        reported_exc = _reported_exception(exc)
+        doeff_tb = get_attached_doeff_traceback(reported_exc)
+        captured = capture_traceback(reported_exc)
         if args.format == "json":
             payload = {
                 "status": "error",
-                "error": exc.__class__.__name__,
-                "message": str(exc),
+                "error": reported_exc.__class__.__name__,
+                "message": str(reported_exc),
             }
             if doeff_tb is not None:
                 payload["traceback"] = doeff_tb.format_default()
@@ -854,7 +867,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         elif captured is not None:
             print(captured.format(condensed=False, max_lines=200), file=sys.stderr)
         else:
-            print(f"Error: {exc}", file=sys.stderr)
+            print(f"Error: {reported_exc}", file=sys.stderr)
         return 1
 
 

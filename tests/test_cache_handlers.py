@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 from doeff import (
+    Ask,
     CacheGet,
     CachePut,
     Effect,
@@ -17,9 +19,11 @@ from doeff import (
     do,
     run,
 )
+from doeff.cache import CacheCallSite
 from doeff.handlers import cache_handler, in_memory_cache_handler, sqlite_cache_handler
 from doeff.handlers.cache_handlers import content_address, make_memo_rewriter, memo_rewriters
 from doeff.storage import InMemoryStorage
+from doeff.traceback import attach_doeff_traceback
 
 
 def _run_with_handlers(program: object, *handlers: object):
@@ -118,6 +122,44 @@ def test_cache_decorator_miss_then_hit() -> None:
     assert result.is_ok(), result.error
     assert result.value == (21, 21)
     assert calls["count"] == 1
+
+
+def test_cache_call_site_formats_rust_and_unknown_sentinel_locations() -> None:
+    rust_site = CacheCallSite("<rust>", 0, "SchedulerHandler")
+    unknown_site = CacheCallSite("<unknown>", 0, "mystery_handler")
+
+    assert rust_site.format_location() == "SchedulerHandler (rust_builtin)"
+    assert unknown_site.format_location() == "mystery_handler"
+
+
+def test_cache_decorator_reraises_original_error_with_cache_note() -> None:
+    @cache()
+    @do
+    def expensive() -> EffectGenerator[int]:
+        _ = yield Ask("cache_missing_key")
+        return 1
+
+    result = run(
+        WithHandler(in_memory_cache_handler(), expensive()),
+        handlers=default_handlers(),
+        print_doeff_trace=False,
+    )
+
+    assert result.is_err()
+    error = result.error
+    assert type(error).__name__ == "MissingEnvKeyError"
+
+    notes = getattr(error, "__notes__", ())
+    if sys.version_info >= (3, 11):
+        assert any("During cache computation for" in note for note in notes)
+        assert any("SchedulerHandler (rust_builtin)" in note for note in notes)
+
+    doeff_tb = attach_doeff_traceback(error, traceback_data=result.traceback_data)
+    assert doeff_tb is not None
+
+    rendered = doeff_tb.format_default()
+    assert "MissingEnvKeyError" in rendered
+    assert "cache_missing_key" in rendered
 
 
 def test_in_memory_cache_handler() -> None:

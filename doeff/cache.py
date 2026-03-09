@@ -2,6 +2,7 @@
 
 import inspect
 import os
+import sys
 import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -26,32 +27,15 @@ class CacheCallSite:
     function_name: str
 
     def format_location(self) -> str:
+        if self.source_file == "<rust>":
+            if self.function_name != "<unknown>":
+                return f"{self.function_name} (rust_builtin)"
+            return "(rust_builtin)"
+        if self.source_file == "<unknown>":
+            if self.function_name != "<unknown>":
+                return self.function_name
+            return "(unknown)"
         return f"{self.source_file}:{self.source_line} in {self.function_name}"
-
-
-class CacheComputationError(RuntimeError):
-    """Error raised when the cached computation fails."""
-
-    def __init__(
-        self,
-        func_name: str,
-        call_args: tuple[Any, ...],
-        call_kwargs: dict[str, Any],
-        call_site: CacheCallSite | None = None,
-    ) -> None:
-        location_suffix = f" at {call_site.format_location()}" if call_site is not None else ""
-        message = (
-            f"Cache computation for {func_name} failed"
-            f" with args={call_args!r} kwargs={call_kwargs!r}{location_suffix}"
-        )
-        super().__init__(message)
-        self.func_name = func_name
-        self.call_args = call_args
-        self.call_kwargs = call_kwargs
-        self.call_site = call_site
-
-        if call_site is not None and hasattr(self, "add_note"):
-            self.add_note(f"Cache-decorated call originated at {call_site.format_location()}")
 
 
 T = TypeVar("T")
@@ -180,6 +164,25 @@ def _truncate_for_log(obj: Any, max_len: int = 200) -> str:
 
     half = (max_len - 5) // 2  # Reserve 5 chars for "..."
     return f"{repr_str[:half]}...{repr_str[-half:]}"
+
+
+def _cache_error_note(
+    func_name: str,
+    call_args: tuple[Any, ...],
+    call_kwargs: dict[str, Any],
+    call_site: CacheCallSite | None,
+) -> str:
+    location_suffix = f" at {call_site.format_location()}" if call_site is not None else ""
+    return (
+        f"During cache computation for {func_name}"
+        f" with args={call_args!r} kwargs={call_kwargs!r}{location_suffix}"
+    )
+
+
+def _attach_exception_note(error: BaseException, note: str) -> None:
+    if sys.version_info >= (3, 11):
+        error.add_note(note)
+
 
 @do_wrapper
 def cache(
@@ -352,11 +355,7 @@ def cache(
         def wrapper(*args, **kwargs) -> EffectGenerator[T]:
             context = yield GetExecutionContext()
             call_stack = getattr(context, "active_chain", ())
-            stack_frames: list[Any]
-            if isinstance(call_stack, (list, tuple)):
-                stack_frames = list(call_stack)
-            else:
-                stack_frames = []
+            stack_frames = list(call_stack) if isinstance(call_stack, (list, tuple)) else []
             call_site = _call_site_from_program_frames(stack_frames)
 
             args_for_key, kwargs_for_key = yield build_key_inputs(tuple(args), dict(kwargs))
@@ -392,12 +391,11 @@ def cache(
 
                 yield slog(msg=f"Computation for {func_name} failed, not caching.", level="error")
                 error = _result_error(result)
-                raise CacheComputationError(
-                    func_name,
-                    args,
-                    dict(kwargs),
-                    call_site,
-                ) from error
+                _attach_exception_note(
+                    error,
+                    _cache_error_note(func_name, args, dict(kwargs), call_site),
+                )
+                raise error
 
             @do
             def try_cache_get() -> EffectGenerator[T]:
@@ -520,7 +518,6 @@ def cache_forever(func: Callable[..., EffectGenerator[T]]) -> Callable[..., Effe
 
 __all__ = [
     "CACHE_PATH_ENV_KEY",
-    "CacheComputationError",
     "cache",
     "cache_1hour",
     "cache_1min",

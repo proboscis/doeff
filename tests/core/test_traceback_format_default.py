@@ -189,7 +189,7 @@ def test_format_default_shows_every_handler_and_status_marker() -> None:
     rendered = tb.format_default()
     assert "handlers:" in rendered
     assert "h_active ⚡" in rendered
-    assert "· 1 pending" in rendered
+    assert "· 1 pending: h_pending" in rendered
     assert "h_passed ↗" in rendered
     assert "h_delegated ⇆" in rendered
     assert "h_resumed ✓" in rendered
@@ -480,11 +480,9 @@ def test_format_default_handler_stack_collapses_pending_groups() -> None:
     )
 
     rendered = tb.format_default()
-    assert "· 2 pending" in rendered
+    assert "· 2 pending: pending_1, pending_2" in rendered
     assert "active_handler ✓  handlers/active.py:10" in rendered
-    assert "· 3 pending" in rendered
-    assert "pending_1" not in rendered
-    assert "pending_5" not in rendered
+    assert "· 3 pending: pending_3, pending_4, pending_5" in rendered
 
 
 def test_format_default_handler_stack_all_pending_shows_no_match() -> None:
@@ -516,7 +514,7 @@ def test_format_default_handler_stack_all_pending_shows_no_match() -> None:
     )
 
     rendered = tb.format_default()
-    assert "· 4 pending (no handler matched)" in rendered
+    assert "· 4 pending: p1, p2, p3, p4 (no handler matched)" in rendered
 
 
 def test_format_default_handler_stack_mixed_pending_groups_keep_order() -> None:
@@ -566,11 +564,11 @@ def test_format_default_handler_stack_mixed_pending_groups_keep_order() -> None:
     )
 
     rendered = tb.format_default()
-    first_pending = rendered.index("· 1 pending")
+    first_pending = rendered.index("· 1 pending: p1")
     delegated = rendered.index("delegate_handler ⇆  handlers/delegate.py:7")
-    middle_pending = rendered.index("· 2 pending")
+    middle_pending = rendered.index("· 2 pending: p2, p3")
     threw = rendered.index("throw_handler ✗  handlers/throw.py:9")
-    trailing_pending = rendered.rindex("· 1 pending")
+    trailing_pending = rendered.rindex("· 1 pending: p4")
     assert first_pending < delegated < middle_pending < threw < trailing_pending
 
 
