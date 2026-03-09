@@ -71,6 +71,7 @@ failing()
     )
 
     assert result.returncode == 1
+    assert result.stderr == ""
     payload = parse_json(result.stdout)
     assert payload["status"] == "error"
     assert payload["error"] == "MissingEnvKeyError"
@@ -136,6 +137,7 @@ WithHandler(bad_handler, body())
     )
 
     assert result.returncode == 1
+    assert result.stderr == ""
     payload = parse_json(result.stdout)
     assert payload["status"] == "error"
     assert payload["error"] == "RuntimeError"
@@ -212,6 +214,7 @@ def test_cli_json_uses_doeff_traceback() -> None:
     )
 
     assert result.returncode == 1
+    assert result.stderr == ""
     payload = parse_json(result.stdout)
     assert "doeff Traceback" in str(payload.get("traceback", ""))
 
@@ -225,7 +228,7 @@ def test_cli_text_uses_doeff_traceback() -> None:
     )
 
     assert result.returncode == 1
-    assert "doeff Traceback" in result.stderr
+    assert result.stderr.count("doeff Traceback (most recent call last):") == 1
 
 
 def test_cli_text_prints_doeff_traceback_once() -> None:

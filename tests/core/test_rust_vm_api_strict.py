@@ -190,14 +190,8 @@ def test_print_doeff_trace_warns_on_format_failure(monkeypatch: pytest.MonkeyPat
         def format_default() -> str:
             raise RuntimeError("format failed")
 
-    monkeypatch.setattr(
-        rust_vm_module,
-        "_build_doeff_traceback_if_present",
-        lambda _run_result: BrokenTrace(),
-    )
-
     with pytest.warns(UserWarning, match="Failed to print doeff trace"):
-        rust_vm_module._print_doeff_trace_if_present(SimpleNamespace())
+        rust_vm_module._print_doeff_trace(BrokenTrace())
 
 
 def test_raise_unhandled_effect_uses_typed_exception_classes(
