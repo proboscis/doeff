@@ -595,9 +595,6 @@ class TestLayer5WithHandlerResume:
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 
-    @pytest.mark.xfail(
-        reason="Flaky scheduler deadlock: @cache decorator + sqlite_cache_handler + high concurrency (85t/40c)"
-    )
     def test_cache_decorator_nested_kleisli_high_concurrency_sync(self) -> None:
         """Uses the real @cache decorator with sqlite_cache_handler.
 
@@ -708,9 +705,6 @@ class TestLayer5WithHandlerResume:
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 
-    @pytest.mark.xfail(
-        reason="Flaky scheduler deadlock: GetExecutionContext + cache handler + high concurrency (85t/40c)"
-    )
     def test_get_execution_context_in_nested_kleisli_high_concurrency_sync(self) -> None:
         """Test if GetExecutionContext in nested KleisliProgram triggers the bug."""
         from doeff import Ask, Local
@@ -790,9 +784,6 @@ class TestLayer5WithHandlerResume:
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 
-    @pytest.mark.xfail(
-        reason="Flaky scheduler deadlock: @cache decorator + in_memory_cache_handler + high concurrency (85t/40c)"
-    )
     def test_cache_decorator_in_memory_high_concurrency_sync(self) -> None:
         """Same as sqlite test but with in_memory_cache_handler to isolate I/O vs @cache logic."""
         from doeff import Ask, Local

@@ -1029,8 +1029,10 @@ impl SchedulerState {
 
     fn has_external_waiters(&self) -> bool {
         self.waiters
-            .keys()
-            .any(|item| matches!(item, Waitable::ExternalPromise(_)))
+            .iter()
+            .any(|(item, waiters)| {
+                matches!(item, Waitable::ExternalPromise(_)) && !waiters.is_empty()
+            })
     }
 
     fn parse_external_completion_item(
@@ -1715,11 +1717,12 @@ impl SchedulerState {
             }
         }
 
-        for pending in self.waiters.values_mut() {
+        self.waiters.retain(|_key, pending| {
             pending.retain(|waiter| {
                 !(waiter.waiting_task == waiting_task && waiter.continuation.cont_id == cont_id)
             });
-        }
+            !pending.is_empty()
+        });
     }
 
     pub fn task_cont(&self, task_id: TaskId) -> Option<Continuation> {
