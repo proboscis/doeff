@@ -72,6 +72,7 @@ else:
         coerce_trace_entries,
     )
 
+    _DOEFF_TRACEBACK_ATTR = "doeff_traceback"
     _logger = logging.getLogger(__name__)
 
     @runtime_checkable
@@ -197,7 +198,11 @@ else:
             value = dispatch.value_repr if dispatch.value_repr is not None else "None"
             detail = f"Transfer(other_k, value={value})"
         elif dispatch.action == "threw":
-            detail = f"raise {dispatch.exception_repr}" if dispatch.exception_repr else "raise <exception>"
+            detail = (
+                f"raise {dispatch.exception_repr}"
+                if dispatch.exception_repr
+                else "raise <exception>"
+            )
         elif dispatch.action == "active":
             detail = "in progress"
         return detail
@@ -310,7 +315,9 @@ else:
         def format(self) -> str:
             return self.format_default()
 
-        def _format_program_entry(self, entry: ProgramFrame | ResumeMarker) -> tuple[str, str | None]:
+        def _format_program_entry(
+            self, entry: ProgramFrame | ResumeMarker
+        ) -> tuple[str, str | None]:
             location = f"{entry.source_file}:{entry.source_line}"
             head = f"  [program]  {entry.function_name}()  {location}"
             if isinstance(entry, ResumeMarker):
@@ -322,10 +329,7 @@ else:
                 location = "(built-in)"
             else:
                 location = f"{entry.source_file}:{entry.source_line}"
-            head = (
-                f"  [handler]  {entry.handler_name}  {location}"
-                f"  -> handling {entry.effect_repr}"
-            )
+            head = f"  [handler]  {entry.handler_name}  {location}  -> handling {entry.effect_repr}"
             return head, entry.action_detail
 
         @staticmethod
@@ -354,15 +358,22 @@ else:
                 return "\n".join(lines)
 
             all_pending = all(entry.status == "pending" for entry in stack)
-            pending_count = 0
+            pending_entries: list[HandlerStackEntry] = []
+
+            def flush_pending_group(*, no_match_suffix: bool = False) -> None:
+                if not pending_entries:
+                    return
+                names = ", ".join(entry.handler_name for entry in pending_entries)
+                suffix = " (no handler matched)" if no_match_suffix else ""
+                lines.append(f"  · {len(pending_entries)} pending: {names}{suffix}")
+                pending_entries.clear()
+
             for entry in stack:
                 if entry.status == "pending":
-                    pending_count += 1
+                    pending_entries.append(entry)
                     continue
 
-                if pending_count:
-                    lines.append(f"  · {pending_count} pending")
-                    pending_count = 0
+                flush_pending_group()
 
                 if entry.source_file is None or entry.source_line is None:
                     if entry.handler_kind == "rust_builtin":
@@ -374,9 +385,7 @@ else:
 
                 lines.append(f"  {entry.handler_name} {marker.get(entry.status, '?')}  {location}")
 
-            if pending_count:
-                suffix = " (no handler matched)" if all_pending else ""
-                lines.append(f"  · {pending_count} pending{suffix}")
+            flush_pending_group(no_match_suffix=all_pending)
 
             return "\n".join(lines)
 
@@ -404,9 +413,8 @@ else:
             final_type = type(self.exception)
             final_name = final_type.__name__
             final_qualified = f"{final_type.__module__}.{final_type.__qualname__}"
-            return (
-                rendered_type in (final_name, final_qualified)
-                or rendered_type.endswith(f".{final_name}")
+            return rendered_type in (final_name, final_qualified) or rendered_type.endswith(
+                f".{final_name}"
             )
 
         def _should_render_effect_entry(self, entry: EffectYield) -> bool:
@@ -454,7 +462,9 @@ else:
                     ):
                         stack_lines = ("(same handlers)",)
                     else:
-                        stack_lines = tuple(self._render_handler_stack(entry.handler_stack).splitlines())
+                        stack_lines = tuple(
+                            self._render_handler_stack(entry.handler_stack).splitlines()
+                        )
                     previous_handler_stack = entry.handler_stack
                     previous_spawn_boundary = None
                     lines.append(
@@ -523,7 +533,9 @@ else:
             lines = ["Program Stack:"]
             if program_entries:
                 for entry in program_entries:
-                    lines.append(f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}")
+                    lines.append(
+                        f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
+                    )
             else:
                 lines.append("  (empty)")
 
@@ -620,6 +632,20 @@ else:
         )
         return tb
 
+    def get_attached_doeff_traceback(exception: BaseException | None) -> DoeffTraceback | None:
+        if exception is None:
+            return None
+        try:
+            attached = getattr(exception, _DOEFF_TRACEBACK_ATTR)
+        except AttributeError:
+            return None
+        if isinstance(attached, DoeffTraceback):
+            return attached
+        return None
+
+    def set_attached_doeff_traceback(exception: BaseException, tb: DoeffTraceback) -> None:
+        setattr(exception, _DOEFF_TRACEBACK_ATTR, tb)
+
     __all__ = [
         "DoeffTraceEntry",
         "DoeffTraceback",
@@ -631,5 +657,7 @@ else:
         "attach_doeff_traceback",
         "build_doeff_traceback",
         "capture_python_traceback",
+        "get_attached_doeff_traceback",
         "project_trace",
+        "set_attached_doeff_traceback",
     ]
