@@ -1,6 +1,17 @@
 # SPEC-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 17)
+## Status: Draft (Revision 18)
+
+### Revision 18 Changelog
+
+Changes from Rev 17. Drop Finally DoCtrl; add Discontinue; enforce continuation linearity. Follows OCaml 5 linear continuation discipline.
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R18-A** | Finally DoCtrl removed | **`Finally(cleanup)` DoCtrl removed.** `FinallyBoundary` SegmentKind variant removed. `graft_continuation_finally_boundaries`, `continuation_finally_registry`, and all grafting machinery deleted. User code uses Python `try/finally` with `yield` for cleanup instead. The `try/finally` approach works correctly with Resume, Transfer, and Discontinue, with no VM-level segment manipulation needed. See ISSUE-VM-DISCONTINUE-001. |
+| **R18-B** | Discontinue DoCtrl | **`Discontinue(k, exn?)` added.** Throws an exception into continuation `k` via generator `.throw()`, triggering Python `try/finally` cleanup. Semantically equivalent to OCaml 5 `Effect.Deep.discontinue k exn`. This is a tail operation (handler does not get control back). Default exception is `Discontinued()` if none specified. Implementation reuses `TransferThrow` mechanics. |
+| **R18-C** | Continuation linearity | **Handler MUST consume `k` exactly once.** Valid operations: `Resume(k, v)`, `Transfer(k, v)`, `Discontinue(k, exn)`, or `Pass()`. If a handler returns without consuming `k`, the VM raises `RuntimeError` immediately (not a warning). This matches OCaml 5 where dropping a continuation without `continue`/`discontinue` is a resource leak bug. |
+| **R18-D** | R17-C/R17-E updated | **R17-C**: `FinallyBoundary` removed from `SegmentKind`; only `MaskBoundary` survives. **R17-E**: Superseded by R18-A. |
 
 ### Revision 17 Changelog
 
@@ -10,9 +21,9 @@ Changes from Rev 16. OCaml-style handler-on-segment model; scope_chain eliminati
 |-----|---------|--------|
 | **R17-A** | Handler-on-Segment | **Handlers move from `VM.handlers` HashMap onto PromptBoundary segments.** `HandlerEntry` struct removed. `PromptBoundary` gains `handler: HandlerRef`, `return_clause: Option<ReturnClauseFn>`, and `py_identity: Option<PyShared>`. Handler lookup walks the segment caller chain instead of reading a HashMap. The `VM.handlers: HashMap<Marker, HandlerEntry>` field is deleted. |
 | **R17-B** | scope_chain eliminated | **Handler lookup walks segment caller chain instead of reading `scope_chain` Vec.** `Segment.scope_chain` field removed. `Continuation` no longer captures `scope_chain`. Handler search starts from `current_segment` and follows `caller` links, inspecting `PromptBoundary` segments. This mirrors OCaml 5 fiber handler resolution. |
-| **R17-C** | New SegmentKind variants | **`MaskBoundary` (for mask/mask-behind) and `FinallyBoundary` (continuation-scoped cleanup) added to `SegmentKind`.** `MaskBoundary { masked_effects, behind }` records effect types to skip during handler walk. `FinallyBoundary { cleanup }` registers a cleanup DoExpr that runs when the continuation resolves. |
+| **R17-C** | New SegmentKind variants | **[R18-D: `FinallyBoundary` removed in R18. Only `MaskBoundary` survives.]** `MaskBoundary` (for mask/mask-behind) added to `SegmentKind`. `MaskBoundary { masked_effects, behind }` records effect types to skip during handler walk. |
 | **R17-D** | return(x) clause | **`PromptBoundary` gains optional `return_clause` that transforms the handled body's return value.** Without it, identity (`return x → x`) is implicit. The return clause is a Python callable invoked when the body returns normally. |
-| **R17-E** | Finally DoCtrl | **`Finally(cleanup: DoExpr)` registers continuation-scoped cleanup.** Cleanup runs when the continuation resolves (return, throw, or abandon). Cleanup is a DoExpr (not a Python lambda) because it may need to perform effects. Cleanup travels with captured continuations. Stored in `Segment.finally_cleanups` (LIFO stack). |
+| **R17-E** | Finally DoCtrl | **[SUPERSEDED BY R18-A — Finally DoCtrl removed in R18. Use Python `try/finally` for cleanup. See ISSUE-VM-DISCONTINUE-001.]** ~~`Finally(cleanup: DoExpr)` registers continuation-scoped cleanup. Cleanup runs when the continuation resolves (return, throw, or abandon). Cleanup is a DoExpr (not a Python lambda) because it may need to perform effects. Cleanup travels with captured continuations. Stored in `Segment.finally_cleanups` (LIFO stack).~~ |
 | **R17-F** | WithIntercept removed | **`WithIntercept` superseded by override handler pattern (handler + mask behind).** `InterceptorState` deleted. R16-D WithIntercept redesign is superseded. See SPEC-VM-016 R2 for the override pattern. |
 | **R17-G** | Mask/MaskBehind DoCtrl | **`Mask(effect_types, body)` creates `MaskBoundary` segment.** During handler walk (caller chain traversal), when a `MaskBoundary` is encountered for effect type E, the next `PromptBoundary` handling E is skipped. `MaskBehind` variant skips the handler "behind" (used in override handler desugaring). |
 
@@ -607,7 +618,7 @@ pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send + Sync>;
 ```rust
 /// Segment kind - distinguishes prompt boundaries from normal segments.
 /// [R17-A] PromptBoundary now carries handler data directly (no separate HandlerEntry).
-/// [R17-C] MaskBoundary and FinallyBoundary added.
+/// [R17-C] MaskBoundary added. [R18-D] FinallyBoundary removed.
 #[derive(Debug, Clone)]
 pub enum SegmentKind {
     /// Normal segment (user code, handler execution)
@@ -636,13 +647,8 @@ pub enum SegmentKind {
         /// true = MaskBehind (skip handler "behind" — used in override pattern)
         behind: bool,
     },
-    /// [R17-C] Finally boundary segment (created by Finally DoCtrl).
-    /// Cleanup runs when the continuation resolves (return, throw, or abandon).
-    FinallyBoundary {
-        /// Cleanup DoExpr to run on continuation resolution.
-        /// DoExpr (not Python lambda) because cleanup may perform effects.
-        cleanup: DoExpr,
-    },
+    // [R18-D] FinallyBoundary REMOVED. Use Python try/finally for cleanup.
+    // See ISSUE-VM-DISCONTINUE-001.
 }
 
 /// Delimited continuation frame.
@@ -652,7 +658,7 @@ pub enum SegmentKind {
 ///
 /// [R17-B] scope_chain removed. Handler lookup walks segment.caller chain
 /// inspecting PromptBoundary segments directly.
-/// [R17-E] finally_cleanups added for continuation-scoped cleanup.
+/// [R18-A] finally_cleanups removed (use Python try/finally instead).
 #[derive(Debug)]
 pub struct Segment {
     /// Handler identity this segment belongs to
@@ -667,13 +673,11 @@ pub struct Segment {
     /// [R17-B] scope_chain REMOVED. Handler lookup walks caller chain instead.
     // pub scope_chain: Vec<Marker>,  // DELETED in R17
     
-    /// Segment kind (Normal, PromptBoundary, MaskBoundary, or FinallyBoundary)
+    /// Segment kind (Normal, PromptBoundary, or MaskBoundary)
     pub kind: SegmentKind,
     
-    /// [R17-E] LIFO cleanup stack for continuation-scoped cleanup.
-    /// Cleanups are DoExpr nodes that run when the continuation resolves
-    /// (return, throw, or abandon). Registered via Finally DoCtrl.
-    pub finally_cleanups: Vec<DoExpr>,
+    // [R18-A] finally_cleanups REMOVED. Use Python try/finally for cleanup.
+    // pub finally_cleanups: Vec<DoExpr>,  // DELETED in R18
 }
 
 impl Segment {
@@ -683,7 +687,6 @@ impl Segment {
             frames: Vec::new(),
             caller,
             kind: SegmentKind::Normal,
-            finally_cleanups: Vec::new(),
         }
     }
     
@@ -745,7 +748,7 @@ impl Segment {
 /// [R17-B] scope_chain removed. Handler lookup walks the segment caller chain
 /// at resume time — the caller link on the materialized segment provides the
 /// handler ordering implicitly.
-/// [R17-E] finally_cleanups travels with captured continuations.
+/// [R18-A] finally_cleanups removed (use Python try/finally instead).
 #[derive(Debug, Clone)]
 pub struct Continuation {
     /// Unique identifier for one-shot tracking
@@ -794,10 +797,8 @@ pub struct Continuation {
     /// at capture time, allowing faithful restoration on resume.
     pub handler_identities: Vec<Option<PyShared>>,
     
-    /// [R17-E] Continuation-scoped cleanups that travel with the continuation.
-    /// When the continuation resolves (return, throw, or abandon), these
-    /// cleanup DoExprs are executed in LIFO order.
-    pub finally_cleanups: Arc<Vec<DoExpr>>,
+    // [R18-A] finally_cleanups REMOVED. Use Python try/finally for cleanup.
+    // pub finally_cleanups: Arc<Vec<DoExpr>>,  // DELETED in R18
 }
 
 impl Continuation {
@@ -863,10 +864,10 @@ pub struct DispatchContext {
     pub k_user: Continuation,
     
     /// Prompt boundary for the root handler of this dispatch.
-    /// Used to detect handler return that abandons the callsite.
+    /// [R18-C] If handler returns without consuming k_user, VM raises RuntimeError.
     pub prompt_seg_id: SegmentId,
     
-    /// Marked true when callsite is resolved (Resume/Transfer/Return)
+    /// Marked true when callsite is resolved (Resume/Transfer/Discontinue/Return)
     pub completed: bool,
 }
 ```
@@ -1079,7 +1080,8 @@ pub enum DoExprTag {
     Pass        = 19,   // [R15-A] terminal pass-through (old Delegate semantics)
     Mask        = 20,   // [R17-G] mask effect types within body
     MaskBehind  = 21,   // [R17-G] mask handler "behind" (override pattern)
-    Finally     = 22,   // [R17-E] register continuation-scoped cleanup
+    // Finally   = 22,   // [R17-E] [SUPERSEDED BY R18-A — removed]
+    Discontinue = 23,   // [R18-B] throw exception into continuation for cleanup
     GetHandlers = 9,
     GetCallStack = 10,
     GetContinuation = 11,
@@ -3907,14 +3909,16 @@ pub enum DoCtrl {
         body: Py<PyAny>,
     },
 
-    /// [R17-E] Finally(cleanup) - Register continuation-scoped cleanup.
-    /// `cleanup` is a DoExpr (not a Python lambda) because it may perform effects.
-    /// Cleanup runs when the continuation resolves: normal return, exception,
-    /// or abandonment. Cleanup is appended to `Segment.finally_cleanups` (LIFO)
-    /// and travels with captured continuations.
-    Finally {
-        /// Cleanup DoExpr to execute on continuation resolution
-        cleanup: DoExpr,
+    /// [R17-E] [SUPERSEDED BY R18-A — removed. Use Python try/finally.]
+
+    /// [R18-B] Discontinue(k, exn) - Throw exception into continuation for cleanup.
+    /// Like Transfer but delivers an exception instead of a value.
+    /// k's generator receives the exception via .throw(), Python try/finally fires.
+    /// Follows OCaml 5 `Effect.Deep.discontinue k exn` semantics.
+    /// This is a tail operation — handler does not get control back.
+    Discontinue {
+        continuation: Continuation,
+        exception: PyException,  // default: Discontinued() if not specified
     },
 }
 ```
