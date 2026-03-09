@@ -23,9 +23,17 @@ def _read(rel: str) -> str:
 
 def test_p0_pyvm_to_generator_strict_has_no_duck_paths() -> None:
     src = _read("packages/doeff-vm/src/pyvm.rs")
+    assert 'getattr("to_generator")' not in src
     assert 'get_type().getattr("to_generator")' not in src
     assert 'hasattr("send")' not in src
     assert 'hasattr("throw")' not in src
+
+
+def test_p0_pyvm_has_no_python_package_imports_or_traceback_attr_probing() -> None:
+    src = _read("packages/doeff-vm/src/pyvm.rs")
+    assert 'py.import("doeff.errors")' not in src
+    assert 'getattr("active_chain")' not in src
+    assert 'getattr("entries")' not in src
 
 
 def test_p0_handler_candidate_has_no_shape_heuristics() -> None:

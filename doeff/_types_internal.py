@@ -454,16 +454,10 @@ EffectFailure = EffectFailureError
 
 from doeff.program import DoExpr, Program, ProgramBase
 
-try:
-    from doeff_vm import EffectBase as _RustEffectBase
-except Exception:  # pragma: no cover - fallback for docs/type tooling without native module
-    _RustEffectBase = object
+from doeff_vm import EffectBase as _RustEffectBase
 
 
 def _is_rust_effect_subclass(subclass: type[Any]) -> bool:
-    if _RustEffectBase is object:
-        return False
-
     try:
         return issubclass(subclass, _RustEffectBase)
     except TypeError:

@@ -127,6 +127,7 @@ DoThunkBase = getattr(_ext, "DoThunkBase", None)
 PyVM = _ext.PyVM
 RunResult = _ext.RunResult
 DoeffTracebackData = _ext.DoeffTracebackData
+Discontinued = _ext.Discontinued
 UnhandledEffectError = _ext.UnhandledEffectError
 NoMatchingHandlerError = _ext.NoMatchingHandlerError
 Ok = getattr(_ext, "Ok", None)
@@ -286,6 +287,7 @@ __all__ = [
     "CreatePromiseEffect",
     "CreateSemaphoreEffect",
     "Delegate",
+    "Discontinued",
     "Discontinue",
     "DoCtrlBase",
     "DoExpr",
