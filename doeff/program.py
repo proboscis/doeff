@@ -32,12 +32,9 @@ T = TypeVar("T")
 U = TypeVar("U")
 V = TypeVar("V")
 
-try:
-    import doeff_vm as _doeff_vm
+import doeff_vm as _doeff_vm
 
-    _RustDoExprBase = _doeff_vm.DoExpr
-except Exception:  # pragma: no cover - fallback for docs/type tooling without native module
-    _RustDoExprBase = object
+_RustDoExprBase = _doeff_vm.DoExpr
 
 
 def _safe_issubclass(candidate: Any, parent: Any) -> bool:
@@ -198,12 +195,7 @@ class DoCtrl(DoExpr[T]):
 
 def _is_rust_program_subclass(subclass: type[Any]) -> bool:
     try:
-        import doeff_vm
-    except ImportError:
-        return False
-
-    try:
-        return issubclass(subclass, doeff_vm.DoExpr)
+        return issubclass(subclass, _RustDoExprBase)
     except TypeError:
         return False
 
