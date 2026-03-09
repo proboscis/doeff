@@ -1,11 +1,14 @@
 use std::sync::{Arc, Mutex};
 
-use pyo3::exceptions::{PyBaseException, PyRuntimeError, PyStopIteration, PyTypeError};
+use pyo3::exceptions::{
+    PyAttributeError, PyBaseException, PyRuntimeError, PyStopIteration, PyTypeError,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
 pyo3::create_exception!(doeff_vm, UnhandledEffectError, PyTypeError);
 pyo3::create_exception!(doeff_vm, NoMatchingHandlerError, UnhandledEffectError);
+pyo3::create_exception!(doeff_vm, Discontinued, pyo3::exceptions::PyException);
 
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
@@ -64,7 +67,7 @@ fn build_traceback_data_pyobject(
     py: Python<'_>,
     trace: Vec<crate::capture::TraceEntry>,
     active_chain: Vec<crate::capture::ActiveChainEntry>,
-) -> Option<Py<PyAny>> {
+) -> Option<Py<PyDoeffTracebackData>> {
     let entries = match Value::Trace(trace).to_pyobject(py) {
         Ok(value) => value.unbind(),
         Err(err) => {
@@ -94,10 +97,13 @@ fn build_traceback_data_pyobject(
             return None;
         }
     };
-    Some(data.into_any().unbind())
+    Some(data.unbind())
 }
 
-fn vmerror_to_pyerr_with_traceback_data(py: Python<'_>, e: VMError) -> (PyErr, Option<Py<PyAny>>) {
+fn vmerror_to_pyerr_with_traceback_data(
+    py: Python<'_>,
+    e: VMError,
+) -> (PyErr, Option<Py<PyDoeffTracebackData>>) {
     match e {
         VMError::OneShotViolation { .. } => (PyRuntimeError::new_err(e.to_string()), None),
         VMError::UnhandledEffect { .. } => (UnhandledEffectError::new_err(e.to_string()), None),
@@ -573,7 +579,7 @@ impl PyVM {
         &self,
         py: Python<'_>,
         error: Bound<'_, PyAny>,
-        traceback_data: Option<Bound<'_, PyAny>>,
+        traceback_data: Option<Bound<'_, PyDoeffTracebackData>>,
     ) -> PyResult<PyRunResult> {
         let raw_store = pyo3::types::PyDict::new(py);
         for (k, v) in &self.vm.rust_store.state {
@@ -584,12 +590,9 @@ impl PyVM {
             log_list.append(entry.to_pyobject(py)?)?;
         }
         let exc = pyerr_to_exception(py, PyErr::from_value(error))?;
-        let traceback_data_obj = traceback_data
-            .filter(|obj| !obj.is_none())
-            .map(Bound::unbind);
         Ok(PyRunResult {
             result: Err(exc),
-            traceback_data: traceback_data_obj,
+            traceback_data: traceback_data.map(Bound::unbind),
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
@@ -616,7 +619,9 @@ impl PyVM {
                 self.vm.end_active_run_session();
                 let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
                 let err_obj = pyerr.value(py).clone().into_any();
-                let traceback_obj = traceback_data.unwrap_or_else(|| py.None());
+                let traceback_obj = traceback_data
+                    .map(|obj| obj.into_bound(py).into_any().unbind())
+                    .unwrap_or_else(|| py.None());
                 let elems: Vec<Bound<'_, pyo3::PyAny>> = vec![
                     "error".into_pyobject(py)?.into_any(),
                     err_obj,
@@ -1769,18 +1774,21 @@ pub(crate) fn classify_yielded_bound(
     }
 
     if obj.is_instance_of::<PyDoExprBase>() {
-        let to_generator = obj.getattr("to_generator").map_err(|_| {
-            PyTypeError::new_err("DoExpr object is missing callable to_generator()")
+        let generated = obj.call_method0("to_generator").map_err(|err| {
+            if err
+                .matches(py, py.get_type::<PyAttributeError>())
+                .unwrap_or(false)
+            {
+                PyTypeError::new_err("DoExpr object is missing to_generator()")
+            } else {
+                err
+            }
         })?;
-        if !to_generator.is_callable() {
-            return Err(PyTypeError::new_err("DoExpr.to_generator must be callable"));
-        }
         let ty_name = obj
             .get_type()
             .name()
             .map(|n| n.to_string())
             .unwrap_or_else(|_| "DoExpr".to_string());
-        let generated = to_generator.call0()?;
         let metadata = CallMetadata::new(
             format!("{ty_name}.to_generator"),
             "<doexpr>".to_string(),
@@ -1830,10 +1838,8 @@ fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
 }
 
 fn default_discontinued_exception(py: Python<'_>) -> PyResult<Py<PyAny>> {
-    py.import("doeff.errors")?
-        .getattr("Discontinued")?
-        .call0()
-        .map(|value| value.into_any().unbind())
+    let err = Discontinued::new_err(());
+    Ok(err.value(py).clone().into_any().unbind())
 }
 
 fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
@@ -1965,7 +1971,7 @@ impl PyDoeffTracebackData {
 pub struct PyRunResult {
     result: Result<Py<PyAny>, PyException>,
     #[pyo3(get)]
-    traceback_data: Option<Py<PyAny>>,
+    traceback_data: Option<Py<PyDoeffTracebackData>>,
     raw_store: Py<pyo3::types::PyDict>,
     log: Py<PyAny>,
     trace: Py<PyAny>,
@@ -2001,27 +2007,30 @@ impl PyRunResult {
         format!("  {}", fallback)
     }
 
-    fn format_traceback_data_preview(traceback_data: &Bound<'_, PyAny>, verbose: bool) -> String {
+    fn format_traceback_data_preview(
+        traceback_data: &Bound<'_, PyDoeffTracebackData>,
+        verbose: bool,
+    ) -> String {
         let mut lines: Vec<String> = Vec::new();
         let max_items = if verbose { 32 } else { 8 };
+        let py = traceback_data.py();
+        let traceback_data_ref = traceback_data.borrow();
+        let active_chain = traceback_data_ref.active_chain.bind(py);
+        let entries = traceback_data_ref.entries.bind(py);
 
-        if let Ok(active_chain) = traceback_data.getattr("active_chain") {
-            if !active_chain.is_none() {
-                lines.push("ActiveChain:".to_string());
-                lines.push(Self::preview_sequence(&active_chain, max_items));
-            }
+        if !active_chain.is_none() {
+            lines.push("ActiveChain:".to_string());
+            lines.push(Self::preview_sequence(active_chain, max_items));
         }
 
-        if let Ok(entries) = traceback_data.getattr("entries") {
-            let entry_count = entries.len().ok();
-            if verbose {
-                lines.push("TraceEntries:".to_string());
-                lines.push(Self::preview_sequence(&entries, max_items));
-            } else if let Some(count) = entry_count {
-                lines.push(format!("TraceEntries: {count}"));
-            } else {
-                lines.push("TraceEntries: <unknown>".to_string());
-            }
+        let entry_count = entries.len().ok();
+        if verbose {
+            lines.push("TraceEntries:".to_string());
+            lines.push(Self::preview_sequence(entries, max_items));
+        } else if let Some(count) = entry_count {
+            lines.push(format!("TraceEntries: {count}"));
+        } else {
+            lines.push("TraceEntries: <unknown>".to_string());
         }
 
         if lines.is_empty() {
@@ -3839,7 +3848,7 @@ mod tests {
             "VM-PROTO-004 FAIL: missing DoeffTracebackData pyclass"
         );
         assert!(
-            runtime_src.contains("traceback_data: Option<Py<PyAny>>"),
+            runtime_src.contains("traceback_data: Option<Py<PyDoeffTracebackData>>"),
             "VM-PROTO-004 FAIL: RunResult missing traceback_data field"
         );
     }
@@ -3863,6 +3872,10 @@ mod tests {
         assert!(
             !runtime_src.contains(".import(\"doeff.traceback\")"),
             "VM-PROTO-004 FAIL: doeff.traceback import still present"
+        );
+        assert!(
+            !runtime_src.contains(".import(\"doeff.errors\")"),
+            "VM-PROTO-004 FAIL: doeff.errors import still present"
         );
     }
 
@@ -4105,6 +4118,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "NoMatchingHandlerError",
         m.py().get_type::<NoMatchingHandlerError>(),
     )?;
+    m.add("Discontinued", m.py().get_type::<Discontinued>())?;
     m.add_class::<PyVM>()?;
     m.add_class::<crate::kleisli::PyKleisli>()?;
     m.add_class::<DoeffGeneratorFn>()?;
