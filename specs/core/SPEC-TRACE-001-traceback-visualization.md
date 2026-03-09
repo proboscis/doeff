@@ -256,7 +256,7 @@ doeff Traceback (most recent call last):
     handlers:
       StateHandler ↗  (rust_builtin)
       ReaderHandler ↗  (rust_builtin)
-      · 3 pending: WriterHandler, ResultHandler, SchedulerHandler
+      · 3 pending: WriterHandler, ResultSafeHandler, SchedulerHandler
       LazyAskHandler ✓  doeff/handlers/lazy_ask.py:42
       · 1 pending: sync_await_handler
     → resumed with 30
@@ -306,7 +306,7 @@ doeff Traceback (most recent call last):
     yield Ask("rate_limit")
     handlers:
       rate_limiter ✓  app.py:6
-      · 8 pending: auth_handler, StateHandler, ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
+      · 8 pending: auth_handler, StateHandler, ReaderHandler, WriterHandler, ResultSafeHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     → resumed with 100
 
   call_api()  app.py:17
@@ -346,7 +346,7 @@ doeff Traceback (most recent call last):
     yield Put("result", "not-an-int")
     handlers:
       strict_handler ✗  app.py:3
-      · 7 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
+      · 7 pending: StateHandler, ReaderHandler, WriterHandler, ResultSafeHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     ✗ strict_handler raised TypeError("expected int, got str")
 
 TypeError: expected int, got str
@@ -378,7 +378,7 @@ doeff Traceback (most recent call last):
     handlers:
       StateHandler ↗  (rust_builtin)
       ReaderHandler ↗  (rust_builtin)
-      · 3 pending: WriterHandler, ResultHandler, SchedulerHandler
+      · 3 pending: WriterHandler, ResultSafeHandler, SchedulerHandler
       LazyAskHandler ✗  doeff/handlers/lazy_ask.py:42
       · 1 pending: sync_await_handler
     ✗ LazyAskHandler raised MissingEnvKeyError("Environment key not found: 'database_url'")
@@ -410,7 +410,7 @@ doeff Traceback (most recent call last):
     yield Put("x", 1)
     handlers:
       StateHandler ✓  (rust_builtin)
-      · 6 pending: ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
+      · 6 pending: ReaderHandler, WriterHandler, ResultSafeHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     → resumed with None
 
   outer()  app.py:4
@@ -421,7 +421,7 @@ doeff Traceback (most recent call last):
     handlers:
       my_handler ↗  app.py:7
       StateHandler ✓  (rust_builtin)
-      · 5 pending: ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler
+      · 5 pending: ReaderHandler, WriterHandler, ResultSafeHandler, SchedulerHandler, LazyAskHandler
     → resumed with None
 
   inner()  app.py:9
@@ -488,7 +488,7 @@ doeff Traceback (most recent call last):
     yield Ask("mode")
     handlers:
       short_circuit_handler ⏎  app.py:3
-      · 7 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
+      · 7 pending: StateHandler, ReaderHandler, WriterHandler, ResultSafeHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     ⏎ short_circuit_handler returned "fallback" (continuation abandoned)
 
   outer()  app.py:13
@@ -533,14 +533,14 @@ doeff Traceback (most recent call last):
     yield Ask("redirect")
     handlers:
       redirect_handler ⇢  app.py:10
-      · 7 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
+      · 7 pending: StateHandler, ReaderHandler, WriterHandler, ResultSafeHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     ⇢ redirect_handler transferred to program_a
 
   program_a()  app.py:7
     yield Put("result", "redirected_value")
     handlers:
       StateHandler ✓  (rust_builtin)
-      · 6 pending: ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
+      · 6 pending: ReaderHandler, WriterHandler, ResultSafeHandler, SchedulerHandler, LazyAskHandler, sync_await_handler
     → resumed with None
 
   program_a()  app.py:8
@@ -594,7 +594,7 @@ doeff Traceback (most recent call last):
   process_batch()  app.py:13
     yield Gather(*tasks)
     handlers:
-      · 4 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler
+      · 4 pending: StateHandler, ReaderHandler, WriterHandler, ResultSafeHandler
       SchedulerHandler ⇢  (rust_builtin)
       · 2 pending: spawn_intercept_handler, sync_await_handler
     ⇢ task 3 failed during Gather
@@ -604,7 +604,7 @@ doeff Traceback (most recent call last):
   fetch_data("https://api.example.com/item/3")  app.py:3
     yield Await(http_get(url))
     handlers:
-      · 6 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler, SchedulerHandler, spawn_intercept_handler
+      · 6 pending: StateHandler, ReaderHandler, WriterHandler, ResultSafeHandler, SchedulerHandler, spawn_intercept_handler
       async_await_handler ✓  doeff/effects/future.py:120
     → resumed with Response(status=500)
 
@@ -656,7 +656,7 @@ doeff Traceback (most recent call last):
   orchestrator()  app.py:16
     yield Gather(*batches)
     handlers:
-      · 4 pending: StateHandler, ReaderHandler, WriterHandler, ResultHandler
+      · 4 pending: StateHandler, ReaderHandler, WriterHandler, ResultSafeHandler
       SchedulerHandler ⇢  (rust_builtin)
       · 2 pending: spawn_intercept_handler, sync_await_handler
     ⇢ task 2 failed during Gather
