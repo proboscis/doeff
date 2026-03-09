@@ -195,16 +195,12 @@ def _build_unified_types():
         "Ok": getattr(_t, "Ok", None),
         "Err": getattr(_t, "Err", None),
     }
-    rust_types: dict = {}
-    try:
-        from doeff_vm import doeff_vm as _ext
+    from doeff_vm import doeff_vm as _ext
 
-        rust_types = {
-            "Ok": getattr(_ext, "Ok", None),
-            "Err": getattr(_ext, "Err", None),
-        }
-    except ImportError:
-        pass
+    rust_types: dict = {
+        "Ok": getattr(_ext, "Ok", None),
+        "Err": getattr(_ext, "Err", None),
+    }
 
     unified = {}
     for name in ("Ok", "Err"):
