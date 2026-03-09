@@ -103,6 +103,7 @@ from .session import (
     session_scope,
     stop_session,
 )
+from .session_backend import SessionBackend
 from .tmux import (
     SessionAlreadyExistsError,
     SessionConfig,
@@ -110,6 +111,7 @@ from .tmux import (
     SessionNotFoundError,
     TmuxError,
     TmuxNotAvailableError,
+    TmuxSessionBackend,
 )
 
 __all__ = [
@@ -150,6 +152,7 @@ __all__ = [
     "SendEffect",
     # Tmux
     "SessionAlreadyExistsError",
+    "SessionBackend",
     "SessionConfig",
     # Effects API - Types
     "SessionHandle",
@@ -163,6 +166,7 @@ __all__ = [
     "TmuxAgentHandler",
     "TmuxError",
     "TmuxNotAvailableError",
+    "TmuxSessionBackend",
     "WithSessionEffect",
     # Effect handlers (doeff_vm protocol)
     "agent_effectful_handler",

@@ -35,6 +35,7 @@ from doeff_agents.monitor import (
     hash_content,
     is_waiting_for_input,
 )
+from doeff_agents.session_backend import SessionBackend
 
 
 class AgentHandler(ABC):
@@ -99,8 +100,9 @@ def get_adapter(agent_type: AgentType) -> AgentAdapter:
 class TmuxAgentHandler(AgentHandler):
     """Handler that executes effects using real tmux sessions."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, backend: SessionBackend | None = None) -> None:
         self._sessions: dict[str, SessionState] = {}
+        self._backend = backend or tmux.get_default_backend()
 
     def handle_launch(self, effect: LaunchEffect) -> SessionHandle:
         """Launch a new agent session in tmux."""
@@ -110,31 +112,31 @@ class TmuxAgentHandler(AgentHandler):
         if not adapter.is_available():
             raise AgentNotAvailableError(f"{config.agent_type.value} CLI is not available")
 
-        if tmux.has_session(effect.session_name):
+        if self._backend.has_session(effect.session_name):
             raise SessionAlreadyExistsError(f"Session {effect.session_name} already exists")
 
         tmux_config = tmux.SessionConfig(
             session_name=effect.session_name,
             work_dir=config.work_dir,
         )
-        session_info = tmux.new_session(tmux_config)
+        session_info = self._backend.new_session(tmux_config)
 
         argv = adapter.launch_command(config)
         command = shlex.join(argv)
 
         if adapter.injection_method == InjectionMethod.ARG:
-            tmux.send_keys(session_info.pane_id, command, literal=False)
+            self._backend.send_keys(session_info.pane_id, command, literal=False)
         else:
-            tmux.send_keys(session_info.pane_id, command, literal=False)
+            self._backend.send_keys(session_info.pane_id, command, literal=False)
             if adapter.ready_pattern and not self._wait_for_ready(
                 session_info.pane_id, adapter.ready_pattern, effect.ready_timeout
             ):
-                tmux.kill_session(effect.session_name)
+                self._backend.kill_session(effect.session_name)
                 raise AgentReadyTimeoutError(
                     f"Agent did not become ready within {effect.ready_timeout}s"
                 )
             if config.prompt:
-                tmux.send_keys(session_info.pane_id, config.prompt)
+                self._backend.send_keys(session_info.pane_id, config.prompt)
 
         handle = SessionHandle(
             session_name=effect.session_name,
@@ -152,16 +154,16 @@ class TmuxAgentHandler(AgentHandler):
         state = self._sessions.get(handle.session_name)
 
         if state is None:
-            if not tmux.has_session(handle.session_name):
+            if not self._backend.has_session(handle.session_name):
                 return Observation(status=SessionStatus.EXITED)
             state = SessionState(handle=handle, adapter=get_adapter(handle.agent_type))
             self._sessions[handle.session_name] = state
 
-        if not tmux.has_session(handle.session_name):
+        if not self._backend.has_session(handle.session_name):
             state.status = SessionStatus.EXITED
             return Observation(status=SessionStatus.EXITED)
 
-        output = tmux.capture_pane(handle.pane_id)
+        output = self._backend.capture_pane(handle.pane_id)
 
         skip_lines = 5
         if hasattr(state.adapter, "status_bar_lines"):
@@ -197,16 +199,16 @@ class TmuxAgentHandler(AgentHandler):
     def handle_capture(self, effect: CaptureEffect) -> str:
         """Capture pane output."""
         handle = effect.handle
-        if not tmux.has_session(handle.session_name):
+        if not self._backend.has_session(handle.session_name):
             raise SessionNotFoundError(f"Session {handle.session_name} does not exist")
-        return tmux.capture_pane(handle.pane_id, effect.lines)
+        return self._backend.capture_pane(handle.pane_id, effect.lines)
 
     def handle_send(self, effect: SendEffect) -> None:
         """Send message to session."""
         handle = effect.handle
-        if not tmux.has_session(handle.session_name):
+        if not self._backend.has_session(handle.session_name):
             raise SessionNotFoundError(f"Session {handle.session_name} does not exist")
-        tmux.send_keys(
+        self._backend.send_keys(
             handle.pane_id,
             effect.message,
             literal=effect.literal,
@@ -216,8 +218,8 @@ class TmuxAgentHandler(AgentHandler):
     def handle_stop(self, effect: StopEffect) -> None:
         """Stop session."""
         handle = effect.handle
-        if tmux.has_session(handle.session_name):
-            tmux.kill_session(handle.session_name)
+        if self._backend.has_session(handle.session_name):
+            self._backend.kill_session(handle.session_name)
         state = self._sessions.get(handle.session_name)
         if state:
             state.status = SessionStatus.STOPPED
@@ -230,7 +232,7 @@ class TmuxAgentHandler(AgentHandler):
         """Wait for agent to be ready for input."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            output = tmux.capture_pane(target, 50)
+            output = self._backend.capture_pane(target, 50)
             if re.search(pattern, output):
                 return True
             time.sleep(0.2)

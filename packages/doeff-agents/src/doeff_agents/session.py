@@ -24,6 +24,7 @@ from .monitor import (
     hash_content,
     is_waiting_for_input,
 )
+from .session_backend import SessionBackend
 
 
 class AgentLaunchError(Exception):
@@ -46,6 +47,7 @@ class AgentSession:
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     _monitor_state: MonitorState = field(default_factory=MonitorState)
     _adapter: AgentAdapter | None = field(default=None, repr=False)
+    _backend: SessionBackend | None = field(default=None, repr=False)
 
     @property
     def is_terminal(self) -> bool:
@@ -84,6 +86,7 @@ def launch_session(
     config: LaunchConfig,
     *,
     ready_timeout: float = 30.0,
+    backend: SessionBackend | None = None,
 ) -> AgentSession:
     """Launch a new agent session in tmux.
 
@@ -100,6 +103,7 @@ def launch_session(
         AgentReadyTimeoutError: If agent doesn't become ready within timeout
         tmux.SessionAlreadyExistsError: If session already exists
     """
+    active_backend = backend or tmux.get_default_backend()
     adapter = get_adapter(config.agent_type)
 
     if not adapter.is_available():
@@ -110,7 +114,7 @@ def launch_session(
         session_name=session_name,
         work_dir=config.work_dir,
     )
-    session_info = tmux.new_session(tmux_config)
+    session_info = active_backend.new_session(tmux_config)
 
     # Build and send command
     argv = adapter.launch_command(config)
@@ -118,18 +122,18 @@ def launch_session(
 
     if adapter.injection_method == InjectionMethod.ARG:
         # Command includes prompt - send directly
-        tmux.send_keys(session_info.pane_id, command)
+        active_backend.send_keys(session_info.pane_id, command)
     else:
         # Send command first, wait for ready, then send prompt
-        tmux.send_keys(session_info.pane_id, command)
+        active_backend.send_keys(session_info.pane_id, command)
         if adapter.ready_pattern and not _wait_for_ready(
-            session_info.pane_id, adapter.ready_pattern, ready_timeout
+            session_info.pane_id, adapter.ready_pattern, ready_timeout, backend=active_backend
         ):
             # Clean up on timeout
-            tmux.kill_session(session_name)
+            active_backend.kill_session(session_name)
             raise AgentReadyTimeoutError(f"Agent did not become ready within {ready_timeout}s")
         if config.prompt:
-            tmux.send_keys(session_info.pane_id, config.prompt)
+            active_backend.send_keys(session_info.pane_id, config.prompt)
 
     return AgentSession(
         session_name=session_name,
@@ -138,6 +142,7 @@ def launch_session(
         work_dir=config.work_dir,
         status=SessionStatus.BOOTING,
         _adapter=adapter,
+        _backend=active_backend,
     )
 
 
@@ -147,6 +152,7 @@ def session_scope(
     config: LaunchConfig,
     *,
     ready_timeout: float = 30.0,
+    backend: SessionBackend | None = None,
 ) -> Iterator[AgentSession]:
     """Context manager for agent session lifecycle.
 
@@ -158,7 +164,12 @@ def session_scope(
                 monitor_session(session)
                 time.sleep(1)
     """
-    session = launch_session(session_name, config, ready_timeout=ready_timeout)
+    session = launch_session(
+        session_name,
+        config,
+        ready_timeout=ready_timeout,
+        backend=backend,
+    )
     try:
         yield session
     finally:
@@ -181,7 +192,9 @@ def monitor_session(
     Returns:
         New status if changed, None otherwise
     """
-    if not tmux.has_session(session.session_name):
+    backend = session._backend or tmux.get_default_backend()
+
+    if not backend.has_session(session.session_name):
         old_status = session.status
         session.status = SessionStatus.EXITED
         if on_status_change and old_status != SessionStatus.EXITED:
@@ -189,7 +202,7 @@ def monitor_session(
         return SessionStatus.EXITED
 
     # Use pane_id for reliable targeting
-    output = tmux.capture_pane(session.pane_id)
+    output = backend.capture_pane(session.pane_id)
 
     # Get skip_lines from adapter if available
     skip_lines = 5
@@ -232,33 +245,45 @@ def send_message(session: AgentSession, message: str, *, enter: bool = True) -> 
         message: The message text
         enter: If True, press Enter after message
     """
-    if not tmux.has_session(session.session_name):
+    backend = session._backend or tmux.get_default_backend()
+
+    if not backend.has_session(session.session_name):
         raise RuntimeError(f"Session {session.session_name} does not exist")
-    tmux.send_keys(session.pane_id, message, enter=enter)
+    backend.send_keys(session.pane_id, message, enter=enter)
 
 
 def capture_output(session: AgentSession, lines: int = 100) -> str:
     """Capture current pane output."""
-    return tmux.capture_pane(session.pane_id, lines)
+    backend = session._backend or tmux.get_default_backend()
+    return backend.capture_pane(session.pane_id, lines)
 
 
 def stop_session(session: AgentSession) -> None:
     """Stop (kill) an agent session."""
-    if tmux.has_session(session.session_name):
-        tmux.kill_session(session.session_name)
+    backend = session._backend or tmux.get_default_backend()
+    if backend.has_session(session.session_name):
+        backend.kill_session(session.session_name)
     session.status = SessionStatus.STOPPED
 
 
 def attach_session(session: AgentSession) -> None:
     """Attach to a session (blocks until detached)."""
-    tmux.attach_session(session.session_name)
+    backend = session._backend or tmux.get_default_backend()
+    backend.attach_session(session.session_name)
 
 
-def _wait_for_ready(target: str, pattern: str, timeout: float) -> bool:
+def _wait_for_ready(
+    target: str,
+    pattern: str,
+    timeout: float,
+    *,
+    backend: SessionBackend | None = None,
+) -> bool:
     """Wait for agent to be ready for input."""
+    active_backend = backend or tmux.get_default_backend()
     deadline = time.time() + timeout
     while time.time() < deadline:
-        output = tmux.capture_pane(target, 50)
+        output = active_backend.capture_pane(target, 50)
         if re.search(pattern, output):
             return True
         time.sleep(0.2)
@@ -300,9 +325,15 @@ async def async_session_scope(
     config: LaunchConfig,
     *,
     ready_timeout: float = 30.0,
+    backend: SessionBackend | None = None,
 ) -> AsyncIterator[AgentSession]:
     """Async context manager for agent session lifecycle."""
-    session = launch_session(session_name, config, ready_timeout=ready_timeout)
+    session = launch_session(
+        session_name,
+        config,
+        ready_timeout=ready_timeout,
+        backend=backend,
+    )
     try:
         yield session
     finally:
