@@ -23,7 +23,6 @@ Usage:
 
 import hashlib
 import inspect
-import os
 import re
 import shutil
 import subprocess
@@ -90,67 +89,67 @@ def strip_ansi(text: str) -> str:
     return ANSI_PATTERN.sub("", text)
 
 
+def _resolve_default_backend():
+    try:
+        from doeff_agents.tmux import get_default_backend
+    except ImportError as exc:
+        raise AgenticServerError(
+            "tmux backend requires doeff-agents. "
+            "Install doeff-agentic[legacy] or add doeff-agents to the environment."
+        ) from exc
+
+    return get_default_backend()
+
+
+def _session_config(session_name: str, work_dir: Path | None = None):
+    try:
+        from doeff_agents.tmux import SessionConfig
+    except ImportError as exc:
+        raise AgenticServerError(
+            "tmux backend requires doeff-agents. "
+            "Install doeff-agentic[legacy] or add doeff-agents to the environment."
+        ) from exc
+
+    return SessionConfig(session_name=session_name, work_dir=work_dir)
+
+
 def is_tmux_available() -> bool:
     """Check if tmux is installed."""
-    result = subprocess.run(["tmux", "-V"], check=False, capture_output=True)
-    return result.returncode == 0
+    return _resolve_default_backend().is_available()
 
 
 def has_session(name: str) -> bool:
     """Check if a tmux session exists."""
-    result = subprocess.run(
-        ["tmux", "has-session", "-t", name], check=False, capture_output=True
-    )
-    return result.returncode == 0
+    return _resolve_default_backend().has_session(name)
 
 
 def new_session(session_name: str, work_dir: Path | None = None) -> str:
     """Create a new detached tmux session. Returns pane_id."""
-    args = ["tmux", "new-session", "-d", "-s", session_name, "-P", "-F", "#{pane_id}"]
-    if work_dir:
-        args.extend(["-c", str(work_dir)])
-
-    result = subprocess.run(args, capture_output=True, text=True, check=True)
-    return result.stdout.strip()
+    return _resolve_default_backend().new_session(
+        _session_config(session_name=session_name, work_dir=work_dir)
+    ).pane_id
 
 
 def send_keys(
     target: str, keys: str, *, literal: bool = True, enter: bool = True
 ) -> None:
     """Send keys to a tmux pane."""
-    args = ["tmux", "send-keys", "-t", target]
-    if literal:
-        args.extend(["-l", keys])
-    else:
-        args.append(keys)
-    subprocess.run(args, check=True)
-
-    if enter:
-        subprocess.run(["tmux", "send-keys", "-t", target, "Enter"], check=True)
+    _resolve_default_backend().send_keys(target, keys, literal=literal, enter=enter)
 
 
 def capture_pane(target: str, lines: int = 100) -> str:
     """Capture the content of a tmux pane."""
-    result = subprocess.run(
-        ["tmux", "capture-pane", "-t", target, "-p", "-S", f"-{lines}"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return strip_ansi(result.stdout)
+    return _resolve_default_backend().capture_pane(target, lines)
 
 
 def kill_session(session: str) -> None:
     """Kill a tmux session."""
-    subprocess.run(["tmux", "kill-session", "-t", session], check=False)
+    _resolve_default_backend().kill_session(session)
 
 
 def attach_session(session: str) -> None:
     """Attach to a tmux session."""
-    if os.environ.get("TMUX"):
-        subprocess.run(["tmux", "switch-client", "-t", session], check=True)
-    else:
-        subprocess.run(["tmux", "attach-session", "-t", session], check=True)
+    _resolve_default_backend().attach_session(session)
 
 
 # =============================================================================
@@ -267,7 +266,7 @@ class TmuxHandler:
 
     SUPPORTED_CAPABILITIES = frozenset({"worktree"})  # worktree via git commands
 
-    def __init__(self, working_dir: str | None = None) -> None:
+    def __init__(self, working_dir: str | None = None, *, backend: Any | None = None) -> None:
         """Initialize the tmux handler.
 
         Args:
@@ -275,13 +274,14 @@ class TmuxHandler:
         """
         self._working_dir = Path(working_dir) if working_dir else Path.cwd()
         self._workflow: TmuxWorkflowState | None = None
+        self._backend = backend or _resolve_default_backend()
 
         # Event logging
         self._event_log = EventLogWriter()
         self._workflow_index = WorkflowIndex()
 
         # Verify tmux is available
-        if not is_tmux_available():
+        if not self._backend.is_available():
             raise AgenticServerError("tmux is not installed or not in PATH")
 
     # -------------------------------------------------------------------------
@@ -298,7 +298,7 @@ class TmuxHandler:
         if self._workflow:
             for state in self._workflow.sessions.values():
                 try:
-                    kill_session(state.handle.name)
+                    self._backend.kill_session(f"doeff-{self._workflow.id}-{state.handle.name}")
                 except Exception:
                     pass
 
@@ -470,8 +470,10 @@ class TmuxHandler:
         session_id = generate_session_id()
 
         try:
-            pane_id = new_session(session_name, work_dir)
-        except subprocess.CalledProcessError as e:
+            pane_id = self._backend.new_session(
+                _session_config(session_name=session_name, work_dir=work_dir)
+            ).pane_id
+        except Exception as e:
             raise AgenticServerError(f"Failed to create tmux session: {e}")
 
         handle = AgenticSessionHandle(
@@ -544,7 +546,7 @@ class TmuxHandler:
             pass
 
         # Kill the tmux session
-        kill_session(session_name)
+        self._backend.kill_session(session_name)
 
         # Update status
         state.handle = AgenticSessionHandle(
@@ -569,7 +571,7 @@ class TmuxHandler:
             raise AgenticSessionNotFoundError(effect.session_id)
 
         session_name = f"doeff-{self._workflow.id}-{name}"
-        kill_session(session_name)
+        self._backend.kill_session(session_name)
 
         self._workflow.session_by_id.pop(effect.session_id, None)
         self._workflow.sessions.pop(name, None)
@@ -592,7 +594,7 @@ class TmuxHandler:
         state = self._workflow.sessions[name]
 
         # Check if session is running
-        if not has_session(f"doeff-{self._workflow.id}-{name}"):
+        if not self._backend.has_session(f"doeff-{self._workflow.id}-{name}"):
             raise AgenticSessionNotRunningError(
                 effect.session_id, state.handle.status.value
             )
@@ -603,7 +605,7 @@ class TmuxHandler:
         )
 
         # Send message to tmux
-        send_keys(state.pane_id, effect.content, literal=True, enter=True)
+        self._backend.send_keys(state.pane_id, effect.content, literal=True, enter=True)
 
         # Record message
         msg_id = f"msg_{time.time_ns()}"
@@ -662,7 +664,7 @@ class TmuxHandler:
 
         # Get output from tmux
         try:
-            output = capture_pane(state.pane_id, 500)
+            output = self._backend.capture_pane(state.pane_id, 500)
         except Exception:
             output = ""
 
@@ -720,7 +722,7 @@ class TmuxHandler:
                 raise AgenticTimeoutError("next_event", effect.timeout)
 
             # Check if session still exists
-            if not has_session(session_name):
+            if not self._backend.has_session(session_name):
                 return AgenticEndOfEvents(
                     reason="session_done",
                     final_status=AgenticSessionStatus.DONE,
@@ -728,7 +730,7 @@ class TmuxHandler:
 
             # Capture output and detect status
             try:
-                output = capture_pane(state.pane_id, 50)
+                output = self._backend.capture_pane(state.pane_id, 50)
             except Exception:
                 return AgenticEndOfEvents(
                     reason="session_error",
@@ -845,7 +847,7 @@ class TmuxHandler:
         session_name = f"doeff-{self._workflow.id}-{state.handle.name}"
         old_status = state.handle.status
 
-        if not has_session(session_name):
+        if not self._backend.has_session(session_name):
             new_status = AgenticSessionStatus.DONE
             state.handle = AgenticSessionHandle(
                 id=state.handle.id,
@@ -866,7 +868,7 @@ class TmuxHandler:
             return
 
         try:
-            output = capture_pane(state.pane_id, 50)
+            output = self._backend.capture_pane(state.pane_id, 50)
             new_status = detect_status(output)
             state.handle = AgenticSessionHandle(
                 id=state.handle.id,
@@ -897,7 +899,7 @@ class TmuxHandler:
         start = time.time()
 
         while time.time() - start < timeout:
-            if not has_session(session_name):
+            if not self._backend.has_session(session_name):
                 return
 
             self._refresh_session_status(state)
@@ -941,7 +943,11 @@ def _as_protocol_handler(
     return _wrapped
 
 
-def tmux_handler(working_dir: str | None = None) -> Callable[[Any, Any], Any]:
+def tmux_handler(
+    working_dir: str | None = None,
+    *,
+    backend: Any | None = None,
+) -> Callable[[Any, Any], Any]:
     """Create VM-compatible handlers for agentic effects using tmux.
 
     Args:
@@ -959,7 +965,7 @@ def tmux_handler(working_dir: str | None = None) -> Callable[[Any, Any], Any]:
         program = WithHandler(handlers, my_workflow())
         result = run(program, handlers=default_handlers())
     """
-    handler = TmuxHandler(working_dir=working_dir)
+    handler = TmuxHandler(working_dir=working_dir, backend=backend)
 
     effect_handlers: tuple[tuple[type[Any], Callable[[Any, Any], Any]], ...] = (
         (AgenticCreateWorkflow, _as_protocol_handler(handler.handle_create_workflow)),

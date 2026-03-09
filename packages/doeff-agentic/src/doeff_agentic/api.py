@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 High-level API for doeff-agentic.
 
@@ -25,9 +27,6 @@ Usage:
     api.stop("a3f")
 """
 
-
-import os
-import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -55,7 +54,7 @@ class AgenticAPI:
         This class is NOT thread-safe. Use separate instances per thread.
     """
 
-    def __init__(self, state_dir: Path | str | None = None):
+    def __init__(self, state_dir: Path | str | None = None, *, backend: Any | None = None):
         """Initialize the API.
 
         Args:
@@ -63,6 +62,22 @@ class AgenticAPI:
         """
         self.state_dir = Path(state_dir) if state_dir else get_default_state_dir()
         self._state_manager = StateManager(self.state_dir)
+        self._backend = backend
+
+    def _session_backend(self) -> Any:
+        if self._backend is not None:
+            return self._backend
+
+        try:
+            from doeff_agents.tmux import get_default_backend
+        except ImportError as exc:
+            raise RuntimeError(
+                "tmux-backed AgenticAPI operations require doeff-agents. "
+                "Install doeff-agentic[legacy] or add doeff-agents to the environment."
+            ) from exc
+
+        self._backend = get_default_backend()
+        return self._backend
 
     def list_workflows(
         self,
@@ -199,15 +214,7 @@ class AgenticAPI:
             # Try constructing from convention
             session_name = f"doeff-{workflow.id}-{agent}"
 
-        # Check if we're in tmux
-        in_tmux = "TMUX" in os.environ
-
-        if in_tmux:
-            # Switch client
-            subprocess.run(["tmux", "switch-client", "-t", session_name], check=False)
-        else:
-            # Attach
-            subprocess.run(["tmux", "attach-session", "-t", session_name], check=False)
+        self._session_backend().attach_session(session_name)
 
     def send_message(
         self,
@@ -258,11 +265,11 @@ class AgenticAPI:
 
         # Send via tmux
         target = pane_id or session_name
-        result = subprocess.run(
-            ["tmux", "send-keys", "-t", target, "-l", message, "Enter"],
-            capture_output=True, check=False,
-        )
-        return result.returncode == 0
+        try:
+            self._session_backend().send_keys(target, message, literal=True, enter=True)
+        except Exception:
+            return False
+        return True
 
     def stop(self, workflow_id: str) -> list[str]:
         """Stop a workflow and all its agents.
@@ -278,13 +285,13 @@ class AgenticAPI:
             return []
 
         stopped: list[str] = []
+        backend = self._session_backend()
         for agent in workflow.agents:
-            result = subprocess.run(
-                ["tmux", "kill-session", "-t", agent.session_name],
-                capture_output=True, check=False,
-            )
-            if result.returncode == 0:
+            try:
+                backend.kill_session(agent.session_name)
                 stopped.append(agent.name)
+            except Exception:
+                continue
 
         # Update workflow status
         if workflow:
@@ -343,12 +350,10 @@ class AgenticAPI:
             session_name = f"doeff-{workflow.id}-{agent}"
             pane_id = session_name
 
-        result = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", pane_id, "-S", f"-{lines}"],
-            capture_output=True,
-            text=True, check=False,
-        )
-        return result.stdout if result.returncode == 0 else ""
+        try:
+            return self._session_backend().capture_pane(pane_id, lines)
+        except Exception:
+            return ""
 
     def run(
         self,
