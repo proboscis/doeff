@@ -552,3 +552,33 @@ class TestWithHandlerIntegration:
         assert result.is_ok
         assert result.value
         assert len(result.value) > 10
+
+    def test_run_agent_via_production_handler_composes_with_agentic_protocol(
+        self,
+        tmp_path: Path,
+        worktree_env: WorktreeEnv,
+    ):
+        from doeff_agentic.handlers import mock_handlers as mock_agentic_handlers
+        from doeff_conductor.handlers import production_handlers
+        from doeff_conductor.handlers.testing import MockConductorRuntime
+
+        runtime = MockConductorRuntime(tmp_path)
+
+        @do
+        def workflow():
+            return (yield RunAgent(env=worktree_env, prompt="Implement feature X"))
+
+        handler = production_handlers(
+            worktree_handler=runtime,
+            issue_handler=runtime,
+            git_handler=runtime,
+            agentic_handler=mock_agentic_handlers(working_dir=str(worktree_env.path)),
+        )
+
+        result = run(
+            WithHandler(handler, workflow()),
+            handlers=default_handlers(),
+        )
+
+        assert result.is_ok
+        assert "Mock response to: Implement feature X" == result.value

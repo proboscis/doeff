@@ -31,6 +31,7 @@ from doeff_agents import (
     Stop,
     TmuxAgentHandler,
 )
+from doeff_agents.effects import CaptureEffect, LaunchEffect, MonitorEffect, SendEffect, SleepEffect, StopEffect
 
 from ..effects import (
     AgentNotRunningError,
@@ -183,6 +184,130 @@ class AgenticHandler:
         # Also update individual agent files
         for agent in agents:
             self.state_manager.write_agent_state(self.workflow_id, agent)
+
+    @do
+    def run_agent_program(self, effect: RunAgentEffect) -> str:
+        config = effect.config
+        agent_name = effect.session_name or f"agent-{self._context.agent_counter + 1}"
+        session_name = self._session_name_for(effect.session_name)
+
+        agent_type = _agent_type_from_str(config.agent_type)
+        work_dir = Path(config.work_dir) if config.work_dir else Path.cwd()
+
+        launch_config = LaunchConfig(
+            agent_type=agent_type,
+            work_dir=work_dir,
+            prompt=config.prompt,
+            resume=config.resume,
+            profile=config.profile,
+        )
+
+        handle = yield Launch(
+            session_name=session_name,
+            config=launch_config,
+            ready_timeout=effect.ready_timeout,
+        )
+        self._context.sessions[agent_name] = handle
+
+        self._update_workflow_status(
+            WorkflowStatus.RUNNING,
+            current_agent=agent_name,
+        )
+
+        last_output = ""
+        while True:
+            obs = yield Monitor(handle)
+
+            if obs.output_changed or obs.status != SessionStatus.RUNNING:
+                status = WorkflowStatus.RUNNING
+                if obs.status == SessionStatus.BLOCKED:
+                    status = WorkflowStatus.BLOCKED
+                self._update_workflow_status(status, current_agent=agent_name)
+
+            if obs.is_terminal:
+                last_output = yield Capture(handle, lines=500)
+                break
+
+            yield Sleep(effect.poll_interval)
+
+        self._update_workflow_status(WorkflowStatus.RUNNING, current_agent=None)
+        return last_output
+
+    @do
+    def send_message_program(self, effect: SendMessageEffect) -> None:
+        handle = self._resolve_session_handle(effect.session_name)
+        yield Send(
+            handle,
+            effect.message,
+            enter=effect.enter,
+        )
+        return None
+
+    @do
+    def wait_for_status_program(self, effect: WaitForStatusEffect) -> AgentStatus:
+        handle = self._resolve_session_handle(effect.session_name)
+
+        targets = effect.target_status
+        if isinstance(targets, AgentStatus):
+            targets = (targets,)
+
+        session_targets = set()
+        for target in targets:
+            if target == AgentStatus.RUNNING:
+                session_targets.add(SessionStatus.RUNNING)
+            elif target == AgentStatus.BLOCKED:
+                session_targets.add(SessionStatus.BLOCKED)
+            elif target == AgentStatus.DONE:
+                session_targets.add(SessionStatus.DONE)
+            elif target == AgentStatus.FAILED:
+                session_targets.add(SessionStatus.FAILED)
+            elif target == AgentStatus.EXITED:
+                session_targets.add(SessionStatus.EXITED)
+            elif target == AgentStatus.STOPPED:
+                session_targets.add(SessionStatus.STOPPED)
+
+        deadline = time.time() + effect.timeout
+
+        while time.time() < deadline:
+            obs = yield Monitor(handle)
+
+            if obs.status in session_targets:
+                return _agent_status_from_session_status(obs.status)
+
+            if obs.is_terminal and obs.status not in session_targets:
+                return _agent_status_from_session_status(obs.status)
+
+            yield Sleep(effect.poll_interval)
+
+        obs = yield Monitor(handle)
+        return _agent_status_from_session_status(obs.status)
+
+    @do
+    def capture_output_program(self, effect: CaptureOutputEffect) -> str:
+        handle = self._resolve_session_handle(effect.session_name)
+        return (yield Capture(handle, lines=effect.lines))
+
+    @do
+    def stop_agent_program(self, effect: StopAgentEffect) -> None:
+        handle = self._context.sessions.get(effect.session_name)
+        if handle is None:
+            return None
+
+        yield Stop(handle)
+        del self._context.sessions[effect.session_name]
+        self._update_workflow_status(WorkflowStatus.RUNNING)
+        return None
+
+    def _resolve_session_handle(self, session_name: str) -> SessionHandle:
+        handle = self._context.sessions.get(session_name)
+        if handle is not None:
+            return handle
+
+        for name, candidate in self._context.sessions.items():
+            if candidate.session_name == session_name or name == session_name:
+                return candidate
+
+        raise AgentNotRunningError(session_name, "not_found")
 
     def handle_run_agent(self, effect: RunAgentEffect) -> str:
         """Handle RunAgent effect.
@@ -414,6 +539,7 @@ def agentic_effectful_handlers(
     workflow_id: str | None = None,
     workflow_name: str | None = None,
     state_dir: Path | str | None = None,
+    tmux_handler: TmuxAgentHandler | None = None,
 ) -> Any:
     """Create a handler-protocol callable for legacy agentic effects.
 
@@ -427,22 +553,135 @@ def agentic_effectful_handlers(
         workflow_id=workflow_id,
         workflow_name=workflow_name,
         state_dir=state_dir,
+        tmux_handler=tmux_handler,
     )
 
     @do
     def _handle(effect: Effect, k: Any):
+        if isinstance(effect, LaunchEffect):
+            return (yield Resume(k, handler.tmux_handler.handle_launch(effect)))
+        if isinstance(effect, MonitorEffect):
+            return (yield Resume(k, handler.tmux_handler.handle_monitor(effect)))
+        if isinstance(effect, CaptureEffect):
+            return (yield Resume(k, handler.tmux_handler.handle_capture(effect)))
+        if isinstance(effect, SendEffect):
+            handler.tmux_handler.handle_send(effect)
+            return (yield Resume(k, None))
+        if isinstance(effect, StopEffect):
+            handler.tmux_handler.handle_stop(effect)
+            return (yield Resume(k, None))
+        if isinstance(effect, SleepEffect):
+            handler.tmux_handler.handle_sleep(effect)
+            return (yield Resume(k, None))
         if isinstance(effect, RunAgentEffect):
-            return (yield Resume(k, handler.handle_run_agent(effect)))
+            config = effect.config
+            agent_name = effect.session_name or f"agent-{handler._context.agent_counter + 1}"
+            session_name = handler._session_name_for(effect.session_name)
+
+            agent_type = _agent_type_from_str(config.agent_type)
+            work_dir = Path(config.work_dir) if config.work_dir else Path.cwd()
+
+            launch_config = LaunchConfig(
+                agent_type=agent_type,
+                work_dir=work_dir,
+                prompt=config.prompt,
+                resume=config.resume,
+                profile=config.profile,
+            )
+
+            handle = yield Launch(
+                session_name=session_name,
+                config=launch_config,
+                ready_timeout=effect.ready_timeout,
+            )
+            handler._context.sessions[agent_name] = handle
+
+            handler._update_workflow_status(
+                WorkflowStatus.RUNNING,
+                current_agent=agent_name,
+            )
+
+            last_output = ""
+            while True:
+                obs = yield Monitor(handle)
+
+                if obs.output_changed or obs.status != SessionStatus.RUNNING:
+                    status = WorkflowStatus.RUNNING
+                    if obs.status == SessionStatus.BLOCKED:
+                        status = WorkflowStatus.BLOCKED
+                    handler._update_workflow_status(status, current_agent=agent_name)
+
+                if obs.is_terminal:
+                    last_output = yield Capture(handle, lines=500)
+                    break
+
+                yield Sleep(effect.poll_interval)
+
+            handler._update_workflow_status(WorkflowStatus.RUNNING, current_agent=None)
+            value = last_output
+            return (yield Resume(k, value))
         if isinstance(effect, SendMessageEffect):
-            return (yield Resume(k, handler.handle_send_message(effect)))
+            handle = handler._resolve_session_handle(effect.session_name)
+            yield Send(
+                handle,
+                effect.message,
+                enter=effect.enter,
+            )
+            value = None
+            return (yield Resume(k, value))
         if isinstance(effect, WaitForStatusEffect):
-            return (yield Resume(k, handler.handle_wait_for_status(effect)))
+            handle = handler._resolve_session_handle(effect.session_name)
+            targets = effect.target_status
+            if isinstance(targets, AgentStatus):
+                targets = (targets,)
+
+            session_targets = set()
+            for target in targets:
+                if target == AgentStatus.RUNNING:
+                    session_targets.add(SessionStatus.RUNNING)
+                elif target == AgentStatus.BLOCKED:
+                    session_targets.add(SessionStatus.BLOCKED)
+                elif target == AgentStatus.DONE:
+                    session_targets.add(SessionStatus.DONE)
+                elif target == AgentStatus.FAILED:
+                    session_targets.add(SessionStatus.FAILED)
+                elif target == AgentStatus.EXITED:
+                    session_targets.add(SessionStatus.EXITED)
+                elif target == AgentStatus.STOPPED:
+                    session_targets.add(SessionStatus.STOPPED)
+
+            deadline = time.time() + effect.timeout
+
+            while time.time() < deadline:
+                obs = yield Monitor(handle)
+
+                if obs.status in session_targets:
+                    value = _agent_status_from_session_status(obs.status)
+                    break
+
+                if obs.is_terminal and obs.status not in session_targets:
+                    value = _agent_status_from_session_status(obs.status)
+                    break
+
+                yield Sleep(effect.poll_interval)
+            else:
+                obs = yield Monitor(handle)
+                value = _agent_status_from_session_status(obs.status)
+            return (yield Resume(k, value))
         if isinstance(effect, CaptureOutputEffect):
-            return (yield Resume(k, handler.handle_capture_output(effect)))
+            handle = handler._resolve_session_handle(effect.session_name)
+            value = yield Capture(handle, lines=effect.lines)
+            return (yield Resume(k, value))
         if isinstance(effect, WaitForUserInputEffect):
             return (yield Resume(k, handler.handle_wait_for_user_input(effect)))
         if isinstance(effect, StopAgentEffect):
-            return (yield Resume(k, handler.handle_stop_agent(effect)))
+            active_handle = handler._context.sessions.get(effect.session_name)
+            if active_handle is not None:
+                yield Stop(active_handle)
+                del handler._context.sessions[effect.session_name]
+                handler._update_workflow_status(WorkflowStatus.RUNNING)
+            value = None
+            return (yield Resume(k, value))
         yield Pass()
 
     return _handle
@@ -453,6 +692,7 @@ def with_agentic_effectful_handlers(
     workflow_id: str | None = None,
     workflow_name: str | None = None,
     state_dir: Path | str | None = None,
+    tmux_handler: TmuxAgentHandler | None = None,
 ) -> Any:
     """Wrap a program with the legacy agentic effect handler."""
     return WithHandler(
@@ -460,6 +700,7 @@ def with_agentic_effectful_handlers(
             workflow_id=workflow_id,
             workflow_name=workflow_name,
             state_dir=state_dir,
+            tmux_handler=tmux_handler,
         ),
         expr=program,
     )
@@ -469,6 +710,7 @@ def agent_handler(
     workflow_id: str | None = None,
     workflow_name: str | None = None,
     state_dir: Path | str | None = None,
+    tmux_handler: TmuxAgentHandler | None = None,
 ) -> AgenticHandler:
     """Create an agentic handler instance.
 
@@ -486,6 +728,7 @@ def agent_handler(
         workflow_id=workflow_id,
         workflow_name=workflow_name,
         state_dir=state_dir,
+        tmux_handler=tmux_handler,
     )
 
 

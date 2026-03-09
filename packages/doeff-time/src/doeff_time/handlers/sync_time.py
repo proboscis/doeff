@@ -7,10 +7,21 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from doeff import Effect, Pass, Resume, WithHandler, default_handlers, do, run
+import doeff_vm
+
+from doeff import Effect, Pass, Resume, do, run
 from doeff_time.effects import DelayEffect, GetTimeEffect, ScheduleAtEffect, WaitUntilEffect
 
 ProtocolHandler = Callable[[Any, Any], Any]
+
+_RUST_SENTINELS = (
+    doeff_vm.state,
+    doeff_vm.reader,
+    doeff_vm.writer,
+    doeff_vm.result_safe,
+    doeff_vm.scheduler,
+    doeff_vm.lazy_ask,
+)
 
 
 def _utc_now() -> datetime:
@@ -36,11 +47,26 @@ class SyncTimeRuntime:
 
         self._handler: ProtocolHandler = _protocol_handler
 
-    def _run_scheduled(self, program: Any, timer: threading.Timer) -> None:
+    def _rebuild_handler_stack(self, visible_handlers: list[Any]) -> list[Any]:
+        sentinels = iter(_RUST_SENTINELS)
+        rebuilt: list[Any] = []
+        for handler in reversed(visible_handlers):
+            if handler is None:
+                rebuilt.append(next(sentinels))
+            else:
+                rebuilt.append(do(handler))
+        return rebuilt
+
+    def _run_scheduled(
+        self,
+        program: Any,
+        timer: threading.Timer,
+        visible_handlers: list[Any],
+    ) -> None:
         try:
             run(
-                WithHandler(self._handler, program),
-                handlers=default_handlers(),
+                program,
+                handlers=self._rebuild_handler_stack(visible_handlers),
             )
         finally:
             self._pending_timers.discard(timer)
@@ -62,10 +88,11 @@ class SyncTimeRuntime:
     @do
     def _handle_schedule_at(self, effect: ScheduleAtEffect, k: Any):
         wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
+        visible_handlers = list((yield doeff_vm.GetHandlers()))
         timer_holder: dict[str, threading.Timer] = {}
 
         def _dispatch() -> None:
-            self._run_scheduled(effect.program, timer_holder["timer"])
+            self._run_scheduled(effect.program, timer_holder["timer"], visible_handlers)
 
         timer = threading.Timer(wait_seconds, _dispatch)
         timer.daemon = True
