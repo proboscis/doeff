@@ -6,10 +6,21 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from doeff import Await, Effect, Pass, Resume, WithHandler, async_run, default_handlers, do
+import doeff_vm
+
+from doeff import Await, Effect, Pass, Resume, async_run, do
 from doeff_time.effects import DelayEffect, GetTimeEffect, ScheduleAtEffect, WaitUntilEffect
 
 ProtocolHandler = Callable[[Any, Any], Any]
+
+_RUST_SENTINELS = (
+    doeff_vm.state,
+    doeff_vm.reader,
+    doeff_vm.writer,
+    doeff_vm.result_safe,
+    doeff_vm.scheduler,
+    doeff_vm.lazy_ask,
+)
 
 
 def _utc_now() -> datetime:
@@ -35,10 +46,20 @@ class AsyncTimeRuntime:
 
         self._handler: ProtocolHandler = _protocol_handler
 
-    async def _run_scheduled(self, program: Any) -> None:
+    def _rebuild_handler_stack(self, visible_handlers: list[Any]) -> list[Any]:
+        sentinels = iter(_RUST_SENTINELS)
+        rebuilt: list[Any] = []
+        for handler in reversed(visible_handlers):
+            if handler is None:
+                rebuilt.append(next(sentinels))
+            else:
+                rebuilt.append(do(handler))
+        return rebuilt
+
+    async def _run_scheduled(self, program: Any, visible_handlers: list[Any]) -> None:
         result = await async_run(
-            WithHandler(self._handler, program),
-            handlers=default_handlers(),
+            program,
+            handlers=self._rebuild_handler_stack(visible_handlers),
         )
         is_err = getattr(result, "is_err", None)
         if callable(is_err) and is_err():
@@ -65,8 +86,8 @@ class AsyncTimeRuntime:
             }
         )
 
-    def _schedule_program(self, program: Any) -> None:
-        task = asyncio.create_task(self._run_scheduled(program))
+    def _schedule_program(self, program: Any, visible_handlers: list[Any]) -> None:
+        task = asyncio.create_task(self._run_scheduled(program, visible_handlers))
         self._pending_tasks.add(task)
         task.add_done_callback(self._on_task_done)
 
@@ -90,7 +111,8 @@ class AsyncTimeRuntime:
     def _handle_schedule_at(self, effect: ScheduleAtEffect, k: Any):
         loop = asyncio.get_running_loop()
         wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
-        loop.call_at(loop.time() + wait_seconds, self._schedule_program, effect.program)
+        visible_handlers = list((yield doeff_vm.GetHandlers()))
+        loop.call_at(loop.time() + wait_seconds, self._schedule_program, effect.program, visible_handlers)
         return (yield Resume(k, None))
 
     @do

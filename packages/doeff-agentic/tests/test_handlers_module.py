@@ -1,14 +1,19 @@
 """Tests for handler module restructuring and compatibility exports."""
 
 
+from pathlib import Path
+
 import pytest
 from doeff_agentic.effects import (
     AgenticCreateSession,
     AgenticGetMessages,
     AgenticGetSessionStatus,
     AgenticSendMessage,
+    RunAgentEffect,
 )
 from doeff_agentic.handlers import mock_handlers, production_handlers
+from doeff_agentic.handlers.production import agentic_effectful_handlers
+from doeff_agentic.types import AgentConfig
 
 from doeff import WithHandler, default_handlers, do, run
 
@@ -67,3 +72,71 @@ def test_legacy_handler_module_reexport_when_optional_dependency_available() -> 
     )
 
     assert old_export is new_export
+
+
+def test_legacy_agentic_handler_accepts_injected_tmux_runtime(tmp_path: Path) -> None:
+    from doeff_agents.adapters.base import AgentType
+    from doeff_agents.effects import Observation, SessionHandle
+    from doeff_agents.monitor import SessionStatus
+
+    class FakeTmuxHandler:
+        def __init__(self) -> None:
+            self.launch_calls = 0
+
+        def handle_launch(self, effect):
+            self.launch_calls += 1
+            return SessionHandle(
+                session_name=effect.session_name,
+                pane_id="%fake0",
+                agent_type=AgentType.CODEX,
+                work_dir=Path(effect.config.work_dir),
+            )
+
+        def handle_monitor(self, _effect):
+            return Observation(
+                status=SessionStatus.DONE,
+                output_changed=True,
+                output_snippet="done",
+            )
+
+        def handle_capture(self, _effect):
+            return "done"
+
+        def handle_send(self, _effect):
+            return None
+
+        def handle_stop(self, _effect):
+            return None
+
+        def handle_sleep(self, _effect):
+            return None
+
+    fake = FakeTmuxHandler()
+
+    @do
+    def workflow():
+        return (
+            yield RunAgentEffect(
+                config=AgentConfig(
+                    agent_type="codex",
+                    prompt="Review this patch",
+                    work_dir=str(tmp_path),
+                )
+            )
+        )
+
+    result = run(
+        WithHandler(
+            agentic_effectful_handlers(
+                workflow_id="wf-test",
+                workflow_name="wf-test",
+                tmux_handler=fake,
+            ),
+            workflow(),
+        ),
+        handlers=default_handlers(),
+    )
+
+    assert result.is_ok()
+    assert result.value == "done"
+    assert fake.launch_calls == 1
