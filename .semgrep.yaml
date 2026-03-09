@@ -62,6 +62,93 @@ rules:
         - /packages/doeff-flow/src/doeff_flow/trace.py
         - /packages/doeff-conductor/src/doeff_conductor/api.py
 
+  - id: no-doeff-vm-import-recovery
+    languages: [python]
+    severity: ERROR
+    message: >
+      doeff_vm is a required runtime dependency. Do not catch ImportError/ModuleNotFoundError/Exception
+      around doeff_vm imports or substitute fallback runtime types. Let the import fail fast with a clear error.
+    pattern-either:
+      - pattern: |
+          try:
+              import doeff_vm
+              ...
+          except ImportError:
+              ...
+      - pattern: |
+          try:
+              import doeff_vm as $ALIAS
+              ...
+          except ImportError:
+              ...
+      - pattern: |
+          try:
+              from doeff_vm import $NAME
+              ...
+          except ImportError:
+              ...
+      - pattern: |
+          try:
+              from doeff_vm import $NAME as $ALIAS
+              ...
+          except ImportError:
+              ...
+      - pattern: |
+          try:
+              import doeff_vm
+              ...
+          except ModuleNotFoundError:
+              ...
+      - pattern: |
+          try:
+              import doeff_vm as $ALIAS
+              ...
+          except ModuleNotFoundError:
+              ...
+      - pattern: |
+          try:
+              from doeff_vm import $NAME
+              ...
+          except ModuleNotFoundError:
+              ...
+      - pattern: |
+          try:
+              from doeff_vm import $NAME as $ALIAS
+              ...
+          except ModuleNotFoundError:
+              ...
+      - pattern: |
+          try:
+              import doeff_vm
+              ...
+          except Exception:
+              ...
+      - pattern: |
+          try:
+              import doeff_vm as $ALIAS
+              ...
+          except Exception:
+              ...
+      - pattern: |
+          try:
+              from doeff_vm import $NAME
+              ...
+          except Exception:
+              ...
+      - pattern: |
+          try:
+              from doeff_vm import $NAME as $ALIAS
+              ...
+          except Exception:
+              ...
+    paths:
+      include:
+        - /doeff/**
+        - /packages/**
+      exclude:
+        - /tests/**
+        - /packages/**/tests/**
+
   - id: doeff-pinjected-no-intercept
     languages: [python]
     severity: ERROR
