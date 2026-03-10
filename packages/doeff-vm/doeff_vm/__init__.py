@@ -204,6 +204,7 @@ CreatePromiseEffect = _ext.CreatePromiseEffect
 CompletePromiseEffect = _ext.CompletePromiseEffect
 FailPromiseEffect = _ext.FailPromiseEffect
 CreateExternalPromiseEffect = _ext.CreateExternalPromiseEffect
+Semaphore = _ext.Semaphore
 CreateSemaphoreEffect = _ext.CreateSemaphoreEffect
 AcquireSemaphoreEffect = _ext.AcquireSemaphoreEffect
 ReleaseSemaphoreEffect = _ext.ReleaseSemaphoreEffect
@@ -213,7 +214,6 @@ ProgramCallStackEffect = _ext.ProgramCallStackEffect
 ProgramCallFrameEffect = _ext.ProgramCallFrameEffect
 PyCancelEffect = _ext.PyCancelEffect
 _SchedulerTaskCompleted = _ext._SchedulerTaskCompleted
-_notify_semaphore_handle_dropped = _ext._notify_semaphore_handle_dropped
 _debug_scheduler_semaphore_count = _ext._debug_scheduler_semaphore_count
 
 # R13-I: DoExprTag constants
@@ -343,6 +343,7 @@ __all__ = [
     "ResumeContinuation",
     "RunResult",
     "RustHandler",
+    "Semaphore",
     "SpawnEffect",
     "TaskCancelEffect",
     "TaskCancelledError",
