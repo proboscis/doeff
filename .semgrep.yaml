@@ -149,6 +149,24 @@ rules:
         - /tests/**
         - /packages/**/tests/**
 
+  - id: handler-filter-no-type-hint-fail-open
+    languages: [python]
+    severity: ERROR
+    message: >
+      Handler type-filter annotation resolution must inspect only the effect parameter.
+      Do not call get_type_hints() on the whole handler inside _extract_handler_effect_types(),
+      because unrelated broken annotations on k/return must not disable filtering.
+    patterns:
+      - pattern-inside: |
+          def _extract_handler_effect_types($HANDLER):
+              ...
+      - pattern-either:
+          - pattern: get_type_hints(...)
+          - pattern: _safe_get_type_hints(...)
+    paths:
+      include:
+        - /doeff/rust_vm.py
+
   - id: doeff-pinjected-no-intercept
     languages: [python]
     severity: ERROR

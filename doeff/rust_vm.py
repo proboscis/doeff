@@ -147,14 +147,68 @@ def _normalize_intercept_types(types: Any) -> tuple[type[Any], ...] | None:
     return normalized
 
 
-def _safe_get_type_hints(target: Any) -> dict[str, Any]:
+def _safe_annotations(target: Any) -> dict[str, Any] | None:
     if target is None:
-        return {}
+        return None
     try:
-        return get_type_hints(target, include_extras=True)
-    except Exception as exc:
-        warnings.warn(f"Failed to resolve type hints for {target}: {exc}", stacklevel=2)
-        return {}
+        annotations = target.__annotations__
+    except AttributeError:
+        return None
+    if isinstance(annotations, dict):
+        return annotations
+    return None
+
+
+def _annotation_namespaces(target: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    globalns: dict[str, Any] = {}
+    localns: dict[str, Any] = {}
+    if target is None:
+        return globalns, None
+
+    module = inspect.getmodule(target)
+    if module is not None:
+        globalns.update(vars(module))
+
+    try:
+        target_globals = target.__globals__
+    except AttributeError:
+        target_globals = None
+    if isinstance(target_globals, dict):
+        globalns.update(target_globals)
+
+    if callable(target):
+        try:
+            closurevars = inspect.getclosurevars(target)
+        except (TypeError, ValueError):
+            closurevars = None
+        if closurevars is not None:
+            globalns.update(closurevars.globals)
+            localns.update(closurevars.nonlocals)
+
+    return globalns, localns or None
+
+
+def _resolve_annotation_only(annotation: Any, *targets: Any) -> Any:
+    if annotation is inspect._empty:
+        return annotation
+
+    raw_annotation: str | None = None
+    if isinstance(annotation, ForwardRef):
+        raw_annotation = annotation.__forward_arg__
+    elif isinstance(annotation, str):
+        raw_annotation = annotation
+
+    if raw_annotation is None:
+        return annotation
+
+    last_exc: Exception | None = None
+    for target in targets:
+        globalns, localns = _annotation_namespaces(target)
+        try:
+            return eval(raw_annotation, globalns, localns)
+        except Exception as exc:
+            last_exc = exc
+    raise TypeError(f"Unresolved handler effect annotation: {raw_annotation!r}") from last_exc
 
 
 def _safe_signature(target: Any) -> inspect.Signature | None:
@@ -180,10 +234,11 @@ def _resolve_handler_effect_types(annotation: Any) -> tuple[type[Any], ...] | No
     if annotation in (Any, Effect, EffectBase):
         return None
     if isinstance(annotation, ForwardRef):
-        # Unresolved forward references cannot be converted to runtime type filters safely.
-        return None
+        raise TypeError(
+            f"Unresolved handler effect annotation: {annotation.__forward_arg__!r}"
+        )
     if isinstance(annotation, str):
-        return None
+        raise TypeError(f"Unresolved handler effect annotation: {annotation!r}")
 
     origin = get_origin(annotation)
     if origin is Annotated:
@@ -250,11 +305,20 @@ def _extract_handler_effect_types(handler: Any) -> tuple[type[Any], ...] | None:
     metadata_source = (
         handler._metadata_source if isinstance(handler, _HandlerWithMetadataSource) else None
     )
-    type_hints = _safe_get_type_hints(metadata_source)
-    if not type_hints:
-        type_hints = _safe_get_type_hints(func)
-    annotation = type_hints.get(effect_param.name, effect_param.annotation)
-    return _resolve_handler_effect_types(annotation)
+    handler_name, _, _ = _handler_registration_metadata(handler)
+    raw_annotation = effect_param.annotation
+    for candidate in (metadata_source, func, handler):
+        annotations = _safe_annotations(candidate)
+        if annotations is not None and effect_param.name in annotations:
+            raw_annotation = annotations[effect_param.name]
+            break
+    try:
+        annotation = _resolve_annotation_only(raw_annotation, metadata_source, func, handler)
+        return _resolve_handler_effect_types(annotation)
+    except TypeError as exc:
+        raise TypeError(
+            f"Failed to resolve effect annotation for handler {handler_name}: {exc}"
+        ) from exc
 
 
 def _with_intercept_metadata(interceptor: Any) -> dict[str, Any]:
