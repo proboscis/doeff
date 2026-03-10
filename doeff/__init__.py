@@ -16,13 +16,6 @@ Example:
     ...     return count + 1
 """
 
-import os as _os
-import sys as _sys
-
-_PKG_DIR = _os.path.dirname(__file__)
-if _PKG_DIR in _sys.path:
-    _sys.path = [path for path in _sys.path if path != _PKG_DIR]
-
 from doeff.analysis import EffectCallTree
 from doeff.cache import (
     CACHE_PATH_ENV_KEY,
