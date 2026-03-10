@@ -75,6 +75,20 @@ rules:
     paths:
       include:
         - /doeff/run.py
+  - id: cache-handler-no-result-duck-typing
+    languages: [python]
+    severity: ERROR
+    message: >
+      Cache handlers must not duck-type result-like values or normalize them through vendor Ok/Err.
+      The cache boundary should store the original value or fail clearly if it cannot persist it.
+    pattern-either:
+      - pattern: hasattr($X, "is_ok")
+      - pattern: hasattr($X, "is_err")
+      - pattern: from doeff._vendor import Ok as $ALIAS
+      - pattern: from doeff._vendor import Err as $ALIAS
+    paths:
+      include:
+        - /doeff/handlers/cache_handlers.py
 
   - id: no-doeff-vm-import-recovery
     languages: [python]
