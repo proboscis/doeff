@@ -390,17 +390,20 @@ class _SchedulerTaskCompleted(EffectBase):
 
 class TaskCancelledError(RuntimeError): ...
 
+class Semaphore:
+    id: int
+
 class CreateSemaphoreEffect(EffectBase):
     permits: int
     def __init__(self, permits: int) -> None: ...
 
 class AcquireSemaphoreEffect(EffectBase):
-    semaphore: Any
-    def __init__(self, semaphore: Any) -> None: ...
+    semaphore: Semaphore
+    def __init__(self, semaphore: Semaphore) -> None: ...
 
 class ReleaseSemaphoreEffect(EffectBase):
-    semaphore: Any
-    def __init__(self, semaphore: Any) -> None: ...
+    semaphore: Semaphore
+    def __init__(self, semaphore: Semaphore) -> None: ...
 
 class PythonAsyncioAwaitEffect(EffectBase):
     awaitable: Awaitable[Any] | Any
@@ -448,7 +451,6 @@ scheduler: RustHandler
 lazy_ask: RustHandler
 await_handler: RustHandler
 
-def _notify_semaphore_handle_dropped(state_id: int, semaphore_id: int) -> None: ...
 def _debug_scheduler_semaphore_count(state_id: int) -> int | None: ...
 
 TAG_PURE: int

@@ -36,10 +36,12 @@ from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
 
 ### `CreateSemaphore(permits: int)`
 
-Creates and returns a `Semaphore` handle with `permits` available permits.
+Creates and returns an opaque `Semaphore` handle with `permits` available permits.
 
 - `permits` must be an integer `>= 1`.
 - `CreateSemaphore(0)` raises `ValueError("permits must be >= 1")`.
+- The returned `Semaphore` is a runtime handle, not a user-constructible value object.
+- Direct construction is not supported: `Semaphore(...)` raises `TypeError`.
 
 ```python
 from doeff import CreateSemaphore, do
@@ -56,6 +58,8 @@ Acquires one permit from `sem`.
 
 - If a permit is available and there are no earlier waiters, acquisition continues immediately.
 - If no permit is available, the task is cooperatively parked and resumed later.
+- `sem` must be the handle returned by `CreateSemaphore` or another Python reference to that same
+  handle object. Manually constructing `Semaphore(id)` is invalid.
 
 ```python
 from doeff import AcquireSemaphore, do
@@ -74,6 +78,8 @@ Releases one permit back to `sem`.
 - Direct transfer prevents permit stealing by third tasks between release and waiter wakeup.
 - Releasing more times than acquired raises
   `RuntimeError("semaphore released too many times")`.
+- `sem` must be the runtime-created handle returned by `CreateSemaphore` (or another Python
+  reference to that same handle object).
 
 ```python
 from doeff import ReleaseSemaphore, do
@@ -83,9 +89,17 @@ def leave(sem):
     yield ReleaseSemaphore(sem)
 ```
 
+### Handle semantics
+
+`Semaphore` is intentionally opaque.
+
+- Valid: keep the handle returned by `CreateSemaphore` and pass that same object around.
+- Valid: assign that handle to another Python name (`alias = sem`) and use the alias.
+- Invalid: construct `Semaphore(existing_id)` manually. Handles come from `CreateSemaphore` only.
+
 ## Usage Patterns
 
-### Mutex: `Semaphore(1)` for exclusive access
+### Mutex: `CreateSemaphore(1)` for exclusive access
 
 ```python
 from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, do
@@ -106,7 +120,7 @@ def program():
 
 Use `try/finally` so permits are released even when work fails.
 
-### Connection pool: `Semaphore(N)` for bounded parallelism
+### Connection pool: `CreateSemaphore(N)` for bounded parallelism
 
 ```python
 from doeff import AcquireSemaphore, CreateSemaphore, Gather, ReleaseSemaphore, Spawn, Wait, do
