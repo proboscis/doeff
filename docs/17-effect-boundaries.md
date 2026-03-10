@@ -126,6 +126,9 @@ interpreters: `run(...)` for sync execution and `async_run(...)` for event-loop 
 
 Use runner + handler presets intentionally:
 
+Examples in this chapter use `handlers=` only to install the builtin runtime preset. For custom
+handler composition, prefer `WithHandler(handler=..., expr=...)`.
+
 | Entry point | Preset | Await behavior |
 | --- | --- | --- |
 | `run(...)` | `default_handlers()` | `sync_await_handler` bridges awaitables via background loop thread |
