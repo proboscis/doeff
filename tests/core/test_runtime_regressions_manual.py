@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import doeff_vm
 import pytest
 
 from doeff import (
     Ask,
     Err,
+    Effect,
     Gather,
     Get,
     Local,
     MissingEnvKeyError,
     Ok,
+    Pass,
     Program,
     Put,
     Spawn,
     Try,
+    WithHandler,
     async_run,
     default_async_handlers,
     default_handlers,
@@ -22,6 +27,7 @@ from doeff import (
     run,
 )
 from doeff.effects import TaskCompleted
+from doeff.types import EffectBase
 
 
 def _rust_ok_err_classes() -> tuple[type, type]:
@@ -66,6 +72,31 @@ def test_try_except_catches_yielded_program_error() -> None:
     result = run(program(), handlers=default_handlers())
     assert result.is_ok()
     assert result.value == ("caught", "ValueError", "x")
+
+
+def test_try_except_catches_handler_raised_error_at_yield_site() -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class HandlerBoom(EffectBase):
+        pass
+
+    @do
+    def handler(effect: Effect, k: object):
+        if not isinstance(effect, HandlerBoom):
+            yield Pass()
+            return
+        raise ValueError("boom-from-handler")
+
+    @do
+    def program():
+        try:
+            _ = yield HandlerBoom()
+            return ("unexpected",)
+        except Exception as exc:
+            return ("caught", type(exc).__name__, str(exc))
+
+    result = run(WithHandler(handler, program()), handlers=default_handlers())
+    assert result.is_ok()
+    assert result.value == ("caught", "ValueError", "boom-from-handler")
 
 
 def test_safe_wraps_error_as_result_value() -> None:
