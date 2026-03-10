@@ -20,6 +20,9 @@ This chapter covers async integration and scheduler primitives for cooperative c
 
 Pair each runner with the matching handler preset. The preferred pairings are marked below.
 
+The examples in this chapter use `handlers=` only to install the builtin sync/async runtime preset.
+For custom handler composition, prefer `WithHandler(handler=..., expr=...)` around the program.
+
 | Runner | Preset | Status | Await Behavior |
 | --- | --- | --- | --- |
 | `run(...)` | `default_handlers()` | Valid (preferred) | Uses `sync_await_handler` |
@@ -83,7 +86,7 @@ The scheduler primitives are:
 | `Wait(task_or_future)` | `Task` or `Future` waitable handle | `T` | Suspend until one waitable resolves |
 | `Gather(*waitables)` | `Task`/`Future` waitable handles | `list[T]` | Suspend until all complete (input order) |
 | `Race(*waitables)` | `Task`/`Future` waitable handles | `RaceResult` | Suspend until first completion |
-| `Cancel(task)` | `Task[T]` | `None` | Request task cancellation (`yield task.cancel()`) |
+| `task.cancel()` | `Task[T]` | `None` | Request task cancellation |
 | `SchedulerYield` | internal | internal | Cooperative preemption point inserted per yield |
 | `CreatePromise()` | none | `Promise[T]` | Allocate doeff-internal promise |
 | `CompletePromise(p, value)` | `Promise[T]`, `T` | `None` | Resolve promise successfully |
@@ -294,7 +297,7 @@ It is sequential under `sync_await_handler`; use `async_run(...)` for overlap.
 | `Wait(waitable)` | waiting for one task/future handle | Accepts only `Task` or `Future` handles |
 | `Gather(*waitables)` | waiting for all spawned children | Pass `Task`/`Future` handles; fail-fast on first error/cancellation |
 | `Race(*waitables)` | waiting for first spawned child | Returns `RaceResult` (`first`, `value`, `rest`); losers continue unless cancelled |
-| `Cancel(task)` | requesting task cancellation | Applies to `Pending`/`Running`/`Suspended`/`Blocked`; terminal states are no-op |
+| `task.cancel()` | requesting task cancellation | Applies to `Pending`/`Running`/`Suspended`/`Blocked`; terminal states are no-op |
 | `SchedulerYield` | understanding scheduler fairness | Internal cooperative preemption point |
 | `CreatePromise()` | internal producer/consumer sync | Complete/fail via effects |
 | `CompletePromise(...)` | resolve internal promise | Wakes waiters |

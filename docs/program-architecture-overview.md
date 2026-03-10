@@ -55,17 +55,18 @@ value = yield Perform(Ask("key"))
 
 ## Handler Stack Model
 
-`run(..., handlers=[h0, h1, h2])` installs nested handler scopes:
+`run(..., handlers=[h0, h1, h2])` is a low-level convenience that installs nested handler scopes:
 
 ```text
-WithHandler(h0,
-  WithHandler(h1,
-    WithHandler(h2, program)))
+WithHandler(handler=h0,
+  expr=WithHandler(handler=h1,
+    expr=WithHandler(handler=h2, expr=program)))
 ```
 
 - `h2` is innermost and sees effects first.
 - `h0` is outermost and sees effects delegated outward.
 - Handler contract is `(effect, k) -> DoExpr`.
+- For user-facing custom composition, prefer explicit `WithHandler(handler=..., expr=...)`.
 
 ## Rust VM Stepping Engine
 

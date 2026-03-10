@@ -53,7 +53,7 @@ async def my_workflow(llm: LLMService, images: ImageService):
 ## Approach 2: Algebraic Effects (doeff)
 
 ```python
-from doeff import do, run, WithHandler
+from doeff import WithHandler, do, run
 from doeff_llm.effects import LLMChat, LLMStructuredOutput
 from doeff_image.effects import ImageGenerate
 
@@ -72,11 +72,16 @@ def my_workflow():
 
 # Stack handlers — routing is automatic
 result = run(
-    WithHandler(WithHandler(WithHandler(
-        my_workflow(),
-        openai_handler),    # Handles gpt-* models
-        gemini_handler),    # Handles gemini-* models
-        seedream_handler),  # Handles seedream-* models
+    WithHandler(
+        handler=seedream_handler,
+        expr=WithHandler(
+            handler=gemini_handler,
+            expr=WithHandler(
+                handler=openai_handler,
+                expr=my_workflow(),
+            ),
+        ),
+    ),
     env={"openai_api_key": "...", "gemini_api_key": "...", "seedream_api_key": "..."}
 )
 ```
@@ -118,7 +123,7 @@ images = CostTrackingImage(RetryImage(LoggingImage(SeedreamImage(), logger), 3),
 **With effects**, cross-cutting handlers apply to ALL effects simultaneously:
 
 ```python
-from doeff import Delegate, Effect, Get, Resume, Try, do
+from doeff import Get, Pass, Resume, Try, do
 
 @do
 def my_workflow():
@@ -129,12 +134,11 @@ def my_workflow():
 
 # One cost handler works across all effect types
 @do
-def cost_cap_handler(effect: Effect, k):
-    if hasattr(effect, 'model'):  # Any effect with a model field
-        current_cost = yield Get("total_cost")
-        if current_cost > MAX_BUDGET:
-            raise BudgetExceededError(current_cost)
-    yield Delegate()
+def cost_cap_handler(effect: LLMChat | LLMEmbedding | LLMStructuredOutput | ImageGenerate, k):
+    current_cost = yield Get("total_cost")
+    if current_cost > MAX_BUDGET:
+        raise BudgetExceededError(current_cost)
+    yield Pass()
 
 # One retry handler works for everything
 @do
@@ -155,33 +159,31 @@ def retry_handler(effect: Effect, k):
 Effects can be intercepted, transformed, or blocked without the original code knowing.
 
 ```python
-from doeff import Delegate, Effect, Get, Resume, Tell, do
+from doeff import Get, Pass, Resume, Tell, WithIntercept, do
 
 # Budget cap across ALL providers — impossible to bypass
 @do
-def budget_handler(effect: Effect, k):
-    if isinstance(effect, (LLMChat, LLMStructuredOutput, ImageGenerate)):
-        total = yield Get("total_cost")
-        if total > settings.max_budget_usd:
-            yield Tell(f"Budget exceeded: ${total:.2f} > ${settings.max_budget_usd}")
-            return (yield Resume(k, BudgetExceededResult()))
-    yield Delegate()
-
-# Model rewriting — swap models transparently
-@do
-def model_rewrite_handler(effect: Effect, k):
-    if isinstance(effect, LLMChat) and effect.model == "gpt-4":
-        # Transparently downgrade to cheaper model in dev
-        effect = LLMChat(**{**vars(effect), "model": "gpt-4o-mini"})
-    yield Delegate()  # Let the actual provider handler deal with it
+def budget_handler(effect: LLMChat | LLMStructuredOutput | ImageGenerate, k):
+    total = yield Get("total_cost")
+    if total > settings.max_budget_usd:
+        yield Tell(f"Budget exceeded: ${total:.2f} > ${settings.max_budget_usd}")
+        return (yield Resume(k, BudgetExceededResult()))
+    yield Pass()
 
 # Dry-run mode — intercept ALL side effects
 @do
-def dry_run_handler(effect: Effect, k):
-    if isinstance(effect, (LLMChat, ImageGenerate)):
-        yield Tell(f"[DRY RUN] Would execute: {type(effect).__name__}(model={effect.model})")
-        return (yield Resume(k, mock_response(effect)))
-    yield Delegate()
+def dry_run_handler(effect: LLMChat | ImageGenerate, k):
+    yield Tell(f"[DRY RUN] Would execute: {type(effect).__name__}(model={effect.model})")
+    return (yield Resume(k, mock_response(effect)))
+
+# Rewriting is better modeled with WithIntercept than Delegate()
+@do
+def rewrite_gpt4(effect):
+    if isinstance(effect, LLMChat) and effect.model == "gpt-4":
+        return LLMChat(**{**vars(effect), "model": "gpt-4o-mini"})
+    return effect
+
+rewritten_program = WithIntercept(rewrite_gpt4, my_workflow(), types=(LLMChat,), mode="include")
 ```
 
 With DI, each of these requires a new wrapper class per service type.
@@ -220,29 +222,34 @@ With doeff-flow, this becomes live-observable in real-time. DI gives you nothing
 No explicit `MultiLLMService` router needed. The handler stack is the routing mechanism.
 
 ```python
-from doeff import Delegate, Effect, Resume, do
+from doeff import Pass, Resume, do
 
-# Each handler checks model prefix, delegates if not its concern
+# Each handler checks model prefix, then passes through if it's not responsible.
 @do
-def openai_handler(effect: Effect, k):
-    if isinstance(effect, LLMChat) and effect.model.startswith("gpt-"):
-        response = yield _call_openai(effect)
-        return (yield Resume(k, response))
-    yield Delegate()  # Not my model, pass to next handler
+def openai_handler(effect: LLMChat, k):
+    if not effect.model.startswith("gpt-"):
+        yield Pass()
+        return
+    response = yield _call_openai(effect)
+    return (yield Resume(k, response))
 
 @do
-def gemini_handler(effect: Effect, k):
-    if isinstance(effect, LLMChat) and effect.model.startswith("gemini-"):
-        response = yield _call_gemini(effect)
-        return (yield Resume(k, response))
-    yield Delegate()
+def gemini_handler(effect: LLMChat, k):
+    if not effect.model.startswith("gemini-"):
+        yield Pass()
+        return
+    response = yield _call_gemini(effect)
+    return (yield Resume(k, response))
 
 # Stacking = routing
 result = run(
-    WithHandler(WithHandler(
-        my_workflow(),
-        openai_handler),   # Inner: tries first
-        gemini_handler),   # Outer: tries if inner delegates
+    WithHandler(
+        handler=gemini_handler,
+        expr=WithHandler(
+            handler=openai_handler,   # inner tries first
+            expr=my_workflow(),
+        ),
+    ),
     env={...}
 )
 ```
@@ -267,19 +274,20 @@ The program never mentions a provider. The handler stack decides where secrets c
 
 ```python
 # Production: Google Cloud Secret Manager
-run(WithHandler(deploy_workflow(), gsm_handler), env={...})
+run(WithHandler(handler=gsm_handler, expr=deploy_workflow()), env={...})
 
 # Local dev: 1Password
-run(WithHandler(deploy_workflow(), onepassword_handler), env={...})
+run(WithHandler(handler=onepassword_handler, expr=deploy_workflow()), env={...})
 
 # CI: AWS Secrets Manager
-run(WithHandler(deploy_workflow(), aws_secrets_handler), env={...})
+run(WithHandler(handler=aws_secrets_handler, expr=deploy_workflow()), env={...})
 
 # Fallback chain: try 1Password, fall back to env vars
-run(WithHandler(WithHandler(
-    deploy_workflow(),
-    onepassword_handler),
-    env_var_handler),
+run(
+    WithHandler(
+        handler=env_var_handler,
+        expr=WithHandler(handler=onepassword_handler, expr=deploy_workflow()),
+    ),
 )
 ```
 
@@ -290,19 +298,19 @@ With DI, you'd need a `SecretService` protocol, provider implementations, a fact
 ```python
 # Production
 result = run(
-    WithHandler(my_workflow(), openai_production_handler),
+    WithHandler(handler=openai_production_handler, expr=my_workflow()),
     env={"openai_api_key": real_key}
 )
 
 # Test — swap handler, everything else identical
 result = run(
-    WithHandler(my_workflow(), openai_mock_handler),
+    WithHandler(handler=openai_mock_handler, expr=my_workflow()),
     store={"mock_config": MockOpenAIConfig(default_response="test")}
 )
 
 # Replay — record and replay real responses
 result = run(
-    WithHandler(my_workflow(), replay_handler(recorded_responses)),
+    WithHandler(handler=replay_handler(recorded_responses), expr=my_workflow()),
 )
 ```
 
@@ -449,29 +457,29 @@ This program uses three independent effect domains:
 from doeff_sim.handlers import deterministic_sim_handler
 from doeff_events.handlers import event_handler
 from doeff_time.handlers import async_time_handler
-from doeff import async_run, default_async_handlers
+from doeff import async_run, default_async_handlers, run
 
 # Deterministic simulation (instant, reproducible)
 result = run(
     WithHandler(
-        WithHandler(
-            trading_strategy(),
-            event_handler(),              # Handles Publish/WaitForEvent
+        handler=deterministic_sim_handler(  # Handles Delay/GetTime/ScheduleAt
+            start_time=1704067200.0,        #   + intercepts Spawn/Wait for
+        ),                                  #   deterministic scheduling
+        expr=WithHandler(
+            handler=event_handler(),        # Handles Publish/WaitForEvent
+            expr=trading_strategy(),
         ),
-        deterministic_sim_handler(        # Handles Delay/GetTime/ScheduleAt
-            start_time=1704067200.0,      #   + intercepts Spawn/Wait for
-        ),                                #   deterministic scheduling
     ),
 )
 
 # Same program, real-time execution (wall-clock, asyncio)
 result = await async_run(
     WithHandler(
-        WithHandler(
-            trading_strategy(),
-            event_handler(),              # Same event handler
+        handler=async_time_handler(),     # asyncio.sleep, time.time()
+        expr=WithHandler(
+            handler=event_handler(),      # Same event handler
+            expr=trading_strategy(),
         ),
-        async_time_handler(),             # asyncio.sleep, time.time()
     ),
     handlers=default_async_handlers(),
 )
@@ -543,10 +551,11 @@ c   │ Publish     │   ·    │    ·    │    ✓     │    ·    │    
 t   │ WaitForEvt  │   ·    │    ·    │    ✓     │    ·    │     ✓     │
 s   └─────────────┴────────┴─────────┴──────────┴─────────┴───────────┘
 
-    ✓ = handler intercepts     · = handler delegates (transparent)
+    ✓ = handler intercepts     · = handler passes through transparently
 ```
 
-Every `·` in this matrix is a handler calling `Delegate()` — the effect passes through transparently. No wrapper needed. No code written. The handler simply doesn't care about effects outside its domain.
+Every `·` in this matrix is a handler passing the effect through transparently. No wrapper needed.
+No code written. The handler simply doesn't care about effects outside its domain.
 
 ## Summary
 

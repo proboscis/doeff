@@ -122,20 +122,22 @@ def complex_workflow():
 ### Performance Analysis
 
 ```python
+from doeff_time import GetTime
+
 @do
 def timed_operations():
-    import time
-
     yield Step("operation_a")
-    start = yield IO(lambda: time.time())
+    start = yield GetTime()
     yield expensive_a()
-    duration_a = yield IO(lambda: time.time() - start)
+    end = yield GetTime()
+    duration_a = (end - start).total_seconds()
     yield Annotate({"duration_a": duration_a})
 
     yield Step("operation_b")
-    start = yield IO(lambda: time.time())
+    start = yield GetTime()
     yield expensive_b()
-    duration_b = yield IO(lambda: time.time() - start)
+    end = yield GetTime()
+    duration_b = (end - start).total_seconds()
     yield Annotate({"duration_b": duration_b})
 ```
 
