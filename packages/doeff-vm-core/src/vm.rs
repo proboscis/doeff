@@ -1344,6 +1344,26 @@ impl VM {
             })
     }
 
+    fn handler_stream_throw_continuation(
+        &self,
+        _stream: &IRStreamRef,
+        handler_kind: Option<HandlerKind>,
+    ) -> Option<Continuation> {
+        if handler_kind != Some(HandlerKind::Python) {
+            return None;
+        }
+
+        let dispatch_id = self
+            .current_segment_dispatch_id_any()
+            .or_else(|| self.current_active_handler_dispatch_id())?;
+        if self.dispatch_state.dispatch_is_execution_context_effect(dispatch_id) {
+            return None;
+        }
+        self.dispatch_state
+            .find_by_dispatch_id(dispatch_id)
+            .map(|ctx| ctx.k_current.clone())
+    }
+
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
         self.dispatch_state
             .active_error_dispatch_original_exception()
@@ -2185,6 +2205,16 @@ impl VM {
                 self.handle_handler_return(value)
             }
             IRStreamStep::Throw(exc) => {
+                if let Some(continuation) =
+                    self.handler_stream_throw_continuation(&stream, handler_kind)
+                {
+                    self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::TransferThrow {
+                        continuation,
+                        exception: exc,
+                    });
+                    return StepEvent::Continue;
+                }
+
                 if let Some(original) = self.active_error_dispatch_original_exception() {
                     TraceState::set_exception_cause(&exc, &original);
                 }
@@ -3675,6 +3705,16 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Deliver(value);
             }
             PyCallOutcome::GenError(exception) => {
+                if let Some(continuation) =
+                    self.handler_stream_throw_continuation(&stream, handler_kind)
+                {
+                    self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::TransferThrow {
+                        continuation,
+                        exception,
+                    });
+                    return;
+                }
+
                 let mut site = GenErrorSite::StepUserGeneratorDirect;
                 if let Some(dispatch_id) = self.current_segment_dispatch_id_any().and_then(|id| {
                     let completed = self
