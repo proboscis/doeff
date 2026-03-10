@@ -1,26 +1,25 @@
 """Cache effect handlers and memoization helpers."""
 
-from __future__ import annotations
-
 import dataclasses
 import hashlib
 import json
 from collections.abc import Callable, Mapping, Set
 from pathlib import Path
-from typing import Any
+from typing import TypeAlias
 
 import doeff_vm
 
-from doeff._vendor import Err as PyErr
-from doeff._vendor import Ok as PyOk
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CacheGetEffect, CachePut, CachePutEffect
 from doeff.effects.result import Try
 from doeff.storage import DurableStorage, InMemoryStorage, SQLiteStorage
 from doeff.types import Effect
 
+MemoKeyFn: TypeAlias = Callable[[object], str]
+CacheProtocolHandler: TypeAlias = Callable[..., object]
 
-def _dumps(value: Any) -> bytes:
+
+def _dumps(value: object) -> bytes:
     try:
         import cloudpickle as serializer
     except ModuleNotFoundError:  # pragma: no cover - optional dependency fallback
@@ -29,9 +28,9 @@ def _dumps(value: Any) -> bytes:
     return serializer.dumps(value)
 
 
-def _normalize_for_hash(value: Any) -> Any:
+def _normalize_for_hash(value: object) -> object:
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        normalized: Any = {
+        normalized: object = {
             "__type__": f"{type(value).__module__}.{type(value).__qualname__}",
             **{
                 field.name: _normalize_for_hash(getattr(value, field.name))
@@ -64,33 +63,28 @@ def _normalize_for_hash(value: Any) -> Any:
     return normalized
 
 
-def _storage_key(key: Any) -> str:
+def _storage_key(key: object) -> str:
     if isinstance(key, str):
         return key
     return f"sha256:{content_address(key)}"
 
 
-def _stored_value(value: Any) -> Any:
-    if (
-        hasattr(value, "is_ok")
-        and callable(value.is_ok)
-        and value.is_ok()
-        and hasattr(value, "value")
-    ):
-        return PyOk(value.value)
-
-    if (
-        hasattr(value, "is_err")
-        and callable(value.is_err)
-        and value.is_err()
-        and hasattr(value, "error")
-    ):
-        return PyErr(value.error)
-
-    return value
+def _persist_value(
+    storage: DurableStorage,
+    storage_key: str,
+    *,
+    original_key: object,
+    value: object,
+) -> None:
+    try:
+        storage.put(storage_key, value)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Cache handler could not persist value for key {original_key!r}: {exc}"
+        ) from exc
 
 
-def content_address(effect: Any) -> str:
+def content_address(effect: object) -> str:
     """Return a SHA-256 content address for an effect payload."""
 
     try:
@@ -102,14 +96,14 @@ def content_address(effect: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def cache_handler(storage: DurableStorage) -> Any:
+def cache_handler(storage: DurableStorage) -> CacheProtocolHandler:
     """Interpret CacheGet/CachePut against a pluggable storage backend."""
 
     @do
-    def handler(effect: CacheGetEffect | CachePutEffect, k: Any):
+    def handler(effect: CacheGetEffect | CachePutEffect, k: object):
         if not isinstance(effect, (CacheGetEffect, CachePutEffect)):
             yield doeff_vm.Pass()
-            return
+            return None
 
         key = _storage_key(effect.key)
 
@@ -119,35 +113,35 @@ def cache_handler(storage: DurableStorage) -> Any:
                 raise KeyError(effect.key)
             return (yield doeff_vm.Resume(k, value))
 
-        storage.put(key, _stored_value(effect.value))
+        _persist_value(storage, key, original_key=effect.key, value=effect.value)
         return (yield doeff_vm.Resume(k, None))
 
     return handler
 
 
-def in_memory_cache_handler() -> Any:
+def in_memory_cache_handler() -> CacheProtocolHandler:
     """Return a cache handler backed by in-memory storage."""
 
     return cache_handler(InMemoryStorage())
 
 
-def sqlite_cache_handler(db_path: str | Path) -> Any:
+def sqlite_cache_handler(db_path: str | Path) -> CacheProtocolHandler:
     """Return a cache handler backed by SQLite storage."""
 
     return cache_handler(SQLiteStorage(db_path))
 
 
 def make_memo_rewriter(
-    effect_type: type[Any],
-    key_fn: Callable[[Any], str] = content_address,
-) -> Any:
+    effect_type: type[object],
+    key_fn: MemoKeyFn = content_address,
+) -> CacheProtocolHandler:
     """Create an interceptor that memoizes handled effects through CacheGet/CachePut."""
 
     @do
-    def handler(effect: Effect, k: Any):
+    def handler(effect: Effect, k: object):
         if not isinstance(effect, effect_type):
             yield doeff_vm.Pass()
-            return
+            return None
 
         key = key_fn(effect)
 
@@ -170,9 +164,9 @@ def make_memo_rewriter(
 
 
 def memo_rewriters(
-    *effect_types: type[Any],
-    key_fn: Callable[[Any], str] = content_address,
-) -> list[Any]:
+    *effect_types: type[object],
+    key_fn: MemoKeyFn = content_address,
+) -> list[CacheProtocolHandler]:
     """Create memo rewriters for each provided effect type."""
 
     return [make_memo_rewriter(effect_type, key_fn=key_fn) for effect_type in effect_types]

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
+import doeff_vm
+
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
 from doeff.do import do
@@ -17,7 +19,7 @@ from doeff.effects.execution_context import GetExecutionContext
 from doeff.effects.result import Try
 from doeff.effects.writer import slog
 from doeff.kleisli import KleisliProgram
-from doeff.types import EffectGenerator, FrozenDict, Result
+from doeff.types import EffectGenerator, Err, FrozenDict, Ok, Result
 
 
 @dataclass(frozen=True)
@@ -41,30 +43,14 @@ class CacheCallSite:
 T = TypeVar("T")
 
 
-def _result_is_ok(result: Any) -> bool:
-    probe = result.is_ok
-    return bool(probe()) if callable(probe) else bool(probe)
-
-
-def _result_is_err(result: Any) -> bool:
-    probe = result.is_err
-    return bool(probe()) if callable(probe) else bool(probe)
-
-
-def _result_value(result: Any) -> Any:
+def _normalize_cache_result(result: object) -> Result[Any]:
     if isinstance(result, Result):
-        return result.unwrap()
-    return result.value
-
-
-def _result_error(result: Any) -> BaseException:
-    if isinstance(result, Result):
-        return result.unwrap_err()
-    return result.error
-
-
-def _is_result_like(value: Any) -> bool:
-    return hasattr(value, "is_ok") and hasattr(value, "is_err")
+        return result
+    if isinstance(result, doeff_vm.Ok):
+        return Ok(result.value)
+    if isinstance(result, doeff_vm.Err):
+        return Err(result.error)
+    raise TypeError(f"cache() expected a Result value, got {type(result).__name__}")
 
 
 def _function_identifier(target: Any) -> str:
@@ -229,7 +215,9 @@ def cache(
         ... def expensive_computation(x: int) -> EffectGenerator[int]:
         ...     yield Tell(f"Computing result for {x}")
         ...     return x * 2
-        >>> await ProgramInterpreter().run(expensive_computation(5))
+        >>> result = run(expensive_computation(5), handlers=default_handlers())
+        >>> result.value
+        10
 
         The first call will compute and cache the result. Subsequent calls within the TTL return
         the cached value, and the policy hints remain available to custom cache handlers.
@@ -373,9 +361,9 @@ def cache(
             def compute_and_cache() -> EffectGenerator[T]:
                 yield slog(msg=f"Cache miss for {func_name}, computing...", level="DEBUG")
                 program_call = wrapped_func(*args, **kwargs)
-                result: Result = yield Try(program_call)
+                result = _normalize_cache_result((yield Try(program_call)))
 
-                if _result_is_ok(result):
+                if result.is_ok():
                     yield ensure_serializable(cache_key_obj)
                     yield CachePut(
                         cache_key_obj,
@@ -387,10 +375,10 @@ def cache(
                         policy=policy,
                     )
                     yield slog(msg=f"Cache: stored result for {func_name}", level="DEBUG")
-                    return _result_value(result)
+                    return result.value
 
                 yield slog(msg=f"Computation for {func_name} failed, not caching.", level="error")
-                error = _result_error(result)
+                error = result.error
                 _attach_exception_note(
                     error,
                     _cache_error_note(func_name, args, dict(kwargs), call_site),
@@ -408,10 +396,10 @@ def cache(
             else:
                 result = yield compute_and_cache()
 
-            if _is_result_like(result):
-                if _result_is_err(result):
-                    raise _result_error(result)
-                return _result_value(result)
+            if isinstance(result, Result):
+                if result.is_err():
+                    raise result.error
+                return result.value
             return result
 
         try:
