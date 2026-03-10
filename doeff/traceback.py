@@ -425,6 +425,22 @@ else:
                 return self._is_final_exception_type(result.exception_repr)
             return True
 
+        def _is_shadowed_effect_entry(self, index: int, entry: EffectYield) -> bool:
+            if not isinstance(entry.result, EffectResultThrew):
+                return False
+            saw_handler_wrapper = False
+            for later in self.active_chain[index + 1 :]:
+                if isinstance(later, ProgramYield) and later.is_handler:
+                    saw_handler_wrapper = True
+                    continue
+                if isinstance(later, ExceptionSite):
+                    return saw_handler_wrapper and (
+                        later.function_name == entry.function_name
+                        and later.source_file == entry.source_file
+                    )
+                break
+            return False
+
         @staticmethod
         def _format_spawn_boundary(boundary: SpawnBoundary) -> str:
             if boundary.spawn_site is not None:
@@ -440,9 +456,16 @@ else:
             lines: list[str] = ["doeff Traceback (most recent call last):", ""]
             previous_handler_stack: tuple[HandlerStackEntry, ...] | None = None
             previous_spawn_boundary: SpawnBoundary | None = None
-            for entry in self.active_chain:
+            for index, entry in enumerate(self.active_chain):
                 if isinstance(entry, ProgramYield):
+                    next_entry = (
+                        self.active_chain[index + 1]
+                        if index + 1 < len(self.active_chain)
+                        else None
+                    )
                     if entry.is_handler:
+                        continue
+                    if isinstance(next_entry, ProgramYield) and next_entry.is_handler:
                         continue
                     previous_handler_stack = None
                     previous_spawn_boundary = None
@@ -454,7 +477,9 @@ else:
                     continue
 
                 if isinstance(entry, EffectYield):
-                    if not self._should_render_effect_entry(entry):
+                    if not self._should_render_effect_entry(entry) or self._is_shadowed_effect_entry(
+                        index, entry
+                    ):
                         continue
                     if (
                         previous_handler_stack is not None
@@ -494,6 +519,10 @@ else:
                 if isinstance(entry, ExceptionSite):
                     previous_handler_stack = None
                     previous_spawn_boundary = None
+                    if entry.function_name == "bridge_generator" and "/doeff/do.py:" in (
+                        f"{entry.source_file}:{entry.source_line}"
+                    ):
+                        continue
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )

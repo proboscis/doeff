@@ -28,6 +28,7 @@ from doeff import (
 from doeff.handlers import result_safe as result_safe_handler
 from doeff.handlers import state as state_handler
 from doeff.effects import TaskCompleted
+from doeff.rust_vm import reader, state
 
 
 def _rust_ok_err_classes() -> tuple[type, type]:
@@ -124,6 +125,48 @@ def test_try_wraps_handler_raised_error_as_result_value() -> None:
     assert value.is_err() is True
     assert isinstance(value.error, ValueError)
     assert str(value.error) == "boom-from-handler"
+
+
+@pytest.mark.parametrize(
+    ("effect_factory", "handler", "run_kwargs", "expected_error_type", "expected_message"),
+    [
+        (
+            lambda: Ask("missing"),
+            reader,
+            {"env": {}},
+            "MissingEnvKeyError",
+            "Environment key not found: 'missing'",
+        ),
+        (
+            lambda: Get("missing"),
+            state,
+            {"store": {}},
+            "KeyError",
+            "'missing'",
+        ),
+    ],
+)
+def test_try_except_catches_rust_withhandler_error_at_yield_site(
+    effect_factory,
+    handler,
+    run_kwargs,
+    expected_error_type,
+    expected_message,
+) -> None:
+    @do
+    def program():
+        try:
+            _ = yield effect_factory()
+            return ("unexpected",)
+        except Exception as exc:
+            return ("caught", type(exc).__name__, str(exc))
+
+    result = run(WithHandler(handler, program()), handlers=default_handlers(), **run_kwargs)
+
+    assert result.is_ok()
+    assert result.value[0] == "caught"
+    assert result.value[1] == expected_error_type
+    assert expected_message in result.value[2]
 
 
 def test_safe_wraps_error_as_result_value() -> None:
@@ -248,28 +291,16 @@ def _yield_site_inner_effect():
             "handler_helper_subprogram_raise",
             _yield_site_helper_boom_handler,
             "helper-boom",
-            marks=pytest.mark.xfail(
-                reason="Tracked by #273/#277: helper sub-program failures inside handlers still escape the yield-site try/except",
-                strict=True,
-            ),
         ),
         pytest.param(
             "handler_expand_callback_raise",
             _yield_site_expand_boom_handler,
             "expand-boom",
-            marks=pytest.mark.xfail(
-                reason="Tracked by #273/#277: handler-triggered Expand callback failures still escape the yield-site try/except",
-                strict=True,
-            ),
         ),
         pytest.param(
             "handler_apply_callback_raise",
             _yield_site_apply_boom_handler,
             "apply-boom",
-            marks=pytest.mark.xfail(
-                reason="Tracked by #273/#277: handler-triggered Apply callback failures still escape the yield-site try/except",
-                strict=True,
-            ),
         ),
     ],
 )
@@ -354,10 +385,6 @@ def test_async_escape_errors_reenter_try_except_in_sync_run() -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason="Tracked by #277: Rust-backed handlers do not yet replay to yield-site try/except",
-    strict=True,
-)
 def test_missing_env_key_is_catchable_at_yield_site_and_try_still_wraps() -> None:
     @do
     def catch_program():
@@ -382,10 +409,6 @@ def test_missing_env_key_is_catchable_at_yield_site_and_try_still_wraps() -> Non
     assert isinstance(safe_result.value.error, MissingEnvKeyError)
 
 
-@pytest.mark.xfail(
-    reason="Tracked by #277: Rust-backed handlers do not yet replay to yield-site try/except",
-    strict=True,
-)
 def test_state_missing_key_is_catchable_at_yield_site_and_try_still_wraps() -> None:
     @do
     def catch_program():

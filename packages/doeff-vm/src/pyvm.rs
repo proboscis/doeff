@@ -1622,6 +1622,12 @@ pub(crate) fn classify_yielded_bound(
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
                 let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                    if vm.is_one_shot_consumed(cont_id) {
+                        return PyRuntimeError::new_err(format!(
+                            "one-shot violation: continuation {} already consumed",
+                            cont_id.raw()
+                        ));
+                    }
                     PyRuntimeError::new_err(format!(
                         "Resume with unknown continuation id {}",
                         cont_id.raw()
@@ -1641,6 +1647,12 @@ pub(crate) fn classify_yielded_bound(
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
                 let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                    if vm.is_one_shot_consumed(cont_id) {
+                        return PyRuntimeError::new_err(format!(
+                            "one-shot violation: continuation {} already consumed",
+                            cont_id.raw()
+                        ));
+                    }
                     PyRuntimeError::new_err(format!(
                         "Transfer with unknown continuation id {}",
                         cont_id.raw()

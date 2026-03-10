@@ -5,7 +5,6 @@ pub mod capture;
 pub mod continuation;
 mod debug_state;
 pub mod dispatch;
-mod dispatch_state;
 pub mod do_ctrl;
 pub mod doeff_generator;
 pub mod driver;
@@ -36,7 +35,7 @@ pub use capture::{
     SpawnSite, TraceEntry, TraceFrame, TraceHop,
 };
 pub use continuation::Continuation;
-pub use dispatch::DispatchContext;
+pub use dispatch::DispatchFrame;
 pub use do_ctrl::DoCtrl;
 pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 pub use driver::{Mode, StepEvent};
