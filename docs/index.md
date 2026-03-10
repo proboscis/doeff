@@ -29,10 +29,9 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 
 ### Integration & Advanced Topics
 
-11. **[Pinjected Integration](10-pinjected-integration.md)** - Dependency injection with pinjected
-12. **[Kleisli Arrows](11-kleisli-arrows.md)** - Composition and automatic unwrapping
-13. **[Patterns](12-patterns.md)** - Best practices and common patterns
-14. **[API Reference](13-api-reference.md)** - Complete API documentation
+11. **[Kleisli Arrows](11-kleisli-arrows.md)** - Composition and automatic unwrapping
+12. **[Patterns](12-patterns.md)** - Best practices and common patterns
+13. **[API Reference](13-api-reference.md)** - Complete API documentation
 
 ### CLI Tools
 
@@ -126,8 +125,7 @@ main()
 1. **[Advanced Effects](09-advanced-effects.md)** for Gather, Atomic
 2. **[WithIntercept](22-with-intercept.md)** for cross-cutting observation
 3. **[Graph Tracking](08-graph-tracking.md)** for execution visualization
-4. **[Pinjected Integration](10-pinjected-integration.md)** for DI patterns
-5. **[API Reference](13-api-reference.md)** for complete API details
+4. **[API Reference](13-api-reference.md)** for complete API details
 
 ## By Use Case
 
@@ -154,7 +152,6 @@ main()
 ### Testing
 
 - **[Patterns](12-patterns.md#testing-patterns)** for testing strategies
-- **[Pinjected Integration](10-pinjected-integration.md)** for dependency injection
 - **[Error Handling](05-error-handling.md)** for error simulation
 
 ## Effect Quick Reference

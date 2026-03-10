@@ -479,56 +479,6 @@ def batch_processor(items, batch_size=100):
 
 ## Testing Patterns
 
-### Dependency Injection for Tests
-
-```python
-# Production code
-@do
-def user_workflow(user_id):
-    db = yield Ask("database")
-    email = yield Ask("email_service")
-    
-    user = yield db.get_user(user_id)
-    yield email.send(user.email, "Welcome!")
-    return user
-
-# Test code
-import pytest
-from doeff_pinjected import program_to_injected
-from pinjected import design, AsyncResolver
-
-@pytest.mark.asyncio
-async def test_user_workflow():
-    # Mock dependencies
-    class MockDB:
-        async def get_user(self, id):
-            return {"id": id, "email": "test@example.com"}
-    
-    class MockEmail:
-        def __init__(self):
-            self.sent = []
-        
-        async def send(self, to, subject):
-            self.sent.append((to, subject))
-    
-    # Setup test bindings
-    mock_email = MockEmail()
-    test_bindings = design(
-        database=MockDB(),
-        email_service=mock_email
-    )
-    
-    # Run test
-    resolver = AsyncResolver(test_bindings)
-    injected = program_to_injected(user_workflow(123))
-    result = await resolver.provide(injected)
-    
-    # Assertions
-    assert result["id"] == 123
-    assert len(mock_email.sent) == 1
-    assert mock_email.sent[0][0] == "test@example.com"
-```
-
 ### Test Effects
 
 Verify effects were executed:
@@ -725,4 +675,4 @@ def flat_structure():
 
 - **[Error Handling](05-error-handling.md)** - Robust error handling patterns
 - **[Advanced Effects](09-advanced-effects.md)** - Parallel execution and optimization
-- **[Pinjected Integration](10-pinjected-integration.md)** - DI patterns
+- **[Basic Effects](03-basic-effects.md)** - Reader-based dependency injection patterns

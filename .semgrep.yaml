@@ -1353,6 +1353,26 @@ rules:
     metadata:
       category: docs-deprecation
 
+  - id: public-surfaces-no-doeff-pinjected
+    pattern-regex: '(doeff-pinjected|doeff_pinjected)'
+    paths:
+      include:
+        - "/README.md"
+        - "/pyproject.toml"
+        - "/docs/01-getting-started.md"
+        - "/docs/index.md"
+        - "/docs/12-patterns.md"
+        - "/docs/13-api-reference.md"
+        - "/docs/10-pinjected-integration.md"
+    message: |
+      ISSUE-261: doeff-pinjected has been removed from the supported public surface.
+      Do not advertise the package or import path in root metadata or public docs.
+    languages: [generic]
+    severity: ERROR
+    metadata:
+      category: package-removal
+      issue: 261
+
   # ---------------------------------------------------------------------------
   # DEPRECATED RUNTIME/INTERPRETER CLASS USAGE (packages & tests)
   # ---------------------------------------------------------------------------
