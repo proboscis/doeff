@@ -470,8 +470,13 @@ pub struct SchedulerState {
 
 static NEXT_SCHEDULER_STATE_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_SEMAPHORE_ID: AtomicU64 = AtomicU64::new(1);
+static SEMAPHORE_DROP_NOTIFICATIONS: OnceLock<Mutex<HashMap<u64, Vec<u64>>>> = OnceLock::new();
 static SCHEDULER_STATE_REGISTRY: OnceLock<Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>>> =
     OnceLock::new();
+
+fn semaphore_drop_notifications() -> &'static Mutex<HashMap<u64, Vec<u64>>> {
+    SEMAPHORE_DROP_NOTIFICATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 fn scheduler_state_registry() -> &'static Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>> {
     SCHEDULER_STATE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
@@ -509,8 +514,52 @@ fn resolve_scheduler_state(state_id: u64) -> Option<Arc<Mutex<SchedulerState>>> 
 
 pub fn debug_semaphore_count_for_state(state_id: u64) -> Option<usize> {
     let state = resolve_scheduler_state(state_id)?;
-    let state = state.lock().expect("Scheduler lock poisoned");
+    let mut state = state.lock().expect("Scheduler lock poisoned");
+    state.process_semaphore_drop_notifications();
     Some(state.semaphores.len())
+}
+
+pub fn debug_semaphore_exists(semaphore_id: u64) -> bool {
+    let mut stale_state_ids: Vec<u64> = Vec::new();
+    let live_states: Vec<(u64, Arc<Mutex<SchedulerState>>)> = {
+        let registry = scheduler_state_registry()
+            .lock()
+            .expect("Scheduler lock poisoned");
+        registry
+            .iter()
+            .filter_map(|(state_id, weak_state)| {
+                weak_state.upgrade().map(|state| (*state_id, state)).or_else(|| {
+                    stale_state_ids.push(*state_id);
+                    None
+                })
+            })
+            .collect()
+    };
+
+    if !stale_state_ids.is_empty() {
+        let mut registry = scheduler_state_registry()
+            .lock()
+            .expect("Scheduler lock poisoned");
+        for state_id in stale_state_ids {
+            registry.remove(&state_id);
+        }
+    }
+
+    for (_state_id, state) in live_states {
+        let mut state = state.lock().expect("Scheduler lock poisoned");
+        state.process_semaphore_drop_notifications();
+        if state.semaphores.contains_key(&semaphore_id) {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
+    let mut notifications = semaphore_drop_notifications()
+        .lock()
+        .expect("Scheduler lock poisoned");
+    notifications.entry(state_id).or_default().push(semaphore_id);
 }
 
 fn parse_task_completed_result(
@@ -852,9 +901,15 @@ fn task_cancelled_error() -> PyException {
     })
 }
 
-fn make_python_semaphore_value(semaphore_id: u64) -> Result<Value, PyException> {
+fn make_python_semaphore_value(semaphore_id: u64, state_id: u64) -> Result<Value, PyException> {
     Python::attach(|py| {
-        let semaphore = Bound::new(py, PySemaphore { id: semaphore_id })
+        let semaphore = Bound::new(
+            py,
+            PySemaphore {
+                id: semaphore_id,
+                state_id,
+            },
+        )
             .map_err(|e| {
                 PyException::runtime_error(format!(
                     "failed to instantiate runtime Semaphore({semaphore_id}): {e}"
@@ -897,6 +952,25 @@ fn make_async_external_wait_step() -> Result<IRStreamStep, PyException> {
 // ---------------------------------------------------------------------------
 
 impl SchedulerState {
+    pub fn process_semaphore_drop_notifications(&mut self) {
+        let dropped = {
+            let mut notifications = semaphore_drop_notifications()
+                .lock()
+                .expect("Scheduler lock poisoned");
+            notifications.remove(&self.state_id)
+        };
+        let Some(dropped) = dropped else {
+            return;
+        };
+
+        let mut unique = HashSet::new();
+        for semaphore_id in dropped {
+            if unique.insert(semaphore_id) {
+                self.remove_semaphore(semaphore_id);
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self::with_external_wait_mode(ExternalWaitMode::Blocking)
     }
@@ -1851,6 +1925,8 @@ impl SchedulerState {
     /// switching and loads the new task's store after switching.
     fn transfer_next(&mut self, store: &mut RustStore) -> TransferNextOutcome {
         loop {
+            self.process_semaphore_drop_notifications();
+
             if let Err(error) = self.drain_external_completions_nonblocking() {
                 return TransferNextOutcome::Step(IRStreamStep::Throw(error));
             }
@@ -2002,6 +2078,9 @@ impl SchedulerState {
 
 impl Drop for SchedulerState {
     fn drop(&mut self) {
+        if let Ok(mut notifications) = semaphore_drop_notifications().lock() {
+            notifications.remove(&self.state_id);
+        }
         if let Ok(mut registry) = scheduler_state_registry().lock() {
             registry.remove(&self.state_id);
         }
@@ -2590,6 +2669,7 @@ impl IRStreamProgram for SchedulerProgram {
     ) -> IRStreamStep {
         {
             let mut state = self.state.lock().expect("Scheduler lock poisoned");
+            state.process_semaphore_drop_notifications();
             if state.apply_running_task_cancellation_if_requested() {
                 drop(state);
                 return self.continue_simple_transfer(k_user, store);
@@ -2688,11 +2768,12 @@ impl IRStreamProgram for SchedulerProgram {
             }
 
             SchedulerEffect::CreateSemaphore { permits } => {
-                let semaphore_id = {
+                let (semaphore_id, state_id) = {
                     let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                    state.create_semaphore(permits)
+                    let semaphore_id = state.create_semaphore(permits);
+                    (semaphore_id, state.state_id())
                 };
-                let semaphore_value = match make_python_semaphore_value(semaphore_id) {
+                let semaphore_value = match make_python_semaphore_value(semaphore_id, state_id) {
                     Ok(value) => value,
                     Err(error) => return IRStreamStep::Throw(error),
                 };

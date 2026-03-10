@@ -137,6 +137,7 @@ pyo3::create_exception!(
 pub struct PySemaphore {
     #[pyo3(get)]
     pub id: u64,
+    pub(crate) state_id: u64,
 }
 
 #[pyclass(frozen, name = "CreateSemaphoreEffect", extends=PyEffectBase)]
@@ -511,6 +512,12 @@ impl PySemaphore {
 
     fn __repr__(&self) -> String {
         format!("Semaphore({})", self.id)
+    }
+}
+
+impl Drop for PySemaphore {
+    fn drop(&mut self) {
+        crate::scheduler::notify_semaphore_handle_dropped(self.state_id, self.id);
     }
 }
 

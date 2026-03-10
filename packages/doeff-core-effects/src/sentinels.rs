@@ -34,8 +34,18 @@ impl PyRustHandlerSentinel {
 }
 
 #[pyfunction]
+fn _notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
+    crate::scheduler::notify_semaphore_handle_dropped(state_id, semaphore_id);
+}
+
+#[pyfunction]
 fn _debug_scheduler_semaphore_count(state_id: u64) -> Option<usize> {
     crate::scheduler::debug_semaphore_count_for_state(state_id)
+}
+
+#[pyfunction]
+fn _debug_semaphore_exists(semaphore_id: u64) -> bool {
+    crate::scheduler::debug_semaphore_exists(semaphore_id)
 }
 
 pub fn register_sentinels(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -89,6 +99,8 @@ pub fn register_sentinels(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "AwaitHandler".to_string(),
         ))),
     )?;
+    m.add_function(wrap_pyfunction!(_notify_semaphore_handle_dropped, m)?)?;
     m.add_function(wrap_pyfunction!(_debug_scheduler_semaphore_count, m)?)?;
+    m.add_function(wrap_pyfunction!(_debug_semaphore_exists, m)?)?;
     Ok(())
 }
