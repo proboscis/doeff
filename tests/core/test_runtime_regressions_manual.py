@@ -25,6 +25,8 @@ from doeff import (
     do,
     run,
 )
+from doeff.handlers import result_safe as result_safe_handler
+from doeff.handlers import state as state_handler
 from doeff.effects import TaskCompleted
 
 
@@ -141,6 +143,285 @@ def test_safe_wraps_error_as_result_value() -> None:
     assert value.is_err() is True
     assert isinstance(value.error, ValueError)
     assert str(value.error) == "x"
+
+
+class YieldSiteProbe(EffectBase):
+    pass
+
+
+@do
+def _yield_site_helper_ok():
+    return "ok"
+
+
+@do
+def _yield_site_helper_boom():
+    raise ValueError("helper-boom")
+
+
+def _yield_site_meta(fn):
+    code = fn.__code__
+    return {
+        "function_name": code.co_name,
+        "source_file": code.co_filename,
+        "source_line": code.co_firstlineno,
+    }
+
+
+def _yield_site_expand_boom_factory():
+    raise ValueError("expand-boom")
+
+
+def _yield_site_apply_boom_callback():
+    raise ValueError("apply-boom")
+
+
+@do
+def _yield_site_raise_after_helper_handler(effect: Effect, _k: object):
+    if not isinstance(effect, YieldSiteProbe):
+        yield Pass()
+        return
+    _ = yield _yield_site_helper_ok()
+    raise ValueError("after-helper-boom")
+
+
+@do
+def _yield_site_helper_boom_handler(effect: Effect, k: object):
+    if not isinstance(effect, YieldSiteProbe):
+        yield Pass()
+        return
+    _ = yield _yield_site_helper_boom()
+    return (yield Resume(k, "unreachable"))
+
+
+@do
+def _yield_site_expand_boom_handler(effect: Effect, k: object):
+    if not isinstance(effect, YieldSiteProbe):
+        yield Pass()
+        return
+    _ = yield doeff_vm.Expand(
+        doeff_vm.Pure(_yield_site_expand_boom_factory),
+        [],
+        {},
+        _yield_site_meta(_yield_site_expand_boom_factory),
+    )
+    return (yield Resume(k, "unreachable"))
+
+
+@do
+def _yield_site_apply_boom_handler(effect: Effect, k: object):
+    if not isinstance(effect, YieldSiteProbe):
+        yield Pass()
+        return
+    _ = yield doeff_vm.Apply(
+        doeff_vm.Pure(_yield_site_apply_boom_callback),
+        [],
+        {},
+        _yield_site_meta(_yield_site_apply_boom_callback),
+    )
+    return (yield Resume(k, "unreachable"))
+
+
+@do
+def _yield_site_try_direct_effect():
+    try:
+        _ = yield YieldSiteProbe()
+        return ("unexpected",)
+    except Exception as exc:
+        return ("caught", type(exc).__name__, str(exc))
+
+
+@do
+def _yield_site_inner_effect():
+    return (yield YieldSiteProbe())
+
+
+@pytest.mark.parametrize(
+    ("case", "handler", "expected_message"),
+    [
+        (
+            "handler_raise_after_helper_work",
+            _yield_site_raise_after_helper_handler,
+            "after-helper-boom",
+        ),
+        pytest.param(
+            "handler_helper_subprogram_raise",
+            _yield_site_helper_boom_handler,
+            "helper-boom",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #273/#277: helper sub-program failures inside handlers still escape the yield-site try/except",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "handler_expand_callback_raise",
+            _yield_site_expand_boom_handler,
+            "expand-boom",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #273/#277: handler-triggered Expand callback failures still escape the yield-site try/except",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "handler_apply_callback_raise",
+            _yield_site_apply_boom_handler,
+            "apply-boom",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #273/#277: handler-triggered Apply callback failures still escape the yield-site try/except",
+                strict=True,
+            ),
+        ),
+    ],
+)
+def test_try_except_catches_handler_internal_failure_sources(
+    case: str, handler: object, expected_message: str
+) -> None:
+    """Unhandled handler-internal failures should re-enter the user's original yield site."""
+    result = run(WithHandler(handler, _yield_site_try_direct_effect()), handlers=default_handlers())
+    assert result.is_ok(), case
+    assert result.value == ("caught", "ValueError", expected_message)
+
+
+@pytest.mark.parametrize(
+    ("case", "handler", "expected_message"),
+    [
+        (
+            "handler_raise_after_helper_work",
+            _yield_site_raise_after_helper_handler,
+            "after-helper-boom",
+        ),
+        (
+            "handler_helper_subprogram_raise",
+            _yield_site_helper_boom_handler,
+            "helper-boom",
+        ),
+        (
+            "handler_expand_callback_raise",
+            _yield_site_expand_boom_handler,
+            "expand-boom",
+        ),
+        (
+            "handler_apply_callback_raise",
+            _yield_site_apply_boom_handler,
+            "apply-boom",
+        ),
+    ],
+)
+def test_try_wraps_handler_internal_failure_sources_as_err(
+    case: str, handler: object, expected_message: str
+) -> None:
+    @do
+    def program():
+        return (yield Try(WithHandler(handler, _yield_site_inner_effect())))
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok(), case
+    value = result.value
+    assert value.is_err() is True
+    assert isinstance(value.error, ValueError)
+    assert str(value.error) == expected_message
+
+
+def test_eval_expr_errors_reenter_try_except() -> None:
+    @do
+    def program():
+        try:
+            _ = yield doeff_vm.Eval(object())
+            return ("unexpected",)
+        except Exception as exc:
+            return ("caught", type(exc).__name__, str(exc))
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok()
+    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+
+
+def test_async_escape_errors_reenter_try_except_in_sync_run() -> None:
+    @do
+    def program():
+        try:
+            _ = yield doeff_vm.PythonAsyncSyntaxEscape(action=lambda: None)
+            return ("unexpected",)
+        except Exception as exc:
+            return ("caught", type(exc).__name__, str(exc))
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok()
+    assert result.value == (
+        "caught",
+        "TypeError",
+        "CallAsync requires async_run (PythonAsyncSyntaxEscape not supported in sync mode)",
+    )
+
+
+@pytest.mark.xfail(
+    reason="Tracked by #277: Rust-backed handlers do not yet replay to yield-site try/except",
+    strict=True,
+)
+def test_missing_env_key_is_catchable_at_yield_site_and_try_still_wraps() -> None:
+    @do
+    def catch_program():
+        try:
+            _ = yield Ask("missing")
+            return ("unexpected",)
+        except Exception as exc:
+            return ("caught", type(exc).__name__, str(exc))
+
+    @do
+    def safe_program():
+        return (yield Try(Ask("missing")))
+
+    catch_result = run(catch_program(), handlers=default_handlers(), env={})
+    assert catch_result.is_ok()
+    assert catch_result.value[0] == "caught"
+    assert catch_result.value[1] == "MissingEnvKeyError"
+
+    safe_result = run(safe_program(), handlers=default_handlers(), env={})
+    assert safe_result.is_ok()
+    assert safe_result.value.is_err() is True
+    assert isinstance(safe_result.value.error, MissingEnvKeyError)
+
+
+@pytest.mark.xfail(
+    reason="Tracked by #277: Rust-backed handlers do not yet replay to yield-site try/except",
+    strict=True,
+)
+def test_state_missing_key_is_catchable_at_yield_site_and_try_still_wraps() -> None:
+    @do
+    def catch_program():
+        try:
+            _ = yield Get("missing")
+            return ("unexpected",)
+        except Exception as exc:
+            return ("caught", type(exc).__name__, str(exc))
+
+    @do
+    def safe_program():
+        return (yield Try(Get("missing")))
+
+    catch_result = run(catch_program(), handlers=[state_handler])
+    assert catch_result.is_ok()
+    assert catch_result.value[0] == "caught"
+    assert catch_result.value[1] == "KeyError"
+
+    safe_result = run(safe_program(), handlers=[result_safe_handler, state_handler])
+    assert safe_result.is_ok()
+    assert safe_result.value.is_err() is True
+    assert isinstance(safe_result.value.error, KeyError)
+
+
+def test_state_handler_callback_error_is_catchable_at_yield_site() -> None:
+    @do
+    def catch_program():
+        try:
+            _ = yield Modify("count", lambda old: old / 0)
+            return ("unexpected",)
+        except Exception as exc:
+            return ("caught", type(exc).__name__, str(exc))
+
+    catch_result = run(catch_program(), handlers=[state_handler], store={"count": 1})
+    assert catch_result.is_ok()
+    assert catch_result.value[0] == "caught"
 
 
 def test_safe_gather_and_run_result_share_rust_ok_err_surface() -> None:
