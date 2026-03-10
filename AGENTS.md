@@ -1,5 +1,8 @@
 # Repository Guidelines
 
+## Communication
+Respond to the user in Japanese by default unless they explicitly request another language.
+
 ## Project Structure & Module Organization
 Core runtime code lives in `doeff/`: monadic primitives in `program.py`, execution helpers in `core.py` and `interpreter.py`, and effect definitions under `effects/` with corresponding handlers in `handlers/`. Shared utilities sit beside them in `utils.py`, `types.py`, and `cache.py`. Tests that exercise each capability reside in `tests/`, while runnable samples land in `examples/`. Workspace extensions such as OpenAI, Gemini, and pinjected bridges are published from `packages/`; keep connector-specific assets inside their respective subpackages. Use `docs/` for design notes or long-form guides that support future contributors.
 
