@@ -515,6 +515,29 @@ value = yield Pure({"status": "ok"})
 
 ---
 
+### WithHandler(handler, expr)
+
+Run a scoped sub-program under a custom handler.
+
+```python
+@do
+def ask_override(effect: AskEffect, k):
+    return (yield Resume(k, "override"))
+
+scoped = WithHandler(handler=ask_override, expr=worker())
+```
+
+**Signature:** `WithHandler(handler: HandlerFn, expr: DoExpr[T])`
+
+**Notes:**
+
+- The public parameter names are `handler=` and `expr=`.
+- The handler's first-parameter effect annotation is converted into a runtime type filter.
+- Use `yield Pass()` for transparent fallthrough.
+- Use `yield Delegate()` only when the handler intentionally wants the outer handler's result.
+
+---
+
 ### WithIntercept(f, expr, types=None, mode="include")
 
 Run a scoped program under interception. Each matched yielded value is offered to `f`.
@@ -760,6 +783,8 @@ def run(
 ```
 
 `env` and `store` are the execution inputs (Reader and State roots).
+`handlers` is a low-level runner hook. For custom handler composition, prefer explicit
+`WithHandler(handler=..., expr=...)` around the program.
 
 ---
 
@@ -790,56 +815,10 @@ async def async_run(
 ) -> RunResult[T]
 ```
 
----
-
-### run_program(...)
-
-Run a Program from Python using CLI-equivalent discovery defaults.
-
-```python
-from doeff import run_program
-
-result = run_program("pkg.features.login_program", quiet=True, report=True)
-assert result.value == "ok"
-```
-
-**Signature:**
-
-```python
-def run_program(
-    program: str | Program[Any],
-    *,
-    interpreter: str | Callable[..., Any] | None = None,
-    envs: list[str | Program[dict[str, Any]] | Mapping[str, Any]] | None = None,
-    apply: str | KleisliProgram[..., Any] | Callable[[Program[Any]], Program[Any]] | None = None,
-    transform: list[str | Callable[[Program[Any]], Program[Any]]] | None = None,
-    report: bool = False,
-    report_verbose: bool = False,
-    quiet: bool = False,
-    load_default_env: bool = True,
-) -> ProgramRunResult
-```
-
-**See:** [Python run_program API](16-run-program-api.md)
+`handlers` is a low-level runner hook. For custom handler composition, prefer explicit
+`WithHandler(handler=..., expr=...)` around the program.
 
 ---
-
-### ProgramRunResult
-
-Dataclass returned by `run_program()`.
-
-```python
-from doeff import ProgramRunResult
-```
-
-**Fields:**
-
-- **`value`** - Final Program value
-- **`run_result`** - `RunResult[Any] | None` (present when interpreter returns one)
-- **`interpreter_path`** - Resolved interpreter path or callable descriptor
-- **`env_sources`** - Applied environment sources
-- **`applied_kleisli`** - Applied Kleisli descriptor (if any)
-- **`applied_transforms`** - Applied transform descriptors
 
 ---
 
@@ -886,7 +865,7 @@ path = run(write_graph_html(graph, "output.html"), handlers=default_handlers()).
 | **Writer** | Tell, Listen, StructuredLog, slog |
 | **Async/Concurrency** | Await, Spawn, Wait, Gather, Race, Task.cancel, TaskCancelledError |
 | **Semaphore** | CreateSemaphore, AcquireSemaphore, ReleaseSemaphore |
-| **Control** | Pure, WithIntercept |
+| **Control** | Pure, WithHandler, WithIntercept |
 | **Error** | Try, Ok, Err |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
@@ -913,7 +892,7 @@ from doeff.effects import TaskCancelledError  # raised on Wait/Gather/Race for c
 from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
 
 # Control
-from doeff import Pure, WithIntercept
+from doeff import Pure, WithHandler, WithIntercept
 
 # Error handling
 from doeff import Try, Ok, Err
