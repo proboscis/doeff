@@ -74,7 +74,11 @@ Let's break down what's happening:
    - `Get("counter")` - State effect: retrieves state
    - `Tell(message)` - Writer effect: appends to log (handled by the Writer handler)
 4. **`run`**: Executes programs with the provided effect handlers
-5. **Result**: Returns a `RuntimeResult` with `.value` for success or `.error` for failure
+5. **Result**: Returns a `RunResult` with `.value` for success or `.error` for failure
+
+Examples in this guide use `default_handlers()` / `default_async_handlers()` only to install the
+builtin runtime preset. For custom handler composition, prefer `WithHandler(handler=..., expr=...)`
+around the program instead of passing custom handlers directly to `run()` / `async_run()`.
 
 ## Key Concepts
 
@@ -101,14 +105,13 @@ Unlike Python generators, `@do` functions can be called multiple times:
 
 ```python
 @do
-def get_timestamp():
-    import time
-    yield Tell("Getting timestamp")
-    return yield IO(lambda: time.time())
+def format_label(label: str):
+    yield Tell(f"Formatting {label}")
+    return label.upper()
 
 # Each call creates a fresh Program
-prog1 = get_timestamp()
-prog2 = get_timestamp()
+prog1 = format_label("alpha")
+prog2 = format_label("beta")
 
 # Each execution is independent
 result1 = run(prog1, default_handlers())
@@ -156,7 +159,7 @@ result = run(
 
 ## Error Handling
 
-`run()` and `async_run()` always return a `RuntimeResult`:
+`run()` and `async_run()` always return a `RunResult`:
 
 ```python
 from doeff import run, default_handlers
@@ -299,9 +302,6 @@ from doeff import (
 
     # Error handling
     Try,
-
-    # IO effects
-    IO,
 
     # Result types
     Ok, Err, Result,

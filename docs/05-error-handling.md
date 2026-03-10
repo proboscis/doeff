@@ -17,6 +17,10 @@ This chapter covers error handling in doeff using `RunResult`, the `Try` effect,
 
 `run()` and `async_run()` return a `RunResult[T]`.
 
+Examples in this chapter pass `handlers=default_handlers()` only to install the builtin runtime
+preset for Reader/State/Writer behavior. For custom handler composition, prefer
+`WithHandler(handler=..., expr=...)`.
+
 ```python
 from doeff import Ask, Tell, default_handlers, do, run
 

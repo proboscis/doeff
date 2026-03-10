@@ -12,15 +12,15 @@ Provider packages implement protocol handlers and route by model prefix.
 
 - `doeff_seedream.handlers.seedream_image_handler`
   - Handles models starting with `seedream-` (and `doubao-seedream-` for compatibility)
-  - Delegates unsupported models via `yield Delegate()`
+  - Passes unsupported models through via `yield Pass()`
 - `doeff_gemini.handlers.gemini_image_handler`
   - Handles Gemini image models (`gemini-...image...`)
-  - Delegates unsupported models via `yield Delegate()`
+  - Passes unsupported models through via `yield Pass()`
 
 ## Multi-provider workflow
 
 ```python
-from doeff import WithHandler, do, run, default_handlers
+from doeff import WithHandler, do, run
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_gemini.handlers import gemini_image_handler
 from doeff_seedream.handlers import seedream_image_handler
@@ -45,10 +45,9 @@ def workflow():
 
 result = run(
     WithHandler(
-        seedream_image_handler,
-        WithHandler(gemini_image_handler, workflow()),
+        handler=seedream_image_handler,
+        expr=WithHandler(handler=gemini_image_handler, expr=workflow()),
     ),
-    handlers=default_handlers(),
 )
 ```
 

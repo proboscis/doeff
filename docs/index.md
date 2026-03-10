@@ -20,12 +20,11 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 3. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
 4. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
 5. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
-6. **[IO Effects](06-io-effects.md)** - IO for side effects
-7. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
-8. **[Graph Tracking](08-graph-tracking.md)** - Execution tracking and visualization
-9. **[Advanced Effects](09-advanced-effects.md)** - Gather, Atomic operations
-10. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
-11. **[WithIntercept](22-with-intercept.md)** - Cross-cutting effect observation across handler boundaries
+6. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
+7. **[Graph Tracking](08-graph-tracking.md)** - Execution tracking and visualization
+8. **[Advanced Effects](09-advanced-effects.md)** - Gather, Atomic operations
+9. **[Semaphore Effects](21-semaphore-effects.md)** - Create, acquire, and release permits with FIFO fairness
+10. **[WithIntercept](22-with-intercept.md)** - Cross-cutting effect observation across handler boundaries
 
 ### Integration & Advanced Topics
 
@@ -35,12 +34,11 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 
 ### CLI Tools
 
-15. **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery
-16. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
-17. **[Python run_program API](16-run-program-api.md)** - Use CLI-equivalent discovery from Python tests or scripts
-18. **[Effect Boundaries](17-effect-boundaries.md)** - Effect vs escape architecture and runner boundaries
-19. **[Effect Combinations](18-effect-combinations.md)** - Composition laws and interaction guarantees across effects
-20. **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
+11. **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery
+12. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
+13. **[Effect Boundaries](17-effect-boundaries.md)** - Effect vs escape architecture and runner boundaries
+14. **[Effect Combinations](18-effect-combinations.md)** - Composition laws and interaction guarantees across effects
+15. **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
 
 ### Specialized Topics
 
@@ -49,6 +47,8 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 - **[seedream.md](seedream.md)** - SeeDream integration
 - **[IDE Plugins](ide-plugins.md)** - PyCharm and VS Code extensions
 - **[Program Architecture](program-architecture-overview.md)** - Runtime internals overview
+- **[Removed IO API](06-io-effects.md)** - Historical note for the removed `IO(...)` effect
+- **[Removed run_program API](16-run-program-api.md)** - Historical note for the removed Python `run_program()` entrypoint
 
 ### Gemini Integration
 
@@ -72,7 +72,7 @@ Key characteristics:
 - **Algebraic effects with handlers**: Define effects as data, handle them with composable, swappable handlers
 - **One-shot continuations**: Each continuation resumes exactly once (unlike multi-shot systems like Koka or Eff)
 - **Rust VM runtime**: High-performance effect handling and continuation management
-- **Batteries-included handlers**: Reader, State, Writer, Future, Result, IO, Cache, Graph tracking — ready to use
+- **Batteries-included handlers**: Reader, State, Writer, Future, Result, Cache, Graph tracking — ready to use
 - **Generator-based do-notation**: Write effectful code that looks like regular Python
 - **Stack-safe execution**: Trampolining prevents stack overflow
 - **Type safety**: Full type annotations with `.pyi` files
@@ -81,7 +81,7 @@ Key characteristics:
 ## Quick Example
 
 ```python
-from doeff import do, Put, Get, Tell, run
+from doeff import default_handlers, do, Get, Put, Tell, run
 
 @do
 def example_workflow():
@@ -98,7 +98,7 @@ def example_workflow():
     return count
 
 def main():
-    result = run(example_workflow())
+    result = run(example_workflow(), handlers=default_handlers())
     print(f"Result: {result.value}")
 
 main()
@@ -145,9 +145,10 @@ main()
 
 ### CLI Applications
 
-- **[IO Effects](06-io-effects.md)** for user interaction
+- **[Basic Effects](03-basic-effects.md)** for configuration and local state
+- **[Async Effects](04-async-effects.md)** for external work and concurrency
 - **[Error Handling](05-error-handling.md)** for validation
-- **[Basic Effects](03-basic-effects.md)** for configuration
+- **[WithIntercept](22-with-intercept.md)** for observability and auditing
 
 ### Testing
 
@@ -163,7 +164,6 @@ main()
 | **Writer** | Tell, Listen, StructuredLog, slog | [03](03-basic-effects.md#writer-effects) |
 | **Future** | Await, Gather | [04](04-async-effects.md) |
 | **Result** | Try | [05](05-error-handling.md) |
-| **IO** | IO | [06](06-io-effects.md) |
 | **Cache** | CacheGet, CachePut | [07](07-cache-system.md) |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph | [08](08-graph-tracking.md) |
 | **Gather** | Gather | [09](09-advanced-effects.md#gather-effects) |
