@@ -271,6 +271,33 @@ class TestSemaphoreRuntimeBehavior:
         assert isinstance(result.error, TypeError)
         assert "CreateSemaphore" in str(result.error)
 
+    def test_dropping_last_handle_cleans_up_runtime_semaphore(self) -> None:
+        """Runtime should retire a semaphore once its last live handle is gone."""
+        from doeff_vm import doeff_vm as raw_vm
+
+        @do
+        def tick():
+            return None
+            yield
+
+        @do
+        def program():
+            sem = yield CreateSemaphore(1)
+            semaphore_id = sem.id
+
+            assert raw_vm._debug_semaphore_exists(semaphore_id) is True
+
+            del sem
+            gc.collect()
+
+            task = yield Spawn(tick())
+            _ = yield Wait(task)
+            return raw_vm._debug_semaphore_exists(semaphore_id)
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_ok(), result.display()
+        assert result.value is False
+
     def test_live_reference_alias_keeps_semaphore_valid_after_original_name_drop(self) -> None:
         """A second Python reference to the same runtime handle keeps it alive."""
 
