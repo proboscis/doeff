@@ -28,3 +28,4 @@ pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }
 opt-level = 3
 lto = true
 codegen-units = 1
+strip = "symbols"
