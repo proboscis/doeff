@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import gc
 
-import doeff_vm
 import pytest
 
 from doeff import (
@@ -20,18 +19,31 @@ from doeff import (
 )
 from doeff.effects import TaskCancelledError
 
+def test_semaphore_public_handle_has_no_runtime_cleanup_surface() -> None:
+    import doeff_vm
 
-def test_semaphore_del_warns_when_cleanup_notification_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _notify_and_fail(_state_id: int, _semaphore_id: int) -> None:
-        raise RuntimeError("notify failed")
+    @do
+    def program():
+        return (yield CreateSemaphore(1))
 
-    monkeypatch.setattr(doeff_vm, "_notify_semaphore_handle_dropped", _notify_and_fail, raising=False)
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok()
+    semaphore = result.value
+    assert not hasattr(type(semaphore), "__del__")
+    assert not hasattr(semaphore, "_scheduler_state_id")
+    assert not hasattr(semaphore, "_cleanup_on_del")
+    assert not hasattr(doeff_vm, "_register_semaphore_handle")
+    assert not hasattr(doeff_vm, "_notify_semaphore_handle_dropped")
 
-    semaphore = Semaphore(id=11, _scheduler_state_id=17, _cleanup_on_del=True)
-    with pytest.warns(UserWarning, match="Failed to notify semaphore handle drop"):
-        semaphore.__del__()
+
+def test_semaphore_constructor_has_no_runtime_side_effects() -> None:
+    with pytest.raises(TypeError, match="CreateSemaphore"):
+        Semaphore(11)
+
+
+def test_semaphore_constructor_rejects_runtime_private_kwargs() -> None:
+    with pytest.raises(TypeError):
+        Semaphore(id=11, _scheduler_state_id=17)  # type: ignore[call-arg]
 
 
 class TestSemaphoreEffectContract:
@@ -45,9 +57,15 @@ class TestSemaphoreEffectContract:
 
     def test_semaphore_type_importable(self) -> None:
         """Semaphore handle type must be importable."""
+        import doeff_vm
         from doeff import Semaphore
 
-        assert Semaphore is not None
+        assert Semaphore is doeff_vm.Semaphore
+
+
+def test_semaphore_cannot_be_constructed_directly() -> None:
+    with pytest.raises(TypeError, match="CreateSemaphore"):
+        Semaphore(11)
 
 
 class TestSemaphoreRuntimeBehavior:
@@ -239,8 +257,22 @@ class TestSemaphoreRuntimeBehavior:
         assert cancelled_result.is_err()
         assert isinstance(cancelled_result.error, TaskCancelledError)
 
-    def test_semaphore_state_cleaned_after_handle_dropped(self) -> None:
-        """GC of semaphore handles should clean up scheduler internal semaphore state."""
+    def test_manual_alias_construction_is_rejected(self) -> None:
+        """Manual Semaphore(id) construction must fail at the public constructor boundary."""
+
+        @do
+        def program():
+            sem = yield CreateSemaphore(1)
+            Semaphore(sem.id)
+            return "unreachable"
+
+        result = run(program(), handlers=default_handlers())
+        assert result.is_err()
+        assert isinstance(result.error, TypeError)
+        assert "CreateSemaphore" in str(result.error)
+
+    def test_live_reference_alias_keeps_semaphore_valid_after_original_name_drop(self) -> None:
+        """A second Python reference to the same runtime handle keeps it alive."""
 
         @do
         def tick():
@@ -249,39 +281,30 @@ class TestSemaphoreRuntimeBehavior:
 
         @do
         def program():
-            semaphores = []
-            for _ in range(8):
-                sem = yield CreateSemaphore(1)
-                semaphores.append(sem)
+            sem = yield CreateSemaphore(1)
+            alias = sem
 
-            state_id = semaphores[0]._scheduler_state_id
-            before = doeff_vm._debug_scheduler_semaphore_count(state_id)
-            semaphores.clear()
             del sem
             gc.collect()
-            # Force one scheduler cycle so VM-internal temporary references are released.
-            task = yield Spawn(tick())
-            _ = yield Wait(task)
-            after = doeff_vm._debug_scheduler_semaphore_count(state_id)
-            return before, after
+
+            warmup = yield Spawn(tick())
+            _ = yield Wait(warmup)
+
+            yield AcquireSemaphore(alias)
+            yield ReleaseSemaphore(alias)
+            return "alias-still-valid"
 
         result = run(program(), handlers=default_handlers())
         assert result.is_ok()
-        before, after = result.value
-        assert before == 8
-        assert after == 0
+        assert result.value == "alias-still-valid"
 
-    def test_semaphore_cleanup_with_pending_waiters(self) -> None:
-        """Dropping the owner handle while waiters are pending yields waiter failure + cleanup."""
+    def test_live_reference_alias_keeps_waiters_releasable_after_original_name_drop(self) -> None:
+        """A second Python reference to the same runtime handle keeps waiters releasable."""
 
         @do
-        def holder(semaphore_id: int):
-            yield AcquireSemaphore(Semaphore(semaphore_id))
-            return "held"
-
-        @do
-        def waiter(semaphore_id: int):
-            yield AcquireSemaphore(Semaphore(semaphore_id))
+        def waiter(alias: Semaphore):
+            yield AcquireSemaphore(alias)
+            yield ReleaseSemaphore(alias)
             return "waiter-acquired"
 
         @do
@@ -292,30 +315,21 @@ class TestSemaphoreRuntimeBehavior:
         @do
         def program():
             sem = yield CreateSemaphore(1)
-            state_id = sem._scheduler_state_id
-            holder_task = yield Spawn(holder(sem.id))
-            waiter_task = yield Spawn(waiter(sem.id))
+            alias = sem
+            yield AcquireSemaphore(sem)
 
-            _ = yield Try(Wait(holder_task))
+            waiter_task = yield Spawn(waiter(alias))
 
-            # Let waiter attempt acquire and block while owner handle is still alive.
             warmup = yield Spawn(tick())
-            _ = yield Try(Wait(warmup))
+            _ = yield Wait(warmup)
 
             del sem
             gc.collect()
 
-            # Trigger scheduler-side drop notification handling.
-            trigger = yield Spawn(tick())
-            _ = yield Try(Wait(trigger))
-
-            waiter_result = yield Try(Wait(waiter_task))
-            remaining = doeff_vm._debug_scheduler_semaphore_count(state_id)
-            return waiter_result, remaining
+            yield ReleaseSemaphore(alias)
+            waiter_result = yield Wait(waiter_task)
+            return waiter_result
 
         result = run(program(), handlers=default_handlers())
         assert result.is_ok()
-        waiter_result, remaining = result.value
-        assert waiter_result.is_err()
-        assert isinstance(waiter_result.error, TaskCancelledError)
-        assert remaining == 0
+        assert result.value == "waiter-acquired"

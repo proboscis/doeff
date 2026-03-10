@@ -207,6 +207,37 @@ rules:
       include:
         - /doeff/__init__.py
         - /doeff/types.py
+  - id: no-public-semaphore-lifecycle-hooks
+    languages: [python]
+    severity: ERROR
+    message: >
+      Semaphore must remain a public data handle. Do not add __del__ or scheduler-private lifecycle
+      fields to doeff/effects/semaphore.py; lifecycle ownership belongs to the runtime, not the value object.
+      Ref: issue #264.
+    pattern-either:
+      - pattern: |
+          def __del__(self):
+              ...
+      - pattern: |
+          _scheduler_state_id: ...
+      - pattern: |
+          _cleanup_on_del: ...
+    paths:
+      include:
+        - /doeff/effects/semaphore.py
+
+  - id: no-python-semaphore-handle-class
+    languages: [python]
+    severity: ERROR
+    message: >
+      Semaphore is a Rust-exported opaque handle. Do not reintroduce a Python-defined Semaphore
+      class in doeff/effects/semaphore.py. Ref: issue #264.
+    pattern: |
+      class Semaphore:
+          ...
+    paths:
+      include:
+        - /doeff/effects/semaphore.py
 
   - id: doeff-pinjected-no-intercept
     languages: [python]
