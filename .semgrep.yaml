@@ -180,6 +180,19 @@ rules:
     paths:
       include:
         - /doeff/rust_vm.py
+  - id: no-import-state-mutation-in-doeff-loading
+    languages: [python]
+    severity: ERROR
+    message: >
+      Import-time loading for doeff must not rewrite sys.path or replace sys.modules entries.
+      Fail fast with a clear error instead of mutating interpreter-global import state.
+    pattern-either:
+      - pattern: sys.path = ...
+      - pattern: $SYS.modules["types"] = ...
+    paths:
+      include:
+        - /doeff/__init__.py
+        - /doeff/types.py
 
   - id: doeff-pinjected-no-intercept
     languages: [python]
