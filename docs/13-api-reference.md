@@ -670,66 +670,6 @@ new_value = yield AtomicUpdate("counter", lambda x: x + 1)
 
 ---
 
-## Pinjected Integration
-
-### program_to_injected(program)
-
-Convert `Program[T]` to `Injected[T]`.
-
-```python
-from doeff_pinjected import program_to_injected
-
-injected = program_to_injected(my_program())
-result = await resolver.provide(injected)
-```
-
-**Signature:** `program_to_injected(prog: Program[T]) -> Injected[T]`
-
----
-
-### program_to_injected_result(program)
-
-Convert `Program[T]` to `Injected[RunResult[T]]`.
-
-```python
-from doeff_pinjected import program_to_injected_result
-
-injected = program_to_injected_result(my_program())
-result = await resolver.provide(injected)
-```
-
-**Signature:** `program_to_injected_result(prog: Program[T]) -> Injected[RunResult[T]]`
-
----
-
-### program_to_iproxy(program)
-
-Convert `Program[T]` to `IProxy[T]`.
-
-```python
-from doeff_pinjected import program_to_iproxy
-
-iproxy = program_to_iproxy(my_program())
-```
-
-**Signature:** `program_to_iproxy(prog: Program[T]) -> IProxy[T]`
-
----
-
-### program_to_iproxy_result(program)
-
-Convert `Program[T]` to `IProxy[RunResult[T]]`.
-
-```python
-from doeff_pinjected import program_to_iproxy_result
-
-iproxy = program_to_iproxy_result(my_program())
-```
-
-**Signature:** `program_to_iproxy_result(prog: Program[T]) -> IProxy[RunResult[T]]`
-
----
-
 ## Execution
 
 ### run
@@ -927,13 +867,6 @@ from doeff import Step, Annotate, Snapshot, CaptureGraph, graph_to_html, write_g
 # Atomic
 from doeff import AtomicGet, AtomicUpdate
 
-# Pinjected (separate package)
-from doeff_pinjected import (
-    program_to_injected,
-    program_to_injected_result,
-    program_to_iproxy,
-    program_to_iproxy_result,
-)
 ```
 
 ## Next Steps
