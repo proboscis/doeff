@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 
+import doeff_vm
+
 from doeff import (
     Ask,
     CacheGet,
@@ -36,6 +38,37 @@ def _run_with_handlers(program: object, *handlers: object):
 @dataclass(frozen=True)
 class MultiplyFx(EffectBase):
     value: int
+
+
+class _ResultLike:
+    def __init__(self, value: object) -> None:
+        self.value = value
+
+    def is_ok(self) -> bool:
+        return True
+
+
+class _FailingStorage:
+    def get(self, key: str) -> object | None:
+        return None
+
+    def put(self, key: str, value: object) -> None:
+        raise TypeError("backend cannot persist value")
+
+    def delete(self, key: str) -> bool:
+        return False
+
+    def exists(self, key: str) -> bool:
+        return False
+
+    def keys(self) -> list[str]:
+        return []
+
+    def items(self) -> list[tuple[str, object]]:
+        return []
+
+    def clear(self) -> None:
+        return None
 
 
 @do
@@ -75,6 +108,40 @@ def test_cache_handler_put() -> None:
     assert result.is_ok(), result.error
     assert result.value is None
     assert storage.get("answer") == 42
+
+
+def test_cache_handler_put_preserves_result_like_objects_without_reinterpretation() -> None:
+    storage = InMemoryStorage()
+    value = _ResultLike("payload")
+
+    result = _run_with_handlers(_cache_put_program("result-like", value), cache_handler(storage))
+
+    assert result.is_ok(), result.error
+    assert storage.get("result-like") is value
+
+
+def test_cache_handler_put_preserves_vm_result_values_without_vendor_coercion() -> None:
+    storage = InMemoryStorage()
+    value = doeff_vm.Ok("payload")
+
+    result = _run_with_handlers(_cache_put_program("vm-ok", value), cache_handler(storage))
+
+    assert result.is_ok(), result.error
+    stored = storage.get("vm-ok")
+    assert type(stored) is type(value)
+    assert stored.value == "payload"
+
+
+def test_cache_handler_put_raises_cache_boundary_error_when_storage_rejects_value() -> None:
+    result = _run_with_handlers(
+        _cache_put_program("bad-key", object()),
+        cache_handler(_FailingStorage()),
+    )
+
+    assert result.is_err()
+    assert isinstance(result.error, RuntimeError)
+    assert "bad-key" in str(result.error)
+    assert "persist" in str(result.error)
 
 
 def test_cache_decorator_with_handler(tmp_path: Path) -> None:
