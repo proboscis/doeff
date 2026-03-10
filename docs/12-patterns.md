@@ -316,16 +316,17 @@ def use_database_connection():
 Prevent cascading failures:
 
 ```python
+from doeff_time import GetTime
+
 @do
 def circuit_breaker(operation, threshold=5, timeout=60):
-    clock = yield Ask("clock")
     failures = yield AtomicGet("circuit_failures")
     last_failure_time = yield Get("circuit_last_failure")
 
     # Check if circuit is open
-    now = clock()
+    now = yield GetTime()
     if failures >= threshold:
-        if last_failure_time and (now - last_failure_time) < timeout:
+        if last_failure_time and (now - last_failure_time).total_seconds() < timeout:
             yield Tell("Circuit breaker OPEN")
             raise Exception("Circuit breaker is open")
         else:
@@ -384,16 +385,17 @@ def order_state_machine(order_id):
 Functional state transformations:
 
 ```python
+from doeff_time import GetTime
+
 @do
 def update_user(user_id, updates):
-    clock = yield Ask("clock")
     user = yield Get(f"user_{user_id}")
 
     # Create updated copy
     updated_user = {
         **user,
         **updates,
-        "updated_at": clock()
+        "updated_at": yield GetTime()
     }
 
     yield Put(f"user_{user_id}", updated_user)
@@ -434,9 +436,10 @@ def with_state_snapshot(operation):
 Fetch multiple resources concurrently:
 
 ```python
+from doeff_time import GetTime
+
 @do
 def fetch_user_dashboard(user_id):
-    clock = yield Ask("clock")
     # Fetch all data in parallel using Gather + dict reconstruction
     programs = {
         "user": fetch_user(user_id),
@@ -453,7 +456,7 @@ def fetch_user_dashboard(user_id):
         "posts": results["posts"],
         "followers": results["followers"],
         "notifications": results["notifications"],
-        "dashboard_loaded_at": clock()
+        "dashboard_loaded_at": yield GetTime()
     }
 ```
 
