@@ -53,3 +53,13 @@ def test_validate_do_handler_effect_annotation_resolves_quoted_subclass() -> Non
         yield Pass()
 
     validate_do_handler_effect_annotation(handler)
+
+
+def test_validate_do_handler_effect_annotation_ignores_unrelated_broken_annotations() -> None:
+    @do
+    def handler(effect: "_SubtypeEffect", k: "MissingContinuation") -> "MissingReturn":
+        if isinstance(effect, _SubtypeEffect):
+            return (yield Resume(k, effect.value))
+        yield Pass()
+
+    validate_do_handler_effect_annotation(handler)
