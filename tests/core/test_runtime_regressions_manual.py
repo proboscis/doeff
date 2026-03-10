@@ -5,16 +5,20 @@ import pytest
 
 from doeff import (
     Ask,
+    Effect,
+    EffectBase,
     Err,
     Gather,
     Get,
     Local,
     MissingEnvKeyError,
     Ok,
+    Pass,
     Program,
     Put,
     Spawn,
     Try,
+    WithHandler,
     async_run,
     default_async_handlers,
     default_handlers,
@@ -66,6 +70,58 @@ def test_try_except_catches_yielded_program_error() -> None:
     result = run(program(), handlers=default_handlers())
     assert result.is_ok()
     assert result.value == ("caught", "ValueError", "x")
+
+
+def test_try_except_catches_handler_raised_error_at_yield_site() -> None:
+    class HandlerBoom(EffectBase):
+        pass
+
+    @do
+    def handler(effect: Effect, _k: object):
+        if not isinstance(effect, HandlerBoom):
+            yield Pass()
+            return
+        raise ValueError("boom-from-handler")
+
+    @do
+    def program():
+        try:
+            _ = yield HandlerBoom()
+            return ("unexpected",)
+        except Exception as exc:
+            return ("caught", type(exc).__name__, str(exc))
+
+    result = run(WithHandler(handler, program()), handlers=default_handlers())
+    assert result.is_ok()
+    assert result.value == ("caught", "ValueError", "boom-from-handler")
+
+
+def test_try_wraps_handler_raised_error_as_result_value() -> None:
+    class HandlerBoom(EffectBase):
+        pass
+
+    @do
+    def handler(effect: Effect, _k: object):
+        if not isinstance(effect, HandlerBoom):
+            yield Pass()
+            return
+        raise ValueError("boom-from-handler")
+
+    @do
+    def inner():
+        return (yield HandlerBoom())
+
+    @do
+    def program():
+        return (yield Try(WithHandler(handler, inner())))
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok()
+
+    value = result.value
+    assert value.is_err() is True
+    assert isinstance(value.error, ValueError)
+    assert str(value.error) == "boom-from-handler"
 
 
 def test_safe_wraps_error_as_result_value() -> None:
