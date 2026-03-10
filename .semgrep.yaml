@@ -62,6 +62,20 @@ rules:
         - /packages/doeff-flow/src/doeff_flow/trace.py
         - /packages/doeff-conductor/src/doeff_conductor/api.py
 
+  - id: no-run-module-cli-entrypoint-import
+    languages: [python]
+    severity: ERROR
+    message: >
+      doeff.run is a library surface and must not import doeff.__main__.
+      Extract shared run/discovery services into a neutral module and have both
+      the CLI and the library API depend on that instead.
+    pattern-either:
+      - pattern: from doeff.__main__ import $X
+      - pattern: import doeff.__main__
+    paths:
+      include:
+        - /doeff/run.py
+
   - id: no-doeff-vm-import-recovery
     languages: [python]
     severity: ERROR
