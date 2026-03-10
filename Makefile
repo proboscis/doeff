@@ -52,7 +52,7 @@ install:
 # ALWAYS use this instead of bare `uv sync` when Rust sources changed.
 sync:
 	uv sync --group dev
-	cd packages/doeff-vm && maturin develop
+	cd packages/doeff-vm && maturin develop --release
 
 pre-commit-install:
 	uv run pre-commit install
