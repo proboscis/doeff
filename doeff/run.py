@@ -25,6 +25,19 @@ from typing import Any, TypeVar
 
 from doeff.kleisli import KleisliProgram
 from doeff.program import Program
+from doeff.run_services import (
+    DiscoveryReporter,
+    RunCommand,
+    RunContext,
+    RunServices,
+    SymbolResolver,
+    _call_interpreter,
+    _ensure_kleisli,
+    _ensure_program,
+    _ensure_transformer,
+    _finalize_result,
+    apply_runtime_envs,
+)
 from doeff.types import RunResult
 
 T = TypeVar("T")
@@ -37,6 +50,19 @@ KleisliLike = str | KleisliProgram[..., Any] | Callable[[Program[Any]], Program[
 TransformLike = str | Callable[[Program[Any]], Program[Any]]
 
 logger = logging.getLogger(__name__)
+
+
+class _LoggerDiscoveryReporter:
+    def __init__(self, *, quiet: bool) -> None:
+        self._quiet = quiet
+
+    def debug(self, message: str) -> None:
+        if not self._quiet:
+            logger.debug(message)
+
+    def warning(self, message: str) -> None:
+        if not self._quiet:
+            logger.warning(message)
 
 
 @dataclass
@@ -168,8 +194,6 @@ def _run_program_from_path(
     load_default_env: bool,
 ) -> ProgramRunResult:
     """Run a program from a string path with full CLI discovery support."""
-    from doeff.__main__ import RunCommand, RunContext, SymbolResolver
-
     # Check if we have any non-string inputs that need special handling
     has_object_inputs = (
         (interpreter is not None and not isinstance(interpreter, str))
@@ -181,8 +205,6 @@ def _run_program_from_path(
     if has_object_inputs:
         # Resolve the program and delegate to instance handler
         resolver = SymbolResolver()
-        from doeff.__main__ import _ensure_program
-
         program_obj = _ensure_program(resolver.resolve(program_path), program_path)
         return _run_program_instance(
             program_obj,
@@ -236,8 +258,6 @@ def _run_program_instance(
     quiet: bool,
     load_default_env: bool,
 ) -> ProgramRunResult:
-    from doeff.__main__ import SymbolResolver
-
     resolver = SymbolResolver()
     env_sources: list[str] = []
 
@@ -251,7 +271,14 @@ def _run_program_instance(
     if transform:
         program, applied_transforms = _apply_transforms(program, transform, resolver)
 
-    program, env_sources = _apply_envs(program, envs or [], resolver, load_default_env, quiet)
+    reporter: DiscoveryReporter = _LoggerDiscoveryReporter(quiet=quiet)
+    program, env_sources = apply_runtime_envs(
+        program,
+        envs or [],
+        load_default_env=load_default_env,
+        services=RunServices(),
+        reporter=reporter,
+    )
 
     final_value = _execute_program(program, interpreter_obj)
 
@@ -288,8 +315,6 @@ def _apply_kleisli(
     resolver: Any,
 ) -> tuple[Program[Any], str]:
     """Apply a Kleisli transformation to the program."""
-    from doeff.__main__ import _ensure_kleisli
-
     if apply is None:
         return program, ""
 
@@ -319,8 +344,6 @@ def _apply_transforms(
     resolver: Any,
 ) -> tuple[Program[Any], list[str]]:
     """Apply a list of transformations to the program."""
-    from doeff.__main__ import _ensure_transformer
-
     applied: list[str] = []
 
     for t in transforms:
@@ -341,110 +364,10 @@ def _apply_transforms(
             raise TypeError(f"transform must be str or callable, got {type(t)}")
 
     return program, applied
-
-
-def _apply_envs(
-    program: Program[Any],
-    envs: list[EnvLike],
-    resolver: Any,
-    load_default_env: bool,
-    quiet: bool,
-) -> tuple[Program[Any], list[str]]:
-    from doeff.__main__ import RunServices
-    from doeff.effects import Local
-    from doeff.rust_vm import default_handlers
-    from doeff.rust_vm import run as vm_run
-
-    env_sources: list[str] = []
-    merged_env: dict[str, Any] = {}
-
-    if load_default_env:
-        default_env_path = _load_default_env(quiet)
-        if default_env_path:
-            services = RunServices()
-            env_program = services.merger.merge_envs([default_env_path])
-            env_value = vm_run(env_program, handlers=default_handlers()).value
-            merged_env.update(env_value)
-            env_sources.append("~/.doeff.py:__default_env__")
-
-    for env in envs:
-        if isinstance(env, str):
-            services = RunServices()
-            env_program = services.merger.merge_envs([env])
-            env_value = vm_run(env_program, handlers=default_handlers()).value
-            merged_env.update(env_value)
-            env_sources.append(env)
-
-        elif isinstance(env, Program):
-            env_value = vm_run(env, handlers=default_handlers()).value
-            if not isinstance(env_value, dict):
-                raise TypeError(f"Environment Program must yield dict, got {type(env_value)}")
-            merged_env.update(env_value)
-            env_sources.append("<Program[dict]>")
-
-        elif isinstance(env, Mapping):
-            merged_env.update(env)
-            env_sources.append("<dict>")
-
-        else:
-            raise TypeError(f"env must be str, Program[dict], or dict, got {type(env)}")
-
-    if merged_env:
-        program = Local(merged_env, program)  # type: ignore[assignment]
-
-    return program, env_sources
-
-
-def _load_default_env(quiet: bool) -> str | None:
-    """Load default environment from ~/.doeff.py if it exists.
-
-    This replicates the behavior of `doeff run` CLI command.
-    """
-    import importlib.util
-    import os
-    import sys
-    from pathlib import Path
-
-    if os.environ.get("DOEFF_DISABLE_DEFAULT_ENV") == "1":
-        return None
-
-    doeff_config_file = Path.home() / ".doeff.py"
-    if not doeff_config_file.exists():
-        if not quiet:
-            logger.debug("[DOEFF][DISCOVERY] Warning: ~/.doeff.py not found")
-        return None
-
-    spec = importlib.util.spec_from_file_location("_doeff_config", doeff_config_file)
-    if not spec or not spec.loader:
-        if not quiet:
-            logger.debug("[DOEFF][DISCOVERY] Warning: Unable to load ~/.doeff.py")
-        return None
-
-    config_module = importlib.util.module_from_spec(spec)
-    sys.modules["_doeff_config"] = config_module
-
-    try:
-        spec.loader.exec_module(config_module)
-    except Exception as exc:
-        if not quiet:
-            logger.warning("[DOEFF][DISCOVERY] Error executing ~/.doeff.py: %s", exc)
-        raise
-
-    if hasattr(config_module, "__default_env__"):
-        if not quiet:
-            logger.debug("[DOEFF][DISCOVERY] Successfully resolved __default_env__ from ~/.doeff.py")
-        return "_doeff_config.__default_env__"
-
-    if not quiet:
-        logger.debug("[DOEFF][DISCOVERY] Warning: ~/.doeff.py exists but __default_env__ not found")
-    return None
-
-
 def _execute_program(
     program: Program[Any],
     interpreter_obj: Any,
 ) -> Any:
-    from doeff.__main__ import _call_interpreter, _finalize_result
     from doeff.rust_vm import default_handlers
     from doeff.rust_vm import run as vm_run
 
@@ -463,8 +386,6 @@ class _QuietRunCommand:
     """A RunCommand variant that suppresses discovery output."""
 
     def __init__(self, context: Any) -> None:
-        from doeff.__main__ import RunCommand
-
         self._inner = RunCommand(context)
 
     def execute(self) -> Any:
