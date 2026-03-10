@@ -46,13 +46,14 @@ print(result.raw_store)  # {'counter': 1}
 Only these public entrypoints are supported:
 | Entrypoint | Signature | Use case |
 | --- | --- | --- |
-| `run` | `run(program, handlers=(), env=None, store=None, trace=False)` | Synchronous execution |
-| `async_run` | `async_run(program, handlers=(), env=None, store=None, trace=False)` | Async execution |
+| `run` | `run(program, handlers=(), env=None, store=None, trace=False, print_doeff_trace=False)` | Synchronous execution |
+| `async_run` | `async_run(program, handlers=(), env=None, store=None, trace=False, print_doeff_trace=False)` | Async execution |
 
 Notes:
 
 - `run()` and `async_run()` return a `RunResult` object (`.value`, `.error`, `.log`, `.raw_store`, `.trace`).
-- Default `handlers` is an empty tuple (`()`), so effectful programs should pass handler presets or custom handlers.
+- Default `handlers` is an empty tuple (`()`), so builtin effects need an explicit runtime preset such as `default_handlers()` or `default_async_handlers()`.
+- Treat `handlers=` as a low-level runner hook. For custom handler composition, prefer explicit `WithHandler(handler=..., expr=...)`.
 
 ## Default Handler Presets
 
@@ -78,7 +79,7 @@ All effect names mentioned here are current public exports.
 Core categories include:
 
 - Reader/State/Writer: `Ask`, `Local`, `Get`, `Put`, `Modify`, `Tell`, `StructuredLog`, `slog`, `Listen`
-- Result/cache: `Safe`, `CacheGet`, `CachePut`, `CacheExists`, `CacheDelete`
+- Result/cache: `Try`, `CacheGet`, `CachePut`, `CacheExists`, `CacheDelete`
 - Scheduler: `Await`, `Spawn`, `Wait`, `Gather`, `Race`, `Future`, `Task`
 - External bridging: `CreateExternalPromise`, `ExternalPromise`
 - Tracing/graph: `GetExecutionContext`, `Step`, `Annotate`, `Snapshot`, `CaptureGraph`
@@ -88,30 +89,31 @@ Writer convenience helpers:
 
 ## Handler Architecture (`WithHandler`)
 
-`WithHandler` lets you attach typed handlers to a sub-program and stack multiple handlers.
-The innermost `WithHandler` layer sees the effect first.
+`WithHandler` lets you attach handlers to a sub-program and stack multiple handlers.
+Use the explicit public shape `WithHandler(handler=..., expr=...)`.
+The innermost `WithHandler` layer sees the effect first, and the handler's effect annotation is
+used as a runtime type filter.
 
 ```python
-from doeff import Ask, AskEffect, Delegate, Effect, Resume, WithHandler, default_handlers, do, run
+from doeff import Ask, AskEffect, Resume, WithHandler, default_handlers, do, run
 
 @do
-def base_handler(effect: Effect, k: object):
-    if isinstance(effect, AskEffect):
-        return (yield Resume(k, "base"))
-    yield Delegate()
+def base_handler(effect: AskEffect, k: object):
+    return (yield Resume(k, "base"))
 
 
 @do
-def override_handler(effect: Effect, k: object):
-    if isinstance(effect, AskEffect):
-        return (yield Resume(k, "override"))
-    yield Delegate()
+def override_handler(effect: AskEffect, k: object):
+    return (yield Resume(k, "override"))
 
 @do
 def read_mode():
     return (yield Ask("mode"))
 
-stacked = WithHandler(base_handler, WithHandler(override_handler, read_mode()))
+stacked = WithHandler(
+    handler=base_handler,
+    expr=WithHandler(handler=override_handler, expr=read_mode()),
+)
 result = run(stacked, handlers=default_handlers())
 print(result.value)  # override
 ```

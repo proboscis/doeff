@@ -281,7 +281,7 @@ After investigation, we've arrived at a clean solution:
 Program = Effect | KleisliProgramCall
 
 where:
-  - Effect: Primitive operations (Ask, Dep, State, IO, etc.)
+  - Effect: Primitive operations (Ask, Get, Put, Tell, Await, CacheGet, etc.)
   - KleisliProgramCall: Compound computations with bound arguments
 
 # Key insight: Both are concrete, structured types!
