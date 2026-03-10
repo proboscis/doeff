@@ -20,7 +20,7 @@ use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySpawn, PyTaskCompleted,
+    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn, PyTaskCompleted,
     TaskCancelledError,
 };
 use crate::error::VMError;
@@ -461,7 +461,6 @@ pub struct SchedulerState {
     cancel_requested: HashSet<TaskId>,
     pub next_task: u64,
     pub next_promise: u64,
-    pub next_semaphore: u64,
     next_ready_sequence: u64,
     pub current_task: Option<TaskId>,
     execution_context_task_override: Option<TaskId>,
@@ -470,6 +469,7 @@ pub struct SchedulerState {
 }
 
 static NEXT_SCHEDULER_STATE_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_SEMAPHORE_ID: AtomicU64 = AtomicU64::new(1);
 static SEMAPHORE_DROP_NOTIFICATIONS: OnceLock<Mutex<HashMap<u64, Vec<u64>>>> = OnceLock::new();
 static SCHEDULER_STATE_REGISTRY: OnceLock<Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>>> =
     OnceLock::new();
@@ -512,21 +512,54 @@ fn resolve_scheduler_state(state_id: u64) -> Option<Arc<Mutex<SchedulerState>>> 
     None
 }
 
-pub fn notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
-    let mut notifications = semaphore_drop_notifications()
-        .lock()
-        .expect("Scheduler lock poisoned");
-    notifications
-        .entry(state_id)
-        .or_default()
-        .push(semaphore_id);
-}
-
 pub fn debug_semaphore_count_for_state(state_id: u64) -> Option<usize> {
     let state = resolve_scheduler_state(state_id)?;
     let mut state = state.lock().expect("Scheduler lock poisoned");
     state.process_semaphore_drop_notifications();
     Some(state.semaphores.len())
+}
+
+pub fn debug_semaphore_exists(semaphore_id: u64) -> bool {
+    let mut stale_state_ids: Vec<u64> = Vec::new();
+    let live_states: Vec<(u64, Arc<Mutex<SchedulerState>>)> = {
+        let registry = scheduler_state_registry()
+            .lock()
+            .expect("Scheduler lock poisoned");
+        registry
+            .iter()
+            .filter_map(|(state_id, weak_state)| {
+                weak_state.upgrade().map(|state| (*state_id, state)).or_else(|| {
+                    stale_state_ids.push(*state_id);
+                    None
+                })
+            })
+            .collect()
+    };
+
+    if !stale_state_ids.is_empty() {
+        let mut registry = scheduler_state_registry()
+            .lock()
+            .expect("Scheduler lock poisoned");
+        for state_id in stale_state_ids {
+            registry.remove(&state_id);
+        }
+    }
+
+    for (_state_id, state) in live_states {
+        let mut state = state.lock().expect("Scheduler lock poisoned");
+        state.process_semaphore_drop_notifications();
+        if state.semaphores.contains_key(&semaphore_id) {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
+    let mut notifications = semaphore_drop_notifications()
+        .lock()
+        .expect("Scheduler lock poisoned");
+    notifications.entry(state_id).or_default().push(semaphore_id);
 }
 
 fn parse_task_completed_result(
@@ -553,7 +586,7 @@ fn parse_task_completed_result(
 }
 
 fn extract_semaphore_id(obj: &Bound<'_, PyAny>) -> Option<u64> {
-    obj.getattr("id").ok()?.extract::<u64>().ok()
+    obj.extract::<PyRef<'_, PySemaphore>>().ok().map(|semaphore| semaphore.id)
 }
 
 fn is_internal_source_file(source_file: &str) -> bool {
@@ -868,28 +901,21 @@ fn task_cancelled_error() -> PyException {
     })
 }
 
-fn make_python_semaphore_value(
-    semaphore_id: u64,
-    scheduler_state_id: u64,
-) -> Result<Value, PyException> {
+fn make_python_semaphore_value(semaphore_id: u64, state_id: u64) -> Result<Value, PyException> {
     Python::attach(|py| {
-        let semaphore_mod = py.import("doeff.effects.semaphore").map_err(|e| {
-            PyException::runtime_error(format!(
-                "failed to import semaphore module while creating Semaphore handle: {e}"
-            ))
-        })?;
-        let semaphore_cls = semaphore_mod.getattr("Semaphore").map_err(|e| {
-            PyException::runtime_error(format!(
-                "failed to resolve Semaphore class while creating Semaphore handle: {e}"
-            ))
-        })?;
-        let semaphore = semaphore_cls
-            .call1((semaphore_id, scheduler_state_id, true))
+        let semaphore = Bound::new(
+            py,
+            PySemaphore {
+                id: semaphore_id,
+                state_id,
+            },
+        )
             .map_err(|e| {
                 PyException::runtime_error(format!(
-                    "failed to instantiate Semaphore({semaphore_id}): {e}"
+                    "failed to instantiate runtime Semaphore({semaphore_id}): {e}"
                 ))
-            })?;
+            })?
+            .into_any();
         Ok(Value::Python(semaphore.unbind()))
     })
 }
@@ -926,6 +952,25 @@ fn make_async_external_wait_step() -> Result<IRStreamStep, PyException> {
 // ---------------------------------------------------------------------------
 
 impl SchedulerState {
+    pub fn process_semaphore_drop_notifications(&mut self) {
+        let dropped = {
+            let mut notifications = semaphore_drop_notifications()
+                .lock()
+                .expect("Scheduler lock poisoned");
+            notifications.remove(&self.state_id)
+        };
+        let Some(dropped) = dropped else {
+            return;
+        };
+
+        let mut unique = HashSet::new();
+        for semaphore_id in dropped {
+            if unique.insert(semaphore_id) {
+                self.remove_semaphore(semaphore_id);
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self::with_external_wait_mode(ExternalWaitMode::Blocking)
     }
@@ -944,7 +989,6 @@ impl SchedulerState {
             cancel_requested: HashSet::new(),
             next_task: 0,
             next_promise: 0,
-            next_semaphore: 1,
             next_ready_sequence: 0,
             current_task: None,
             execution_context_task_override: None,
@@ -955,27 +999,6 @@ impl SchedulerState {
 
     pub fn state_id(&self) -> u64 {
         self.state_id
-    }
-
-    pub fn process_semaphore_drop_notifications(&mut self) {
-        let dropped = {
-            let mut notifications = semaphore_drop_notifications()
-                .lock()
-                .expect("Scheduler lock poisoned");
-            notifications.remove(&self.state_id)
-        };
-        let Some(dropped) = dropped else {
-            return;
-        };
-
-        // Duplicate notifications are possible when multiple temporary references
-        // to the same Semaphore object are collected around the same time.
-        let mut unique = HashSet::new();
-        for semaphore_id in dropped {
-            if unique.insert(semaphore_id) {
-                self.remove_semaphore(semaphore_id);
-            }
-        }
     }
 
     pub fn ensure_external_completion_queue(&mut self) -> Result<PyShared, PyException> {
@@ -1153,9 +1176,7 @@ impl SchedulerState {
     }
 
     pub fn alloc_semaphore_id(&mut self) -> u64 {
-        let id = self.next_semaphore;
-        self.next_semaphore += 1;
-        id
+        NEXT_SEMAPHORE_ID.fetch_add(1, Ordering::Relaxed)
     }
 
     fn enqueue_ready_task(&mut self, task_id: TaskId, priority: u32) {
@@ -2747,16 +2768,15 @@ impl IRStreamProgram for SchedulerProgram {
             }
 
             SchedulerEffect::CreateSemaphore { permits } => {
-                let (semaphore_id, scheduler_state_id) = {
+                let (semaphore_id, state_id) = {
                     let mut state = self.state.lock().expect("Scheduler lock poisoned");
                     let semaphore_id = state.create_semaphore(permits);
                     (semaphore_id, state.state_id())
                 };
-                let semaphore_value =
-                    match make_python_semaphore_value(semaphore_id, scheduler_state_id) {
-                        Ok(value) => value,
-                        Err(error) => return IRStreamStep::Throw(error),
-                    };
+                let semaphore_value = match make_python_semaphore_value(semaphore_id, state_id) {
+                    Ok(value) => value,
+                    Err(error) => return IRStreamStep::Throw(error),
+                };
                 resume_to_continuation(k_user, semaphore_value)
             }
 
@@ -4902,17 +4922,6 @@ mod tests {
             state.promises.get(&waiter_promise),
             Some(PromiseState::Done(Err(_)))
         ));
-    }
-
-    #[test]
-    fn test_semaphore_drop_notification_is_drained_for_state() {
-        let mut state = SchedulerState::new();
-        let semaphore_id = state.create_semaphore(1);
-
-        notify_semaphore_handle_dropped(state.state_id(), semaphore_id);
-        state.process_semaphore_drop_notifications();
-
-        assert!(!state.semaphores.contains_key(&semaphore_id));
     }
 
     #[test]

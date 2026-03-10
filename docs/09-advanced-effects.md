@@ -131,6 +131,9 @@ Semaphores provide cooperative concurrency control for limiting concurrent acces
 - `CreateSemaphore(permits)` creates a semaphore with `permits >= 1`
 - `AcquireSemaphore(sem)` acquires a permit (parks when none are available)
 - `ReleaseSemaphore(sem)` releases a permit (wakes the next waiter in FIFO order)
+- The returned `Semaphore` is opaque: keep the handle returned by `CreateSemaphore` and reuse that
+  same object (or another Python reference to it). `Semaphore(...)` is not a supported public
+  constructor and raises `TypeError`.
 
 ### Basic Pattern (Always Release in finally)
 

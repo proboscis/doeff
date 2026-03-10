@@ -2,9 +2,9 @@
 //!
 //! Effects are the requests that user code makes, which handlers respond to.
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyModule};
+use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
 
 use doeff_vm_core::effect::{PyExecutionContext, PyGetExecutionContext};
 
@@ -132,6 +132,13 @@ pyo3::create_exception!(
     TaskCancelledError,
     pyo3::exceptions::PyRuntimeError
 );
+
+#[pyclass(frozen, weakref, name = "Semaphore")]
+pub struct PySemaphore {
+    #[pyo3(get)]
+    pub id: u64,
+    pub(crate) state_id: u64,
+}
 
 #[pyclass(frozen, name = "CreateSemaphoreEffect", extends=PyEffectBase)]
 pub struct PyCreateSemaphore {
@@ -494,6 +501,27 @@ impl PyTaskCompleted {
 }
 
 #[pymethods]
+impl PySemaphore {
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+        Err(PyTypeError::new_err(
+            "Semaphore handles are created by CreateSemaphore only",
+        ))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Semaphore({})", self.id)
+    }
+}
+
+impl Drop for PySemaphore {
+    fn drop(&mut self) {
+        crate::scheduler::notify_semaphore_handle_dropped(self.state_id, self.id);
+    }
+}
+
+#[pymethods]
 impl PyCreateSemaphore {
     #[new]
     fn new(permits: i64) -> PyResult<PyClassInitializer<Self>> {
@@ -514,11 +542,16 @@ impl PyCreateSemaphore {
 #[pymethods]
 impl PyAcquireSemaphore {
     #[new]
-    fn new(semaphore: Py<PyAny>) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase {
+    fn new(py: Python<'_>, semaphore: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        if !semaphore.bind(py).is_instance_of::<PySemaphore>() {
+            return Err(PyTypeError::new_err(
+                "AcquireSemaphore requires a Semaphore handle returned by CreateSemaphore",
+            ));
+        }
+        Ok(PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
         })
-        .add_subclass(PyAcquireSemaphore { semaphore })
+        .add_subclass(PyAcquireSemaphore { semaphore }))
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
@@ -530,11 +563,16 @@ impl PyAcquireSemaphore {
 #[pymethods]
 impl PyReleaseSemaphore {
     #[new]
-    fn new(semaphore: Py<PyAny>) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase {
+    fn new(py: Python<'_>, semaphore: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        if !semaphore.bind(py).is_instance_of::<PySemaphore>() {
+            return Err(PyTypeError::new_err(
+                "ReleaseSemaphore requires a Semaphore handle returned by CreateSemaphore",
+            ));
+        }
+        Ok(PyClassInitializer::from(PyEffectBase {
             tag: DoExprTag::Effect as u8,
         })
-        .add_subclass(PyReleaseSemaphore { semaphore })
+        .add_subclass(PyReleaseSemaphore { semaphore }))
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
@@ -901,6 +939,7 @@ pub fn register_effect_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCancelEffect>()?;
     m.add_class::<PyTaskCompleted>()?;
     m.add("TaskCancelledError", m.py().get_type::<TaskCancelledError>())?;
+    m.add_class::<PySemaphore>()?;
     m.add_class::<PyCreateSemaphore>()?;
     m.add_class::<PyAcquireSemaphore>()?;
     m.add_class::<PyReleaseSemaphore>()?;
