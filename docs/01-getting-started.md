@@ -18,13 +18,7 @@ Make sure a Rust toolchain is available first:
 curl https://sh.rustup.rs -sSf | sh
 ```
 
-For pinjected integration support:
-
-```bash
-pip install doeff-pinjected
-```
-
-Or if you're using uv:
+If you're using uv:
 
 ```bash
 uv add doeff

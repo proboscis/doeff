@@ -30,7 +30,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-pinjected = ["doeff-pinjected; python_version < '3.14'"]
 viz = ["phart>=1.1.4"]
 
 [project.scripts]
@@ -56,7 +55,6 @@ packages = ["doeff"]
 members = ["packages/*"]
 
 [tool.uv.sources]
-doeff-pinjected = { workspace = true }
 doeff-indexer = { workspace = true }
 doeff-flow = { workspace = true }
 doeff-agents = { workspace = true }
