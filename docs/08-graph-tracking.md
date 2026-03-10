@@ -124,18 +124,18 @@ def complex_workflow():
 ```python
 @do
 def timed_operations():
-    import time
+    clock = yield Ask("clock")
 
     yield Step("operation_a")
-    start = yield IO(lambda: time.time())
+    start = clock()
     yield expensive_a()
-    duration_a = yield IO(lambda: time.time() - start)
+    duration_a = clock() - start
     yield Annotate({"duration_a": duration_a})
 
     yield Step("operation_b")
-    start = yield IO(lambda: time.time())
+    start = clock()
     yield expensive_b()
-    duration_b = yield IO(lambda: time.time() - start)
+    duration_b = clock() - start
     yield Annotate({"duration_b": duration_b})
 ```
 

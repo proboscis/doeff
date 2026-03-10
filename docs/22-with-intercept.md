@@ -29,15 +29,15 @@ The legacy `Intercept` API was removed because it could not implement cross-cutt
 ```python
 from doeff import WithIntercept
 
-WithIntercept(f, expr, types=None, mode=None)
+WithIntercept(f, expr, types=None, mode="include")
 ```
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `f` | `@do (effect: Effect) -> DoExpr` | *(required)* | Interceptor function. Receives matched effects, must return a `DoExpr` (typically the original effect unchanged, or a transformed replacement). |
 | `expr` | `DoExpr` | *(required)* | The scoped program to observe. All yields within this subtree are candidates for interception. |
-| `types` | `tuple[type, ...]` or `None` | `()` (empty tuple) | Effect or `DoCtrl` subclass types to filter on via `isinstance`. |
-| `mode` | `"include"` or `"exclude"` or `None` | `"include"` | How `types` is interpreted. See **Type Filtering** below. |
+| `types` | `tuple[type, ...]` or `None` | `None` | Optional effect or `DoCtrl` subclass filter. `None` means no type filter. |
+| `mode` | `"include"` or `"exclude"` | `"include"` | How `types` is interpreted when a filter is provided. See **Type Filtering** below. |
 
 **Return**: A `DoExpr` that, when interpreted, runs `expr` while routing matched yields through `f`.
 
@@ -64,7 +64,7 @@ def my_program() -> EffectGenerator[None]:
 
 result = run(
     WithIntercept(log_all, my_program(), types=(WriterTellEffect,), mode="include"),
-    handlers=default_handlers,
+    handlers=default_handlers(),
 )
 
 # observed now contains repr strings for both Tell effects
@@ -81,8 +81,17 @@ When a handler inside the scope yields effects of its own, `WithIntercept` sees 
 ```python
 from dataclasses import dataclass
 from doeff import (
-    Effect, EffectBase, WithIntercept, WithHandler, Resume, Delegate,
-    do, EffectGenerator, run, default_handlers, Tell, WriterTellEffect,
+    Effect,
+    EffectBase,
+    Resume,
+    Tell,
+    WithHandler,
+    WithIntercept,
+    WriterTellEffect,
+    default_handlers,
+    do,
+    run,
+    EffectGenerator,
 )
 
 @dataclass(frozen=True)
@@ -95,16 +104,14 @@ seen: list[str] = []
 def observe_tells(effect: Effect):
     """Cross-cutting observer: sees Tell from ANY source."""
     if isinstance(effect, WriterTellEffect):
-        seen.append(effect.value)
+        seen.append(effect.message)
     return effect
 
 @do
-def ping_handler(effect: Effect, k: object):
+def ping_handler(effect: Ping, k: object):
     """Handler that internally yields a Tell when it handles a Ping."""
-    if isinstance(effect, Ping):
-        yield Tell(f"handler:{effect.label}")           # <- this Tell is visible!
-        return (yield Resume(k, f"handled:{effect.label}"))
-    yield Delegate()
+    yield Tell(f"handler:{effect.label}")           # <- this Tell is visible!
+    return (yield Resume(k, f"handled:{effect.label}"))
 
 @do
 def user_program() -> EffectGenerator[str]:
@@ -116,12 +123,12 @@ def user_program() -> EffectGenerator[str]:
 # WithIntercept wraps WithHandler — so f sees handler's yields
 observed_program = WithIntercept(
     observe_tells,
-    WithHandler(ping_handler, user_program()),
+    WithHandler(handler=ping_handler, expr=user_program()),
     types=(WriterTellEffect,),
     mode="include",
 )
 
-run(observed_program, handlers=default_handlers)
+run(observed_program, handlers=default_handlers())
 
 # seen == ["from-user", "handler:foo", "after-ping"]
 #                        ^^^^^^^^^^^
@@ -193,7 +200,7 @@ def log_ctrl(effect: Effect):
 # Observe only WithHandler and Resume control nodes
 observed = WithIntercept(
     log_ctrl,
-    WithHandler(my_handler, my_program()),
+    WithHandler(handler=my_handler, expr=my_program()),
     types=(WithHandler, Resume),
     mode="include",
 )
@@ -240,7 +247,7 @@ def audit_interceptor(effect: Effect):
 
 audited = WithIntercept(
     audit_interceptor,
-    WithHandler(ping_handler, user_program()),
+    WithHandler(handler=ping_handler, expr=user_program()),
     types=(Ping,),
     mode="include",
 )
@@ -319,10 +326,18 @@ Here:
 # Both arrangements are equivalent — f sees ping_handler's Tell yields in either case.
 
 # Arrangement A: WithIntercept outside
-WithIntercept(f, WithHandler(ping_handler, user_program()), types=(WriterTellEffect,), mode="include")
+WithIntercept(
+    f,
+    WithHandler(handler=ping_handler, expr=user_program()),
+    types=(WriterTellEffect,),
+    mode="include",
+)
 
 # Arrangement B: WithIntercept inside
-WithHandler(ping_handler, WithIntercept(f, user_program(), types=(WriterTellEffect,), mode="include"))
+WithHandler(
+    handler=ping_handler,
+    expr=WithIntercept(f, user_program(), types=(WriterTellEffect,), mode="include"),
+)
 ```
 
 When `user_program` yields `Ping("x")`, the effect passes through the interceptor (filtered out by `types`) and reaches `ping_handler`. When `ping_handler` internally yields `Tell("handler:x")`, the interceptor sees it because the handler is processing an effect that originated from within the interceptor's scope.

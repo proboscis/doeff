@@ -318,11 +318,12 @@ Prevent cascading failures:
 ```python
 @do
 def circuit_breaker(operation, threshold=5, timeout=60):
+    clock = yield Ask("clock")
     failures = yield AtomicGet("circuit_failures")
     last_failure_time = yield Get("circuit_last_failure")
-    
+
     # Check if circuit is open
-    now = yield IO(lambda: time.time())
+    now = clock()
     if failures >= threshold:
         if last_failure_time and (now - last_failure_time) < timeout:
             yield Tell("Circuit breaker OPEN")
@@ -385,15 +386,16 @@ Functional state transformations:
 ```python
 @do
 def update_user(user_id, updates):
+    clock = yield Ask("clock")
     user = yield Get(f"user_{user_id}")
-    
+
     # Create updated copy
     updated_user = {
         **user,
         **updates,
-        "updated_at": yield IO(lambda: time.time())
+        "updated_at": clock()
     }
-    
+
     yield Put(f"user_{user_id}", updated_user)
     return updated_user
 
@@ -434,6 +436,7 @@ Fetch multiple resources concurrently:
 ```python
 @do
 def fetch_user_dashboard(user_id):
+    clock = yield Ask("clock")
     # Fetch all data in parallel using Gather + dict reconstruction
     programs = {
         "user": fetch_user(user_id),
@@ -450,7 +453,7 @@ def fetch_user_dashboard(user_id):
         "posts": results["posts"],
         "followers": results["followers"],
         "notifications": results["notifications"],
-        "dashboard_loaded_at": yield IO(lambda: time.time())
+        "dashboard_loaded_at": clock()
     }
 ```
 
@@ -597,13 +600,13 @@ def good_program():
     return "done"
 ```
 
-### ❌ Side Effects Without IO
+### ❌ Untracked Side Effects
 
 **BAD:**
 ```python
 @do
 def bad_side_effects():
-    # DON't: side effects without IO
+    # Don't: perform side effects directly in program bodies
     with open("file.txt", "w") as f:
         f.write("data")  # Untracked side effect
     return "done"
@@ -611,10 +614,20 @@ def bad_side_effects():
 
 **GOOD:**
 ```python
+from dataclasses import dataclass
+from doeff import EffectBase
+
+
+@dataclass(frozen=True)
+class WriteFile(EffectBase):
+    path: str
+    data: str
+
+
 @do
 def good_side_effects():
-    # DO: wrap side effects with IO
-    yield IO(lambda: open("file.txt", "w").write("data"))
+    # Do: model the side effect explicitly
+    yield WriteFile(path="file.txt", data="data")
     return "done"
 ```
 
@@ -715,7 +728,7 @@ def flat_structure():
 
 ### Best Practices
 
-1. **Use IO for side effects**: Never perform untracked side effects
+1. **Model side effects explicitly**: Never hide file/network/process work inside plain Python calls
 2. **Keep Programs pure**: Inject dependencies, don't create them
 3. **Handle errors explicitly**: Don't silently swallow errors
 4. **Prefer composition**: Small, focused Programs over large ones

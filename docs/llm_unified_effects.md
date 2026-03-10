@@ -17,7 +17,11 @@ Now, effect definitions are shared in one package while provider packages focus 
 Handlers inspect `effect.model`:
 
 1. If a handler supports the model, it handles the effect.
-2. If not, it yields `Delegate()` so the next outer handler can try.
+2. If not, it yields `Pass()` so the next outer handler can try.
+
+When a handler uses a narrow effect annotation such as `effect: LLMChat` or
+`effect: LLMStructuredOutput`, `WithHandler(...)` also installs a runtime type filter so
+non-matching effects skip the handler entirely.
 
 This enables a single program to call multiple providers by model name.
 
@@ -26,7 +30,7 @@ This enables a single program to call multiple providers by model name.
 ```python
 from pydantic import BaseModel
 
-from doeff import WithHandler, default_handlers, do, run
+from doeff import WithHandler, do, run
 from doeff_llm.effects import LLMChat, LLMStructuredOutput
 from doeff_gemini.handlers import gemini_production_handler
 from doeff_openai.handlers import openai_production_handler
@@ -58,13 +62,12 @@ def workflow():
 
 result = run(
     WithHandler(
-        openrouter_production_handler,  # fallback / catch-all
-        WithHandler(
-            gemini_production_handler,
-            WithHandler(openai_production_handler, workflow()),
+        handler=openrouter_production_handler,  # fallback / catch-all
+        expr=WithHandler(
+            handler=gemini_production_handler,
+            expr=WithHandler(handler=openai_production_handler, expr=workflow()),
         ),
     ),
-    handlers=default_handlers(),
     env={
         "openai_api_key": "...",
         "gemini_api_key": "...",
