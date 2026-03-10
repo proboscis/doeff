@@ -436,7 +436,7 @@ if joined.is_err() and joined.error.__class__.__name__ == "TaskCancelledError":
 
 ### CreateSemaphore(permits)
 
-Create a semaphore handle with `permits` initial permits.
+Create an opaque semaphore handle with `permits` initial permits.
 
 `permits` must be `>= 1`; `CreateSemaphore(0)` raises
 `ValueError("permits must be >= 1")`.
@@ -448,6 +448,9 @@ sem = yield CreateSemaphore(3)
 **Signature:** `CreateSemaphore(permits: int)`
 
 **Returns:** `Semaphore`
+
+The returned `Semaphore` is opaque. Keep and reuse the handle returned by `CreateSemaphore`.
+`Semaphore(...)` is not part of the public API and raises `TypeError`.
 
 ---
 
@@ -464,6 +467,9 @@ finally:
 ```
 
 **Signature:** `AcquireSemaphore(semaphore: Semaphore)`
+
+`semaphore` must be the handle returned by `CreateSemaphore` or another Python reference to that
+same handle object. `Semaphore(id)` construction is not supported.
 
 Blocked acquirers are resumed in FIFO order. When no permit is available, the task transitions to
 `BLOCKED` until a release occurs.
@@ -484,6 +490,9 @@ yield ReleaseSemaphore(sem)
 ```
 
 **Signature:** `ReleaseSemaphore(semaphore: Semaphore)`
+
+`semaphore` must be the runtime-created handle returned by `CreateSemaphore` (or another Python
+reference to that same handle object). `Semaphore(id)` construction is not supported.
 
 When waiters exist, release uses direct handoff to the oldest waiter (FIFO): the permit transfers
 to that waiter and `available_permits` remains `0`.
