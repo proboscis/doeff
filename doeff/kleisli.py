@@ -13,7 +13,7 @@ from collections.abc import Callable
 from collections.abc import Callable as TypingCallable
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, ClassVar, Generic, ParamSpec, TypeVar, get_type_hints
+from typing import Any, ClassVar, ForwardRef, Generic, ParamSpec, TypeVar, get_type_hints
 
 from doeff.program import (
     Program,
@@ -224,6 +224,70 @@ def _safe_signature(target: Any) -> inspect.Signature | None:
         return None
 
 
+def _safe_annotations(target: Any) -> dict[str, Any] | None:
+    if target is None:
+        return None
+    try:
+        annotations = target.__annotations__
+    except AttributeError:
+        return None
+    if isinstance(annotations, dict):
+        return annotations
+    return None
+
+
+def _annotation_namespaces(target: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    globalns: dict[str, Any] = {}
+    localns: dict[str, Any] = {}
+    if target is None:
+        return globalns, None
+
+    module = inspect.getmodule(target)
+    if module is not None:
+        globalns.update(vars(module))
+
+    try:
+        target_globals = target.__globals__
+    except AttributeError:
+        target_globals = None
+    if isinstance(target_globals, dict):
+        globalns.update(target_globals)
+
+    if callable(target):
+        try:
+            closurevars = inspect.getclosurevars(target)
+        except (TypeError, ValueError):
+            closurevars = None
+        if closurevars is not None:
+            globalns.update(closurevars.globals)
+            localns.update(closurevars.nonlocals)
+
+    return globalns, localns or None
+
+
+def _resolve_annotation_only(annotation: Any, *targets: Any) -> Any:
+    if annotation is inspect._empty:
+        return annotation
+
+    raw_annotation: str | None = None
+    if isinstance(annotation, ForwardRef):
+        raw_annotation = annotation.__forward_arg__
+    elif isinstance(annotation, str):
+        raw_annotation = annotation
+
+    if raw_annotation is None:
+        return annotation
+
+    last_exc: Exception | None = None
+    for target in targets:
+        globalns, localns = _annotation_namespaces(target)
+        try:
+            return eval(raw_annotation, globalns, localns)
+        except Exception as exc:
+            last_exc = exc
+    raise TypeError(f"Failed to resolve effect annotation: {raw_annotation!r}") from last_exc
+
+
 def validate_do_handler_effect_annotation(handler: Any) -> None:
     if not bool(getattr(handler, "__doeff_do_decorated__", False)):
         return
@@ -238,15 +302,20 @@ def validate_do_handler_effect_annotation(handler: Any) -> None:
     if len(params) < 2:
         raise TypeError("@do handler must accept (effect, k)")
 
-    metadata_source = getattr(handler, "_metadata_source", None)
-    type_hints = _safe_get_type_hints(metadata_source)
-    if not type_hints:
-        type_hints = _safe_get_type_hints(getattr(handler, "func", None))
-    if not type_hints:
-        type_hints = _safe_get_type_hints(handler)
-
     effect_param = params[0]
-    effect_annotation = type_hints.get(effect_param.name, effect_param.annotation)
+    metadata_source = getattr(handler, "_metadata_source", None)
+    handler_name = getattr(handler, "__qualname__", getattr(handler, "__name__", repr(handler)))
+    func = getattr(handler, "func", None)
+    raw_annotation = effect_param.annotation
+    for candidate in (metadata_source, func, handler):
+        annotations = _safe_annotations(candidate)
+        if annotations is not None and effect_param.name in annotations:
+            raw_annotation = annotations[effect_param.name]
+            break
+    try:
+        effect_annotation = _resolve_annotation_only(raw_annotation, metadata_source, func, handler)
+    except TypeError as exc:
+        raise TypeError(f"Failed to resolve effect annotation for handler {handler_name}: {exc}") from exc
     if effect_annotation is inspect._empty or not _is_effect_annotation_kind(effect_annotation):
         raise TypeError("@do handler first parameter must be annotated as Effect")
 

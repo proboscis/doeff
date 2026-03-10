@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import warnings
 
 import doeff_vm
 import pytest
@@ -77,6 +78,14 @@ def test_extract_handler_effect_types() -> None:
     assert rust_vm._extract_handler_effect_types(no_annotation_handler) is None
 
 
+def test_extract_handler_effect_types_ignores_broken_other_annotations() -> None:
+    @do
+    def tell_handler(effect: TellFx, k: "MissingContinuation") -> "MissingReturn":
+        yield doeff_vm.Pass()
+
+    assert rust_vm._extract_handler_effect_types(tell_handler) == (TellFx,)
+
+
 def test_with_handler_passes_types_to_vm() -> None:
     @do
     def tell_handler(effect: TellFx, k):
@@ -109,6 +118,53 @@ def test_raw_doeff_vm_with_handler_validates_types_kwarg() -> None:
 
     with pytest.raises(TypeError, match="WithHandler.types must contain only Python type objects"):
         doeff_vm.WithHandler(tell_handler, _tell_program("x"), types=(TellFx, "bad"))
+
+
+def test_with_handler_rejects_unresolved_effect_annotation() -> None:
+    @do
+    def broken_handler(effect: "MissingEffect", k):
+        yield doeff_vm.Pass()
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError, match=r"MissingEffect|broken_handler|annotation"):
+            WithHandler(broken_handler, _tell_program("x"))
+    assert recorded == []
+
+
+def test_run_handlers_param_rejects_unresolved_effect_annotation() -> None:
+    @do
+    def broken_handler(effect: "MissingEffect", k):
+        yield doeff_vm.Pass()
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError, match=r"MissingEffect|broken_handler|annotation"):
+            run(_tell_program("x"), handlers=[broken_handler, fallback_handler])
+    assert recorded == []
+
+
+def test_with_handler_accepts_valid_effect_annotation_with_broken_other_annotations() -> None:
+    @do
+    def tell_handler(effect: TellFx, k: "MissingContinuation") -> "MissingReturn":
+        yield doeff_vm.Pass()
+
+    ctrl = WithHandler(tell_handler, _tell_program("x"))
+    assert ctrl.types == (TellFx,)
+
+
+def test_run_handlers_param_accepts_valid_effect_annotation_with_broken_other_annotations() -> None:
+    seen: list[str] = []
+
+    @do
+    def tell_handler(effect: TellFx, k: "MissingContinuation") -> "MissingReturn":
+        seen.append(type(effect).__name__)
+        return (yield doeff_vm.Resume(k, f"handled_tell:{effect.message}"))
+
+    result = run(_tell_program("x"), handlers=[fallback_handler, tell_handler])
+    assert result.is_ok()
+    assert result.value == "handled_tell:x"
+    assert seen == ["TellFx"]
 
 
 @pytest.mark.asyncio
