@@ -28,7 +28,7 @@ use crate::segment::ScopeStore;
 use crate::step::{PyException, PythonCall};
 use crate::value::Value;
 use crate::vm::RustStore;
-use doeff_vm_core::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
+use doeff_vm_core::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
 
 enum ParsedStateEffect {
     Get { key: String },
@@ -805,6 +805,9 @@ impl IRStreamFactory for LazyAskHandlerFactory {
 #[derive(Debug)]
 enum LazyAskPhase {
     Idle,
+    AwaitDelegate {
+        continuation: Continuation,
+    },
     AwaitLocalEval {
         continuation: Continuation,
         cache_snapshot: HashMap<HashedPyKey, LazyCacheEntry>,
@@ -846,6 +849,7 @@ impl LazyAskHandlerProgram {
     fn current_phase_name(&self) -> &'static str {
         match self.phase {
             LazyAskPhase::Idle => "Idle",
+            LazyAskPhase::AwaitDelegate { .. } => "AwaitDelegate",
             LazyAskPhase::AwaitLocalEval { .. } => "AwaitLocalEval",
             LazyAskPhase::AwaitAcquire { .. } => "AwaitAcquire",
             LazyAskPhase::AwaitEval { .. } => "AwaitEval",
@@ -865,6 +869,11 @@ impl LazyAskHandlerProgram {
             continuation,
             exception,
         })
+    }
+
+    fn begin_delegate_phase(&mut self, continuation: Continuation, effect: DispatchEffect) -> IRStreamStep {
+        self.phase = LazyAskPhase::AwaitDelegate { continuation };
+        IRStreamStep::Yield(DoCtrl::Delegate { effect })
     }
 
     fn snapshot_lazy_state(
@@ -1065,9 +1074,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                     if let Some(value) = ask_from_scope_or_env(store, scope, &key) {
                         return self.handle_ask_value(key, k, value);
                     }
-                    IRStreamStep::Yield(DoCtrl::Delegate {
-                        effect: dispatch_from_shared(obj),
-                    })
+                    self.begin_delegate_phase(k, dispatch_from_shared(obj))
                 }
                 Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
@@ -1094,6 +1101,10 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
+            LazyAskPhase::AwaitDelegate { continuation } => IRStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            }),
             LazyAskPhase::AwaitLocalEval {
                 continuation,
                 cache_snapshot,
@@ -1189,6 +1200,9 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
+            LazyAskPhase::AwaitDelegate { continuation } => {
+                Self::transfer_throw(continuation, exc)
+            }
             LazyAskPhase::AwaitLocalEval {
                 continuation,
                 cache_snapshot,

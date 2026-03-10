@@ -4,11 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::capture::HandlerKind;
+use crate::dispatch::DispatchFrame;
 use crate::do_ctrl::DoCtrl;
-use crate::ids::{DispatchId, Marker};
+use crate::ids::Marker;
 use crate::ir_stream::IRStreamRef;
 use crate::py_shared::PyShared;
-use crate::value::Value;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -134,8 +134,9 @@ pub enum Frame {
     },
     InterceptorApply(Box<InterceptorContinuation>),
     InterceptorEval(Box<InterceptorContinuation>),
-    HandlerDispatch {
-        dispatch_id: DispatchId,
+    Dispatch(Box<DispatchFrame>),
+    HandlerBoundary {
+        plain_return_allowed: bool,
     },
     EvalReturn(Box<EvalReturnContinuation>),
     MapReturn {

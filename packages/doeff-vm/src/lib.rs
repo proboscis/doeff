@@ -67,7 +67,6 @@ pub mod segment {
     pub use doeff_vm_core::segment::*;
 }
 mod step {
-    pub use doeff_vm_core::do_ctrl::DoCtrl;
     pub use doeff_vm_core::driver::{Mode, PyException, StepEvent};
     pub use doeff_vm_core::python_call::{PendingPython, PyCallOutcome, PythonCall};
 }
@@ -75,7 +74,7 @@ pub mod value {
     pub use doeff_vm_core::value::*;
 }
 mod vm {
-    pub use doeff_vm_core::{DebugConfig, DebugLevel, RustStore, TraceEvent, VM};
+    pub use doeff_vm_core::{DebugConfig, VM};
 }
 
 // Re-exports for convenience
@@ -86,7 +85,7 @@ pub use capture::{
     SpawnSite, TraceEntry, TraceFrame, TraceHop,
 };
 pub use continuation::Continuation;
-pub use dispatch::DispatchContext;
+pub use dispatch::DispatchFrame;
 pub use do_ctrl::DoCtrl;
 pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 pub use driver::{Mode, StepEvent};

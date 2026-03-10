@@ -47,6 +47,7 @@ pub struct Segment {
     pub scope_store: ScopeStore,
     pub kind: SegmentKind,
     pub dispatch_id: Option<DispatchId>,
+    pub dispatch_segment_id: Option<SegmentId>,
     pub mode: Mode,
     pub pending_python: Option<PendingPython>,
     pub pending_error_context: Option<PyException>,
@@ -63,6 +64,7 @@ impl Segment {
             scope_store: ScopeStore::default(),
             kind: SegmentKind::Normal,
             dispatch_id: None,
+            dispatch_segment_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
@@ -88,6 +90,7 @@ impl Segment {
                 types: None,
             },
             dispatch_id: None,
+            dispatch_segment_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
@@ -114,6 +117,7 @@ impl Segment {
                 types,
             },
             dispatch_id: None,
+            dispatch_segment_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
@@ -190,9 +194,7 @@ mod tests {
         let mut seg = Segment::new(marker, None);
 
         seg.push_frame(Frame::FlatMapBindResult);
-        seg.push_frame(Frame::HandlerDispatch {
-            dispatch_id: DispatchId::fresh(),
-        });
+        seg.push_frame(Frame::FlatMapBindResult);
         seg.push_frame(Frame::InterceptBodyReturn { marker });
 
         assert_eq!(seg.frame_count(), 3);
@@ -203,7 +205,7 @@ mod tests {
         let f1 = seg.pop_frame().unwrap();
 
         assert!(matches!(f3, Frame::InterceptBodyReturn { .. }));
-        assert!(matches!(f2, Frame::HandlerDispatch { .. }));
+        assert!(matches!(f2, Frame::FlatMapBindResult));
         assert!(matches!(f1, Frame::FlatMapBindResult));
 
         assert!(!seg.has_frames());

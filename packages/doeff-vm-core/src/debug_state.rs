@@ -274,9 +274,10 @@ impl DebugState {
                     let frame_kind = match frame {
                         Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)",
                         Frame::Program { .. } => "Program",
+                        Frame::Dispatch(_) => "Dispatch",
+                        Frame::HandlerBoundary { .. } => "HandlerBoundary",
                         Frame::InterceptorApply(_) => "InterceptorApply",
                         Frame::InterceptorEval(_) => "InterceptorEval",
-                        Frame::HandlerDispatch { .. } => "HandlerDispatch",
                         Frame::EvalReturn(_) => "EvalReturn",
                         Frame::MapReturn { .. } => "MapReturn",
                         Frame::FlatMapBindResult => "FlatMapBindResult",

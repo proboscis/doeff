@@ -34,6 +34,7 @@ pub struct Continuation {
     pub frames_snapshot: Arc<Vec<Frame>>,
     pub marker: Marker,
     pub dispatch_id: Option<DispatchId>,
+    pub dispatch_segment_id: Option<SegmentId>,
     pub mode: Box<Mode>,
     pub pending_python: Option<Box<PendingPython>>,
     pub pending_error_context: Option<PyException>,
@@ -63,6 +64,17 @@ pub struct Continuation {
 }
 
 impl Continuation {
+    fn capture_frames(segment: &Segment) -> Arc<Vec<Frame>> {
+        Arc::new(
+            segment
+                .frames
+                .iter()
+                .filter(|frame| !matches!(frame, Frame::Dispatch(_)))
+                .cloned()
+                .collect(),
+        )
+    }
+
     pub fn capture(
         segment: &Segment,
         segment_id: SegmentId,
@@ -72,9 +84,10 @@ impl Continuation {
             cont_id: ContId::fresh(),
             segment_id,
             scope_store: segment.scope_store.clone(),
-            frames_snapshot: Arc::new(segment.frames.clone()),
+            frames_snapshot: Self::capture_frames(segment),
             marker: segment.marker,
             dispatch_id,
+            dispatch_segment_id: segment.dispatch_segment_id,
             mode: Box::new(segment.mode.clone()),
             pending_python: segment.pending_python.clone().map(Box::new),
             pending_error_context: segment.pending_error_context.clone(),
@@ -99,9 +112,10 @@ impl Continuation {
             cont_id,
             segment_id,
             scope_store: segment.scope_store.clone(),
-            frames_snapshot: Arc::new(segment.frames.clone()),
+            frames_snapshot: Self::capture_frames(segment),
             marker: segment.marker,
             dispatch_id,
+            dispatch_segment_id: segment.dispatch_segment_id,
             mode: Box::new(segment.mode.clone()),
             pending_python: segment.pending_python.clone().map(Box::new),
             pending_error_context: segment.pending_error_context.clone(),
@@ -133,6 +147,7 @@ impl Continuation {
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
+            dispatch_segment_id: None,
             mode: Box::new(Mode::Deliver(Value::Unit)),
             pending_python: None,
             pending_error_context: None,
@@ -173,6 +188,7 @@ impl Continuation {
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
+            dispatch_segment_id: None,
             mode: Box::new(Mode::Deliver(Value::Unit)),
             pending_python: None,
             pending_error_context: None,

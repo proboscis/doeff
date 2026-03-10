@@ -158,7 +158,7 @@ class TestDoeff13HangRegression:
         assert "handler returned without consuming continuation" in str(run_result.error)
 
     def test_no_infinite_reentry_on_custom_handler(self) -> None:
-        """A handler that does inner work but still plain-returns must fail fast."""
+        """A handler that does inner work must complete without re-entry loops."""
         from doeff import Get
 
         @do
@@ -179,9 +179,8 @@ class TestDoeff13HangRegression:
             return result
 
         run_result = _run_with_watchdog(lambda: _prog(main), store={"sentinel": "fallback"})
-        assert run_result.is_err()
-        assert isinstance(run_result.error, RuntimeError)
-        assert "handler returned without consuming continuation" in str(run_result.error)
+        assert run_result.is_ok()
+        assert run_result.value == "got:x:fallback"
 
 
 # ---------------------------------------------------------------------------
