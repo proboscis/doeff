@@ -6,7 +6,6 @@ This module contains the Program wrapper class that represents a lazy computatio
 
 import inspect
 import types
-import warnings
 from abc import ABC, ABCMeta
 from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
@@ -113,8 +112,7 @@ def _safe_get_type_hints(target: Any) -> dict[str, Any]:
         return {}
     try:
         return get_type_hints(target, include_extras=True)
-    except Exception as exc:
-        warnings.warn(f"Failed to resolve type hints for {target}: {exc}", stacklevel=2)
+    except Exception:
         return {}
 
 
