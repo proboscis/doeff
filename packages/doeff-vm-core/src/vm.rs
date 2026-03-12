@@ -1359,9 +1359,18 @@ impl VM {
         if self.dispatch_state.dispatch_is_execution_context_effect(dispatch_id) {
             return None;
         }
-        self.dispatch_state
-            .find_by_dispatch_id(dispatch_id)
-            .map(|ctx| ctx.k_current.clone())
+        let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+        // If the dispatch is already completed (handler already resumed the
+        // continuation), don't return it — the exception should propagate
+        // normally through the segment stack instead of attempting a
+        // TransferThrow into an already-consumed continuation.
+        if ctx.completed {
+            return None;
+        }
+        if self.is_one_shot_consumed(ctx.k_current.cont_id) {
+            return None;
+        }
+        Some(ctx.k_current.clone())
     }
 
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
