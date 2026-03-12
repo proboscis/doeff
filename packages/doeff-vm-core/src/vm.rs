@@ -1362,6 +1362,7 @@ impl VM {
         self.dispatch_state
             .find_by_dispatch_id(dispatch_id)
             .map(|ctx| ctx.k_current.clone())
+            .filter(|k| !self.is_one_shot_consumed(k.cont_id))
     }
 
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {

@@ -1527,10 +1527,17 @@ pub(crate) fn classify_yielded_bound(
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
                 let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Discontinue with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
+                    if vm.is_one_shot_consumed(cont_id) {
+                        PyRuntimeError::new_err(format!(
+                            "one-shot violation: continuation {} already consumed",
+                            cont_id.raw()
+                        ))
+                    } else {
+                        PyRuntimeError::new_err(format!(
+                            "Discontinue with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    }
                 })?;
                 let bound_exception = d.exception.bind(py);
                 if !bound_exception.is_instance_of::<PyBaseException>() {
@@ -1622,10 +1629,17 @@ pub(crate) fn classify_yielded_bound(
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
                 let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Resume with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
+                    if vm.is_one_shot_consumed(cont_id) {
+                        PyRuntimeError::new_err(format!(
+                            "one-shot violation: continuation {} already consumed",
+                            cont_id.raw()
+                        ))
+                    } else {
+                        PyRuntimeError::new_err(format!(
+                            "Resume with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    }
                 })?;
                 Ok(DoCtrl::Resume {
                     continuation: k,
@@ -1641,10 +1655,17 @@ pub(crate) fn classify_yielded_bound(
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
                 let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Transfer with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
+                    if vm.is_one_shot_consumed(cont_id) {
+                        PyRuntimeError::new_err(format!(
+                            "one-shot violation: continuation {} already consumed",
+                            cont_id.raw()
+                        ))
+                    } else {
+                        PyRuntimeError::new_err(format!(
+                            "Transfer with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    }
                 })?;
                 Ok(DoCtrl::Transfer {
                     continuation: k,
@@ -1680,10 +1701,17 @@ pub(crate) fn classify_yielded_bound(
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
                 let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "ResumeContinuation with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
+                    if vm.is_one_shot_consumed(cont_id) {
+                        PyRuntimeError::new_err(format!(
+                            "one-shot violation: continuation {} already consumed",
+                            cont_id.raw()
+                        ))
+                    } else {
+                        PyRuntimeError::new_err(format!(
+                            "ResumeContinuation with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    }
                 })?;
                 Ok(DoCtrl::ResumeContinuation {
                     continuation: k,
@@ -1722,10 +1750,17 @@ pub(crate) fn classify_yielded_bound(
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
                 let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "GetTraceback with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
+                    if vm.is_one_shot_consumed(cont_id) {
+                        PyRuntimeError::new_err(format!(
+                            "one-shot violation: continuation {} already consumed",
+                            cont_id.raw()
+                        ))
+                    } else {
+                        PyRuntimeError::new_err(format!(
+                            "GetTraceback with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    }
                 })?;
                 Ok(DoCtrl::GetTraceback { continuation: k })
             }
@@ -1746,10 +1781,17 @@ pub(crate) fn classify_yielded_bound(
                 })?;
                 let cont_id = scope_obj.borrow().cont_id;
                 let scope = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "EvalInScope with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
+                    if vm.is_one_shot_consumed(cont_id) {
+                        PyRuntimeError::new_err(format!(
+                            "one-shot violation: continuation {} already consumed",
+                            cont_id.raw()
+                        ))
+                    } else {
+                        PyRuntimeError::new_err(format!(
+                            "EvalInScope with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    }
                 })?;
                 Ok(DoCtrl::EvalInScope {
                     expr: PyShared::new(expr),
