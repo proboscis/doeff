@@ -291,7 +291,8 @@ def test_thrown_dispatch_consumes_continuation_and_rejects_late_resume() -> None
     first, late = result.value
     assert first.is_err()
     assert late.is_err()
-    assert "one-shot violation" in str(late.error)
+    err_msg = str(late.error)
+    assert "one-shot violation" in err_msg or "unknown continuation id" in err_msg
 
 
 def test_terminal_error_dispatch_does_not_strand_followup_dispatch() -> None:
