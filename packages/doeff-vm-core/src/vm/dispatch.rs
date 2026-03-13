@@ -1,65 +1,6 @@
 use super::*;
 
 impl VM {
-    pub(super) fn track_run_handler(&mut self, handler: &KleisliRef) {
-        if !self
-            .run_handlers
-            .iter()
-            .any(|existing| Arc::ptr_eq(existing, handler))
-        {
-            self.run_handlers.push(handler.clone());
-        }
-    }
-
-    pub(super) fn find_prompt_boundary_by_marker(
-        &self,
-        marker: Marker,
-    ) -> Option<(SegmentId, KleisliRef, Option<Vec<PyShared>>)> {
-        self.segments
-            .iter()
-            .find_map(|(seg_id, seg)| match &seg.kind {
-                SegmentKind::PromptBoundary {
-                    handled_marker,
-                    handler,
-                    types,
-                    ..
-                } if *handled_marker == marker => Some((seg_id, handler.clone(), types.clone())),
-                SegmentKind::PromptBoundary { .. }
-                | SegmentKind::Normal
-                | SegmentKind::InterceptorBoundary { .. }
-                | SegmentKind::MaskBoundary { .. } => None,
-            })
-    }
-
-    pub(super) fn handlers_in_caller_chain(
-        &self,
-        start_seg_id: SegmentId,
-    ) -> Vec<HandlerChainEntry> {
-        let mut chain = Vec::new();
-        let mut cursor = Some(start_seg_id);
-        while let Some(seg_id) = cursor {
-            let Some(seg) = self.segments.get(seg_id) else {
-                break;
-            };
-            if let SegmentKind::PromptBoundary {
-                handled_marker,
-                handler,
-                types,
-                ..
-            } = &seg.kind
-            {
-                chain.push(HandlerChainEntry {
-                    marker: *handled_marker,
-                    prompt_seg_id: seg_id,
-                    handler: handler.clone(),
-                    types: types.clone(),
-                });
-            }
-            cursor = seg.caller;
-        }
-        chain
-    }
-
     pub(super) fn chain_entries_in_caller_chain(
         &self,
         start_seg_id: SegmentId,
@@ -125,47 +66,7 @@ impl VM {
         None
     }
 
-    fn same_effect_python_type(a: &DispatchEffect, b: &DispatchEffect) -> bool {
-        let Some(a_obj) = dispatch_ref_as_python(a) else {
-            return false;
-        };
-        let Some(b_obj) = dispatch_ref_as_python(b) else {
-            return false;
-        };
-        Python::attach(|py| {
-            let a_ty = a_obj.bind(py).get_type();
-            let b_ty = b_obj.bind(py).get_type();
-            a_ty.as_ptr() == b_ty.as_ptr()
-        })
-    }
-
-    fn current_handler_chain(&self) -> Vec<HandlerChainEntry> {
-        let Some(seg_id) = self.current_segment else {
-            return Vec::new();
-        };
-        self.handlers_in_caller_chain(seg_id)
-    }
-
-    fn prepare_with_handler(
-        handler: KleisliRef,
-        current_segment: Option<SegmentId>,
-    ) -> Result<WithHandlerPlan, VMError> {
-        let handler_marker = Marker::fresh();
-        let Some(outside_seg_id) = current_segment else {
-            return Err(VMError::internal("no current segment for WithHandler"));
-        };
-
-        Ok(WithHandlerPlan {
-            handler_marker,
-            outside_seg_id,
-            handler,
-        })
-    }
-
-    fn dispatch_origin_in_segment(
-        &self,
-        seg_id: SegmentId,
-    ) -> Option<DispatchOriginView> {
+    fn dispatch_origin_in_segment(&self, seg_id: SegmentId) -> Option<DispatchOriginView> {
         let seg = self.segments.get(seg_id)?;
         seg.frames.iter().rev().find_map(|frame| match frame {
             Frame::DispatchOrigin {
@@ -416,9 +317,7 @@ impl VM {
         seg.pending_error_context = None;
     }
 
-    fn continuation_chain_contains_eval_in_scope_return(
-        continuation: &Continuation,
-    ) -> bool {
+    fn continuation_chain_contains_eval_in_scope_return(continuation: &Continuation) -> bool {
         let mut cursor = Some(continuation);
         while let Some(current) = cursor {
             if current.frames_snapshot.iter().any(|frame| {
@@ -471,10 +370,7 @@ impl VM {
             || Self::continuation_chain_contains_eval_in_scope_return(&origin.k_origin)
     }
 
-    fn materialize_vm_error_exception(
-        module_attr: &str,
-        message: &str,
-    ) -> Option<PyException> {
+    fn materialize_vm_error_exception(module_attr: &str, message: &str) -> Option<PyException> {
         Python::attach(|py| {
             for module_name in ["doeff_vm", "doeff_vm.doeff_vm"] {
                 let Ok(module) = PyModule::import(py, module_name) else {
@@ -496,10 +392,7 @@ impl VM {
         })
     }
 
-    fn recoverable_eval_in_scope_dispatch_exception(
-        &self,
-        error: &VMError,
-    ) -> Option<PyException> {
+    fn recoverable_eval_in_scope_dispatch_exception(&self, error: &VMError) -> Option<PyException> {
         if !self.is_inside_eval_in_scope_subtopology() {
             return None;
         }
@@ -573,30 +466,6 @@ impl VM {
         }
     }
 
-    pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
-        let installed = self.installed_handlers.clone();
-        let mut outside_seg_id: Option<SegmentId> = None;
-        for entry in installed.into_iter().rev() {
-            let mut prompt_seg = Segment::new_prompt(
-                entry.marker,
-                outside_seg_id,
-                entry.marker,
-                entry.handler.clone(),
-            );
-            self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
-            self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
-            let prompt_seg_id = self.alloc_segment(prompt_seg);
-            self.track_run_handler(&entry.handler);
-
-            let mut body_seg = Segment::new(entry.marker, Some(prompt_seg_id));
-            self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
-            self.copy_scope_store_from(outside_seg_id, &mut body_seg);
-            let body_seg_id = self.alloc_segment(body_seg);
-            outside_seg_id = Some(body_seg_id);
-        }
-        outside_seg_id
-    }
-
     /// Copy interceptor guard state from a source segment to a child segment.
     ///
     /// **Why inheritance is required (not derivable from frames):**
@@ -649,10 +518,7 @@ impl VM {
         child_seg.scope_store = source_seg.scope_store.clone();
     }
 
-    fn remap_interceptor_skip_markers(
-        seg: &mut Segment,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
+    fn remap_interceptor_skip_markers(seg: &mut Segment, marker_remap: &HashMap<Marker, Marker>) {
         if marker_remap.is_empty() {
             return;
         }
@@ -981,20 +847,6 @@ impl VM {
         self.continuation_registry.remove(&cont_id);
     }
 
-    pub fn register_continuation(&mut self, k: Continuation) {
-        self.continuation_registry.insert(k.cont_id, k);
-    }
-
-    pub fn lookup_continuation(&self, cont_id: ContId) -> Option<&Continuation> {
-        self.continuation_registry.get(&cont_id)
-    }
-
-    pub fn capture_continuation(&self, dispatch_id: Option<DispatchId>) -> Option<Continuation> {
-        let seg_id = self.current_segment?;
-        let segment = self.segments.get(seg_id)?;
-        Some(Continuation::capture(segment, seg_id, dispatch_id))
-    }
-
     pub(super) fn current_segment_dispatch_id(&self) -> Option<DispatchId> {
         self.current_dispatch_origin()
             .map(|origin| origin.dispatch_id)
@@ -1019,44 +871,38 @@ impl VM {
         handler_chain: &[Marker],
         effect: &DispatchEffect,
     ) -> Result<(usize, Marker, KleisliRef), VMError> {
-        let effect_obj =
-            Python::attach(|py| dispatch_to_pyobject(py, effect).map(|obj| obj.unbind())).map_err(
-                |err| {
-                    VMError::python_error(format!(
-                        "failed to convert dispatch effect to Python object: {err}"
-                    ))
-                },
-            )?;
-        for (idx, marker) in handler_chain.iter().copied().enumerate() {
-            let Some((prompt_seg_id, handler, types)) = self.find_prompt_boundary_by_marker(marker)
-            else {
-                return Err(VMError::internal(format!(
-                    "find_matching_handler: missing handler marker {} at index {}",
-                    marker.raw(),
-                    idx
-                )));
-            };
-            if handler.can_handle(effect)?
-                && self
-                    .should_invoke_handler(
-                        &HandlerChainEntry {
-                            marker,
-                            prompt_seg_id,
-                            handler: handler.clone(),
-                            types,
-                        },
-                        &effect_obj,
-                    )
-                    .map_err(|err| {
-                        VMError::python_error(format!(
-                            "failed to evaluate WithHandler type filter: {err:?}"
-                        ))
-                    })?
-            {
-                return Ok((idx, marker, handler));
-            }
-        }
-        Err(VMError::no_matching_handler(effect.clone()))
+        let entries = handler_chain
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(idx, marker)| {
+                let Some((prompt_seg_id, handler, types)) =
+                    self.find_prompt_boundary_by_marker(marker)
+                else {
+                    return Err(VMError::internal(format!(
+                        "find_matching_handler: missing handler marker {} at index {}",
+                        marker.raw(),
+                        idx
+                    )));
+                };
+                Ok(HandlerChainEntry {
+                    marker,
+                    prompt_seg_id,
+                    handler,
+                    types,
+                })
+            })
+            .collect::<Result<Vec<_>, VMError>>()?;
+
+        let Some(selected) = self.select_handler(&entries, effect, false)? else {
+            return Err(VMError::no_matching_handler(effect.clone()));
+        };
+
+        Ok((
+            selected.index,
+            selected.entry.marker,
+            selected.entry.handler,
+        ))
     }
 
     pub fn start_dispatch(&mut self, effect: DispatchEffect) -> Result<StepEvent, VMError> {
@@ -1120,52 +966,8 @@ impl VM {
             return Err(VMError::unhandled_effect(effect));
         }
 
-        let effect_obj =
-            Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind()))
-                .map_err(|err| {
-                    VMError::python_error(format!(
-                        "failed to convert dispatch effect to Python object: {err}"
-                    ))
-                })?;
-
-        let mut selected: Option<(usize, HandlerChainEntry)> = None;
-        let mut first_type_filtered_skip: Option<(usize, HandlerChainEntry)> = None;
-        for (idx, entry) in handler_chain.iter().enumerate() {
-            let can_handle = entry.handler.can_handle(&effect)?;
-            if !can_handle {
-                continue;
-            }
-
-            let should_invoke = self
-                .should_invoke_handler(entry, &effect_obj)
-                .map_err(|err| {
-                    VMError::python_error(format!(
-                        "failed to evaluate WithHandler type filter: {err:?}"
-                    ))
-                })?;
-            if should_invoke {
-                selected = Some((idx, entry.clone()));
-                break;
-            }
-
-            if first_type_filtered_skip.is_none() {
-                first_type_filtered_skip = Some((idx, entry.clone()));
-            }
-        }
-        let mut bootstrap_with_pass = false;
-        let selected = match selected {
-            Some(found) => {
-                if let Some(skipped) = &first_type_filtered_skip {
-                    if skipped.0 < found.0 {
-                        bootstrap_with_pass = true;
-                        skipped.clone()
-                    } else {
-                        found
-                    }
-                } else {
-                    found
-                }
-            }
+        let selected = match self.select_handler(&handler_chain, &effect, true)? {
+            Some(selected) => selected,
             None => {
                 if let Some(original) = original_exception.clone() {
                     self.current_seg_mut().mode = Mode::Throw(original);
@@ -1175,9 +977,10 @@ impl VM {
             }
         };
 
-        let handler_marker = selected.1.marker;
-        let prompt_seg_id = selected.1.prompt_seg_id;
-        let handler = selected.1.handler.clone();
+        let bootstrap_with_pass = selected.bootstrap_with_pass;
+        let handler_marker = selected.entry.marker;
+        let prompt_seg_id = selected.entry.prompt_seg_id;
+        let handler = selected.entry.handler.clone();
         let is_execution_context_effect = Self::is_execution_context_effect(&effect);
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
         for entry in &handler_chain {
@@ -1242,9 +1045,7 @@ impl VM {
             return Ok(self.handle_forward(ForwardKind::Pass, effect));
         }
 
-        if handler.py_identity().is_some() {
-            self.register_continuation(k_user.clone());
-        }
+        self.register_handler_continuation_if_needed(&handler, &k_user);
         let ir_node = Self::invoke_kleisli_handler_expr(handler, effect, k_user)?;
         Ok(self.evaluate(ir_node))
     }
@@ -1291,54 +1092,6 @@ impl VM {
         }
     }
 
-    pub fn install_handler(
-        &mut self,
-        marker: Marker,
-        handler: KleisliRef,
-        _py_identity: Option<PyShared>,
-    ) {
-        self.installed_handlers
-            .retain(|entry| entry.marker != marker);
-        self.installed_handlers
-            .push(InstalledHandler { marker, handler });
-    }
-
-    pub fn remove_handler(&mut self, marker: Marker) -> bool {
-        let before = self.installed_handlers.len();
-        self.installed_handlers
-            .retain(|entry| entry.marker != marker);
-        before != self.installed_handlers.len()
-    }
-
-    pub fn installed_handler_markers(&self) -> Vec<Marker> {
-        self.installed_handlers
-            .iter()
-            .map(|entry| entry.marker)
-            .collect()
-    }
-
-    pub fn install_handler_on_segment(
-        &mut self,
-        marker: Marker,
-        prompt_seg_id: SegmentId,
-        handler: KleisliRef,
-        _py_identity: Option<PyShared>,
-    ) -> bool {
-        let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
-            let prompt_seg = Segment::new_prompt(marker, None, marker, handler.clone());
-            self.alloc_segment(prompt_seg);
-            self.track_run_handler(&handler);
-            return true;
-        };
-        seg.kind = SegmentKind::PromptBoundary {
-            handled_marker: marker,
-            handler: handler.clone(),
-            types: None,
-        };
-        self.track_run_handler(&handler);
-        true
-    }
-
     fn record_continuation_activation(
         &mut self,
         kind: ContinuationActivationKind,
@@ -1367,10 +1120,7 @@ impl VM {
         }
     }
 
-    fn continuation_segment_dispatch_id(
-        &mut self,
-        k: &Continuation,
-    ) -> Option<DispatchId> {
+    fn continuation_segment_dispatch_id(&mut self, k: &Continuation) -> Option<DispatchId> {
         if let Some(dispatch_id) = k.dispatch_id {
             if self.dispatch_origin_for_dispatch_id(dispatch_id).is_some() {
                 return Some(dispatch_id);
@@ -1413,11 +1163,7 @@ impl VM {
         self.current_segment = Some(exec_seg_id);
     }
 
-    fn enter_continuation_segment(
-        &mut self,
-        k: &Continuation,
-        caller: Option<SegmentId>,
-    ) {
+    fn enter_continuation_segment(&mut self, k: &Continuation, caller: Option<SegmentId>) {
         let dispatch_id = self.continuation_segment_dispatch_id(k);
         self.enter_continuation_segment_with_dispatch(k, caller, dispatch_id);
     }
@@ -1568,28 +1314,17 @@ impl VM {
         program: DoCtrl,
         types: Option<Vec<PyShared>>,
     ) -> StepEvent {
-        let plan = match Self::prepare_with_handler(handler, self.current_segment) {
+        let plan = match self.prepare_with_handler(handler) {
             Ok(plan) => plan,
             Err(err) => return StepEvent::Error(err),
         };
         let prompt_handler = plan.handler.clone();
-
-        let mut prompt_seg = Segment::new_prompt_with_types(
+        let (_, body_seg_id) = self.install_handler_scope(
             plan.handler_marker,
             Some(plan.outside_seg_id),
-            plan.handler_marker,
-            prompt_handler.clone(),
+            prompt_handler,
             types,
         );
-        self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
-        self.copy_scope_store_from(Some(plan.outside_seg_id), &mut prompt_seg);
-        let prompt_seg_id = self.alloc_segment(prompt_seg);
-        self.track_run_handler(&prompt_handler);
-
-        let mut body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
-        self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut body_seg);
-        self.copy_scope_store_from(Some(plan.outside_seg_id), &mut body_seg);
-        let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
         self.evaluate(program)
@@ -1664,11 +1399,7 @@ impl VM {
         }
     }
 
-    fn handle_forward(
-        &mut self,
-        kind: ForwardKind,
-        effect: DispatchEffect,
-    ) -> StepEvent {
+    fn handle_forward(&mut self, kind: ForwardKind, effect: DispatchEffect) -> StepEvent {
         let Some(dispatch_id) = self.current_dispatch_id() else {
             return StepEvent::Error(VMError::internal(kind.outside_dispatch_error()));
         };
@@ -1726,109 +1457,81 @@ impl VM {
             ForwardKind::Delegate | ForwardKind::Pass => {}
         }
 
-        let effect_obj =
-            match Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind())) {
-                Ok(obj) => obj,
-                Err(err) => {
-                    return StepEvent::Error(VMError::python_error(format!(
-                        "failed to convert dispatch effect to Python object: {err}"
-                    )))
-                }
-            };
-
-        for entry in visible_chain {
+        if let Some(selected) = match self.select_handler(&visible_chain, &effect, false) {
+            Ok(value) => value,
+            Err(err) => return StepEvent::Error(err),
+        } {
+            let entry = selected.entry;
             let handler = entry.handler.clone();
-            let can_handle = match handler.can_handle(&effect) {
-                Ok(value) => value,
-                Err(err) => return StepEvent::Error(err),
+            let Some(idx) = handler_chain
+                .iter()
+                .position(|chain_entry| chain_entry.marker == entry.marker)
+            else {
+                return StepEvent::Error(VMError::internal(format!(
+                    "{}: target handler marker {} not found in original caller chain",
+                    kind.missing_handler_context(),
+                    entry.marker.raw()
+                )));
             };
-            if can_handle {
-                let should_invoke = match self.should_invoke_handler(&entry, &effect_obj) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        return StepEvent::Error(VMError::python_error(format!(
-                            "failed to evaluate WithHandler type filter: {err:?}"
-                        )))
-                    }
-                };
-                if !should_invoke {
-                    continue;
-                }
-                let Some(idx) = handler_chain
+            self.emit_forward_active_chain_event(
+                kind,
+                dispatch_id,
+                &handler_chain
                     .iter()
-                    .position(|chain_entry| chain_entry.marker == entry.marker)
-                else {
-                    return StepEvent::Error(VMError::internal(format!(
-                        "{}: target handler marker {} not found in original caller chain",
-                        kind.missing_handler_context(),
-                        entry.marker.raw()
-                    )));
+                    .map(|chain_entry| chain_entry.marker)
+                    .collect::<Vec<_>>(),
+                from_idx,
+                idx,
+                entry.marker,
+            );
+
+            let handler_seg_id = if matches!(kind, ForwardKind::Pass) {
+                let Some(handler_seg) = self.segments.get_mut(inner_seg_id) else {
+                    return StepEvent::Error(VMError::invalid_segment(
+                        "active handler segment not found for Pass",
+                    ));
                 };
-                self.emit_forward_active_chain_event(
-                    kind,
+                handler_seg.marker = entry.marker;
+                handler_seg.frames.clear();
+                handler_seg.dispatch_id = Some(dispatch_id);
+                handler_seg.pending_error_context = None;
+                handler_seg.push_frame(Frame::DispatchOrigin {
                     dispatch_id,
-                    &handler_chain
-                        .iter()
-                        .map(|chain_entry| chain_entry.marker)
-                        .collect::<Vec<_>>(),
-                    from_idx,
-                    idx,
-                    entry.marker,
-                );
+                    effect: effect.clone(),
+                    k_origin: next_k.clone(),
+                });
+                handler_seg.push_frame(Frame::HandlerDispatch {
+                    dispatch_id,
+                    continuation: next_k.clone(),
+                    prompt_seg_id: entry.prompt_seg_id,
+                });
+                inner_seg_id
+            } else {
+                let mut handler_seg = Segment::new(entry.marker, Some(inner_seg_id));
+                self.copy_scope_store_from(Some(inner_seg_id), &mut handler_seg);
+                handler_seg.dispatch_id = Some(dispatch_id);
+                self.copy_interceptor_guard_state(Some(inner_seg_id), &mut handler_seg);
+                handler_seg.push_frame(Frame::DispatchOrigin {
+                    dispatch_id,
+                    effect: effect.clone(),
+                    k_origin: next_k.clone(),
+                });
+                handler_seg.push_frame(Frame::HandlerDispatch {
+                    dispatch_id,
+                    continuation: next_k.clone(),
+                    prompt_seg_id: entry.prompt_seg_id,
+                });
+                self.alloc_segment(handler_seg)
+            };
+            self.current_segment = Some(handler_seg_id);
 
-                let handler_seg_id = if matches!(kind, ForwardKind::Pass) {
-                    let Some(handler_seg) = self.segments.get_mut(inner_seg_id) else {
-                        return StepEvent::Error(VMError::invalid_segment(
-                            "active handler segment not found for Pass",
-                        ));
-                    };
-                    handler_seg.marker = entry.marker;
-                    handler_seg.frames.clear();
-                    handler_seg.dispatch_id = Some(dispatch_id);
-                    handler_seg.pending_error_context = None;
-                    handler_seg.push_frame(Frame::DispatchOrigin {
-                        dispatch_id,
-                        effect: effect.clone(),
-                        k_origin: next_k.clone(),
-                    });
-                    handler_seg.push_frame(Frame::HandlerDispatch {
-                        dispatch_id,
-                        continuation: next_k.clone(),
-                        prompt_seg_id: entry.prompt_seg_id,
-                    });
-                    inner_seg_id
-                } else {
-                    let mut handler_seg = Segment::new(entry.marker, Some(inner_seg_id));
-                    self.copy_scope_store_from(Some(inner_seg_id), &mut handler_seg);
-                    handler_seg.dispatch_id = Some(dispatch_id);
-                    self.copy_interceptor_guard_state(Some(inner_seg_id), &mut handler_seg);
-                    handler_seg.push_frame(Frame::DispatchOrigin {
-                        dispatch_id,
-                        effect: effect.clone(),
-                        k_origin: next_k.clone(),
-                    });
-                    handler_seg.push_frame(Frame::HandlerDispatch {
-                        dispatch_id,
-                        continuation: next_k.clone(),
-                        prompt_seg_id: entry.prompt_seg_id,
-                    });
-                    self.alloc_segment(handler_seg)
-                };
-                self.current_segment = Some(handler_seg_id);
-
-                if handler.py_identity().is_some() {
-                    self.register_continuation(next_k.clone());
-                }
-                let ir_node = match Self::invoke_kleisli_handler_expr(
-                    handler,
-                    effect.clone(),
-                    next_k.clone(),
-                ) {
+            self.register_handler_continuation_if_needed(&handler, &next_k);
+            let ir_node =
+                match Self::invoke_kleisli_handler_expr(handler, effect.clone(), next_k.clone()) {
                     Ok(node) => node,
                     Err(err) => return StepEvent::Error(err),
                 };
-                return self.evaluate(ir_node);
-            }
+            return self.evaluate(ir_node);
         }
 
         if let Some(original_exception) = origin.original_exception {
@@ -1998,21 +1701,8 @@ impl VM {
                 base_handler
             };
             let handler_marker = Marker::fresh();
-            let mut prompt_seg = Segment::new_prompt(
-                handler_marker,
-                outside_seg_id,
-                handler_marker,
-                handler.clone(),
-            );
-            self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
-            self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
-            let prompt_seg_id = self.alloc_segment(prompt_seg);
-            self.track_run_handler(&handler);
-            let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-            self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
-            self.copy_scope_store_from(outside_seg_id, &mut body_seg);
-            let body_seg_id = self.alloc_segment(body_seg);
-
+            let (_, body_seg_id) =
+                self.install_handler_scope(handler_marker, outside_seg_id, handler, None);
             outside_seg_id = Some(body_seg_id);
         }
 

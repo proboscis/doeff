@@ -49,11 +49,16 @@ const MISSING_UNKNOWN: &str = "[MISSING] <unknown>";
 #[path = "vm/dispatch.rs"]
 mod dispatch_impl;
 
+#[path = "vm/handler_registry.rs"]
+mod handler_registry_impl;
+
 #[path = "vm/step.rs"]
 mod step_impl;
 
 #[path = "vm/vm_trace.rs"]
 mod vm_trace_impl;
+
+use handler_registry_impl::{HandlerChainEntry, InstalledHandler, WithHandlerPlan};
 
 #[derive(Debug, Clone, Copy)]
 enum GenErrorSite {
@@ -189,27 +194,6 @@ pub struct InterceptorEntry {
     pub(crate) types: Option<Vec<PyShared>>,
     pub(crate) mode: InterceptMode,
     pub(crate) metadata: Option<CallMetadata>,
-}
-
-#[derive(Clone)]
-struct InstalledHandler {
-    marker: Marker,
-    handler: KleisliRef,
-}
-
-#[derive(Clone)]
-struct HandlerChainEntry {
-    marker: Marker,
-    prompt_seg_id: SegmentId,
-    handler: KleisliRef,
-    types: Option<Vec<PyShared>>,
-}
-
-#[derive(Clone)]
-struct WithHandlerPlan {
-    handler_marker: Marker,
-    outside_seg_id: SegmentId,
-    handler: KleisliRef,
 }
 
 #[derive(Clone)]

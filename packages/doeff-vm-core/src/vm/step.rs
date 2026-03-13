@@ -316,10 +316,7 @@ impl VM {
         }
     }
 
-    fn chain_exception_context(
-        original_exception: &PyException,
-        cleanup_exception: &PyException,
-    ) {
+    fn chain_exception_context(original_exception: &PyException, cleanup_exception: &PyException) {
         if Self::same_exception(original_exception, cleanup_exception) {
             return;
         }
@@ -747,11 +744,7 @@ impl VM {
         }
     }
 
-    fn step_intercept_body_return_frame(
-        &mut self,
-        _marker: Marker,
-        mode: Mode,
-    ) -> StepEvent {
+    fn step_intercept_body_return_frame(&mut self, _marker: Marker, mode: Mode) -> StepEvent {
         match mode {
             Mode::Deliver(value) => self.handle_handler_return(value),
             Mode::Throw(exc) => {
@@ -996,25 +989,6 @@ impl VM {
             Ok(false)
         })?;
         Ok(entry.mode.should_invoke(matches_filter))
-    }
-
-    pub(super) fn should_invoke_handler(
-        &self,
-        entry: &HandlerChainEntry,
-        effect_obj: &Py<PyAny>,
-    ) -> Result<bool, PyException> {
-        let Some(types) = entry.types.as_ref() else {
-            return Ok(true);
-        };
-        if types.is_empty() {
-            return Ok(false);
-        }
-
-        Ok(Python::attach(|py| -> PyResult<bool> {
-            let effect = effect_obj.bind(py);
-            let type_tuple = PyTuple::new(py, types.iter().map(|ty| ty.clone_ref(py)))?;
-            effect.is_instance(&type_tuple)
-        })?)
     }
 
     fn continue_interceptor_chain_mode(
@@ -1393,19 +1367,11 @@ impl VM {
         }
     }
 
-    fn handle_yield_resume(
-        &mut self,
-        continuation: Continuation,
-        value: Value,
-    ) -> StepEvent {
+    fn handle_yield_resume(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_resume(continuation, value)
     }
 
-    fn handle_yield_transfer(
-        &mut self,
-        continuation: Continuation,
-        value: Value,
-    ) -> StepEvent {
+    fn handle_yield_transfer(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_transfer(continuation, value)
     }
 
@@ -1481,10 +1447,7 @@ impl VM {
         self.handle_resume_continuation(continuation, value)
     }
 
-    fn handle_yield_python_async_syntax_escape(
-        &mut self,
-        action: Py<PyAny>,
-    ) -> StepEvent {
+    fn handle_yield_python_async_syntax_escape(&mut self, action: Py<PyAny>) -> StepEvent {
         self.current_seg_mut().pending_python = Some(PendingPython::AsyncEscape);
         StepEvent::NeedsPython(PythonCall::CallAsync {
             func: PyShared::new(action),
@@ -1723,11 +1686,7 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn handle_yield_eval(
-        &mut self,
-        expr: PyShared,
-        metadata: Option<CallMetadata>,
-    ) -> StepEvent {
+    fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
         let handlers = self.current_visible_handlers();
         let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
         self.handle_resume_continuation(cont, Value::None)
@@ -1781,23 +1740,13 @@ impl VM {
                 CallerChainEntry::Handler(entry) => {
                     let handler = entry.handler.clone();
                     let handler_marker = Marker::fresh();
-                    let mut prompt_seg = Segment::new_prompt_with_types(
+                    let (prompt_seg_id, body_seg_id) = self.install_handler_scope(
                         handler_marker,
                         outside_seg_id,
-                        handler_marker,
-                        handler.clone(),
+                        handler,
                         entry.types.clone(),
                     );
-                    self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
-                    self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
-                    let prompt_seg_id = self.alloc_segment(prompt_seg);
                     replay_seg_ids.push(prompt_seg_id);
-                    self.track_run_handler(&handler);
-
-                    let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-                    self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
-                    self.copy_scope_store_from(outside_seg_id, &mut body_seg);
-                    let body_seg_id = self.alloc_segment(body_seg);
                     replay_seg_ids.push(body_seg_id);
                     outside_seg_id = Some(body_seg_id);
                 }
@@ -2166,11 +2115,7 @@ impl VM {
         }
     }
 
-    fn receive_expand_handler_value(
-        &mut self,
-        metadata: Option<CallMetadata>,
-        value: Value,
-    ) {
+    fn receive_expand_handler_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
         match value {
             Value::Python(handler_gen) => {
                 match Self::extract_doeff_generator(handler_gen, metadata, "ExpandReturn(handler)")
@@ -2214,11 +2159,7 @@ impl VM {
         }
     }
 
-    fn receive_expand_program_value(
-        &mut self,
-        metadata: Option<CallMetadata>,
-        value: Value,
-    ) {
+    fn receive_expand_program_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
         match self.classify_expand_result_as_doctrl(metadata, value, "ExpandReturn") {
             Ok(doctrl) => {
                 self.current_seg_mut().mode = Mode::HandleYield(doctrl);
@@ -2262,11 +2203,7 @@ impl VM {
         })
     }
 
-    fn receive_expand_gen_error(
-        &mut self,
-        handler_return: bool,
-        exception: PyException,
-    ) {
+    fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
         if handler_return {
             let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
                 let dispatch_id = self.current_segment_dispatch_id_any()?;

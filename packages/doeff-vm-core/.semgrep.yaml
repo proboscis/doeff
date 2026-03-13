@@ -42,3 +42,32 @@ rules:
     paths:
       include:
         - "**/doeff-vm-core/src/**"
+
+  # =========================================================================
+  # ISSUE gh-297: handler registry ownership
+  # =========================================================================
+
+  - id: vm-core-handler-helpers-must-live-in-handler-registry
+    pattern-regex: 'fn (track_run_handler|prepare_with_handler|handlers_in_caller_chain|instantiate_installed_handlers|register_continuation|should_invoke_handler|select_handler)\b'
+    message: |
+      SPEC VIOLATION (gh-297): Handler installation, lookup, selection, and
+      continuation-registration helpers must live in src/vm/handler_registry.rs.
+      Do not reintroduce these helpers in vm/dispatch.rs or vm/step.rs.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm-core/src/vm/dispatch.rs"
+        - "**/doeff-vm-core/src/vm/step.rs"
+
+  - id: vm-core-no-inline-handler-bootstrap-selection
+    pattern-regex: 'first_type_filtered_skip'
+    message: |
+      SPEC VIOLATION (gh-297): Typed-handler bootstrap selection belongs in the
+      handler registry abstraction. Do not inline first_type_filtered_skip logic
+      in vm/dispatch.rs.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm-core/src/vm/dispatch.rs"
