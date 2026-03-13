@@ -2520,6 +2520,7 @@ rules:
     paths:
       include:
         - "**/packages/doeff-vm-core/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm/*.rs"
     message: |
       BANNED: wildcard `_ => unreachable!(...)` disables exhaustiveness checking on enum matches.
       List explicit variants and keep `unreachable!` only inside explicit variant arms when needed.
@@ -2536,6 +2537,7 @@ rules:
       exclude:
         - "**/packages/doeff-vm-core/src/do_ctrl.rs"
         - "**/packages/doeff-vm-core/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm/*.rs"
     message: |
       DEPRECATED: GetCallStack DoCtrl is deprecated per INTROSPECT-UNIFY-001.
       Use GetExecutionContext effect instead — it flows through handlers and
@@ -2566,6 +2568,7 @@ rules:
     paths:
       include:
         - "**/packages/doeff-vm-core/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm/*.rs"
     patterns:
       - pattern-inside: |
           fn handle_yield_effect(&mut self, $EFFECT: DispatchEffect) -> StepEvent {
@@ -2588,6 +2591,7 @@ rules:
     paths:
       include:
         - "**/packages/doeff-vm-core/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm/*.rs"
     patterns:
       - pattern-inside: |
           fn classify_apply_result_as_doctrl(&self, $VALUE: &Value) -> Result<Option<DoCtrl>, PyException> {
@@ -2610,6 +2614,7 @@ rules:
     paths:
       include:
         - "**/packages/doeff-vm-core/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm/*.rs"
     patterns:
       - pattern-inside: |
           fn handle_handler_return(&mut self, $VALUE: Value) -> StepEvent {
@@ -2670,4 +2675,5 @@ rules:
     paths:
       include:
         - "**/packages/doeff-vm-core/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm/*.rs"
     pattern-regex: 'prompt_seg\.push_frame\(Frame::DispatchOrigin|fn remove_dispatch_origin\b|dispatch_origin_segments\b'

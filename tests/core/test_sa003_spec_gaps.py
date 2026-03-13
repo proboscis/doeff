@@ -28,6 +28,17 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _read_vm_runtime(*relative: str) -> str:
+    candidates = [
+        ROOT / "packages" / "doeff-vm" / "src" / Path(*relative),
+        ROOT / "packages" / "doeff-vm-core" / "src" / Path(*relative),
+    ]
+    for path in candidates:
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+    raise FileNotFoundError(relative)
+
+
 def _extract_fn_body(source: str, fn_name: str) -> str:
     m = re.search(rf"fn\s+{re.escape(fn_name)}\s*\(", source)
     assert m, f"function not found: {fn_name}"
@@ -47,7 +58,7 @@ def _extract_fn_body(source: str, fn_name: str) -> str:
 
 
 def test_SA_003_G01_callfunc_path_has_distinct_pending_state() -> None:
-    src = _read(RUST_SRC / "vm.rs")
+    src = _read_vm_runtime("vm", "step.rs")
     body = _extract_fn_body(src, "step_handle_yield")
     assert "PendingPython::CallFuncReturn" in body
     assert "PendingPython::ExpandReturn" in body
@@ -73,7 +84,7 @@ def test_SA_003_G03_isolated_spawn_without_snapshot_must_throw() -> None:
 
 
 def test_SA_003_G04_get_handlers_must_not_skip_missing_entries() -> None:
-    src = _read(RUST_SRC / "vm.rs")
+    src = _read_vm_runtime("vm", "dispatch.rs")
     body = _extract_fn_body(src, "handle_get_handlers")
     assert "filter_map" not in body
 
