@@ -542,6 +542,7 @@ rules:
     paths:
       include:
         - "**/doeff-vm-core/src/vm.rs"
+        - "**/doeff-vm-core/src/vm/*.rs"
     metadata:
       category: spec-enforcement
       issue: ISSUE-VM-APPLY-AUTOEVAL
