@@ -588,6 +588,175 @@ impl PyVM {
         dict.set_item("frames_scanned", stats.frames_scanned)?;
         dict.set_item("lookup_wall_time_ns", stats.lookup_wall_time_ns)?;
         dict.set_item("step_wall_time_ns", stats.step_wall_time_ns)?;
+        dict.set_item(
+            "handlers_in_caller_chain_calls",
+            stats.handlers_in_caller_chain_calls,
+        )?;
+        dict.set_item(
+            "handlers_in_caller_chain_segments_walked",
+            stats.handlers_in_caller_chain_segments_walked,
+        )?;
+        dict.set_item(
+            "handlers_in_caller_chain_wall_time_ns",
+            stats.handlers_in_caller_chain_wall_time_ns,
+        )?;
+        dict.set_item(
+            "current_interceptor_chain_calls",
+            stats.current_interceptor_chain_calls,
+        )?;
+        dict.set_item(
+            "current_interceptor_chain_wall_time_ns",
+            stats.current_interceptor_chain_wall_time_ns,
+        )?;
+        dict.set_item(
+            "dispatch_origin_caller_segments_calls",
+            stats.dispatch_origin_caller_segments_calls,
+        )?;
+        dict.set_item(
+            "dispatch_origin_caller_segments_segments_walked",
+            stats.dispatch_origin_caller_segments_segments_walked,
+        )?;
+        dict.set_item(
+            "dispatch_origin_caller_segments_wall_time_ns",
+            stats.dispatch_origin_caller_segments_wall_time_ns,
+        )?;
+        dict.set_item(
+            "current_handler_dispatch_calls",
+            stats.current_handler_dispatch_calls,
+        )?;
+        dict.set_item(
+            "current_handler_dispatch_frames_scanned",
+            stats.current_handler_dispatch_frames_scanned,
+        )?;
+        dict.set_item(
+            "current_handler_dispatch_wall_time_ns",
+            stats.current_handler_dispatch_wall_time_ns,
+        )?;
+        dict.set_item(
+            "nearest_handler_dispatch_calls",
+            stats.nearest_handler_dispatch_calls,
+        )?;
+        dict.set_item(
+            "nearest_handler_dispatch_frames_scanned",
+            stats.nearest_handler_dispatch_frames_scanned,
+        )?;
+        dict.set_item(
+            "nearest_handler_dispatch_wall_time_ns",
+            stats.nearest_handler_dispatch_wall_time_ns,
+        )?;
+        dict.set_item(
+            "active_handler_dispatch_for_calls",
+            stats.active_handler_dispatch_for_calls,
+        )?;
+        dict.set_item(
+            "active_handler_dispatch_for_frames_scanned",
+            stats.active_handler_dispatch_for_frames_scanned,
+        )?;
+        dict.set_item(
+            "active_handler_dispatch_for_wall_time_ns",
+            stats.active_handler_dispatch_for_wall_time_ns,
+        )?;
+        dict.set_item("start_dispatch_calls", stats.start_dispatch_calls)?;
+        dict.set_item(
+            "start_dispatch_wall_time_ns",
+            stats.start_dispatch_wall_time_ns,
+        )?;
+        dict.set_item(
+            "start_dispatch_capture_wall_time_ns",
+            stats.start_dispatch_capture_wall_time_ns,
+        )?;
+        dict.set_item(
+            "start_dispatch_handler_select_wall_time_ns",
+            stats.start_dispatch_handler_select_wall_time_ns,
+        )?;
+        dict.set_item(
+            "start_dispatch_trace_setup_wall_time_ns",
+            stats.start_dispatch_trace_setup_wall_time_ns,
+        )?;
+        dict.set_item(
+            "program_frame_resume_calls",
+            stats.program_frame_resume_calls,
+        )?;
+        dict.set_item(
+            "program_frame_resume_wall_time_ns",
+            stats.program_frame_resume_wall_time_ns,
+        )?;
+        dict.set_item(
+            "step_deliver_or_throw_calls",
+            stats.step_deliver_or_throw_calls,
+        )?;
+        dict.set_item(
+            "step_deliver_or_throw_wall_time_ns",
+            stats.step_deliver_or_throw_wall_time_ns,
+        )?;
+        dict.set_item("step_handle_yield_calls", stats.step_handle_yield_calls)?;
+        dict.set_item(
+            "step_handle_yield_wall_time_ns",
+            stats.step_handle_yield_wall_time_ns,
+        )?;
+        dict.set_item("step_return_calls", stats.step_return_calls)?;
+        dict.set_item("step_return_wall_time_ns", stats.step_return_wall_time_ns)?;
+        dict.set_item("yield_perform_calls", stats.yield_perform_calls)?;
+        dict.set_item(
+            "yield_perform_wall_time_ns",
+            stats.yield_perform_wall_time_ns,
+        )?;
+        dict.set_item("yield_expand_calls", stats.yield_expand_calls)?;
+        dict.set_item("yield_expand_wall_time_ns", stats.yield_expand_wall_time_ns)?;
+        dict.set_item("yield_apply_calls", stats.yield_apply_calls)?;
+        dict.set_item("yield_apply_wall_time_ns", stats.yield_apply_wall_time_ns)?;
+        dict.set_item("yield_ir_stream_calls", stats.yield_ir_stream_calls)?;
+        dict.set_item(
+            "yield_ir_stream_wall_time_ns",
+            stats.yield_ir_stream_wall_time_ns,
+        )?;
+        dict.set_item("yield_transfer_like_calls", stats.yield_transfer_like_calls)?;
+        dict.set_item(
+            "yield_transfer_like_wall_time_ns",
+            stats.yield_transfer_like_wall_time_ns,
+        )?;
+        dict.set_item("yield_other_calls", stats.yield_other_calls)?;
+        dict.set_item("yield_other_wall_time_ns", stats.yield_other_wall_time_ns)?;
+        dict.set_item(
+            "continuation_activation_record_wall_time_ns",
+            stats.continuation_activation_record_wall_time_ns,
+        )?;
+        dict.set_item(
+            "continuation_activation_attach_context_wall_time_ns",
+            stats.continuation_activation_attach_context_wall_time_ns,
+        )?;
+        dict.set_item(
+            "continuation_activation_enter_segment_wall_time_ns",
+            stats.continuation_activation_enter_segment_wall_time_ns,
+        )?;
+        dict.set_item(
+            "enter_continuation_segment_calls",
+            stats.enter_continuation_segment_calls,
+        )?;
+        dict.set_item(
+            "enter_continuation_segment_wall_time_ns",
+            stats.enter_continuation_segment_wall_time_ns,
+        )?;
+        dict.set_item(
+            "attach_active_chain_checks",
+            stats.attach_active_chain_checks,
+        )?;
+        dict.set_item(
+            "attach_active_chain_performed_calls",
+            stats.attach_active_chain_performed_calls,
+        )?;
+        dict.set_item(
+            "attach_active_chain_check_wall_time_ns",
+            stats.attach_active_chain_check_wall_time_ns,
+        )?;
+        dict.set_item(
+            "attach_active_chain_assemble_wall_time_ns",
+            stats.attach_active_chain_assemble_wall_time_ns,
+        )?;
+        dict.set_item(
+            "attach_active_chain_serialize_wall_time_ns",
+            stats.attach_active_chain_serialize_wall_time_ns,
+        )?;
         Ok(dict.into_any().unbind())
     }
 

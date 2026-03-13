@@ -90,8 +90,7 @@ impl InterceptorState {
             let bound = result_obj.bind(py);
             let is_effect_base = bound.is_instance_of::<PyEffectBase>();
             let is_py_doexpr = bound.is_instance_of::<PyDoExprBase>();
-            let is_doexpr =
-                is_py_doexpr || bound.is_instance_of::<DoeffGenerator>();
+            let is_doexpr = is_py_doexpr || bound.is_instance_of::<DoeffGenerator>();
             // Interceptor return values that are already DoExpr objects should be
             // re-classified directly, not eagerly evaluated. The extra Eval step is
             // only for generator-like results that still need to resolve to a DoExpr.

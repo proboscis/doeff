@@ -641,9 +641,10 @@ impl IRStreamProgram for StateHandlerProgram {
         }
         // Modify case: store modifier result but resume caller with OLD value.
         // SPEC-008 L1271: Modify is read-then-modify, returns the old value.
-        let key = self.pending_key.take().expect(
-            "StateHandler Modify invariant violated: pending key missing during resume",
-        );
+        let key = self
+            .pending_key
+            .take()
+            .expect("StateHandler Modify invariant violated: pending key missing during resume");
         let continuation = self.pending_k.take().expect(
             "StateHandler Modify invariant violated: pending continuation missing during resume",
         );

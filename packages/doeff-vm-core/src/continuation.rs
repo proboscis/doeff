@@ -34,6 +34,7 @@ pub struct Continuation {
     pub frames_snapshot: Arc<Vec<Frame>>,
     pub marker: Marker,
     pub dispatch_id: Option<DispatchId>,
+    pub resume_location: Option<(String, String, u32)>,
     pub mode: Box<Mode>,
     pub pending_python: Option<Box<PendingPython>>,
     pub pending_error_context: Option<PyException>,
@@ -92,6 +93,7 @@ impl Continuation {
             frames_snapshot: Self::snapshot_frames(segment),
             marker: segment.marker,
             dispatch_id,
+            resume_location: Self::snapshot_resume_location(segment),
             mode: Box::new(segment.mode.clone()),
             pending_python: segment.pending_python.clone().map(Box::new),
             pending_error_context: segment.pending_error_context.clone(),
@@ -119,6 +121,7 @@ impl Continuation {
             frames_snapshot: Self::snapshot_frames(segment),
             marker: segment.marker,
             dispatch_id,
+            resume_location: Self::snapshot_resume_location(segment),
             mode: Box::new(segment.mode.clone()),
             pending_python: segment.pending_python.clone().map(Box::new),
             pending_error_context: segment.pending_error_context.clone(),
@@ -150,6 +153,7 @@ impl Continuation {
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
+            resume_location: None,
             mode: Box::new(Mode::Deliver(Value::Unit)),
             pending_python: None,
             pending_error_context: None,
@@ -190,6 +194,7 @@ impl Continuation {
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
             dispatch_id: None,
+            resume_location: None,
             mode: Box::new(Mode::Deliver(Value::Unit)),
             pending_python: None,
             pending_error_context: None,
@@ -206,6 +211,32 @@ impl Continuation {
 
     pub fn is_started(&self) -> bool {
         self.started
+    }
+
+    fn snapshot_resume_location(segment: &Segment) -> Option<(String, String, u32)> {
+        for frame in segment.frames.iter().rev() {
+            if let Frame::Program {
+                stream,
+                metadata: Some(metadata),
+                ..
+            } = frame
+            {
+                let guard = stream.lock().expect("IRStream lock poisoned");
+                if let Some(location) = guard.debug_location() {
+                    return Some((
+                        metadata.function_name.clone(),
+                        location.source_file,
+                        location.source_line,
+                    ));
+                }
+                return Some((
+                    metadata.function_name.clone(),
+                    metadata.source_file.clone(),
+                    metadata.source_line,
+                ));
+            }
+        }
+        None
     }
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {

@@ -346,5 +346,7 @@ def test_example_9_nested_spawn() -> None:
     assert any(separator_indices[0] < idx < separator_indices[1] for idx in gather_indices)
 
     raise_idx = _first_line_index(lines, "raise RuntimeError(")
-    assert raise_idx > separator_indices[1]
+    assert raise_idx > separator_indices[0]
+    frame_window = lines[max(0, raise_idx - 2) : raise_idx + 1]
+    assert any("leaf_worker()" in line or "batch_worker()" in line for line in frame_window)
     assert "corrupt data for item 1-2" in rendered

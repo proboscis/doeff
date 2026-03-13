@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
+use pyo3::types::{PyDict, PyModule, PyTuple};
 
 use crate::arena::SegmentArena;
 use crate::capture::{
@@ -141,6 +141,58 @@ pub struct DispatchLookupStats {
     pub frames_scanned: u64,
     pub lookup_wall_time_ns: u64,
     pub step_wall_time_ns: u64,
+    pub handlers_in_caller_chain_calls: u64,
+    pub handlers_in_caller_chain_segments_walked: u64,
+    pub handlers_in_caller_chain_wall_time_ns: u64,
+    pub current_interceptor_chain_calls: u64,
+    pub current_interceptor_chain_wall_time_ns: u64,
+    pub dispatch_origin_caller_segments_calls: u64,
+    pub dispatch_origin_caller_segments_segments_walked: u64,
+    pub dispatch_origin_caller_segments_wall_time_ns: u64,
+    pub current_handler_dispatch_calls: u64,
+    pub current_handler_dispatch_frames_scanned: u64,
+    pub current_handler_dispatch_wall_time_ns: u64,
+    pub nearest_handler_dispatch_calls: u64,
+    pub nearest_handler_dispatch_frames_scanned: u64,
+    pub nearest_handler_dispatch_wall_time_ns: u64,
+    pub active_handler_dispatch_for_calls: u64,
+    pub active_handler_dispatch_for_frames_scanned: u64,
+    pub active_handler_dispatch_for_wall_time_ns: u64,
+    pub start_dispatch_calls: u64,
+    pub start_dispatch_wall_time_ns: u64,
+    pub start_dispatch_capture_wall_time_ns: u64,
+    pub start_dispatch_handler_select_wall_time_ns: u64,
+    pub start_dispatch_trace_setup_wall_time_ns: u64,
+    pub program_frame_resume_calls: u64,
+    pub program_frame_resume_wall_time_ns: u64,
+    pub step_deliver_or_throw_calls: u64,
+    pub step_deliver_or_throw_wall_time_ns: u64,
+    pub step_handle_yield_calls: u64,
+    pub step_handle_yield_wall_time_ns: u64,
+    pub step_return_calls: u64,
+    pub step_return_wall_time_ns: u64,
+    pub yield_perform_calls: u64,
+    pub yield_perform_wall_time_ns: u64,
+    pub yield_expand_calls: u64,
+    pub yield_expand_wall_time_ns: u64,
+    pub yield_apply_calls: u64,
+    pub yield_apply_wall_time_ns: u64,
+    pub yield_ir_stream_calls: u64,
+    pub yield_ir_stream_wall_time_ns: u64,
+    pub yield_transfer_like_calls: u64,
+    pub yield_transfer_like_wall_time_ns: u64,
+    pub yield_other_calls: u64,
+    pub yield_other_wall_time_ns: u64,
+    pub continuation_activation_record_wall_time_ns: u64,
+    pub continuation_activation_attach_context_wall_time_ns: u64,
+    pub continuation_activation_enter_segment_wall_time_ns: u64,
+    pub enter_continuation_segment_calls: u64,
+    pub enter_continuation_segment_wall_time_ns: u64,
+    pub attach_active_chain_checks: u64,
+    pub attach_active_chain_performed_calls: u64,
+    pub attach_active_chain_check_wall_time_ns: u64,
+    pub attach_active_chain_assemble_wall_time_ns: u64,
+    pub attach_active_chain_serialize_wall_time_ns: u64,
 }
 
 #[derive(Debug, Default)]
@@ -152,19 +204,160 @@ struct DispatchLookupProfiler {
     frames_scanned: AtomicU64,
     lookup_wall_time_ns: AtomicU64,
     step_wall_time_ns: AtomicU64,
+    handlers_in_caller_chain_calls: AtomicU64,
+    handlers_in_caller_chain_segments_walked: AtomicU64,
+    handlers_in_caller_chain_wall_time_ns: AtomicU64,
+    current_interceptor_chain_calls: AtomicU64,
+    current_interceptor_chain_wall_time_ns: AtomicU64,
+    dispatch_origin_caller_segments_calls: AtomicU64,
+    dispatch_origin_caller_segments_segments_walked: AtomicU64,
+    dispatch_origin_caller_segments_wall_time_ns: AtomicU64,
+    current_handler_dispatch_calls: AtomicU64,
+    current_handler_dispatch_frames_scanned: AtomicU64,
+    current_handler_dispatch_wall_time_ns: AtomicU64,
+    nearest_handler_dispatch_calls: AtomicU64,
+    nearest_handler_dispatch_frames_scanned: AtomicU64,
+    nearest_handler_dispatch_wall_time_ns: AtomicU64,
+    active_handler_dispatch_for_calls: AtomicU64,
+    active_handler_dispatch_for_frames_scanned: AtomicU64,
+    active_handler_dispatch_for_wall_time_ns: AtomicU64,
+    start_dispatch_calls: AtomicU64,
+    start_dispatch_wall_time_ns: AtomicU64,
+    start_dispatch_capture_wall_time_ns: AtomicU64,
+    start_dispatch_handler_select_wall_time_ns: AtomicU64,
+    start_dispatch_trace_setup_wall_time_ns: AtomicU64,
+    program_frame_resume_calls: AtomicU64,
+    program_frame_resume_wall_time_ns: AtomicU64,
+    step_deliver_or_throw_calls: AtomicU64,
+    step_deliver_or_throw_wall_time_ns: AtomicU64,
+    step_handle_yield_calls: AtomicU64,
+    step_handle_yield_wall_time_ns: AtomicU64,
+    step_return_calls: AtomicU64,
+    step_return_wall_time_ns: AtomicU64,
+    yield_perform_calls: AtomicU64,
+    yield_perform_wall_time_ns: AtomicU64,
+    yield_expand_calls: AtomicU64,
+    yield_expand_wall_time_ns: AtomicU64,
+    yield_apply_calls: AtomicU64,
+    yield_apply_wall_time_ns: AtomicU64,
+    yield_ir_stream_calls: AtomicU64,
+    yield_ir_stream_wall_time_ns: AtomicU64,
+    yield_transfer_like_calls: AtomicU64,
+    yield_transfer_like_wall_time_ns: AtomicU64,
+    yield_other_calls: AtomicU64,
+    yield_other_wall_time_ns: AtomicU64,
+    continuation_activation_record_wall_time_ns: AtomicU64,
+    continuation_activation_attach_context_wall_time_ns: AtomicU64,
+    continuation_activation_enter_segment_wall_time_ns: AtomicU64,
+    enter_continuation_segment_calls: AtomicU64,
+    enter_continuation_segment_wall_time_ns: AtomicU64,
+    attach_active_chain_checks: AtomicU64,
+    attach_active_chain_performed_calls: AtomicU64,
+    attach_active_chain_check_wall_time_ns: AtomicU64,
+    attach_active_chain_assemble_wall_time_ns: AtomicU64,
+    attach_active_chain_serialize_wall_time_ns: AtomicU64,
 }
 
 impl DispatchLookupProfiler {
     fn reset_for_run(&self) {
-        self.timing_enabled
-            .store(env_flag_enabled(DISPATCH_LOOKUP_PROFILE_ENV), Ordering::Relaxed);
-        self.dispatch_origin_in_segment_calls.store(0, Ordering::Relaxed);
+        self.timing_enabled.store(
+            env_flag_enabled(DISPATCH_LOOKUP_PROFILE_ENV),
+            Ordering::Relaxed,
+        );
+        self.dispatch_origin_in_segment_calls
+            .store(0, Ordering::Relaxed);
         self.dispatch_origin_in_segment_for_dispatch_calls
             .store(0, Ordering::Relaxed);
         self.dispatch_origins_calls.store(0, Ordering::Relaxed);
         self.frames_scanned.store(0, Ordering::Relaxed);
         self.lookup_wall_time_ns.store(0, Ordering::Relaxed);
         self.step_wall_time_ns.store(0, Ordering::Relaxed);
+        self.handlers_in_caller_chain_calls
+            .store(0, Ordering::Relaxed);
+        self.handlers_in_caller_chain_segments_walked
+            .store(0, Ordering::Relaxed);
+        self.handlers_in_caller_chain_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.current_interceptor_chain_calls
+            .store(0, Ordering::Relaxed);
+        self.current_interceptor_chain_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.dispatch_origin_caller_segments_calls
+            .store(0, Ordering::Relaxed);
+        self.dispatch_origin_caller_segments_segments_walked
+            .store(0, Ordering::Relaxed);
+        self.dispatch_origin_caller_segments_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.current_handler_dispatch_calls
+            .store(0, Ordering::Relaxed);
+        self.current_handler_dispatch_frames_scanned
+            .store(0, Ordering::Relaxed);
+        self.current_handler_dispatch_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.nearest_handler_dispatch_calls
+            .store(0, Ordering::Relaxed);
+        self.nearest_handler_dispatch_frames_scanned
+            .store(0, Ordering::Relaxed);
+        self.nearest_handler_dispatch_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.active_handler_dispatch_for_calls
+            .store(0, Ordering::Relaxed);
+        self.active_handler_dispatch_for_frames_scanned
+            .store(0, Ordering::Relaxed);
+        self.active_handler_dispatch_for_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.start_dispatch_calls.store(0, Ordering::Relaxed);
+        self.start_dispatch_wall_time_ns.store(0, Ordering::Relaxed);
+        self.start_dispatch_capture_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.start_dispatch_handler_select_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.start_dispatch_trace_setup_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.program_frame_resume_calls.store(0, Ordering::Relaxed);
+        self.program_frame_resume_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.step_deliver_or_throw_calls.store(0, Ordering::Relaxed);
+        self.step_deliver_or_throw_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.step_handle_yield_calls.store(0, Ordering::Relaxed);
+        self.step_handle_yield_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.step_return_calls.store(0, Ordering::Relaxed);
+        self.step_return_wall_time_ns.store(0, Ordering::Relaxed);
+        self.yield_perform_calls.store(0, Ordering::Relaxed);
+        self.yield_perform_wall_time_ns.store(0, Ordering::Relaxed);
+        self.yield_expand_calls.store(0, Ordering::Relaxed);
+        self.yield_expand_wall_time_ns.store(0, Ordering::Relaxed);
+        self.yield_apply_calls.store(0, Ordering::Relaxed);
+        self.yield_apply_wall_time_ns.store(0, Ordering::Relaxed);
+        self.yield_ir_stream_calls.store(0, Ordering::Relaxed);
+        self.yield_ir_stream_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.yield_transfer_like_calls.store(0, Ordering::Relaxed);
+        self.yield_transfer_like_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.yield_other_calls.store(0, Ordering::Relaxed);
+        self.yield_other_wall_time_ns.store(0, Ordering::Relaxed);
+        self.continuation_activation_record_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.continuation_activation_attach_context_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.continuation_activation_enter_segment_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.enter_continuation_segment_calls
+            .store(0, Ordering::Relaxed);
+        self.enter_continuation_segment_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.attach_active_chain_checks.store(0, Ordering::Relaxed);
+        self.attach_active_chain_performed_calls
+            .store(0, Ordering::Relaxed);
+        self.attach_active_chain_check_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.attach_active_chain_assemble_wall_time_ns
+            .store(0, Ordering::Relaxed);
+        self.attach_active_chain_serialize_wall_time_ns
+            .store(0, Ordering::Relaxed);
     }
 
     fn start_lookup_timer(&self) -> Option<Instant> {
@@ -205,8 +398,7 @@ impl DispatchLookupProfiler {
         if !self.enabled() {
             return;
         }
-        self.dispatch_origins_calls
-            .fetch_add(1, Ordering::Relaxed);
+        self.dispatch_origins_calls.fetch_add(1, Ordering::Relaxed);
     }
 
     fn start_step_timer(&self) -> Option<Instant> {
@@ -228,6 +420,270 @@ impl DispatchLookupProfiler {
             .fetch_add(Self::elapsed_ns(started), Ordering::Relaxed);
     }
 
+    fn record_handlers_in_caller_chain(&self, segments_walked: usize, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.handlers_in_caller_chain_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self.handlers_in_caller_chain_segments_walked
+            .fetch_add(segments_walked as u64, Ordering::Relaxed);
+        self.handlers_in_caller_chain_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_current_interceptor_chain(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.current_interceptor_chain_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self.current_interceptor_chain_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_dispatch_origin_caller_segments(
+        &self,
+        segments_walked: usize,
+        started: Option<Instant>,
+    ) {
+        if !self.enabled() {
+            return;
+        }
+        self.dispatch_origin_caller_segments_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self.dispatch_origin_caller_segments_segments_walked
+            .fetch_add(segments_walked as u64, Ordering::Relaxed);
+        self.dispatch_origin_caller_segments_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_current_handler_dispatch(&self, frames_scanned: usize, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.current_handler_dispatch_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self.current_handler_dispatch_frames_scanned
+            .fetch_add(frames_scanned as u64, Ordering::Relaxed);
+        self.current_handler_dispatch_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_nearest_handler_dispatch(&self, frames_scanned: usize, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.nearest_handler_dispatch_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self.nearest_handler_dispatch_frames_scanned
+            .fetch_add(frames_scanned as u64, Ordering::Relaxed);
+        self.nearest_handler_dispatch_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_active_handler_dispatch_for(&self, frames_scanned: usize, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.active_handler_dispatch_for_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self.active_handler_dispatch_for_frames_scanned
+            .fetch_add(frames_scanned as u64, Ordering::Relaxed);
+        self.active_handler_dispatch_for_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_start_dispatch(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.start_dispatch_calls.fetch_add(1, Ordering::Relaxed);
+        self.start_dispatch_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_start_dispatch_capture(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.start_dispatch_capture_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_start_dispatch_handler_select(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.start_dispatch_handler_select_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_start_dispatch_trace_setup(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.start_dispatch_trace_setup_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_program_frame_resume(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.program_frame_resume_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self.program_frame_resume_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_step_deliver_or_throw(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.step_deliver_or_throw_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self.step_deliver_or_throw_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_step_handle_yield(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.step_handle_yield_calls.fetch_add(1, Ordering::Relaxed);
+        self.step_handle_yield_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_step_return(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.step_return_calls.fetch_add(1, Ordering::Relaxed);
+        self.step_return_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_yield_perform(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.yield_perform_calls.fetch_add(1, Ordering::Relaxed);
+        self.yield_perform_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_yield_expand(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.yield_expand_calls.fetch_add(1, Ordering::Relaxed);
+        self.yield_expand_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_yield_apply(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.yield_apply_calls.fetch_add(1, Ordering::Relaxed);
+        self.yield_apply_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_yield_ir_stream(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.yield_ir_stream_calls.fetch_add(1, Ordering::Relaxed);
+        self.yield_ir_stream_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_yield_transfer_like(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.yield_transfer_like_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self.yield_transfer_like_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_yield_other(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.yield_other_calls.fetch_add(1, Ordering::Relaxed);
+        self.yield_other_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_continuation_activation_record(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.continuation_activation_record_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_continuation_activation_attach_context(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.continuation_activation_attach_context_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_continuation_activation_enter_segment(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.continuation_activation_enter_segment_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_enter_continuation_segment(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.enter_continuation_segment_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self.enter_continuation_segment_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_attach_active_chain_check(&self, started: Option<Instant>, performed: bool) {
+        if !self.enabled() {
+            return;
+        }
+        self.attach_active_chain_checks
+            .fetch_add(1, Ordering::Relaxed);
+        if performed {
+            self.attach_active_chain_performed_calls
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        self.attach_active_chain_check_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_attach_active_chain_assemble(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.attach_active_chain_assemble_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
+    fn record_attach_active_chain_serialize(&self, started: Option<Instant>) {
+        if !self.enabled() {
+            return;
+        }
+        self.attach_active_chain_serialize_wall_time_ns
+            .fetch_add(Self::elapsed_ns_or_zero(started), Ordering::Relaxed);
+    }
+
     fn snapshot(&self) -> DispatchLookupStats {
         DispatchLookupStats {
             dispatch_origin_in_segment_calls: self
@@ -240,6 +696,124 @@ impl DispatchLookupProfiler {
             frames_scanned: self.frames_scanned.load(Ordering::Relaxed),
             lookup_wall_time_ns: self.lookup_wall_time_ns.load(Ordering::Relaxed),
             step_wall_time_ns: self.step_wall_time_ns.load(Ordering::Relaxed),
+            handlers_in_caller_chain_calls: self
+                .handlers_in_caller_chain_calls
+                .load(Ordering::Relaxed),
+            handlers_in_caller_chain_segments_walked: self
+                .handlers_in_caller_chain_segments_walked
+                .load(Ordering::Relaxed),
+            handlers_in_caller_chain_wall_time_ns: self
+                .handlers_in_caller_chain_wall_time_ns
+                .load(Ordering::Relaxed),
+            current_interceptor_chain_calls: self
+                .current_interceptor_chain_calls
+                .load(Ordering::Relaxed),
+            current_interceptor_chain_wall_time_ns: self
+                .current_interceptor_chain_wall_time_ns
+                .load(Ordering::Relaxed),
+            dispatch_origin_caller_segments_calls: self
+                .dispatch_origin_caller_segments_calls
+                .load(Ordering::Relaxed),
+            dispatch_origin_caller_segments_segments_walked: self
+                .dispatch_origin_caller_segments_segments_walked
+                .load(Ordering::Relaxed),
+            dispatch_origin_caller_segments_wall_time_ns: self
+                .dispatch_origin_caller_segments_wall_time_ns
+                .load(Ordering::Relaxed),
+            current_handler_dispatch_calls: self
+                .current_handler_dispatch_calls
+                .load(Ordering::Relaxed),
+            current_handler_dispatch_frames_scanned: self
+                .current_handler_dispatch_frames_scanned
+                .load(Ordering::Relaxed),
+            current_handler_dispatch_wall_time_ns: self
+                .current_handler_dispatch_wall_time_ns
+                .load(Ordering::Relaxed),
+            nearest_handler_dispatch_calls: self
+                .nearest_handler_dispatch_calls
+                .load(Ordering::Relaxed),
+            nearest_handler_dispatch_frames_scanned: self
+                .nearest_handler_dispatch_frames_scanned
+                .load(Ordering::Relaxed),
+            nearest_handler_dispatch_wall_time_ns: self
+                .nearest_handler_dispatch_wall_time_ns
+                .load(Ordering::Relaxed),
+            active_handler_dispatch_for_calls: self
+                .active_handler_dispatch_for_calls
+                .load(Ordering::Relaxed),
+            active_handler_dispatch_for_frames_scanned: self
+                .active_handler_dispatch_for_frames_scanned
+                .load(Ordering::Relaxed),
+            active_handler_dispatch_for_wall_time_ns: self
+                .active_handler_dispatch_for_wall_time_ns
+                .load(Ordering::Relaxed),
+            start_dispatch_calls: self.start_dispatch_calls.load(Ordering::Relaxed),
+            start_dispatch_wall_time_ns: self.start_dispatch_wall_time_ns.load(Ordering::Relaxed),
+            start_dispatch_capture_wall_time_ns: self
+                .start_dispatch_capture_wall_time_ns
+                .load(Ordering::Relaxed),
+            start_dispatch_handler_select_wall_time_ns: self
+                .start_dispatch_handler_select_wall_time_ns
+                .load(Ordering::Relaxed),
+            start_dispatch_trace_setup_wall_time_ns: self
+                .start_dispatch_trace_setup_wall_time_ns
+                .load(Ordering::Relaxed),
+            program_frame_resume_calls: self.program_frame_resume_calls.load(Ordering::Relaxed),
+            program_frame_resume_wall_time_ns: self
+                .program_frame_resume_wall_time_ns
+                .load(Ordering::Relaxed),
+            step_deliver_or_throw_calls: self.step_deliver_or_throw_calls.load(Ordering::Relaxed),
+            step_deliver_or_throw_wall_time_ns: self
+                .step_deliver_or_throw_wall_time_ns
+                .load(Ordering::Relaxed),
+            step_handle_yield_calls: self.step_handle_yield_calls.load(Ordering::Relaxed),
+            step_handle_yield_wall_time_ns: self
+                .step_handle_yield_wall_time_ns
+                .load(Ordering::Relaxed),
+            step_return_calls: self.step_return_calls.load(Ordering::Relaxed),
+            step_return_wall_time_ns: self.step_return_wall_time_ns.load(Ordering::Relaxed),
+            yield_perform_calls: self.yield_perform_calls.load(Ordering::Relaxed),
+            yield_perform_wall_time_ns: self.yield_perform_wall_time_ns.load(Ordering::Relaxed),
+            yield_expand_calls: self.yield_expand_calls.load(Ordering::Relaxed),
+            yield_expand_wall_time_ns: self.yield_expand_wall_time_ns.load(Ordering::Relaxed),
+            yield_apply_calls: self.yield_apply_calls.load(Ordering::Relaxed),
+            yield_apply_wall_time_ns: self.yield_apply_wall_time_ns.load(Ordering::Relaxed),
+            yield_ir_stream_calls: self.yield_ir_stream_calls.load(Ordering::Relaxed),
+            yield_ir_stream_wall_time_ns: self.yield_ir_stream_wall_time_ns.load(Ordering::Relaxed),
+            yield_transfer_like_calls: self.yield_transfer_like_calls.load(Ordering::Relaxed),
+            yield_transfer_like_wall_time_ns: self
+                .yield_transfer_like_wall_time_ns
+                .load(Ordering::Relaxed),
+            yield_other_calls: self.yield_other_calls.load(Ordering::Relaxed),
+            yield_other_wall_time_ns: self.yield_other_wall_time_ns.load(Ordering::Relaxed),
+            continuation_activation_record_wall_time_ns: self
+                .continuation_activation_record_wall_time_ns
+                .load(Ordering::Relaxed),
+            continuation_activation_attach_context_wall_time_ns: self
+                .continuation_activation_attach_context_wall_time_ns
+                .load(Ordering::Relaxed),
+            continuation_activation_enter_segment_wall_time_ns: self
+                .continuation_activation_enter_segment_wall_time_ns
+                .load(Ordering::Relaxed),
+            enter_continuation_segment_calls: self
+                .enter_continuation_segment_calls
+                .load(Ordering::Relaxed),
+            enter_continuation_segment_wall_time_ns: self
+                .enter_continuation_segment_wall_time_ns
+                .load(Ordering::Relaxed),
+            attach_active_chain_checks: self.attach_active_chain_checks.load(Ordering::Relaxed),
+            attach_active_chain_performed_calls: self
+                .attach_active_chain_performed_calls
+                .load(Ordering::Relaxed),
+            attach_active_chain_check_wall_time_ns: self
+                .attach_active_chain_check_wall_time_ns
+                .load(Ordering::Relaxed),
+            attach_active_chain_assemble_wall_time_ns: self
+                .attach_active_chain_assemble_wall_time_ns
+                .load(Ordering::Relaxed),
+            attach_active_chain_serialize_wall_time_ns: self
+                .attach_active_chain_serialize_wall_time_ns
+                .load(Ordering::Relaxed),
         }
     }
 
@@ -256,6 +830,10 @@ impl DispatchLookupProfiler {
 
     fn elapsed_ns(started: Instant) -> u64 {
         started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64
+    }
+
+    fn elapsed_ns_or_zero(started: Option<Instant>) -> u64 {
+        started.map_or(0, Self::elapsed_ns)
     }
 
     fn enabled(&self) -> bool {
@@ -587,9 +1165,12 @@ impl VM {
     }
 
     fn handlers_in_caller_chain(&self, start_seg_id: SegmentId) -> Vec<HandlerChainEntry> {
+        let started = self.dispatch_lookup_profiler.start_lookup_timer();
         let mut chain = Vec::new();
+        let mut segments_walked = 0usize;
         let mut cursor = Some(start_seg_id);
         while let Some(seg_id) = cursor {
+            segments_walked += 1;
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
             };
@@ -609,6 +1190,8 @@ impl VM {
             }
             cursor = seg.caller;
         }
+        self.dispatch_lookup_profiler
+            .record_handlers_in_caller_chain(segments_walked, started);
         chain
     }
 
@@ -863,39 +1446,13 @@ impl VM {
     fn current_handler_dispatch(
         &self,
     ) -> Option<(SegmentId, DispatchId, Continuation, Marker, SegmentId)> {
+        let started = self.dispatch_lookup_profiler.start_lookup_timer();
+        let mut frames_scanned = 0usize;
         let seg_id = self.current_segment?;
         let seg = self.segments.get(seg_id)?;
-        seg.frames.iter().rev().find_map(|frame| match frame {
-            Frame::HandlerDispatch {
-                dispatch_id,
-                continuation,
-                prompt_seg_id,
-            } => Some((
-                seg_id,
-                *dispatch_id,
-                continuation.clone(),
-                seg.marker,
-                *prompt_seg_id,
-            )),
-            Frame::Program { .. }
-            | Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
-            | Frame::DispatchOrigin { .. }
-            | Frame::EvalReturn(_)
-            | Frame::MapReturn { .. }
-            | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
-        })
-    }
-
-    fn nearest_handler_dispatch(
-        &self,
-    ) -> Option<(SegmentId, DispatchId, Continuation, Marker, SegmentId)> {
-        let mut cursor = self.current_segment;
-        while let Some(seg_id) = cursor {
-            let seg = self.segments.get(seg_id)?;
-            if let Some(found) = seg.frames.iter().rev().find_map(|frame| match frame {
+        let found = seg.frames.iter().rev().find_map(|frame| {
+            frames_scanned += 1;
+            match frame {
                 Frame::HandlerDispatch {
                     dispatch_id,
                     continuation,
@@ -916,11 +1473,54 @@ impl VM {
                 | Frame::FlatMapBindResult
                 | Frame::FlatMapBindSource { .. }
                 | Frame::InterceptBodyReturn { .. } => None,
+            }
+        });
+        self.dispatch_lookup_profiler
+            .record_current_handler_dispatch(frames_scanned, started);
+        found
+    }
+
+    fn nearest_handler_dispatch(
+        &self,
+    ) -> Option<(SegmentId, DispatchId, Continuation, Marker, SegmentId)> {
+        let started = self.dispatch_lookup_profiler.start_lookup_timer();
+        let mut frames_scanned = 0usize;
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            let seg = self.segments.get(seg_id)?;
+            if let Some(found) = seg.frames.iter().rev().find_map(|frame| {
+                frames_scanned += 1;
+                match frame {
+                    Frame::HandlerDispatch {
+                        dispatch_id,
+                        continuation,
+                        prompt_seg_id,
+                    } => Some((
+                        seg_id,
+                        *dispatch_id,
+                        continuation.clone(),
+                        seg.marker,
+                        *prompt_seg_id,
+                    )),
+                    Frame::Program { .. }
+                    | Frame::InterceptorApply(_)
+                    | Frame::InterceptorEval(_)
+                    | Frame::DispatchOrigin { .. }
+                    | Frame::EvalReturn(_)
+                    | Frame::MapReturn { .. }
+                    | Frame::FlatMapBindResult
+                    | Frame::FlatMapBindSource { .. }
+                    | Frame::InterceptBodyReturn { .. } => None,
+                }
             }) {
+                self.dispatch_lookup_profiler
+                    .record_nearest_handler_dispatch(frames_scanned, started);
                 return Some(found);
             }
             cursor = seg.caller;
         }
+        self.dispatch_lookup_profiler
+            .record_nearest_handler_dispatch(frames_scanned, started);
         None
     }
 
@@ -928,32 +1528,41 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<(SegmentId, Continuation, Marker)> {
+        let started = self.dispatch_lookup_profiler.start_lookup_timer();
+        let mut frames_scanned = 0usize;
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
             let seg = self.segments.get(seg_id)?;
-            if let Some(found) = seg.frames.iter().rev().find_map(|frame| match frame {
-                Frame::HandlerDispatch {
-                    dispatch_id: frame_dispatch_id,
-                    continuation,
-                    ..
-                } if *frame_dispatch_id == dispatch_id => {
-                    Some((seg_id, continuation.clone(), seg.marker))
+            if let Some(found) = seg.frames.iter().rev().find_map(|frame| {
+                frames_scanned += 1;
+                match frame {
+                    Frame::HandlerDispatch {
+                        dispatch_id: frame_dispatch_id,
+                        continuation,
+                        ..
+                    } if *frame_dispatch_id == dispatch_id => {
+                        Some((seg_id, continuation.clone(), seg.marker))
+                    }
+                    Frame::Program { .. }
+                    | Frame::InterceptorApply(_)
+                    | Frame::InterceptorEval(_)
+                    | Frame::DispatchOrigin { .. }
+                    | Frame::HandlerDispatch { .. }
+                    | Frame::EvalReturn(_)
+                    | Frame::MapReturn { .. }
+                    | Frame::FlatMapBindResult
+                    | Frame::FlatMapBindSource { .. }
+                    | Frame::InterceptBodyReturn { .. } => None,
                 }
-                Frame::Program { .. }
-                | Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
-                | Frame::DispatchOrigin { .. }
-                | Frame::HandlerDispatch { .. }
-                | Frame::EvalReturn(_)
-                | Frame::MapReturn { .. }
-                | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => None,
             }) {
+                self.dispatch_lookup_profiler
+                    .record_active_handler_dispatch_for(frames_scanned, started);
                 return Some(found);
             }
             cursor = seg.caller;
         }
+        self.dispatch_lookup_profiler
+            .record_active_handler_dispatch_for(frames_scanned, started);
         None
     }
 
@@ -1653,11 +2262,7 @@ impl VM {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return false;
         };
-        Python::attach(|py| {
-            obj.bind(py)
-                .extract::<PyRef<'_, PyGetExecutionContext>>()
-                .is_ok()
-        })
+        Python::attach(|py| obj.bind(py).is_instance_of::<PyGetExecutionContext>())
     }
 
     fn dispatch_supports_error_context_conversion(&self, dispatch_id: DispatchId) -> bool {
@@ -2032,7 +2637,11 @@ impl VM {
         let Some(dispatch_id) = dispatch_id else {
             return Ok(());
         };
-        if !self.should_attach_active_chain_for_dispatch(dispatch_id) {
+        let check_started = self.dispatch_lookup_profiler.start_lookup_timer();
+        let should_attach = self.should_attach_active_chain_for_dispatch(dispatch_id);
+        self.dispatch_lookup_profiler
+            .record_attach_active_chain_check(check_started, should_attach);
+        if !should_attach {
             return Ok(());
         }
         let context_obj = match value {
@@ -2045,7 +2654,11 @@ impl VM {
             }
         };
 
+        let assemble_started = self.dispatch_lookup_profiler.start_lookup_timer();
         let mut active_chain = self.assemble_active_chain(None);
+        self.dispatch_lookup_profiler
+            .record_attach_active_chain_assemble(assemble_started);
+        let serialize_started = self.dispatch_lookup_profiler.start_lookup_timer();
         Python::attach(|py| {
             let context_bound = context_obj.bind(py);
             if !context_bound.is_instance_of::<PyExecutionContext>() {
@@ -2059,46 +2672,6 @@ impl VM {
                 )));
             }
 
-            let entries_obj = context_bound.getattr("entries").map_err(|err| {
-                VMError::python_error(format!(
-                    "GetExecutionContext handler returned invalid ExecutionContext.entries: {err}"
-                ))
-            })?;
-            let iter = entries_obj.try_iter().map_err(|err| {
-                VMError::python_error(format!(
-                    "GetExecutionContext handler returned non-iterable ExecutionContext.entries: {err}"
-                ))
-            })?;
-            for entry_result in iter {
-                let entry = entry_result.map_err(|err| {
-                    VMError::python_error(format!(
-                        "failed to iterate ExecutionContext.entries while attaching active_chain: {err}"
-                    ))
-                })?;
-                active_chain.push(ActiveChainEntry::ContextEntry {
-                    data: entry.unbind(),
-                });
-            }
-
-            let active_chain_obj =
-                Value::ActiveChain(active_chain)
-                    .to_pyobject(py)
-                    .map_err(|err| {
-                        VMError::python_error(format!(
-                            "failed to convert active_chain snapshot to Python object: {err}"
-                        ))
-                    })?;
-            let active_chain_list = active_chain_obj.cast::<PyList>().map_err(|err| {
-                VMError::python_error(format!(
-                    "active_chain snapshot serialization did not produce list: {err}"
-                ))
-            })?;
-            let active_chain_tuple = PyTuple::new(py, active_chain_list.iter()).map_err(|err| {
-                VMError::python_error(format!(
-                    "failed to convert active_chain snapshot to tuple: {err}"
-                ))
-            })?;
-
             let mut context_ref = context_bound
                 .extract::<PyRefMut<'_, PyExecutionContext>>()
                 .map_err(|err| {
@@ -2106,9 +2679,17 @@ impl VM {
                         "failed to access ExecutionContext for active_chain assignment: {err}"
                     ))
                 })?;
-            context_ref.set_active_chain(Some(active_chain_tuple.into_any().unbind()));
+            for entry in context_ref.entries.bind(py).iter() {
+                active_chain.push(ActiveChainEntry::ContextEntry {
+                    data: entry.unbind(),
+                });
+            }
+            context_ref.set_active_chain_snapshot(Some(active_chain));
             Ok(())
-        })
+        })?;
+        self.dispatch_lookup_profiler
+            .record_attach_active_chain_serialize(serialize_started);
+        Ok(())
     }
 
     pub fn step(&mut self) -> StepEvent {
@@ -2136,9 +2717,27 @@ impl VM {
             }
 
             let result = match mode_kind {
-                0 => self.step_deliver_or_throw(),
-                1 => self.step_handle_yield(),
-                2 => self.step_return(),
+                0 => {
+                    let mode_started = self.dispatch_lookup_profiler.start_lookup_timer();
+                    let result = self.step_deliver_or_throw();
+                    self.dispatch_lookup_profiler
+                        .record_step_deliver_or_throw(mode_started);
+                    result
+                }
+                1 => {
+                    let mode_started = self.dispatch_lookup_profiler.start_lookup_timer();
+                    let result = self.step_handle_yield();
+                    self.dispatch_lookup_profiler
+                        .record_step_handle_yield(mode_started);
+                    result
+                }
+                2 => {
+                    let mode_started = self.dispatch_lookup_profiler.start_lookup_timer();
+                    let result = self.step_return();
+                    self.dispatch_lookup_profiler
+                        .record_step_return(mode_started);
+                    result
+                }
                 other => unreachable!("invalid mode discriminator in VM::step: {other}"),
             };
 
@@ -2277,6 +2876,7 @@ impl VM {
                     Mode::Throw(exc) => Some(exc.clone()),
                     Mode::Deliver(_) | Mode::HandleYield(_) | Mode::Return(_) => None,
                 };
+                let resume_started = self.dispatch_lookup_profiler.start_lookup_timer();
                 let step = {
                     let Some(seg) = self.segments.get_mut(seg_id) else {
                         return StepEvent::Error(VMError::invalid_segment("segment not found"));
@@ -2294,6 +2894,8 @@ impl VM {
                         }
                     }
                 };
+                self.dispatch_lookup_profiler
+                    .record_program_frame_resume(resume_started);
                 self.apply_stream_step(step, stream, metadata, handler_kind, incoming_throw)
             }
             Frame::InterceptorApply(cont) => self.step_interceptor_apply_frame(*cont, mode),
@@ -2977,19 +3579,26 @@ impl VM {
     }
 
     fn current_interceptor_chain(&self) -> Vec<Marker> {
+        let started = self.dispatch_lookup_profiler.start_lookup_timer();
         let dispatch_origin_callers = self.dispatch_origin_caller_segments();
-        self.interceptor_state.current_chain(
+        let chain = self.interceptor_state.current_chain(
             self.current_segment,
             &self.segments,
             &dispatch_origin_callers,
-        )
+        );
+        self.dispatch_lookup_profiler
+            .record_current_interceptor_chain(started);
+        chain
     }
 
     fn dispatch_origin_caller_segments(&self) -> Vec<SegmentId> {
+        let started = self.dispatch_lookup_profiler.start_lookup_timer();
         let mut seen = HashSet::new();
         let mut callers = Vec::new();
+        let mut segments_walked = 0usize;
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
+            segments_walked += 1;
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
             };
@@ -3006,10 +3615,13 @@ impl VM {
             cursor = seg.caller;
         }
         callers.sort_by_key(|(dispatch_id, _)| dispatch_id.raw());
-        callers
+        let caller_segments = callers
             .into_iter()
             .map(|(_dispatch_id, segment_id)| segment_id)
-            .collect()
+            .collect();
+        self.dispatch_lookup_profiler
+            .record_dispatch_origin_caller_segments(segments_walked, started);
+        caller_segments
     }
 
     fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
@@ -3360,66 +3972,167 @@ impl VM {
                 }
             };
         match yielded {
-            DoCtrl::Pure { value } => self.handle_yield_pure(value),
+            DoCtrl::Pure { value } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_pure(value);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::Map {
                 source,
                 mapper,
                 mapper_meta,
-            } => self.handle_yield_map(source, mapper, mapper_meta),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_map(source, mapper, mapper_meta);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::FlatMap {
                 source,
                 binder,
                 binder_meta,
-            } => self.handle_yield_flat_map(source, binder, binder_meta),
-            DoCtrl::Perform { effect } => self.handle_yield_effect(effect),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_flat_map(source, binder, binder_meta);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::Perform { effect } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_effect(effect);
+                self.dispatch_lookup_profiler.record_yield_perform(started);
+                result
+            }
             DoCtrl::Resume {
                 continuation,
                 value,
-            } => self.handle_yield_resume(continuation, value),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_resume(continuation, value);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
             DoCtrl::Transfer {
                 continuation,
                 value,
-            } => self.handle_yield_transfer(continuation, value),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_transfer(continuation, value);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
             DoCtrl::TransferThrow {
                 continuation,
                 exception,
-            } => self.handle_yield_transfer_throw(continuation, exception),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_transfer_throw(continuation, exception);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
             DoCtrl::ResumeThrow {
                 continuation,
                 exception,
-            } => self.handle_yield_resume_throw(continuation, exception),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_resume_throw(continuation, exception);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
             DoCtrl::WithHandler {
                 handler,
                 body,
                 types,
-            } => self.handle_with_handler(handler, *body, types),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_with_handler(handler, *body, types);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::WithIntercept {
                 interceptor,
                 body,
                 types,
                 mode,
                 metadata,
-            } => self.handle_yield_with_intercept(interceptor, *body, types, mode, metadata),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result =
+                    self.handle_yield_with_intercept(interceptor, *body, types, mode, metadata);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::Discontinue {
                 continuation,
                 exception,
-            } => self.handle_yield_discontinue(continuation, exception),
-            DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
-            DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
-            DoCtrl::GetContinuation => self.handle_yield_get_continuation(),
-            DoCtrl::GetHandlers => self.handle_yield_get_handlers(),
-            DoCtrl::GetTraceback { continuation } => self.handle_yield_get_traceback(continuation),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_discontinue(continuation, exception);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
+            DoCtrl::Delegate { effect } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_delegate(effect);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::Pass { effect } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_pass(effect);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::GetContinuation => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_get_continuation();
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::GetHandlers => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_get_handlers();
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::GetTraceback { continuation } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_get_traceback(continuation);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::CreateContinuation {
                 expr,
                 handlers,
                 handler_identities,
-            } => self.handle_yield_create_continuation(expr, handlers, handler_identities),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result =
+                    self.handle_yield_create_continuation(expr, handlers, handler_identities);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::ResumeContinuation {
                 continuation,
                 value,
-            } => self.handle_yield_resume_continuation(continuation, value),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_resume_continuation(continuation, value);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
             DoCtrl::PythonAsyncSyntaxEscape { action } => {
-                self.handle_yield_python_async_syntax_escape(action)
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_python_async_syntax_escape(action);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
             }
             // PendingPython::CallFuncReturn is set in handle_yield_apply.
             DoCtrl::Apply {
@@ -3427,26 +4140,57 @@ impl VM {
                 args,
                 kwargs,
                 metadata,
-            } => self.handle_yield_apply(*f, args, kwargs, metadata),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_apply(*f, args, kwargs, metadata);
+                self.dispatch_lookup_profiler.record_yield_apply(started);
+                result
+            }
             // PendingPython::ExpandReturn is set in handle_yield_expand.
             DoCtrl::Expand {
                 factory,
                 args,
                 kwargs,
                 metadata,
-            } => self.handle_yield_expand(*factory, args, kwargs, metadata),
-            DoCtrl::IRStream { stream, metadata } => self.handle_yield_ir_stream(
-                stream,
-                metadata,
-                self.current_program_frame_handler_kind(),
-            ),
-            DoCtrl::Eval { expr, metadata } => self.handle_yield_eval(expr, metadata),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_expand(*factory, args, kwargs, metadata);
+                self.dispatch_lookup_profiler.record_yield_expand(started);
+                result
+            }
+            DoCtrl::IRStream { stream, metadata } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_ir_stream(
+                    stream,
+                    metadata,
+                    self.current_program_frame_handler_kind(),
+                );
+                self.dispatch_lookup_profiler
+                    .record_yield_ir_stream(started);
+                result
+            }
+            DoCtrl::Eval { expr, metadata } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_eval(expr, metadata);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::EvalInScope {
                 expr,
                 scope,
                 metadata,
-            } => self.handle_yield_eval_in_scope(expr, scope, metadata),
-            DoCtrl::GetCallStack => self.handle_yield_get_call_stack(),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_eval_in_scope(expr, scope, metadata);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::GetCallStack => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_get_call_stack();
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
         }
     }
 
@@ -4557,6 +5301,7 @@ impl VM {
     }
 
     pub fn start_dispatch(&mut self, effect: DispatchEffect) -> Result<StepEvent, VMError> {
+        let dispatch_started = self.dispatch_lookup_profiler.start_lookup_timer();
         let seg_id = self
             .current_segment
             .ok_or_else(|| VMError::internal("no current segment during dispatch"))?;
@@ -4599,17 +5344,25 @@ impl VM {
             .get(seg_id)
             .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
         let dispatch_id = DispatchId::fresh();
+        let capture_started = self.dispatch_lookup_profiler.start_lookup_timer();
         let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
+        self.dispatch_lookup_profiler
+            .record_start_dispatch_capture(capture_started);
         let current_scope_store = current_seg.scope_store.clone();
         if let Some(seg) = self.current_segment_mut() {
             seg.pending_error_context = None;
         }
+        let handler_select_started = self.dispatch_lookup_profiler.start_lookup_timer();
         let mut handler_chain = self.handlers_in_caller_chain(seg_id);
         if let Some(excluded_prompt) = exclude_prompt {
             handler_chain.retain(|entry| entry.prompt_seg_id != excluded_prompt);
         }
 
         if handler_chain.is_empty() {
+            self.dispatch_lookup_profiler
+                .record_start_dispatch_handler_select(handler_select_started);
+            self.dispatch_lookup_profiler
+                .record_start_dispatch(dispatch_started);
             if let Some(original) = original_exception.clone() {
                 self.current_seg_mut().mode = Mode::Throw(original);
                 return Ok(StepEvent::Continue);
@@ -4664,6 +5417,10 @@ impl VM {
                 }
             }
             None => {
+                self.dispatch_lookup_profiler
+                    .record_start_dispatch_handler_select(handler_select_started);
+                self.dispatch_lookup_profiler
+                    .record_start_dispatch(dispatch_started);
                 if let Some(original) = original_exception.clone() {
                     self.current_seg_mut().mode = Mode::Throw(original);
                     return Ok(StepEvent::Continue);
@@ -4671,10 +5428,13 @@ impl VM {
                 return Err(VMError::no_matching_handler(effect));
             }
         };
+        self.dispatch_lookup_profiler
+            .record_start_dispatch_handler_select(handler_select_started);
 
         let handler_marker = selected.1.marker;
         let prompt_seg_id = selected.1.prompt_seg_id;
         let handler = selected.1.handler.clone();
+        let trace_setup_started = self.dispatch_lookup_profiler.start_lookup_timer();
         let is_execution_context_effect = Self::is_execution_context_effect(&effect);
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
         for entry in &handler_chain {
@@ -4688,6 +5448,10 @@ impl VM {
         }
 
         if self.segments.get(prompt_seg_id).is_none() {
+            self.dispatch_lookup_profiler
+                .record_start_dispatch_trace_setup(trace_setup_started);
+            self.dispatch_lookup_profiler
+                .record_start_dispatch(dispatch_started);
             return Err(VMError::invalid_segment("dispatch prompt not found"));
         }
 
@@ -4732,6 +5496,10 @@ impl VM {
                 .as_ref()
                 .map(|(_, _, _, source_line)| *source_line),
         );
+        self.dispatch_lookup_profiler
+            .record_start_dispatch_trace_setup(trace_setup_started);
+        self.dispatch_lookup_profiler
+            .record_start_dispatch(dispatch_started);
 
         // Preserve handler scope when a type-filtered handler is skipped: this mirrors the
         // `Pass()` forwarding topology without invoking the skipped handler body.
@@ -4880,39 +5648,49 @@ impl VM {
 
     fn enter_continuation_segment_with_dispatch(
         &mut self,
-        k: &Continuation,
+        k: Continuation,
         caller: Option<SegmentId>,
         dispatch_id: Option<DispatchId>,
     ) {
-        let frames = (*k.frames_snapshot).clone();
+        let started = self.dispatch_lookup_profiler.start_lookup_timer();
+        let Continuation {
+            scope_store,
+            frames_snapshot,
+            marker,
+            mode,
+            pending_python,
+            interceptor_eval_depth,
+            interceptor_skip_stack,
+            ..
+        } = k;
+        let frames = Arc::try_unwrap(frames_snapshot).unwrap_or_else(|frames| (*frames).clone());
         let exec_seg = Segment {
-            marker: k.marker,
+            marker,
             dispatch_origin_frame_indices: Segment::dispatch_origin_frame_indices_from_frames(
                 &frames,
             ),
             frames,
             caller,
-            scope_store: k.scope_store.clone(),
-            kind: self.structural_kind_for_marker(k.marker),
+            scope_store,
+            kind: self.structural_kind_for_marker(marker),
             dispatch_id,
-            mode: k.mode.as_ref().clone(),
-            pending_python: k
-                .pending_python
-                .as_ref()
-                .map(|pending| pending.as_ref().clone()),
+            mode: *mode,
+            pending_python: pending_python.map(|pending| *pending),
             // The original exception lives on the active DispatchOrigin.k_origin.
             // Reinstalling it onto resumed continuation segments makes unrelated
             // nested Perform() calls look like fresh GetExecutionContext dispatches.
             pending_error_context: None,
-            interceptor_eval_depth: k.interceptor_eval_depth,
-            interceptor_skip_stack: k.interceptor_skip_stack.clone(),
+            interceptor_eval_depth,
+            interceptor_skip_stack,
         };
         let exec_seg_id = self.alloc_segment(exec_seg);
         self.current_segment = Some(exec_seg_id);
+        self.dispatch_lookup_profiler
+            .record_enter_continuation_segment(started);
     }
 
-    fn enter_continuation_segment(&mut self, k: &Continuation, caller: Option<SegmentId>) {
-        let dispatch_id = self.continuation_segment_dispatch_id(k);
+    fn enter_continuation_segment(&mut self, k: Continuation, caller: Option<SegmentId>) {
+        let dispatch_id = self.continuation_segment_dispatch_id(&k);
         self.enter_continuation_segment_with_dispatch(k, caller, dispatch_id);
     }
 
@@ -4933,12 +5711,20 @@ impl VM {
         }
         self.mark_one_shot_consumed(k.cont_id);
         let error_dispatch = self.error_dispatch_for_continuation(&k);
+        let record_started = self.dispatch_lookup_profiler.start_lookup_timer();
         self.record_continuation_activation(kind, &k, &value);
+        self.dispatch_lookup_profiler
+            .record_continuation_activation_record(record_started);
+        let attach_started = self.dispatch_lookup_profiler.start_lookup_timer();
         if let Err(err) =
             self.maybe_attach_active_chain_to_execution_context(k.dispatch_id, &mut value)
         {
+            self.dispatch_lookup_profiler
+                .record_continuation_activation_attach_context(attach_started);
             return StepEvent::Error(err);
         }
+        self.dispatch_lookup_profiler
+            .record_continuation_activation_attach_context(attach_started);
 
         if let Some((_dispatch_id, original_exception, terminal)) = error_dispatch {
             if terminal {
@@ -4950,7 +5736,10 @@ impl VM {
                 // Terminal error-context dispatches must detach from the active handler
                 // segment so normal completion does not re-pop the same DispatchOrigin.
                 let caller = self.segments.get(k.segment_id).and_then(|seg| seg.caller);
-                self.enter_continuation_segment_with_dispatch(&k, caller, None);
+                let enter_started = self.dispatch_lookup_profiler.start_lookup_timer();
+                self.enter_continuation_segment_with_dispatch(k, caller, None);
+                self.dispatch_lookup_profiler
+                    .record_continuation_activation_enter_segment(enter_started);
                 self.current_seg_mut().mode = Mode::Throw(enriched_exception);
                 return StepEvent::Continue;
             }
@@ -4962,7 +5751,10 @@ impl VM {
                 self.segments.get(k.segment_id).and_then(|seg| seg.caller)
             }
         };
-        self.enter_continuation_segment(&k, caller);
+        let enter_started = self.dispatch_lookup_profiler.start_lookup_timer();
+        self.enter_continuation_segment(k, caller);
+        self.dispatch_lookup_profiler
+            .record_continuation_activation_enter_segment(enter_started);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }
@@ -5026,7 +5818,7 @@ impl VM {
             .and_then(|seg| seg.caller)
             .or(self.current_segment);
         let dispatch_id = self.continuation_segment_dispatch_id(&k);
-        self.enter_continuation_segment_with_dispatch(&k, caller, dispatch_id);
+        self.enter_continuation_segment_with_dispatch(k, caller, dispatch_id);
         self.current_seg_mut().mode =
             if terminal_dispatch_completion && thrown_by_context_conversion_handler {
                 self.mode_after_generror(

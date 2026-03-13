@@ -145,7 +145,7 @@ impl TraceState {
     }
 
     pub(crate) fn continuation_resume_location(k: &Continuation) -> Option<(String, String, u32)> {
-        Self::resume_location_from_frames(k.frames_snapshot.as_ref())
+        k.resume_location.clone()
     }
 
     fn is_internal_source_file(source_file: &str) -> bool {
@@ -394,9 +394,7 @@ impl TraceState {
                         if let Ok(Some((resolved_function, resolved_file, resolved_line))) =
                             resolve_location
                                 .call1((exc_value_bound.clone(),))
-                                .and_then(|value| {
-                                    value.extract::<Option<(String, String, u32)>>()
-                                })
+                                .and_then(|value| value.extract::<Option<(String, String, u32)>>())
                         {
                             function_name = resolved_function;
                             source_file = resolved_file;
@@ -1064,9 +1062,9 @@ impl TraceState {
             .rev()
             .find(|ctx| ctx.dispatch_id == dispatch_id)
             .map(|dispatch_ctx| {
-                    dispatch_ctx
-                        .continuation
-                        .frames_snapshot
+                dispatch_ctx
+                    .continuation
+                    .frames_snapshot
                     .iter()
                     .filter_map(|frame| {
                         let Frame::Program {

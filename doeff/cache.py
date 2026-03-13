@@ -340,13 +340,17 @@ def cache(
             return tuple(args_list), kwargs_for_key
 
         @do
-        def wrapper(*args, **kwargs) -> EffectGenerator[T]:
+        def resolve_call_site() -> EffectGenerator[CacheCallSite | None]:
             context = yield GetExecutionContext()
-            call_stack = getattr(context, "active_chain", ())
+            call_stack = context.active_chain
             stack_frames = list(call_stack) if isinstance(call_stack, (list, tuple)) else []
-            call_site = _call_site_from_program_frames(stack_frames)
+            return _call_site_from_program_frames(stack_frames)
 
-            args_for_key, kwargs_for_key = yield build_key_inputs(tuple(args), dict(kwargs))
+        @do
+        def wrapper(*args, **kwargs) -> EffectGenerator[T]:
+            call_args = tuple(args)
+            call_kwargs = dict(kwargs)
+            args_for_key, kwargs_for_key = yield build_key_inputs(call_args, call_kwargs)
 
             frozen_kwargs = FrozenDict(kwargs_for_key) if kwargs_for_key else FrozenDict()
             cache_key_obj = (
@@ -379,9 +383,10 @@ def cache(
 
                 yield slog(msg=f"Computation for {func_name} failed, not caching.", level="error")
                 error = result.error
+                call_site = yield resolve_call_site()
                 _attach_exception_note(
                     error,
-                    _cache_error_note(func_name, args, dict(kwargs), call_site),
+                    _cache_error_note(func_name, call_args, call_kwargs, call_site),
                 )
                 raise error
 

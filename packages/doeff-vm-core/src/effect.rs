@@ -1,10 +1,12 @@
 //! VM-internal effect base and opaque dispatch wrappers.
 
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyList, PyTuple};
 
+use crate::capture::ActiveChainEntry;
 use crate::py_shared::PyShared;
 use crate::pyvm::DoExprTag;
+use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub struct Effect(pub PyShared);
@@ -29,7 +31,10 @@ impl PyEffectBase {
 impl PyEffectBase {
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, pyo3::types::PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
+    fn new(
+        _args: &Bound<'_, pyo3::types::PyTuple>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> Self {
         Self::new_base()
     }
 }
@@ -41,8 +46,15 @@ pub struct PyGetExecutionContext {}
 pub struct PyExecutionContext {
     #[pyo3(get)]
     pub entries: Py<PyList>,
-    #[pyo3(get)]
-    pub active_chain: Option<Py<PyAny>>,
+    active_chain: Option<Py<PyAny>>,
+    pending_active_chain: Option<Vec<ActiveChainEntry>>,
+}
+
+impl PyExecutionContext {
+    pub fn set_active_chain_snapshot(&mut self, active_chain: Option<Vec<ActiveChainEntry>>) {
+        self.pending_active_chain = active_chain;
+        self.active_chain = None;
+    }
 }
 
 #[pymethods]
@@ -64,6 +76,7 @@ impl PyExecutionContext {
         PyExecutionContext {
             entries: PyList::empty(py).unbind(),
             active_chain: None,
+            pending_active_chain: None,
         }
     }
 
@@ -73,10 +86,27 @@ impl PyExecutionContext {
 
     pub fn set_active_chain(&mut self, active_chain: Option<Py<PyAny>>) {
         self.active_chain = active_chain;
+        self.pending_active_chain = None;
+    }
+
+    #[getter]
+    fn active_chain(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if let Some(active_chain) = &self.active_chain {
+            return Ok(active_chain.clone_ref(py));
+        }
+        let Some(snapshot) = self.pending_active_chain.take() else {
+            return Ok(py.None());
+        };
+        let active_chain_obj = Value::ActiveChain(snapshot).to_pyobject(py)?;
+        let active_chain_list = active_chain_obj.cast::<PyList>()?;
+        let active_chain_tuple = PyTuple::new(py, active_chain_list.iter())?;
+        let active_chain = active_chain_tuple.into_any().unbind();
+        self.active_chain = Some(active_chain.clone_ref(py));
+        Ok(active_chain)
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
-        let has_active_chain = self.active_chain.is_some();
+        let has_active_chain = self.active_chain.is_some() || self.pending_active_chain.is_some();
         format!(
             "ExecutionContext(entries={}, active_chain={has_active_chain})",
             self.entries.bind(py).len()
@@ -111,6 +141,7 @@ pub fn make_execution_context_object(py: Python<'_>) -> PyResult<Py<PyAny>> {
         PyExecutionContext {
             entries: PyList::empty(py).unbind(),
             active_chain: None,
+            pending_active_chain: None,
         },
     )?;
     Ok(ctx.into_any().unbind())

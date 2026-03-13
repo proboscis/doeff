@@ -4,7 +4,7 @@
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
+use pyo3::types::{PyDict, PyModule, PyTuple};
 
 use doeff_vm_core::effect::{PyExecutionContext, PyGetExecutionContext};
 
@@ -754,13 +754,7 @@ pub fn make_get_execution_context_effect() -> PyResult<DispatchEffect> {
 }
 
 pub fn make_execution_context_object(py: Python<'_>) -> PyResult<Py<PyAny>> {
-    let ctx = Bound::new(
-        py,
-        PyExecutionContext {
-            entries: PyList::empty(py).unbind(),
-            active_chain: None,
-        },
-    )?;
+    let ctx = Bound::new(py, PyExecutionContext::new(py))?;
     Ok(ctx.into_any().unbind())
 }
 
@@ -938,7 +932,10 @@ pub fn register_effect_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCreateExternalPromise>()?;
     m.add_class::<PyCancelEffect>()?;
     m.add_class::<PyTaskCompleted>()?;
-    m.add("TaskCancelledError", m.py().get_type::<TaskCancelledError>())?;
+    m.add(
+        "TaskCancelledError",
+        m.py().get_type::<TaskCancelledError>(),
+    )?;
     m.add_class::<PySemaphore>()?;
     m.add_class::<PyCreateSemaphore>()?;
     m.add_class::<PyAcquireSemaphore>()?;

@@ -229,6 +229,41 @@ def test_cache_decorator_reraises_original_error_with_cache_note() -> None:
     assert "cache_missing_key" in rendered
 
 
+def test_cache_decorator_skips_get_execution_context_on_success() -> None:
+    from doeff.rust_vm import Delegate, GetExecutionContext
+
+    seen: list[str] = []
+
+    @do
+    def observe_context(effect: Effect, k: object):
+        if isinstance(effect, GetExecutionContext):
+            seen.append(type(effect).__name__)
+            context = yield Delegate()
+            return (yield Resume(k, context))
+        yield Pass()
+
+    @cache()
+    @do
+    def expensive(value: int) -> EffectGenerator[int]:
+        return value * 3
+
+    @do
+    def workflow() -> EffectGenerator[tuple[int, int]]:
+        first = yield expensive(7)
+        second = yield expensive(7)
+        return first, second
+
+    result = run(
+        WithHandler(observe_context, WithHandler(in_memory_cache_handler(), workflow())),
+        handlers=default_handlers(),
+        print_doeff_trace=False,
+    )
+
+    assert result.is_ok(), result.error
+    assert result.value == (21, 21)
+    assert seen == []
+
+
 def test_in_memory_cache_handler() -> None:
     @do
     def workflow() -> EffectGenerator[str]:

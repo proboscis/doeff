@@ -243,8 +243,11 @@ mod tests {
     fn test_segment_frame_push_pop_o1() {
         let marker = Marker::fresh();
         let mut seg = Segment::new(marker, None);
-        let continuation =
-            crate::continuation::Continuation::capture(&Segment::new(marker, None), SegmentId::from_index(0), None);
+        let continuation = crate::continuation::Continuation::capture(
+            &Segment::new(marker, None),
+            SegmentId::from_index(0),
+            None,
+        );
 
         seg.push_frame(Frame::FlatMapBindResult);
         seg.push_frame(Frame::HandlerDispatch {
@@ -273,8 +276,11 @@ mod tests {
     fn test_segment_dispatch_origin_cache_tracks_push_pop_and_clear() {
         let marker = Marker::fresh();
         let mut seg = Segment::new(marker, None);
-        let continuation =
-            crate::continuation::Continuation::capture(&Segment::new(marker, None), SegmentId::from_index(0), None);
+        let continuation = crate::continuation::Continuation::capture(
+            &Segment::new(marker, None),
+            SegmentId::from_index(0),
+            None,
+        );
 
         pyo3::Python::attach(|py| {
             let effect = crate::py_shared::PyShared::new(py.None());
@@ -318,7 +324,9 @@ mod tests {
 
             seg.clear_frames();
             assert!(seg.current_dispatch_origin_frame().is_none());
-            assert!(seg.dispatch_origin_frame_for_dispatch(dispatch_one).is_none());
+            assert!(seg
+                .dispatch_origin_frame_for_dispatch(dispatch_one)
+                .is_none());
         });
     }
 }
