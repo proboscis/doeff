@@ -4,15 +4,25 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+try:
+    from pydantic import BaseModel
+except (ImportError, TypeError):
+    pytest.skip("pydantic not compatible with this Python version", allow_module_level=True)
+
+try:
+    from doeff_openai.handlers import (
+        MockOpenAIConfig,
+        MockOpenAIState,
+        openai_mock_handler,
+    )
+except (ImportError, TypeError):
+    pytest.skip("openai not compatible with this Python version", allow_module_level=True)
+
 from doeff_gemini.handlers import gemini_mock_handler
 from doeff_llm.effects import LLMChat, LLMStructuredQuery
-from doeff_openai.handlers import (
-    MockOpenAIConfig,
-    MockOpenAIState,
-    openai_mock_handler,
-)
 from doeff_openrouter.handlers import MockOpenRouterRuntime, openrouter_mock_handler
-from pydantic import BaseModel
 
 from doeff import Effect, EffectGenerator, WithHandler, default_handlers, do, run
 
