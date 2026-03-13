@@ -9,7 +9,8 @@ use crate::frame::CallMetadata;
 use crate::frame::Frame;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
+use crate::py_shared::OpaqueRefPyExt;
 use crate::segment::{ScopeStore, Segment};
 use crate::step::{Mode, PendingPython, PyException};
 use crate::value::Value;
@@ -45,7 +46,7 @@ pub struct Continuation {
     /// started=false => created (unstarted) continuation
     pub started: bool,
 
-    pub program: Option<PyShared>,
+    pub program: Option<OpaqueRef>,
 
     /// Handlers to install when started=false (innermost first).
     /// Empty for captured (started=true) continuations.
@@ -53,7 +54,7 @@ pub struct Continuation {
 
     /// Optional Python identities corresponding to handlers by index.
     /// Used to preserve Rust sentinel identity across continuation round-trips.
-    pub handler_identities: Vec<Option<PyShared>>,
+    pub handler_identities: Vec<Option<OpaqueRef>>,
 
     /// Optional call metadata to attach when starting unstarted continuations.
     pub metadata: Option<CallMetadata>,
@@ -133,12 +134,12 @@ impl Continuation {
         }
     }
 
-    pub fn create_unstarted(expr: PyShared, handlers: Vec<KleisliRef>) -> Self {
+    pub fn create_unstarted(expr: OpaqueRef, handlers: Vec<KleisliRef>) -> Self {
         Self::create_unstarted_with_metadata(expr, handlers, None)
     }
 
     pub fn create_unstarted_with_metadata(
-        expr: PyShared,
+        expr: OpaqueRef,
         handlers: Vec<KleisliRef>,
         metadata: Option<CallMetadata>,
     ) -> Self {
@@ -165,9 +166,9 @@ impl Continuation {
     }
 
     pub fn create_unstarted_with_identities(
-        expr: PyShared,
+        expr: OpaqueRef,
         handlers: Vec<KleisliRef>,
-        handler_identities: Vec<Option<PyShared>>,
+        handler_identities: Vec<Option<OpaqueRef>>,
     ) -> Self {
         Self::create_unstarted_with_identities_and_metadata(
             expr,
@@ -178,9 +179,9 @@ impl Continuation {
     }
 
     pub fn create_unstarted_with_identities_and_metadata(
-        expr: PyShared,
+        expr: OpaqueRef,
         handlers: Vec<KleisliRef>,
-        handler_identities: Vec<Option<PyShared>>,
+        handler_identities: Vec<Option<OpaqueRef>>,
         metadata: Option<CallMetadata>,
     ) -> Self {
         Continuation {

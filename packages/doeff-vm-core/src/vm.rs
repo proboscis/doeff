@@ -19,7 +19,7 @@ use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
-    dispatch_ref_as_python, dispatch_to_pyobject, make_get_execution_context_effect,
+    dispatch_ref_as_opaque, dispatch_to_pyobject, make_get_execution_context_effect,
     DispatchEffect, PyExecutionContext, PyGetExecutionContext,
 };
 #[cfg(test)]
@@ -30,7 +30,8 @@ use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::interceptor_state::InterceptorState;
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{IdentityKleisli, KleisliRef};
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
+use crate::py_shared::{OpaqueRefPyExt, PyShared};
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::pyvm::{
     classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, DoExprTag, PyDoExprBase,
@@ -502,10 +503,10 @@ impl VM {
     }
 
     fn same_effect_python_type(a: &DispatchEffect, b: &DispatchEffect) -> bool {
-        let Some(a_obj) = dispatch_ref_as_python(a) else {
+        let Some(a_obj) = dispatch_ref_as_opaque(a) else {
             return false;
         };
-        let Some(b_obj) = dispatch_ref_as_python(b) else {
+        let Some(b_obj) = dispatch_ref_as_opaque(b) else {
             return false;
         };
         Python::attach(|py| {
@@ -1397,8 +1398,8 @@ impl VM {
             }
 
             let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
-                PyShared::new(wrapped.generator.clone_ref(py)),
-                PyShared::new(wrapped.get_frame.clone_ref(py)),
+                OpaqueRef::new(wrapped.generator.clone_ref(py)),
+                OpaqueRef::new(wrapped.get_frame.clone_ref(py)),
             )) as Box<dyn IRStream>));
             Ok((
                 stream,
@@ -1426,7 +1427,7 @@ impl VM {
 
     fn value_variant_name(value: &Value) -> &'static str {
         match value {
-            Value::Python(_) => "Python",
+            Value::Opaque(_) => "Opaque",
             Value::Unit => "Unit",
             Value::Int(_) => "Int",
             Value::String(_) => "String",
@@ -1451,7 +1452,7 @@ impl VM {
     }
 
     fn is_execution_context_effect(effect: &DispatchEffect) -> bool {
-        let Some(obj) = dispatch_ref_as_python(effect) else {
+        let Some(obj) = dispatch_ref_as_opaque(effect) else {
             return false;
         };
         Python::attach(|py| {
@@ -1522,7 +1523,7 @@ impl VM {
             }),
             args: vec![
                 DoCtrl::Pure {
-                    value: Value::Python(effect_obj),
+                    value: Value::Opaque(OpaqueRef::new(effect_obj)),
                 },
                 DoCtrl::Pure {
                     value: Value::Continuation(continuation),
@@ -1837,7 +1838,7 @@ impl VM {
             return Ok(());
         }
         let context_obj = match value {
-            Value::Python(obj) => obj,
+            Value::Opaque(obj) => obj,
             other => {
                 return Err(VMError::python_error(format!(
                     "GetExecutionContext handler must return ExecutionContext, got {}",
@@ -1877,7 +1878,7 @@ impl VM {
                     ))
                 })?;
                 active_chain.push(ActiveChainEntry::ContextEntry {
-                    data: entry.unbind(),
+                    data: OpaqueRef::new(entry.unbind()),
                 });
             }
 
@@ -2525,7 +2526,7 @@ impl VM {
 
     fn step_map_return_frame(
         &mut self,
-        mapper: PyShared,
+        mapper: OpaqueRef,
         mapper_meta: CallMetadata,
         mode: Mode,
     ) -> StepEvent {
@@ -2533,7 +2534,7 @@ impl VM {
             Mode::Deliver(value) => {
                 self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
                     f: Box::new(DoCtrl::Pure {
-                        value: Value::Python(mapper.into_inner()),
+                        value: Value::Opaque(mapper),
                     }),
                     args: vec![DoCtrl::Pure { value }],
                     kwargs: vec![],
@@ -2575,7 +2576,7 @@ impl VM {
 
     fn step_flat_map_bind_source_frame(
         &mut self,
-        binder: PyShared,
+        binder: OpaqueRef,
         binder_meta: CallMetadata,
         mode: Mode,
     ) -> StepEvent {
@@ -2589,7 +2590,7 @@ impl VM {
                 seg.push_frame(Frame::FlatMapBindResult);
                 seg.mode = Mode::HandleYield(DoCtrl::Expand {
                     factory: Box::new(DoCtrl::Pure {
-                        value: Value::Python(binder.into_inner()),
+                        value: Value::Opaque(binder),
                     }),
                     args: vec![DoCtrl::Pure { value }],
                     kwargs: vec![],
@@ -2807,7 +2808,7 @@ impl VM {
     fn classify_interceptor_result_object(
         &self,
         result_obj: Py<PyAny>,
-        original_obj: &PyShared,
+        original_obj: &OpaqueRef,
         original_yielded: DoCtrl,
     ) -> Result<DoCtrl, PyException> {
         Python::attach(|py| {
@@ -2821,14 +2822,15 @@ impl VM {
     fn classify_interceptor_eval_result(
         &self,
         value: Value,
-        original_obj: &PyShared,
+        original_obj: &OpaqueRef,
         original_yielded: DoCtrl,
     ) -> Result<DoCtrl, PyException> {
-        let Value::Python(result_obj) = value else {
+        let Value::Opaque(result_ref) = value else {
             return Err(PyException::type_error(
                 "WithIntercept effectful interceptor must resolve to DoExpr",
             ));
         };
+        let result_obj = Python::attach(|py| result_ref.clone_ref(py));
         self.classify_interceptor_result_object(result_obj, original_obj, original_yielded)
     }
 
@@ -2973,7 +2975,7 @@ impl VM {
         let continuation = InterceptorContinuation {
             marker,
             original_yielded: yielded,
-            original_obj: PyShared::new(yielded_obj_for_continuation),
+            original_obj: OpaqueRef::new(yielded_obj_for_continuation),
             emitter_stream: stream,
             emitter_metadata: metadata,
             emitter_handler_kind: handler_kind,
@@ -2998,7 +3000,7 @@ impl VM {
                 value: Value::Kleisli(interceptor_kleisli),
             }),
             args: vec![DoCtrl::Pure {
-                value: Value::Python(yielded_obj),
+                value: Value::Opaque(OpaqueRef::new(yielded_obj)),
             }],
             kwargs: vec![],
             metadata: apply_metadata,
@@ -3022,12 +3024,13 @@ impl VM {
             guard_eval_depth,
             ..
         } = continuation;
-        let Value::Python(result_obj) = value else {
+        let Value::Opaque(result_ref) = value else {
             self.pop_interceptor_skip(marker);
             return Mode::Throw(PyException::type_error(
                 "WithIntercept interceptor must return DoExpr",
             ));
         };
+        let result_obj = Python::attach(|py| result_ref.clone_ref(py));
 
         let (is_direct_expr, is_doexpr) = InterceptorState::classify_result_shape(&result_obj);
 
@@ -3076,7 +3079,7 @@ impl VM {
             })));
 
             return Mode::HandleYield(DoCtrl::Eval {
-                expr: PyShared::new(result_obj),
+                expr: OpaqueRef::new(result_obj),
                 metadata: None,
             });
         }
@@ -3229,8 +3232,8 @@ impl VM {
 
     fn handle_yield_map(
         &mut self,
-        source: PyShared,
-        mapper: PyShared,
+        source: OpaqueRef,
+        mapper: OpaqueRef,
         mapper_meta: CallMetadata,
     ) -> StepEvent {
         self.handle_map(source, mapper, mapper_meta)
@@ -3238,8 +3241,8 @@ impl VM {
 
     fn handle_yield_flat_map(
         &mut self,
-        source: PyShared,
-        binder: PyShared,
+        source: OpaqueRef,
+        binder: OpaqueRef,
         binder_meta: CallMetadata,
     ) -> StepEvent {
         self.handle_flat_map(source, binder, binder_meta)
@@ -3288,10 +3291,11 @@ impl VM {
         &mut self,
         interceptor: KleisliRef,
         body: DoCtrl,
-        types: Option<Vec<PyShared>>,
+        types: Option<Vec<OpaqueRef>>,
         mode: InterceptMode,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
+        let types = types.map(|v| v.into_iter().map(PyShared::from_opaque_unwrap).collect());
         self.handle_with_intercept(interceptor, body, types, mode, metadata)
     }
 
@@ -3317,9 +3321,9 @@ impl VM {
 
     fn handle_yield_create_continuation(
         &mut self,
-        expr: PyShared,
+        expr: OpaqueRef,
         handlers: Vec<KleisliRef>,
-        handler_identities: Vec<Option<PyShared>>,
+        handler_identities: Vec<Option<OpaqueRef>>,
     ) -> StepEvent {
         self.handle_create_continuation(expr, handlers, handler_identities)
     }
@@ -3332,10 +3336,10 @@ impl VM {
         self.handle_resume_continuation(continuation, value)
     }
 
-    fn handle_yield_python_async_syntax_escape(&mut self, action: Py<PyAny>) -> StepEvent {
+    fn handle_yield_python_async_syntax_escape(&mut self, action: OpaqueRef) -> StepEvent {
         self.current_seg_mut().pending_python = Some(PendingPython::AsyncEscape);
         StepEvent::NeedsPython(PythonCall::CallAsync {
-            func: PyShared::new(action),
+            func: action,
             args: vec![],
         })
     }
@@ -3396,7 +3400,7 @@ impl VM {
         };
 
         let func = match f_value {
-            Value::Python(func) => PyShared::new(func),
+            Value::Opaque(func) => func,
             Value::Kleisli(kleisli) => {
                 let args_values = Self::collect_value_args(args);
                 let kwargs_values = Self::collect_value_kwargs(kwargs);
@@ -3488,7 +3492,7 @@ impl VM {
         };
 
         let (func, handler_return) = match factory_value {
-            Value::Python(factory) => (PyShared::new(factory), false),
+            Value::Opaque(factory) => (factory, false),
             Value::Kleisli(kleisli) => {
                 let args_values = Self::collect_value_args(args);
                 let kwargs_values = Self::collect_value_kwargs(kwargs);
@@ -3571,7 +3575,7 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
+    fn handle_yield_eval(&mut self, expr: OpaqueRef, metadata: Option<CallMetadata>) -> StepEvent {
         let handlers = self.current_visible_handlers();
         let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
         self.handle_resume_continuation(cont, Value::None)
@@ -3579,7 +3583,7 @@ impl VM {
 
     fn handle_yield_eval_in_scope(
         &mut self,
-        expr: PyShared,
+        expr: OpaqueRef,
         scope: Continuation,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
@@ -3966,11 +3970,11 @@ impl VM {
     }
 
     fn returned_control_primitive_signature(value: &Value) -> Option<&'static str> {
-        let Value::Python(result_obj) = value else {
+        let Value::Opaque(result_ref) = value else {
             return None;
         };
 
-        Python::attach(|py| match doctrl_tag(result_obj.bind(py)) {
+        Python::attach(|py| match doctrl_tag(result_ref.bind(py)) {
             Some(DoExprTag::Pass) => Some("Pass()"),
             Some(DoExprTag::Resume) => Some("Resume(k, value)"),
             Some(DoExprTag::Delegate) => Some("Delegate()"),
@@ -4012,8 +4016,8 @@ impl VM {
 
     fn receive_expand_handler_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
         match value {
-            Value::Python(handler_gen) => {
-                match Self::extract_doeff_generator(handler_gen, metadata, "ExpandReturn(handler)")
+            Value::Opaque(handler_ref) => {
+                match Self::extract_doeff_generator(Python::attach(|py| handler_ref.clone_ref(py)), metadata, "ExpandReturn(handler)")
                 {
                     Ok((stream, metadata)) => {
                         let Some(_dispatch_id) = self
@@ -4071,13 +4075,13 @@ impl VM {
         value: Value,
         context: &str,
     ) -> Result<DoCtrl, PyException> {
-        let Value::Python(result_obj) = value else {
+        let Value::Opaque(result_ref) = value else {
             return Err(PyException::type_error(format!(
                 "{context}: expected DoeffGenerator, DoExpr, or EffectBase, got {value:?}"
             )));
         };
-
         Python::attach(|py| {
+            let result_obj = result_ref.clone_ref(py);
             let bound = result_obj.bind(py);
             if bound.is_instance_of::<DoeffGenerator>() {
                 let (stream, metadata) =
@@ -4564,7 +4568,7 @@ impl VM {
         &mut self,
         marker: Marker,
         handler: KleisliRef,
-        _py_identity: Option<PyShared>,
+        _py_identity: Option<OpaqueRef>,
     ) {
         self.installed_handlers
             .retain(|entry| entry.marker != marker);
@@ -4591,7 +4595,7 @@ impl VM {
         marker: Marker,
         prompt_seg_id: SegmentId,
         handler: KleisliRef,
-        _py_identity: Option<PyShared>,
+        _py_identity: Option<OpaqueRef>,
     ) -> bool {
         let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
             let prompt_seg = Segment::new_prompt(marker, None, marker, handler.clone());
@@ -4824,8 +4828,9 @@ impl VM {
         &mut self,
         handler: KleisliRef,
         program: DoCtrl,
-        types: Option<Vec<PyShared>>,
+        types: Option<Vec<OpaqueRef>>,
     ) -> StepEvent {
+        let types = types.map(|v| v.into_iter().map(PyShared::from_opaque_unwrap).collect());
         let plan = match Self::prepare_with_handler(handler, self.current_segment) {
             Ok(plan) => plan,
             Err(err) => return StepEvent::Error(err),
@@ -5122,8 +5127,8 @@ impl VM {
 
     fn handle_map(
         &mut self,
-        source: PyShared,
-        mapper: PyShared,
+        source: OpaqueRef,
+        mapper: OpaqueRef,
         mapper_meta: CallMetadata,
     ) -> StepEvent {
         let Some(seg) = self.current_segment_mut() else {
@@ -5142,8 +5147,8 @@ impl VM {
 
     fn handle_flat_map(
         &mut self,
-        source: PyShared,
-        binder: PyShared,
+        source: OpaqueRef,
+        binder: OpaqueRef,
         binder_meta: CallMetadata,
     ) -> StepEvent {
         let Some(seg) = self.current_segment_mut() else {
@@ -5205,9 +5210,9 @@ impl VM {
 
     fn handle_create_continuation(
         &mut self,
-        program: PyShared,
+        program: OpaqueRef,
         handlers: Vec<KleisliRef>,
-        handler_identities: Vec<Option<PyShared>>,
+        handler_identities: Vec<Option<OpaqueRef>>,
     ) -> StepEvent {
         let k =
             Continuation::create_unstarted_with_identities(program, handlers, handler_identities);

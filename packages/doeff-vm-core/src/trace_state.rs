@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
+use crate::opaque_ref::OpaqueRef;
+use crate::py_shared::OpaqueRefPyExt;
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectCreationSite,
     EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry,
@@ -492,7 +494,7 @@ impl TraceState {
         original: PyException,
         context_value: Value,
     ) -> Result<PyException, PyException> {
-        let Value::Python(new_context) = context_value else {
+        let Value::Opaque(new_context) = context_value else {
             let err = PyException::type_error(
                 "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
             );
@@ -1473,7 +1475,7 @@ impl TraceState {
         let context_entries = exception.map_or_else(Vec::new, Self::context_entries_from_exception);
         let has_context_entries = !context_entries.is_empty();
         for data in context_entries {
-            active_chain.push(ActiveChainEntry::ContextEntry { data });
+            active_chain.push(ActiveChainEntry::ContextEntry { data: OpaqueRef::new(data) });
         }
 
         let Some(exception) = exception else {

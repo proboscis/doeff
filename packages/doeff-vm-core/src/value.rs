@@ -1,6 +1,7 @@
 //! Value types that flow through the VM.
 //!
-//! Values can be either Rust-native (for optimization) or Python objects.
+//! Values can be either Rust-native (for optimization) or opaque runtime
+//! objects wrapped in `OpaqueRef`.
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString};
@@ -12,7 +13,8 @@ use crate::capture::{
 use crate::frame::CallMetadata;
 use crate::ids::{PromiseId, TaskId};
 use crate::kleisli::KleisliRef;
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
+use crate::py_shared::OpaqueRefPyExt;
 use crate::pyvm::{PyTraceFrame, PyTraceHop};
 
 /// Opaque handle to a spawned task.
@@ -31,16 +33,16 @@ pub struct PromiseHandle {
 #[derive(Clone, Debug)]
 pub struct ExternalPromise {
     pub id: PromiseId,
-    pub completion_queue: Option<PyShared>,
+    pub completion_queue: Option<OpaqueRef>,
 }
 
 /// A value that can flow through the VM.
 ///
-/// Can be either a Rust-native value or a Python object.
+/// Can be either a Rust-native value or an opaque runtime object.
 /// Rust-native variants avoid Python overhead for common cases.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Value {
-    Python(Py<PyAny>),
+    Opaque(OpaqueRef),
     Unit,
     Int(i64),
     String(String),
@@ -323,7 +325,7 @@ impl Value {
             }
             ActiveChainEntry::ContextEntry { data } => {
                 dict.set_item("kind", "context_entry")?;
-                dict.set_item("data", data.clone_ref(py))?;
+                dict.set_item("data", data.bind(py))?;
             }
             ActiveChainEntry::ExceptionSite {
                 function_name,
@@ -345,7 +347,7 @@ impl Value {
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         match self {
-            Value::Python(obj) => Ok(obj.bind(py).clone()),
+            Value::Opaque(obj) => Ok(obj.bind(py).clone()),
             Value::Unit => Ok(py.None().into_bound(py)),
             Value::Int(i) => Ok(i.into_pyobject(py)?.into_any()),
             Value::String(s) => Ok(PyString::new(py, s).into_any()),
@@ -453,7 +455,7 @@ impl Value {
 
     /// Preserve a Python object as-is without VM-side type coercion.
     pub fn from_python_opaque(obj: &Bound<'_, PyAny>) -> Self {
-        Value::Python(obj.clone().unbind())
+        Value::Opaque(OpaqueRef::new(obj.clone().unbind()))
     }
 
     pub fn from_pyobject(obj: &Bound<'_, PyAny>) -> Self {
@@ -469,7 +471,7 @@ impl Value {
         if let Ok(s) = obj.extract::<String>() {
             return Value::String(s);
         }
-        Value::Python(obj.clone().unbind())
+        Value::Opaque(OpaqueRef::new(obj.clone().unbind()))
     }
 
     /// Create from Python object, consuming it.
@@ -482,31 +484,16 @@ impl Value {
         matches!(self, Value::None | Value::Unit)
     }
 
-    /// Check if this is a Python object.
-    pub fn is_python(&self) -> bool {
-        matches!(self, Value::Python(_))
+    /// Check if this is an opaque runtime object.
+    pub fn is_opaque(&self) -> bool {
+        matches!(self, Value::Opaque(_))
     }
 
     /// Try to get as i64.
     pub fn as_int(&self) -> Option<i64> {
         match self {
             Value::Int(i) => Some(*i),
-            Value::Python(_)
-            | Value::Unit
-            | Value::String(_)
-            | Value::Bool(_)
-            | Value::None
-            | Value::Continuation(_)
-            | Value::Handlers(_)
-            | Value::Kleisli(_)
-            | Value::Task(_)
-            | Value::Promise(_)
-            | Value::ExternalPromise(_)
-            | Value::CallStack(_)
-            | Value::Trace(_)
-            | Value::Traceback(_)
-            | Value::ActiveChain(_)
-            | Value::List(_) => None,
+            _ => None,
         }
     }
 
@@ -514,22 +501,7 @@ impl Value {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::String(s) => Some(s),
-            Value::Python(_)
-            | Value::Unit
-            | Value::Int(_)
-            | Value::Bool(_)
-            | Value::None
-            | Value::Continuation(_)
-            | Value::Handlers(_)
-            | Value::Kleisli(_)
-            | Value::Task(_)
-            | Value::Promise(_)
-            | Value::ExternalPromise(_)
-            | Value::CallStack(_)
-            | Value::Trace(_)
-            | Value::Traceback(_)
-            | Value::ActiveChain(_)
-            | Value::List(_) => None,
+            _ => None,
         }
     }
 
@@ -537,22 +509,7 @@ impl Value {
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Value::Bool(b) => Some(*b),
-            Value::Python(_)
-            | Value::Unit
-            | Value::Int(_)
-            | Value::String(_)
-            | Value::None
-            | Value::Continuation(_)
-            | Value::Handlers(_)
-            | Value::Kleisli(_)
-            | Value::Task(_)
-            | Value::Promise(_)
-            | Value::ExternalPromise(_)
-            | Value::CallStack(_)
-            | Value::Trace(_)
-            | Value::Traceback(_)
-            | Value::ActiveChain(_)
-            | Value::List(_) => None,
+            _ => None,
         }
     }
 
@@ -560,22 +517,15 @@ impl Value {
     pub fn as_handlers(&self) -> Option<&[KleisliRef]> {
         match self {
             Value::Handlers(h) => Some(h),
-            Value::Python(_)
-            | Value::Unit
-            | Value::Int(_)
-            | Value::String(_)
-            | Value::Bool(_)
-            | Value::None
-            | Value::Continuation(_)
-            | Value::Kleisli(_)
-            | Value::Task(_)
-            | Value::Promise(_)
-            | Value::ExternalPromise(_)
-            | Value::CallStack(_)
-            | Value::Trace(_)
-            | Value::Traceback(_)
-            | Value::ActiveChain(_)
-            | Value::List(_) => None,
+            _ => None,
+        }
+    }
+
+    /// Try to get the inner OpaqueRef.
+    pub fn as_opaque(&self) -> Option<&OpaqueRef> {
+        match self {
+            Value::Opaque(o) => Some(o),
+            _ => None,
         }
     }
 }
@@ -587,42 +537,9 @@ impl Default for Value {
 }
 
 impl Value {
-    pub fn clone_ref(&self, py: Python<'_>) -> Self {
-        match self {
-            Value::Python(obj) => Value::Python(obj.clone_ref(py)),
-            Value::Unit => Value::Unit,
-            Value::Int(i) => Value::Int(*i),
-            Value::String(s) => Value::String(s.clone()),
-            Value::Bool(b) => Value::Bool(*b),
-            Value::None => Value::None,
-            Value::Continuation(k) => Value::Continuation(k.clone()),
-            Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
-            Value::Kleisli(kleisli) => Value::Kleisli(kleisli.clone()),
-            Value::Task(h) => Value::Task(*h),
-            Value::Promise(h) => Value::Promise(*h),
-            Value::ExternalPromise(h) => Value::ExternalPromise(h.clone()),
-            Value::CallStack(stack) => Value::CallStack(stack.clone()),
-            Value::Trace(entries) => Value::Trace(entries.clone()),
-            Value::Traceback(hops) => Value::Traceback(hops.clone()),
-            Value::ActiveChain(entries) => Value::ActiveChain(entries.clone()),
-            Value::List(items) => Value::List(items.iter().map(|v| v.clone_ref(py)).collect()),
-        }
-    }
-}
-
-impl Clone for Value {
-    fn clone(&self) -> Self {
-        Python::attach(|py| self.clone_ref(py))
-    }
-}
-
-impl Value {
     pub fn from_effect(effect: &crate::effect::Effect) -> Self {
-        if let Some(py_obj) = effect.as_python() {
-            // SAFETY: from_effect only clones an existing Py<PyAny> from VM-managed effect values,
-            // and all callers execute under attached Python contexts.
-            let py = unsafe { pyo3::Python::assume_attached() };
-            return Value::Python(py_obj.clone_ref(py));
+        if let Some(opaque) = effect.as_opaque() {
+            return Value::Opaque(opaque.clone());
         }
         Value::None
     }
@@ -693,7 +610,6 @@ mod tests {
     #[test]
     fn test_value_task_and_promise() {
         use crate::ids::{PromiseId, TaskId};
-        use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 
         let task = Value::Task(TaskHandle {
             id: TaskId::from_raw(1),
@@ -710,5 +626,14 @@ mod tests {
         assert!(matches!(task, Value::Task(_)));
         assert!(matches!(promise, Value::Promise(_)));
         assert!(matches!(ext, Value::ExternalPromise(_)));
+    }
+
+    #[test]
+    fn test_value_opaque_clone() {
+        // OpaqueRef clone is cheap (Arc clone) — no GIL needed
+        let opaque = OpaqueRef::new(42u64);
+        let val = Value::Opaque(opaque);
+        let cloned = val.clone();
+        assert!(cloned.is_opaque());
     }
 }

@@ -9,7 +9,7 @@ use crate::do_ctrl::DoCtrl;
 use crate::effect::DispatchEffect;
 use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::ir_stream::IRStreamRef;
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -28,7 +28,7 @@ pub struct CallMetadata {
     pub source_file: String,
     pub source_line: u32,
     pub args_repr: Option<String>,
-    pub program_call: Option<PyShared>,
+    pub program_call: Option<OpaqueRef>,
 }
 
 impl CallMetadata {
@@ -37,7 +37,7 @@ impl CallMetadata {
         source_file: String,
         source_line: u32,
         args_repr: Option<String>,
-        program_call: Option<PyShared>,
+        program_call: Option<OpaqueRef>,
     ) -> Self {
         CallMetadata {
             frame_id: fresh_frame_id(),
@@ -71,7 +71,7 @@ impl CallMetadata {
 pub struct InterceptorContinuation {
     pub marker: Marker,
     pub original_yielded: DoCtrl,
-    pub original_obj: PyShared,
+    pub original_obj: OpaqueRef,
     pub emitter_stream: IRStreamRef,
     pub emitter_metadata: Option<CallMetadata>,
     pub emitter_handler_kind: Option<HandlerKind>,
@@ -147,12 +147,12 @@ pub enum Frame {
     },
     EvalReturn(Box<EvalReturnContinuation>),
     MapReturn {
-        mapper: PyShared,
+        mapper: OpaqueRef,
         mapper_meta: CallMetadata,
     },
     FlatMapBindResult,
     FlatMapBindSource {
-        binder: PyShared,
+        binder: OpaqueRef,
         binder_meta: CallMetadata,
     },
     InterceptBodyReturn {

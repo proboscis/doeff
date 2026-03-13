@@ -9,12 +9,13 @@ use pyo3::types::{PyDict, PyTuple};
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
-use crate::effect::{dispatch_from_shared, DispatchEffect};
+use crate::effect::{dispatch_from_opaque, DispatchEffect};
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{IRStreamFactoryRef, IRStreamProgramRef};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
+use crate::py_shared::{OpaqueRefPyExt, PyShared};
 use crate::pyvm::PyK;
 use crate::segment::ScopeStore;
 use crate::value::Value;
@@ -60,8 +61,8 @@ pub trait Kleisli: std::fmt::Debug + Send + Sync {
         self.debug_info().name
     }
 
-    /// Optional Python identity for handler self-exclusion (OCaml semantics).
-    fn py_identity(&self) -> Option<PyShared> {
+    /// Optional identity for handler self-exclusion (OCaml semantics).
+    fn py_identity(&self) -> Option<OpaqueRef> {
         None
     }
 
@@ -87,15 +88,15 @@ pub trait Kleisli: std::fmt::Debug + Send + Sync {
 /// Shared reference to a Kleisli arrow.
 pub type KleisliRef = Arc<dyn Kleisli>;
 
-/// Kleisli wrapper that preserves a specific Python identity object.
+/// Kleisli wrapper that preserves a specific identity object.
 #[derive(Debug, Clone)]
 pub struct IdentityKleisli {
     inner: KleisliRef,
-    identity: PyShared,
+    identity: OpaqueRef,
 }
 
 impl IdentityKleisli {
-    pub fn new(inner: KleisliRef, identity: PyShared) -> Self {
+    pub fn new(inner: KleisliRef, identity: OpaqueRef) -> Self {
         Self { inner, identity }
     }
 }
@@ -118,7 +119,7 @@ impl Kleisli for IdentityKleisli {
         self.inner.debug_info()
     }
 
-    fn py_identity(&self) -> Option<PyShared> {
+    fn py_identity(&self) -> Option<OpaqueRef> {
         Some(self.identity.clone())
     }
 
@@ -346,7 +347,7 @@ impl PyKleisli {
             Value::Continuation(k) => Bound::new(py, PyK::from_cont_id(k.cont_id))
                 .map(|obj| obj.into_any())
                 .map_err(Self::map_pyerr),
-            Value::Python(_)
+            Value::Opaque(_)
             | Value::Unit
             | Value::Int(_)
             | Value::String(_)
@@ -411,7 +412,10 @@ impl Kleisli for PyKleisli {
             (produced.unbind(), Self::default_get_frame(py)?)
         };
 
-        let stream = PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
+        let stream = PythonGeneratorStream::new(
+            OpaqueRef::new(generator),
+            OpaqueRef::new(get_frame),
+        );
         let stream_ref: IRStreamRef = Arc::new(Mutex::new(Box::new(stream)));
         let metadata = CallMetadata::new(
             self.name.clone(),
@@ -435,14 +439,14 @@ impl Kleisli for PyKleisli {
         }
     }
 
-    fn py_identity(&self) -> Option<PyShared> {
+    fn py_identity(&self) -> Option<OpaqueRef> {
         Python::attach(|py| {
             if let Ok(factory) = self.func.bind(py).getattr("_doeff_generator_factory") {
                 if let Ok(callable) = factory.getattr("callable") {
-                    return Some(PyShared::new(callable.unbind()));
+                    return Some(OpaqueRef::new(callable.unbind()));
                 }
             }
-            Some(self.func.clone())
+            Some(self.func.as_opaque().clone())
         })
     }
 }
@@ -450,7 +454,7 @@ impl Kleisli for PyKleisli {
 #[derive(Debug, Clone)]
 pub struct DgfnKleisli {
     inner: PyKleisli,
-    callable_identity: PyShared,
+    callable_identity: OpaqueRef,
 }
 
 impl DgfnKleisli {
@@ -462,7 +466,7 @@ impl DgfnKleisli {
         let inner = PyKleisli::from_handler(py, dgfn_obj)?;
         Ok(Self {
             inner,
-            callable_identity: PyShared::new(callable_identity),
+            callable_identity: OpaqueRef::new(callable_identity),
         })
     }
 }
@@ -476,7 +480,7 @@ impl Kleisli for DgfnKleisli {
         self.inner.debug_info()
     }
 
-    fn py_identity(&self) -> Option<PyShared> {
+    fn py_identity(&self) -> Option<OpaqueRef> {
         Some(self.callable_identity.clone())
     }
 }
@@ -533,7 +537,7 @@ impl Kleisli for PyCallableKleisli {
             .call1(arg_tuple)
             .map_err(PyKleisli::map_pyerr)?;
         Ok(DoCtrl::Pure {
-            value: Value::Python(produced.unbind()),
+            value: Value::Opaque(OpaqueRef::new(produced.unbind())),
         })
     }
 
@@ -545,8 +549,8 @@ impl Kleisli for PyCallableKleisli {
         }
     }
 
-    fn py_identity(&self) -> Option<PyShared> {
-        Some(self.func.clone())
+    fn py_identity(&self) -> Option<OpaqueRef> {
+        Some(self.func.as_opaque().clone())
     }
 }
 
@@ -640,10 +644,10 @@ impl Kleisli for RustKleisli {
         }
 
         let effect = match &args[0] {
-            Value::Python(obj) => dispatch_from_shared(PyShared::new(obj.clone_ref(py))),
+            Value::Opaque(obj) => dispatch_from_opaque(obj.clone()),
             other => {
                 return Err(VMError::type_error(format!(
-                    "RustKleisli arg[0] must be Python effect, got {other:?}"
+                    "RustKleisli arg[0] must be Opaque effect, got {other:?}"
                 )))
             }
         };

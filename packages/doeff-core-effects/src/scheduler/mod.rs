@@ -29,6 +29,7 @@ use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
+use doeff_vm_core::opaque_ref::OpaqueRef;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
 use crate::segment::ScopeStore;
 use crate::step::{DoCtrl, PyException, PythonCall};
@@ -916,7 +917,7 @@ fn make_python_semaphore_value(semaphore_id: u64, state_id: u64) -> Result<Value
                 ))
             })?
             .into_any();
-        Ok(Value::Python(semaphore.unbind()))
+        Ok(Value::Opaque(OpaqueRef::new(semaphore.unbind())))
     })
 }
 
@@ -941,7 +942,7 @@ fn make_async_external_wait_step() -> Result<IRStreamStep, PyException> {
             ))
         })?;
         Ok(IRStreamStep::NeedsPython(PythonCall::CallAsync {
-            func: PyShared::new(sleep.unbind()),
+            func: OpaqueRef::new(sleep.unbind()),
             args: vec![Value::Int(0)],
         }))
     })
@@ -2515,7 +2516,7 @@ impl SchedulerProgram {
                 }
             }
 
-            resume_to_continuation(k_user, Value::Python(context))
+            resume_to_continuation(k_user, Value::Opaque(OpaqueRef::new(context)))
         })
     }
 
@@ -2762,7 +2763,7 @@ impl IRStreamProgram for SchedulerProgram {
                     k_user,
                     Value::ExternalPromise(ExternalPromise {
                         id: pid,
-                        completion_queue: Some(completion_queue),
+                        completion_queue: Some(completion_queue.into_opaque()),
                     }),
                 )
             }
@@ -2852,7 +2853,7 @@ impl IRStreamProgram for SchedulerProgram {
             SchedulerPhase::SpawnAwaitTraceback { k_user, effect } => {
                 let traceback = match value {
                     Value::Traceback(hops) => hops,
-                    Value::Python(_)
+                    Value::Opaque(_)
                     | Value::Unit
                     | Value::Int(_)
                     | Value::String(_)
@@ -2942,7 +2943,7 @@ impl IRStreamProgram for SchedulerProgram {
                 };
 
                 IRStreamStep::Yield(DoCtrl::CreateContinuation {
-                    expr: PyShared::new(program),
+                    expr: OpaqueRef::new(program),
                     handlers,
                     handler_identities: vec![],
                 })
@@ -2958,7 +2959,7 @@ impl IRStreamProgram for SchedulerProgram {
             } => {
                 let handlers = match value {
                     Value::Handlers(hs) => hs,
-                    Value::Python(_)
+                    Value::Opaque(_)
                     | Value::Unit
                     | Value::Int(_)
                     | Value::String(_)
@@ -2989,7 +2990,7 @@ impl IRStreamProgram for SchedulerProgram {
                 };
 
                 IRStreamStep::Yield(DoCtrl::CreateContinuation {
-                    expr: PyShared::new(program),
+                    expr: OpaqueRef::new(program),
                     handlers,
                     handler_identities: vec![],
                 })
@@ -3005,7 +3006,7 @@ impl IRStreamProgram for SchedulerProgram {
                 // Value should be the continuation created by CreateContinuation
                 let cont = match value {
                     Value::Continuation(c) => c,
-                    Value::Python(_)
+                    Value::Opaque(_)
                     | Value::Unit
                     | Value::Int(_)
                     | Value::String(_)
@@ -3216,7 +3217,7 @@ impl IRStreamFactory for SchedulerHandler {
             return Ok(false);
         };
 
-        match parse_scheduler_python_effect(obj, None) {
+        match parse_scheduler_python_effect(&obj, None) {
             Ok(Some(_)) | Err(_) => Ok(true),
             Ok(None) => Ok(false),
         }
@@ -3441,7 +3442,7 @@ mod tests {
                 }),
                 IRStreamStep::Yield(DoCtrl::GetHandlers),
                 IRStreamStep::Yield(DoCtrl::CreateContinuation {
-                    expr: expr.clone(),
+                    expr: expr.clone().into_opaque(),
                     handlers: vec![],
                     handler_identities: vec![],
                 }),

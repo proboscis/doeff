@@ -1,8 +1,7 @@
 //! Unified traceback capture and assembly types.
 
-use pyo3::prelude::*;
-
 use crate::ids::DispatchId;
+use crate::opaque_ref::OpaqueRef;
 
 /// Unique identifier for a program frame instance.
 pub type FrameId = u64;
@@ -123,7 +122,7 @@ pub enum ActiveChainEntry {
         result: EffectResult,
     },
     ContextEntry {
-        data: Py<PyAny>,
+        data: OpaqueRef,
     },
     ExceptionSite {
         function_name: String,

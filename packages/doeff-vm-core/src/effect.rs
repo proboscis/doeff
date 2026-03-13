@@ -3,13 +3,14 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
+use crate::py_shared::{OpaqueRefPyExt, PyShared};
 use crate::pyvm::DoExprTag;
 
 #[derive(Debug, Clone)]
-pub struct Effect(pub PyShared);
+pub struct Effect(pub OpaqueRef);
 
-pub type DispatchEffect = PyShared;
+pub type DispatchEffect = OpaqueRef;
 
 #[pyclass(subclass, frozen, name = "EffectBase")]
 pub struct PyEffectBase {
@@ -85,14 +86,18 @@ impl PyExecutionContext {
 }
 
 pub fn dispatch_from_shared(obj: PyShared) -> DispatchEffect {
+    obj.into_opaque()
+}
+
+pub fn dispatch_from_opaque(obj: OpaqueRef) -> DispatchEffect {
     obj
 }
 
-pub fn dispatch_ref_as_python(effect: &DispatchEffect) -> Option<&PyShared> {
+pub fn dispatch_ref_as_opaque(effect: &DispatchEffect) -> Option<&OpaqueRef> {
     Some(effect)
 }
 
-pub fn dispatch_into_python(effect: DispatchEffect) -> Option<PyShared> {
+pub fn dispatch_into_opaque(effect: DispatchEffect) -> Option<OpaqueRef> {
     Some(effect)
 }
 
@@ -128,20 +133,24 @@ impl Effect {
         false
     }
 
-    pub fn as_python(&self) -> Option<&PyShared> {
+    pub fn as_opaque(&self) -> Option<&OpaqueRef> {
         Some(&self.0)
     }
 
-    pub fn from_shared(obj: PyShared) -> Self {
+    pub fn from_opaque(obj: OpaqueRef) -> Self {
         Effect(obj)
     }
 
-    pub fn into_python(self) -> Option<PyShared> {
+    pub fn from_shared(obj: PyShared) -> Self {
+        Effect(obj.into_opaque())
+    }
+
+    pub fn into_opaque(self) -> Option<OpaqueRef> {
         Some(self.0)
     }
 
     pub fn type_name(&self) -> &'static str {
-        "Python"
+        "Opaque"
     }
 
     pub fn python(obj: Py<PyAny>) -> Self {
@@ -149,9 +158,9 @@ impl Effect {
     }
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        if let Some(obj) = self.as_python() {
+        if let Some(obj) = self.as_opaque() {
             return Ok(obj.bind(py).clone());
         }
-        unreachable!("runtime Effect is always Python")
+        unreachable!("runtime Effect is always Opaque")
     }
 }

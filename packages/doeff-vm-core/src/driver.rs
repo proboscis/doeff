@@ -4,16 +4,17 @@ use pyo3::prelude::*;
 
 use crate::do_ctrl::DoCtrl;
 use crate::error::VMError;
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
+use crate::py_shared::{OpaqueRefPyExt, PyShared};
 use crate::python_call::PythonCall;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub enum PyException {
     Materialized {
-        exc_type: PyShared,
-        exc_value: PyShared,
-        exc_tb: Option<PyShared>,
+        exc_type: OpaqueRef,
+        exc_value: OpaqueRef,
+        exc_tb: Option<OpaqueRef>,
     },
     RuntimeError {
         message: String,
@@ -42,9 +43,9 @@ pub enum StepEvent {
 impl PyException {
     pub fn new(exc_type: Py<PyAny>, exc_value: Py<PyAny>, exc_tb: Option<Py<PyAny>>) -> Self {
         PyException::Materialized {
-            exc_type: PyShared::new(exc_type),
-            exc_value: PyShared::new(exc_value),
-            exc_tb: exc_tb.map(PyShared::new),
+            exc_type: OpaqueRef::new(exc_type),
+            exc_value: OpaqueRef::new(exc_value),
+            exc_tb: exc_tb.map(OpaqueRef::new),
         }
     }
 
@@ -82,26 +83,6 @@ impl PyException {
 
     pub fn to_pyerr(&self, py: Python<'_>) -> PyErr {
         PyErr::from_value(self.value_clone_ref(py).bind(py).clone())
-    }
-
-    pub fn clone_ref(&self, py: Python<'_>) -> Self {
-        match self {
-            PyException::Materialized {
-                exc_type,
-                exc_value,
-                exc_tb,
-            } => PyException::Materialized {
-                exc_type: PyShared::new(exc_type.clone_ref(py)),
-                exc_value: PyShared::new(exc_value.clone_ref(py)),
-                exc_tb: exc_tb.as_ref().map(|tb| PyShared::new(tb.clone_ref(py))),
-            },
-            PyException::RuntimeError { message } => PyException::RuntimeError {
-                message: message.clone(),
-            },
-            PyException::TypeError { message } => PyException::TypeError {
-                message: message.clone(),
-            },
-        }
     }
 }
 

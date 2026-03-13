@@ -7,6 +7,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
 
 use doeff_vm_core::effect::{PyExecutionContext, PyGetExecutionContext};
+use doeff_vm_core::opaque_ref::OpaqueRef;
+use doeff_vm_core::py_shared::OpaqueRefPyExt;
 
 use crate::py_shared::PyShared;
 use crate::pyvm::{DoExprTag, PyEffectBase};
@@ -652,7 +654,7 @@ impl PyProgramCallFrame {
 pub struct Effect(pub PyShared);
 
 #[cfg(not(test))]
-pub type DispatchEffect = PyShared;
+pub type DispatchEffect = OpaqueRef;
 
 #[cfg(test)]
 /// An effect that can be yielded by user code.
@@ -718,18 +720,18 @@ pub fn dispatch_from_shared(obj: PyShared) -> DispatchEffect {
     }
     #[cfg(not(test))]
     {
-        obj
+        obj.into_opaque()
     }
 }
 
-pub fn dispatch_ref_as_python(effect: &DispatchEffect) -> Option<&PyShared> {
+pub fn dispatch_ref_as_python(effect: &DispatchEffect) -> Option<PyShared> {
     #[cfg(test)]
     {
-        return effect.as_python();
+        return effect.as_python().cloned();
     }
     #[cfg(not(test))]
     {
-        Some(effect)
+        PyShared::from_opaque(effect.clone())
     }
 }
 
@@ -740,7 +742,7 @@ pub fn dispatch_into_python(effect: DispatchEffect) -> Option<PyShared> {
     }
     #[cfg(not(test))]
     {
-        Some(effect)
+        PyShared::from_opaque(effect)
     }
 }
 
