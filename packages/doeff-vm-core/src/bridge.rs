@@ -36,7 +36,13 @@ pub struct VmHooks {
 static VM_HOOKS: OnceLock<VmHooks> = OnceLock::new();
 
 pub fn install_vm_hooks(hooks: VmHooks) {
-    let _ = VM_HOOKS.set(hooks);
+    if VM_HOOKS.set(hooks).is_err() {
+        let message = "VM hooks already installed; duplicate install is not allowed";
+        if cfg!(debug_assertions) {
+            panic!("{message}");
+        }
+        eprintln!("[VM WARNING] {message}");
+    }
 }
 
 pub fn classify_yielded_for_vm(

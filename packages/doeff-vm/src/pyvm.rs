@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 
 use pyo3::exceptions::{
     PyAttributeError, PyBaseException, PyRuntimeError, PyStopIteration, PyTypeError,
@@ -36,10 +36,14 @@ use doeff_vm_core::{
     PyResultOk, PyTraceFrame, PyTraceHop, VmHooks,
 };
 
+static VM_CORE_HOOKS_INSTALLED: Once = Once::new();
+
 fn ensure_vm_core_hooks_installed() {
-    install_vm_hooks(VmHooks {
-        classify_yielded: classify_yielded_for_vm,
-        doctrl_to_pyexpr: doctrl_to_pyexpr_for_vm,
+    VM_CORE_HOOKS_INSTALLED.call_once(|| {
+        install_vm_hooks(VmHooks {
+            classify_yielded: classify_yielded_for_vm,
+            doctrl_to_pyexpr: doctrl_to_pyexpr_for_vm,
+        });
     });
 }
 
