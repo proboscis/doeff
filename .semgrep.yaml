@@ -2593,6 +2593,7 @@ rules:
           fn classify_apply_result_as_doctrl(&self, $VALUE: &Value) -> Result<Option<DoCtrl>, PyException> {
               ...
           }
+
       - pattern-either:
           - pattern: classify_yielded_for_vm(...)
           - pattern: $OBJ.is_instance_of::<PyDoExprBase>()
@@ -2619,3 +2620,54 @@ rules:
           - pattern: $OBJ.is_instance_of::<DoeffGenerator>()
           - pattern: $OBJ.is_instance_of::<PyEffectBase>()
           - pattern: self.is_interceptor_eval_idle()
+
+  - id: vm-dispatch-no-dispatchcontext-runtime
+    languages: [rust]
+    severity: ERROR
+    message: |
+      ISSUE-287: DispatchContext is a forbidden side table. Derive dispatch from
+      Frame::DispatchOrigin on the prompt boundary instead of storing runtime state
+      in a parallel registry.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+        - "**/packages/doeff-vm/src/**"
+    pattern-regex: '\bDispatchContext\b'
+
+  - id: vm-dispatch-no-dispatchstate-runtime
+    languages: [rust]
+    severity: ERROR
+    message: |
+      ISSUE-287: DispatchState is forbidden. The VM must derive dispatch state
+      from segments, frames, and continuations instead of a side table.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+        - "**/packages/doeff-vm/src/**"
+    pattern-regex: '\bDispatchState\b'
+
+  - id: vm-dispatch-no-parent-inference
+    languages: [rust]
+    severity: ERROR
+    message: |
+      ISSUE-287: Dispatch completion and throw routing must not infer state from
+      `k_current.parent` or legacy completion helpers. Use Frame::DispatchOrigin
+      plus the handler's continuation argument instead.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+    pattern-regex: 'k_current\.parent|check_dispatch_completion|mark_dispatch_completed|mark_dispatch_threw|lazy_pop_completed'
+
+  - id: vm-dispatch-origin-not-on-prompt-boundary
+    languages: [rust]
+    severity: ERROR
+    message: |
+      ISSUE-287 review: DispatchOrigin must live on the active handler segment,
+      not the prompt boundary, and ownership must remain structural on that
+      live handler segment. Prompt-boundary ownership conflates body
+      completion with handler return, and VM-level owner maps recreate
+      shared dispatch state across interleaved tasks.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    pattern-regex: 'prompt_seg\.push_frame\(Frame::DispatchOrigin|fn remove_dispatch_origin\b|dispatch_origin_segments\b'

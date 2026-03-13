@@ -5,7 +5,14 @@ from __future__ import annotations
 import sys
 
 import pytest
-from beartype import beartype
+
+try:
+    from beartype import beartype
+except Exception as exc:  # pragma: no cover - interpreter/dependency compatibility
+    pytest.skip(
+        f"beartype unavailable in this environment: {exc}",
+        allow_module_level=True,
+    )
 
 import doeff.kleisli as kleisli_module
 from doeff import Program

@@ -15,6 +15,7 @@ from doeff import (
     Transfer,
     Try,
     WithHandler,
+    WithIntercept,
     default_handlers,
     do,
     run,
@@ -359,3 +360,123 @@ def test_rust_program_continuation_path_runs_under_nested_dispatch() -> None:
     trace = list(result.trace)
     assert any(row["result"] == "NeedsPython(CallFunc)" for row in trace)
     assert max(row["dispatch_depth"] for row in trace) >= 2
+
+
+def test_body_completion_after_error_context_dispatch_does_not_rethrow_original_exception() -> None:
+    @do
+    def observe_execution_context(effect: Effect, k: object):
+        if isinstance(effect, GetExecutionContext):
+            context = yield Delegate()
+            return (yield Resume(k, context))
+        yield Pass()
+
+    @do
+    def failing_program() -> EffectGenerator[None]:
+        raise ValueError("body completion should stay ok")
+
+    @do
+    def program() -> EffectGenerator[str]:
+        attempt = yield Try(failing_program())
+        assert attempt.is_err()
+        return "body-completed"
+
+    wrapped = _with_handlers(program(), observe_execution_context)
+    result = run(wrapped, handlers=default_handlers(), trace=True)
+    assert _is_ok(result), result.error
+    assert result.value == "body-completed"
+    trace = list(result.trace)
+    assert max(row["dispatch_depth"] for row in trace) <= 2
+
+
+def test_handler_return_without_resume_is_runtime_error_not_panic() -> None:
+    @do
+    def bad_handler(effect: Effect, k: object):
+        if not isinstance(effect, Greet):
+            yield Pass()
+            return
+        return "bad-return"
+
+    wrapped = _with_handlers(greet_world(), bad_handler)
+    result = run(wrapped, handlers=default_handlers())
+    assert _is_err(result)
+    assert "handler returned without consuming continuation" in str(result.error)
+
+
+def test_delegated_handler_exception_routes_to_delegate_continuation() -> None:
+    @do
+    def inner(effect: Effect, k: object):
+        if not isinstance(effect, Greet):
+            yield Pass()
+            return
+        try:
+            delegated = yield Delegate()
+        except RuntimeError as exc:
+            return (yield Resume(k, f"caught:{exc}"))
+        return (yield Resume(k, f"delegated:{delegated}"))
+
+    @do
+    def outer(effect: Effect, k: object):
+        if not isinstance(effect, Greet):
+            yield Pass()
+            return
+        raise RuntimeError("outer boom")
+
+    wrapped = _with_handlers(greet_world(), inner, outer)
+    result = run(wrapped, handlers=default_handlers())
+    assert _is_ok(result), result.error
+    assert result.value == "caught:outer boom"
+
+
+def test_with_intercept_body_completion_after_dispatch_is_ok() -> None:
+    seen: list[str] = []
+
+    @do
+    def observe_intercept(effect: Effect):
+        seen.append(type(effect).__name__)
+        return effect
+
+    @do
+    def program() -> EffectGenerator[str]:
+        greeting = yield Greet(name="intercepted")
+        return f"{greeting}|intercept-body-completed"
+
+    wrapped = WithIntercept(
+        observe_intercept,
+        _with_handlers(program(), greet_handler),
+        (Greet,),
+        "include",
+    )
+    result = run(wrapped, handlers=default_handlers(), trace=True)
+    assert _is_ok(result), result.error
+    assert result.value == "hello intercepted|intercept-body-completed"
+    assert seen == ["Greet"]
+    trace = list(result.trace)
+    assert max(row["dispatch_depth"] for row in trace) <= 2
+
+
+def test_sequential_error_dispatches_on_same_prompt_boundary_do_not_accumulate_depth() -> None:
+    @do
+    def observe_execution_context(effect: Effect, k: object):
+        if isinstance(effect, GetExecutionContext):
+            context = yield Delegate()
+            return (yield Resume(k, context))
+        yield Pass()
+
+    @do
+    def failing_program() -> EffectGenerator[None]:
+        raise ValueError("sequential terminal failure")
+
+    @do
+    def program() -> EffectGenerator[tuple[bool, ...]]:
+        attempts: list[bool] = []
+        for _ in range(5):
+            attempt = yield Try(failing_program())
+            attempts.append(attempt.is_err())
+        return tuple(attempts)
+
+    wrapped = _with_handlers(program(), observe_execution_context)
+    result = run(wrapped, handlers=default_handlers(), trace=True)
+    assert _is_ok(result), result.error
+    assert result.value == (True,) * 5
+    trace = list(result.trace)
+    assert max(row["dispatch_depth"] for row in trace) <= 2
