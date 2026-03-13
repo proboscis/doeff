@@ -118,11 +118,16 @@ impl DispatchState {
             .is_some_and(|ctx| ctx.supports_error_context_conversion())
     }
 
-    pub(crate) fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
+    pub(crate) fn active_error_dispatch_original_exception(
+        &self,
+        reachable: &HashSet<DispatchId>,
+    ) -> Option<PyException> {
         // Walk insertion order in reverse to find most recent active error dispatch
+        // scoped to the given set of reachable dispatch IDs.
         self.insertion_order
             .iter()
             .rev()
+            .filter(|id| reachable.contains(id))
             .filter_map(|id| self.dispatches.get(id))
             .find(|ctx| !ctx.completed && ctx.original_exception.is_some())
             .and_then(|ctx| ctx.original_exception.clone())

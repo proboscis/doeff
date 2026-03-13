@@ -1298,11 +1298,40 @@ impl VM {
     }
 
     fn current_active_handler_dispatch_id(&self) -> Option<DispatchId> {
-        self.interceptor_state.current_active_handler_dispatch_id(
-            &self.dispatch_state.contexts_ordered(),
-            self.current_segment,
-            &self.segments,
-        )
+        // Segment-scoped dispatch lookup: walk the current segment chain
+        // to find the dispatch that owns the current handler, instead of
+        // using dispatch_stack.last() which breaks under concurrent tasks.
+        let seg_id = self.current_segment?;
+        let seg = self.segments.get(seg_id)?;
+
+        // First try: the current segment's own dispatch_id
+        if let Some(dispatch_id) = seg.dispatch_id {
+            let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+            if !ctx.completed {
+                let marker = *ctx.handler_chain.get(ctx.handler_idx())?;
+                if seg.marker == marker {
+                    return Some(dispatch_id);
+                }
+            }
+        }
+
+        // Fallback: walk the segment chain to find a dispatch whose handler
+        // marker matches the current segment's marker.
+        let mut cursor = seg.caller;
+        while let Some(cid) = cursor {
+            let cseg = self.segments.get(cid)?;
+            if let Some(dispatch_id) = cseg.dispatch_id {
+                let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+                if !ctx.completed {
+                    let marker = *ctx.handler_chain.get(ctx.handler_idx())?;
+                    if seg.marker == marker {
+                        return Some(dispatch_id);
+                    }
+                }
+            }
+            cursor = cseg.caller;
+        }
+        None
     }
 
     fn current_program_frame_handler_kind(&self) -> Option<HandlerKind> {
@@ -1374,8 +1403,9 @@ impl VM {
     }
 
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
+        let reachable = self.dispatch_ids_in_segment_chain();
         self.dispatch_state
-            .active_error_dispatch_original_exception()
+            .active_error_dispatch_original_exception(&reachable)
     }
 
     fn original_exception_for_dispatch(&self, dispatch_id: DispatchId) -> Option<PyException> {
@@ -1510,7 +1540,7 @@ impl VM {
             exception,
             &self.segments,
             self.current_segment,
-            &self.dispatch_state.contexts_ordered(),
+            &self.dispatches_for_current_context(),
         )
     }
 
@@ -1526,7 +1556,7 @@ impl VM {
             exception,
             &self.segments,
             self.current_segment,
-            &self.dispatch_state.contexts_ordered(),
+            &self.dispatches_for_current_context(),
         )
     }
 
@@ -2339,14 +2369,14 @@ impl VM {
         self.interceptor_state.current_chain(
             self.current_segment,
             &self.segments,
-            &self.dispatch_state.contexts_ordered(),
+            &self.dispatches_for_current_context(),
         )
     }
 
     fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
         self.interceptor_state.visible_to_active_handler(
             interceptor_marker,
-            &self.dispatch_state.contexts_ordered(),
+            &self.dispatches_for_current_context(),
             self.current_segment,
             &self.segments,
         )
@@ -3841,6 +3871,36 @@ impl VM {
         Some(Continuation::capture(segment, seg_id, dispatch_id))
     }
 
+    /// Collect all dispatch IDs reachable from the current segment's caller chain.
+    /// Used to scope dispatch operations to the current execution context,
+    /// preventing cross-task dispatch state corruption under concurrent execution.
+    fn dispatch_ids_in_segment_chain(&self) -> HashSet<DispatchId> {
+        let mut ids = HashSet::new();
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            if let Some(dispatch_id) = seg.dispatch_id {
+                ids.insert(dispatch_id);
+            }
+            cursor = seg.caller;
+        }
+        ids
+    }
+
+    /// Return dispatches scoped to the current segment chain.
+    /// For trace assembly and interceptor queries that must not bleed across
+    /// concurrent task boundaries.
+    fn dispatches_for_current_context(&self) -> Vec<&Dispatch> {
+        let reachable = self.dispatch_ids_in_segment_chain();
+        self.dispatch_state
+            .contexts_ordered()
+            .into_iter()
+            .filter(|ctx| reachable.contains(&ctx.dispatch_id))
+            .collect()
+    }
+
     fn current_segment_dispatch_id(&self) -> Option<DispatchId> {
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
@@ -4161,12 +4221,15 @@ impl VM {
 
     fn finalize_active_dispatches_as_threw(&mut self, exception: &PyException) {
         let exception_repr = Self::exception_repr(exception);
-        // Collect dispatch IDs to process (avoid borrowing dispatch_state mutably while iterating)
+        // Only finalize dispatches reachable from the current segment chain.
+        // This prevents cross-task corruption under concurrent execution where
+        // multiple dispatches from different spawned tasks coexist.
+        let reachable = self.dispatch_ids_in_segment_chain();
         let active_ids: Vec<DispatchId> = self
             .dispatch_state
             .contexts_ordered()
             .iter()
-            .filter(|ctx| !ctx.completed)
+            .filter(|ctx| !ctx.completed && reachable.contains(&ctx.dispatch_id))
             .map(|ctx| ctx.dispatch_id)
             .collect();
 
