@@ -63,6 +63,23 @@ pub struct Continuation {
 }
 
 impl Continuation {
+    fn snapshot_frames(segment: &Segment) -> Arc<Vec<Frame>> {
+        let keep_dispatch_origin = segment
+            .frames
+            .iter()
+            .any(|frame| matches!(frame, Frame::HandlerDispatch { .. }));
+        Arc::new(
+            segment
+                .frames
+                .iter()
+                .filter(|frame| {
+                    keep_dispatch_origin || !matches!(frame, Frame::DispatchOrigin { .. })
+                })
+                .cloned()
+                .collect(),
+        )
+    }
+
     pub fn capture(
         segment: &Segment,
         segment_id: SegmentId,
@@ -72,7 +89,7 @@ impl Continuation {
             cont_id: ContId::fresh(),
             segment_id,
             scope_store: segment.scope_store.clone(),
-            frames_snapshot: Arc::new(segment.frames.clone()),
+            frames_snapshot: Self::snapshot_frames(segment),
             marker: segment.marker,
             dispatch_id,
             mode: Box::new(segment.mode.clone()),
@@ -99,7 +116,7 @@ impl Continuation {
             cont_id,
             segment_id,
             scope_store: segment.scope_store.clone(),
-            frames_snapshot: Arc::new(segment.frames.clone()),
+            frames_snapshot: Self::snapshot_frames(segment),
             marker: segment.marker,
             dispatch_id,
             mode: Box::new(segment.mode.clone()),

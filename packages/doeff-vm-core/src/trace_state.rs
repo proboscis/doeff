@@ -11,7 +11,6 @@ use crate::capture::{
     HandlerStatus, TraceEntry, TraceFrame, TraceHop,
 };
 use crate::continuation::Continuation;
-use crate::dispatch::DispatchContext;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
 use crate::frame::{CallMetadata, Frame};
 use crate::ids::{DispatchId, SegmentId};
@@ -26,6 +25,12 @@ const MISSING_TARGET: &str = "[MISSING] <target>";
 const MISSING_EXCEPTION: &str = "[MISSING] <exception>";
 const MISSING_EXCEPTION_TYPE: &str = "[MISSING] Exception";
 const MISSING_NONE_REPR: &str = "[MISSING] None";
+
+#[derive(Debug, Clone)]
+pub(crate) struct LiveDispatchSnapshot {
+    pub(crate) dispatch_id: DispatchId,
+    pub(crate) continuation: Continuation,
+}
 
 #[derive(Debug, Clone)]
 struct ActiveChainFrameState {
@@ -551,40 +556,58 @@ impl TraceState {
                 let mut source_file = MISSING_UNKNOWN.to_string();
                 let mut source_line = 0u32;
 
-                let mut tb = exc_tb
-                    .as_ref()
-                    .map(|tb| tb.bind(py).clone().into_any())
-                    .or_else(|| exc_value_bound.getattr("__traceback__").ok());
-
-                while let Some(tb_obj) = tb {
-                    let next = tb_obj.getattr("tb_next").ok();
-                    let has_next = next.as_ref().is_some_and(|n| !n.is_none());
-                    if has_next {
-                        tb = next;
-                        continue;
-                    }
-
-                    source_line = tb_obj
-                        .getattr("tb_lineno")
-                        .ok()
-                        .and_then(|v| v.extract::<u32>().ok())
-                        .unwrap_or(0);
-
-                    if let Ok(frame) = tb_obj.getattr("tb_frame") {
-                        if let Ok(code) = frame.getattr("f_code") {
-                            function_name = code
-                                .getattr("co_name")
-                                .ok()
-                                .and_then(|v| v.extract::<String>().ok())
-                                .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
-                            source_file = code
-                                .getattr("co_filename")
-                                .ok()
-                                .and_then(|v| v.extract::<String>().ok())
-                                .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
+                if let Ok(do_module) = PyModule::import(py, "doeff.do") {
+                    if let Ok(resolve_location) = do_module.getattr("resolve_exception_location") {
+                        if let Ok(Some((resolved_function, resolved_file, resolved_line))) =
+                            resolve_location
+                                .call1((exc_value_bound.clone(),))
+                                .and_then(|value| {
+                                    value.extract::<Option<(String, String, u32)>>()
+                                })
+                        {
+                            function_name = resolved_function;
+                            source_file = resolved_file;
+                            source_line = resolved_line;
                         }
                     }
-                    break;
+                }
+
+                if source_line == 0 {
+                    let mut tb = exc_tb
+                        .as_ref()
+                        .map(|tb| tb.bind(py).clone().into_any())
+                        .or_else(|| exc_value_bound.getattr("__traceback__").ok());
+
+                    while let Some(tb_obj) = tb {
+                        let next = tb_obj.getattr("tb_next").ok();
+                        let has_next = next.as_ref().is_some_and(|n| !n.is_none());
+                        if has_next {
+                            tb = next;
+                            continue;
+                        }
+
+                        source_line = tb_obj
+                            .getattr("tb_lineno")
+                            .ok()
+                            .and_then(|v| v.extract::<u32>().ok())
+                            .unwrap_or(0);
+
+                        if let Ok(frame) = tb_obj.getattr("tb_frame") {
+                            if let Ok(code) = frame.getattr("f_code") {
+                                function_name = code
+                                    .getattr("co_name")
+                                    .ok()
+                                    .and_then(|v| v.extract::<String>().ok())
+                                    .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
+                                source_file = code
+                                    .getattr("co_filename")
+                                    .ok()
+                                    .and_then(|v| v.extract::<String>().ok())
+                                    .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
+                            }
+                        }
+                        break;
+                    }
                 }
 
                 ActiveChainEntry::ExceptionSite {
@@ -617,7 +640,7 @@ impl TraceState {
         exception: Option<&PyException>,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<ActiveChainEntry> {
         let mut state = self.active_chain_state.clone();
         self.merge_live_frame_state(&mut state, segments, current_segment, dispatch_stack);
@@ -634,7 +657,7 @@ impl TraceState {
         exception: &PyException,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<TraceEntry> {
         let mut state = self.active_chain_state.clone();
         self.merge_live_frame_state(&mut state, segments, current_segment, dispatch_stack);
@@ -968,7 +991,7 @@ impl TraceState {
         state: &mut ActiveChainAssemblyState,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[LiveDispatchSnapshot],
     ) {
         self.merge_frame_lines_from_segments(&mut state.frame_stack, segments, current_segment);
         let (frame_stack, dispatches) = (&mut state.frame_stack, &state.dispatches);
@@ -1016,7 +1039,7 @@ impl TraceState {
         &self,
         frame_stack: &mut Vec<ActiveChainFrameState>,
         dispatches: &HashMap<DispatchId, ActiveChainDispatchState>,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[LiveDispatchSnapshot],
     ) {
         let Some(dispatch_ctx) = dispatch_stack.iter().rev().find(|ctx| {
             dispatches
@@ -1026,7 +1049,7 @@ impl TraceState {
             return;
         };
 
-        for frame in dispatch_ctx.k_current.frames_snapshot.iter() {
+        for frame in dispatch_ctx.continuation.frames_snapshot.iter() {
             let Frame::Program {
                 stream,
                 metadata: Some(metadata),
@@ -1090,7 +1113,7 @@ impl TraceState {
     fn entries_from_active_chain_state(
         &self,
         state: &ActiveChainAssemblyState,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<ActiveChainEntry> {
         let mut active_chain = self.entries_from_frame_stack(state);
         if active_chain.is_empty() {
@@ -1132,7 +1155,7 @@ impl TraceState {
     fn fallback_entries_when_chain_empty(
         &self,
         state: &ActiveChainAssemblyState,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[LiveDispatchSnapshot],
         active_chain: &mut Vec<ActiveChainEntry>,
     ) {
         let Some(dispatch_id) = self.fallback_dispatch_id(state, dispatch_stack) else {
@@ -1168,7 +1191,7 @@ impl TraceState {
     fn fallback_dispatch_id(
         &self,
         state: &ActiveChainAssemblyState,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Option<DispatchId> {
         dispatch_stack
             .iter()
@@ -1201,16 +1224,16 @@ impl TraceState {
     fn snapshot_frames_for_dispatch(
         &self,
         dispatch_id: DispatchId,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<ActiveChainFrameState> {
         dispatch_stack
             .iter()
             .rev()
             .find(|ctx| ctx.dispatch_id == dispatch_id)
             .map(|dispatch_ctx| {
-                dispatch_ctx
-                    .k_current
-                    .frames_snapshot
+                    dispatch_ctx
+                        .continuation
+                        .frames_snapshot
                     .iter()
                     .filter_map(|frame| {
                         let Frame::Program {

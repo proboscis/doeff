@@ -193,6 +193,26 @@ fn strict_kleisli_ref_type_error(context: &str, obj: &Bound<'_, PyAny>) -> PyErr
     ))
 }
 
+fn lookup_continuation_for_control(
+    vm: &VM,
+    cont_id: crate::ids::ContId,
+    control_name: &str,
+) -> PyResult<doeff_vm_core::Continuation> {
+    if let Some(k) = vm.lookup_continuation(cont_id).cloned() {
+        return Ok(k);
+    }
+    if vm.is_one_shot_consumed(cont_id) {
+        return Err(PyRuntimeError::new_err(format!(
+            "one-shot violation: continuation {} already consumed",
+            cont_id.raw()
+        )));
+    }
+    Err(PyRuntimeError::new_err(format!(
+        "{control_name} with unknown continuation id {}",
+        cont_id.raw()
+    )))
+}
+
 fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     Ok(obj.is_instance_of::<PyEffectBase>())
 }
@@ -1621,12 +1641,7 @@ pub(crate) fn classify_yielded_bound(
                     )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
-                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Resume with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                let k = lookup_continuation_for_control(vm, cont_id, "Resume")?;
                 Ok(DoCtrl::Resume {
                     continuation: k,
                     value: Value::from_pyobject(r.value.bind(py)),
@@ -1640,12 +1655,7 @@ pub(crate) fn classify_yielded_bound(
                     )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
-                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Transfer with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                let k = lookup_continuation_for_control(vm, cont_id, "Transfer")?;
                 Ok(DoCtrl::Transfer {
                     continuation: k,
                     value: Value::from_pyobject(t.value.bind(py)),
@@ -1679,12 +1689,7 @@ pub(crate) fn classify_yielded_bound(
                     )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
-                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "ResumeContinuation with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                let k = lookup_continuation_for_control(vm, cont_id, "ResumeContinuation")?;
                 Ok(DoCtrl::ResumeContinuation {
                     continuation: k,
                     value: Value::from_pyobject(rc.value.bind(py)),

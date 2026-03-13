@@ -188,10 +188,14 @@ mod tests {
     fn test_segment_frame_push_pop_o1() {
         let marker = Marker::fresh();
         let mut seg = Segment::new(marker, None);
+        let continuation =
+            crate::continuation::Continuation::capture(&Segment::new(marker, None), SegmentId::from_index(0), None);
 
         seg.push_frame(Frame::FlatMapBindResult);
         seg.push_frame(Frame::HandlerDispatch {
             dispatch_id: DispatchId::fresh(),
+            continuation,
+            prompt_seg_id: SegmentId::from_index(0),
         });
         seg.push_frame(Frame::InterceptBodyReturn { marker });
 

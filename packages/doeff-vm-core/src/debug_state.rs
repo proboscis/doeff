@@ -277,6 +277,7 @@ impl DebugState {
                         Frame::InterceptorApply(_) => "InterceptorApply",
                         Frame::InterceptorEval(_) => "InterceptorEval",
                         Frame::HandlerDispatch { .. } => "HandlerDispatch",
+                        Frame::DispatchOrigin { .. } => "DispatchOrigin",
                         Frame::EvalReturn(_) => "EvalReturn",
                         Frame::MapReturn { .. } => "MapReturn",
                         Frame::FlatMapBindResult => "FlatMapBindResult",
