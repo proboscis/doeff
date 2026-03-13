@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
-use crate::dispatch::DispatchContext;
+use crate::dispatch::Dispatch;
 use crate::do_ctrl::InterceptMode;
 use crate::doeff_generator::DoeffGenerator;
 use crate::error::VMError;
@@ -31,7 +31,7 @@ impl InterceptorState {
         &self,
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
-        dispatch_contexts: &[DispatchContext],
+        dispatch_contexts: &[&Dispatch],
     ) -> Vec<Marker> {
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
@@ -77,7 +77,7 @@ impl InterceptorState {
     pub(crate) fn visible_to_active_handler(
         &self,
         _interceptor_marker: Marker,
-        _dispatch_stack: &[DispatchContext],
+        _dispatch_stack: &[&Dispatch],
         _current_segment: Option<SegmentId>,
         _segments: &SegmentArena,
     ) -> bool {
@@ -121,7 +121,7 @@ impl InterceptorState {
 
     pub(crate) fn current_active_handler_dispatch_id(
         &self,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[&Dispatch],
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
     ) -> Option<DispatchId> {
@@ -129,7 +129,7 @@ impl InterceptorState {
         if top.completed {
             return None;
         }
-        let marker = *top.handler_chain.get(top.handler_idx)?;
+        let marker = *top.handler_chain.get(top.handler_idx())?;
         let seg_id = current_segment?;
         let seg = segments.get(seg_id)?;
         if seg.marker == marker {

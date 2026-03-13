@@ -11,7 +11,7 @@ use crate::capture::{
     HandlerStatus, TraceEntry, TraceFrame, TraceHop,
 };
 use crate::continuation::Continuation;
-use crate::dispatch::DispatchContext;
+use crate::dispatch::Dispatch;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
 use crate::frame::{CallMetadata, Frame};
 use crate::ids::{DispatchId, SegmentId};
@@ -617,7 +617,7 @@ impl TraceState {
         exception: Option<&PyException>,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[&Dispatch],
     ) -> Vec<ActiveChainEntry> {
         let mut state = self.active_chain_state.clone();
         self.merge_live_frame_state(&mut state, segments, current_segment, dispatch_stack);
@@ -634,7 +634,7 @@ impl TraceState {
         exception: &PyException,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[&Dispatch],
     ) -> Vec<TraceEntry> {
         let mut state = self.active_chain_state.clone();
         self.merge_live_frame_state(&mut state, segments, current_segment, dispatch_stack);
@@ -968,7 +968,7 @@ impl TraceState {
         state: &mut ActiveChainAssemblyState,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[&Dispatch],
     ) {
         self.merge_frame_lines_from_segments(&mut state.frame_stack, segments, current_segment);
         let (frame_stack, dispatches) = (&mut state.frame_stack, &state.dispatches);
@@ -1016,7 +1016,7 @@ impl TraceState {
         &self,
         frame_stack: &mut Vec<ActiveChainFrameState>,
         dispatches: &HashMap<DispatchId, ActiveChainDispatchState>,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[&Dispatch],
     ) {
         let Some(dispatch_ctx) = dispatch_stack.iter().rev().find(|ctx| {
             dispatches
@@ -1026,7 +1026,7 @@ impl TraceState {
             return;
         };
 
-        for frame in dispatch_ctx.k_current.frames_snapshot.iter() {
+        for frame in dispatch_ctx.k_current().frames_snapshot.iter() {
             let Frame::Program {
                 stream,
                 metadata: Some(metadata),
@@ -1090,7 +1090,7 @@ impl TraceState {
     fn entries_from_active_chain_state(
         &self,
         state: &ActiveChainAssemblyState,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[&Dispatch],
     ) -> Vec<ActiveChainEntry> {
         let mut active_chain = self.entries_from_frame_stack(state);
         if active_chain.is_empty() {
@@ -1132,7 +1132,7 @@ impl TraceState {
     fn fallback_entries_when_chain_empty(
         &self,
         state: &ActiveChainAssemblyState,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[&Dispatch],
         active_chain: &mut Vec<ActiveChainEntry>,
     ) {
         let Some(dispatch_id) = self.fallback_dispatch_id(state, dispatch_stack) else {
@@ -1168,7 +1168,7 @@ impl TraceState {
     fn fallback_dispatch_id(
         &self,
         state: &ActiveChainAssemblyState,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[&Dispatch],
     ) -> Option<DispatchId> {
         dispatch_stack
             .iter()
@@ -1201,7 +1201,7 @@ impl TraceState {
     fn snapshot_frames_for_dispatch(
         &self,
         dispatch_id: DispatchId,
-        dispatch_stack: &[DispatchContext],
+        dispatch_stack: &[&Dispatch],
     ) -> Vec<ActiveChainFrameState> {
         dispatch_stack
             .iter()
@@ -1209,7 +1209,7 @@ impl TraceState {
             .find(|ctx| ctx.dispatch_id == dispatch_id)
             .map(|dispatch_ctx| {
                 dispatch_ctx
-                    .k_current
+                    .k_current()
                     .frames_snapshot
                     .iter()
                     .filter_map(|frame| {
