@@ -42,3 +42,17 @@ rules:
     paths:
       include:
         - "**/doeff-vm-core/src/**"
+
+  # ISSUE-294: pyo3 must stay optional in doeff-vm-core so no-default-features
+  # builds can exercise the handle-based foundation without a Python runtime.
+  - id: vm-core-pyo3-dependency-must-be-optional
+    pattern-regex: '(?ms)^\[dependencies\][^\[]*^pyo3\s*=\s*\{(?![^\n}]*optional\s*=\s*true)[^\n]*\}'
+    message: |
+      ISSUE-294: doeff-vm-core must keep `pyo3` optional.
+      Python bindings belong behind the `python_bridge` feature so the core
+      crate can build and test its Handle<T> foundation without GIL/PyO3.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm-core/Cargo.toml"
