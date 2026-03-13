@@ -244,32 +244,20 @@ def _yield_site_inner_effect():
             _yield_site_raise_after_helper_handler,
             "after-helper-boom",
         ),
-        pytest.param(
+        (
             "handler_helper_subprogram_raise",
             _yield_site_helper_boom_handler,
             "helper-boom",
-            marks=pytest.mark.xfail(
-                reason="Tracked by #273/#277: helper sub-program failures inside handlers still escape the yield-site try/except",
-                strict=True,
-            ),
         ),
-        pytest.param(
+        (
             "handler_expand_callback_raise",
             _yield_site_expand_boom_handler,
             "expand-boom",
-            marks=pytest.mark.xfail(
-                reason="Tracked by #273/#277: handler-triggered Expand callback failures still escape the yield-site try/except",
-                strict=True,
-            ),
         ),
-        pytest.param(
+        (
             "handler_apply_callback_raise",
             _yield_site_apply_boom_handler,
             "apply-boom",
-            marks=pytest.mark.xfail(
-                reason="Tracked by #273/#277: handler-triggered Apply callback failures still escape the yield-site try/except",
-                strict=True,
-            ),
         ),
     ],
 )

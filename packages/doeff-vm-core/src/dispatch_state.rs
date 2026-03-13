@@ -71,9 +71,7 @@ impl DispatchState {
     ) {
         if let Some(d) = self.dispatches.get_mut(&dispatch_id) {
             d.completed = true;
-            if let Some(activation) = d.current_activation() {
-                consumed_cont_ids.insert(activation.k_current.cont_id);
-            }
+            consumed_cont_ids.insert(d.k_origin.cont_id);
         }
     }
 

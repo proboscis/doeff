@@ -1368,9 +1368,14 @@ impl VM {
         if self.dispatch_state.dispatch_is_execution_context_effect(dispatch_id) {
             return None;
         }
-        self.dispatch_state
+        let k = self
+            .dispatch_state
             .find_by_dispatch_id(dispatch_id)
-            .and_then(|d| d.current_k_current().cloned())
+            .and_then(|d| d.current_k_current().cloned())?;
+        if self.is_one_shot_consumed(k.cont_id) {
+            return None;
+        }
+        Some(k)
     }
 
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
@@ -3828,7 +3833,6 @@ impl VM {
 
     pub fn mark_one_shot_consumed(&mut self, cont_id: ContId) {
         self.consumed_cont_ids.insert(cont_id);
-        self.continuation_registry.remove(&cont_id);
     }
 
     pub fn register_continuation(&mut self, k: Continuation) {
@@ -4901,9 +4905,7 @@ impl VM {
 
             if caller_id == d.prompt_seg_id {
                 d.completed = true;
-                if let Some(activation) = d.current_activation() {
-                    self.consumed_cont_ids.insert(activation.k_current.cont_id);
-                }
+                self.consumed_cont_ids.insert(d.k_origin.cont_id);
             }
 
             if d.completed {
