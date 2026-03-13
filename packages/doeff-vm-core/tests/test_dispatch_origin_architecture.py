@@ -4,6 +4,9 @@ from pathlib import Path
 CORE_ROOT = Path(__file__).resolve().parents[1]
 FRAME_RS = CORE_ROOT / "src/frame.rs"
 VM_RS = CORE_ROOT / "src/vm.rs"
+VM_DISPATCH_RS = CORE_ROOT / "src/vm/dispatch.rs"
+VM_STEP_RS = CORE_ROOT / "src/vm/step.rs"
+VM_TRACE_RS = CORE_ROOT / "src/vm/vm_trace.rs"
 CORE_LIB_RS = CORE_ROOT / "src/lib.rs"
 DISPATCH_RS = CORE_ROOT / "src/dispatch.rs"
 DISPATCH_STATE_RS = CORE_ROOT / "src/dispatch_state.rs"
@@ -13,6 +16,14 @@ VM_BINDINGS_LIB_RS = CORE_ROOT.parent / "doeff-vm" / "src/lib.rs"
 def _runtime_source(path: Path) -> str:
     source = path.read_text(encoding="utf-8")
     return source.split("#[cfg(test)]", 1)[0]
+
+
+def _vm_runtime_source() -> str:
+    return "\n".join(
+        _runtime_source(path)
+        for path in (VM_RS, VM_DISPATCH_RS, VM_STEP_RS, VM_TRACE_RS)
+        if path.exists()
+    )
 
 
 def test_frame_dispatch_origin_is_runtime_dispatch_anchor() -> None:
@@ -26,7 +37,7 @@ def test_frame_dispatch_origin_is_runtime_dispatch_anchor() -> None:
 
 
 def test_dispatch_origin_is_installed_on_handler_segment_not_prompt_boundary() -> None:
-    source = VM_RS.read_text(encoding="utf-8")
+    source = _vm_runtime_source()
 
     assert "handler_seg.push_frame(Frame::DispatchOrigin" in source, (
         "DispatchOrigin must be installed on the handler segment so only handler-return paths "
@@ -38,7 +49,7 @@ def test_dispatch_origin_is_installed_on_handler_segment_not_prompt_boundary() -
 
 
 def test_dispatch_origin_cleanup_does_not_linearly_scan_all_segments() -> None:
-    source = VM_RS.read_text(encoding="utf-8")
+    source = _vm_runtime_source()
     assert "fn remove_dispatch_origin" not in source, (
         "DispatchOrigin cleanup must not linearly scan the segment arena; it should be owned by "
         "the active handler segment and cleaned up structurally."
@@ -50,7 +61,7 @@ def test_dispatch_origin_cleanup_does_not_linearly_scan_all_segments() -> None:
 
 
 def test_vm_runtime_has_no_dispatch_side_table_left() -> None:
-    vm_source = _runtime_source(VM_RS)
+    vm_source = _vm_runtime_source()
     core_lib_source = _runtime_source(CORE_LIB_RS)
     bindings_lib_source = _runtime_source(VM_BINDINGS_LIB_RS)
     dispatch_source = _runtime_source(DISPATCH_RS)
@@ -65,7 +76,7 @@ def test_vm_runtime_has_no_dispatch_side_table_left() -> None:
 
 
 def test_vm_runtime_has_no_parent_chain_completion_inference() -> None:
-    source = _runtime_source(VM_RS)
+    source = _vm_runtime_source()
 
     banned = (
         "check_dispatch_completion",
