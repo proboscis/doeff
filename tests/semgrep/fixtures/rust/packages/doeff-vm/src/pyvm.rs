@@ -3,3 +3,6 @@ pub fn build_traceback_data_bad() -> Option<()> {
     serialized.ok()?;
     Some(())
 }
+
+#[cfg(any())]
+pub struct DuplicateBaseStub;

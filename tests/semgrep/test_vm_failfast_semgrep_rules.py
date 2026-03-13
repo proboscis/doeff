@@ -50,6 +50,7 @@ def test_vm_failfast_rust_rules_detect_known_bad_examples() -> None:
         "no-bare-ok-in-handler-can-handle",
         "no-silent-if-let-current-segment",
         "no-bare-ok-in-traceback-build",
+        "doeff-vm-no-cfg-disabled-base-stubs",
     }
     assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
 
