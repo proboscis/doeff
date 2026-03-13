@@ -115,6 +115,8 @@ impl VM {
             other => unreachable!("invalid mode discriminator in VM::step: {other}"),
         };
 
+        self.observe_pending_trace_events();
+
         if self.debug.is_enabled() {
             self.debug_step_exit(&result);
         }
@@ -316,10 +318,7 @@ impl VM {
         }
     }
 
-    fn chain_exception_context(
-        original_exception: &PyException,
-        cleanup_exception: &PyException,
-    ) {
+    fn chain_exception_context(original_exception: &PyException, cleanup_exception: &PyException) {
         if Self::same_exception(original_exception, cleanup_exception) {
             return;
         }
@@ -426,21 +425,14 @@ impl VM {
                 if let Some((handler_index, handler_name)) =
                     self.current_handler_identity_for_dispatch(dispatch_id)
                 {
-                    let value_repr = Self::value_repr(&value);
-                    self.trace_state.emit_handler_completed(
-                        dispatch_id,
-                        handler_name.clone(),
-                        handler_index,
-                        HandlerAction::Returned {
-                            value_repr: value_repr.clone(),
-                        },
-                    );
-                    self.emit_resume_event(
+                    self.queue_handler_completed(
                         dispatch_id,
                         handler_name,
-                        value_repr,
-                        &continuation,
-                        false,
+                        handler_index,
+                        TraceObserverHandlerAction::Returned {
+                            value: value.clone(),
+                            continuation: continuation.clone(),
+                        },
                     );
                 }
 
@@ -747,11 +739,7 @@ impl VM {
         }
     }
 
-    fn step_intercept_body_return_frame(
-        &mut self,
-        _marker: Marker,
-        mode: Mode,
-    ) -> StepEvent {
+    fn step_intercept_body_return_frame(&mut self, _marker: Marker, mode: Mode) -> StepEvent {
         match mode {
             Mode::Deliver(value) => self.handle_handler_return(value),
             Mode::Throw(exc) => {
@@ -1393,19 +1381,11 @@ impl VM {
         }
     }
 
-    fn handle_yield_resume(
-        &mut self,
-        continuation: Continuation,
-        value: Value,
-    ) -> StepEvent {
+    fn handle_yield_resume(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_resume(continuation, value)
     }
 
-    fn handle_yield_transfer(
-        &mut self,
-        continuation: Continuation,
-        value: Value,
-    ) -> StepEvent {
+    fn handle_yield_transfer(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_transfer(continuation, value)
     }
 
@@ -1481,10 +1461,7 @@ impl VM {
         self.handle_resume_continuation(continuation, value)
     }
 
-    fn handle_yield_python_async_syntax_escape(
-        &mut self,
-        action: Py<PyAny>,
-    ) -> StepEvent {
+    fn handle_yield_python_async_syntax_escape(&mut self, action: Py<PyAny>) -> StepEvent {
         self.current_seg_mut().pending_python = Some(PendingPython::AsyncEscape);
         StepEvent::NeedsPython(PythonCall::CallAsync {
             func: PyShared::new(action),
@@ -1723,11 +1700,7 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn handle_yield_eval(
-        &mut self,
-        expr: PyShared,
-        metadata: Option<CallMetadata>,
-    ) -> StepEvent {
+    fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
         let handlers = self.current_visible_handlers();
         let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
         self.handle_resume_continuation(cont, Value::None)
@@ -2166,11 +2139,7 @@ impl VM {
         }
     }
 
-    fn receive_expand_handler_value(
-        &mut self,
-        metadata: Option<CallMetadata>,
-        value: Value,
-    ) {
+    fn receive_expand_handler_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
         match value {
             Value::Python(handler_gen) => {
                 match Self::extract_doeff_generator(handler_gen, metadata, "ExpandReturn(handler)")
@@ -2214,11 +2183,7 @@ impl VM {
         }
     }
 
-    fn receive_expand_program_value(
-        &mut self,
-        metadata: Option<CallMetadata>,
-        value: Value,
-    ) {
+    fn receive_expand_program_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
         match self.classify_expand_result_as_doctrl(metadata, value, "ExpandReturn") {
             Ok(doctrl) => {
                 self.current_seg_mut().mode = Mode::HandleYield(doctrl);
@@ -2262,11 +2227,7 @@ impl VM {
         })
     }
 
-    fn receive_expand_gen_error(
-        &mut self,
-        handler_return: bool,
-        exception: PyException,
-    ) {
+    fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
         if handler_return {
             let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
                 let dispatch_id = self.current_segment_dispatch_id_any()?;

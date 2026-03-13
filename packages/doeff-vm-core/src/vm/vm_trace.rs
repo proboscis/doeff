@@ -1,18 +1,6 @@
 use super::*;
 
 impl VM {
-    pub(super) fn value_repr(value: &Value) -> Option<String> {
-        DebugState::value_repr(value)
-    }
-
-    fn program_call_repr(metadata: &CallMetadata) -> Option<String> {
-        DebugState::program_call_repr(metadata)
-    }
-
-    pub(super) fn exception_repr(exception: &PyException) -> Option<String> {
-        DebugState::exception_repr(exception)
-    }
-
     fn value_variant_name(value: &Value) -> &'static str {
         match value {
             Value::Python(_) => "Python",
@@ -33,10 +21,6 @@ impl VM {
             Value::ActiveChain(_) => "ActiveChain",
             Value::List(_) => "List",
         }
-    }
-
-    pub(super) fn effect_repr(effect: &DispatchEffect) -> String {
-        DebugState::effect_repr(effect)
     }
 
     pub(super) fn is_execution_context_effect(effect: &DispatchEffect) -> bool {
@@ -64,18 +48,6 @@ impl VM {
     fn is_execution_context_effect_for_dispatch(&self, dispatch_id: DispatchId) -> bool {
         self.effect_for_dispatch(dispatch_id)
             .is_some_and(|effect| Self::is_execution_context_effect(&effect))
-    }
-
-    pub(super) fn effect_creation_site_from_continuation(
-        k: &Continuation,
-    ) -> Option<EffectCreationSite> {
-        let (_, function_name, source_file, source_line) =
-            TraceState::effect_site_from_continuation(k)?;
-        Some(EffectCreationSite {
-            function_name,
-            source_file,
-            source_line,
-        })
     }
 
     pub(super) fn handler_trace_info(
@@ -339,20 +311,71 @@ impl VM {
         }
     }
 
+    fn queue_trace_observer_event(&mut self, event: TraceObserverEvent) {
+        self.pending_trace_observer_events.push(event);
+    }
+
+    pub(super) fn observe_pending_trace_events(&mut self) {
+        for event in std::mem::take(&mut self.pending_trace_observer_events) {
+            self.trace_state.observe(event);
+        }
+    }
+
+    pub(super) fn queue_dispatch_started(
+        &mut self,
+        dispatch_id: DispatchId,
+        effect: &DispatchEffect,
+        continuation: &Continuation,
+        is_execution_context_effect: bool,
+        handler_name: String,
+        handler_kind: HandlerKind,
+        handler_source_file: Option<String>,
+        handler_source_line: Option<u32>,
+        handler_chain_snapshot: Vec<HandlerSnapshotEntry>,
+    ) {
+        self.queue_trace_observer_event(TraceObserverEvent::DispatchStarted {
+            dispatch_id,
+            effect: effect.clone(),
+            continuation: continuation.clone(),
+            is_execution_context_effect,
+            handler_name,
+            handler_kind,
+            handler_source_file,
+            handler_source_line,
+            handler_chain_snapshot,
+        });
+    }
+
+    pub(super) fn queue_handler_completed(
+        &mut self,
+        dispatch_id: DispatchId,
+        handler_name: String,
+        handler_index: usize,
+        action: TraceObserverHandlerAction,
+    ) {
+        self.queue_trace_observer_event(TraceObserverEvent::HandlerCompleted {
+            dispatch_id,
+            handler_name,
+            handler_index,
+            action,
+        });
+    }
+
     pub(super) fn emit_frame_entered(
         &mut self,
         metadata: &CallMetadata,
         handler_kind: Option<HandlerKind>,
     ) {
-        self.trace_state.emit_frame_entered(
-            metadata,
-            Self::program_call_repr(metadata),
+        self.queue_trace_observer_event(TraceObserverEvent::FrameEntered {
+            metadata: metadata.clone(),
             handler_kind,
-        );
+        });
     }
 
     pub(super) fn emit_frame_exited(&mut self, metadata: &CallMetadata) {
-        self.trace_state.emit_frame_exited(metadata);
+        self.queue_trace_observer_event(TraceObserverEvent::FrameExited {
+            function_name: metadata.function_name.clone(),
+        });
     }
 
     pub(super) fn emit_handler_threw_for_dispatch(
@@ -375,33 +398,43 @@ impl VM {
         let Some((handler_index, handler_name)) = handler_identity else {
             return;
         };
-        self.trace_state.emit_handler_threw_for_dispatch(
+        self.queue_handler_completed(
             dispatch_id,
             handler_name,
             handler_index,
-            Self::exception_repr(exc),
+            TraceObserverHandlerAction::Threw {
+                exception: exc.clone(),
+            },
         );
     }
 
-    pub(super) fn emit_resume_event(
+    pub(super) fn queue_forwarded(
         &mut self,
+        kind: TraceObserverForwardKind,
         dispatch_id: DispatchId,
-        handler_name: String,
-        value_repr: Option<String>,
-        continuation: &Continuation,
-        transferred: bool,
+        from_handler_name: String,
+        from_handler_index: usize,
+        to_handler_name: String,
+        to_handler_index: usize,
+        to_handler_kind: HandlerKind,
+        to_handler_source_file: Option<String>,
+        to_handler_source_line: Option<u32>,
     ) {
-        self.trace_state.emit_resume_event(
+        self.queue_trace_observer_event(TraceObserverEvent::Forwarded {
+            kind,
             dispatch_id,
-            handler_name,
-            value_repr,
-            continuation,
-            transferred,
-            TraceState::continuation_resume_location,
-        );
+            from_handler_name,
+            from_handler_index,
+            to_handler_name,
+            to_handler_index,
+            to_handler_kind,
+            to_handler_source_file,
+            to_handler_source_line,
+        });
     }
 
-    pub fn assemble_traceback_entries(&self, exception: &PyException) -> Vec<TraceEntry> {
+    pub fn assemble_traceback_entries(&mut self, exception: &PyException) -> Vec<TraceEntry> {
+        self.observe_pending_trace_events();
         self.trace_state.assemble_traceback_entries(
             exception,
             &self.segments,
@@ -417,7 +450,11 @@ impl VM {
         TraceState::enrich_original_exception_with_context(original, context_value)
     }
 
-    pub fn assemble_active_chain(&self, exception: Option<&PyException>) -> Vec<ActiveChainEntry> {
+    pub fn assemble_active_chain(
+        &mut self,
+        exception: Option<&PyException>,
+    ) -> Vec<ActiveChainEntry> {
+        self.observe_pending_trace_events();
         self.trace_state.assemble_active_chain(
             exception,
             &self.segments,

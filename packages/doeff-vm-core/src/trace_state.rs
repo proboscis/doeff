@@ -11,7 +11,8 @@ use crate::capture::{
     HandlerStatus, TraceEntry, TraceFrame, TraceHop,
 };
 use crate::continuation::Continuation;
-use crate::effect::{make_execution_context_object, PyExecutionContext};
+use crate::debug_state::DebugState;
+use crate::effect::{make_execution_context_object, DispatchEffect, PyExecutionContext};
 use crate::frame::{CallMetadata, Frame};
 use crate::ids::{DispatchId, SegmentId};
 use crate::ir_stream::{IRStreamRef, StreamLocation};
@@ -30,6 +31,70 @@ const MISSING_NONE_REPR: &str = "[MISSING] None";
 pub(crate) struct LiveDispatchSnapshot {
     pub(crate) dispatch_id: DispatchId,
     pub(crate) continuation: Continuation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TraceObserverForwardKind {
+    Delegate,
+    Pass,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum TraceObserverHandlerAction {
+    Resumed {
+        value: Value,
+        continuation: Continuation,
+    },
+    Transferred {
+        value: Value,
+        continuation: Continuation,
+    },
+    Returned {
+        value: Value,
+        continuation: Continuation,
+    },
+    Threw {
+        exception: PyException,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum TraceObserverEvent {
+    FrameEntered {
+        metadata: CallMetadata,
+        handler_kind: Option<HandlerKind>,
+    },
+    FrameExited {
+        function_name: String,
+    },
+    DispatchStarted {
+        dispatch_id: DispatchId,
+        effect: DispatchEffect,
+        continuation: Continuation,
+        is_execution_context_effect: bool,
+        handler_name: String,
+        handler_kind: HandlerKind,
+        handler_source_file: Option<String>,
+        handler_source_line: Option<u32>,
+        handler_chain_snapshot: Vec<HandlerSnapshotEntry>,
+    },
+    HandlerCompleted {
+        dispatch_id: DispatchId,
+        handler_name: String,
+        handler_index: usize,
+        action: TraceObserverHandlerAction,
+    },
+    Forwarded {
+        kind: TraceObserverForwardKind,
+        dispatch_id: DispatchId,
+        from_handler_name: String,
+        from_handler_index: usize,
+        to_handler_name: String,
+        to_handler_index: usize,
+        to_handler_kind: HandlerKind,
+        to_handler_source_file: Option<String>,
+        to_handler_source_line: Option<u32>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -104,108 +169,213 @@ impl TraceState {
         &self.active_chain_state
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn emit_dispatch_started(
-        &mut self,
-        dispatch_id: DispatchId,
-        effect_repr: String,
-        is_execution_context_effect: bool,
-        creation_site: Option<EffectCreationSite>,
-        handler_name: String,
-        handler_kind: HandlerKind,
-        handler_source_file: Option<String>,
-        handler_source_line: Option<u32>,
-        handler_chain_snapshot: Vec<HandlerSnapshotEntry>,
-        effect_frame_id: Option<FrameId>,
-        effect_function_name: Option<String>,
-        effect_source_file: Option<String>,
-        effect_source_line: Option<u32>,
-    ) {
-        self.apply_capture_event(CaptureEvent::DispatchStarted {
-            dispatch_id,
-            effect_repr,
-            is_execution_context_effect,
-            creation_site,
-            handler_name,
-            handler_kind,
-            handler_source_file,
-            handler_source_line,
-            handler_chain_snapshot,
-            effect_frame_id,
-            effect_function_name,
-            effect_source_file,
-            effect_source_line,
-        });
-    }
-
-    pub(crate) fn emit_handler_completed(
-        &mut self,
-        dispatch_id: DispatchId,
-        handler_name: String,
-        handler_index: usize,
-        action: HandlerAction,
-    ) {
-        self.apply_capture_event(CaptureEvent::HandlerCompleted {
-            dispatch_id,
-            handler_name,
-            handler_index,
-            action,
-        });
-    }
-
     pub(crate) fn clear(&mut self) {
         self.active_chain_state = ActiveChainAssemblyState::new();
     }
 
-    pub(crate) fn emit_frame_entered(
-        &mut self,
-        metadata: &CallMetadata,
-        program_call_repr: Option<String>,
-        handler_kind: Option<HandlerKind>,
-    ) {
-        self.apply_capture_event(CaptureEvent::FrameEntered {
-            frame_id: metadata.frame_id as FrameId,
-            function_name: metadata.function_name.clone(),
-            source_file: metadata.source_file.clone(),
-            source_line: metadata.source_line,
-            args_repr: metadata.args_repr.clone(),
-            program_call_repr,
-            handler_kind,
-        });
+    pub(crate) fn observe(&mut self, event: TraceObserverEvent) {
+        match event {
+            TraceObserverEvent::FrameEntered {
+                metadata,
+                handler_kind,
+            } => {
+                self.apply_capture_event(CaptureEvent::FrameEntered {
+                    frame_id: metadata.frame_id as FrameId,
+                    function_name: metadata.function_name.clone(),
+                    source_file: metadata.source_file.clone(),
+                    source_line: metadata.source_line,
+                    args_repr: metadata.args_repr.clone(),
+                    program_call_repr: Self::program_call_repr(&metadata),
+                    handler_kind,
+                });
+            }
+            TraceObserverEvent::FrameExited { function_name } => {
+                self.apply_capture_event(CaptureEvent::FrameExited { function_name });
+            }
+            TraceObserverEvent::DispatchStarted {
+                dispatch_id,
+                effect,
+                continuation,
+                is_execution_context_effect,
+                handler_name,
+                handler_kind,
+                handler_source_file,
+                handler_source_line,
+                handler_chain_snapshot,
+            } => {
+                let effect_site = Self::effect_site_from_continuation(&continuation);
+                let creation_site =
+                    effect_site
+                        .as_ref()
+                        .map(
+                            |(_, function_name, source_file, source_line)| EffectCreationSite {
+                                function_name: function_name.clone(),
+                                source_file: source_file.clone(),
+                                source_line: *source_line,
+                            },
+                        );
+                self.apply_capture_event(CaptureEvent::DispatchStarted {
+                    dispatch_id,
+                    effect_repr: DebugState::effect_repr(&effect),
+                    is_execution_context_effect,
+                    creation_site,
+                    handler_name,
+                    handler_kind,
+                    handler_source_file,
+                    handler_source_line,
+                    handler_chain_snapshot,
+                    effect_frame_id: effect_site.as_ref().map(|(frame_id, _, _, _)| *frame_id),
+                    effect_function_name: effect_site
+                        .as_ref()
+                        .map(|(_, function_name, _, _)| function_name.clone()),
+                    effect_source_file: effect_site
+                        .as_ref()
+                        .map(|(_, _, source_file, _)| source_file.clone()),
+                    effect_source_line: effect_site
+                        .as_ref()
+                        .map(|(_, _, _, source_line)| *source_line),
+                });
+            }
+            TraceObserverEvent::HandlerCompleted {
+                dispatch_id,
+                handler_name,
+                handler_index,
+                action,
+            } => {
+                self.observe_handler_completed(dispatch_id, handler_name, handler_index, action);
+            }
+            TraceObserverEvent::Forwarded {
+                kind,
+                dispatch_id,
+                from_handler_name,
+                from_handler_index,
+                to_handler_name,
+                to_handler_index,
+                to_handler_kind,
+                to_handler_source_file,
+                to_handler_source_line,
+            } => {
+                let capture_event = match kind {
+                    TraceObserverForwardKind::Delegate => CaptureEvent::Delegated {
+                        dispatch_id,
+                        from_handler_name,
+                        from_handler_index,
+                        to_handler_name,
+                        to_handler_index,
+                        to_handler_kind,
+                        to_handler_source_file,
+                        to_handler_source_line,
+                    },
+                    TraceObserverForwardKind::Pass => CaptureEvent::Passed {
+                        dispatch_id,
+                        from_handler_name,
+                        from_handler_index,
+                        to_handler_name,
+                        to_handler_index,
+                        to_handler_kind,
+                        to_handler_source_file,
+                        to_handler_source_line,
+                    },
+                };
+                self.apply_capture_event(capture_event);
+            }
+        }
     }
 
-    pub(crate) fn emit_frame_exited(&mut self, metadata: &CallMetadata) {
-        self.apply_capture_event(CaptureEvent::FrameExited {
-            function_name: metadata.function_name.clone(),
-        });
-    }
-
-    pub(crate) fn emit_handler_threw_for_dispatch(
+    fn observe_handler_completed(
         &mut self,
         dispatch_id: DispatchId,
         handler_name: String,
         handler_index: usize,
-        exception_repr: Option<String>,
+        action: TraceObserverHandlerAction,
     ) {
-        self.apply_capture_event(CaptureEvent::HandlerCompleted {
-            dispatch_id,
-            handler_name,
-            handler_index,
-            action: HandlerAction::Threw { exception_repr },
-        });
+        match action {
+            TraceObserverHandlerAction::Resumed {
+                value,
+                continuation,
+            } => {
+                let value_repr = DebugState::value_repr(&value);
+                self.apply_capture_event(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name: handler_name.clone(),
+                    handler_index,
+                    action: HandlerAction::Resumed {
+                        value_repr: value_repr.clone(),
+                    },
+                });
+                self.apply_resume_capture_event(
+                    dispatch_id,
+                    handler_name,
+                    value_repr,
+                    &continuation,
+                    false,
+                );
+            }
+            TraceObserverHandlerAction::Transferred {
+                value,
+                continuation,
+            } => {
+                let value_repr = DebugState::value_repr(&value);
+                self.apply_capture_event(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name: handler_name.clone(),
+                    handler_index,
+                    action: HandlerAction::Transferred {
+                        value_repr: value_repr.clone(),
+                    },
+                });
+                self.apply_resume_capture_event(
+                    dispatch_id,
+                    handler_name,
+                    value_repr,
+                    &continuation,
+                    true,
+                );
+            }
+            TraceObserverHandlerAction::Returned {
+                value,
+                continuation,
+            } => {
+                let value_repr = DebugState::value_repr(&value);
+                self.apply_capture_event(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name: handler_name.clone(),
+                    handler_index,
+                    action: HandlerAction::Returned {
+                        value_repr: value_repr.clone(),
+                    },
+                });
+                self.apply_resume_capture_event(
+                    dispatch_id,
+                    handler_name,
+                    value_repr,
+                    &continuation,
+                    false,
+                );
+            }
+            TraceObserverHandlerAction::Threw { exception } => {
+                self.apply_capture_event(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name,
+                    handler_index,
+                    action: HandlerAction::Threw {
+                        exception_repr: DebugState::exception_repr(&exception),
+                    },
+                });
+            }
+        }
     }
 
-    pub(crate) fn emit_resume_event(
+    fn apply_resume_capture_event(
         &mut self,
         dispatch_id: DispatchId,
         handler_name: String,
         value_repr: Option<String>,
         continuation: &Continuation,
         transferred: bool,
-        continuation_resume_location: impl Fn(&Continuation) -> Option<(String, String, u32)>,
     ) {
         if let Some((resumed_function_name, source_file, source_line)) =
-            continuation_resume_location(continuation)
+            Self::continuation_resume_location(continuation)
         {
             if transferred {
                 self.apply_capture_event(CaptureEvent::Transferred {
@@ -227,52 +397,6 @@ impl TraceState {
                 });
             }
         }
-    }
-
-    pub(crate) fn emit_delegated(
-        &mut self,
-        dispatch_id: DispatchId,
-        from_handler_name: String,
-        from_handler_index: usize,
-        to_handler_name: String,
-        to_handler_index: usize,
-        to_handler_kind: HandlerKind,
-        to_handler_source_file: Option<String>,
-        to_handler_source_line: Option<u32>,
-    ) {
-        self.apply_capture_event(CaptureEvent::Delegated {
-            dispatch_id,
-            from_handler_name,
-            from_handler_index,
-            to_handler_name,
-            to_handler_index,
-            to_handler_kind,
-            to_handler_source_file,
-            to_handler_source_line,
-        });
-    }
-
-    pub(crate) fn emit_passed(
-        &mut self,
-        dispatch_id: DispatchId,
-        from_handler_name: String,
-        from_handler_index: usize,
-        to_handler_name: String,
-        to_handler_index: usize,
-        to_handler_kind: HandlerKind,
-        to_handler_source_file: Option<String>,
-        to_handler_source_line: Option<u32>,
-    ) {
-        self.apply_capture_event(CaptureEvent::Passed {
-            dispatch_id,
-            from_handler_name,
-            from_handler_index,
-            to_handler_name,
-            to_handler_index,
-            to_handler_kind,
-            to_handler_source_file,
-            to_handler_source_line,
-        });
     }
 
     // TODO(TRACE-CAPTURE-LOG-SEPARATION follow-up): remove transient CaptureEvent
@@ -561,9 +685,7 @@ impl TraceState {
                         if let Ok(Some((resolved_function, resolved_file, resolved_line))) =
                             resolve_location
                                 .call1((exc_value_bound.clone(),))
-                                .and_then(|value| {
-                                    value.extract::<Option<(String, String, u32)>>()
-                                })
+                                .and_then(|value| value.extract::<Option<(String, String, u32)>>())
                         {
                             function_name = resolved_function;
                             source_file = resolved_file;
@@ -1231,9 +1353,9 @@ impl TraceState {
             .rev()
             .find(|ctx| ctx.dispatch_id == dispatch_id)
             .map(|dispatch_ctx| {
-                    dispatch_ctx
-                        .continuation
-                        .frames_snapshot
+                dispatch_ctx
+                    .continuation
+                    .frames_snapshot
                     .iter()
                     .filter_map(|frame| {
                         let Frame::Program {
