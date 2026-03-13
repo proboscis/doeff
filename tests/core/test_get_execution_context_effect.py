@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import inspect
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import doeff_vm
 
 from doeff import Effect, Gather, Program, Spawn, do
 from doeff._types_internal import EffectBase
@@ -21,6 +24,14 @@ from doeff.rust_vm import (
 from doeff.traceback import build_doeff_traceback
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _line_of(function: object, needle: str) -> int:
+    lines, start = inspect.getsourcelines(function)
+    for offset, line in enumerate(lines):
+        if needle in line:
+            return start + offset
+    raise AssertionError(f"failed to find {needle!r} in source")
 
 
 def _entries_from_error(error: BaseException) -> list[Any]:
@@ -251,6 +262,38 @@ def test_get_execution_context_on_error_still_works() -> None:
     assert isinstance(result.error, ValueError)
     entries = _entries_from_error(result.error)
     assert any(isinstance(entry, dict) and entry.get("kind") == "test_marker" for entry in entries)
+
+
+def test_eval_typeerror_caught_exception_keeps_active_chain() -> None:
+    captured: dict[str, Any] = {}
+
+    @do
+    def program() -> Program[tuple[str, str, str]]:
+        try:
+            _ = yield doeff_vm.Eval(object())
+            return ("unexpected", "", "")
+        except Exception as exc:
+            captured["context"] = getattr(exc, "doeff_execution_context", None)
+            return ("caught", type(exc).__name__, str(exc))
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+
+    context = captured.get("context")
+    assert context is not None
+    active_chain = getattr(context, "active_chain", None)
+    assert active_chain is not None
+
+    entries = _active_chain_entries(active_chain)
+    expected_line = _line_of(program.func, "_ = yield doeff_vm.Eval(object())")
+    assert any(
+        entry.get("kind") == "program_yield"
+        and entry.get("function_name") == "program"
+        and entry.get("source_file") == __file__
+        and entry.get("source_line") == expected_line
+        for entry in entries
+    )
 
 
 def test_get_execution_context_active_chain_renderable() -> None:
