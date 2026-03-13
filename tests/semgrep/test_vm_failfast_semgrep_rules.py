@@ -42,7 +42,7 @@ def test_vm_failfast_rust_rules_detect_known_bad_examples() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/rust"
     check_ids = _semgrep_rule_ids(
         REPO_ROOT / "packages/doeff-vm/.semgrep.yaml",
-        "packages/doeff-vm/src",
+        "packages",
         cwd=fixture_root,
     )
 
@@ -50,6 +50,7 @@ def test_vm_failfast_rust_rules_detect_known_bad_examples() -> None:
         "no-bare-ok-in-handler-can-handle",
         "no-silent-if-let-current-segment",
         "no-bare-ok-in-traceback-build",
+        "doeff-vm-core-no-inline-trace-state-emits",
     }
     assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
 

@@ -103,6 +103,25 @@ rules:
       invariants: ["API-12"]
 
   # ---------------------------------------------------------------------------
+  # gh-296: trace observer extraction
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-vm-core-no-inline-trace-state-emits
+    pattern-regex: 'trace_state\.emit_[a-z_]+\('
+    message: |
+      ISSUE-gh-296: VM execution code must not call trace_state.emit_* inline.
+      Queue trace observer events during execution and flush them from VM::step()
+      via the extracted trace observer boundary instead.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm-core/src/vm/*.rs"
+    metadata:
+      category: architecture-enforcement
+      issue: gh-296
+
+  # ---------------------------------------------------------------------------
   # SPEC-009: RunResult Python-exposed name
   # ---------------------------------------------------------------------------
 
