@@ -13,10 +13,11 @@ crate-type = ["rlib"]
 
 [features]
 default = []
+python_bridge = ["dep:pyo3"]
 vm_debug_logs = []
 
 [dependencies]
-pyo3 = { version = "0.28", features = ["py-clone"] }
+pyo3 = { version = "0.28", features = ["py-clone"], optional = true }
 
 [dev-dependencies]
 pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }
