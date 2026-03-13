@@ -998,25 +998,6 @@ impl VM {
         Ok(entry.mode.should_invoke(matches_filter))
     }
 
-    pub(super) fn should_invoke_handler(
-        &self,
-        entry: &HandlerChainEntry,
-        effect_obj: &Py<PyAny>,
-    ) -> Result<bool, PyException> {
-        let Some(types) = entry.types.as_ref() else {
-            return Ok(true);
-        };
-        if types.is_empty() {
-            return Ok(false);
-        }
-
-        Ok(Python::attach(|py| -> PyResult<bool> {
-            let effect = effect_obj.bind(py);
-            let type_tuple = PyTuple::new(py, types.iter().map(|ty| ty.clone_ref(py)))?;
-            effect.is_instance(&type_tuple)
-        })?)
-    }
-
     fn continue_interceptor_chain_mode(
         &mut self,
         yielded: DoCtrl,

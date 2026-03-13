@@ -46,6 +46,9 @@ static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 const MISSING_UNKNOWN: &str = "[MISSING] <unknown>";
 
+#[path = "vm/handler.rs"]
+mod handler_impl;
+
 #[path = "vm/dispatch.rs"]
 mod dispatch_impl;
 
