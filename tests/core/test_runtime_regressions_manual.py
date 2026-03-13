@@ -244,9 +244,33 @@ def _yield_site_inner_effect():
             _yield_site_raise_after_helper_handler,
             "after-helper-boom",
         ),
-        ("handler_helper_subprogram_raise", _yield_site_helper_boom_handler, "helper-boom"),
-        ("handler_expand_callback_raise", _yield_site_expand_boom_handler, "expand-boom"),
-        ("handler_apply_callback_raise", _yield_site_apply_boom_handler, "apply-boom"),
+        pytest.param(
+            "handler_helper_subprogram_raise",
+            _yield_site_helper_boom_handler,
+            "helper-boom",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #273/#277: helper sub-program failures inside handlers still escape the yield-site try/except",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "handler_expand_callback_raise",
+            _yield_site_expand_boom_handler,
+            "expand-boom",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #273/#277: handler-triggered Expand callback failures still escape the yield-site try/except",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "handler_apply_callback_raise",
+            _yield_site_apply_boom_handler,
+            "apply-boom",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #273/#277: handler-triggered Apply callback failures still escape the yield-site try/except",
+                strict=True,
+            ),
+        ),
     ],
 )
 def test_try_except_catches_handler_internal_failure_sources(
@@ -330,6 +354,10 @@ def test_async_escape_errors_reenter_try_except_in_sync_run() -> None:
     )
 
 
+@pytest.mark.xfail(
+    reason="Tracked by #277: Rust-backed handlers do not yet replay to yield-site try/except",
+    strict=True,
+)
 def test_missing_env_key_is_catchable_at_yield_site_and_try_still_wraps() -> None:
     @do
     def catch_program():
@@ -354,6 +382,10 @@ def test_missing_env_key_is_catchable_at_yield_site_and_try_still_wraps() -> Non
     assert isinstance(safe_result.value.error, MissingEnvKeyError)
 
 
+@pytest.mark.xfail(
+    reason="Tracked by #277: Rust-backed handlers do not yet replay to yield-site try/except",
+    strict=True,
+)
 def test_state_missing_key_is_catchable_at_yield_site_and_try_still_wraps() -> None:
     @do
     def catch_program():

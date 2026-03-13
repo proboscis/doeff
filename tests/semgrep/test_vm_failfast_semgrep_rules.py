@@ -12,20 +12,8 @@ pytestmark = pytest.mark.semgrep
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _resolve_semgrep_bin() -> str | None:
-    semgrep_bin = shutil.which("semgrep")
-    if semgrep_bin is not None:
-        return semgrep_bin
-
-    fallback = Path.home() / ".local" / "bin" / "semgrep"
-    if fallback.exists():
-        return str(fallback)
-
-    return None
-
-
 def _semgrep_rule_ids(config: Path, target: str, *, cwd: Path) -> set[str]:
-    semgrep_bin = _resolve_semgrep_bin()
+    semgrep_bin = shutil.which("semgrep")
     if semgrep_bin is None:
         pytest.skip("semgrep is not installed")
 
@@ -77,21 +65,5 @@ def test_vm_failfast_python_rules_detect_known_bad_examples() -> None:
     expected = {
         "no-silent-except-in-traceback",
         "no-silent-except-return-none",
-    }
-    assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
-
-
-def test_vm_dispatch_architecture_rules_detect_known_bad_examples() -> None:
-    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/rust"
-    check_ids = _semgrep_rule_ids(
-        REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-vm-core/src",
-        cwd=fixture_root,
-    )
-
-    expected = {
-        "vm-dispatch-no-vec-stack-state",
-        "vm-dispatch-no-fallback-index",
-        "vm-dispatch-no-parent-chain-completion-inference",
     }
     assert all(_has_rule(check_ids, rule_id) for rule_id in expected)

@@ -86,9 +86,10 @@ pub use capture::{
     SpawnSite, TraceEntry, TraceFrame, TraceHop,
 };
 pub use continuation::Continuation;
-pub use dispatch::{Dispatch, HandlerActivation};
+pub use dispatch::DispatchContext;
 pub use do_ctrl::DoCtrl;
 pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
+pub use doeff_vm_core::DoExprTag;
 pub use driver::{Mode, StepEvent};
 pub use effect::*;
 pub use error::VMError;
@@ -98,9 +99,8 @@ pub use ids::{ContId, DispatchId, Marker, PromiseId, RunnableId, SegmentId, Task
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
 pub use py_key::HashedPyKey;
-pub use doeff_vm_core::DoExprTag;
-pub use pyvm::PyVM;
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
+pub use pyvm::PyVM;
 pub use rust_store::RustStore;
 pub use segment::{Segment, SegmentKind};
 pub use step::PyException;

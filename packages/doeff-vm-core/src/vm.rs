@@ -15,6 +15,7 @@ use crate::capture::{
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
+use crate::dispatch::HandlerActivation;
 use crate::dispatch_state::DispatchState;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::doeff_generator::DoeffGenerator;
@@ -41,7 +42,7 @@ use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::TraceState;
 use crate::value::Value;
 
-pub use crate::dispatch::{Dispatch, HandlerActivation};
+pub use crate::dispatch::DispatchContext;
 pub use crate::rust_store::RustStore;
 
 static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
@@ -1345,7 +1346,7 @@ impl VM {
     ) -> bool {
         self.dispatch_state
             .find_by_dispatch_id(dispatch_id)
-            .and_then(Dispatch::current_continuation)
+            .and_then(DispatchContext::current_continuation)
             .is_some_and(|continuation| {
                 continuation
                     .frames_snapshot
@@ -1561,11 +1562,12 @@ impl VM {
     }
 
     pub fn assemble_traceback_entries(&self, exception: &PyException) -> Vec<TraceEntry> {
+        let dispatch_stack: Vec<DispatchContext> = self.dispatch_state.iter().cloned().collect();
         self.trace_state.assemble_traceback_entries(
             exception,
             &self.segments,
             self.current_segment,
-            &self.dispatch_state,
+            &dispatch_stack,
         )
     }
 
@@ -1577,11 +1579,12 @@ impl VM {
     }
 
     pub fn assemble_active_chain(&self, exception: Option<&PyException>) -> Vec<ActiveChainEntry> {
+        let dispatch_stack: Vec<DispatchContext> = self.dispatch_state.iter().cloned().collect();
         self.trace_state.assemble_active_chain(
             exception,
             &self.segments,
             self.current_segment,
-            &self.dispatch_state,
+            &dispatch_stack,
         )
     }
 
@@ -4486,7 +4489,7 @@ impl VM {
     ) -> bool {
         self.dispatch_state
             .find_by_dispatch_id(dispatch_id)
-            .and_then(Dispatch::active_activation)
+            .and_then(DispatchContext::active_activation)
             .is_some_and(|activation| {
                 if activation.throw_target.is_some() {
                     return false;
@@ -4727,11 +4730,15 @@ impl VM {
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.current_segment = Some(handler_seg_id);
 
-        self.dispatch_state.push_dispatch(Dispatch {
+        self.dispatch_state.push_dispatch(DispatchContext {
             dispatch_id,
             effect: effect.clone(),
             is_execution_context_effect,
             handler_chain: handler_chain.iter().map(|entry| entry.marker).collect(),
+            handler_idx,
+            active_handler_seg_id: handler_seg_id,
+            supports_error_context_conversion,
+            k_current: k_user.clone(),
             activations: vec![HandlerActivation {
                 handler_idx,
                 active_handler_seg_id: handler_seg_id,
