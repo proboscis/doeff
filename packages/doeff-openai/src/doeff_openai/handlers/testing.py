@@ -21,7 +21,7 @@ from doeff_openai.effects import (
     StreamingChatCompletion,
     StructuredOutput,
 )
-from doeff_openai.handlers.production import _is_openai_model
+from doeff_openai.handlers._model_select import _is_openai_model
 
 ProtocolHandler = Callable[[Any, Any], Any]
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 
 import pytest
-from beartype import beartype
 
 import doeff.kleisli as kleisli_module
 from doeff import Program
@@ -26,6 +25,11 @@ def test_kleisli_call_is_beartype_decoratable() -> None:
 
     if sys.version_info < (3, 11):
         pytest.skip("beartype ParamSpec handling is unstable on Python 3.10")
+
+    try:
+        from beartype import beartype
+    except Exception as exc:  # pragma: no cover - environment-dependent upstream issue
+        pytest.skip(f"beartype import unavailable in this environment: {exc}")
 
     try:
         decorated_call = beartype(KleisliProgram.__call__)
