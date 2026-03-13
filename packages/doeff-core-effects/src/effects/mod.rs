@@ -2,7 +2,7 @@
 //!
 //! Effects are the requests that user code makes, which handlers respond to.
 
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::{PyBaseException, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
 
@@ -68,8 +68,6 @@ pub struct PySpawn {
     #[pyo3(get)]
     pub handlers: Py<PyAny>,
     #[pyo3(get)]
-    pub store_mode: Py<PyAny>,
-    #[pyo3(get)]
     pub priority: Py<PyAny>,
 }
 
@@ -109,6 +107,14 @@ pub struct PyFailPromise {
 #[pyclass(frozen, name = "CreateExternalPromiseEffect", extends=PyEffectBase)]
 pub struct PyCreateExternalPromise;
 
+#[pyclass(name = "ExternalPromise", dict)]
+pub struct PyExternalPromise {
+    #[pyo3(get)]
+    pub id: u64,
+    #[pyo3(get)]
+    pub _completion_queue: Py<PyAny>,
+}
+
 #[pyclass(frozen, name = "PyCancelEffect", extends=PyEffectBase)]
 pub struct PyCancelEffect {
     #[pyo3(get)]
@@ -137,7 +143,6 @@ pyo3::create_exception!(
 pub struct PySemaphore {
     #[pyo3(get)]
     pub id: u64,
-    pub(crate) state_id: u64,
 }
 
 #[pyclass(frozen, name = "CreateSemaphoreEffect", extends=PyEffectBase)]
@@ -297,7 +302,6 @@ impl PySpawn {
         program: Py<PyAny>,
         options: Option<Py<PyAny>>,
         handlers: Option<Py<PyAny>>,
-        store_mode: Option<Py<PyAny>>,
         priority: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyEffectBase {
@@ -308,7 +312,6 @@ impl PySpawn {
             options: options.unwrap_or_else(|| pyo3::types::PyDict::new(py).into_any().unbind()),
             handlers: handlers
                 .unwrap_or_else(|| pyo3::types::PyList::empty(py).into_any().unbind()),
-            store_mode: store_mode.unwrap_or_else(|| py.None()),
             priority: priority.unwrap_or_else(|| py.None()),
         })
     }
@@ -317,26 +320,24 @@ impl PySpawn {
 #[pymethods]
 impl PySpawn {
     #[new]
-    #[pyo3(signature = (program, options=None, handlers=None, store_mode=None, priority=None))]
+    #[pyo3(signature = (program, options=None, handlers=None, priority=None))]
     fn new(
         py: Python<'_>,
         program: Py<PyAny>,
         options: Option<Py<PyAny>>,
         handlers: Option<Py<PyAny>>,
-        store_mode: Option<Py<PyAny>>,
         priority: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
-        Self::create(py, program, options, handlers, store_mode, priority)
+        Self::create(py, program, options, handlers, priority)
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
         let program_repr = py_repr_or(py, &self.program, "<program>");
         let handlers_repr = py_repr_or(py, &self.handlers, "<handlers>");
-        let store_mode_repr = py_repr_or(py, &self.store_mode, "<store_mode>");
         let priority_repr = py_repr_or(py, &self.priority, "<priority>");
         format!(
-            "Spawn(program={}, handlers={}, store_mode={}, priority={})",
-            program_repr, handlers_repr, store_mode_repr, priority_repr
+            "Spawn(program={}, handlers={}, priority={})",
+            program_repr, handlers_repr, priority_repr
         )
     }
 }
@@ -456,6 +457,41 @@ impl PyCreateExternalPromise {
 }
 
 #[pymethods]
+impl PyExternalPromise {
+    #[getter]
+    fn future(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let handle = PyDict::new(py);
+        handle.set_item("type", "ExternalPromise")?;
+        handle.set_item("promise_id", self.id)?;
+        let future_type = py.import("doeff.effects.spawn")?.getattr("Future")?;
+        future_type
+            .call1((handle, self._completion_queue.clone_ref(py)))
+            .map(|obj| obj.unbind())
+    }
+
+    fn complete(&self, py: Python<'_>, value: Py<PyAny>) -> PyResult<()> {
+        self._completion_queue
+            .bind(py)
+            .call_method1("put", ((self.id, value, py.None()),))?;
+        Ok(())
+    }
+
+    fn fail(&self, py: Python<'_>, error: Py<PyAny>) -> PyResult<()> {
+        if !error.bind(py).is_instance_of::<PyBaseException>() {
+            return Err(PyTypeError::new_err("error must be BaseException"));
+        }
+        self._completion_queue
+            .bind(py)
+            .call_method1("put", ((self.id, py.None(), error),))?;
+        Ok(())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ExternalPromise({})", self.id)
+    }
+}
+
+#[pymethods]
 impl PyCancelEffect {
     #[new]
     fn new(task: Py<PyAny>) -> PyClassInitializer<Self> {
@@ -512,12 +548,6 @@ impl PySemaphore {
 
     fn __repr__(&self) -> String {
         format!("Semaphore({})", self.id)
-    }
-}
-
-impl Drop for PySemaphore {
-    fn drop(&mut self) {
-        crate::scheduler::notify_semaphore_handle_dropped(self.state_id, self.id);
     }
 }
 
@@ -936,6 +966,7 @@ pub fn register_effect_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCompletePromise>()?;
     m.add_class::<PyFailPromise>()?;
     m.add_class::<PyCreateExternalPromise>()?;
+    m.add_class::<PyExternalPromise>()?;
     m.add_class::<PyCancelEffect>()?;
     m.add_class::<PyTaskCompleted>()?;
     m.add("TaskCancelledError", m.py().get_type::<TaskCancelledError>())?;

@@ -181,9 +181,13 @@ result_safe = _ext.result_safe
 scheduler = _ext.scheduler
 lazy_ask = _ext.lazy_ask
 await_handler = _ext.await_handler
+sync_await_handler = _ext.sync_await_handler
 CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
 GetHandlers = _ext.GetHandlers
+HandlerGet = _ext.HandlerGet
+HandlerSet = _ext.HandlerSet
+HandlerHas = _ext.HandlerHas
 GetTraceback = _ext.GetTraceback
 GetExecutionContext = _ext.GetExecutionContext
 ExecutionContext = _ext.ExecutionContext
@@ -204,6 +208,7 @@ CreatePromiseEffect = _ext.CreatePromiseEffect
 CompletePromiseEffect = _ext.CompletePromiseEffect
 FailPromiseEffect = _ext.FailPromiseEffect
 CreateExternalPromiseEffect = _ext.CreateExternalPromiseEffect
+ExternalPromise = _ext.ExternalPromise
 Semaphore = _ext.Semaphore
 CreateSemaphoreEffect = _ext.CreateSemaphoreEffect
 AcquireSemaphoreEffect = _ext.AcquireSemaphoreEffect
@@ -214,7 +219,6 @@ ProgramCallStackEffect = _ext.ProgramCallStackEffect
 ProgramCallFrameEffect = _ext.ProgramCallFrameEffect
 PyCancelEffect = _ext.PyCancelEffect
 _SchedulerTaskCompleted = _ext._SchedulerTaskCompleted
-_debug_scheduler_semaphore_count = _ext._debug_scheduler_semaphore_count
 
 # R13-I: DoExprTag constants
 TAG_PURE = _ext.TAG_PURE
@@ -228,6 +232,9 @@ TAG_DELEGATE = _ext.TAG_DELEGATE
 TAG_PASS = _ext.TAG_PASS
 TAG_GET_CONTINUATION = _ext.TAG_GET_CONTINUATION
 TAG_GET_HANDLERS = _ext.TAG_GET_HANDLERS
+TAG_HANDLER_GET = _ext.TAG_HANDLER_GET
+TAG_HANDLER_SET = _ext.TAG_HANDLER_SET
+TAG_HANDLER_HAS = _ext.TAG_HANDLER_HAS
 TAG_GET_TRACEBACK = _ext.TAG_GET_TRACEBACK
 TAG_WITH_INTERCEPT = _ext.TAG_WITH_INTERCEPT
 TAG_DISCONTINUE = _ext.TAG_DISCONTINUE
@@ -268,6 +275,9 @@ __all__ = [
     "TAG_GET_CALL_STACK",
     "TAG_GET_CONTINUATION",
     "TAG_GET_HANDLERS",
+    "TAG_HANDLER_GET",
+    "TAG_HANDLER_SET",
+    "TAG_HANDLER_HAS",
     "TAG_GET_TRACEBACK",
     "TAG_MAP",
     "TAG_PASS",
@@ -284,6 +294,7 @@ __all__ = [
     "CompletePromiseEffect",
     "CreateContinuation",
     "CreateExternalPromiseEffect",
+    "ExternalPromise",
     "CreatePromiseEffect",
     "CreateSemaphoreEffect",
     "Delegate",
@@ -308,6 +319,9 @@ __all__ = [
     "GetContinuation",
     "GetExecutionContext",
     "GetHandlers",
+    "HandlerGet",
+    "HandlerSet",
+    "HandlerHas",
     "GetTraceback",
     "K",
     "Map",
@@ -356,6 +370,7 @@ __all__ = [
     "_SchedulerTaskCompleted",
     "async_run",
     "await_handler",
+    "sync_await_handler",
     "lazy_ask",
     "reader",
     "result_safe",

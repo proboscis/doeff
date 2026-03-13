@@ -3,10 +3,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::dispatch::{ControlOwnership, DispatchRootRef};
 use crate::do_ctrl::InterceptMode;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::ids::{DispatchId, HandlerScopeId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
@@ -18,6 +19,7 @@ pub enum SegmentKind {
     Normal,
     PromptBoundary {
         handled_marker: Marker,
+        handler_scope_id: HandlerScopeId,
         handler: KleisliRef,
         types: Option<Vec<PyShared>>,
     },
@@ -46,8 +48,7 @@ pub struct Segment {
     pub caller: Option<SegmentId>,
     pub scope_store: ScopeStore,
     pub kind: SegmentKind,
-    pub dispatch_id: Option<DispatchId>,
-    pub dispatch_segment_id: Option<SegmentId>,
+    pub control_ownership: ControlOwnership,
     pub mode: Mode,
     pub pending_python: Option<PendingPython>,
     pub pending_error_context: Option<PyException>,
@@ -63,8 +64,7 @@ impl Segment {
             caller,
             scope_store: ScopeStore::default(),
             kind: SegmentKind::Normal,
-            dispatch_id: None,
-            dispatch_segment_id: None,
+            control_ownership: ControlOwnership::default(),
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
@@ -77,6 +77,7 @@ impl Segment {
         marker: Marker,
         caller: Option<SegmentId>,
         handled_marker: Marker,
+        handler_scope_id: HandlerScopeId,
         handler: KleisliRef,
     ) -> Self {
         Segment {
@@ -86,11 +87,11 @@ impl Segment {
             scope_store: ScopeStore::default(),
             kind: SegmentKind::PromptBoundary {
                 handled_marker,
+                handler_scope_id,
                 handler,
                 types: None,
             },
-            dispatch_id: None,
-            dispatch_segment_id: None,
+            control_ownership: ControlOwnership::default(),
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
@@ -103,6 +104,7 @@ impl Segment {
         marker: Marker,
         caller: Option<SegmentId>,
         handled_marker: Marker,
+        handler_scope_id: HandlerScopeId,
         handler: KleisliRef,
         types: Option<Vec<PyShared>>,
     ) -> Self {
@@ -113,11 +115,11 @@ impl Segment {
             scope_store: ScopeStore::default(),
             kind: SegmentKind::PromptBoundary {
                 handled_marker,
+                handler_scope_id,
                 handler,
                 types,
             },
-            dispatch_id: None,
-            dispatch_segment_id: None,
+            control_ownership: ControlOwnership::default(),
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
@@ -154,6 +156,41 @@ impl Segment {
             | SegmentKind::MaskBoundary { .. } => None,
         }
     }
+
+    pub fn prompt_handler_scope_id(&self) -> Option<HandlerScopeId> {
+        match &self.kind {
+            SegmentKind::PromptBoundary {
+                handler_scope_id, ..
+            } => Some(*handler_scope_id),
+            SegmentKind::Normal
+            | SegmentKind::InterceptorBoundary { .. }
+            | SegmentKind::MaskBoundary { .. } => None,
+        }
+    }
+
+    pub fn owner_dispatch_ref(&self) -> Option<DispatchRootRef> {
+        self.control_ownership.owner_dispatch
+    }
+
+    pub fn owner_dispatch_id(&self) -> Option<DispatchId> {
+        self.control_ownership.owner_dispatch_id()
+    }
+
+    pub fn set_owner_dispatch(&mut self, owner_dispatch: Option<DispatchRootRef>) {
+        self.control_ownership.owner_dispatch = owner_dispatch;
+    }
+
+    pub fn visible_dispatch_ref(&self) -> Option<DispatchRootRef> {
+        self.control_ownership.visible_dispatch
+    }
+
+    pub fn visible_dispatch_id(&self) -> Option<DispatchId> {
+        self.control_ownership.visible_dispatch_id()
+    }
+
+    pub fn set_visible_dispatch(&mut self, visible_dispatch: Option<DispatchRootRef>) {
+        self.control_ownership.visible_dispatch = visible_dispatch;
+    }
 }
 
 #[cfg(test)]
@@ -178,11 +215,11 @@ mod tests {
             marker,
             None,
             handled,
+            HandlerScopeId::fresh(),
             std::sync::Arc::new(crate::kleisli::RustKleisli::new(
                 std::sync::Arc::new(crate::handler::StateHandlerFactory),
                 "StateHandler".to_string(),
             )),
-            None,
         );
         assert!(seg.is_prompt_boundary());
         assert_eq!(seg.handled_marker(), Some(handled));

@@ -12,7 +12,7 @@ import linecache
 import logging
 import sysconfig
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import TracebackType
 from typing import (
@@ -417,30 +417,6 @@ else:
                 f".{final_name}"
             )
 
-        def _should_render_effect_entry(self, entry: EffectYield) -> bool:
-            result = entry.result
-            if isinstance(result, EffectResultResumed):
-                return False
-            if isinstance(result, EffectResultThrew):
-                return self._is_final_exception_type(result.exception_repr)
-            return True
-
-        def _is_shadowed_effect_entry(self, index: int, entry: EffectYield) -> bool:
-            if not isinstance(entry.result, EffectResultThrew):
-                return False
-            saw_handler_wrapper = False
-            for later in self.active_chain[index + 1 :]:
-                if isinstance(later, ProgramYield) and later.is_handler:
-                    saw_handler_wrapper = True
-                    continue
-                if isinstance(later, ExceptionSite):
-                    return saw_handler_wrapper and (
-                        later.function_name == entry.function_name
-                        and later.source_file == entry.source_file
-                    )
-                break
-            return False
-
         @staticmethod
         def _format_spawn_boundary(boundary: SpawnBoundary) -> str:
             if boundary.spawn_site is not None:
@@ -477,8 +453,9 @@ else:
                     continue
 
                 if isinstance(entry, EffectYield):
-                    if not self._should_render_effect_entry(entry) or self._is_shadowed_effect_entry(
-                        index, entry
+                    if (
+                        isinstance(entry.result, EffectResultThrew)
+                        and not self._is_final_exception_type(entry.result.exception_repr)
                     ):
                         continue
                     if (
@@ -526,6 +503,9 @@ else:
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )
+                    if entry.handler_stack:
+                        for stack_line in self._render_handler_stack(entry.handler_stack).splitlines():
+                            lines.append(f"    {stack_line}")
                     lines.append(f"    raise {entry.exception_type}({entry.message!r})")
                     lines.append("")
 
@@ -600,6 +580,69 @@ else:
                 return f"{type(self.exception).__name__}: {self.exception}"
             return " -> ".join(parts) + f": {type(self.exception).__name__}: {self.exception}"
 
+    def _attach_missing_exception_handler_stacks(
+        active_chain: list[ActiveChainEntry],
+        trace_entries: list[Any] | tuple[Any, ...],
+    ) -> list[ActiveChainEntry]:
+        dispatches = [
+            entry for entry in coerce_trace_entries(list(trace_entries)) if isinstance(entry, TraceDispatch)
+        ]
+        if not dispatches:
+            return active_chain
+
+        def _match_dispatch(site: ExceptionSite) -> tuple[HandlerStackEntry, ...]:
+            def _tail(name: str) -> str:
+                return name.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
+
+            for dispatch in reversed(dispatches):
+                chain = list(dispatch.delegation_chain)
+                if not chain:
+                    continue
+                matched = any(
+                    delegated.source_file == site.source_file
+                    and _tail(delegated.handler_name) == site.function_name
+                    for delegated in chain
+                ) or (
+                    dispatch.handler_source_file == site.source_file
+                    and _tail(dispatch.handler_name) == site.function_name
+                )
+                if not matched:
+                    continue
+
+                stack: list[HandlerStackEntry] = []
+                for delegated in chain[:-1]:
+                    stack.append(
+                        HandlerStackEntry(
+                            handler_name=delegated.handler_name,
+                            handler_scope_id=None,
+                            handler_kind=delegated.handler_kind,
+                            source_file=delegated.source_file,
+                            source_line=delegated.source_line,
+                            status="pending",
+                        )
+                    )
+                stack.append(
+                    HandlerStackEntry(
+                        handler_name=dispatch.handler_name,
+                        handler_scope_id=None,
+                        handler_kind=dispatch.handler_kind,
+                        source_file=dispatch.handler_source_file,
+                        source_line=dispatch.handler_source_line,
+                        status="threw",
+                    )
+                )
+                return tuple(stack)
+            return ()
+
+        normalized: list[ActiveChainEntry] = []
+        for entry in active_chain:
+            if isinstance(entry, ExceptionSite) and not entry.handler_stack:
+                stack = _match_dispatch(entry)
+                if stack:
+                    entry = replace(entry, handler_stack=stack)
+            normalized.append(entry)
+        return normalized
+
     def build_doeff_traceback(
         exception: BaseException,
         trace_entries: list[Any] | tuple[Any, ...],
@@ -611,6 +654,7 @@ else:
 
         projected = project_trace(trace_entries, allow_active=allow_active)
         active_chain = coerce_active_chain_entries(list(active_chain_entries))
+        active_chain = _attach_missing_exception_handler_stacks(active_chain, trace_entries)
         captured = get_captured_traceback(exception)
         if captured is None:
             captured = capture_traceback(exception)

@@ -14,7 +14,7 @@ use crate::continuation::Continuation;
 use crate::dispatch::DispatchFrame;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
 use crate::frame::{CallMetadata, Frame};
-use crate::ids::{DispatchId, SegmentId};
+use crate::ids::{DispatchId, HandlerScopeId, SegmentId};
 use crate::ir_stream::{IRStreamRef, StreamLocation};
 use crate::step::PyException;
 use crate::value::Value;
@@ -68,17 +68,6 @@ impl ActiveChainAssemblyState {
             dispatch_order: Vec::new(),
         }
     }
-
-    pub(crate) fn dispatch_has_terminal_result(&self, dispatch_id: DispatchId) -> bool {
-        self.dispatches.get(&dispatch_id).is_some_and(|dispatch| {
-            matches!(
-                dispatch.result,
-                EffectResult::Resumed { .. }
-                    | EffectResult::Transferred { .. }
-                    | EffectResult::Threw { .. }
-            )
-        })
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -95,10 +84,6 @@ impl Default for TraceState {
 }
 
 impl TraceState {
-    pub(crate) fn active_chain_state(&self) -> &ActiveChainAssemblyState {
-        &self.active_chain_state
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn emit_dispatch_started(
         &mut self,
@@ -146,6 +131,38 @@ impl TraceState {
             handler_index,
             action,
         });
+    }
+
+    pub(crate) fn force_dispatch_threw(
+        &mut self,
+        dispatch_id: DispatchId,
+        handler_scope_id: Option<HandlerScopeId>,
+        exception_repr: String,
+    ) -> bool {
+        let Some(dispatch) = self.active_chain_state.dispatches.get_mut(&dispatch_id) else {
+            return false;
+        };
+        let target_index = dispatch
+            .handler_stack
+            .iter()
+            .position(|entry| handler_scope_id.is_some_and(|scope_id| entry.handler_scope_id == scope_id))
+            .or_else(|| {
+                dispatch
+                    .handler_stack
+                    .iter()
+                    .position(|entry| entry.status != HandlerStatus::Pending)
+            })
+            .or_else(|| (!dispatch.handler_stack.is_empty()).then_some(0));
+        let Some(target_index) = target_index else {
+            return false;
+        };
+        let handler_name = dispatch.handler_stack[target_index].handler_name.clone();
+        dispatch.handler_stack[target_index].status = HandlerStatus::Threw;
+        dispatch.result = EffectResult::Threw {
+            handler_name,
+            exception_repr,
+        };
+        true
     }
 
     pub(crate) fn clear(&mut self) {
@@ -526,7 +543,10 @@ impl TraceState {
         })
     }
 
-    fn exception_site(exception: &PyException) -> ActiveChainEntry {
+    fn exception_site_with_scope(
+        exception: &PyException,
+        handler_scope_id: Option<HandlerScopeId>,
+    ) -> ActiveChainEntry {
         match exception {
             PyException::Materialized {
                 exc_type: _exc_type,
@@ -591,6 +611,8 @@ impl TraceState {
                     function_name,
                     source_file,
                     source_line,
+                    handler_scope_id,
+                    handler_stack: Vec::new(),
                     exception_type,
                     message,
                 }
@@ -599,6 +621,8 @@ impl TraceState {
                 function_name: "<runtime>".to_string(),
                 source_file: "<runtime>".to_string(),
                 source_line: 0,
+                handler_scope_id,
+                handler_stack: Vec::new(),
                 exception_type: "RuntimeError".to_string(),
                 message: message.clone(),
             },
@@ -606,10 +630,33 @@ impl TraceState {
                 function_name: "<runtime>".to_string(),
                 source_file: "<runtime>".to_string(),
                 source_line: 0,
+                handler_scope_id,
+                handler_stack: Vec::new(),
                 exception_type: "TypeError".to_string(),
                 message: message.clone(),
             },
         }
+    }
+
+    fn current_handler_scope_id_from_segments(
+        segments: &SegmentArena,
+        current_segment: Option<SegmentId>,
+    ) -> Option<HandlerScopeId> {
+        let seg_id = current_segment?;
+        let seg = segments.get(seg_id)?;
+        seg.frames.iter().rev().find_map(|frame| match frame {
+            Frame::HandlerBoundary { handler_scope_id, .. } => Some(*handler_scope_id),
+            _ => None,
+        })
+    }
+
+    fn current_handler_scope_id_from_dispatch(
+        dispatch_stack: &[DispatchFrame],
+    ) -> Option<HandlerScopeId> {
+        dispatch_stack
+            .iter()
+            .rev()
+            .find_map(|dispatch| dispatch.current_activation().map(|activation| activation.handler_scope_id))
     }
 
     pub(crate) fn assemble_active_chain(
@@ -624,9 +671,13 @@ impl TraceState {
         if let Some(exception) = exception {
             Self::finalize_unresolved_dispatches_as_threw(&mut state, exception);
         }
+        let current_handler_scope_id =
+            Self::current_handler_scope_id_from_segments(segments, current_segment)
+                .or_else(|| Self::current_handler_scope_id_from_dispatch(dispatch_stack));
         let entries = self.entries_from_active_chain_state(&state, dispatch_stack);
         let entries = Self::dedup_adjacent(entries);
-        Self::inject_context(entries, exception)
+        let entries = Self::inject_context(entries, exception, current_handler_scope_id, &state);
+        Self::filter_hidden_effect_entries(entries)
     }
 
     pub(crate) fn assemble_traceback_entries(
@@ -962,6 +1013,7 @@ impl TraceState {
             .enumerate()
             .map(|(index, snapshot)| HandlerDispatchEntry {
                 handler_name: snapshot.handler_name.clone(),
+                handler_scope_id: snapshot.handler_scope_id,
                 handler_kind: snapshot.handler_kind,
                 source_file: snapshot.source_file.clone(),
                 source_line: snapshot.source_line,
@@ -1438,6 +1490,7 @@ impl TraceState {
                 source_line: lhs_source_line,
                 exception_type: lhs_exception_type,
                 message: lhs_message,
+                ..
             } => match rhs {
                 ActiveChainEntry::ExceptionSite {
                     function_name: rhs_function_name,
@@ -1445,6 +1498,7 @@ impl TraceState {
                     source_line: rhs_source_line,
                     exception_type: rhs_exception_type,
                     message: rhs_message,
+                    ..
                 } => {
                     lhs_function_name == rhs_function_name
                         && lhs_source_file == rhs_source_file
@@ -1462,6 +1516,8 @@ impl TraceState {
     fn inject_context(
         mut active_chain: Vec<ActiveChainEntry>,
         exception: Option<&PyException>,
+        current_handler_scope_id: Option<HandlerScopeId>,
+        state: &ActiveChainAssemblyState,
     ) -> Vec<ActiveChainEntry> {
         let context_entries = exception.map_or_else(Vec::new, Self::context_entries_from_exception);
         let has_context_entries = !context_entries.is_empty();
@@ -1473,7 +1529,81 @@ impl TraceState {
             return active_chain;
         };
 
-        let exception_site = Self::exception_site(exception);
+        let exception_site = match Self::exception_site_with_scope(exception, current_handler_scope_id) {
+            ActiveChainEntry::ExceptionSite {
+                function_name,
+                source_file,
+                source_line,
+                handler_scope_id,
+                exception_type,
+                message,
+                ..
+            } => {
+                let handler_stack = active_chain
+                    .iter()
+                    .rev()
+                    .find(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
+                    .and_then(|entry| match entry {
+                        ActiveChainEntry::EffectYield { handler_stack, .. } => {
+                            let mut stack = handler_stack.clone();
+                            let mut matched = false;
+                            if let Some(scope_id) = handler_scope_id {
+                                if let Some(target) =
+                                    stack.iter_mut().find(|entry| entry.handler_scope_id == scope_id)
+                                {
+                                    target.status = HandlerStatus::Threw;
+                                    matched = true;
+                                }
+                            }
+                            matched.then_some(stack)
+                        }
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        state.dispatches.values().find_map(|dispatch| {
+                            let mut stack = dispatch.handler_stack.clone();
+                            let target = if let Some(scope_id) = handler_scope_id {
+                                if let Some(target) =
+                                    stack.iter_mut().find(|entry| entry.handler_scope_id == scope_id)
+                                {
+                                    target
+                                } else {
+                                    stack
+                                        .iter_mut()
+                                        .rfind(|entry| {
+                                            entry.status != HandlerStatus::Pending
+                                                && entry.source_file.as_deref()
+                                                    == Some(source_file.as_str())
+                                                && entry.source_line == Some(source_line)
+                                        })?
+                                }
+                            } else {
+                                stack
+                                    .iter_mut()
+                                    .rfind(|entry| {
+                                        entry.status != HandlerStatus::Pending
+                                            && entry.source_file.as_deref()
+                                                == Some(source_file.as_str())
+                                            && entry.source_line == Some(source_line)
+                                    })?
+                            };
+                            target.status = HandlerStatus::Threw;
+                            Some(stack)
+                        })
+                    })
+                    .unwrap_or_default();
+                ActiveChainEntry::ExceptionSite {
+                    function_name,
+                    source_file,
+                    source_line,
+                    handler_scope_id,
+                    handler_stack,
+                    exception_type,
+                    message,
+                }
+            }
+            other => other,
+        };
         let ActiveChainEntry::ExceptionSite { function_name, .. } = &exception_site else {
             unreachable!("exception_site() must return ActiveChainEntry::ExceptionSite")
         };
@@ -1505,6 +1635,62 @@ impl TraceState {
             active_chain.push(exception_site);
         }
         active_chain
+    }
+
+    fn filter_hidden_effect_entries(entries: Vec<ActiveChainEntry>) -> Vec<ActiveChainEntry> {
+        let mut keep = vec![true; entries.len()];
+        for (index, entry) in entries.iter().enumerate() {
+            let ActiveChainEntry::EffectYield {
+                function_name,
+                source_file,
+                result,
+                ..
+            } = entry
+            else {
+                continue;
+            };
+
+            if matches!(result, EffectResult::Resumed { .. }) {
+                keep[index] = false;
+                continue;
+            }
+
+            if !matches!(result, EffectResult::Threw { .. }) {
+                continue;
+            }
+
+            let mut saw_handler_wrapper = false;
+            for later in entries.iter().skip(index + 1) {
+                match later {
+                    ActiveChainEntry::ProgramYield {
+                        handler_kind: Some(_),
+                        ..
+                    } => {
+                        saw_handler_wrapper = true;
+                    }
+                    ActiveChainEntry::ExceptionSite {
+                        function_name: later_function_name,
+                        source_file: later_source_file,
+                        ..
+                    } => {
+                        if saw_handler_wrapper
+                            && later_function_name == function_name
+                            && later_source_file == source_file
+                        {
+                            keep[index] = false;
+                        }
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        entries
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, entry)| keep[index].then_some(entry))
+            .collect()
     }
 
     fn is_visible_dispatch(dispatch: &ActiveChainDispatchState) -> bool {

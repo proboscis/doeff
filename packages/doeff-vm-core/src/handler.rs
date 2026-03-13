@@ -15,6 +15,12 @@ use crate::segment::ScopeStore;
 use crate::step::PyException;
 use crate::value::Value;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunContext {
+    pub token: Option<u64>,
+    pub async_external_wait: bool,
+}
+
 /// A Rust handler program instance (generator-like).
 /// start/resume/throw mirror Python generator protocol but run in Rust.
 pub trait IRStreamProgram: std::fmt::Debug + Send {
@@ -48,11 +54,11 @@ pub trait IRStreamFactory: std::fmt::Debug + Send + Sync {
         std::any::type_name::<Self>()
     }
 
-    /// Create a handler program for a specific VM run token.
+    /// Create a handler program for a specific VM run context.
     ///
     /// Handlers that keep per-run state can override this to isolate state
     /// between distinct top-level runs.
-    fn create_program_for_run(&self, _run_token: Option<u64>) -> IRStreamProgramRef {
+    fn create_program_for_run(&self, _run_context: Option<RunContext>) -> IRStreamProgramRef {
         self.create_program()
     }
 
@@ -75,20 +81,20 @@ where
     T: IRStreamFactory + Clone + std::fmt::Debug + Send + Sync + 'static,
 {
     fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
-        self.apply_with_run_token(py, args, None)
+        self.apply_with_run_context(py, args, None)
     }
 
-    fn apply_with_run_token(
+    fn apply_with_run_context(
         &self,
         py: Python<'_>,
         args: Vec<Value>,
-        run_token: Option<u64>,
+        run_context: Option<RunContext>,
     ) -> Result<DoCtrl, VMError> {
         let kleisli = RustKleisli::new(
             Arc::new(self.clone()),
             <Self as IRStreamFactory>::handler_name(self).to_string(),
         );
-        kleisli.apply_with_run_token(py, args, run_token)
+        kleisli.apply_with_run_context(py, args, run_context)
     }
 
     fn debug_info(&self) -> KleisliDebugInfo {

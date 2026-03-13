@@ -131,6 +131,7 @@ impl InterceptorState {
         // these fields must be copied rather than derived from frames.
         body_seg.interceptor_eval_depth = outside_seg.interceptor_eval_depth;
         body_seg.interceptor_skip_stack = outside_seg.interceptor_skip_stack.clone();
+        body_seg.control_ownership = outside_seg.control_ownership;
         Ok(body_seg)
     }
 }

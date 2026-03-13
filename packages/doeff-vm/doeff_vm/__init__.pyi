@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
 from types import ModuleType
 from typing import Any, Generic, Literal, TypeAlias, TypedDict, TypeVar
@@ -334,14 +332,12 @@ class SpawnEffect(EffectBase):
     program: DoExpr[Any] | EffectBase
     options: Any
     handlers: Sequence[Any]
-    store_mode: Any
     priority: Any
     def __init__(
         self,
         program: DoExpr[Any] | EffectBase,
         options: Any | None = None,
         handlers: Sequence[Any] | None = None,
-        store_mode: Any | None = None,
         priority: Any | None = None,
     ) -> None: ...
 
@@ -369,6 +365,14 @@ class FailPromiseEffect(EffectBase):
 
 class CreateExternalPromiseEffect(EffectBase):
     def __init__(self) -> None: ...
+
+class ExternalPromise:
+    id: int
+    _completion_queue: Any
+    @property
+    def future(self) -> Any: ...
+    def complete(self, value: Any) -> None: ...
+    def fail(self, error: BaseException | Any) -> None: ...
 
 class PyCancelEffect(EffectBase):
     task: Any
@@ -450,8 +454,7 @@ result_safe: RustHandler
 scheduler: RustHandler
 lazy_ask: RustHandler
 await_handler: RustHandler
-
-def _debug_scheduler_semaphore_count(state_id: int) -> int | None: ...
+sync_await_handler: RustHandler
 
 TAG_PURE: int
 TAG_MAP: int

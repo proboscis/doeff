@@ -2,12 +2,54 @@
 
 use crate::continuation::Continuation;
 use crate::effect::DispatchEffect;
-use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::ids::{DispatchId, HandlerScopeId, Marker, SegmentId};
 use crate::step::PyException;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DispatchRootRef {
+    pub dispatch_id: DispatchId,
+    pub root_segment_id: SegmentId,
+}
+
+impl DispatchRootRef {
+    pub fn new(dispatch_id: DispatchId, root_segment_id: SegmentId) -> Self {
+        Self {
+            dispatch_id,
+            root_segment_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ControlOwnership {
+    pub owner_dispatch: Option<DispatchRootRef>,
+    pub visible_dispatch: Option<DispatchRootRef>,
+}
+
+impl ControlOwnership {
+    pub fn with_owner_and_visible(
+        owner_dispatch: Option<DispatchRootRef>,
+        visible_dispatch: Option<DispatchRootRef>,
+    ) -> Self {
+        Self {
+            owner_dispatch,
+            visible_dispatch,
+        }
+    }
+
+    pub fn owner_dispatch_id(&self) -> Option<DispatchId> {
+        self.owner_dispatch.map(|root| root.dispatch_id)
+    }
+
+    pub fn visible_dispatch_id(&self) -> Option<DispatchId> {
+        self.visible_dispatch.map(|root| root.dispatch_id)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct HandlerActivation {
     pub handler_idx: usize,
+    pub handler_scope_id: HandlerScopeId,
     pub active_handler_seg_id: SegmentId,
     pub continuation_passed_to_handler: Continuation,
     /// Continuation used for normal handler return / replay bookkeeping.
@@ -78,6 +120,7 @@ impl DispatchFrame {
     pub fn replace_current_activation(
         &mut self,
         handler_idx: usize,
+        handler_scope_id: HandlerScopeId,
         active_handler_seg_id: SegmentId,
         supports_error_context_conversion: bool,
     ) {
@@ -85,6 +128,7 @@ impl DispatchFrame {
             return;
         };
         current.handler_idx = handler_idx;
+        current.handler_scope_id = handler_scope_id;
         current.active_handler_seg_id = active_handler_seg_id;
         current.supports_error_context_conversion = supports_error_context_conversion;
     }
@@ -93,6 +137,7 @@ impl DispatchFrame {
         &mut self,
         idx: usize,
         handler_idx: usize,
+        handler_scope_id: HandlerScopeId,
         active_handler_seg_id: SegmentId,
         supports_error_context_conversion: bool,
     ) {
@@ -100,6 +145,7 @@ impl DispatchFrame {
             return;
         };
         current.handler_idx = handler_idx;
+        current.handler_scope_id = handler_scope_id;
         current.active_handler_seg_id = active_handler_seg_id;
         current.supports_error_context_conversion = supports_error_context_conversion;
     }

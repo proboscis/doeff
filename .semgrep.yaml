@@ -757,7 +757,7 @@ rules:
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
   - id: doctrl-variants-require-approval
-    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|Discontinue\b|WithHandler\b|WithIntercept\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|EvalInScope\b|GetCallStack\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
+    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|Discontinue\b|WithHandler\b|WithIntercept\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|HandlerGet\b|HandlerSet\b|HandlerHas\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|EvalInScope\b|GetCallStack\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
       include:
         - "**/packages/doeff-vm-core/src/do_ctrl.rs"
@@ -2619,3 +2619,132 @@ rules:
           - pattern: $OBJ.is_instance_of::<DoeffGenerator>()
           - pattern: $OBJ.is_instance_of::<PyEffectBase>()
           - pattern: self.is_interceptor_eval_idle()
+
+  - id: vm-no-dispatch-segments-side-index
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Issue #282 removed the VM-side DispatchId -> SegmentId side index.
+      Dispatch reachability must flow through DispatchRootRef and ControlOwnership,
+      not HashMap<DispatchId, SegmentId>.
+    pattern-regex: 'HashMap\\s*<\\s*DispatchId\\s*,\\s*SegmentId\\s*>'
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+
+  - id: vm-no-raw-dispatch-fields-on-control-objects
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Issue #282 requires explicit ControlOwnership on Continuation and Segment.
+      Do not reintroduce raw dispatch_id or dispatch_segment_id fields on those
+      control objects.
+    pattern-either:
+      - pattern-regex: '\\bdispatch_id\\s*:'
+      - pattern-regex: '\\bdispatch_segment_id\\s*:'
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/continuation.rs"
+        - "**/packages/doeff-vm-core/src/segment.rs"
+
+  - id: no-shared-handler-object-state
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Issue #282 requires handler-owned mutable state to live in handler-local store cells,
+      not on shared handler objects. Do not reintroduce default_state or run_states.
+    pattern-either:
+      - pattern-regex: '\\bdefault_state\\b'
+      - pattern-regex: '\\brun_states\\b'
+    paths:
+      include:
+        - "**/packages/doeff-core-effects/src/handlers/mod.rs"
+        - "**/packages/doeff-core-effects/src/scheduler/mod.rs"
+
+  - id: no-process-global-sync-await-state
+    languages: [python]
+    severity: ERROR
+    message: |
+      Issue #282 moved sync Await runtime state into handler-local cells.
+      Do not reintroduce process-global _loop/_loop_thread bridge state.
+    pattern-either:
+      - pattern-regex: '^_loop\\s*='
+      - pattern-regex: '^_loop_thread\\s*:'
+      - pattern-regex: '^_loop_lock\\s*='
+      - pattern-regex: '^def\\s+_shutdown_background_loop\\b'
+    paths:
+      include:
+        - /doeff/handlers/await_handlers.py
+
+  - id: no-python-external-promise-wrapper
+    languages: [python]
+    severity: ERROR
+    message: |
+      Issue #282 follow-up: ExternalPromise must be a Rust-exported pyclass, not a pure-Python
+      wrapper/dataclass. Do not reintroduce a Python class named ExternalPromise here.
+    pattern: |
+      class ExternalPromise:
+          ...
+    paths:
+      include:
+        - /doeff/effects/external_promise.py
+
+  - id: no-sync-await-runtime-registry
+    languages: [python]
+    severity: ERROR
+    message: |
+      Issue #282 follow-up: sync Await must not keep a process-global runtime registry.
+      Keep runtime ownership on the Rust-backed handle / handler-local state instead.
+    pattern-regex: '_RUNTIME_BY_QUEUE_ID'
+    paths:
+      include:
+        - /doeff/handlers/await_handlers.py
+
+  - id: no-scheduler-semaphore-global-side-tables
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Issue #282 follow-up: scheduler semaphore/runtime state must not use process-global side
+      tables. Keep semaphore ownership inside handler-local SchedulerState.
+    pattern-either:
+      - pattern-regex: '\bRUN_EXTERNAL_WAIT_MODES\b'
+      - pattern-regex: '\bSCHEDULER_STATE_REGISTRY\b'
+      - pattern-regex: '\bSEMAPHORE_DROP_NOTIFICATIONS\b'
+      - pattern-regex: '\bstate_id\s*:'
+    paths:
+      include:
+        - "**/packages/doeff-core-effects/src/scheduler/mod.rs"
+
+  - id: no-semaphore-debug-global-hooks
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Issue #282 follow-up: semaphore cleanup/debug must not depend on global hook functions.
+      Do not reintroduce semaphore drop/debug pyfunctions backed by global state.
+    pattern-either:
+      - pattern-regex: '\b_notify_semaphore_handle_dropped\b'
+      - pattern-regex: '\b_debug_scheduler_semaphore_count\b'
+      - pattern-regex: '\b_debug_semaphore_exists\b'
+    paths:
+      include:
+        - "**/packages/doeff-core-effects/src/sentinels.rs"
+        - "**/packages/doeff-vm/doeff_vm/__init__.py"
+        - "**/packages/doeff-vm/doeff_vm/__init__.pyi"
+
+  - id: no-public-spawn-store-mode
+    languages: [python]
+    severity: ERROR
+    message: |
+      Issue #282 removed public Spawn.store_mode. Spawn is shared-state only now;
+      do not reintroduce store_mode on the public Python surface.
+    pattern-either:
+      - pattern: |
+          def $F(..., store_mode, ...):
+              ...
+      - pattern-regex: '\\bstore_mode\\s*:'
+    paths:
+      include:
+        - /doeff/effects/spawn.py
+        - /packages/doeff-vm/doeff_vm/__init__.pyi
+      exclude:
+        - /tests/**

@@ -5,8 +5,9 @@
 
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::Mutex;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -19,26 +20,30 @@ use crate::effect::Effect;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
-    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn, PyTaskCompleted,
+    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyExternalPromise,
+    PyFailPromise, PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn,
+    PyTaskCompleted,
     TaskCancelledError,
 };
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
-use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
+use crate::ids::{ContId, DispatchId, HandlerScopeId, PromiseId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
 use crate::segment::ScopeStore;
 use crate::step::{DoCtrl, PyException, PythonCall};
-use crate::value::{ExternalPromise, PromiseHandle, TaskHandle, Value};
+use crate::value::{PromiseHandle, TaskHandle, Value};
 use crate::vm::RustStore;
+use doeff_vm_core::handler::RunContext;
+use doeff_vm_core::rust_store::HandlerStateKey;
 
 pub const SCHEDULER_HANDLER_NAME: &str = "SchedulerHandler";
 pub const PRIORITY_IDLE: u32 = 0;
 pub const PRIORITY_NORMAL: u32 = 10;
 pub const PRIORITY_HIGH: u32 = 20;
+const SCHEDULER_STATE_KEY: HandlerStateKey = HandlerStateKey::new("scheduler_state");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExternalWaitMode {
@@ -59,7 +64,6 @@ pub enum SchedulerEffect {
     Spawn {
         program: Py<PyAny>,
         handlers: Vec<KleisliRef>,
-        store_mode: StoreMode,
         priority: u32,
         creation_site: Option<SpawnSite>,
     },
@@ -106,45 +110,16 @@ pub enum Waitable {
     ExternalPromise(PromiseId),
 }
 
-/// Store isolation mode for spawned tasks.
-#[derive(Clone, Copy, Debug)]
-pub enum StoreMode {
-    /// Child shares the parent's RustStore (reads/writes visible immediately).
-    Shared,
-    /// Child gets a snapshot of RustStore. Merge policy controls what comes back.
-    Isolated { merge: StoreMergePolicy },
-}
-
-/// Policy for merging isolated task stores back into parent.
-#[derive(Clone, Copy, Debug)]
-pub enum StoreMergePolicy {
-    /// Merge only logs (append in Gather items order). State/env changes discarded.
-    LogsOnly,
-}
-
-/// Per-task store state.
-#[derive(Debug, Clone)]
-pub enum TaskStore {
-    Shared,
-    Isolated {
-        store: RustStore,
-        merge: StoreMergePolicy,
-    },
-}
-
 /// Runtime state of a task.
 #[derive(Debug)]
 pub enum TaskState {
     Pending {
         cont: Continuation,
-        store: TaskStore,
         resume_outcome: Option<Result<Value, PyException>>,
         priority: u32,
-        pending_log_merge_items: Option<Vec<Waitable>>,
     },
     Done {
         result: Result<Value, PyException>,
-        store: TaskStore,
     },
 }
 
@@ -202,41 +177,6 @@ struct WaitRequest {
     items: Vec<Waitable>,
     mode: WaitMode,
     waiting_task: Option<TaskId>,
-    waiting_store: RustStore,
-}
-
-static RUN_EXTERNAL_WAIT_MODES: OnceLock<Mutex<HashMap<u64, ExternalWaitMode>>> = OnceLock::new();
-
-fn run_external_wait_modes() -> &'static Mutex<HashMap<u64, ExternalWaitMode>> {
-    RUN_EXTERNAL_WAIT_MODES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-pub fn set_run_external_wait_mode(run_token: u64, mode: ExternalWaitMode) {
-    let mut modes = run_external_wait_modes()
-        .lock()
-        .expect("Scheduler lock poisoned");
-    modes.insert(run_token, mode);
-}
-
-fn external_wait_mode_for_run(run_token: Option<u64>) -> ExternalWaitMode {
-    let Some(token) = run_token else {
-        return ExternalWaitMode::Blocking;
-    };
-
-    let modes = run_external_wait_modes()
-        .lock()
-        .expect("Scheduler lock poisoned");
-    modes
-        .get(&token)
-        .copied()
-        .unwrap_or(ExternalWaitMode::Blocking)
-}
-
-fn clear_run_external_wait_mode(run_token: u64) {
-    let mut modes = run_external_wait_modes()
-        .lock()
-        .expect("Scheduler lock poisoned");
-    modes.remove(&run_token);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -249,8 +189,6 @@ struct ReadyRootResume {
     continuation: Continuation,
     outcome: Result<Value, PyException>,
     waiting_task: Option<TaskId>,
-    waiting_store: RustStore,
-    merge_items: Option<Vec<Waitable>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -410,6 +348,9 @@ fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
             | DoCtrl::Pass { .. }
             | DoCtrl::GetContinuation
             | DoCtrl::GetHandlers
+            | DoCtrl::HandlerGet { .. }
+            | DoCtrl::HandlerSet { .. }
+            | DoCtrl::HandlerHas { .. }
             | DoCtrl::GetTraceback { .. }
             | DoCtrl::CreateContinuation { .. }
             | DoCtrl::PythonAsyncSyntaxEscape { .. }
@@ -465,102 +406,8 @@ pub struct SchedulerState {
     pub current_task: Option<TaskId>,
     execution_context_task_override: Option<TaskId>,
     external_wait_mode: ExternalWaitMode,
-    state_id: u64,
 }
-
-static NEXT_SCHEDULER_STATE_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_SEMAPHORE_ID: AtomicU64 = AtomicU64::new(1);
-static SEMAPHORE_DROP_NOTIFICATIONS: OnceLock<Mutex<HashMap<u64, Vec<u64>>>> = OnceLock::new();
-static SCHEDULER_STATE_REGISTRY: OnceLock<Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>>> =
-    OnceLock::new();
-
-fn semaphore_drop_notifications() -> &'static Mutex<HashMap<u64, Vec<u64>>> {
-    SEMAPHORE_DROP_NOTIFICATIONS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn scheduler_state_registry() -> &'static Mutex<HashMap<u64, Weak<Mutex<SchedulerState>>>> {
-    SCHEDULER_STATE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn register_scheduler_state(state: &Arc<Mutex<SchedulerState>>) {
-    let state_id = {
-        let guard = state.lock().expect("Scheduler lock poisoned");
-        guard.state_id
-    };
-    let mut registry = scheduler_state_registry()
-        .lock()
-        .expect("Scheduler lock poisoned");
-    registry.insert(state_id, Arc::downgrade(state));
-}
-
-fn resolve_scheduler_state(state_id: u64) -> Option<Arc<Mutex<SchedulerState>>> {
-    let weak_state = {
-        let registry = scheduler_state_registry()
-            .lock()
-            .expect("Scheduler lock poisoned");
-        registry.get(&state_id).cloned()?
-    };
-
-    if let Some(state) = weak_state.upgrade() {
-        return Some(state);
-    }
-
-    let mut registry = scheduler_state_registry()
-        .lock()
-        .expect("Scheduler lock poisoned");
-    registry.remove(&state_id);
-    None
-}
-
-pub fn debug_semaphore_count_for_state(state_id: u64) -> Option<usize> {
-    let state = resolve_scheduler_state(state_id)?;
-    let mut state = state.lock().expect("Scheduler lock poisoned");
-    state.process_semaphore_drop_notifications();
-    Some(state.semaphores.len())
-}
-
-pub fn debug_semaphore_exists(semaphore_id: u64) -> bool {
-    let mut stale_state_ids: Vec<u64> = Vec::new();
-    let live_states: Vec<(u64, Arc<Mutex<SchedulerState>>)> = {
-        let registry = scheduler_state_registry()
-            .lock()
-            .expect("Scheduler lock poisoned");
-        registry
-            .iter()
-            .filter_map(|(state_id, weak_state)| {
-                weak_state.upgrade().map(|state| (*state_id, state)).or_else(|| {
-                    stale_state_ids.push(*state_id);
-                    None
-                })
-            })
-            .collect()
-    };
-
-    if !stale_state_ids.is_empty() {
-        let mut registry = scheduler_state_registry()
-            .lock()
-            .expect("Scheduler lock poisoned");
-        for state_id in stale_state_ids {
-            registry.remove(&state_id);
-        }
-    }
-
-    for (_state_id, state) in live_states {
-        let mut state = state.lock().expect("Scheduler lock poisoned");
-        state.process_semaphore_drop_notifications();
-        if state.semaphores.contains_key(&semaphore_id) {
-            return true;
-        }
-    }
-    false
-}
-
-pub fn notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
-    let mut notifications = semaphore_drop_notifications()
-        .lock()
-        .expect("Scheduler lock poisoned");
-    notifications.entry(state_id).or_default().push(semaphore_id);
-}
 
 fn parse_task_completed_result(
     py: Python<'_>,
@@ -631,12 +478,10 @@ fn parse_scheduler_python_effect(
 
         if let Ok(spawn) = obj.extract::<PyRef<'_, PySpawn>>() {
             let handlers = extract_handlers_from_python(spawn.handlers.bind(py))?;
-            let store_mode = parse_store_mode(spawn.store_mode.bind(py))?;
             let priority = parse_priority(spawn.priority.bind(py))?;
             return Ok(Some(SchedulerEffect::Spawn {
                 program: spawn.program.clone_ref(py),
                 handlers,
-                store_mode,
                 priority,
                 creation_site,
             }));
@@ -858,22 +703,6 @@ fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<KleisliRef
     Ok(handlers)
 }
 
-fn parse_store_mode(obj: &Bound<'_, PyAny>) -> Result<StoreMode, String> {
-    if obj.is_none() {
-        return Ok(StoreMode::Shared);
-    }
-    if let Ok(mode) = obj.extract::<String>() {
-        return match mode.to_lowercase().as_str() {
-            "shared" => Ok(StoreMode::Shared),
-            "isolated" => Ok(StoreMode::Isolated {
-                merge: StoreMergePolicy::LogsOnly,
-            }),
-            other => Err(format!("unsupported store_mode '{other}'")),
-        };
-    }
-    Ok(StoreMode::Shared)
-}
-
 fn parse_priority(obj: &Bound<'_, PyAny>) -> Result<u32, String> {
     if obj.is_none() {
         return Ok(PRIORITY_NORMAL);
@@ -901,13 +730,14 @@ fn task_cancelled_error() -> PyException {
     })
 }
 
-fn make_python_semaphore_value(semaphore_id: u64, state_id: u64) -> Result<Value, PyException> {
+fn make_python_semaphore_value(
+    semaphore_id: u64,
+) -> Result<Value, PyException> {
     Python::attach(|py| {
         let semaphore = Bound::new(
             py,
             PySemaphore {
                 id: semaphore_id,
-                state_id,
             },
         )
             .map_err(|e| {
@@ -952,25 +782,6 @@ fn make_async_external_wait_step() -> Result<IRStreamStep, PyException> {
 // ---------------------------------------------------------------------------
 
 impl SchedulerState {
-    pub fn process_semaphore_drop_notifications(&mut self) {
-        let dropped = {
-            let mut notifications = semaphore_drop_notifications()
-                .lock()
-                .expect("Scheduler lock poisoned");
-            notifications.remove(&self.state_id)
-        };
-        let Some(dropped) = dropped else {
-            return;
-        };
-
-        let mut unique = HashSet::new();
-        for semaphore_id in dropped {
-            if unique.insert(semaphore_id) {
-                self.remove_semaphore(semaphore_id);
-            }
-        }
-    }
-
     pub fn new() -> Self {
         Self::with_external_wait_mode(ExternalWaitMode::Blocking)
     }
@@ -993,12 +804,7 @@ impl SchedulerState {
             current_task: None,
             execution_context_task_override: None,
             external_wait_mode,
-            state_id: NEXT_SCHEDULER_STATE_ID.fetch_add(1, Ordering::Relaxed),
         }
-    }
-
-    pub fn state_id(&self) -> u64 {
-        self.state_id
     }
 
     pub fn ensure_external_completion_queue(&mut self) -> Result<PyShared, PyException> {
@@ -1012,9 +818,9 @@ impl SchedulerState {
                     "failed to import Python queue module for ExternalPromise bridge: {e}"
                 ))
             })?;
-            let queue_type = queue_mod.getattr("Queue").map_err(|e| {
+            let queue_type = queue_mod.getattr("SimpleQueue").map_err(|e| {
                 PyException::runtime_error(format!(
-                    "failed to resolve queue.Queue for ExternalPromise bridge: {e}"
+                    "failed to resolve queue.SimpleQueue for ExternalPromise bridge: {e}"
                 ))
             })?;
             let queue_obj = queue_type.call0().map_err(|e| {
@@ -1448,58 +1254,6 @@ impl SchedulerState {
         Err(unknown_semaphore_error(semaphore_id))
     }
 
-    pub fn save_task_store(
-        &mut self,
-        task_id: TaskId,
-        store: &RustStore,
-    ) -> Result<(), PyException> {
-        let state = self.tasks.get_mut(&task_id).ok_or_else(|| {
-            scheduler_internal_error(format!("save_task_store: task {} not found", task_id.raw()))
-        })?;
-        match state {
-            TaskState::Pending {
-                store:
-                    TaskStore::Isolated {
-                        store: ref mut task_store,
-                        ..
-                    },
-                ..
-            } => {
-                *task_store = store.clone();
-                Ok(())
-            }
-            TaskState::Pending {
-                store: TaskStore::Shared,
-                ..
-            } => Ok(()),
-            TaskState::Done { .. } => Err(scheduler_internal_error(format!(
-                "save_task_store: task {} is already done",
-                task_id.raw()
-            ))),
-        }
-    }
-
-    pub fn load_task_store(
-        &self,
-        task_id: TaskId,
-        store: &mut RustStore,
-    ) -> Result<(), PyException> {
-        let state = self.tasks.get(&task_id).ok_or_else(|| {
-            scheduler_internal_error(format!("load_task_store: task {} not found", task_id.raw()))
-        })?;
-        let task_store = match state {
-            TaskState::Pending { store, .. } => store,
-            TaskState::Done { store, .. } => store,
-        };
-        if let TaskStore::Isolated {
-            store: task_store, ..
-        } = task_store
-        {
-            *store = task_store.clone();
-        }
-        Ok(())
-    }
-
     pub fn mark_task_done(
         &mut self,
         task_id: TaskId,
@@ -1507,18 +1261,13 @@ impl SchedulerState {
     ) -> Result<(), PyException> {
         self.cancel_requested.remove(&task_id);
         self.remove_ready_task(task_id);
-        let state = self.tasks.remove(&task_id).ok_or_else(|| {
+        self.tasks.remove(&task_id).ok_or_else(|| {
             scheduler_internal_error(format!("mark_task_done: task {} not found", task_id.raw()))
         })?;
-        let task_store = match state {
-            TaskState::Pending { store, .. } => store,
-            TaskState::Done { store, .. } => store,
-        };
         self.tasks.insert(
             task_id,
             TaskState::Done {
                 result,
-                store: task_store,
             },
         );
         Ok(())
@@ -1539,12 +1288,10 @@ impl SchedulerState {
             TaskState::Pending {
                 cont,
                 resume_outcome,
-                pending_log_merge_items,
                 ..
             } => {
                 *cont = continuation;
                 *resume_outcome = None;
-                *pending_log_merge_items = None;
                 Ok(())
             }
             TaskState::Done { .. } => Err(scheduler_internal_error(format!(
@@ -1563,10 +1310,6 @@ impl SchedulerState {
         let Some(outcome) = outcome else {
             return None;
         };
-        let should_merge_logs = matches!(outcome, Ok(_))
-            && matches!(waiter.mode, WaitMode::All)
-            && waiter.items.len() > 1;
-        let merge_items = should_merge_logs.then(|| waiter.items.clone());
 
         self.clear_waiters_for_owner(waiter.waiting_task, waiter_id);
 
@@ -1576,14 +1319,12 @@ impl SchedulerState {
                     cont,
                     resume_outcome,
                     priority,
-                    pending_log_merge_items,
                     ..
                 }) => {
                     if cont.cont_id != waiter_id {
                         return None;
                     }
                     *resume_outcome = Some(outcome.clone());
-                    *pending_log_merge_items = merge_items;
                     *priority
                 }
                 Some(TaskState::Done { .. }) | None => return None,
@@ -1599,8 +1340,6 @@ impl SchedulerState {
                 continuation: waiter.continuation,
                 outcome,
                 waiting_task: None,
-                waiting_store: waiter.waiting_store,
-                merge_items,
             },
         );
         self.enqueue_ready_root(waiter_id);
@@ -1660,12 +1399,10 @@ impl SchedulerState {
                 cont,
                 resume_outcome,
                 priority,
-                pending_log_merge_items,
                 ..
             }) => {
                 *cont = continuation;
                 *resume_outcome = Some(Ok(value));
-                *pending_log_merge_items = None;
                 *priority
             }
             Some(TaskState::Done { .. }) => {
@@ -1703,13 +1440,11 @@ impl SchedulerState {
             if let Some(TaskState::Pending {
                 cont,
                 resume_outcome,
-                pending_log_merge_items,
                 ..
             }) = self.tasks.get_mut(&task_id)
             {
                 if cont.cont_id == cont_id {
                     *resume_outcome = None;
-                    *pending_log_merge_items = None;
                 }
             }
         } else {
@@ -1728,12 +1463,10 @@ impl SchedulerState {
                 self.ready_task_ids.remove(&task_id);
                 if let Some(TaskState::Pending {
                     resume_outcome,
-                    pending_log_merge_items,
                     ..
                 }) = self.tasks.get_mut(&task_id)
                 {
                     *resume_outcome = None;
-                    *pending_log_merge_items = None;
                 }
             }
         }
@@ -1792,13 +1525,12 @@ impl SchedulerState {
         None
     }
 
-    pub fn wait_on_all(&mut self, items: &[Waitable], k: Continuation, store: &RustStore) {
+    pub fn wait_on_all(&mut self, items: &[Waitable], k: Continuation, _store: &RustStore) {
         let waiter = WaitRequest {
             continuation: k,
             items: items.to_vec(),
             mode: WaitMode::All,
             waiting_task: self.current_task,
-            waiting_store: store.clone(),
         };
 
         for item in items {
@@ -1808,13 +1540,12 @@ impl SchedulerState {
         }
     }
 
-    pub fn wait_on_any(&mut self, items: &[Waitable], k: Continuation, store: &RustStore) {
+    pub fn wait_on_any(&mut self, items: &[Waitable], k: Continuation, _store: &RustStore) {
         let waiter = WaitRequest {
             continuation: k,
             items: items.to_vec(),
             mode: WaitMode::Any,
             waiting_task: self.current_task,
-            waiting_store: store.clone(),
         };
 
         for item in items {
@@ -1895,38 +1626,12 @@ impl SchedulerState {
         None
     }
 
-    pub fn merge_task_logs(&self, task_id: TaskId, store: &mut RustStore) {
-        if let Some(state) = self.tasks.get(&task_id) {
-            let task_store = match state {
-                TaskState::Pending { store, .. } => store,
-                TaskState::Done { store, .. } => store,
-            };
-            if let TaskStore::Isolated {
-                store: task_store,
-                merge: StoreMergePolicy::LogsOnly,
-            } = task_store
-            {
-                store.log.extend(task_store.log.iter().cloned());
-            }
-        }
-    }
-
-    pub fn merge_gather_logs(&self, items: &[Waitable], store: &mut RustStore) {
-        for item in items {
-            if let Waitable::Task(task_id) = item {
-                self.merge_task_logs(*task_id, store);
-            }
-        }
-    }
-
     /// Transfer to the next ready task/root waiter.
     ///
     /// Per spec (SPEC-008 L1434-1447): saves the current task's store before
     /// switching and loads the new task's store after switching.
-    fn transfer_next(&mut self, store: &mut RustStore) -> TransferNextOutcome {
+    fn transfer_next(&mut self, _store: &mut RustStore) -> TransferNextOutcome {
         loop {
-            self.process_semaphore_drop_notifications();
-
             if let Err(error) = self.drain_external_completions_nonblocking() {
                 return TransferNextOutcome::Step(IRStreamStep::Throw(error));
             }
@@ -1965,18 +1670,16 @@ impl SchedulerState {
                             self.finalize_task_cancellation(task_id);
                             continue;
                         }
-                        let (task_k, resume_outcome, merge_items) =
+                        let (task_k, resume_outcome) =
                             match self.tasks.get_mut(&task_id) {
                                 Some(TaskState::Pending {
                                     cont,
                                     resume_outcome,
-                                    pending_log_merge_items,
                                     ..
                                 }) => {
                                     let continuation = cont.clone();
                                     let outcome = resume_outcome.take();
-                                    let pending_merge = pending_log_merge_items.take();
-                                    (continuation, outcome, pending_merge)
+                                    (continuation, outcome)
                                 }
                                 Some(TaskState::Done { .. }) | None => {
                                     return TransferNextOutcome::Step(IRStreamStep::Throw(
@@ -1988,22 +1691,7 @@ impl SchedulerState {
                                 }
                             };
 
-                        // Save current task's store before switching away.
-                        if let Some(old_id) = self.current_task {
-                            if old_id != task_id {
-                                if let Err(error) = self.save_task_store(old_id, store) {
-                                    return TransferNextOutcome::Step(IRStreamStep::Throw(error));
-                                }
-                            }
-                        }
-                        // Load new task's store.
-                        if let Err(error) = self.load_task_store(task_id, store) {
-                            return TransferNextOutcome::Step(IRStreamStep::Throw(error));
-                        }
                         self.current_task = Some(task_id);
-                        if let Some(items) = merge_items.as_ref() {
-                            self.merge_gather_logs(items, store);
-                        }
                         match resume_outcome {
                             Some(Err(error)) => {
                                 return TransferNextOutcome::Step(throw_to_continuation(
@@ -2031,16 +1719,9 @@ impl SchedulerState {
                             ready_root.continuation.cont_id,
                         );
                         if let Some(waiting_task) = ready_root.waiting_task {
-                            if let Err(error) = self.load_task_store(waiting_task, store) {
-                                return TransferNextOutcome::Step(IRStreamStep::Throw(error));
-                            }
                             self.current_task = Some(waiting_task);
                         } else {
-                            *store = ready_root.waiting_store;
                             self.current_task = None;
-                        }
-                        if let Some(items) = &ready_root.merge_items {
-                            self.merge_gather_logs(items, store);
                         }
                         return TransferNextOutcome::Step(match ready_root.outcome {
                             Ok(value) => resume_to_continuation(ready_root.continuation, value),
@@ -2076,17 +1757,6 @@ impl SchedulerState {
     }
 }
 
-impl Drop for SchedulerState {
-    fn drop(&mut self) {
-        if let Ok(mut notifications) = semaphore_drop_notifications().lock() {
-            notifications.remove(&self.state_id);
-        }
-        if let Ok(mut registry) = scheduler_state_registry().lock() {
-            registry.remove(&self.state_id);
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // SchedulerPhase (internal to scheduler program)
 // ---------------------------------------------------------------------------
@@ -2101,15 +1771,11 @@ enum SchedulerPhase {
     SpawnAwaitHandlers {
         k_user: Continuation,
         program: Py<PyAny>,
-        store_mode: StoreMode,
-        store_snapshot: Option<RustStore>,
         priority: u32,
         spawn_site: Option<SpawnSite>,
     },
     SpawnAwaitContinuation {
         k_user: Continuation,
-        store_mode: StoreMode,
-        store_snapshot: Option<RustStore>,
         priority: u32,
         spawn_site: Option<SpawnSite>,
     },
@@ -2143,8 +1809,11 @@ enum SchedulerPhase {
 // ---------------------------------------------------------------------------
 
 pub struct SchedulerProgram {
-    state: Arc<Mutex<SchedulerState>>,
+    handler_scope_id: Option<HandlerScopeId>,
+    run_context: Option<RunContext>,
     phase: SchedulerPhase,
+    #[cfg(test)]
+    test_state: Option<Arc<Mutex<SchedulerState>>>,
 }
 
 impl std::fmt::Debug for SchedulerProgram {
@@ -2156,11 +1825,84 @@ impl std::fmt::Debug for SchedulerProgram {
 }
 
 impl SchedulerProgram {
-    pub fn new(state: Arc<Mutex<SchedulerState>>) -> Self {
+    pub fn new(run_context: Option<RunContext>) -> Self {
         SchedulerProgram {
-            state,
+            handler_scope_id: None,
+            run_context,
             phase: SchedulerPhase::Idle,
+            #[cfg(test)]
+            test_state: None,
         }
+    }
+
+    #[cfg(test)]
+    pub fn new_with_state(state: Arc<Mutex<SchedulerState>>) -> Self {
+        SchedulerProgram {
+            handler_scope_id: None,
+            run_context: None,
+            phase: SchedulerPhase::Idle,
+            test_state: Some(state),
+        }
+    }
+
+    fn bind_scope_from(&mut self, k: &Continuation, store: &RustStore) {
+        if self.handler_scope_id.is_none() {
+            let mut candidates = Vec::new();
+            if let Some(scope_id) = k.handler_scope_id {
+                candidates.push(scope_id);
+            }
+            candidates.extend(k.captured_handler_scope_ids.iter().flatten().copied());
+            candidates.extend(k.reinstall_chain.iter().filter_map(|entry| match entry {
+                crate::continuation::ReinstallChainEntry::Handler(spec) => spec.handler_scope_id,
+                crate::continuation::ReinstallChainEntry::Interceptor(_) => None,
+            }));
+            candidates.extend(
+                k.unstarted_handlers
+                    .iter()
+                    .filter_map(|spec| spec.handler_scope_id),
+            );
+
+            if let Some(existing_scope_id) = candidates.iter().copied().find(|scope_id| {
+                store
+                    .handler_rust_get::<Arc<Mutex<SchedulerState>>>(*scope_id, SCHEDULER_STATE_KEY)
+                    .is_some()
+            }) {
+                self.handler_scope_id = Some(existing_scope_id);
+            } else {
+                self.handler_scope_id = k.handler_scope_id;
+            }
+        }
+    }
+
+    fn scope_id(&self) -> Result<HandlerScopeId, PyException> {
+        self.handler_scope_id.ok_or_else(|| {
+            scheduler_internal_error("scheduler program missing handler scope id")
+        })
+    }
+
+    fn state_handle(&self, store: &mut RustStore) -> Result<Arc<Mutex<SchedulerState>>, PyException> {
+        #[cfg(test)]
+        if let Some(state) = &self.test_state {
+            return Ok(state.clone());
+        }
+
+        let scope_id = self.scope_id()?;
+        if let Some(state) =
+            store.handler_rust_get::<Arc<Mutex<SchedulerState>>>(scope_id, SCHEDULER_STATE_KEY)
+        {
+            return Ok(state.clone());
+        }
+
+        let external_wait_mode = if self.run_context.is_some_and(|ctx| ctx.async_external_wait) {
+            ExternalWaitMode::AsyncYield
+        } else {
+            ExternalWaitMode::Blocking
+        };
+        let state = Arc::new(Mutex::new(SchedulerState::with_external_wait_mode(
+            external_wait_mode,
+        )));
+        store.handler_rust_set(scope_id, SCHEDULER_STATE_KEY, state.clone());
+        Ok(state)
     }
 
     fn current_phase_name(&self) -> &'static str {
@@ -2188,7 +1930,11 @@ impl SchedulerProgram {
         k_user: Continuation,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let state_handle = match self.state_handle(store) {
+            Ok(state) => state,
+            Err(error) => return IRStreamStep::Throw(error),
+        };
+        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
         match state.transfer_next(store) {
             TransferNextOutcome::Step(step) => {
                 self.phase = SchedulerPhase::Idle;
@@ -2211,7 +1957,11 @@ impl SchedulerProgram {
         deadlock_message: String,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let state_handle = match self.state_handle(store) {
+            Ok(state) => state,
+            Err(error) => return IRStreamStep::Throw(error),
+        };
+        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
         match state.transfer_next(store) {
             TransferNextOutcome::Step(step) => {
                 self.phase = SchedulerPhase::Idle;
@@ -2224,7 +1974,16 @@ impl SchedulerProgram {
             }
             TransferNextOutcome::None => {
                 self.phase = SchedulerPhase::Idle;
-                IRStreamStep::Throw(scheduler_internal_error(deadlock_message))
+                let scope_debug = self
+                    .handler_scope_id
+                    .map(|scope_id| scope_id.raw().to_string())
+                    .unwrap_or_else(|| "<none>".to_string());
+                IRStreamStep::Throw(scheduler_internal_error(format!(
+                    "{deadlock_message} (scope={scope_debug}, tasks={}, ready_empty={}, ready_task_ids={})",
+                    state.tasks.len(),
+                    state.ready.is_empty(),
+                    state.ready_task_ids.len(),
+                )))
             }
         }
     }
@@ -2235,7 +1994,11 @@ impl SchedulerProgram {
         deadlock_message: String,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let state_handle = match self.state_handle(store) {
+            Ok(state) => state,
+            Err(error) => return IRStreamStep::Throw(error),
+        };
+        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
         match state.transfer_next(store) {
             TransferNextOutcome::Step(step) => {
                 let next_running_task = state.current_task;
@@ -2265,7 +2028,16 @@ impl SchedulerProgram {
             }
             TransferNextOutcome::None => {
                 self.phase = SchedulerPhase::Idle;
-                IRStreamStep::Throw(scheduler_internal_error(deadlock_message))
+                let scope_debug = self
+                    .handler_scope_id
+                    .map(|scope_id| scope_id.raw().to_string())
+                    .unwrap_or_else(|| "<none>".to_string());
+                IRStreamStep::Throw(scheduler_internal_error(format!(
+                    "{deadlock_message} (scope={scope_debug}, tasks={}, ready_empty={}, ready_task_ids={})",
+                    state.tasks.len(),
+                    state.ready.is_empty(),
+                    state.ready_task_ids.len(),
+                )))
             }
         }
     }
@@ -2275,7 +2047,11 @@ impl SchedulerProgram {
         k_user: Continuation,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let state_handle = match self.state_handle(store) {
+            Ok(state) => state,
+            Err(error) => return IRStreamStep::Throw(error),
+        };
+        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
         match state.transfer_next(store) {
             TransferNextOutcome::Step(raw_step) => {
                 let step = match raw_step {
@@ -2319,7 +2095,11 @@ impl SchedulerProgram {
         owner: WaitOwner,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let state_handle = match self.state_handle(store) {
+            Ok(state) => state,
+            Err(error) => return IRStreamStep::Throw(error),
+        };
+        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
         match state.transfer_next(store) {
             TransferNextOutcome::Step(step) => {
                 let next_running_task = state.current_task;
@@ -2357,17 +2137,16 @@ impl SchedulerProgram {
         items: Vec<Waitable>,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let state_handle = match self.state_handle(store) {
+            Ok(state) => state,
+            Err(error) => return IRStreamStep::Throw(error),
+        };
+        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
         if let Some(aggregate) = state.collect_all_result(&items) {
             state.clear_waiters_for_owner(waiting_task, k_user.cont_id);
             return match aggregate {
-                Ok(results) => {
-                    if items.len() > 1 {
-                        state.merge_gather_logs(&items, store);
-                    }
-                    resume_to_continuation(k_user, results)
-                }
+                Ok(results) => resume_to_continuation(k_user, results),
                 Err(error) => throw_to_continuation(k_user, error),
             };
         }
@@ -2401,7 +2180,11 @@ impl SchedulerProgram {
         items: Vec<Waitable>,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let state_handle = match self.state_handle(store) {
+            Ok(state) => state,
+            Err(error) => return IRStreamStep::Throw(error),
+        };
+        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
         let waiting_task = state.current_task;
         if let Some(first) = state.collect_any_result(&items) {
             state.clear_waiters_for_owner(waiting_task, k_user.cont_id);
@@ -2434,9 +2217,17 @@ impl SchedulerProgram {
         )
     }
 
-    fn handle_get_execution_context(&mut self, k_user: Continuation) -> IRStreamStep {
+    fn handle_get_execution_context(
+        &mut self,
+        k_user: Continuation,
+        store: &mut RustStore,
+    ) -> IRStreamStep {
         let spawn_boundaries = {
-            let mut state = self.state.lock().expect("Scheduler lock poisoned");
+            let state_handle = match self.state_handle(store) {
+                Ok(state) => state,
+                Err(error) => return IRStreamStep::Throw(error),
+            };
+            let mut state = state_handle.lock().expect("Scheduler lock poisoned");
             let task_for_context = state
                 .execution_context_task_override
                 .take()
@@ -2525,7 +2316,11 @@ impl SchedulerProgram {
         k_user: Continuation,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let state_handle = match self.state_handle(store) {
+            Ok(state) => state,
+            Err(error) => return IRStreamStep::Throw(error),
+        };
+        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
 
         let Some(task_id) = state.current_task else {
             return IRStreamStep::Throw(PyException::runtime_error(
@@ -2534,9 +2329,6 @@ impl SchedulerProgram {
         };
         state.current_task = None;
 
-        if let Err(error) = state.save_task_store(task_id, store) {
-            return IRStreamStep::Throw(error);
-        }
         if let Err(error) = state.mark_task_done(task_id, outcome) {
             return IRStreamStep::Throw(error);
         }
@@ -2552,7 +2344,11 @@ impl SchedulerProgram {
         outcome: Result<Value, PyException>,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let state_handle = match self.state_handle(store) {
+            Ok(state) => state,
+            Err(error) => return IRStreamStep::Throw(error),
+        };
+        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
         let current_priority = state.current_task_priority();
         let highest_woken_task = state.mark_promise_done(promise, outcome);
         // Option B (ISSUE-SCHED-006): PreemptiveTransfer is a single slot, so nested
@@ -2581,7 +2377,11 @@ impl SchedulerProgram {
         running_task: TaskId,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let state_handle = match self.state_handle(store) {
+            Ok(state) => state,
+            Err(error) => return IRStreamStep::Throw(error),
+        };
+        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
 
         let owner_still_waiting = match &owner {
             WaitOwner::Task { task_id, cont_id } => matches!(
@@ -2611,9 +2411,6 @@ impl SchedulerProgram {
         }
 
         if !task_already_done {
-            if let Err(error) = state.save_task_store(running_task, store) {
-                return IRStreamStep::Throw(error);
-            }
             if let Err(error) = state.mark_task_done(running_task, outcome) {
                 return IRStreamStep::Throw(error);
             }
@@ -2667,9 +2464,13 @@ impl IRStreamProgram for SchedulerProgram {
         store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
+        self.bind_scope_from(&k_user, store);
         {
-            let mut state = self.state.lock().expect("Scheduler lock poisoned");
-            state.process_semaphore_drop_notifications();
+            let state_handle = match self.state_handle(store) {
+                Ok(state) => state,
+                Err(error) => return IRStreamStep::Throw(error),
+            };
+            let mut state = state_handle.lock().expect("Scheduler lock poisoned");
             if state.apply_running_task_cancellation_if_requested() {
                 drop(state);
                 return self.continue_simple_transfer(k_user, store);
@@ -2713,16 +2514,21 @@ impl IRStreamProgram for SchedulerProgram {
             }
 
             SchedulerEffect::CancelTask { task } => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                let state_handle = match self.state_handle(store) {
+                    Ok(state) => state,
+                    Err(error) => return IRStreamStep::Throw(error),
+                };
+                let mut state = state_handle.lock().expect("Scheduler lock poisoned");
                 state.request_task_cancellation(task);
                 resume_to_continuation(k_user, Value::Unit)
             }
 
             SchedulerEffect::TaskCompleted { task, result } => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                if let Err(error) = state.save_task_store(task, store) {
-                    return IRStreamStep::Throw(error);
-                }
+                let state_handle = match self.state_handle(store) {
+                    Ok(state) => state,
+                    Err(error) => return IRStreamStep::Throw(error),
+                };
+                let mut state = state_handle.lock().expect("Scheduler lock poisoned");
                 if let Err(error) = state.mark_task_done(task, result) {
                     return IRStreamStep::Throw(error);
                 }
@@ -2736,7 +2542,11 @@ impl IRStreamProgram for SchedulerProgram {
             SchedulerEffect::Race { items } => self.handle_race(k_user, items, store),
 
             SchedulerEffect::CreatePromise => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                let state_handle = match self.state_handle(store) {
+                    Ok(state) => state,
+                    Err(error) => return IRStreamStep::Throw(error),
+                };
+                let mut state = state_handle.lock().expect("Scheduler lock poisoned");
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
                 resume_to_continuation(k_user, Value::Promise(PromiseHandle { id: pid }))
@@ -2751,29 +2561,49 @@ impl IRStreamProgram for SchedulerProgram {
             }
 
             SchedulerEffect::CreateExternalPromise => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                let state_handle = match self.state_handle(store) {
+                    Ok(state) => state,
+                    Err(error) => return IRStreamStep::Throw(error),
+                };
+                let mut state = state_handle.lock().expect("Scheduler lock poisoned");
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
                 let completion_queue = match state.ensure_external_completion_queue() {
                     Ok(queue) => queue,
                     Err(error) => return IRStreamStep::Throw(error),
                 };
-                resume_to_continuation(
-                    k_user,
-                    Value::ExternalPromise(ExternalPromise {
-                        id: pid,
-                        completion_queue: Some(completion_queue),
-                    }),
-                )
+                let promise_value = match Python::attach(|py| -> Result<Value, PyException> {
+                    let promise = Bound::new(
+                        py,
+                        PyExternalPromise {
+                            id: pid.raw(),
+                            _completion_queue: completion_queue.bind(py).clone().unbind(),
+                        },
+                    )
+                    .map_err(|err| {
+                        PyException::runtime_error(format!(
+                            "failed to instantiate ExternalPromise({}): {err}",
+                            pid.raw()
+                        ))
+                    })?;
+                    Ok(Value::Python(promise.into_any().unbind()))
+                }) {
+                    Ok(promise) => promise,
+                    Err(error) => return IRStreamStep::Throw(error),
+                };
+                resume_to_continuation(k_user, promise_value)
             }
 
             SchedulerEffect::CreateSemaphore { permits } => {
-                let (semaphore_id, state_id) = {
-                    let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                    let semaphore_id = state.create_semaphore(permits);
-                    (semaphore_id, state.state_id())
+                let state_handle = match self.state_handle(store) {
+                    Ok(state) => state,
+                    Err(error) => return IRStreamStep::Throw(error),
                 };
-                let semaphore_value = match make_python_semaphore_value(semaphore_id, state_id) {
+                let semaphore_id = {
+                    let mut state = state_handle.lock().expect("Scheduler lock poisoned");
+                    state.create_semaphore(permits)
+                };
+                let semaphore_value = match make_python_semaphore_value(semaphore_id) {
                     Ok(value) => value,
                     Err(error) => return IRStreamStep::Throw(error),
                 };
@@ -2782,7 +2612,11 @@ impl IRStreamProgram for SchedulerProgram {
 
             SchedulerEffect::AcquireSemaphore { semaphore_id } => {
                 let waiter_promise = {
-                    let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                    let state_handle = match self.state_handle(store) {
+                        Ok(state) => state,
+                        Err(error) => return IRStreamStep::Throw(error),
+                    };
+                    let mut state = state_handle.lock().expect("Scheduler lock poisoned");
                     match state.acquire_semaphore(semaphore_id) {
                         Ok(result) => result,
                         Err(error) => return IRStreamStep::Throw(error),
@@ -2790,7 +2624,11 @@ impl IRStreamProgram for SchedulerProgram {
                 };
                 match waiter_promise {
                     Some(promise_id) => {
-                        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                        let state_handle = match self.state_handle(store) {
+                            Ok(state) => state,
+                            Err(error) => return IRStreamStep::Throw(error),
+                        };
+                        let mut state = state_handle.lock().expect("Scheduler lock poisoned");
                         let items = [Waitable::Promise(promise_id)];
                         let waiting_task = state.current_task;
                         if let Some(waiting_task) = state.current_task {
@@ -2831,14 +2669,18 @@ impl IRStreamProgram for SchedulerProgram {
             }
 
             SchedulerEffect::ReleaseSemaphore { semaphore_id } => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                let state_handle = match self.state_handle(store) {
+                    Ok(state) => state,
+                    Err(error) => return IRStreamStep::Throw(error),
+                };
+                let mut state = state_handle.lock().expect("Scheduler lock poisoned");
                 if let Err(error) = state.release_semaphore(semaphore_id) {
                     return IRStreamStep::Throw(error);
                 }
                 resume_to_continuation(k_user, Value::Unit)
             }
 
-            SchedulerEffect::GetExecutionContext => self.handle_get_execution_context(k_user),
+            SchedulerEffect::GetExecutionContext => self.handle_get_execution_context(k_user, store),
         }
     }
 
@@ -2906,7 +2748,6 @@ impl IRStreamProgram for SchedulerProgram {
                 let SchedulerEffect::Spawn {
                     program,
                     handlers,
-                    store_mode,
                     priority,
                     creation_site,
                 } = sched_effect
@@ -2916,17 +2757,10 @@ impl IRStreamProgram for SchedulerProgram {
                     ));
                 };
 
-                let store_snapshot = match store_mode {
-                    StoreMode::Shared => None,
-                    StoreMode::Isolated { .. } => Some(store.clone()),
-                };
-
                 if handlers.is_empty() {
                     self.phase = SchedulerPhase::SpawnAwaitHandlers {
                         k_user,
                         program,
-                        store_mode,
-                        store_snapshot,
                         priority,
                         spawn_site: creation_site,
                     };
@@ -2935,8 +2769,6 @@ impl IRStreamProgram for SchedulerProgram {
 
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
                     k_user,
-                    store_mode,
-                    store_snapshot,
                     priority,
                     spawn_site: creation_site,
                 };
@@ -2951,8 +2783,6 @@ impl IRStreamProgram for SchedulerProgram {
             SchedulerPhase::SpawnAwaitHandlers {
                 k_user,
                 program,
-                store_mode,
-                store_snapshot,
                 priority,
                 spawn_site,
             } => {
@@ -2982,8 +2812,6 @@ impl IRStreamProgram for SchedulerProgram {
 
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
                     k_user,
-                    store_mode,
-                    store_snapshot,
                     priority,
                     spawn_site,
                 };
@@ -2997,8 +2825,6 @@ impl IRStreamProgram for SchedulerProgram {
 
             SchedulerPhase::SpawnAwaitContinuation {
                 k_user,
-                store_mode,
-                store_snapshot,
                 priority,
                 spawn_site,
             } => {
@@ -3028,32 +2854,19 @@ impl IRStreamProgram for SchedulerProgram {
                     }
                 };
 
-                let task_store = match store_mode {
-                    StoreMode::Shared => TaskStore::Shared,
-                    StoreMode::Isolated { merge } => match store_snapshot {
-                        Some(snapshot) => TaskStore::Isolated {
-                            store: snapshot,
-                            merge,
-                        },
-                        None => {
-                            return IRStreamStep::Throw(PyException::runtime_error(
-                                "isolated spawn missing store snapshot".to_string(),
-                            ))
-                        }
-                    },
+                let state_handle = match self.state_handle(store) {
+                    Ok(state) => state,
+                    Err(error) => return IRStreamStep::Throw(error),
                 };
-
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                let mut state = state_handle.lock().expect("Scheduler lock poisoned");
                 let task_id = state.alloc_task_id();
                 let parent_task = state.current_task;
                 state.tasks.insert(
                     task_id,
                     TaskState::Pending {
                         cont,
-                        store: task_store,
                         resume_outcome: None,
                         priority,
-                        pending_log_merge_items: None,
                     },
                 );
                 state.task_metadata.insert(
@@ -3061,7 +2874,7 @@ impl IRStreamProgram for SchedulerProgram {
                     TaskMetadata {
                         parent_task,
                         spawn_site,
-                        spawn_dispatch_id: k_user.dispatch_id,
+                        spawn_dispatch_id: k_user.owner_dispatch_id(),
                     },
                 );
                 state.enqueue_ready_task(task_id, priority);
@@ -3169,10 +2982,7 @@ impl IRStream for SchedulerProgram {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-pub struct SchedulerHandler {
-    default_state: Arc<Mutex<SchedulerState>>,
-    run_states: Arc<Mutex<HashMap<u64, Arc<Mutex<SchedulerState>>>>>,
-}
+pub struct SchedulerHandler;
 
 impl std::fmt::Debug for SchedulerHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -3182,31 +2992,7 @@ impl std::fmt::Debug for SchedulerHandler {
 
 impl SchedulerHandler {
     pub fn new() -> Self {
-        let default_state = Arc::new(Mutex::new(SchedulerState::new()));
-        register_scheduler_state(&default_state);
-        SchedulerHandler {
-            default_state,
-            run_states: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    fn state_for_run(&self, run_token: Option<u64>) -> Arc<Mutex<SchedulerState>> {
-        match run_token {
-            Some(token) => {
-                let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
-                states
-                    .entry(token)
-                    .or_insert_with(|| {
-                        let mode = external_wait_mode_for_run(Some(token));
-                        let state =
-                            Arc::new(Mutex::new(SchedulerState::with_external_wait_mode(mode)));
-                        register_scheduler_state(&state);
-                        state
-                    })
-                    .clone()
-            }
-            None => self.default_state.clone(),
-        }
+        SchedulerHandler
     }
 }
 
@@ -3223,25 +3009,15 @@ impl IRStreamFactory for SchedulerHandler {
     }
 
     fn create_program(&self) -> IRStreamProgramRef {
-        Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
-            self.state_for_run(None),
-        ))))
+        Arc::new(Mutex::new(Box::new(SchedulerProgram::new(None))))
     }
 
-    fn create_program_for_run(&self, run_token: Option<u64>) -> IRStreamProgramRef {
-        Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
-            self.state_for_run(run_token),
-        ))))
+    fn create_program_for_run(&self, run_context: Option<RunContext>) -> IRStreamProgramRef {
+        Arc::new(Mutex::new(Box::new(SchedulerProgram::new(run_context))))
     }
 
     fn handler_name(&self) -> &'static str {
         SCHEDULER_HANDLER_NAME
-    }
-
-    fn on_run_end(&self, run_token: u64) {
-        let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
-        states.remove(&run_token);
-        clear_run_external_wait_mode(run_token);
     }
 
     fn supports_error_context_conversion(&self) -> bool {

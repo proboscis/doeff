@@ -1,9 +1,8 @@
 """Await handlers for sync and async VM drivers."""
 
+
 import asyncio
-import atexit
 import threading
-from collections.abc import Awaitable
 from typing import Any
 
 import doeff_vm
@@ -15,126 +14,68 @@ from doeff.effects.wait import Wait
 
 PythonAsyncioAwaitEffect = doeff_vm.PythonAsyncioAwaitEffect
 
-_loop_lock = threading.Lock()
-_loop_thread: threading.Thread | None = None
-_loop: asyncio.AbstractEventLoop | None = None
-_ASYNCIO_LOOP_AFFINE_CLASSES = frozenset(
-    {
-        "Semaphore",
-        "BoundedSemaphore",
-        "Lock",
-        "Event",
-        "Condition",
-        "Queue",
-        "PriorityQueue",
-        "LifoQueue",
-    }
-)
+sync_await_handler = doeff_vm.sync_await_handler
 
 
-def _shutdown_background_loop() -> None:
-    global _loop
-    global _loop_thread
-
-    loop = _loop
-    thread = _loop_thread
-    if loop is not None and loop.is_running():
-        loop.call_soon_threadsafe(loop.stop)
-    if thread is not None:
-        thread.join(timeout=1.0)
-    if loop is not None:
-        try:
-            loop.close()
-        except Exception:
-            pass
-    _loop = None
-    _loop_thread = None
-
-
-def _ensure_background_loop() -> asyncio.AbstractEventLoop:
-    global _loop
-    global _loop_thread
-
-    if _loop is not None and _loop.is_running():
-        return _loop
-
-    with _loop_lock:
-        if _loop is not None and _loop.is_running():
-            return _loop
-
-        loop = asyncio.new_event_loop()
-
-        def _loop_main() -> None:
-            asyncio.set_event_loop(loop)
-            loop.run_forever()
-
-        thread = threading.Thread(target=_loop_main, daemon=True, name="doeff-await-bridge")
-        thread.start()
-        _loop = loop
-        _loop_thread = thread
-        atexit.register(_shutdown_background_loop)
-        return loop
-
-
-def _detect_asyncio_loop_affine(awaitable: Awaitable[Any]) -> str | None:
-    # Coroutines from class methods like Semaphore.acquire or Lock.acquire.
-    if not asyncio.iscoroutine(awaitable):
-        if isinstance(awaitable, asyncio.Future):
-            return "asyncio.Future"
-        return None
-
-    qualname = getattr(awaitable, "__qualname__", "") or ""
-    parts = qualname.split(".")
-    if len(parts) >= 2 and parts[0] in _ASYNCIO_LOOP_AFFINE_CLASSES:
-        return qualname
-
-    if isinstance(awaitable, asyncio.Future):
-        return "asyncio.Future"
-
-    return None
-
-
-def _submit_awaitable(awaitable: Awaitable[Any], promise: Any) -> None:
-    loop = _ensure_background_loop()
-    detected = _detect_asyncio_loop_affine(awaitable)
-    if detected is not None:
-        if asyncio.iscoroutine(awaitable):
-            awaitable.close()
+def _run_awaitable_sync(awaitable: object) -> object:
+    if asyncio.isfuture(awaitable):
         raise RuntimeError(
-            f"Await({detected}) is not safe under Spawn/Gather. "
-            "asyncio synchronization primitives have thread-affine sync methods "
-            "(release/set/notify/cancel) that silently break when called from a "
-            "different thread than their event loop. "
-            "Use doeff native effects instead:\n"
-            "  sem = yield CreateSemaphore(n)\n"
-            "  yield AcquireSemaphore(sem)\n"
-            "  yield ReleaseSemaphore(sem)"
+            "Await(asyncio.Future) is not safe under Spawn/Gather in sync run(); use "
+            "CreateSemaphore or async_run"
         )
 
-    async def _run() -> object:
-        return await awaitable
+    qualname = getattr(awaitable, "__qualname__", None)
+    if isinstance(qualname, str):
+        loop_affine_prefixes = (
+            "Semaphore",
+            "BoundedSemaphore",
+            "Lock",
+            "Event",
+            "Condition",
+            "Queue",
+            "PriorityQueue",
+            "LifoQueue",
+        )
+        if any(qualname == prefix or qualname.startswith(f"{prefix}.") for prefix in loop_affine_prefixes):
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            raise RuntimeError(
+                f"Await({qualname}) is not safe under Spawn/Gather in sync run(); use CreateSemaphore"
+            )
 
-    future = asyncio.run_coroutine_threadsafe(_run(), loop)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
 
-    def _on_done(completed: Any) -> None:
+    result: dict[str, object] = {}
+
+    def _worker() -> None:
         try:
-            promise.complete(completed.result())
-        except BaseException as exc:  # pragma: no cover - defensive bridge path
+            result["value"] = asyncio.run(awaitable)
+        except BaseException as exc:
+            result["error"] = exc
+
+    thread = threading.Thread(target=_worker, name="doeff-await-bridge", daemon=True)
+    thread.start()
+    thread.join()
+
+    if "error" in result:
+        raise result["error"]  # type: ignore[misc]
+    return result.get("value")
+
+
+def _submit_awaitable(awaitable: object, promise: object) -> None:
+    def _worker() -> None:
+        try:
+            result = _run_awaitable_sync(awaitable)
+            promise.complete(result)
+        except BaseException as exc:
             promise.fail(exc)
 
-    future.add_done_callback(_on_done)
-
-
-@do
-def sync_await_handler(effect: Effect, k: Any):
-    """Handle Await effects via background-loop bridge for sync execution."""
-    if isinstance(effect, PythonAsyncioAwaitEffect):
-        promise = yield CreateExternalPromise()
-        _submit_awaitable(effect.awaitable, promise)
-        value = yield Wait(promise.future)
-        return (yield doeff_vm.Resume(k, value))
-
-    yield doeff_vm.Pass()
+    thread = threading.Thread(target=_worker, name="doeff-await-bridge", daemon=True)
+    thread.start()
 
 
 @do

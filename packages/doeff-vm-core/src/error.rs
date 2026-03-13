@@ -1,9 +1,11 @@
 //! Error types for the VM.
 
 use crate::capture::{ActiveChainEntry, TraceEntry};
-use crate::effect::DispatchEffect;
+use crate::effect::{dispatch_ref_as_python, DispatchEffect};
 use crate::ids::{ContId, Marker};
 use crate::step::PyException;
+use pyo3::Python;
+use pyo3::types::PyAnyMethods;
 
 #[derive(Debug, Clone)]
 pub enum VMError {
@@ -52,13 +54,13 @@ impl std::fmt::Display for VMError {
                 )
             }
             VMError::UnhandledEffect { effect } => {
-                write!(f, "unhandled effect: {:?}", effect)
+                write!(f, "unhandled effect: {}", format_dispatch_effect(effect))
             }
             VMError::NoMatchingHandler { effect } => {
-                write!(f, "no matching handler for effect: {:?}", effect)
+                write!(f, "no matching handler for effect: {}", format_dispatch_effect(effect))
             }
             VMError::DelegateNoOuterHandler { effect } => {
-                write!(f, "delegate: no outer handler for effect: {:?}", effect)
+                write!(f, "delegate: no outer handler for effect: {}", format_dispatch_effect(effect))
             }
             VMError::HandlerNotFound { marker } => {
                 write!(f, "handler not found for marker {}", marker.raw())
@@ -70,6 +72,18 @@ impl std::fmt::Display for VMError {
             VMError::UncaughtException { .. } => write!(f, "uncaught exception"),
         }
     }
+}
+
+fn format_dispatch_effect(effect: &DispatchEffect) -> String {
+    if let Some(obj) = dispatch_ref_as_python(effect) {
+        return Python::attach(|py| {
+            obj.bind(py)
+                .repr()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|_| format!("{effect:?}"))
+        });
+    }
+    format!("{effect:?}")
 }
 
 impl std::error::Error for VMError {}

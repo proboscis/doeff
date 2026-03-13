@@ -4,7 +4,7 @@ This module implements Spawn and Task effects for background task execution
 as specified in SPEC-EFF-005-concurrency.md.
 
 Design Decisions (from spec):
-1. Store semantics: Snapshot at spawn time (isolated - child gets copy)
+1. Store semantics: shared run state (OCaml5-style)
 2. Error handling: Exception stored in Task until join (fire-and-forget friendly)
 3. Cancellation: Follow asyncio conventions (cancel() is sync request, CancelledError on join)
 """
@@ -77,8 +77,6 @@ TaskCancelEffect = doeff_vm.PyCancelEffect
 class Task(Generic[T]):
     # eq=False: hashable by id since snapshot dicts are unhashable
     _handle: Any = field(repr=False)
-    _env_snapshot: dict[Any, Any] = field(default_factory=dict, repr=False, hash=False)
-    _state_snapshot: dict[str, Any] = field(default_factory=dict, repr=False, hash=False)
 
     def __hash__(self) -> int:
         return hash(self._handle)
@@ -203,12 +201,13 @@ def spawn(
     """
     ensure_program_like(program, name="program")
     ensure_dict_str_any(options, name="options")
+    if "store_mode" in options:
+        raise TypeError("Spawn/store_mode is removed; Spawn is always shared-state now")
     validated_priority = _validate_priority(priority)
 
     effect = SpawnEffect(
         program=program,
         options=options,
-        store_mode="isolated",
         priority=validated_priority,
     )
     return effect
@@ -230,12 +229,13 @@ def Spawn(
     """
     ensure_program_like(program, name="program")
     ensure_dict_str_any(options, name="options")
+    if "store_mode" in options:
+        raise TypeError("Spawn/store_mode is removed; Spawn is always shared-state now")
     validated_priority = _validate_priority(priority)
 
     effect = SpawnEffect(
         program=program,
         options=options,
-        store_mode="isolated",
         priority=validated_priority,
     )
     return effect
