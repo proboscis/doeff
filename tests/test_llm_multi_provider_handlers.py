@@ -4,15 +4,24 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from doeff_gemini.handlers import gemini_mock_handler
 from doeff_llm.effects import LLMChat, LLMStructuredQuery
-from doeff_openai.handlers import (
-    MockOpenAIConfig,
-    MockOpenAIState,
-    openai_mock_handler,
-)
 from doeff_openrouter.handlers import MockOpenRouterRuntime, openrouter_mock_handler
 from pydantic import BaseModel
+
+try:
+    from doeff_openai.handlers import (
+        MockOpenAIConfig,
+        MockOpenAIState,
+        openai_mock_handler,
+    )
+except Exception as exc:  # pragma: no cover - interpreter/dependency compatibility
+    pytest.skip(
+        f"doeff_openai unavailable in this environment: {exc}",
+        allow_module_level=True,
+    )
 
 from doeff import Effect, EffectGenerator, WithHandler, default_handlers, do, run
 

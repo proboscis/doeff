@@ -43,6 +43,10 @@ def test_dispatch_origin_cleanup_does_not_linearly_scan_all_segments() -> None:
         "DispatchOrigin cleanup must not linearly scan the segment arena; it should be owned by "
         "the active handler segment and cleaned up structurally."
     )
+    assert "dispatch_origin_segments:" not in source, (
+        "DispatchOrigin ownership must be structural on the live handler segment, not tracked "
+        "through a VM-level dispatch_id -> segment side map."
+    )
 
 
 def test_vm_runtime_has_no_dispatch_side_table_left() -> None:
