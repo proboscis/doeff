@@ -16,6 +16,7 @@ pub mod ids;
 mod interceptor_state;
 pub mod ir_stream;
 pub mod kleisli;
+pub mod opaque_ref;
 pub mod py_key;
 pub mod py_shared;
 pub mod pyvm;
@@ -39,9 +40,9 @@ pub use do_ctrl::DoCtrl;
 pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 pub use driver::{Mode, StepEvent};
 pub use effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, dispatch_to_pyobject,
-    make_execution_context_object, make_get_execution_context_effect, DispatchEffect, Effect,
-    PyEffectBase, PyExecutionContext, PyGetExecutionContext,
+    dispatch_from_opaque, dispatch_from_shared, dispatch_into_opaque, dispatch_ref_as_opaque,
+    dispatch_to_pyobject, make_execution_context_object, make_get_execution_context_effect,
+    DispatchEffect, Effect, PyEffectBase, PyExecutionContext, PyGetExecutionContext,
 };
 pub use error::VMError;
 pub use frame::Frame;
@@ -51,6 +52,7 @@ pub use handler::{
 pub use ids::{ContId, DispatchId, Marker, PromiseId, RunnableId, SegmentId, TaskId};
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
+pub use opaque_ref::OpaqueRef;
 pub use py_key::HashedPyKey;
 pub use pyvm::{
     classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, install_vm_hooks,

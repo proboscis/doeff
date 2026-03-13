@@ -28,6 +28,8 @@ use crate::segment::ScopeStore;
 use crate::step::{PyException, PythonCall};
 use crate::value::Value;
 use crate::vm::RustStore;
+use doeff_vm_core::opaque_ref::OpaqueRef;
+use doeff_vm_core::py_shared::OpaqueRefPyExt;
 use doeff_vm_core::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
 
 enum ParsedStateEffect {
@@ -179,7 +181,7 @@ fn wrap_value_as_result_ok(value: Value) -> Result<Value, PyException> {
             },
         )
         .map_err(|e| pyerr_to_exception(py, e))?;
-        Ok(Value::Python(wrapped.into_any().unbind()))
+        Ok(Value::Opaque(OpaqueRef::new(wrapped.into_any().unbind())))
     })
 }
 
@@ -193,12 +195,12 @@ fn wrap_exception_as_result_err(error: PyException) -> Result<Value, PyException
             },
         )
         .map_err(|e| pyerr_to_exception(py, e))?;
-        Ok(Value::Python(wrapped.into_any().unbind()))
+        Ok(Value::Opaque(OpaqueRef::new(wrapped.into_any().unbind())))
     })
 }
 
 fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
-    let Value::Python(obj) = value else {
+    let Value::Opaque(obj) = value else {
         return None;
     };
 
@@ -218,7 +220,7 @@ fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
 }
 
 fn lazy_source_id(value: &Value) -> Option<usize> {
-    let Value::Python(obj) = value else {
+    let Value::Opaque(obj) = value else {
         return None;
     };
     Python::attach(|py| Some(obj.bind(py).as_ptr() as usize))
@@ -235,7 +237,7 @@ fn lazy_ask_create_semaphore_effect() -> Result<DispatchEffect, PyException> {
 }
 
 fn lazy_ask_acquire_semaphore_effect(semaphore: &Value) -> Result<DispatchEffect, PyException> {
-    let Value::Python(semaphore_obj) = semaphore else {
+    let Value::Opaque(semaphore_obj) = semaphore else {
         return Err(PyException::type_error(format!(
             "CreateSemaphore returned non-semaphore value: {:?}",
             semaphore
@@ -252,7 +254,7 @@ fn lazy_ask_acquire_semaphore_effect(semaphore: &Value) -> Result<DispatchEffect
 }
 
 fn lazy_ask_release_semaphore_effect(semaphore: &Value) -> Result<DispatchEffect, PyException> {
-    let Value::Python(semaphore_obj) = semaphore else {
+    let Value::Opaque(semaphore_obj) = semaphore else {
         return Err(PyException::type_error(format!(
             "CreateSemaphore returned non-semaphore value: {:?}",
             semaphore
@@ -327,7 +329,7 @@ impl IRStreamFactory for AwaitHandlerFactory {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
-        parse_await_python_effect(obj)
+        parse_await_python_effect(&obj)
             .map(|parsed| parsed.is_some())
             .map_err(|msg| {
                 VMError::internal(format!(
@@ -386,8 +388,8 @@ impl IRStreamProgram for AwaitHandlerProgram {
                     };
                     self.pending_k = Some(k);
                     IRStreamStep::NeedsPython(PythonCall::CallFunc {
-                        func: runner,
-                        args: vec![Value::Python(awaitable)],
+                        func: runner.into_opaque(),
+                        args: vec![Value::Opaque(OpaqueRef::new(awaitable))],
                         kwargs: vec![],
                     })
                 }
@@ -490,7 +492,7 @@ impl IRStreamFactory for StateHandlerFactory {
             return Ok(false);
         };
 
-        parse_state_python_effect(obj)
+        parse_state_python_effect(&obj)
             .map(|parsed| parsed.is_some())
             .map_err(|msg| {
                 VMError::internal(format!(
@@ -574,7 +576,7 @@ impl IRStreamProgram for StateHandlerProgram {
             self.pending_k = Some(k);
             self.pending_old_value = Some(old_value.clone());
             return IRStreamStep::NeedsPython(PythonCall::CallFunc {
-                func: modifier,
+                func: modifier.into_opaque(),
                 args: vec![old_value],
                 kwargs: vec![],
             });
@@ -605,7 +607,7 @@ impl IRStreamProgram for StateHandlerProgram {
                         self.pending_k = Some(k);
                         self.pending_old_value = Some(old_value.clone());
                         IRStreamStep::NeedsPython(PythonCall::CallFunc {
-                            func: modifier,
+                            func: modifier.into_opaque(),
                             args: vec![old_value],
                             kwargs: vec![],
                         })
@@ -769,7 +771,7 @@ impl IRStreamFactory for LazyAskHandlerFactory {
             return Ok(false);
         };
 
-        let is_reader = parse_reader_python_effect(obj)
+        let is_reader = parse_reader_python_effect(&obj)
             .map(|parsed| parsed.is_some())
             .map_err(|msg| {
                 VMError::internal(format!(
@@ -777,7 +779,7 @@ impl IRStreamFactory for LazyAskHandlerFactory {
                 ))
             })?;
 
-        Ok(is_reader || is_local_python_effect(obj))
+        Ok(is_reader || is_local_python_effect(&obj))
     }
 
     fn create_program(&self) -> IRStreamProgramRef {
@@ -1047,7 +1049,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                         semaphore_snapshot,
                     };
                     return IRStreamStep::Yield(DoCtrl::EvalInScope {
-                        expr: local_effect.sub_program,
+                        expr: local_effect.sub_program.into_opaque(),
                         scope: eval_scope,
                         metadata: None,
                     });
@@ -1116,7 +1118,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
             } => {
                 let Some(semaphore) = semaphore else {
                     let semaphore = match value {
-                        Value::Python(_) => value,
+                        Value::Opaque(_) => value,
                         Value::Unit
                         | Value::Int(_)
                         | Value::String(_)
@@ -1154,7 +1156,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                     semaphore,
                 };
                 IRStreamStep::Yield(DoCtrl::EvalInScope {
-                    expr,
+                    expr: expr.into_opaque(),
                     scope: eval_scope,
                     metadata: None,
                 })
@@ -1264,7 +1266,7 @@ impl IRStreamFactory for ReaderHandlerFactory {
             return Ok(false);
         };
 
-        parse_reader_python_effect(obj)
+        parse_reader_python_effect(&obj)
             .map(|parsed| parsed.is_some())
             .map_err(|msg| {
                 VMError::internal(format!(
@@ -1416,7 +1418,7 @@ impl IRStreamFactory for WriterHandlerFactory {
             return Ok(false);
         };
 
-        parse_writer_python_effect(obj)
+        parse_writer_python_effect(&obj)
             .map(|parsed| parsed.is_some())
             .map_err(|msg| {
                 VMError::internal(format!(
@@ -1547,7 +1549,7 @@ impl IRStreamFactory for ResultSafeHandlerFactory {
             return Ok(false);
         };
 
-        parse_result_safe_python_effect(obj)
+        parse_result_safe_python_effect(&obj)
             .map(|parsed| parsed.is_some())
             .map_err(|msg| {
                 VMError::internal(format!(
@@ -1626,7 +1628,7 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
                     let eval_scope = k.clone();
                     self.phase = ResultSafePhase::AwaitEval { continuation: k };
                     IRStreamStep::Yield(DoCtrl::EvalInScope {
-                        expr: sub_program,
+                        expr: sub_program.into_opaque(),
                         scope: eval_scope,
                         metadata: None,
                     })
@@ -1779,7 +1781,7 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
                     modifier: modifier.clone(),
                 };
                 IRStreamStep::NeedsPython(PythonCall::CallFunc {
-                    func: modifier,
+                    func: modifier.into_opaque(),
                     args: vec![Value::Int(10)],
                     kwargs: vec![],
                 })
@@ -1803,7 +1805,7 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
                     first_result: value.clone(),
                 };
                 IRStreamStep::NeedsPython(PythonCall::CallFunc {
-                    func: modifier,
+                    func: modifier.into_opaque(),
                     args: vec![value],
                     kwargs: vec![],
                 })
@@ -2387,7 +2389,7 @@ mod tests {
             };
             match ok_step {
                 IRStreamStep::Yield(DoCtrl::Resume {
-                    value: Value::Python(obj),
+                    value: Value::Opaque(obj),
                     ..
                 }) => {
                     let bound = obj.bind(py);
@@ -2412,7 +2414,7 @@ mod tests {
 
             match err_step {
                 IRStreamStep::Yield(DoCtrl::Resume {
-                    value: Value::Python(obj),
+                    value: Value::Opaque(obj),
                     ..
                 }) => {
                     let bound = obj.bind(py);

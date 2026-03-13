@@ -7,16 +7,16 @@ use crate::driver::PyException;
 use crate::frame::CallMetadata;
 use crate::ids::Marker;
 use crate::ir_stream::IRStreamRef;
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub enum PythonCall {
     EvalExpr {
-        expr: PyShared,
+        expr: OpaqueRef,
     },
     CallFunc {
-        func: PyShared,
+        func: OpaqueRef,
         args: Vec<Value>,
         kwargs: Vec<(String, Value)>,
     },
@@ -28,7 +28,7 @@ pub enum PythonCall {
         exc: PyException,
     },
     CallAsync {
-        func: PyShared,
+        func: OpaqueRef,
         args: Vec<Value>,
     },
 }

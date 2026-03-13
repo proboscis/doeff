@@ -47,6 +47,9 @@ pub mod ir_stream {
 pub mod kleisli {
     pub use doeff_vm_core::kleisli::*;
 }
+pub mod opaque_ref {
+    pub use doeff_vm_core::opaque_ref::*;
+}
 pub mod py_key {
     pub use doeff_vm_core::py_key::*;
 }

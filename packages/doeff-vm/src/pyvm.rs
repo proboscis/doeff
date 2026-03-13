@@ -12,8 +12,9 @@ pyo3::create_exception!(doeff_vm, Discontinued, pyo3::exceptions::PyException);
 
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
+use crate::dispatch::{dispatch_from_opaque, dispatch_ref_as_opaque};
 use crate::effect::{
-    dispatch_from_shared, dispatch_ref_as_python, PyExecutionContext, PyGetExecutionContext,
+    PyExecutionContext, PyGetExecutionContext,
     PyProgramCallStack,
 };
 
@@ -23,7 +24,8 @@ use crate::ids::Marker;
 use crate::ir_stream::{IRStream, PythonGeneratorStream};
 use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli};
 use crate::py_key::HashedPyKey;
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
+use crate::py_shared::OpaqueRefPyExt;
 #[allow(unused_imports)]
 use crate::segment::{Segment, SegmentKind};
 use crate::step::{Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent};
@@ -313,7 +315,7 @@ fn normalize_handler_types_obj(
 fn intercept_types_from_pyobj(
     py: Python<'_>,
     types: &Option<Py<PyAny>>,
-) -> PyResult<Option<Vec<PyShared>>> {
+) -> PyResult<Option<Vec<OpaqueRef>>> {
     let Some(types_obj) = types else {
         return Ok(None);
     };
@@ -331,7 +333,7 @@ fn intercept_types_from_pyobj(
                 "WithIntercept.types must contain only Python type objects",
             ));
         }
-        normalized.push(PyShared::new(item.unbind()));
+        normalized.push(OpaqueRef::new(item.unbind()));
     }
     Ok(Some(normalized))
 }
@@ -339,7 +341,7 @@ fn intercept_types_from_pyobj(
 fn handler_types_from_pyobj(
     py: Python<'_>,
     types: &Option<Py<PyAny>>,
-) -> PyResult<Option<Vec<PyShared>>> {
+) -> PyResult<Option<Vec<OpaqueRef>>> {
     let Some(types_obj) = types else {
         return Ok(None);
     };
@@ -357,14 +359,14 @@ fn handler_types_from_pyobj(
                 "WithHandler.types must contain only Python type objects",
             ));
         }
-        normalized.push(PyShared::new(item.unbind()));
+        normalized.push(OpaqueRef::new(item.unbind()));
     }
     Ok(Some(normalized))
 }
 
 fn intercept_types_to_pyobj(
     py: Python<'_>,
-    types: &Option<Vec<PyShared>>,
+    types: &Option<Vec<OpaqueRef>>,
 ) -> PyResult<Option<Py<PyAny>>> {
     let Some(types) = types else {
         return Ok(None);
@@ -375,7 +377,7 @@ fn intercept_types_to_pyobj(
 
 fn handler_types_to_pyobj(
     py: Python<'_>,
-    types: &Option<Vec<PyShared>>,
+    types: &Option<Vec<OpaqueRef>>,
 ) -> PyResult<Option<Py<PyAny>>> {
     let Some(types) = types else {
         return Ok(None);
@@ -715,7 +717,7 @@ impl PyVM {
 
         if obj.is_instance_of::<PyRustHandlerSentinel>() {
             let sentinel: PyRef<'_, PyRustHandlerSentinel> = obj.extract()?;
-            let identity = PyShared::new(obj.clone().unbind());
+            let identity = OpaqueRef::new(obj.clone().unbind());
             return Ok(Arc::new(IdentityKleisli::new(
                 sentinel.kleisli_ref(),
                 identity,
@@ -753,7 +755,7 @@ impl PyVM {
             ));
         };
         seg.mode = Mode::HandleYield(DoCtrl::Eval {
-            expr: PyShared::new(expr),
+            expr: OpaqueRef::new(expr),
             metadata: None,
         });
         Ok(())
@@ -905,7 +907,7 @@ impl PyVM {
         match value {
             // Runtime callback arguments must receive the opaque K handle.
             Value::Continuation(k) => Ok(Bound::new(py, PyK::from_cont_id(k.cont_id))?.into_any()),
-            Value::Python(_)
+            Value::Opaque(_)
             | Value::Unit
             | Value::Int(_)
             | Value::String(_)
@@ -1010,7 +1012,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 .unbind(),
             ),
             DoCtrl::Perform { effect } => {
-                dispatch_ref_as_python(effect).map(|value| value.clone_ref(py))
+                dispatch_ref_as_opaque(effect).map(|value| value.clone_ref(py))
             }
             DoCtrl::Resume {
                 continuation,
@@ -1481,8 +1483,8 @@ fn classify_doeff_generator_as_irstream(
 
     let stream: Arc<Mutex<Box<dyn IRStream>>> =
         Arc::new(Mutex::new(Box::new(PythonGeneratorStream::new(
-            PyShared::new(wrapped.generator.clone_ref(py)),
-            PyShared::new(wrapped.get_frame.clone_ref(py)),
+            OpaqueRef::new(wrapped.generator.clone_ref(py)),
+            OpaqueRef::new(wrapped.get_frame.clone_ref(py)),
         )) as Box<dyn IRStream>));
 
     Ok(DoCtrl::IRStream {
@@ -1614,23 +1616,23 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::Map => {
                 let m: PyRef<'_, PyMap> = obj.extract()?;
                 Ok(DoCtrl::Map {
-                    source: PyShared::new(m.source.clone_ref(py)),
-                    mapper: PyShared::new(m.mapper.clone_ref(py)),
+                    source: OpaqueRef::new(m.source.clone_ref(py)),
+                    mapper: OpaqueRef::new(m.mapper.clone_ref(py)),
                     mapper_meta: call_metadata_from_meta_obj(m.mapper_meta.bind(py)),
                 })
             }
             DoExprTag::FlatMap => {
                 let fm: PyRef<'_, PyFlatMap> = obj.extract()?;
                 Ok(DoCtrl::FlatMap {
-                    source: PyShared::new(fm.source.clone_ref(py)),
-                    binder: PyShared::new(fm.binder.clone_ref(py)),
+                    source: OpaqueRef::new(fm.source.clone_ref(py)),
+                    binder: OpaqueRef::new(fm.binder.clone_ref(py)),
                     binder_meta: call_metadata_from_meta_obj(fm.binder_meta.bind(py)),
                 })
             }
             DoExprTag::Perform => {
                 let pf: PyRef<'_, PyPerform> = obj.extract()?;
                 Ok(DoCtrl::Perform {
-                    effect: dispatch_from_shared(PyShared::new(pf.effect.clone_ref(py))),
+                    effect: dispatch_from_opaque(OpaqueRef::new(pf.effect.clone_ref(py))),
                 })
             }
             DoExprTag::Resume => {
@@ -1706,12 +1708,12 @@ pub(crate) fn classify_yielded_bound(
                     let kleisli = PyVM::extract_kleisli_ref(py, &item, "CreateContinuation")?;
                     let identity = kleisli
                         .py_identity()
-                        .or_else(|| Some(PyShared::new(item.clone().unbind())));
+                        .or_else(|| Some(OpaqueRef::new(item.clone().unbind())));
                     handlers.push(kleisli);
                     handler_identities.push(identity);
                 }
                 Ok(DoCtrl::CreateContinuation {
-                    expr: PyShared::new(program),
+                    expr: OpaqueRef::new(program),
                     handlers,
                     handler_identities,
                 })
@@ -1739,7 +1741,7 @@ pub(crate) fn classify_yielded_bound(
                 let eval: PyRef<'_, PyEval> = obj.extract()?;
                 let expr = eval.expr.clone_ref(py);
                 Ok(DoCtrl::Eval {
-                    expr: PyShared::new(expr),
+                    expr: OpaqueRef::new(expr),
                     metadata: None,
                 })
             }
@@ -1757,7 +1759,7 @@ pub(crate) fn classify_yielded_bound(
                     ))
                 })?;
                 Ok(DoCtrl::EvalInScope {
-                    expr: PyShared::new(expr),
+                    expr: OpaqueRef::new(expr),
                     scope,
                     metadata: None,
                 })
@@ -1765,7 +1767,7 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::AsyncEscape => {
                 let ae: PyRef<'_, PyAsyncEscape> = obj.extract()?;
                 Ok(DoCtrl::PythonAsyncSyntaxEscape {
-                    action: ae.action.clone_ref(py),
+                    action: OpaqueRef::new(ae.action.clone_ref(py)),
                 })
             }
             DoExprTag::Effect | DoExprTag::Unknown => Err(PyTypeError::new_err(
@@ -1799,7 +1801,7 @@ pub(crate) fn classify_yielded_bound(
             "<doexpr>".to_string(),
             0,
             None,
-            Some(PyShared::new(obj.clone().unbind())),
+            Some(OpaqueRef::new(obj.clone().unbind())),
         );
         return classify_doeff_generator_as_irstream(
             py,
@@ -1815,7 +1817,7 @@ pub(crate) fn classify_yielded_bound(
             return Ok(DoCtrl::GetCallStack);
         }
         return Ok(DoCtrl::Perform {
-            effect: dispatch_from_shared(PyShared::new(obj.clone().unbind())),
+            effect: dispatch_from_opaque(OpaqueRef::new(obj.clone().unbind())),
         });
     }
 
@@ -1866,7 +1868,7 @@ fn metadata_attr_as_u32(meta: &Bound<'_, PyAny>, key: &str) -> Option<u32> {
         .and_then(|v| v.extract::<u32>().ok())
 }
 
-fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<PyShared> {
+fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<OpaqueRef> {
     meta.cast::<PyDict>()
         .ok()
         .and_then(|dict| dict.get_item(key).ok().flatten())
@@ -1874,7 +1876,7 @@ fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<PyShared> {
             if v.is_none() {
                 None
             } else {
-                Some(PyShared::new(v.unbind()))
+                Some(OpaqueRef::new(v.unbind()))
             }
         })
 }
@@ -3781,7 +3783,7 @@ mod tests {
             let inner_f = py.eval(c"lambda: 7", None, None).unwrap().unbind();
             let inner_apply = DoCtrl::Apply {
                 f: Box::new(DoCtrl::Pure {
-                    value: Value::Python(inner_f),
+                    value: Value::Opaque(OpaqueRef::new(inner_f)),
                 }),
                 args: vec![],
                 kwargs: vec![],
@@ -3798,10 +3800,10 @@ mod tests {
                 .expect("inner Apply conversion should produce object");
             let outer_apply = DoCtrl::Apply {
                 f: Box::new(DoCtrl::Pure {
-                    value: Value::Python(outer_f),
+                    value: Value::Opaque(OpaqueRef::new(outer_f)),
                 }),
                 args: vec![DoCtrl::Pure {
-                    value: Value::Python(inner_program.clone_ref(py)),
+                    value: Value::Opaque(OpaqueRef::new(inner_program.clone_ref(py))),
                 }],
                 kwargs: vec![],
                 metadata: CallMetadata::new(
@@ -3832,7 +3834,7 @@ mod tests {
                     assert!(matches!(args.as_slice(), [DoCtrl::Pure { .. }]));
                     match &args[0] {
                         DoCtrl::Pure {
-                            value: Value::Python(program),
+                            value: Value::Opaque(program),
                         } => {
                             assert!(program.bind(py).is_instance_of::<PyApply>());
                         }
@@ -3960,7 +3962,7 @@ mod tests {
             "PYVM-CATCHALL-001 FAIL: Value match must not use `_ =>` fallback"
         );
         let value_variants = [
-            "Value::Python",
+            "Value::Opaque",
             "Value::Unit",
             "Value::Int",
             "Value::String",

@@ -5,9 +5,10 @@ use pyo3::prelude::*;
 use crate::arena::SegmentArena;
 use crate::do_ctrl::DoCtrl;
 use crate::driver::{Mode, PyException, StepEvent};
-use crate::effect::{dispatch_ref_as_python, DispatchEffect};
+use crate::effect::{dispatch_ref_as_opaque, DispatchEffect};
 use crate::frame::{CallMetadata, Frame};
 use crate::ids::SegmentId;
+use crate::py_shared::OpaqueRefPyExt;
 use crate::python_call::{PendingPython, PythonCall};
 use crate::value::Value;
 use crate::vm::{DebugConfig, DebugLevel, ModeFormatVerbosity, TraceEvent};
@@ -73,7 +74,7 @@ impl DebugState {
     pub(crate) fn value_repr(value: &Value) -> Option<String> {
         let repr = match value {
             Value::None | Value::Unit => "None".to_string(),
-            Value::Python(obj) => Python::attach(|py| {
+            Value::Opaque(obj) => Python::attach(|py| {
                 obj.bind(py)
                     .repr()
                     .map(|v| v.to_string())
@@ -113,7 +114,7 @@ impl DebugState {
     }
 
     pub(crate) fn effect_repr(effect: &DispatchEffect) -> String {
-        let repr = if let Some(obj) = dispatch_ref_as_python(effect) {
+        let repr = if let Some(obj) = dispatch_ref_as_opaque(effect) {
             Python::attach(|py| {
                 obj.bind(py)
                     .repr()

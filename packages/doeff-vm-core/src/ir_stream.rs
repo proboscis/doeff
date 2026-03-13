@@ -7,7 +7,8 @@ use pyo3::prelude::*;
 
 use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
+use crate::py_shared::{OpaqueRefPyExt, PyShared};
 use crate::python_call::PythonCall;
 use crate::segment::ScopeStore;
 use crate::value::Value;
@@ -29,7 +30,7 @@ pub trait IRStream: fmt::Debug + Send {
     fn debug_location(&self) -> Option<StreamLocation> {
         None
     }
-    fn python_generator(&self) -> Option<PyShared> {
+    fn python_generator(&self) -> Option<OpaqueRef> {
         None
     }
 }
@@ -53,8 +54,8 @@ pub struct StreamLocation {
 }
 
 pub struct PythonGeneratorStream {
-    generator: PyShared,
-    get_frame: PyShared,
+    generator: OpaqueRef,
+    get_frame: OpaqueRef,
     started: bool,
 }
 
@@ -67,12 +68,17 @@ impl fmt::Debug for PythonGeneratorStream {
 }
 
 impl PythonGeneratorStream {
-    pub fn new(generator: PyShared, get_frame: PyShared) -> Self {
+    pub fn new(generator: OpaqueRef, get_frame: OpaqueRef) -> Self {
         PythonGeneratorStream {
             generator,
             get_frame,
             started: false,
         }
+    }
+
+    /// Legacy constructor from PyShared (bridge convenience).
+    pub fn from_py_shared(generator: PyShared, get_frame: PyShared) -> Self {
+        Self::new(generator.into_opaque(), get_frame.into_opaque())
     }
 
     fn resolve_location(&self, py: Python<'_>) -> Option<StreamLocation> {
@@ -128,7 +134,7 @@ impl IRStream for PythonGeneratorStream {
         Python::attach(|py| self.resolve_location(py))
     }
 
-    fn python_generator(&self) -> Option<PyShared> {
+    fn python_generator(&self) -> Option<OpaqueRef> {
         Some(self.generator.clone())
     }
 }
@@ -162,7 +168,7 @@ mod tests {
                 .unbind();
 
             let mut stream =
-                PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
+                PythonGeneratorStream::new(OpaqueRef::new(generator), OpaqueRef::new(get_frame));
             let mut store = RustStore::new();
             let mut scope = ScopeStore::default();
 
@@ -205,7 +211,7 @@ mod tests {
                 .unbind();
 
             let mut stream =
-                PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
+                PythonGeneratorStream::new(OpaqueRef::new(generator), OpaqueRef::new(get_frame));
             let mut store = RustStore::new();
             let mut scope = ScopeStore::default();
             let step = stream.throw(PyException::runtime_error("boom"), &mut store, &mut scope);
@@ -238,7 +244,7 @@ mod tests {
                 .expect("_get_frame missing")
                 .unbind();
             let stream =
-                PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
+                PythonGeneratorStream::new(OpaqueRef::new(generator), OpaqueRef::new(get_frame));
 
             let location = stream
                 .debug_location()

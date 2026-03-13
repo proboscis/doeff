@@ -1,14 +1,12 @@
 //! DoCtrl primitives.
 
-use pyo3::prelude::*;
-
 use crate::continuation::Continuation;
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
-use crate::py_shared::PyShared;
+use crate::opaque_ref::OpaqueRef;
 use crate::value::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,13 +45,13 @@ pub enum DoCtrl {
         value: Value,
     },
     Map {
-        source: PyShared,
-        mapper: PyShared,
+        source: OpaqueRef,
+        mapper: OpaqueRef,
         mapper_meta: CallMetadata,
     },
     FlatMap {
-        source: PyShared,
-        binder: PyShared,
+        source: OpaqueRef,
+        binder: OpaqueRef,
         binder_meta: CallMetadata,
     },
     Perform {
@@ -78,12 +76,12 @@ pub enum DoCtrl {
     WithHandler {
         handler: KleisliRef,
         body: Box<DoCtrl>,
-        types: Option<Vec<PyShared>>,
+        types: Option<Vec<OpaqueRef>>,
     },
     WithIntercept {
         interceptor: KleisliRef,
         body: Box<DoCtrl>,
-        types: Option<Vec<PyShared>>,
+        types: Option<Vec<OpaqueRef>>,
         mode: InterceptMode,
         metadata: Option<CallMetadata>,
     },
@@ -103,16 +101,16 @@ pub enum DoCtrl {
         continuation: Continuation,
     },
     CreateContinuation {
-        expr: PyShared,
+        expr: OpaqueRef,
         handlers: Vec<KleisliRef>,
-        handler_identities: Vec<Option<PyShared>>,
+        handler_identities: Vec<Option<OpaqueRef>>,
     },
     ResumeContinuation {
         continuation: Continuation,
         value: Value,
     },
     PythonAsyncSyntaxEscape {
-        action: Py<PyAny>,
+        action: OpaqueRef,
     },
     Apply {
         f: Box<DoCtrl>,
@@ -131,174 +129,16 @@ pub enum DoCtrl {
         metadata: Option<CallMetadata>,
     },
     Eval {
-        expr: PyShared,
+        expr: OpaqueRef,
         metadata: Option<CallMetadata>,
     },
     EvalInScope {
-        expr: PyShared,
+        expr: OpaqueRef,
         scope: Continuation,
         metadata: Option<CallMetadata>,
     },
     // DEPRECATED (INTROSPECT-UNIFY-001): use GetExecutionContext for handler-aware introspection.
     GetCallStack,
-}
-
-impl DoCtrl {
-    pub fn clone_ref(&self, py: Python<'_>) -> Self {
-        match self {
-            DoCtrl::Pure { value } => DoCtrl::Pure {
-                value: value.clone(),
-            },
-            DoCtrl::Map {
-                source,
-                mapper,
-                mapper_meta,
-            } => DoCtrl::Map {
-                source: source.clone(),
-                mapper: mapper.clone(),
-                mapper_meta: mapper_meta.clone(),
-            },
-            DoCtrl::FlatMap {
-                source,
-                binder,
-                binder_meta,
-            } => DoCtrl::FlatMap {
-                source: source.clone(),
-                binder: binder.clone(),
-                binder_meta: binder_meta.clone(),
-            },
-            DoCtrl::Perform { effect } => DoCtrl::Perform {
-                effect: effect.clone(),
-            },
-            DoCtrl::Resume {
-                continuation,
-                value,
-            } => DoCtrl::Resume {
-                continuation: continuation.clone(),
-                value: value.clone(),
-            },
-            DoCtrl::Transfer {
-                continuation,
-                value,
-            } => DoCtrl::Transfer {
-                continuation: continuation.clone(),
-                value: value.clone(),
-            },
-            DoCtrl::TransferThrow {
-                continuation,
-                exception,
-            } => DoCtrl::TransferThrow {
-                continuation: continuation.clone(),
-                exception: exception.clone_ref(py),
-            },
-            DoCtrl::ResumeThrow {
-                continuation,
-                exception,
-            } => DoCtrl::ResumeThrow {
-                continuation: continuation.clone(),
-                exception: exception.clone_ref(py),
-            },
-            DoCtrl::WithHandler {
-                handler,
-                body,
-                types,
-            } => DoCtrl::WithHandler {
-                handler: handler.clone(),
-                body: body.clone(),
-                types: types.clone(),
-            },
-            DoCtrl::WithIntercept {
-                interceptor,
-                body,
-                types,
-                mode,
-                metadata,
-            } => DoCtrl::WithIntercept {
-                interceptor: interceptor.clone(),
-                body: body.clone(),
-                types: types.clone(),
-                mode: *mode,
-                metadata: metadata.clone(),
-            },
-            DoCtrl::Discontinue {
-                continuation,
-                exception,
-            } => DoCtrl::Discontinue {
-                continuation: continuation.clone(),
-                exception: exception.clone_ref(py),
-            },
-            DoCtrl::Delegate { effect } => DoCtrl::Delegate {
-                effect: effect.clone(),
-            },
-            DoCtrl::Pass { effect } => DoCtrl::Pass {
-                effect: effect.clone(),
-            },
-            DoCtrl::GetContinuation => DoCtrl::GetContinuation,
-            DoCtrl::GetHandlers => DoCtrl::GetHandlers,
-            DoCtrl::GetTraceback { continuation } => DoCtrl::GetTraceback {
-                continuation: continuation.clone(),
-            },
-            DoCtrl::CreateContinuation {
-                expr,
-                handlers,
-                handler_identities,
-            } => DoCtrl::CreateContinuation {
-                expr: PyShared::new(expr.clone_ref(py)),
-                handlers: handlers.clone(),
-                handler_identities: handler_identities.clone(),
-            },
-            DoCtrl::ResumeContinuation {
-                continuation,
-                value,
-            } => DoCtrl::ResumeContinuation {
-                continuation: continuation.clone(),
-                value: value.clone(),
-            },
-            DoCtrl::PythonAsyncSyntaxEscape { action } => DoCtrl::PythonAsyncSyntaxEscape {
-                action: action.clone_ref(py),
-            },
-            DoCtrl::Apply {
-                f,
-                args,
-                kwargs,
-                metadata,
-            } => DoCtrl::Apply {
-                f: f.clone(),
-                args: args.clone(),
-                kwargs: kwargs.clone(),
-                metadata: metadata.clone(),
-            },
-            DoCtrl::Expand {
-                factory,
-                args,
-                kwargs,
-                metadata,
-            } => DoCtrl::Expand {
-                factory: factory.clone(),
-                args: args.clone(),
-                kwargs: kwargs.clone(),
-                metadata: metadata.clone(),
-            },
-            DoCtrl::IRStream { stream, metadata } => DoCtrl::IRStream {
-                stream: stream.clone(),
-                metadata: metadata.clone(),
-            },
-            DoCtrl::Eval { expr, metadata } => DoCtrl::Eval {
-                expr: PyShared::new(expr.clone_ref(py)),
-                metadata: metadata.clone(),
-            },
-            DoCtrl::EvalInScope {
-                expr,
-                scope,
-                metadata,
-            } => DoCtrl::EvalInScope {
-                expr: PyShared::new(expr.clone_ref(py)),
-                scope: scope.clone(),
-                metadata: metadata.clone(),
-            },
-            DoCtrl::GetCallStack => DoCtrl::GetCallStack,
-        }
-    }
 }
 
 #[cfg(test)]
