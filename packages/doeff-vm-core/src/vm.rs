@@ -41,7 +41,7 @@ use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::TraceState;
 use crate::value::Value;
 
-pub use crate::dispatch::{Dispatch, DispatchContext};
+pub use crate::dispatch::Dispatch;
 pub use crate::rust_store::RustStore;
 
 static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
@@ -1358,7 +1358,7 @@ impl VM {
         _stream: &IRStreamRef,
         handler_kind: Option<HandlerKind>,
     ) -> Option<Continuation> {
-        if handler_kind != Some(HandlerKind::Python) {
+        if handler_kind.is_none() {
             return None;
         }
 
@@ -1368,14 +1368,19 @@ impl VM {
         if self.dispatch_state.dispatch_is_execution_context_effect(dispatch_id) {
             return None;
         }
-        let k = self
-            .dispatch_state
-            .find_by_dispatch_id(dispatch_id)
-            .and_then(|d| d.current_k_current().cloned())?;
-        if self.is_one_shot_consumed(k.cont_id) {
-            return None;
+        let d = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+        // Walk the activation stack from top (current) to bottom (original).
+        // After a Delegate+TransferThrow, the top activation's throw_target may
+        // be consumed.  Fall through to the parent activation whose throw_target
+        // is the user's original yield-site continuation.
+        for activation in d.activations.iter().rev() {
+            if let Some(ref throw_target) = activation.throw_target {
+                if !self.is_one_shot_consumed(throw_target.cont_id) {
+                    return Some(throw_target.clone());
+                }
+            }
         }
-        Some(k)
+        None
     }
 
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
@@ -4089,7 +4094,7 @@ impl VM {
             active_handler_seg_id: handler_seg_id,
             k_passed: k_user.clone(),
             k_current: k_user.clone(),
-            throw_target: None,
+            throw_target: Some(k_user.clone()),
             supports_error_context_conversion,
         };
         self.dispatch_state.insert(Dispatch {
@@ -4143,7 +4148,8 @@ impl VM {
     }
 
     fn check_dispatch_completion(&mut self, k: &Continuation) {
-        self.dispatch_state.check_dispatch_completion(k);
+        self.dispatch_state
+            .check_dispatch_completion(k, &self.consumed_cont_ids);
     }
 
     fn error_dispatch_for_continuation(
@@ -4754,7 +4760,10 @@ impl VM {
                     d.effect = effect.clone();
                     match kind {
                         ForwardKind::Delegate => {
-                            // Delegate pushes a new activation
+                            // Delegate pushes a new activation; throw_target is the
+                            // k_new continuation captured from the inner handler so
+                            // that exceptions thrown by the outer handler can be routed
+                            // back to the inner handler's yield site.
                             let k_current = d
                                 .current_k_current()
                                 .cloned()
@@ -4764,7 +4773,7 @@ impl VM {
                                 active_handler_seg_id: handler_seg_id,
                                 k_passed: k_current.clone(),
                                 k_current: k_current.clone(),
-                                throw_target: None,
+                                throw_target: Some(k_current.clone()),
                                 supports_error_context_conversion,
                             });
                             k_current
