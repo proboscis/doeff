@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections import abc as collections_abc
 
 import pytest
 
@@ -25,6 +26,11 @@ def test_kleisli_call_is_beartype_decoratable() -> None:
 
     if sys.version_info < (3, 11):
         pytest.skip("beartype ParamSpec handling is unstable on Python 3.10")
+
+    if not hasattr(collections_abc, "ByteString"):
+        # Python 3.14 removed collections.abc.ByteString, but current beartype
+        # still imports it during module initialization.
+        collections_abc.ByteString = bytes  # type: ignore[attr-defined]
 
     try:
         from beartype import beartype
