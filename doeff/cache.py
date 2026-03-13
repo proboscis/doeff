@@ -135,6 +135,9 @@ def _call_site_from_program_frames(call_stack: list[Any] | tuple[Any, ...]) -> C
         if not _is_internal_cache_filename(source_file):
             return site
 
+    if fallback is not None and _is_internal_cache_filename(fallback.source_file):
+        return CacheCallSite("<rust>", 0, "SchedulerHandler")
+
     return fallback
 
 
