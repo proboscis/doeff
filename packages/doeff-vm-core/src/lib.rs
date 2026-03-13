@@ -111,4 +111,4 @@ pub use step::PyException;
 #[cfg(feature = "python_bridge")]
 pub use value::Value;
 #[cfg(feature = "python_bridge")]
-pub use vm::{DebugConfig, DebugLevel, TraceEvent, VM};
+pub use vm::{DebugConfig, DebugLevel, DispatchLookupStats, TraceEvent, VM};

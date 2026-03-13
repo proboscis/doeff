@@ -468,6 +468,7 @@ impl PyVM {
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
+            dispatch_lookup_stats: self.build_dispatch_lookup_stats_dict(py)?,
         })
     }
 
@@ -572,6 +573,24 @@ impl PyVM {
         Ok(trace_list.into_any().unbind())
     }
 
+    fn build_dispatch_lookup_stats_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let stats = self.vm.dispatch_lookup_stats();
+        let dict = pyo3::types::PyDict::new(py);
+        dict.set_item(
+            "dispatch_origin_in_segment_calls",
+            stats.dispatch_origin_in_segment_calls,
+        )?;
+        dict.set_item(
+            "dispatch_origin_in_segment_for_dispatch_calls",
+            stats.dispatch_origin_in_segment_for_dispatch_calls,
+        )?;
+        dict.set_item("dispatch_origins_calls", stats.dispatch_origins_calls)?;
+        dict.set_item("frames_scanned", stats.frames_scanned)?;
+        dict.set_item("lookup_wall_time_ns", stats.lookup_wall_time_ns)?;
+        dict.set_item("step_wall_time_ns", stats.step_wall_time_ns)?;
+        Ok(dict.into_any().unbind())
+    }
+
     pub fn build_run_result(
         &self,
         py: Python<'_>,
@@ -591,6 +610,7 @@ impl PyVM {
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
+            dispatch_lookup_stats: self.build_dispatch_lookup_stats_dict(py)?,
         })
     }
 
@@ -616,6 +636,7 @@ impl PyVM {
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
+            dispatch_lookup_stats: self.build_dispatch_lookup_stats_dict(py)?,
         })
     }
 
@@ -1980,6 +2001,7 @@ pub struct PyRunResult {
     raw_store: Py<pyo3::types::PyDict>,
     log: Py<PyAny>,
     trace: Py<PyAny>,
+    dispatch_lookup_stats: Py<PyAny>,
 }
 
 impl PyRunResult {
@@ -2105,6 +2127,11 @@ impl PyRunResult {
     #[getter]
     fn trace(&self, py: Python<'_>) -> Py<PyAny> {
         self.trace.clone_ref(py)
+    }
+
+    #[getter]
+    fn dispatch_lookup_stats(&self, py: Python<'_>) -> Py<PyAny> {
+        self.dispatch_lookup_stats.clone_ref(py)
     }
 
     fn is_ok(&self) -> bool {

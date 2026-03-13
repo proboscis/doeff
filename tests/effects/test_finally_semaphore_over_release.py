@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import sys
 from typing import Any
 
 import pytest
@@ -61,6 +62,9 @@ class _Store(EffectBase):
 
 
 TIMEOUT_SECONDS = 10
+HIGH_CONCURRENCY_TIMEOUT_SECONDS = (
+    30 if hasattr(sys, "_is_gil_enabled") and not sys._is_gil_enabled() else TIMEOUT_SECONDS
+)
 TASK_COUNT = 20
 CONCURRENCY = 5
 
@@ -87,6 +91,10 @@ def _run_sync_with_custom_timeout(program, timeout_seconds: int):
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old)
+
+
+def _run_sync_with_high_concurrency_timeout(program):
+    return _run_sync_with_custom_timeout(program, HIGH_CONCURRENCY_TIMEOUT_SECONDS)
 
 
 async def _fake_api_call(n: int) -> int:
@@ -191,7 +199,7 @@ class TestLayer1WithIntercept:
 
         programs = [_worker_simple(i) for i in range(TASK_COUNT)]
         program = WithIntercept(_interceptor, _throttled(programs, CONCURRENCY))
-        result = _run_sync_with_timeout(program)
+        result = _run_sync_with_high_concurrency_timeout(program)
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(TASK_COUNT)]
 
@@ -652,7 +660,7 @@ class TestLayer5WithHandlerResume:
                 _interceptor,
                 WithHandler(sqlite_cache_handler(db_path), Local(env, body)),
             )
-            result = _run_sync_with_timeout(program)
+            result = _run_sync_with_high_concurrency_timeout(program)
 
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
@@ -711,7 +719,7 @@ class TestLayer5WithHandlerResume:
             _interceptor,
             WithHandler(in_memory_cache_handler(), Local(env, body)),
         )
-        result = _run_sync_with_timeout(program)
+        result = _run_sync_with_high_concurrency_timeout(program)
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 
@@ -771,7 +779,7 @@ class TestLayer5WithHandlerResume:
             _interceptor,
             WithHandler(in_memory_cache_handler(), Local(env, body)),
         )
-        result = _run_sync_with_timeout(program)
+        result = _run_sync_with_high_concurrency_timeout(program)
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 
@@ -828,7 +836,7 @@ class TestLayer5WithHandlerResume:
             _interceptor,
             WithHandler(in_memory_cache_handler(), Local(env, body)),
         )
-        result = _run_sync_with_timeout(program)
+        result = _run_sync_with_high_concurrency_timeout(program)
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 

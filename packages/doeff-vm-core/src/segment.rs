@@ -43,6 +43,7 @@ pub struct ScopeStore {
 pub struct Segment {
     pub marker: Marker,
     pub frames: Vec<Frame>,
+    pub(crate) dispatch_origin_frame_indices: Vec<usize>,
     pub caller: Option<SegmentId>,
     pub scope_store: ScopeStore,
     pub kind: SegmentKind,
@@ -59,6 +60,7 @@ impl Segment {
         Segment {
             marker,
             frames: Vec::new(),
+            dispatch_origin_frame_indices: Vec::new(),
             caller,
             scope_store: ScopeStore::default(),
             kind: SegmentKind::Normal,
@@ -80,6 +82,7 @@ impl Segment {
         Segment {
             marker,
             frames: Vec::new(),
+            dispatch_origin_frame_indices: Vec::new(),
             caller,
             scope_store: ScopeStore::default(),
             kind: SegmentKind::PromptBoundary {
@@ -106,6 +109,7 @@ impl Segment {
         Segment {
             marker,
             frames: Vec::new(),
+            dispatch_origin_frame_indices: Vec::new(),
             caller,
             scope_store: ScopeStore::default(),
             kind: SegmentKind::PromptBoundary {
@@ -122,12 +126,37 @@ impl Segment {
         }
     }
 
+    pub(crate) fn dispatch_origin_frame_indices_from_frames(frames: &[Frame]) -> Vec<usize> {
+        frames
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, frame)| matches!(frame, Frame::DispatchOrigin { .. }).then_some(idx))
+            .collect()
+    }
+
     pub fn push_frame(&mut self, frame: Frame) {
+        if matches!(frame, Frame::DispatchOrigin { .. }) {
+            self.dispatch_origin_frame_indices.push(self.frames.len());
+        }
         self.frames.push(frame);
     }
 
     pub fn pop_frame(&mut self) -> Option<Frame> {
-        self.frames.pop()
+        let frame = self.frames.pop()?;
+        if matches!(frame, Frame::DispatchOrigin { .. }) {
+            let expected_idx = self.frames.len();
+            debug_assert_eq!(
+                self.dispatch_origin_frame_indices.pop(),
+                Some(expected_idx),
+                "dispatch origin frame cache out of sync"
+            );
+        }
+        Some(frame)
+    }
+
+    pub fn clear_frames(&mut self) {
+        self.frames.clear();
+        self.dispatch_origin_frame_indices.clear();
     }
 
     pub fn has_frames(&self) -> bool {
@@ -136,6 +165,32 @@ impl Segment {
 
     pub fn frame_count(&self) -> usize {
         self.frames.len()
+    }
+
+    pub fn current_dispatch_origin_frame(&self) -> Option<&Frame> {
+        let idx = *self.dispatch_origin_frame_indices.last()?;
+        self.frames.get(idx)
+    }
+
+    pub fn dispatch_origin_frame_for_dispatch(&self, dispatch_id: DispatchId) -> Option<&Frame> {
+        for idx in self.dispatch_origin_frame_indices.iter().rev() {
+            let frame = self.frames.get(*idx)?;
+            match frame {
+                Frame::DispatchOrigin {
+                    dispatch_id: frame_dispatch_id,
+                    ..
+                } if *frame_dispatch_id == dispatch_id => return Some(frame),
+                Frame::DispatchOrigin { .. } => continue,
+                _ => {
+                    debug_assert!(
+                        false,
+                        "dispatch origin frame cache pointed at a non-DispatchOrigin frame"
+                    );
+                    return None;
+                }
+            }
+        }
+        None
     }
 
     pub fn is_prompt_boundary(&self) -> bool {
@@ -212,5 +267,58 @@ mod tests {
 
         assert!(!seg.has_frames());
         assert!(seg.pop_frame().is_none());
+    }
+
+    #[test]
+    fn test_segment_dispatch_origin_cache_tracks_push_pop_and_clear() {
+        let marker = Marker::fresh();
+        let mut seg = Segment::new(marker, None);
+        let continuation =
+            crate::continuation::Continuation::capture(&Segment::new(marker, None), SegmentId::from_index(0), None);
+
+        pyo3::Python::attach(|py| {
+            let effect = crate::py_shared::PyShared::new(py.None());
+            let dispatch_one = DispatchId::fresh();
+            let dispatch_two = DispatchId::fresh();
+
+            seg.push_frame(Frame::DispatchOrigin {
+                dispatch_id: dispatch_one,
+                effect: effect.clone(),
+                k_origin: continuation.clone(),
+            });
+            assert!(matches!(
+                seg.current_dispatch_origin_frame(),
+                Some(Frame::DispatchOrigin { dispatch_id, .. }) if *dispatch_id == dispatch_one
+            ));
+
+            seg.push_frame(Frame::FlatMapBindResult);
+            seg.push_frame(Frame::DispatchOrigin {
+                dispatch_id: dispatch_two,
+                effect,
+                k_origin: continuation.clone(),
+            });
+            assert!(matches!(
+                seg.dispatch_origin_frame_for_dispatch(dispatch_one),
+                Some(Frame::DispatchOrigin { dispatch_id, .. }) if *dispatch_id == dispatch_one
+            ));
+            assert!(matches!(
+                seg.current_dispatch_origin_frame(),
+                Some(Frame::DispatchOrigin { dispatch_id, .. }) if *dispatch_id == dispatch_two
+            ));
+
+            let popped = seg.pop_frame();
+            assert!(matches!(
+                popped,
+                Some(Frame::DispatchOrigin { dispatch_id, .. }) if dispatch_id == dispatch_two
+            ));
+            assert!(matches!(
+                seg.current_dispatch_origin_frame(),
+                Some(Frame::DispatchOrigin { dispatch_id, .. }) if *dispatch_id == dispatch_one
+            ));
+
+            seg.clear_frames();
+            assert!(seg.current_dispatch_origin_frame().is_none());
+            assert!(seg.dispatch_origin_frame_for_dispatch(dispatch_one).is_none());
+        });
     }
 }
