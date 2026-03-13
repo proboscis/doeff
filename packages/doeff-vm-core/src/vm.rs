@@ -1400,6 +1400,7 @@ impl VM {
         self.dispatch_state
             .find_by_dispatch_id(dispatch_id)
             .map(|ctx| ctx.k_current().clone())
+            .filter(|k| !self.is_one_shot_consumed(k.cont_id))
     }
 
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
@@ -1950,9 +1951,8 @@ impl VM {
     }
 
     fn step_handler_dispatch_frame(&mut self, dispatch_id: DispatchId, mode: Mode) -> StepEvent {
-        let _ = dispatch_id;
         match mode {
-            Mode::Deliver(value) => self.handle_handler_return(value),
+            Mode::Deliver(value) => self.handle_handler_return(value, dispatch_id),
             Mode::Throw(exc) => {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
@@ -2212,7 +2212,10 @@ impl VM {
 
     fn step_intercept_body_return_frame(&mut self, _marker: Marker, mode: Mode) -> StepEvent {
         match mode {
-            Mode::Deliver(value) => self.handle_handler_return(value),
+            Mode::Deliver(value) => {
+                let did = self.current_dispatch_id().unwrap_or(DispatchId(0));
+                self.handle_handler_return(value, did)
+            }
             Mode::Throw(exc) => {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
@@ -2241,7 +2244,8 @@ impl VM {
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
-                self.handle_handler_return(value)
+                let did = self.current_dispatch_id().unwrap_or(DispatchId(0));
+                self.handle_handler_return(value, did)
             }
             IRStreamStep::Throw(exc) => {
                 if let Some(continuation) =
@@ -3642,7 +3646,8 @@ impl VM {
                 }
             }
             other => {
-                let _ = self.handle_handler_return(other);
+                let did = self.current_dispatch_id().unwrap_or(DispatchId(0));
+                let _ = self.handle_handler_return(other, did);
             }
         }
     }
@@ -4862,10 +4867,33 @@ impl VM {
         self.handle_forward(ForwardKind::Pass, effect)
     }
 
-    fn handle_handler_return(&mut self, mut value: Value) -> StepEvent {
+    fn handle_handler_return(&mut self, mut value: Value, frame_dispatch_id: DispatchId) -> StepEvent {
         self.lazy_pop_completed();
 
-        let active_python_handler = self.current_dispatch_id().and_then(|dispatch_id| {
+        // If the frame's dispatch was already completed and popped, this
+        // handler return belongs to a finished dispatch — just deliver the value.
+        // Do NOT fall back to current_dispatch_id() which finds a DIFFERENT
+        // dispatch and corrupts its state.
+        if self.dispatch_state.find_by_dispatch_id(frame_dispatch_id).is_none()
+            && frame_dispatch_id.0 != 0
+        {
+            self.current_seg_mut().mode = Mode::Deliver(value);
+            return StepEvent::Continue;
+        }
+
+        let resolve_dispatch_id = || -> Option<DispatchId> {
+            if frame_dispatch_id.0 != 0
+                && self
+                    .dispatch_state
+                    .find_by_dispatch_id(frame_dispatch_id)
+                    .is_some()
+            {
+                return Some(frame_dispatch_id);
+            }
+            self.current_dispatch_id()
+        };
+
+        let active_python_handler = resolve_dispatch_id().and_then(|dispatch_id| {
             let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
             let marker = *ctx.handler_chain.get(ctx.handler_idx())?;
             let (_, kind, _, _) = self.marker_handler_trace_info(marker)?;
@@ -4887,7 +4915,7 @@ impl VM {
             }
         }
 
-        let Some(dispatch_id) = self.current_dispatch_id() else {
+        let Some(dispatch_id) = resolve_dispatch_id() else {
             self.current_seg_mut().mode = Mode::Deliver(value);
             return StepEvent::Continue;
         };
@@ -4954,9 +4982,9 @@ impl VM {
             // dispatch is complete. Pop all activations and mark completed.
             if caller_id == ctx.prompt_seg_id {
                 ctx.completed = true;
-                if let Some(activation) = ctx.current_activation() {
-                    self.consumed_cont_ids.insert(activation.k_current.cont_id);
-                }
+                // Only consume k_origin — activations may reference continuations
+                // still live in the Delegate chain (e.g. inner handler's k).
+                self.consumed_cont_ids.insert(ctx.k_origin.cont_id);
                 ctx.activations.clear();
             }
 

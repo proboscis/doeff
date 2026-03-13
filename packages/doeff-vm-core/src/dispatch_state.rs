@@ -78,7 +78,9 @@ impl DispatchState {
     ) {
         if let Some(ctx) = self.dispatches.get_mut(&dispatch_id) {
             ctx.completed = true;
-            consumed_cont_ids.insert(ctx.k_current().cont_id);
+            // Only consume k_origin — activations may reference continuations
+            // still live in the Delegate chain.
+            consumed_cont_ids.insert(ctx.k_origin.cont_id);
         }
     }
 
