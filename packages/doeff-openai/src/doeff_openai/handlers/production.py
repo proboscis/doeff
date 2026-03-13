@@ -21,20 +21,17 @@ from doeff_openai.effects import (
     StructuredOutput,
 )
 from doeff_openai.embeddings import create_embedding
+from doeff_openai.handlers._model_select import (
+    OPENAI_MODEL_EXCLUSIONS,
+    OPENAI_MODEL_PREFIXES,
+    _is_openai_model,
+)
 from doeff_openai.structured_llm import build_api_parameters, process_structured_response
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
 DEFAULT_STRUCTURED_MAX_TOKENS = 8192
 DEFAULT_STRUCTURED_TEMPERATURE = 0.7
-OPENAI_MODEL_PREFIXES = ("gpt-", "o1-", "o3-", "o4-", "text-embedding-")
-OPENAI_MODEL_EXCLUSIONS = ("text-embedding-004", "embedding-001")
-
-
-def _is_openai_model(model: str) -> bool:
-    if model in OPENAI_MODEL_EXCLUSIONS:
-        return False
-    return any(model.startswith(prefix) for prefix in OPENAI_MODEL_PREFIXES)
 
 
 @do

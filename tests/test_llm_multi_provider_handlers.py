@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 from doeff_gemini.handlers import gemini_mock_handler
@@ -12,7 +13,39 @@ from doeff_openai.handlers import (
     openai_mock_handler,
 )
 from doeff_openrouter.handlers import MockOpenRouterRuntime, openrouter_mock_handler
-from pydantic import BaseModel
+
+try:
+    from pydantic import BaseModel as _PydanticBaseModel
+
+    class _PydanticCompatibilityProbe(_PydanticBaseModel):
+        value: str
+
+    BaseModel = _PydanticBaseModel
+except Exception:
+    class BaseModel:  # type: ignore[no-redef]
+        """Minimal pydantic-like stub for Python 3.14t test environments."""
+
+        model_fields: dict[str, Any] = {}
+
+        def __init_subclass__(cls, **kwargs: Any) -> None:
+            super().__init_subclass__(**kwargs)
+            annotations = getattr(cls, "__annotations__", {})
+            cls.model_fields = {
+                name: SimpleNamespace(annotation=annotation)
+                for name, annotation in annotations.items()
+            }
+
+        def __init__(self, **data: Any) -> None:
+            for field_name in self.model_fields:
+                setattr(self, field_name, data[field_name])
+
+        @classmethod
+        def model_validate(cls, value: Any) -> Any:
+            if isinstance(value, cls):
+                return value
+            if not isinstance(value, dict):
+                raise TypeError("Expected mapping payload")
+            return cls(**value)
 
 from doeff import Effect, EffectGenerator, WithHandler, default_handlers, do, run
 
