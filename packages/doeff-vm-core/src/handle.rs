@@ -7,15 +7,31 @@ use std::sync::Arc;
 pub trait HandleToken: fmt::Debug + Send + Sync + 'static {
     fn stable_id(&self) -> u64;
     fn as_any(&self) -> &dyn Any;
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
+}
+
+#[derive(Debug)]
+struct HandleInner {
+    token: Box<dyn HandleToken>,
+}
+
+impl HandleInner {
+    fn stable_id(&self) -> u64 {
+        self.token.stable_id()
+    }
+
+    fn downcast_ref<U: 'static>(&self) -> Option<&U> {
+        self.token.as_any().downcast_ref::<U>()
+    }
 }
 
 pub struct Handle<T> {
-    inner: Arc<dyn HandleToken>,
-    marker: PhantomData<fn() -> T>,
+    inner: Arc<HandleInner>,
+    marker: PhantomData<fn(T) -> T>,
 }
 
 impl<T> Handle<T> {
-    pub fn new(inner: Arc<dyn HandleToken>) -> Self {
+    fn new(inner: Arc<HandleInner>) -> Self {
         Self {
             inner,
             marker: PhantomData,
@@ -23,7 +39,9 @@ impl<T> Handle<T> {
     }
 
     pub fn from_token(token: impl HandleToken) -> Self {
-        Self::new(Arc::new(token))
+        Self::new(Arc::new(HandleInner {
+            token: Box::new(token),
+        }))
     }
 
     pub fn stable_id(&self) -> u64 {
@@ -31,11 +49,18 @@ impl<T> Handle<T> {
     }
 
     pub fn downcast_ref<U: 'static>(&self) -> Option<&U> {
-        self.inner.as_any().downcast_ref::<U>()
+        self.inner.downcast_ref::<U>()
     }
 
     pub fn retag<U>(&self) -> Handle<U> {
         Handle::new(Arc::clone(&self.inner))
+    }
+
+    pub(crate) fn try_unwrap_token(self) -> Result<Box<dyn HandleToken>, Self> {
+        match Arc::try_unwrap(self.inner) {
+            Ok(inner) => Ok(inner.token),
+            Err(inner) => Err(Self::new(inner)),
+        }
     }
 }
 
