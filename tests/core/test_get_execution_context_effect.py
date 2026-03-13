@@ -66,6 +66,31 @@ def test_generror_dispatches_get_execution_context_to_handlers() -> None:
     assert seen == ["GetExecutionContext"]
 
 
+def test_eval_typeerror_dispatches_get_execution_context_to_handlers() -> None:
+    seen: list[str] = []
+
+    @do
+    def observer(effect: Effect, k: object):
+        if isinstance(effect, GetExecutionContext):
+            seen.append(type(effect).__name__)
+            context = yield Delegate()
+            return (yield Resume(k, context))
+        yield Pass()
+
+    @do
+    def program() -> Program[tuple[str, str, str]]:
+        try:
+            _ = yield doeff_vm.Eval(object())
+            return ("unexpected", "", "")
+        except Exception as exc:
+            return ("caught", type(exc).__name__, str(exc))
+
+    result = run(WithHandler(observer, program()), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+    assert seen == ["GetExecutionContext"]
+
+
 def test_handler_can_enrich_execution_context_before_throw() -> None:
     @do
     def enrich(effect: Effect, k: object):

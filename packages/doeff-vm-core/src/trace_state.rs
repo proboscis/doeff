@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use pyo3::prelude::*;
+use pyo3::types::{PyList, PyTuple};
 
 use crate::arena::SegmentArena;
 use crate::capture::{
@@ -298,47 +299,21 @@ impl TraceState {
         }
     }
 
-    fn active_chain_from_context_obj(context: &Bound<'_, PyAny>) -> Option<Py<PyAny>> {
-        if !context.is_instance_of::<PyExecutionContext>() {
-            return None;
-        }
-        context
-            .getattr("active_chain")
-            .ok()
-            .filter(|chain| !chain.is_none())
-            .map(|chain| chain.unbind())
-    }
-
-    fn active_chain_from_exception(exception: &PyException) -> Option<Py<PyAny>> {
-        let PyException::Materialized { exc_value, .. } = exception else {
-            return None;
-        };
-
-        Python::attach(|py| {
-            let exc = exc_value.bind(py);
-            let context = exc
-                .getattr(EXECUTION_CONTEXT_ATTR)
-                .ok()
-                .filter(|ctx| !ctx.is_none())?;
-            Self::active_chain_from_context_obj(&context)
-        })
-    }
-
     fn build_execution_context_from_entries(
         py: Python<'_>,
         entries: &[Py<PyAny>],
-        active_chain: Option<&Py<PyAny>>,
+        active_chain: Option<&[ActiveChainEntry]>,
     ) -> PyResult<Py<PyAny>> {
         let context = make_execution_context_object(py)?;
-        let add = context.bind(py).getattr("add")?;
+        let mut context_ref = context.bind(py).extract::<PyRefMut<'_, PyExecutionContext>>()?;
         for entry in entries {
-            add.call1((entry.clone_ref(py),))?;
+            context_ref.add(py, entry.clone_ref(py))?;
         }
         if let Some(active_chain) = active_chain {
-            let mut context_ref = context
-                .bind(py)
-                .extract::<PyRefMut<'_, PyExecutionContext>>()?;
-            context_ref.set_active_chain(Some(active_chain.clone_ref(py)));
+            let active_chain_obj = Value::ActiveChain(active_chain.to_vec()).to_pyobject(py)?;
+            let active_chain_list = active_chain_obj.cast::<PyList>()?;
+            let active_chain_tuple = PyTuple::new(py, active_chain_list.iter())?;
+            context_ref.set_active_chain(Some(active_chain_tuple.into_any().unbind()));
         }
         Ok(context)
     }
@@ -357,6 +332,7 @@ impl TraceState {
     pub(crate) fn enrich_original_exception_with_context(
         original: PyException,
         context_value: Value,
+        active_chain: Vec<ActiveChainEntry>,
     ) -> Result<PyException, PyException> {
         let Value::Python(new_context) = context_value else {
             let err = PyException::type_error(
@@ -379,13 +355,17 @@ impl TraceState {
             let mut merged_entries = Self::context_entries_from_context_obj(context_bound);
             let existing_entries = Self::context_entries_from_exception(&original);
             merged_entries.extend(existing_entries);
-            let merged_active_chain = Self::active_chain_from_context_obj(context_bound)
-                .or_else(|| Self::active_chain_from_exception(&original));
+            let mut merged_active_chain = active_chain;
+            for entry in &merged_entries {
+                merged_active_chain.push(ActiveChainEntry::ContextEntry {
+                    data: entry.clone_ref(py),
+                });
+            }
 
             let merged_context = match Self::build_execution_context_from_entries(
                 py,
                 &merged_entries,
-                merged_active_chain.as_ref(),
+                Some(&merged_active_chain),
             ) {
                 Ok(context) => context,
                 Err(err) => {
