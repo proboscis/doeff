@@ -540,26 +540,12 @@ impl VM {
 
     fn dispatch_origin_in_segment(&self, seg_id: SegmentId) -> Option<DispatchOriginView> {
         let seg = self.segments.get(seg_id)?;
-        seg.frames.iter().rev().find_map(|frame| match frame {
-            Frame::DispatchOrigin {
-                dispatch_id,
-                effect,
-                k_origin,
-            } => Some(DispatchOriginView {
-                dispatch_id: *dispatch_id,
-                effect: effect.clone(),
-                k_origin: k_origin.clone(),
-                original_exception: k_origin.pending_error_context.clone(),
-            }),
-            Frame::Program { .. }
-            | Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
-            | Frame::HandlerDispatch { .. }
-            | Frame::EvalReturn(_)
-            | Frame::MapReturn { .. }
-            | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
+        let cached = seg.cached_dispatch_origin.as_ref()?;
+        Some(DispatchOriginView {
+            dispatch_id: cached.dispatch_id,
+            effect: cached.effect.clone(),
+            k_origin: cached.k_origin.clone(),
+            original_exception: cached.k_origin.pending_error_context.clone(),
         })
     }
 
@@ -569,28 +555,17 @@ impl VM {
         dispatch_id: DispatchId,
     ) -> Option<DispatchOriginView> {
         let seg = self.segments.get(seg_id)?;
-        seg.frames.iter().rev().find_map(|frame| match frame {
-            Frame::DispatchOrigin {
-                dispatch_id: frame_dispatch_id,
-                effect,
-                k_origin,
-            } if *frame_dispatch_id == dispatch_id => Some(DispatchOriginView {
-                dispatch_id: *frame_dispatch_id,
-                effect: effect.clone(),
-                k_origin: k_origin.clone(),
-                original_exception: k_origin.pending_error_context.clone(),
-            }),
-            Frame::Program { .. }
-            | Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
-            | Frame::HandlerDispatch { .. }
-            | Frame::DispatchOrigin { .. }
-            | Frame::EvalReturn(_)
-            | Frame::MapReturn { .. }
-            | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
-        })
+        let cached = seg.cached_dispatch_origin.as_ref()?;
+        if cached.dispatch_id == dispatch_id {
+            Some(DispatchOriginView {
+                dispatch_id: cached.dispatch_id,
+                effect: cached.effect.clone(),
+                k_origin: cached.k_origin.clone(),
+                original_exception: cached.k_origin.pending_error_context.clone(),
+            })
+        } else {
+            None
+        }
     }
 
     fn dispatch_origins(&self) -> Vec<DispatchOriginView> {
@@ -649,6 +624,62 @@ impl VM {
                 return Some(origin);
             }
             cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
+        }
+        None
+    }
+
+    /// Check if a dispatch origin exists for the given dispatch_id.
+    /// O(segments) walk but no cloning — uses `seg.dispatch_id` for fast skip.
+    fn has_dispatch_origin(&self, dispatch_id: DispatchId) -> bool {
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            if seg.dispatch_id == Some(dispatch_id)
+                && seg.cached_dispatch_origin.is_some()
+            {
+                return true;
+            }
+            cursor = seg.caller;
+        }
+        false
+    }
+
+    /// Get just the effect for a dispatch_id without cloning the Continuation.
+    fn effect_for_dispatch_origin(&self, dispatch_id: DispatchId) -> Option<DispatchEffect> {
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            if let Some(cached) = &seg.cached_dispatch_origin {
+                if cached.dispatch_id == dispatch_id {
+                    return Some(cached.effect.clone());
+                }
+            }
+            cursor = seg.caller;
+        }
+        None
+    }
+
+    /// Get just the original exception for a dispatch_id without cloning the
+    /// full Continuation.
+    fn original_exception_for_dispatch_origin(
+        &self,
+        dispatch_id: DispatchId,
+    ) -> Option<PyException> {
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            if let Some(cached) = &seg.cached_dispatch_origin {
+                if cached.dispatch_id == dispatch_id {
+                    return cached.k_origin.pending_error_context.clone();
+                }
+            }
+            cursor = seg.caller;
         }
         None
     }
@@ -784,7 +815,7 @@ impl VM {
         let Some(seg) = self.segments.get_mut(seg_id) else {
             return;
         };
-        seg.frames.clear();
+        seg.clear_frames();
         seg.dispatch_id = None;
         seg.pending_error_context = None;
     }
@@ -1669,8 +1700,7 @@ impl VM {
     }
 
     fn original_exception_for_dispatch(&self, dispatch_id: DispatchId) -> Option<PyException> {
-        self.dispatch_origin_for_dispatch_id(dispatch_id)
-            .and_then(|origin| origin.original_exception)
+        self.original_exception_for_dispatch_origin(dispatch_id)
     }
 
     fn is_base_exception_not_exception(exception: &PyException) -> bool {
@@ -1819,10 +1849,12 @@ impl VM {
     }
 
     fn should_attach_active_chain_for_dispatch(&self, dispatch_id: DispatchId) -> bool {
-        let Some(origin) = self.dispatch_origin_for_dispatch_id(dispatch_id) else {
+        // Use lightweight lookups to avoid cloning the full Continuation.
+        let Some(effect) = self.effect_for_dispatch_origin(dispatch_id) else {
             return false;
         };
-        Self::is_execution_context_effect(&origin.effect) && origin.original_exception.is_none()
+        Self::is_execution_context_effect(&effect)
+            && self.original_exception_for_dispatch_origin(dispatch_id).is_none()
     }
 
     fn maybe_attach_active_chain_to_execution_context(
@@ -4279,8 +4311,7 @@ impl VM {
     }
 
     pub fn effect_for_dispatch(&self, dispatch_id: DispatchId) -> Option<DispatchEffect> {
-        self.dispatch_origin_for_dispatch_id(dispatch_id)
-            .map(|origin| origin.effect)
+        self.effect_for_dispatch_origin(dispatch_id)
     }
 
     pub fn find_matching_handler(
@@ -4638,15 +4669,18 @@ impl VM {
 
     fn continuation_segment_dispatch_id(&mut self, k: &Continuation) -> Option<DispatchId> {
         if let Some(dispatch_id) = k.dispatch_id {
-            if self.dispatch_origin_for_dispatch_id(dispatch_id).is_some() {
+            if self.has_dispatch_origin(dispatch_id) {
                 return Some(dispatch_id);
             }
         }
 
         self.segments.get(k.segment_id).and_then(|source_seg| {
             let dispatch_id = source_seg.dispatch_id?;
-            self.dispatch_origin_for_dispatch_id(dispatch_id)
-                .map(|_| dispatch_id)
+            if self.has_dispatch_origin(dispatch_id) {
+                Some(dispatch_id)
+            } else {
+                None
+            }
         })
     }
 
@@ -4656,13 +4690,14 @@ impl VM {
         caller: Option<SegmentId>,
         dispatch_id: Option<DispatchId>,
     ) {
-        let exec_seg = Segment {
+        let mut exec_seg = Segment {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
             caller,
             scope_store: k.scope_store.clone(),
             kind: self.structural_kind_for_marker(k.marker),
             dispatch_id,
+            cached_dispatch_origin: None,
             mode: k.mode.as_ref().clone(),
             pending_python: k
                 .pending_python
@@ -4675,6 +4710,7 @@ impl VM {
             interceptor_eval_depth: k.interceptor_eval_depth,
             interceptor_skip_stack: k.interceptor_skip_stack.clone(),
         };
+        exec_seg.rebuild_dispatch_origin_cache();
         let exec_seg_id = self.alloc_segment(exec_seg);
         self.current_segment = Some(exec_seg_id);
     }
@@ -5037,7 +5073,7 @@ impl VM {
                         ));
                     };
                     handler_seg.marker = entry.marker;
-                    handler_seg.frames.clear();
+                    handler_seg.clear_frames();
                     handler_seg.dispatch_id = Some(dispatch_id);
                     handler_seg.pending_error_context = None;
                     handler_seg.push_frame(Frame::DispatchOrigin {
