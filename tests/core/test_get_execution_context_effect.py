@@ -272,6 +272,36 @@ def test_get_execution_context_active_chain_renderable() -> None:
     assert "doeff Traceback (most recent call last):" in rendered
 
 
+def test_get_execution_context_active_chain_excludes_completed_sibling_tasks() -> None:
+    captured_worker_frame_counts: list[int] = []
+
+    @do
+    def worker(n: int) -> Program[int]:
+        _ = n
+        context = yield GetExecutionContext()
+        entries = _active_chain_entries(getattr(context, "active_chain", None))
+        worker_frames = [
+            entry
+            for entry in entries
+            if entry.get("kind") == "program_yield" and entry.get("function_name") == "worker"
+        ]
+        captured_worker_frame_counts.append(len(worker_frames))
+        return n
+
+    @do
+    def program() -> Program[list[int]]:
+        tasks = []
+        for i in range(5):
+            task = yield Spawn(worker(i))
+            tasks.append(task)
+        return list((yield Gather(*tasks)))
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_ok(), result.error
+    assert result.value == [0, 1, 2, 3, 4]
+    assert captured_worker_frame_counts == [1, 1, 1, 1, 1]
+
+
 def test_program_call_stack_deprecation_warning() -> None:
     @do
     def body() -> Program[object]:

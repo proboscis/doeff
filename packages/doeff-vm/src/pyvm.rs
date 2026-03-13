@@ -19,7 +19,7 @@ use crate::effect::{
 
 use crate::error::VMError;
 use crate::frame::CallMetadata;
-use crate::ids::Marker;
+use crate::ids::{ContId, Marker};
 use crate::ir_stream::{IRStream, PythonGeneratorStream};
 use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli};
 use crate::py_key::HashedPyKey;
@@ -1476,6 +1476,26 @@ fn classify_doeff_generator_as_irstream(
     })
 }
 
+fn lookup_registered_continuation(
+    vm: &VM,
+    cont_id: ContId,
+    op: &str,
+) -> PyResult<crate::continuation::Continuation> {
+    if let Some(continuation) = vm.lookup_continuation(cont_id).cloned() {
+        return Ok(continuation);
+    }
+    if vm.is_one_shot_consumed(cont_id) {
+        return Err(PyRuntimeError::new_err(format!(
+            "one-shot violation: continuation {} already consumed",
+            cont_id.raw()
+        )));
+    }
+    Err(PyRuntimeError::new_err(format!(
+        "{op} with unknown continuation id {}",
+        cont_id.raw()
+    )))
+}
+
 pub(crate) fn classify_yielded_bound(
     vm: &VM,
     py: Python<'_>,
@@ -1526,12 +1546,7 @@ pub(crate) fn classify_yielded_bound(
                     )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
-                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Discontinue with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                let k = lookup_registered_continuation(vm, cont_id, "Discontinue")?;
                 let bound_exception = d.exception.bind(py);
                 if !bound_exception.is_instance_of::<PyBaseException>() {
                     return Err(PyTypeError::new_err(
@@ -1621,12 +1636,7 @@ pub(crate) fn classify_yielded_bound(
                     )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
-                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Resume with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                let k = lookup_registered_continuation(vm, cont_id, "Resume")?;
                 Ok(DoCtrl::Resume {
                     continuation: k,
                     value: Value::from_pyobject(r.value.bind(py)),
@@ -1640,12 +1650,7 @@ pub(crate) fn classify_yielded_bound(
                     )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
-                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Transfer with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                let k = lookup_registered_continuation(vm, cont_id, "Transfer")?;
                 Ok(DoCtrl::Transfer {
                     continuation: k,
                     value: Value::from_pyobject(t.value.bind(py)),
@@ -1679,12 +1684,7 @@ pub(crate) fn classify_yielded_bound(
                     )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
-                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "ResumeContinuation with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                let k = lookup_registered_continuation(vm, cont_id, "ResumeContinuation")?;
                 Ok(DoCtrl::ResumeContinuation {
                     continuation: k,
                     value: Value::from_pyobject(rc.value.bind(py)),
@@ -1721,12 +1721,7 @@ pub(crate) fn classify_yielded_bound(
                     )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
-                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "GetTraceback with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                let k = lookup_registered_continuation(vm, cont_id, "GetTraceback")?;
                 Ok(DoCtrl::GetTraceback { continuation: k })
             }
             DoExprTag::GetCallStack => Ok(DoCtrl::GetCallStack),
@@ -1745,12 +1740,7 @@ pub(crate) fn classify_yielded_bound(
                     PyTypeError::new_err("EvalInScope.scope must be K (opaque continuation handle)")
                 })?;
                 let cont_id = scope_obj.borrow().cont_id;
-                let scope = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "EvalInScope with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                let scope = lookup_registered_continuation(vm, cont_id, "EvalInScope")?;
                 Ok(DoCtrl::EvalInScope {
                     expr: PyShared::new(expr),
                     scope,

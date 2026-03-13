@@ -67,3 +67,19 @@ def test_vm_failfast_python_rules_detect_known_bad_examples() -> None:
         "no-silent-except-return-none",
     }
     assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
+
+
+def test_vm_dispatch_architecture_rules_detect_known_bad_examples() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/rust"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-vm-core/src",
+        cwd=fixture_root,
+    )
+
+    expected = {
+        "vm-dispatch-no-vec-stack-state",
+        "vm-dispatch-no-fallback-index",
+        "vm-dispatch-no-parent-chain-completion-inference",
+    }
+    assert all(_has_rule(check_ids, rule_id) for rule_id in expected)

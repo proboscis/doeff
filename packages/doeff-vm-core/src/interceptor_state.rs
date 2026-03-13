@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
-use crate::dispatch::DispatchContext;
+use crate::dispatch_state::DispatchState;
 use crate::do_ctrl::InterceptMode;
 use crate::doeff_generator::DoeffGenerator;
 use crate::error::VMError;
@@ -31,7 +31,7 @@ impl InterceptorState {
         &self,
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
-        dispatch_contexts: &[DispatchContext],
+        dispatch_state: &DispatchState,
     ) -> Vec<Marker> {
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
@@ -40,16 +40,18 @@ impl InterceptorState {
             .and_then(|sid| segments.get(sid))
             .and_then(|seg| seg.dispatch_id);
         while let Some(did) = dispatch_id {
-            let ctx = dispatch_contexts
-                .iter()
-                .rev()
-                .find(|ctx| ctx.dispatch_id == did && !ctx.completed);
-            let Some(ctx) = ctx else {
+            let Some(dispatch) = dispatch_state.find_by_dispatch_id(did) else {
                 break;
             };
-            let origin_seg_id = ctx.k_origin.segment_id;
+            if dispatch.completed {
+                break;
+            }
+            let origin_seg_id = dispatch.k_origin.segment_id;
             Self::walk_segment_chain(Some(origin_seg_id), segments, &mut chain, &mut seen);
-            dispatch_id = segments.get(origin_seg_id).and_then(|seg| seg.dispatch_id);
+            dispatch_id = segments
+                .get(origin_seg_id)
+                .and_then(|seg| seg.dispatch_id)
+                .filter(|next| *next != did);
         }
         chain
     }
@@ -77,7 +79,7 @@ impl InterceptorState {
     pub(crate) fn visible_to_active_handler(
         &self,
         _interceptor_marker: Marker,
-        _dispatch_stack: &[DispatchContext],
+        _dispatch_state: &DispatchState,
         _current_segment: Option<SegmentId>,
         _segments: &SegmentArena,
     ) -> bool {
@@ -121,22 +123,19 @@ impl InterceptorState {
 
     pub(crate) fn current_active_handler_dispatch_id(
         &self,
-        dispatch_stack: &[DispatchContext],
+        dispatch_state: &DispatchState,
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
     ) -> Option<DispatchId> {
-        let top = dispatch_stack.last()?;
-        if top.completed {
-            return None;
-        }
-        let marker = *top.handler_chain.get(top.handler_idx)?;
         let seg_id = current_segment?;
         let seg = segments.get(seg_id)?;
-        if seg.marker == marker {
-            Some(top.dispatch_id)
-        } else {
-            None
+        let dispatch_id = seg.dispatch_id?;
+        let dispatch = dispatch_state.find_by_dispatch_id(dispatch_id)?;
+        if dispatch.completed {
+            return None;
         }
+        let activation = dispatch.active_activation()?;
+        (activation.active_handler_seg_id == seg_id).then_some(dispatch_id)
     }
 
     pub(crate) fn insert(
