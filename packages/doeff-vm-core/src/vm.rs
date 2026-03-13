@@ -10,8 +10,8 @@ use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
 
 use crate::arena::SegmentArena;
 use crate::capture::{
-    ActiveChainEntry, EffectCreationSite, HandlerAction, HandlerKind, HandlerSnapshotEntry,
-    TraceEntry,
+    ActiveChainEntry, CaptureEvent, EffectCreationSite, FrameId, HandlerAction, HandlerKind,
+    HandlerSnapshotEntry, TraceEntry,
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
@@ -279,6 +279,9 @@ pub struct VM {
     pub current_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
+    /// Buffered trace events collected during step execution.
+    /// Flushed to trace_state at the end of each step() call.
+    pub(crate) pending_trace_events: Vec<CaptureEvent>,
     pub continuation_registry: HashMap<ContId, Continuation>,
     pub active_run_token: Option<u64>,
 }
@@ -296,6 +299,7 @@ impl VM {
             current_segment: None,
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
+            pending_trace_events: Vec::new(),
             continuation_registry: HashMap::new(),
             active_run_token: None,
         }
@@ -361,6 +365,14 @@ impl VM {
 
     pub fn alloc_segment(&mut self, segment: Segment) -> SegmentId {
         self.segments.alloc(segment)
+    }
+
+    /// Drain all buffered trace events into trace_state.
+    /// Called once at the end of each step() — the single observation point.
+    fn flush_trace_events(&mut self) {
+        for event in self.pending_trace_events.drain(..) {
+            self.trace_state.apply_capture_event(event);
+        }
     }
 
     pub fn current_segment_mut(&mut self) -> Option<&mut Segment> {
