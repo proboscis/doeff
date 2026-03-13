@@ -5,7 +5,7 @@ impl VM {
         DebugState::value_repr(value)
     }
 
-    pub(super) fn program_call_repr(metadata: &CallMetadata) -> Option<String> {
+    fn program_call_repr(metadata: &CallMetadata) -> Option<String> {
         DebugState::program_call_repr(metadata)
     }
 
@@ -13,7 +13,7 @@ impl VM {
         DebugState::exception_repr(exception)
     }
 
-    pub(super) fn value_variant_name(value: &Value) -> &'static str {
+    fn value_variant_name(value: &Value) -> &'static str {
         match value {
             Value::Python(_) => "Python",
             Value::Unit => "Unit",
@@ -61,7 +61,7 @@ impl VM {
             .is_some_and(|(_, handler, _)| handler.supports_error_context_conversion())
     }
 
-    pub(super) fn is_execution_context_effect_for_dispatch(&self, dispatch_id: DispatchId) -> bool {
+    fn is_execution_context_effect_for_dispatch(&self, dispatch_id: DispatchId) -> bool {
         self.effect_for_dispatch(dispatch_id)
             .is_some_and(|effect| Self::is_execution_context_effect(&effect))
     }
@@ -273,7 +273,7 @@ impl VM {
             .and_then(|origin| origin.original_exception)
     }
 
-    pub(super) fn is_base_exception_not_exception(exception: &PyException) -> bool {
+    fn is_base_exception_not_exception(exception: &PyException) -> bool {
         let PyException::Materialized { exc_value, .. } = exception else {
             return false;
         };
@@ -426,7 +426,7 @@ impl VM {
         )
     }
 
-    pub(super) fn should_attach_active_chain_for_dispatch(&self, dispatch_id: DispatchId) -> bool {
+    fn should_attach_active_chain_for_dispatch(&self, dispatch_id: DispatchId) -> bool {
         let Some(origin) = self.dispatch_origin_for_dispatch_id(dispatch_id) else {
             return false;
         };

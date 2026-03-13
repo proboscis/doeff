@@ -107,7 +107,7 @@ impl VM {
         chain
     }
 
-    pub(super) fn find_prompt_boundary_in_caller_chain(
+    fn find_prompt_boundary_in_caller_chain(
         &self,
         start_seg_id: SegmentId,
         marker: Marker,
@@ -125,7 +125,7 @@ impl VM {
         None
     }
 
-    pub(super) fn same_effect_python_type(a: &DispatchEffect, b: &DispatchEffect) -> bool {
+    fn same_effect_python_type(a: &DispatchEffect, b: &DispatchEffect) -> bool {
         let Some(a_obj) = dispatch_ref_as_python(a) else {
             return false;
         };
@@ -139,14 +139,14 @@ impl VM {
         })
     }
 
-    pub(super) fn current_handler_chain(&self) -> Vec<HandlerChainEntry> {
+    fn current_handler_chain(&self) -> Vec<HandlerChainEntry> {
         let Some(seg_id) = self.current_segment else {
             return Vec::new();
         };
         self.handlers_in_caller_chain(seg_id)
     }
 
-    pub(super) fn prepare_with_handler(
+    fn prepare_with_handler(
         handler: KleisliRef,
         current_segment: Option<SegmentId>,
     ) -> Result<WithHandlerPlan, VMError> {
@@ -162,7 +162,7 @@ impl VM {
         })
     }
 
-    pub(super) fn dispatch_origin_in_segment(
+    fn dispatch_origin_in_segment(
         &self,
         seg_id: SegmentId,
     ) -> Option<DispatchOriginView> {
@@ -190,7 +190,7 @@ impl VM {
         })
     }
 
-    pub(super) fn dispatch_origin_in_segment_for_dispatch(
+    fn dispatch_origin_in_segment_for_dispatch(
         &self,
         seg_id: SegmentId,
         dispatch_id: DispatchId,
@@ -280,7 +280,7 @@ impl VM {
         None
     }
 
-    pub(super) fn dispatch_origin_for_continuation(
+    fn dispatch_origin_for_continuation(
         &self,
         continuation: &Continuation,
     ) -> Option<DispatchOriginView> {
@@ -385,7 +385,7 @@ impl VM {
         None
     }
 
-    pub(super) fn retarget_handler_dispatch_continuation(
+    fn retarget_handler_dispatch_continuation(
         continuation: &mut Continuation,
         dispatch_id: DispatchId,
         replacement: Continuation,
@@ -407,7 +407,7 @@ impl VM {
         continuation.frames_snapshot = Arc::new(frames);
     }
 
-    pub(super) fn clear_forwarded_handler_segment(&mut self, seg_id: SegmentId) {
+    fn clear_forwarded_handler_segment(&mut self, seg_id: SegmentId) {
         let Some(seg) = self.segments.get_mut(seg_id) else {
             return;
         };
@@ -416,7 +416,7 @@ impl VM {
         seg.pending_error_context = None;
     }
 
-    pub(super) fn continuation_chain_contains_eval_in_scope_return(
+    fn continuation_chain_contains_eval_in_scope_return(
         continuation: &Continuation,
     ) -> bool {
         let mut cursor = Some(continuation);
@@ -438,7 +438,7 @@ impl VM {
         false
     }
 
-    pub(super) fn is_inside_eval_in_scope_subtopology(&self) -> bool {
+    fn is_inside_eval_in_scope_subtopology(&self) -> bool {
         let mut seg_id = self.current_segment;
         while let Some(id) = seg_id {
             let Some(seg) = self.segments.get(id) else {
@@ -471,7 +471,7 @@ impl VM {
             || Self::continuation_chain_contains_eval_in_scope_return(&origin.k_origin)
     }
 
-    pub(super) fn materialize_vm_error_exception(
+    fn materialize_vm_error_exception(
         module_attr: &str,
         message: &str,
     ) -> Option<PyException> {
@@ -496,7 +496,7 @@ impl VM {
         })
     }
 
-    pub(super) fn recoverable_eval_in_scope_dispatch_exception(
+    fn recoverable_eval_in_scope_dispatch_exception(
         &self,
         error: &VMError,
     ) -> Option<PyException> {
@@ -561,7 +561,7 @@ impl VM {
         Some(start_seg_id)
     }
 
-    pub(super) fn structural_kind_for_marker(&self, marker: Marker) -> SegmentKind {
+    fn structural_kind_for_marker(&self, marker: Marker) -> SegmentKind {
         let Some(entry) = self.interceptor_state.get_entry(marker) else {
             return SegmentKind::Normal;
         };
@@ -649,7 +649,7 @@ impl VM {
         child_seg.scope_store = source_seg.scope_store.clone();
     }
 
-    pub(super) fn remap_interceptor_skip_markers(
+    fn remap_interceptor_skip_markers(
         seg: &mut Segment,
         marker_remap: &HashMap<Marker, Marker>,
     ) {
@@ -663,13 +663,13 @@ impl VM {
         }
     }
 
-    pub(super) fn remap_marker(marker: &mut Marker, marker_remap: &HashMap<Marker, Marker>) {
+    fn remap_marker(marker: &mut Marker, marker_remap: &HashMap<Marker, Marker>) {
         if let Some(remapped) = marker_remap.get(marker) {
             *marker = *remapped;
         }
     }
 
-    pub(super) fn remap_interceptor_markers_in_doctrl(
+    fn remap_interceptor_markers_in_doctrl(
         ctrl: &mut DoCtrl,
         marker_remap: &HashMap<Marker, Marker>,
     ) {
@@ -745,7 +745,7 @@ impl VM {
         }
     }
 
-    pub(super) fn remap_interceptor_markers_in_interceptor_continuation(
+    fn remap_interceptor_markers_in_interceptor_continuation(
         continuation: &mut InterceptorContinuation,
         marker_remap: &HashMap<Marker, Marker>,
     ) {
@@ -759,7 +759,7 @@ impl VM {
         Self::remap_interceptor_markers_in_doctrl(&mut continuation.original_yielded, marker_remap);
     }
 
-    pub(super) fn remap_interceptor_markers_in_eval_return_continuation(
+    fn remap_interceptor_markers_in_eval_return_continuation(
         continuation: &mut EvalReturnContinuation,
         marker_remap: &HashMap<Marker, Marker>,
     ) {
@@ -821,7 +821,7 @@ impl VM {
         }
     }
 
-    pub(super) fn remap_interceptor_markers_in_frame(
+    fn remap_interceptor_markers_in_frame(
         frame: &mut Frame,
         marker_remap: &HashMap<Marker, Marker>,
     ) {
@@ -909,7 +909,7 @@ impl VM {
         }
     }
 
-    pub(super) fn remap_interceptor_markers_in_segment(
+    fn remap_interceptor_markers_in_segment(
         seg: &mut Segment,
         marker_remap: &HashMap<Marker, Marker>,
     ) {
@@ -1249,7 +1249,7 @@ impl VM {
         Ok(self.evaluate(ir_node))
     }
 
-    pub(super) fn error_dispatch_for_continuation(
+    fn error_dispatch_for_continuation(
         &self,
         k: &Continuation,
     ) -> Option<(DispatchId, PyException, bool)> {
@@ -1262,7 +1262,7 @@ impl VM {
         ))
     }
 
-    pub(super) fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
+    fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
         self.trace_state
             .active_chain_state()
             .dispatch_has_terminal_result(dispatch_id)
@@ -1339,7 +1339,7 @@ impl VM {
         true
     }
 
-    pub(super) fn record_continuation_activation(
+    fn record_continuation_activation(
         &mut self,
         kind: ContinuationActivationKind,
         k: &Continuation,
@@ -1367,7 +1367,7 @@ impl VM {
         }
     }
 
-    pub(super) fn continuation_segment_dispatch_id(
+    fn continuation_segment_dispatch_id(
         &mut self,
         k: &Continuation,
     ) -> Option<DispatchId> {
@@ -1384,7 +1384,7 @@ impl VM {
         })
     }
 
-    pub(super) fn enter_continuation_segment_with_dispatch(
+    fn enter_continuation_segment_with_dispatch(
         &mut self,
         k: &Continuation,
         caller: Option<SegmentId>,
@@ -1413,7 +1413,7 @@ impl VM {
         self.current_segment = Some(exec_seg_id);
     }
 
-    pub(super) fn enter_continuation_segment(
+    fn enter_continuation_segment(
         &mut self,
         k: &Continuation,
         caller: Option<SegmentId>,
@@ -1422,7 +1422,7 @@ impl VM {
         self.enter_continuation_segment_with_dispatch(k, caller, dispatch_id);
     }
 
-    pub(super) fn activate_continuation(
+    fn activate_continuation(
         &mut self,
         kind: ContinuationActivationKind,
         k: Continuation,
@@ -1481,7 +1481,7 @@ impl VM {
         self.activate_continuation(ContinuationActivationKind::Transfer, k, value)
     }
 
-    pub(super) fn activate_throw_continuation(
+    fn activate_throw_continuation(
         &mut self,
         k: Continuation,
         exception: PyException,
@@ -1622,7 +1622,7 @@ impl VM {
         self.evaluate(program)
     }
 
-    pub(super) fn emit_forward_active_chain_event(
+    fn emit_forward_active_chain_event(
         &mut self,
         kind: ForwardKind,
         dispatch_id: DispatchId,
@@ -1664,7 +1664,7 @@ impl VM {
         }
     }
 
-    pub(super) fn handle_forward(
+    fn handle_forward(
         &mut self,
         kind: ForwardKind,
         effect: DispatchEffect,

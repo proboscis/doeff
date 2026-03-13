@@ -12,7 +12,7 @@ impl VM {
         StepEvent::Continue
     }
 
-    pub(super) fn eval_then_reenter_call(
+    fn eval_then_reenter_call(
         &mut self,
         expr: DoCtrl,
         continuation: EvalReturnContinuation,
@@ -30,7 +30,7 @@ impl VM {
         self.step_handle_yield()
     }
 
-    pub(super) fn merged_metadata_from_doeff(
+    fn merged_metadata_from_doeff(
         inherited: Option<CallMetadata>,
         function_name: String,
         source_file: String,
@@ -48,7 +48,7 @@ impl VM {
         }
     }
 
-    pub(super) fn extract_doeff_generator(
+    fn extract_doeff_generator(
         value: Py<PyAny>,
         inherited_metadata: Option<CallMetadata>,
         context: &str,
@@ -126,7 +126,7 @@ impl VM {
         result
     }
 
-    pub(super) fn step_deliver_or_throw(&mut self) -> StepEvent {
+    fn step_deliver_or_throw(&mut self) -> StepEvent {
         let seg_id = match self.current_segment {
             Some(id) => id,
             None => return StepEvent::Error(VMError::internal("no current segment")),
@@ -253,7 +253,7 @@ impl VM {
         }
     }
 
-    pub(super) fn same_exception(lhs: &PyException, rhs: &PyException) -> bool {
+    fn same_exception(lhs: &PyException, rhs: &PyException) -> bool {
         match (lhs, rhs) {
             (
                 PyException::Materialized {
@@ -316,7 +316,7 @@ impl VM {
         }
     }
 
-    pub(super) fn chain_exception_context(
+    fn chain_exception_context(
         original_exception: &PyException,
         cleanup_exception: &PyException,
     ) {
@@ -333,7 +333,7 @@ impl VM {
         });
     }
 
-    pub(super) fn step_interceptor_apply_frame(
+    fn step_interceptor_apply_frame(
         &mut self,
         continuation: InterceptorContinuation,
         mode: Mode,
@@ -365,7 +365,7 @@ impl VM {
         }
     }
 
-    pub(super) fn step_interceptor_eval_frame(
+    fn step_interceptor_eval_frame(
         &mut self,
         continuation: InterceptorContinuation,
         mode: Mode,
@@ -392,7 +392,7 @@ impl VM {
         }
     }
 
-    pub(super) fn step_handler_dispatch_frame(
+    fn step_handler_dispatch_frame(
         &mut self,
         dispatch_id: DispatchId,
         continuation: Continuation,
@@ -467,7 +467,7 @@ impl VM {
         }
     }
 
-    pub(super) fn step_dispatch_origin_frame(
+    fn step_dispatch_origin_frame(
         &mut self,
         dispatch_id: DispatchId,
         k_origin: Continuation,
@@ -503,7 +503,7 @@ impl VM {
         }
     }
 
-    pub(super) fn step_eval_return_frame(
+    fn step_eval_return_frame(
         &mut self,
         continuation: EvalReturnContinuation,
         mode: Mode,
@@ -548,7 +548,7 @@ impl VM {
         }
     }
 
-    pub(super) fn mode_from_eval_return_continuation(
+    fn mode_from_eval_return_continuation(
         &mut self,
         continuation: EvalReturnContinuation,
         value: Value,
@@ -660,7 +660,7 @@ impl VM {
         }
     }
 
-    pub(super) fn step_map_return_frame(
+    fn step_map_return_frame(
         &mut self,
         mapper: PyShared,
         mapper_meta: CallMetadata,
@@ -691,7 +691,7 @@ impl VM {
         }
     }
 
-    pub(super) fn step_flat_map_bind_result_frame(&mut self, mode: Mode) -> StepEvent {
+    fn step_flat_map_bind_result_frame(&mut self, mode: Mode) -> StepEvent {
         match mode {
             Mode::Deliver(value) => {
                 self.current_seg_mut().mode = Mode::Deliver(value);
@@ -710,7 +710,7 @@ impl VM {
         }
     }
 
-    pub(super) fn step_flat_map_bind_source_frame(
+    fn step_flat_map_bind_source_frame(
         &mut self,
         binder: PyShared,
         binder_meta: CallMetadata,
@@ -747,7 +747,7 @@ impl VM {
         }
     }
 
-    pub(super) fn step_intercept_body_return_frame(
+    fn step_intercept_body_return_frame(
         &mut self,
         _marker: Marker,
         mode: Mode,
@@ -767,7 +767,7 @@ impl VM {
         }
     }
 
-    pub(super) fn apply_stream_step(
+    fn apply_stream_step(
         &mut self,
         step: IRStreamStep,
         stream: IRStreamRef,
@@ -867,7 +867,7 @@ impl VM {
         }
     }
 
-    pub(super) fn handle_stream_yield(
+    fn handle_stream_yield(
         &mut self,
         yielded: DoCtrl,
         stream: IRStreamRef,
@@ -880,7 +880,7 @@ impl VM {
         StepEvent::Continue
     }
 
-    pub(super) fn finalize_stream_yield_mode(
+    fn finalize_stream_yield_mode(
         &mut self,
         yielded: DoCtrl,
         stream: IRStreamRef,
@@ -912,7 +912,7 @@ impl VM {
         Mode::HandleYield(yielded)
     }
 
-    pub(super) fn current_interceptor_chain(&self) -> Vec<Marker> {
+    fn current_interceptor_chain(&self) -> Vec<Marker> {
         let dispatch_origin_callers = self
             .dispatch_origins()
             .into_iter()
@@ -925,27 +925,27 @@ impl VM {
         )
     }
 
-    pub(super) fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
+    fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
         self.interceptor_state
             .visible_to_active_handler(interceptor_marker)
     }
 
-    pub(super) fn is_interceptor_skipped(&self, marker: Marker) -> bool {
+    fn is_interceptor_skipped(&self, marker: Marker) -> bool {
         InterceptorState::is_skipped(self.current_seg(), marker)
     }
 
-    pub(super) fn pop_interceptor_skip(&mut self, marker: Marker) {
+    fn pop_interceptor_skip(&mut self, marker: Marker) {
         let seg = self.current_seg_mut();
         if InterceptorState::is_skipped(seg, marker) {
             InterceptorState::pop_skip(seg, marker);
         }
     }
 
-    pub(super) fn push_interceptor_skip(&mut self, marker: Marker) {
+    fn push_interceptor_skip(&mut self, marker: Marker) {
         InterceptorState::push_skip(self.current_seg_mut(), marker);
     }
 
-    pub(super) fn classify_interceptor_result_object(
+    fn classify_interceptor_result_object(
         &self,
         result_obj: Py<PyAny>,
         original_obj: &PyShared,
@@ -959,7 +959,7 @@ impl VM {
         })
     }
 
-    pub(super) fn classify_interceptor_eval_result(
+    fn classify_interceptor_eval_result(
         &self,
         value: Value,
         original_obj: &PyShared,
@@ -973,7 +973,7 @@ impl VM {
         self.classify_interceptor_result_object(result_obj, original_obj, original_yielded)
     }
 
-    pub(super) fn should_invoke_interceptor(
+    fn should_invoke_interceptor(
         &self,
         entry: &InterceptorEntry,
         yielded_obj: &Py<PyAny>,
@@ -1017,7 +1017,7 @@ impl VM {
         })?)
     }
 
-    pub(super) fn continue_interceptor_chain_mode(
+    fn continue_interceptor_chain_mode(
         &mut self,
         yielded: DoCtrl,
         stream: IRStreamRef,
@@ -1071,7 +1071,7 @@ impl VM {
         self.finalize_stream_yield_mode(current, stream, metadata, handler_kind)
     }
 
-    pub(super) fn fallback_interceptor_metadata() -> CallMetadata {
+    fn fallback_interceptor_metadata() -> CallMetadata {
         CallMetadata::new(
             "WithIntercept.interceptor".to_string(),
             "<unknown>".to_string(),
@@ -1081,7 +1081,7 @@ impl VM {
         )
     }
 
-    pub(super) fn start_interceptor_invocation_mode(
+    fn start_interceptor_invocation_mode(
         &mut self,
         marker: Marker,
         entry: InterceptorEntry,
@@ -1146,7 +1146,7 @@ impl VM {
         })
     }
 
-    pub(super) fn handle_interceptor_apply_result(
+    fn handle_interceptor_apply_result(
         &mut self,
         continuation: InterceptorContinuation,
         value: Value,
@@ -1228,7 +1228,7 @@ impl VM {
         ))
     }
 
-    pub(super) fn handle_interceptor_eval_result(
+    fn handle_interceptor_eval_result(
         &mut self,
         continuation: InterceptorContinuation,
         value: Value,
@@ -1263,7 +1263,7 @@ impl VM {
         )
     }
 
-    pub(super) fn step_handle_yield(&mut self) -> StepEvent {
+    fn step_handle_yield(&mut self) -> StepEvent {
         let yielded =
             match std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit)) {
                 Mode::HandleYield(y) => y,
@@ -1363,12 +1363,12 @@ impl VM {
         }
     }
 
-    pub(super) fn handle_yield_pure(&mut self, value: Value) -> StepEvent {
+    fn handle_yield_pure(&mut self, value: Value) -> StepEvent {
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }
 
-    pub(super) fn handle_yield_map(
+    fn handle_yield_map(
         &mut self,
         source: PyShared,
         mapper: PyShared,
@@ -1377,7 +1377,7 @@ impl VM {
         self.handle_map(source, mapper, mapper_meta)
     }
 
-    pub(super) fn handle_yield_flat_map(
+    fn handle_yield_flat_map(
         &mut self,
         source: PyShared,
         binder: PyShared,
@@ -1386,14 +1386,14 @@ impl VM {
         self.handle_flat_map(source, binder, binder_meta)
     }
 
-    pub(super) fn handle_yield_effect(&mut self, effect: DispatchEffect) -> StepEvent {
+    fn handle_yield_effect(&mut self, effect: DispatchEffect) -> StepEvent {
         match self.start_dispatch(effect) {
             Ok(event) => event,
             Err(error) => self.dispatch_fatal_error_event(error),
         }
     }
 
-    pub(super) fn handle_yield_resume(
+    fn handle_yield_resume(
         &mut self,
         continuation: Continuation,
         value: Value,
@@ -1401,7 +1401,7 @@ impl VM {
         self.handle_resume(continuation, value)
     }
 
-    pub(super) fn handle_yield_transfer(
+    fn handle_yield_transfer(
         &mut self,
         continuation: Continuation,
         value: Value,
@@ -1409,7 +1409,7 @@ impl VM {
         self.handle_transfer(continuation, value)
     }
 
-    pub(super) fn handle_yield_transfer_throw(
+    fn handle_yield_transfer_throw(
         &mut self,
         continuation: Continuation,
         exception: PyException,
@@ -1417,7 +1417,7 @@ impl VM {
         self.handle_transfer_throw(continuation, exception)
     }
 
-    pub(super) fn handle_yield_discontinue(
+    fn handle_yield_discontinue(
         &mut self,
         continuation: Continuation,
         exception: PyException,
@@ -1425,7 +1425,7 @@ impl VM {
         self.handle_transfer_throw(continuation, exception)
     }
 
-    pub(super) fn handle_yield_resume_throw(
+    fn handle_yield_resume_throw(
         &mut self,
         continuation: Continuation,
         exception: PyException,
@@ -1433,7 +1433,7 @@ impl VM {
         self.handle_transfer_throw_non_terminal(continuation, exception)
     }
 
-    pub(super) fn handle_yield_with_intercept(
+    fn handle_yield_with_intercept(
         &mut self,
         interceptor: KleisliRef,
         body: DoCtrl,
@@ -1444,27 +1444,27 @@ impl VM {
         self.handle_with_intercept(interceptor, body, types, mode, metadata)
     }
 
-    pub(super) fn handle_yield_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
+    fn handle_yield_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
         self.handle_delegate(effect)
     }
 
-    pub(super) fn handle_yield_pass(&mut self, effect: DispatchEffect) -> StepEvent {
+    fn handle_yield_pass(&mut self, effect: DispatchEffect) -> StepEvent {
         self.handle_pass(effect)
     }
 
-    pub(super) fn handle_yield_get_continuation(&mut self) -> StepEvent {
+    fn handle_yield_get_continuation(&mut self) -> StepEvent {
         self.handle_get_continuation()
     }
 
-    pub(super) fn handle_yield_get_handlers(&mut self) -> StepEvent {
+    fn handle_yield_get_handlers(&mut self) -> StepEvent {
         self.handle_get_handlers()
     }
 
-    pub(super) fn handle_yield_get_traceback(&mut self, continuation: Continuation) -> StepEvent {
+    fn handle_yield_get_traceback(&mut self, continuation: Continuation) -> StepEvent {
         self.handle_get_traceback(continuation)
     }
 
-    pub(super) fn handle_yield_create_continuation(
+    fn handle_yield_create_continuation(
         &mut self,
         expr: PyShared,
         handlers: Vec<KleisliRef>,
@@ -1473,7 +1473,7 @@ impl VM {
         self.handle_create_continuation(expr, handlers, handler_identities)
     }
 
-    pub(super) fn handle_yield_resume_continuation(
+    fn handle_yield_resume_continuation(
         &mut self,
         continuation: Continuation,
         value: Value,
@@ -1481,7 +1481,7 @@ impl VM {
         self.handle_resume_continuation(continuation, value)
     }
 
-    pub(super) fn handle_yield_python_async_syntax_escape(
+    fn handle_yield_python_async_syntax_escape(
         &mut self,
         action: Py<PyAny>,
     ) -> StepEvent {
@@ -1492,7 +1492,7 @@ impl VM {
         })
     }
 
-    pub(super) fn handle_yield_apply(
+    fn handle_yield_apply(
         &mut self,
         f: DoCtrl,
         args: Vec<DoCtrl>,
@@ -1584,7 +1584,7 @@ impl VM {
         })
     }
 
-    pub(super) fn handle_yield_expand(
+    fn handle_yield_expand(
         &mut self,
         factory: DoCtrl,
         args: Vec<DoCtrl>,
@@ -1700,7 +1700,7 @@ impl VM {
         })
     }
 
-    pub(super) fn handle_yield_ir_stream(
+    fn handle_yield_ir_stream(
         &mut self,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
@@ -1723,7 +1723,7 @@ impl VM {
         StepEvent::Continue
     }
 
-    pub(super) fn handle_yield_eval(
+    fn handle_yield_eval(
         &mut self,
         expr: PyShared,
         metadata: Option<CallMetadata>,
@@ -1733,7 +1733,7 @@ impl VM {
         self.handle_resume_continuation(cont, Value::None)
     }
 
-    pub(super) fn handle_yield_eval_in_scope(
+    fn handle_yield_eval_in_scope(
         &mut self,
         expr: PyShared,
         scope: Continuation,
@@ -1859,7 +1859,7 @@ impl VM {
         StepEvent::NeedsPython(PythonCall::EvalExpr { expr })
     }
 
-    pub(super) fn handle_yield_get_call_stack(&mut self) -> StepEvent {
+    fn handle_yield_get_call_stack(&mut self) -> StepEvent {
         let mut stack = Vec::new();
         let mut seg_id = self.current_segment;
         while let Some(id) = seg_id {
@@ -1915,21 +1915,21 @@ impl VM {
         StepEvent::Continue
     }
 
-    pub(super) fn first_non_pure_arg(args: &[DoCtrl]) -> Option<(usize, DoCtrl)> {
+    fn first_non_pure_arg(args: &[DoCtrl]) -> Option<(usize, DoCtrl)> {
         let arg_idx = args
             .iter()
             .position(|arg| !matches!(arg, DoCtrl::Pure { .. }))?;
         Some((arg_idx, args[arg_idx].clone()))
     }
 
-    pub(super) fn first_non_pure_kwarg(kwargs: &[(String, DoCtrl)]) -> Option<(usize, DoCtrl)> {
+    fn first_non_pure_kwarg(kwargs: &[(String, DoCtrl)]) -> Option<(usize, DoCtrl)> {
         let kwargs_idx = kwargs
             .iter()
             .position(|(_, value)| !matches!(value, DoCtrl::Pure { .. }))?;
         Some((kwargs_idx, kwargs[kwargs_idx].1.clone()))
     }
 
-    pub(super) fn collect_value_args(args: Vec<DoCtrl>) -> Vec<Value> {
+    fn collect_value_args(args: Vec<DoCtrl>) -> Vec<Value> {
         let mut values = Vec::with_capacity(args.len());
         for arg in args {
             match arg {
@@ -1967,7 +1967,7 @@ impl VM {
         values
     }
 
-    pub(super) fn collect_value_kwargs(kwargs: Vec<(String, DoCtrl)>) -> Vec<(String, Value)> {
+    fn collect_value_kwargs(kwargs: Vec<(String, DoCtrl)>) -> Vec<(String, Value)> {
         let mut values = Vec::with_capacity(kwargs.len());
         for (key, value) in kwargs {
             match value {
@@ -2005,7 +2005,7 @@ impl VM {
         values
     }
 
-    pub(super) fn step_return(&mut self) -> StepEvent {
+    fn step_return(&mut self) -> StepEvent {
         let value =
             match std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit)) {
                 Mode::Return(v) => v,
@@ -2087,7 +2087,7 @@ impl VM {
         }
     }
 
-    pub(super) fn receive_eval_expr_result(
+    fn receive_eval_expr_result(
         &mut self,
         _metadata: Option<CallMetadata>,
         outcome: PyCallOutcome,
@@ -2106,7 +2106,7 @@ impl VM {
         }
     }
 
-    pub(super) fn receive_call_func_result(&mut self, outcome: PyCallOutcome) {
+    fn receive_call_func_result(&mut self, outcome: PyCallOutcome) {
         match outcome {
             PyCallOutcome::Value(value) => {
                 self.current_seg_mut().mode = Mode::Deliver(value);
@@ -2121,7 +2121,7 @@ impl VM {
         }
     }
 
-    pub(super) fn returned_control_primitive_signature(value: &Value) -> Option<&'static str> {
+    fn returned_control_primitive_signature(value: &Value) -> Option<&'static str> {
         let Value::Python(result_obj) = value else {
             return None;
         };
@@ -2137,13 +2137,13 @@ impl VM {
         })
     }
 
-    pub(super) fn returned_control_primitive_exception(value: &Value) -> Option<PyException> {
+    fn returned_control_primitive_exception(value: &Value) -> Option<PyException> {
         let signature = Self::returned_control_primitive_signature(value)?;
         Some(PyException::runtime_error(format!(
             "Handler returned {signature} but control primitives must be yielded, not returned.\n  Change: return {signature}  ->  yield {signature}"
         )))
     }
-    pub(super) fn receive_expand_result(
+    fn receive_expand_result(
         &mut self,
         metadata: Option<CallMetadata>,
         handler_return: bool,
@@ -2166,7 +2166,7 @@ impl VM {
         }
     }
 
-    pub(super) fn receive_expand_handler_value(
+    fn receive_expand_handler_value(
         &mut self,
         metadata: Option<CallMetadata>,
         value: Value,
@@ -2214,7 +2214,7 @@ impl VM {
         }
     }
 
-    pub(super) fn receive_expand_program_value(
+    fn receive_expand_program_value(
         &mut self,
         metadata: Option<CallMetadata>,
         value: Value,
@@ -2229,7 +2229,7 @@ impl VM {
         }
     }
 
-    pub(super) fn classify_expand_result_as_doctrl(
+    fn classify_expand_result_as_doctrl(
         &self,
         metadata: Option<CallMetadata>,
         value: Value,
@@ -2262,7 +2262,7 @@ impl VM {
         })
     }
 
-    pub(super) fn receive_expand_gen_error(
+    fn receive_expand_gen_error(
         &mut self,
         handler_return: bool,
         exception: PyException,
@@ -2291,7 +2291,7 @@ impl VM {
             self.mode_after_generror(GenErrorSite::ExpandReturnProgram, exception, false);
     }
 
-    pub(super) fn receive_step_user_generator_result(
+    fn receive_step_user_generator_result(
         &mut self,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
@@ -2365,7 +2365,7 @@ impl VM {
         }
     }
 
-    pub(super) fn receive_rust_program_result(
+    fn receive_rust_program_result(
         &mut self,
         _marker: Marker,
         _continuation: Continuation,
@@ -2388,7 +2388,7 @@ impl VM {
         }
     }
 
-    pub(super) fn receive_async_escape_result(&mut self, outcome: PyCallOutcome) {
+    fn receive_async_escape_result(&mut self, outcome: PyCallOutcome) {
         match outcome {
             PyCallOutcome::Value(result) => {
                 self.current_seg_mut().mode = Mode::Deliver(result);
@@ -2403,7 +2403,7 @@ impl VM {
         }
     }
 
-    pub(super) fn receive_unexpected_outcome(&mut self) {
+    fn receive_unexpected_outcome(&mut self) {
         self.current_seg_mut().mode = Mode::Throw(PyException::runtime_error(
             "unexpected pending/outcome combination in receive_python_result",
         ));
