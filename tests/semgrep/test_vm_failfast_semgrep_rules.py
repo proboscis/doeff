@@ -12,8 +12,20 @@ pytestmark = pytest.mark.semgrep
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _semgrep_rule_ids(config: Path, target: str, *, cwd: Path) -> set[str]:
+def _resolve_semgrep_bin() -> str | None:
     semgrep_bin = shutil.which("semgrep")
+    if semgrep_bin is not None:
+        return semgrep_bin
+
+    fallback = Path.home() / ".local" / "bin" / "semgrep"
+    if fallback.exists():
+        return str(fallback)
+
+    return None
+
+
+def _semgrep_rule_ids(config: Path, target: str, *, cwd: Path) -> set[str]:
+    semgrep_bin = _resolve_semgrep_bin()
     if semgrep_bin is None:
         pytest.skip("semgrep is not installed")
 

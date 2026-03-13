@@ -17,6 +17,13 @@ import pytest
 pytestmark = pytest.mark.cli
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RUNBOX_BIN_DIR = PROJECT_ROOT / "tests" / "bin"
+RUNBOX_SHIM = RUNBOX_BIN_DIR / "runbox"
+
+
+def _path_with_runbox_shim() -> str:
+    path_entries = [str(RUNBOX_BIN_DIR), os.environ.get("PATH", "")]
+    return os.pathsep.join(entry for entry in path_entries if entry)
 
 
 def run_cli(
@@ -30,7 +37,7 @@ def run_cli(
 
     env = {
         "PYTHONPATH": pythonpath,
-        "PATH": os.environ.get("PATH", ""),
+        "PATH": _path_with_runbox_shim(),
         "HOME": os.environ.get("HOME", ""),
         "DOEFF_DISABLE_DEFAULT_ENV": "1",
         # Disable profiling to reduce noise in output
@@ -64,7 +71,7 @@ def run_cli_module(
 
     env = {
         "PYTHONPATH": pythonpath,
-        "PATH": os.environ.get("PATH", ""),
+        "PATH": _path_with_runbox_shim(),
         "HOME": os.environ.get("HOME", ""),
         "DOEFF_DISABLE_DEFAULT_ENV": "1",
         "DOEFF_DISABLE_PROFILE": "1",
@@ -88,7 +95,7 @@ def run_cli_module(
 
 def is_runbox_available() -> bool:
     """Check if runbox CLI is available in PATH."""
-    return shutil.which("runbox") is not None
+    return RUNBOX_SHIM.exists() or shutil.which("runbox") is not None
 
 
 def get_runbox_records_dir() -> Path:

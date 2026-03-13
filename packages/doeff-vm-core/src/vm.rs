@@ -1372,7 +1372,10 @@ impl VM {
         _stream: &IRStreamRef,
         handler_kind: Option<HandlerKind>,
     ) -> Option<Continuation> {
-        if handler_kind != Some(HandlerKind::Python) {
+        if !matches!(
+            handler_kind,
+            Some(HandlerKind::Python | HandlerKind::RustBuiltin)
+        ) {
             return None;
         }
 
@@ -1389,6 +1392,39 @@ impl VM {
             .find_by_dispatch_id(dispatch_id)
             .and_then(|dispatch| dispatch.active_activation())
             .and_then(|activation| activation.throw_target.clone())
+    }
+
+    fn active_handler_throw_target(&self) -> Option<Continuation> {
+        let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
+            let dispatch_id = self.current_segment_dispatch_id_any()?;
+            if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
+                Some(dispatch_id)
+            } else {
+                None
+            }
+        })?;
+        if self
+            .dispatch_state
+            .dispatch_is_execution_context_effect(dispatch_id)
+        {
+            return None;
+        }
+        self.dispatch_state
+            .find_by_dispatch_id(dispatch_id)
+            .and_then(|dispatch| dispatch.active_activation())
+            .and_then(|activation| activation.throw_target.clone())
+            .filter(|continuation| !self.is_one_shot_consumed(continuation.cont_id))
+    }
+
+    fn transfer_to_active_handler_throw_target(&mut self, exception: PyException) -> bool {
+        let Some(continuation) = self.active_handler_throw_target() else {
+            return false;
+        };
+        self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::TransferThrow {
+            continuation,
+            exception,
+        });
+        true
     }
 
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
@@ -4052,6 +4088,9 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Deliver(value);
             }
             PyCallOutcome::GenError(exception) => {
+                if self.transfer_to_active_handler_throw_target(exception.clone()) {
+                    return;
+                }
                 self.current_seg_mut().mode =
                     self.mode_after_generror(GenErrorSite::CallFuncReturn, exception, false);
             }
@@ -4235,6 +4274,9 @@ impl VM {
             return;
         }
 
+        if self.transfer_to_active_handler_throw_target(exception.clone()) {
+            return;
+        }
         self.current_seg_mut().mode =
             self.mode_after_generror(GenErrorSite::ExpandReturnProgram, exception, false);
     }
@@ -4300,18 +4342,28 @@ impl VM {
                     return;
                 }
                 let active_dispatch_id = self.current_active_handler_dispatch_id();
-                let fallback_active_handler_dispatch = || {
-                    let dispatch_id = self.current_segment_dispatch_id_any()?;
-                    if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
-                        Some(dispatch_id)
-                    } else {
-                        None
-                    }
-                };
-                if let Some(dispatch_id) = active_dispatch_id
+                let fallback_active_handler_dispatch = self
+                    .current_segment_dispatch_id_any()
+                    .and_then(|dispatch_id| {
+                        if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
+                            Some(dispatch_id)
+                        } else {
+                            None
+                        }
+                    });
+                let maybe_active_dispatch_id = active_dispatch_id
                     .or_else(|| self.current_segment_dispatch_id())
-                    .or_else(fallback_active_handler_dispatch)
+                    .or(fallback_active_handler_dispatch);
+                if let Some(dispatch_id) = maybe_active_dispatch_id
                 {
+                    if self.current_segment_is_active_handler_for_dispatch(dispatch_id)
+                        && !self.dispatch_uses_user_continuation_stream(dispatch_id, &stream)
+                        && self.transfer_to_active_handler_throw_target(exception.clone())
+                    {
+                        return;
+                    }
+                }
+                if let Some(dispatch_id) = maybe_active_dispatch_id {
                     if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
                         if let Some(incoming_exception) = incoming_exception.as_ref() {
                             self.remember_resumed_exception_for_dispatch(
@@ -5151,31 +5203,13 @@ impl VM {
             self.check_dispatch_completion_for_non_terminal_throw(&k);
         }
 
-        let dispatch_id: Option<DispatchId> = None;
         let caller = self
             .segments
             .get(k.segment_id)
             .and_then(|seg| seg.caller)
             .or(self.current_segment);
-        let exec_seg = Segment {
-            marker: k.marker,
-            frames: (*k.frames_snapshot).clone(),
-            caller,
-            scope_store: k.scope_store.clone(),
-            kind: self.structural_kind_for_marker(k.marker),
-            dispatch_id,
-            mode: k.mode.as_ref().clone(),
-            pending_python: k
-                .pending_python
-                .as_ref()
-                .map(|pending| pending.as_ref().clone()),
-            pending_error_context: k.pending_error_context.clone(),
-            interceptor_eval_depth: k.interceptor_eval_depth,
-            interceptor_skip_stack: k.interceptor_skip_stack.clone(),
-        };
-        let exec_seg_id = self.alloc_segment(exec_seg);
-
-        self.current_segment = Some(exec_seg_id);
+        let dispatch_id = self.continuation_segment_dispatch_id(&k);
+        self.enter_continuation_segment_with_dispatch(&k, caller, dispatch_id);
         self.current_seg_mut().mode =
             if terminal_dispatch_completion && thrown_by_context_conversion_handler {
                 self.mode_after_generror(
