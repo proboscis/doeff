@@ -5,14 +5,14 @@ use std::collections::{HashMap, HashSet};
 use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
-use crate::do_ctrl::InterceptMode;
+use crate::do_ctrl::{InterceptMode, PyDoExprBase};
 use crate::doeff_generator::DoeffGenerator;
+use crate::effect::PyEffectBase;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::ids::{Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
-use crate::pyvm::{PyDoExprBase, PyEffectBase};
 use crate::segment::{Segment, SegmentKind};
 use crate::vm::InterceptorEntry;
 
@@ -90,8 +90,7 @@ impl InterceptorState {
             let bound = result_obj.bind(py);
             let is_effect_base = bound.is_instance_of::<PyEffectBase>();
             let is_py_doexpr = bound.is_instance_of::<PyDoExprBase>();
-            let is_doexpr =
-                is_py_doexpr || bound.is_instance_of::<DoeffGenerator>();
+            let is_doexpr = is_py_doexpr || bound.is_instance_of::<DoeffGenerator>();
             // Interceptor return values that are already DoExpr objects should be
             // re-classified directly, not eagerly evaluated. The extra Eval step is
             // only for generator-like results that still need to resolve to a DoExpr.

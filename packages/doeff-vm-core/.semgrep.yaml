@@ -3,6 +3,17 @@ rules:
   # SPEC-VM-018: Core Effects Extraction Boundary Enforcement
   # =========================================================================
 
+  - id: vm-core-no-pyvm-imports
+    pattern-regex: 'crate::pyvm::|pub mod pyvm;'
+    message: |
+      ISSUE gh-298: doeff-vm-core must not own a pyvm module or import from one.
+      The Python bridge is owned by packages/doeff-vm/src/pyvm.rs.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm-core/src/**"
+
   # INV-4: No effect structs in VM core (except the 3 VM-internal ones)
   - id: vm-core-no-user-effect-structs
     pattern-regex: '#\[pyclass\(.*extends\s*=\s*PyEffectBase.*\)\]\s*pub struct (?!PyGetExecutionContext|PyExecutionContext)'

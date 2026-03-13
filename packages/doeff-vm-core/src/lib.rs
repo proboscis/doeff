@@ -1,6 +1,7 @@
 //! doeff-vm-core: generic VM machinery and handler protocol.
 
 pub mod arena;
+mod bridge;
 pub mod capture;
 pub mod continuation;
 mod debug_state;
@@ -18,7 +19,6 @@ pub mod ir_stream;
 pub mod kleisli;
 pub mod py_key;
 pub mod py_shared;
-pub mod pyvm;
 pub mod python_call;
 pub mod rust_store;
 pub mod segment;
@@ -35,9 +35,9 @@ pub use capture::{
     SpawnSite, TraceEntry, TraceFrame, TraceHop,
 };
 pub use continuation::Continuation;
-pub use do_ctrl::DoCtrl;
+pub use do_ctrl::{DoCtrl, DoExprTag, PyDoCtrlBase, PyDoExprBase};
 pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
-pub use driver::{Mode, StepEvent};
+pub use driver::{Mode, PyResultErr, PyResultOk, StepEvent};
 pub use effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, dispatch_to_pyobject,
     make_execution_context_object, make_get_execution_context_effect, DispatchEffect, Effect,
@@ -50,16 +50,15 @@ pub use handler::{
 };
 pub use ids::{ContId, DispatchId, Marker, PromiseId, RunnableId, SegmentId, TaskId};
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
-pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
+pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyK, PyKleisli, RustKleisli};
 pub use py_key::HashedPyKey;
-pub use pyvm::{
+pub use bridge::{
     classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, install_vm_hooks,
-    is_doexpr_like, is_effect_base_like, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyK, PyResultErr,
-    PyResultOk, PyTraceFrame, PyTraceHop, VmHooks,
+    is_doexpr_like, is_effect_base_like, VmHooks,
 };
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 pub use rust_store::RustStore;
 pub use segment::{Segment, SegmentKind};
 pub use step::PyException;
-pub use value::Value;
+pub use value::{PyTraceFrame, PyTraceHop, Value};
 pub use vm::{DebugConfig, DebugLevel, TraceEvent, VM};

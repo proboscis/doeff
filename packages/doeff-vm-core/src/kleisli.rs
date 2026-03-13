@@ -9,16 +9,33 @@ use pyo3::types::{PyDict, PyTuple};
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
-use crate::effect::{dispatch_from_shared, DispatchEffect};
+use crate::effect::{DispatchEffect, dispatch_from_shared};
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{IRStreamFactoryRef, IRStreamProgramRef};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::py_shared::PyShared;
-use crate::pyvm::PyK;
 use crate::segment::ScopeStore;
 use crate::value::Value;
 use crate::vm::RustStore;
+
+#[pyclass(name = "K")]
+pub struct PyK {
+    pub cont_id: crate::ids::ContId,
+}
+
+impl PyK {
+    pub fn from_cont_id(cont_id: crate::ids::ContId) -> Self {
+        Self { cont_id }
+    }
+}
+
+#[pymethods]
+impl PyK {
+    fn __repr__(&self) -> String {
+        format!("K({})", self.cont_id.raw())
+    }
+}
 
 /// Debug metadata for a Kleisli arrow.
 #[derive(Debug, Clone)]
@@ -644,7 +661,7 @@ impl Kleisli for RustKleisli {
             other => {
                 return Err(VMError::type_error(format!(
                     "RustKleisli arg[0] must be Python effect, got {other:?}"
-                )))
+                )));
             }
         };
 
@@ -653,7 +670,7 @@ impl Kleisli for RustKleisli {
             other => {
                 return Err(VMError::type_error(format!(
                     "RustKleisli arg[1] must be Continuation, got {other:?}"
-                )))
+                )));
             }
         };
 

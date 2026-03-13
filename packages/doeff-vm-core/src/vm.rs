@@ -1,26 +1,27 @@
 //! Core VM struct and step execution.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
 
 use crate::arena::SegmentArena;
+use crate::bridge::{classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm};
 use crate::capture::{
     ActiveChainEntry, EffectCreationSite, HandlerAction, HandlerKind, HandlerSnapshotEntry,
     TraceEntry,
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
-use crate::do_ctrl::{DoCtrl, InterceptMode};
+use crate::do_ctrl::{DoCtrl, DoExprTag, InterceptMode, PyDoExprBase};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
+    DispatchEffect, PyEffectBase, PyExecutionContext, PyGetExecutionContext,
     dispatch_ref_as_python, dispatch_to_pyobject, make_get_execution_context_effect,
-    DispatchEffect, PyExecutionContext, PyGetExecutionContext,
 };
 #[cfg(test)]
 use crate::effect::{Effect, PySpawn};
@@ -32,10 +33,6 @@ use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStrea
 use crate::kleisli::{IdentityKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::pyvm::{
-    classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, DoExprTag, PyDoExprBase,
-    PyEffectBase,
-};
 use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::{LiveDispatchSnapshot, TraceState};
 use crate::value::Value;
@@ -1842,7 +1839,7 @@ impl VM {
                 return Err(VMError::python_error(format!(
                     "GetExecutionContext handler must return ExecutionContext, got {}",
                     Self::value_variant_name(other)
-                )))
+                )));
             }
         };
 
@@ -2764,7 +2761,7 @@ impl VM {
                     return Mode::Throw(PyException::runtime_error(
                         "current_segment_mut() returned None in apply_stream_step \
                          (Yield non-terminal)",
-                    ))
+                    ));
                 }
             }
         }
@@ -4986,7 +4983,7 @@ impl VM {
                 Err(err) => {
                     return StepEvent::Error(VMError::python_error(format!(
                         "failed to convert dispatch effect to Python object: {err}"
-                    )))
+                    )));
                 }
             };
 
@@ -5002,7 +4999,7 @@ impl VM {
                     Err(err) => {
                         return StepEvent::Error(VMError::python_error(format!(
                             "failed to evaluate WithHandler type filter: {err:?}"
-                        )))
+                        )));
                     }
                 };
                 if !should_invoke {
@@ -5229,7 +5226,7 @@ impl VM {
         let program = match k.program {
             Some(prog) => prog,
             None => {
-                return StepEvent::Error(VMError::internal("unstarted continuation has no program"))
+                return StepEvent::Error(VMError::internal("unstarted continuation has no program"));
             }
         };
         let start_metadata = k.metadata.clone();

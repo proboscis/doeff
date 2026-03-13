@@ -3,8 +3,8 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
+use crate::do_ctrl::DoExprTag;
 use crate::py_shared::PyShared;
-use crate::pyvm::DoExprTag;
 
 #[derive(Debug, Clone)]
 pub struct Effect(pub PyShared);
@@ -29,7 +29,10 @@ impl PyEffectBase {
 impl PyEffectBase {
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, pyo3::types::PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
+    fn new(
+        _args: &Bound<'_, pyo3::types::PyTuple>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> Self {
         Self::new_base()
     }
 }
