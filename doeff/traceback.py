@@ -436,16 +436,6 @@ else:
                 site = "<unknown>"
             return f"── in task {boundary.task_id} (spawned at {site}) ──"
 
-        @staticmethod
-        def _should_render_exception_site(entry: ExceptionSite) -> bool:
-            normalized_source = entry.source_file.replace("\\", "/")
-            if normalized_source.endswith("/doeff/do.py") and entry.function_name in {
-                "bridge_generator",
-                "value_generator",
-            }:
-                return False
-            return True
-
         def format_default(self) -> str:
             lines: list[str] = ["doeff Traceback (most recent call last):", ""]
             previous_handler_stack: tuple[HandlerStackEntry, ...] | None = None
@@ -502,8 +492,6 @@ else:
                     continue
 
                 if isinstance(entry, ExceptionSite):
-                    if not self._should_render_exception_site(entry):
-                        continue
                     previous_handler_stack = None
                     previous_spawn_boundary = None
                     lines.append(
