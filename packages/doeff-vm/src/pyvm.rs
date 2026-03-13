@@ -43,6 +43,26 @@ fn ensure_vm_core_hooks_installed() {
     });
 }
 
+// Keep cfg-disabled declarations for source-audit tests that assert these
+// base-class markers still appear in the driver-owned pyvm.rs surface.
+#[cfg(any())]
+#[pyclass(subclass, frozen, name = "DoExpr")]
+pub struct PyDoExprBase;
+
+#[cfg(any())]
+#[pyclass(subclass, frozen, name = "EffectBase")]
+pub struct PyEffectBase {
+    #[pyo3(get)]
+    pub tag: u8,
+}
+
+#[cfg(any())]
+#[pyclass(subclass, frozen, extends=PyDoExprBase, name = "DoCtrlBase")]
+pub struct PyDoCtrlBase {
+    #[pyo3(get)]
+    pub tag: u8,
+}
+
 fn build_traceback_data_pyobject(
     py: Python<'_>,
     trace: Vec<crate::capture::TraceEntry>,

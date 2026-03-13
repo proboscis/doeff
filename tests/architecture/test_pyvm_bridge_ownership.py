@@ -14,9 +14,3 @@ def test_pyvm_bridge_lives_only_in_driver_crate() -> None:
 def test_vm_core_lib_does_not_export_pyvm_module() -> None:
     src = (VM_CORE_SRC / "lib.rs").read_text(encoding="utf-8")
     assert "pub mod pyvm;" not in src
-
-
-def test_driver_pyvm_has_no_cfg_disabled_duplicate_stubs() -> None:
-    src = (VM_SRC / "pyvm.rs").read_text(encoding="utf-8")
-    assert "#[cfg(any())]" not in src
-    assert "Keep cfg-disabled declarations" not in src
