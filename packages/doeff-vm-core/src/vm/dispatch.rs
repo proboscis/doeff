@@ -162,10 +162,7 @@ impl VM {
         })
     }
 
-    fn dispatch_origin_in_segment(
-        &self,
-        seg_id: SegmentId,
-    ) -> Option<DispatchOriginView> {
+    fn dispatch_origin_in_segment(&self, seg_id: SegmentId) -> Option<DispatchOriginView> {
         let seg = self.segments.get(seg_id)?;
         seg.frames.iter().rev().find_map(|frame| match frame {
             Frame::DispatchOrigin {
@@ -416,9 +413,7 @@ impl VM {
         seg.pending_error_context = None;
     }
 
-    fn continuation_chain_contains_eval_in_scope_return(
-        continuation: &Continuation,
-    ) -> bool {
+    fn continuation_chain_contains_eval_in_scope_return(continuation: &Continuation) -> bool {
         let mut cursor = Some(continuation);
         while let Some(current) = cursor {
             if current.frames_snapshot.iter().any(|frame| {
@@ -471,10 +466,7 @@ impl VM {
             || Self::continuation_chain_contains_eval_in_scope_return(&origin.k_origin)
     }
 
-    fn materialize_vm_error_exception(
-        module_attr: &str,
-        message: &str,
-    ) -> Option<PyException> {
+    fn materialize_vm_error_exception(module_attr: &str, message: &str) -> Option<PyException> {
         Python::attach(|py| {
             for module_name in ["doeff_vm", "doeff_vm.doeff_vm"] {
                 let Ok(module) = PyModule::import(py, module_name) else {
@@ -496,10 +488,7 @@ impl VM {
         })
     }
 
-    fn recoverable_eval_in_scope_dispatch_exception(
-        &self,
-        error: &VMError,
-    ) -> Option<PyException> {
+    fn recoverable_eval_in_scope_dispatch_exception(&self, error: &VMError) -> Option<PyException> {
         if !self.is_inside_eval_in_scope_subtopology() {
             return None;
         }
@@ -649,10 +638,7 @@ impl VM {
         child_seg.scope_store = source_seg.scope_store.clone();
     }
 
-    fn remap_interceptor_skip_markers(
-        seg: &mut Segment,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
+    fn remap_interceptor_skip_markers(seg: &mut Segment, marker_remap: &HashMap<Marker, Marker>) {
         if marker_remap.is_empty() {
             return;
         }
@@ -1213,27 +1199,16 @@ impl VM {
 
         let (handler_name, handler_kind, handler_source_file, handler_source_line) =
             Self::handler_trace_info(&handler);
-        let effect_site = TraceState::effect_site_from_continuation(&k_user);
-        self.trace_state.emit_dispatch_started(
+        self.queue_dispatch_started(
             dispatch_id,
-            Self::effect_repr(&effect),
+            &effect,
+            &k_user,
             is_execution_context_effect,
-            Self::effect_creation_site_from_continuation(&k_user),
             handler_name,
             handler_kind,
             handler_source_file,
             handler_source_line,
             handler_chain_snapshot,
-            effect_site.as_ref().map(|(frame_id, _, _, _)| *frame_id),
-            effect_site
-                .as_ref()
-                .map(|(_, function_name, _, _)| function_name.clone()),
-            effect_site
-                .as_ref()
-                .map(|(_, _, source_file, _)| source_file.clone()),
-            effect_site
-                .as_ref()
-                .map(|(_, _, _, source_line)| *source_line),
         );
 
         // Preserve handler scope when a type-filtered handler is skipped: this mirrors the
@@ -1262,14 +1237,14 @@ impl VM {
         ))
     }
 
-    fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
+    fn dispatch_has_terminal_handler_action(&mut self, dispatch_id: DispatchId) -> bool {
+        self.observe_pending_trace_events();
         self.trace_state
             .active_chain_state()
             .dispatch_has_terminal_result(dispatch_id)
     }
 
     pub(super) fn finalize_active_dispatches_as_threw(&mut self, exception: &PyException) {
-        let exception_repr = Self::exception_repr(exception);
         for origin in self.dispatch_origins() {
             let dispatch_id = origin.dispatch_id;
             if self.dispatch_has_terminal_handler_action(dispatch_id) {
@@ -1280,12 +1255,12 @@ impl VM {
             else {
                 continue;
             };
-            self.trace_state.emit_handler_completed(
+            self.queue_handler_completed(
                 dispatch_id,
                 handler_name,
                 handler_index,
-                HandlerAction::Threw {
-                    exception_repr: exception_repr.clone(),
+                TraceObserverHandlerAction::Threw {
+                    exception: exception.clone(),
                 },
             );
         }
@@ -1349,28 +1324,17 @@ impl VM {
             if let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
             {
-                let value_repr = Self::value_repr(value);
-                self.trace_state.emit_handler_completed(
-                    dispatch_id,
-                    handler_name.clone(),
-                    handler_index,
-                    kind.handler_action(value_repr.clone()),
-                );
-                self.emit_resume_event(
+                self.queue_handler_completed(
                     dispatch_id,
                     handler_name,
-                    value_repr,
-                    k,
-                    kind.is_transferred(),
+                    handler_index,
+                    kind.trace_observer_action(value, k),
                 );
             }
         }
     }
 
-    fn continuation_segment_dispatch_id(
-        &mut self,
-        k: &Continuation,
-    ) -> Option<DispatchId> {
+    fn continuation_segment_dispatch_id(&mut self, k: &Continuation) -> Option<DispatchId> {
         if let Some(dispatch_id) = k.dispatch_id {
             if self.dispatch_origin_for_dispatch_id(dispatch_id).is_some() {
                 return Some(dispatch_id);
@@ -1413,11 +1377,7 @@ impl VM {
         self.current_segment = Some(exec_seg_id);
     }
 
-    fn enter_continuation_segment(
-        &mut self,
-        k: &Continuation,
-        caller: Option<SegmentId>,
-    ) {
+    fn enter_continuation_segment(&mut self, k: &Continuation, caller: Option<SegmentId>) {
         let dispatch_id = self.continuation_segment_dispatch_id(k);
         self.enter_continuation_segment_with_dispatch(k, caller, dispatch_id);
     }
@@ -1514,12 +1474,12 @@ impl VM {
                 if let Some((handler_index, handler_name)) =
                     self.current_handler_identity_for_dispatch(dispatch_id)
                 {
-                    self.trace_state.emit_handler_completed(
+                    self.queue_handler_completed(
                         dispatch_id,
                         handler_name,
                         handler_index,
-                        HandlerAction::Threw {
-                            exception_repr: Self::exception_repr(&exception),
+                        TraceObserverHandlerAction::Threw {
+                            exception: exception.clone(),
                         },
                     );
                 }
@@ -1640,7 +1600,8 @@ impl VM {
             (from_name, to_info)
         {
             match kind {
-                ForwardKind::Delegate => self.trace_state.emit_delegated(
+                ForwardKind::Delegate => self.queue_forwarded(
+                    TraceObserverForwardKind::Delegate,
                     dispatch_id,
                     from_name,
                     from_idx,
@@ -1650,7 +1611,8 @@ impl VM {
                     to_source_file,
                     to_source_line,
                 ),
-                ForwardKind::Pass => self.trace_state.emit_passed(
+                ForwardKind::Pass => self.queue_forwarded(
+                    TraceObserverForwardKind::Pass,
                     dispatch_id,
                     from_name,
                     from_idx,
@@ -1664,11 +1626,7 @@ impl VM {
         }
     }
 
-    fn handle_forward(
-        &mut self,
-        kind: ForwardKind,
-        effect: DispatchEffect,
-    ) -> StepEvent {
+    fn handle_forward(&mut self, kind: ForwardKind, effect: DispatchEffect) -> StepEvent {
         let Some(dispatch_id) = self.current_dispatch_id() else {
             return StepEvent::Error(VMError::internal(kind.outside_dispatch_error()));
         };

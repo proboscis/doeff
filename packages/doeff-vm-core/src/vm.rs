@@ -9,10 +9,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
 
 use crate::arena::SegmentArena;
-use crate::capture::{
-    ActiveChainEntry, EffectCreationSite, HandlerAction, HandlerKind, HandlerSnapshotEntry,
-    TraceEntry,
-};
+use crate::capture::{ActiveChainEntry, HandlerKind, HandlerSnapshotEntry, TraceEntry};
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
@@ -37,7 +34,10 @@ use crate::pyvm::{
     PyEffectBase,
 };
 use crate::segment::{Segment, SegmentKind};
-use crate::trace_state::{LiveDispatchSnapshot, TraceState};
+use crate::trace_state::{
+    LiveDispatchSnapshot, TraceObserverEvent, TraceObserverForwardKind, TraceObserverHandlerAction,
+    TraceState,
+};
 use crate::value::Value;
 
 pub use crate::rust_store::RustStore;
@@ -142,17 +142,22 @@ impl ContinuationActivationKind {
         }
     }
 
-    fn handler_action(self, value_repr: Option<String>) -> HandlerAction {
+    fn trace_observer_action(
+        self,
+        value: &Value,
+        continuation: &Continuation,
+    ) -> TraceObserverHandlerAction {
         match self {
-            ContinuationActivationKind::Resume => HandlerAction::Resumed { value_repr },
-            ContinuationActivationKind::Transfer => HandlerAction::Transferred { value_repr },
+            ContinuationActivationKind::Resume => TraceObserverHandlerAction::Resumed {
+                value: value.clone(),
+                continuation: continuation.clone(),
+            },
+            ContinuationActivationKind::Transfer => TraceObserverHandlerAction::Transferred {
+                value: value.clone(),
+                continuation: continuation.clone(),
+            },
         }
     }
-
-    fn is_transferred(self) -> bool {
-        matches!(self, ContinuationActivationKind::Transfer)
-    }
-
     fn caller_segment(self, current_segment: Option<SegmentId>) -> Option<SegmentId> {
         match self {
             ContinuationActivationKind::Resume => current_segment,
@@ -279,6 +284,7 @@ pub struct VM {
     pub current_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
+    pub(crate) pending_trace_observer_events: Vec<TraceObserverEvent>,
     pub continuation_registry: HashMap<ContId, Continuation>,
     pub active_run_token: Option<u64>,
 }
@@ -296,6 +302,7 @@ impl VM {
             current_segment: None,
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
+            pending_trace_observer_events: Vec::new(),
             continuation_registry: HashMap::new(),
             active_run_token: None,
         }
@@ -315,6 +322,7 @@ impl VM {
         let token = NEXT_RUN_TOKEN.fetch_add(1, Ordering::Relaxed);
         self.active_run_token = Some(token);
         self.trace_state.clear();
+        self.pending_trace_observer_events.clear();
         self.interceptor_state.clear_for_run();
         self.run_handlers.clear();
         token
@@ -335,6 +343,7 @@ impl VM {
         self.run_handlers.clear();
         self.continuation_registry.clear();
         self.consumed_cont_ids.clear();
+        self.pending_trace_observer_events.clear();
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
