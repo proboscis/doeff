@@ -2657,3 +2657,15 @@ rules:
       include:
         - "**/packages/doeff-vm-core/src/**"
     pattern-regex: 'k_current\.parent|check_dispatch_completion|mark_dispatch_completed|mark_dispatch_threw|lazy_pop_completed'
+
+  - id: vm-dispatch-origin-not-on-prompt-boundary
+    languages: [rust]
+    severity: ERROR
+    message: |
+      ISSUE-287 review: DispatchOrigin must live on the active handler segment,
+      not the prompt boundary. Prompt-boundary ownership conflates body
+      completion with handler return.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    pattern-regex: 'prompt_seg\.push_frame\(Frame::DispatchOrigin|fn remove_dispatch_origin\b'
