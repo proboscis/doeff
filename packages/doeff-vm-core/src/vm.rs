@@ -41,7 +41,7 @@ use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::TraceState;
 use crate::value::Value;
 
-pub use crate::dispatch::DispatchContext;
+pub use crate::dispatch::{Dispatch, DispatchContext};
 pub use crate::rust_store::RustStore;
 
 static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
@@ -557,7 +557,8 @@ impl VM {
         let Some(ctx) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
             return false;
         };
-        Self::continuation_chain_contains_eval_in_scope_return(&ctx.k_current)
+        ctx.current_k_current()
+            .is_some_and(|k| Self::continuation_chain_contains_eval_in_scope_return(k))
             || Self::continuation_chain_contains_eval_in_scope_return(&ctx.k_origin)
     }
 
@@ -1036,13 +1037,21 @@ impl VM {
             Self::remap_interceptor_markers_in_segment(seg, marker_remap);
         }
 
-        let dispatch_depth = self.dispatch_state.depth();
-        for idx in 0..dispatch_depth {
-            let Some(ctx) = self.dispatch_state.get_mut(idx) else {
-                continue;
-            };
-            Self::remap_interceptor_markers_in_continuation(&mut ctx.k_origin, marker_remap);
-            Self::remap_interceptor_markers_in_continuation(&mut ctx.k_current, marker_remap);
+        for d in self.dispatch_state.dispatches_mut().values_mut() {
+            Self::remap_interceptor_markers_in_continuation(&mut d.k_origin, marker_remap);
+            for activation in &mut d.activations {
+                Self::remap_interceptor_markers_in_continuation(
+                    &mut activation.k_current,
+                    marker_remap,
+                );
+                Self::remap_interceptor_markers_in_continuation(
+                    &mut activation.k_passed,
+                    marker_remap,
+                );
+                if let Some(throw_target) = &mut activation.throw_target {
+                    Self::remap_interceptor_markers_in_continuation(throw_target, marker_remap);
+                }
+            }
         }
 
         for continuation in self.continuation_registry.values_mut() {
@@ -1269,28 +1278,27 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<(usize, String)> {
-        let ctx = self
-            .dispatch_state
-            .find_by_dispatch_id(dispatch_id)?
-            .clone();
-        let marker = *ctx.handler_chain.get(ctx.handler_idx)?;
+        let d = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+        let handler_idx = d.current_handler_idx()?;
+        let marker = *d.handler_chain.get(handler_idx)?;
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
-        Some((ctx.handler_idx, name))
+        Some((handler_idx, name))
     }
 
     fn current_segment_is_active_handler_for_dispatch(&self, dispatch_id: DispatchId) -> bool {
         let Some(seg_id) = self.current_segment else {
             return false;
         };
-        let Some(ctx) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
+        let Some(d) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
             return false;
         };
-        seg_id == ctx.active_handler_seg_id
+        d.current_active_handler_seg_id()
+            .is_some_and(|active_seg| seg_id == active_seg)
     }
 
     fn current_active_handler_dispatch_id(&self) -> Option<DispatchId> {
         self.interceptor_state.current_active_handler_dispatch_id(
-            self.dispatch_state.contexts(),
+            self.dispatch_state.dispatches_ref(),
             self.current_segment,
             &self.segments,
         )
@@ -1323,8 +1331,9 @@ impl VM {
     ) -> bool {
         self.dispatch_state
             .find_by_dispatch_id(dispatch_id)
-            .is_some_and(|ctx| {
-                ctx.k_current
+            .and_then(|d| d.current_k_current())
+            .is_some_and(|k_current| {
+                k_current
                     .frames_snapshot
                     .iter()
                     .any(|frame| match frame {
@@ -1361,7 +1370,7 @@ impl VM {
         }
         self.dispatch_state
             .find_by_dispatch_id(dispatch_id)
-            .map(|ctx| ctx.k_current.clone())
+            .and_then(|d| d.current_k_current().cloned())
     }
 
     fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
@@ -1501,7 +1510,7 @@ impl VM {
             exception,
             &self.segments,
             self.current_segment,
-            self.dispatch_state.contexts(),
+            self.dispatch_state.dispatches_ref(),
         )
     }
 
@@ -1517,7 +1526,7 @@ impl VM {
             exception,
             &self.segments,
             self.current_segment,
-            self.dispatch_state.contexts(),
+            self.dispatch_state.dispatches_ref(),
         )
     }
 
@@ -2268,12 +2277,16 @@ impl VM {
                         "RustProgramContinuation: dispatch context not found",
                     ));
                 };
+                let handler_idx = ctx.current_handler_idx().unwrap_or(0);
                 let marker = ctx
                     .handler_chain
-                    .get(ctx.handler_idx)
+                    .get(handler_idx)
                     .copied()
                     .unwrap_or_else(Marker::fresh);
-                let k = ctx.k_current.clone();
+                let k = ctx
+                    .current_k_current()
+                    .cloned()
+                    .unwrap_or_else(|| ctx.k_origin.clone());
                 self.current_seg_mut().pending_python =
                     Some(PendingPython::RustProgramContinuation { marker, k });
                 StepEvent::NeedsPython(call)
@@ -2330,14 +2343,14 @@ impl VM {
         self.interceptor_state.current_chain(
             self.current_segment,
             &self.segments,
-            self.dispatch_state.contexts(),
+            self.dispatch_state.dispatches_ref(),
         )
     }
 
     fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
         self.interceptor_state.visible_to_active_handler(
             interceptor_marker,
-            self.dispatch_state.contexts(),
+            self.dispatch_state.dispatches_ref(),
             self.current_segment,
             &self.segments,
         )
@@ -3951,15 +3964,17 @@ impl VM {
         // together to keep dispatch/switch behavior bounded under heavy task churn.
         let exclude_prompt = self.segments.get(seg_id).and_then(|seg| {
             let dispatch_id = seg.dispatch_id?;
-            let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
-            if ctx.completed {
+            let d = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+            if d.completed {
                 return None;
             }
-            if seg_id != ctx.active_handler_seg_id {
+            let active_seg = d.current_active_handler_seg_id()?;
+            if seg_id != active_seg {
                 return None;
             }
-            let active_marker = *ctx.handler_chain.get(ctx.handler_idx)?;
-            let is_same_effect = Self::same_effect_python_type(&effect, &ctx.effect);
+            let handler_idx = d.current_handler_idx()?;
+            let active_marker = *d.handler_chain.get(handler_idx)?;
+            let is_same_effect = Self::same_effect_python_type(&effect, &d.effect);
             if !is_same_effect {
                 // Cross-effect yields from handler clauses should remain dispatchable.
                 // Only same-effect re-dispatch is excluded to prevent self-recursion.
@@ -4065,16 +4080,21 @@ impl VM {
         let handler_seg_id = self.alloc_segment(handler_seg);
         self.current_segment = Some(handler_seg_id);
 
-        self.dispatch_state.push_dispatch(DispatchContext {
+        let activation = crate::dispatch::HandlerActivation {
+            handler_idx,
+            active_handler_seg_id: handler_seg_id,
+            k_passed: k_user.clone(),
+            k_current: k_user.clone(),
+            throw_target: None,
+            supports_error_context_conversion,
+        };
+        self.dispatch_state.insert(Dispatch {
             dispatch_id,
             effect: effect.clone(),
             is_execution_context_effect,
             handler_chain: handler_chain.iter().map(|entry| entry.marker).collect(),
-            handler_idx,
-            active_handler_seg_id: handler_seg_id,
-            supports_error_context_conversion,
+            activations: vec![activation],
             k_origin: k_user.clone(),
-            k_current: k_user.clone(),
             prompt_seg_id,
             completed: false,
             original_exception,
@@ -4148,25 +4168,24 @@ impl VM {
 
     fn finalize_active_dispatches_as_threw(&mut self, exception: &PyException) {
         let exception_repr = Self::exception_repr(exception);
-        for idx in 0..self.dispatch_state.depth() {
-            let Some(ctx) = self.dispatch_state.get(idx) else {
-                continue;
-            };
-            let dispatch_id = ctx.dispatch_id;
-            let completed = ctx.completed;
-            if completed {
-                continue;
-            }
+        let dispatch_ids: Vec<DispatchId> = self
+            .dispatch_state
+            .dispatches_ref()
+            .values()
+            .filter(|d| !d.completed)
+            .map(|d| d.dispatch_id)
+            .collect();
+        for dispatch_id in dispatch_ids {
             if self.dispatch_has_terminal_handler_action(dispatch_id) {
                 self.dispatch_state
-                    .mark_completed_at(idx, &mut self.consumed_cont_ids);
+                    .mark_completed(dispatch_id, &mut self.consumed_cont_ids);
                 continue;
             }
             let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
             else {
                 self.dispatch_state
-                    .mark_completed_at(idx, &mut self.consumed_cont_ids);
+                    .mark_completed(dispatch_id, &mut self.consumed_cont_ids);
                 continue;
             };
             self.trace_state.emit_handler_completed(
@@ -4178,7 +4197,7 @@ impl VM {
                 },
             );
             self.dispatch_state
-                .mark_completed_at(idx, &mut self.consumed_cont_ids);
+                .mark_completed(dispatch_id, &mut self.consumed_cont_ids);
         }
     }
 
@@ -4613,16 +4632,20 @@ impl VM {
         };
         let (handler_chain, start_idx, from_idx, parent_k_user) =
             match self.dispatch_state.find_by_dispatch_id(dispatch_id) {
-                Some(ctx) => (
-                    ctx.handler_chain.clone(),
-                    ctx.handler_idx + 1,
-                    ctx.handler_idx,
-                    if kind == ForwardKind::Delegate {
-                        Some(ctx.k_current.clone())
-                    } else {
-                        None
-                    },
-                ),
+                Some(d) => {
+                    let handler_idx = d.current_handler_idx().unwrap_or(0);
+                    let k_current = d.current_k_current().cloned();
+                    (
+                        d.handler_chain.clone(),
+                        handler_idx + 1,
+                        handler_idx,
+                        if kind == ForwardKind::Delegate {
+                            k_current
+                        } else {
+                            None
+                        },
+                    )
+                }
                 None => {
                     return StepEvent::Error(VMError::internal(format!(
                         "{}: dispatch {} not found",
@@ -4651,12 +4674,14 @@ impl VM {
                 };
                 k_new.parent = Some(Arc::new(parent_k_user));
                 self.clear_segment_frames(inner_seg_id);
-                let Some(ctx) = self.dispatch_state.find_mut_by_dispatch_id(dispatch_id) else {
+                let Some(d) = self.dispatch_state.find_mut_by_dispatch_id(dispatch_id) else {
                     return StepEvent::Error(VMError::internal(
                         "Delegate called with missing dispatch context",
                     ));
                 };
-                ctx.k_current = k_new;
+                if let Some(activation) = d.current_activation_mut() {
+                    activation.k_current = k_new;
+                }
             }
             ForwardKind::Pass => {
                 self.clear_segment_frames(inner_seg_id);
@@ -4717,16 +4742,42 @@ impl VM {
                 let handler_seg_id = self.alloc_segment(handler_seg);
 
                 let k_user = {
-                    let Some(ctx) = self.dispatch_state.find_mut_by_dispatch_id(dispatch_id) else {
+                    let Some(d) = self.dispatch_state.find_mut_by_dispatch_id(dispatch_id) else {
                         return StepEvent::Error(VMError::internal(
                             "forward target dispatch context not found",
                         ));
                     };
-                    ctx.handler_idx = idx;
-                    ctx.active_handler_seg_id = handler_seg_id;
-                    ctx.supports_error_context_conversion = supports_error_context_conversion;
-                    ctx.effect = effect.clone();
-                    ctx.k_current.clone()
+                    d.effect = effect.clone();
+                    match kind {
+                        ForwardKind::Delegate => {
+                            // Delegate pushes a new activation
+                            let k_current = d
+                                .current_k_current()
+                                .cloned()
+                                .unwrap_or_else(|| d.k_origin.clone());
+                            d.activations.push(crate::dispatch::HandlerActivation {
+                                handler_idx: idx,
+                                active_handler_seg_id: handler_seg_id,
+                                k_passed: k_current.clone(),
+                                k_current: k_current.clone(),
+                                throw_target: None,
+                                supports_error_context_conversion,
+                            });
+                            k_current
+                        }
+                        ForwardKind::Pass => {
+                            // Pass replaces current activation in-place
+                            if let Some(activation) = d.current_activation_mut() {
+                                activation.handler_idx = idx;
+                                activation.active_handler_seg_id = handler_seg_id;
+                                activation.supports_error_context_conversion =
+                                    supports_error_context_conversion;
+                                activation.k_current.clone()
+                            } else {
+                                d.k_origin.clone()
+                            }
+                        }
+                    }
                 };
 
                 self.current_segment = Some(handler_seg_id);
@@ -4764,14 +4815,12 @@ impl VM {
         self.lazy_pop_completed();
 
         let active_python_handler = self.current_dispatch_id().and_then(|dispatch_id| {
-            let ctx = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
-            let marker = *ctx.handler_chain.get(ctx.handler_idx)?;
+            let d = self.dispatch_state.find_by_dispatch_id(dispatch_id)?;
+            let handler_idx = d.current_handler_idx()?;
+            let marker = *d.handler_chain.get(handler_idx)?;
             let (_, kind, _, _) = self.marker_handler_trace_info(marker)?;
-            Some((
-                dispatch_id,
-                kind == HandlerKind::Python,
-                ctx.k_current.cont_id,
-            ))
+            let k_current = d.current_k_current()?;
+            Some((dispatch_id, kind == HandlerKind::Python, k_current.cont_id))
         });
         if let Some((_dispatch_id, true, cont_id)) = active_python_handler {
             if self.continuation_registry.contains_key(&cont_id)
@@ -4834,27 +4883,31 @@ impl VM {
                 value_repr: value_repr.clone(),
             },
         );
-        self.emit_resume_event(
-            top_snapshot.dispatch_id,
-            handler_name,
-            value_repr,
-            &top_snapshot.k_current,
-            false,
-        );
+        if let Some(k_current) = top_snapshot.current_k_current() {
+            self.emit_resume_event(
+                top_snapshot.dispatch_id,
+                handler_name,
+                value_repr,
+                k_current,
+                false,
+            );
+        }
 
         let original_exception = {
-            let Some(ctx) = self.dispatch_state.find_mut_by_dispatch_id(dispatch_id) else {
+            let Some(d) = self.dispatch_state.find_mut_by_dispatch_id(dispatch_id) else {
                 self.current_seg_mut().mode = Mode::Deliver(value);
                 return StepEvent::Continue;
             };
 
-            if caller_id == ctx.prompt_seg_id {
-                ctx.completed = true;
-                self.consumed_cont_ids.insert(ctx.k_current.cont_id);
+            if caller_id == d.prompt_seg_id {
+                d.completed = true;
+                if let Some(activation) = d.current_activation() {
+                    self.consumed_cont_ids.insert(activation.k_current.cont_id);
+                }
             }
 
-            if ctx.completed {
-                ctx.original_exception.clone()
+            if d.completed {
+                d.original_exception.clone()
             } else {
                 None
             }
@@ -4924,10 +4977,14 @@ impl VM {
         let Some(dispatch_id) = self.current_dispatch_id() else {
             return StepEvent::Error(VMError::internal("GetContinuation outside dispatch"));
         };
-        let Some(ctx) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
+        let Some(d) = self.dispatch_state.find_by_dispatch_id(dispatch_id) else {
             return StepEvent::Error(VMError::internal("GetContinuation: dispatch not found"));
         };
-        let k = ctx.k_current.clone();
+        let Some(k) = d.current_k_current().cloned() else {
+            return StepEvent::Error(VMError::internal(
+                "GetContinuation: no active activation",
+            ));
+        };
         self.register_continuation(k.clone());
         self.current_seg_mut().mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue
