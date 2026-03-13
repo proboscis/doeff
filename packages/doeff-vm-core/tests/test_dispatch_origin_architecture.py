@@ -18,11 +18,31 @@ def _runtime_source(path: Path) -> str:
 def test_frame_dispatch_origin_is_runtime_dispatch_anchor() -> None:
     source = _runtime_source(FRAME_RS)
     assert "DispatchOrigin {" in source, (
-        "Dispatch must be anchored in Frame::DispatchOrigin on the prompt boundary."
+        "Dispatch must be anchored in Frame::DispatchOrigin on the active handler segment."
     )
     assert "dispatch_id: DispatchId" in source
     assert "effect: DispatchEffect" in source
     assert "k_origin: crate::continuation::Continuation" in source or "k_origin: Continuation" in source
+
+
+def test_dispatch_origin_is_installed_on_handler_segment_not_prompt_boundary() -> None:
+    source = VM_RS.read_text(encoding="utf-8")
+
+    assert "handler_seg.push_frame(Frame::DispatchOrigin" in source, (
+        "DispatchOrigin must be installed on the handler segment so only handler-return paths "
+        "interact with dispatch cleanup/enrichment."
+    )
+    assert "prompt_seg.push_frame(Frame::DispatchOrigin" not in source, (
+        "Prompt-boundary DispatchOrigin conflates body completion with handler return."
+    )
+
+
+def test_dispatch_origin_cleanup_does_not_linearly_scan_all_segments() -> None:
+    source = VM_RS.read_text(encoding="utf-8")
+    assert "fn remove_dispatch_origin" not in source, (
+        "DispatchOrigin cleanup must not linearly scan the segment arena; it should be owned by "
+        "the active handler segment and cleaned up structurally."
+    )
 
 
 def test_vm_runtime_has_no_dispatch_side_table_left() -> None:
