@@ -116,6 +116,19 @@ def test_writer_effects():
     assert logs[2] == "Done"
 
 
+def test_run_result_exposes_dispatch_lookup_stats():
+    result = doeff_vm.run(_with_handlers(counter_program(), doeff_vm.state))
+
+    assert result.is_ok()
+    stats = result.dispatch_lookup_stats
+    assert isinstance(stats, dict)
+    assert stats["dispatch_origin_in_segment_calls"] >= 1
+    assert stats["dispatch_origins_calls"] >= 0
+    assert stats["frames_scanned"] >= 0
+    assert stats["lookup_wall_time_ns"] >= 0
+    assert stats["step_wall_time_ns"] >= stats["lookup_wall_time_ns"]
+
+
 @do
 def state_and_logging_program() -> Program[int]:
     yield Tell("Setting counter")

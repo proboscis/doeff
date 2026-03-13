@@ -601,8 +601,7 @@ class TestLayer5WithHandlerResume:
             _interceptor,
             WithHandler(in_memory_cache_handler(), Local(env, body)),
         )
-        # Same correctness-oriented stress profile as the sqlite-backed variant above.
-        result = _run_sync_with_custom_timeout(program, 30)
+        result = _run_sync_with_timeout(program)
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 
@@ -653,9 +652,7 @@ class TestLayer5WithHandlerResume:
                 _interceptor,
                 WithHandler(sqlite_cache_handler(db_path), Local(env, body)),
             )
-            # This is a high-concurrency correctness stress case; the exact wall-clock budget is
-            # less important than verifying the scheduler/cache stack makes forward progress.
-            result = _run_sync_with_custom_timeout(program, 30)
+            result = _run_sync_with_timeout(program)
 
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
@@ -714,8 +711,7 @@ class TestLayer5WithHandlerResume:
             _interceptor,
             WithHandler(in_memory_cache_handler(), Local(env, body)),
         )
-        # Same correctness-oriented stress profile as the sqlite-backed variant above.
-        result = _run_sync_with_custom_timeout(program, 30)
+        result = _run_sync_with_timeout(program)
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 
@@ -775,10 +771,7 @@ class TestLayer5WithHandlerResume:
             _interceptor,
             WithHandler(in_memory_cache_handler(), Local(env, body)),
         )
-        # This is a correctness stress test for interleaved scheduler tasks, not a strict
-        # performance budget. The structural dispatch derivation is slower than the old side
-        # table under this load, so allow a wider timeout while still detecting deadlocks.
-        result = _run_sync_with_custom_timeout(program, 30)
+        result = _run_sync_with_timeout(program)
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 
@@ -835,8 +828,7 @@ class TestLayer5WithHandlerResume:
             _interceptor,
             WithHandler(in_memory_cache_handler(), Local(env, body)),
         )
-        # Same correctness-oriented stress profile as the sqlite-backed variant above.
-        result = _run_sync_with_custom_timeout(program, 30)
+        result = _run_sync_with_timeout(program)
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 
