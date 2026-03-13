@@ -352,9 +352,16 @@ def test_exception_spawn_boundaries_global_removed() -> None:
         scheduler_rs = ROOT / "packages" / "doeff-core-effects" / "src" / "scheduler" / "mod.rs"
     scheduler_src = scheduler_rs.read_text()
     vm_rs = ROOT / "packages" / "doeff-vm" / "src" / "vm.rs"
+    vm_sources = [vm_rs]
     if not vm_rs.exists():
         vm_rs = ROOT / "packages" / "doeff-vm-core" / "src" / "vm.rs"
-    vm_src = vm_rs.read_text()
+        vm_sources = [
+            vm_rs,
+            vm_rs.parent / "vm" / "dispatch.rs",
+            vm_rs.parent / "vm" / "step.rs",
+            vm_rs.parent / "vm" / "vm_trace.rs",
+        ]
+    vm_src = "\n".join(path.read_text() for path in vm_sources if path.exists())
     assert "EXCEPTION_SPAWN_BOUNDARIES" not in scheduler_src
     assert "take_exception_spawn_boundaries" not in scheduler_src
     assert "take_exception_spawn_boundaries" not in vm_src
