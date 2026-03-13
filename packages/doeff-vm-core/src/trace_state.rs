@@ -556,40 +556,58 @@ impl TraceState {
                 let mut source_file = MISSING_UNKNOWN.to_string();
                 let mut source_line = 0u32;
 
-                let mut tb = exc_tb
-                    .as_ref()
-                    .map(|tb| tb.bind(py).clone().into_any())
-                    .or_else(|| exc_value_bound.getattr("__traceback__").ok());
-
-                while let Some(tb_obj) = tb {
-                    let next = tb_obj.getattr("tb_next").ok();
-                    let has_next = next.as_ref().is_some_and(|n| !n.is_none());
-                    if has_next {
-                        tb = next;
-                        continue;
-                    }
-
-                    source_line = tb_obj
-                        .getattr("tb_lineno")
-                        .ok()
-                        .and_then(|v| v.extract::<u32>().ok())
-                        .unwrap_or(0);
-
-                    if let Ok(frame) = tb_obj.getattr("tb_frame") {
-                        if let Ok(code) = frame.getattr("f_code") {
-                            function_name = code
-                                .getattr("co_name")
-                                .ok()
-                                .and_then(|v| v.extract::<String>().ok())
-                                .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
-                            source_file = code
-                                .getattr("co_filename")
-                                .ok()
-                                .and_then(|v| v.extract::<String>().ok())
-                                .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
+                if let Ok(do_module) = PyModule::import(py, "doeff.do") {
+                    if let Ok(resolve_location) = do_module.getattr("resolve_exception_location") {
+                        if let Ok(Some((resolved_function, resolved_file, resolved_line))) =
+                            resolve_location
+                                .call1((exc_value_bound.clone(),))
+                                .and_then(|value| {
+                                    value.extract::<Option<(String, String, u32)>>()
+                                })
+                        {
+                            function_name = resolved_function;
+                            source_file = resolved_file;
+                            source_line = resolved_line;
                         }
                     }
-                    break;
+                }
+
+                if source_line == 0 {
+                    let mut tb = exc_tb
+                        .as_ref()
+                        .map(|tb| tb.bind(py).clone().into_any())
+                        .or_else(|| exc_value_bound.getattr("__traceback__").ok());
+
+                    while let Some(tb_obj) = tb {
+                        let next = tb_obj.getattr("tb_next").ok();
+                        let has_next = next.as_ref().is_some_and(|n| !n.is_none());
+                        if has_next {
+                            tb = next;
+                            continue;
+                        }
+
+                        source_line = tb_obj
+                            .getattr("tb_lineno")
+                            .ok()
+                            .and_then(|v| v.extract::<u32>().ok())
+                            .unwrap_or(0);
+
+                        if let Ok(frame) = tb_obj.getattr("tb_frame") {
+                            if let Ok(code) = frame.getattr("f_code") {
+                                function_name = code
+                                    .getattr("co_name")
+                                    .ok()
+                                    .and_then(|v| v.extract::<String>().ok())
+                                    .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
+                                source_file = code
+                                    .getattr("co_filename")
+                                    .ok()
+                                    .and_then(|v| v.extract::<String>().ok())
+                                    .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
+                            }
+                        }
+                        break;
+                    }
                 }
 
                 ActiveChainEntry::ExceptionSite {

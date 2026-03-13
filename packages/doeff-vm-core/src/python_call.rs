@@ -43,6 +43,7 @@ pub enum PendingPython {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
+        incoming_throw: Option<PyException>,
     },
     ExpandReturn {
         metadata: Option<CallMetadata>,
