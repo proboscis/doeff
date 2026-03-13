@@ -344,15 +344,21 @@ impl VM {
         metadata: &CallMetadata,
         handler_kind: Option<HandlerKind>,
     ) {
-        self.trace_state.emit_frame_entered(
-            metadata,
-            Self::program_call_repr(metadata),
+        self.pending_trace_events.push(CaptureEvent::FrameEntered {
+            frame_id: metadata.frame_id as FrameId,
+            function_name: metadata.function_name.clone(),
+            source_file: metadata.source_file.clone(),
+            source_line: metadata.source_line,
+            args_repr: metadata.args_repr.clone(),
+            program_call_repr: Self::program_call_repr(metadata),
             handler_kind,
-        );
+        });
     }
 
     pub(super) fn emit_frame_exited(&mut self, metadata: &CallMetadata) {
-        self.trace_state.emit_frame_exited(metadata);
+        self.pending_trace_events.push(CaptureEvent::FrameExited {
+            function_name: metadata.function_name.clone(),
+        });
     }
 
     pub(super) fn emit_handler_threw_for_dispatch(
@@ -375,12 +381,15 @@ impl VM {
         let Some((handler_index, handler_name)) = handler_identity else {
             return;
         };
-        self.trace_state.emit_handler_threw_for_dispatch(
-            dispatch_id,
-            handler_name,
-            handler_index,
-            Self::exception_repr(exc),
-        );
+        self.pending_trace_events
+            .push(CaptureEvent::HandlerCompleted {
+                dispatch_id,
+                handler_name,
+                handler_index,
+                action: HandlerAction::Threw {
+                    exception_repr: Self::exception_repr(exc),
+                },
+            });
     }
 
     pub(super) fn emit_resume_event(
@@ -391,17 +400,33 @@ impl VM {
         continuation: &Continuation,
         transferred: bool,
     ) {
-        self.trace_state.emit_resume_event(
-            dispatch_id,
-            handler_name,
-            value_repr,
-            continuation,
-            transferred,
-            TraceState::continuation_resume_location,
-        );
+        if let Some((resumed_function_name, source_file, source_line)) =
+            TraceState::continuation_resume_location(continuation)
+        {
+            if transferred {
+                self.pending_trace_events.push(CaptureEvent::Transferred {
+                    dispatch_id,
+                    handler_name,
+                    value_repr,
+                    resumed_function_name,
+                    source_file,
+                    source_line,
+                });
+            } else {
+                self.pending_trace_events.push(CaptureEvent::Resumed {
+                    dispatch_id,
+                    handler_name,
+                    value_repr,
+                    resumed_function_name,
+                    source_file,
+                    source_line,
+                });
+            }
+        }
     }
 
-    pub fn assemble_traceback_entries(&self, exception: &PyException) -> Vec<TraceEntry> {
+    pub fn assemble_traceback_entries(&mut self, exception: &PyException) -> Vec<TraceEntry> {
+        self.flush_trace_events();
         self.trace_state.assemble_traceback_entries(
             exception,
             &self.segments,
@@ -417,7 +442,8 @@ impl VM {
         TraceState::enrich_original_exception_with_context(original, context_value)
     }
 
-    pub fn assemble_active_chain(&self, exception: Option<&PyException>) -> Vec<ActiveChainEntry> {
+    pub fn assemble_active_chain(&mut self, exception: Option<&PyException>) -> Vec<ActiveChainEntry> {
+        self.flush_trace_events();
         self.trace_state.assemble_active_chain(
             exception,
             &self.segments,
