@@ -54,6 +54,17 @@ def test_vm_failfast_rust_rules_detect_known_bad_examples() -> None:
     assert all(_has_rule(check_ids, rule_id) for rule_id in expected)
 
 
+def test_vm_core_semgrep_rules_detect_known_bad_examples() -> None:
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/rust"
+    check_ids = _semgrep_rule_ids(
+        REPO_ROOT / "packages/doeff-vm-core/.semgrep.yaml",
+        "packages/doeff-vm-core/src",
+        cwd=fixture_root,
+    )
+
+    assert _has_rule(check_ids, "vm-core-no-pyvm-imports")
+
+
 def test_vm_failfast_python_rules_detect_known_bad_examples() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     check_ids = _semgrep_rule_ids(

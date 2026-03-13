@@ -13,7 +13,42 @@ use crate::frame::CallMetadata;
 use crate::ids::{PromiseId, TaskId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
-use crate::pyvm::{PyTraceFrame, PyTraceHop};
+
+#[pyclass(frozen, name = "TraceFrame")]
+pub struct PyTraceFrame {
+    #[pyo3(get)]
+    pub func_name: String,
+    #[pyo3(get)]
+    pub source_file: String,
+    #[pyo3(get)]
+    pub source_line: u32,
+}
+
+#[pymethods]
+impl PyTraceFrame {
+    #[new]
+    fn new(func_name: String, source_file: String, source_line: u32) -> Self {
+        Self {
+            func_name,
+            source_file,
+            source_line,
+        }
+    }
+}
+
+#[pyclass(frozen, name = "TraceHop")]
+pub struct PyTraceHop {
+    #[pyo3(get)]
+    pub frames: Vec<Py<PyTraceFrame>>,
+}
+
+#[pymethods]
+impl PyTraceHop {
+    #[new]
+    fn new(frames: Vec<Py<PyTraceFrame>>) -> Self {
+        Self { frames }
+    }
+}
 
 /// Opaque handle to a spawned task.
 #[derive(Clone, Copy, Debug)]

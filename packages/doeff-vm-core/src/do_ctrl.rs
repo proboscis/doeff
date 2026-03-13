@@ -1,6 +1,8 @@
 //! DoCtrl primitives.
 
+use pyo3::exceptions::{PyRuntimeError, PyStopIteration};
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
 
 use crate::continuation::Continuation;
 use crate::driver::PyException;
@@ -38,6 +40,158 @@ impl InterceptMode {
             Self::Include => matches_filter,
             Self::Exclude => !matches_filter,
         }
+    }
+}
+
+/// Discriminant stored as `tag: u8` on control/effect base classes.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoExprTag {
+    Pure = 0,
+    Map = 2,
+    FlatMap = 3,
+    WithHandler = 4,
+    Perform = 5,
+    Resume = 6,
+    Transfer = 7,
+    Delegate = 8,
+    GetContinuation = 9,
+    GetHandlers = 10,
+    GetCallStack = 11,
+    Eval = 12,
+    CreateContinuation = 13,
+    ResumeContinuation = 14,
+    AsyncEscape = 15,
+    Apply = 16,
+    Expand = 17,
+    Pass = 19,
+    GetTraceback = 20,
+    WithIntercept = 21,
+    Discontinue = 22,
+    EvalInScope = 23,
+    Effect = 128,
+    Unknown = 255,
+}
+
+impl TryFrom<u8> for DoExprTag {
+    type Error = u8;
+
+    fn try_from(v: u8) -> Result<Self, u8> {
+        match v {
+            0 => Ok(DoExprTag::Pure),
+            2 => Ok(DoExprTag::Map),
+            3 => Ok(DoExprTag::FlatMap),
+            4 => Ok(DoExprTag::WithHandler),
+            5 => Ok(DoExprTag::Perform),
+            6 => Ok(DoExprTag::Resume),
+            7 => Ok(DoExprTag::Transfer),
+            8 => Ok(DoExprTag::Delegate),
+            9 => Ok(DoExprTag::GetContinuation),
+            10 => Ok(DoExprTag::GetHandlers),
+            11 => Ok(DoExprTag::GetCallStack),
+            12 => Ok(DoExprTag::Eval),
+            13 => Ok(DoExprTag::CreateContinuation),
+            14 => Ok(DoExprTag::ResumeContinuation),
+            15 => Ok(DoExprTag::AsyncEscape),
+            16 => Ok(DoExprTag::Apply),
+            17 => Ok(DoExprTag::Expand),
+            19 => Ok(DoExprTag::Pass),
+            20 => Ok(DoExprTag::GetTraceback),
+            21 => Ok(DoExprTag::WithIntercept),
+            22 => Ok(DoExprTag::Discontinue),
+            23 => Ok(DoExprTag::EvalInScope),
+            128 => Ok(DoExprTag::Effect),
+            255 => Ok(DoExprTag::Unknown),
+            other => Err(other),
+        }
+    }
+}
+
+#[pyclass(subclass, frozen, name = "DoExpr")]
+pub struct PyDoExprBase;
+
+impl PyDoExprBase {
+    fn new_base() -> Self {
+        PyDoExprBase
+    }
+}
+
+#[pymethods]
+impl PyDoExprBase {
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        PyDoExprBase::new_base()
+    }
+
+    fn to_generator(slf: Py<Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let expr = slf.into_any();
+        let generator = Bound::new(
+            py,
+            DoExprOnceGenerator {
+                expr: Some(expr),
+                done: false,
+            },
+        )?
+        .into_any()
+        .unbind();
+        Ok(generator)
+    }
+}
+
+#[pyclass(name = "_DoExprOnceGenerator")]
+struct DoExprOnceGenerator {
+    expr: Option<Py<PyAny>>,
+    done: bool,
+}
+
+#[pymethods]
+impl DoExprOnceGenerator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        if self.done {
+            return Ok(None);
+        }
+        self.done = true;
+        let expr = self
+            .expr
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("DoExprOnceGenerator already consumed"))?;
+        let _ = py;
+        Ok(Some(expr))
+    }
+
+    fn send(&mut self, py: Python<'_>, value: Py<PyAny>) -> PyResult<Py<PyAny>> {
+        if !self.done {
+            return match self.__next__(py)? {
+                Some(v) => Ok(v),
+                None => Err(PyStopIteration::new_err(py.None())),
+            };
+        }
+        Err(PyStopIteration::new_err((value,)))
+    }
+
+    fn throw(&mut self, _py: Python<'_>, exc: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        Err(PyErr::from_value(exc))
+    }
+}
+
+#[pyclass(subclass, frozen, extends=PyDoExprBase, name = "DoCtrlBase")]
+pub struct PyDoCtrlBase {
+    #[pyo3(get)]
+    pub tag: u8,
+}
+
+#[pymethods]
+impl PyDoCtrlBase {
+    #[new]
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase).add_subclass(PyDoCtrlBase {
+            tag: DoExprTag::Unknown as u8,
+        })
     }
 }
 
