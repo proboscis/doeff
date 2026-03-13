@@ -6,9 +6,9 @@ use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
 use crate::capture::{
-    ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectCreationSite,
-    EffectResult, FrameId, HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry,
-    HandlerStatus, TraceEntry, TraceFrame, TraceHop,
+    ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
+    HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus,
+    TraceEntry, TraceFrame, TraceHop,
 };
 use crate::continuation::Continuation;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
@@ -104,180 +104,13 @@ impl TraceState {
         &self.active_chain_state
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn emit_dispatch_started(
-        &mut self,
-        dispatch_id: DispatchId,
-        effect_repr: String,
-        is_execution_context_effect: bool,
-        creation_site: Option<EffectCreationSite>,
-        handler_name: String,
-        handler_kind: HandlerKind,
-        handler_source_file: Option<String>,
-        handler_source_line: Option<u32>,
-        handler_chain_snapshot: Vec<HandlerSnapshotEntry>,
-        effect_frame_id: Option<FrameId>,
-        effect_function_name: Option<String>,
-        effect_source_file: Option<String>,
-        effect_source_line: Option<u32>,
-    ) {
-        self.apply_capture_event(CaptureEvent::DispatchStarted {
-            dispatch_id,
-            effect_repr,
-            is_execution_context_effect,
-            creation_site,
-            handler_name,
-            handler_kind,
-            handler_source_file,
-            handler_source_line,
-            handler_chain_snapshot,
-            effect_frame_id,
-            effect_function_name,
-            effect_source_file,
-            effect_source_line,
-        });
-    }
-
-    pub(crate) fn emit_handler_completed(
-        &mut self,
-        dispatch_id: DispatchId,
-        handler_name: String,
-        handler_index: usize,
-        action: HandlerAction,
-    ) {
-        self.apply_capture_event(CaptureEvent::HandlerCompleted {
-            dispatch_id,
-            handler_name,
-            handler_index,
-            action,
-        });
-    }
-
     pub(crate) fn clear(&mut self) {
         self.active_chain_state = ActiveChainAssemblyState::new();
     }
 
-    pub(crate) fn emit_frame_entered(
-        &mut self,
-        metadata: &CallMetadata,
-        program_call_repr: Option<String>,
-        handler_kind: Option<HandlerKind>,
-    ) {
-        self.apply_capture_event(CaptureEvent::FrameEntered {
-            frame_id: metadata.frame_id as FrameId,
-            function_name: metadata.function_name.clone(),
-            source_file: metadata.source_file.clone(),
-            source_line: metadata.source_line,
-            args_repr: metadata.args_repr.clone(),
-            program_call_repr,
-            handler_kind,
-        });
-    }
-
-    pub(crate) fn emit_frame_exited(&mut self, metadata: &CallMetadata) {
-        self.apply_capture_event(CaptureEvent::FrameExited {
-            function_name: metadata.function_name.clone(),
-        });
-    }
-
-    pub(crate) fn emit_handler_threw_for_dispatch(
-        &mut self,
-        dispatch_id: DispatchId,
-        handler_name: String,
-        handler_index: usize,
-        exception_repr: Option<String>,
-    ) {
-        self.apply_capture_event(CaptureEvent::HandlerCompleted {
-            dispatch_id,
-            handler_name,
-            handler_index,
-            action: HandlerAction::Threw { exception_repr },
-        });
-    }
-
-    pub(crate) fn emit_resume_event(
-        &mut self,
-        dispatch_id: DispatchId,
-        handler_name: String,
-        value_repr: Option<String>,
-        continuation: &Continuation,
-        transferred: bool,
-        continuation_resume_location: impl Fn(&Continuation) -> Option<(String, String, u32)>,
-    ) {
-        if let Some((resumed_function_name, source_file, source_line)) =
-            continuation_resume_location(continuation)
-        {
-            if transferred {
-                self.apply_capture_event(CaptureEvent::Transferred {
-                    dispatch_id,
-                    handler_name,
-                    value_repr,
-                    resumed_function_name,
-                    source_file,
-                    source_line,
-                });
-            } else {
-                self.apply_capture_event(CaptureEvent::Resumed {
-                    dispatch_id,
-                    handler_name,
-                    value_repr,
-                    resumed_function_name,
-                    source_file,
-                    source_line,
-                });
-            }
-        }
-    }
-
-    pub(crate) fn emit_delegated(
-        &mut self,
-        dispatch_id: DispatchId,
-        from_handler_name: String,
-        from_handler_index: usize,
-        to_handler_name: String,
-        to_handler_index: usize,
-        to_handler_kind: HandlerKind,
-        to_handler_source_file: Option<String>,
-        to_handler_source_line: Option<u32>,
-    ) {
-        self.apply_capture_event(CaptureEvent::Delegated {
-            dispatch_id,
-            from_handler_name,
-            from_handler_index,
-            to_handler_name,
-            to_handler_index,
-            to_handler_kind,
-            to_handler_source_file,
-            to_handler_source_line,
-        });
-    }
-
-    pub(crate) fn emit_passed(
-        &mut self,
-        dispatch_id: DispatchId,
-        from_handler_name: String,
-        from_handler_index: usize,
-        to_handler_name: String,
-        to_handler_index: usize,
-        to_handler_kind: HandlerKind,
-        to_handler_source_file: Option<String>,
-        to_handler_source_line: Option<u32>,
-    ) {
-        self.apply_capture_event(CaptureEvent::Passed {
-            dispatch_id,
-            from_handler_name,
-            from_handler_index,
-            to_handler_name,
-            to_handler_index,
-            to_handler_kind,
-            to_handler_source_file,
-            to_handler_source_line,
-        });
-    }
-
-    // TODO(TRACE-CAPTURE-LOG-SEPARATION follow-up): remove transient CaptureEvent
-    // construction in emit_* paths and mutate active_chain_state directly.
-    fn apply_capture_event(&mut self, event: CaptureEvent) {
+    /// Apply a single capture event to the active chain state.
+    /// Called from VM::flush_trace_events() — the single observation point.
+    pub(crate) fn apply_capture_event(&mut self, event: CaptureEvent) {
         Self::apply_active_chain_event(&mut self.active_chain_state, &event);
     }
 

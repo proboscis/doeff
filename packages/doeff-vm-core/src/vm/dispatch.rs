@@ -1053,27 +1053,28 @@ impl VM {
         let (handler_name, handler_kind, handler_source_file, handler_source_line) =
             Self::handler_trace_info(&handler);
         let effect_site = TraceState::effect_site_from_continuation(&k_user);
-        self.trace_state.emit_dispatch_started(
-            dispatch_id,
-            Self::effect_repr(&effect),
-            is_execution_context_effect,
-            Self::effect_creation_site_from_continuation(&k_user),
-            handler_name,
-            handler_kind,
-            handler_source_file,
-            handler_source_line,
-            handler_chain_snapshot,
-            effect_site.as_ref().map(|(frame_id, _, _, _)| *frame_id),
-            effect_site
-                .as_ref()
-                .map(|(_, function_name, _, _)| function_name.clone()),
-            effect_site
-                .as_ref()
-                .map(|(_, _, source_file, _)| source_file.clone()),
-            effect_site
-                .as_ref()
-                .map(|(_, _, _, source_line)| *source_line),
-        );
+        self.pending_trace_events
+            .push(CaptureEvent::DispatchStarted {
+                dispatch_id,
+                effect_repr: Self::effect_repr(&effect),
+                is_execution_context_effect,
+                creation_site: Self::effect_creation_site_from_continuation(&k_user),
+                handler_name,
+                handler_kind,
+                handler_source_file,
+                handler_source_line,
+                handler_chain_snapshot,
+                effect_frame_id: effect_site.as_ref().map(|(frame_id, _, _, _)| *frame_id),
+                effect_function_name: effect_site
+                    .as_ref()
+                    .map(|(_, function_name, _, _)| function_name.clone()),
+                effect_source_file: effect_site
+                    .as_ref()
+                    .map(|(_, _, source_file, _)| source_file.clone()),
+                effect_source_line: effect_site
+                    .as_ref()
+                    .map(|(_, _, _, source_line)| *source_line),
+            });
 
         // Preserve handler scope when a type-filtered handler is skipped: this mirrors the
         // `Pass()` forwarding topology without invoking the skipped handler body.
@@ -1102,6 +1103,17 @@ impl VM {
     }
 
     fn dispatch_has_terminal_handler_action(&self, dispatch_id: DispatchId) -> bool {
+        // Check pending (not-yet-flushed) events for terminal actions from the current step.
+        for event in &self.pending_trace_events {
+            if let CaptureEvent::HandlerCompleted {
+                dispatch_id: eid, ..
+            } = event
+            {
+                if *eid == dispatch_id {
+                    return true;
+                }
+            }
+        }
         self.trace_state
             .active_chain_state()
             .dispatch_has_terminal_result(dispatch_id)
@@ -1119,14 +1131,15 @@ impl VM {
             else {
                 continue;
             };
-            self.trace_state.emit_handler_completed(
-                dispatch_id,
-                handler_name,
-                handler_index,
-                HandlerAction::Threw {
-                    exception_repr: exception_repr.clone(),
-                },
-            );
+            self.pending_trace_events
+                .push(CaptureEvent::HandlerCompleted {
+                    dispatch_id,
+                    handler_name,
+                    handler_index,
+                    action: HandlerAction::Threw {
+                        exception_repr: exception_repr.clone(),
+                    },
+                });
         }
     }
 
@@ -1189,12 +1202,13 @@ impl VM {
                 self.current_handler_identity_for_dispatch(dispatch_id)
             {
                 let value_repr = Self::value_repr(value);
-                self.trace_state.emit_handler_completed(
-                    dispatch_id,
-                    handler_name.clone(),
-                    handler_index,
-                    kind.handler_action(value_repr.clone()),
-                );
+                self.pending_trace_events
+                    .push(CaptureEvent::HandlerCompleted {
+                        dispatch_id,
+                        handler_name: handler_name.clone(),
+                        handler_index,
+                        action: kind.handler_action(value_repr.clone()),
+                    });
                 self.emit_resume_event(
                     dispatch_id,
                     handler_name,
@@ -1353,14 +1367,15 @@ impl VM {
                 if let Some((handler_index, handler_name)) =
                     self.current_handler_identity_for_dispatch(dispatch_id)
                 {
-                    self.trace_state.emit_handler_completed(
-                        dispatch_id,
-                        handler_name,
-                        handler_index,
-                        HandlerAction::Threw {
-                            exception_repr: Self::exception_repr(&exception),
-                        },
-                    );
+                    self.pending_trace_events
+                        .push(CaptureEvent::HandlerCompleted {
+                            dispatch_id,
+                            handler_name,
+                            handler_index,
+                            action: HandlerAction::Threw {
+                                exception_repr: Self::exception_repr(&exception),
+                            },
+                        });
                 }
             }
         }
@@ -1479,26 +1494,30 @@ impl VM {
             (from_name, to_info)
         {
             match kind {
-                ForwardKind::Delegate => self.trace_state.emit_delegated(
-                    dispatch_id,
-                    from_name,
-                    from_idx,
-                    to_name,
-                    to_idx,
-                    to_kind,
-                    to_source_file,
-                    to_source_line,
-                ),
-                ForwardKind::Pass => self.trace_state.emit_passed(
-                    dispatch_id,
-                    from_name,
-                    from_idx,
-                    to_name,
-                    to_idx,
-                    to_kind,
-                    to_source_file,
-                    to_source_line,
-                ),
+                ForwardKind::Delegate => {
+                    self.pending_trace_events.push(CaptureEvent::Delegated {
+                        dispatch_id,
+                        from_handler_name: from_name,
+                        from_handler_index: from_idx,
+                        to_handler_name: to_name,
+                        to_handler_index: to_idx,
+                        to_handler_kind: to_kind,
+                        to_handler_source_file: to_source_file,
+                        to_handler_source_line: to_source_line,
+                    })
+                }
+                ForwardKind::Pass => {
+                    self.pending_trace_events.push(CaptureEvent::Passed {
+                        dispatch_id,
+                        from_handler_name: from_name,
+                        from_handler_index: from_idx,
+                        to_handler_name: to_name,
+                        to_handler_index: to_idx,
+                        to_handler_kind: to_kind,
+                        to_handler_source_file: to_source_file,
+                        to_handler_source_line: to_source_line,
+                    })
+                }
             }
         }
     }
