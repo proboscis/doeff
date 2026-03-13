@@ -29,6 +29,13 @@ pub struct ContId(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct DispatchId(pub u64);
 
+/// Unique identifier for a handler installation scope.
+///
+/// Each entered handler installation gets a fresh scope id so handler-local
+/// state can be shared within that installation and shadowed by nested ones.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct HandlerScopeId(pub u64);
+
 /// Unique identifier for runnable continuations.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RunnableId(pub u64);
@@ -49,6 +56,7 @@ pub struct PromiseId(pub u64);
 static MARKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CONT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DISPATCH_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+static HANDLER_SCOPE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static RUNNABLE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl Marker {
@@ -98,6 +106,22 @@ impl DispatchId {
     /// Get the raw value.
     pub fn raw(&self) -> u64 {
         self.0
+    }
+}
+
+impl HandlerScopeId {
+    /// Create a fresh unique HandlerScopeId.
+    pub fn fresh() -> Self {
+        HandlerScopeId(HANDLER_SCOPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Get the raw value.
+    pub fn raw(&self) -> u64 {
+        self.0
+    }
+
+    pub fn from_raw(value: u64) -> Self {
+        HandlerScopeId(value)
     }
 }
 

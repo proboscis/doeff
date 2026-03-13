@@ -65,6 +65,7 @@ TraceEntry: TypeAlias = TraceFrame | TraceDispatch | TraceResumePoint
 @dataclass(frozen=True)
 class HandlerStackEntry:
     handler_name: str
+    handler_scope_id: int | None
     handler_kind: TraceHandlerKind
     source_file: str | None
     source_line: int | None
@@ -152,6 +153,8 @@ class ExceptionSite:
     source_line: int
     exception_type: str
     message: str
+    handler_scope_id: int | None = None
+    handler_stack: tuple[HandlerStackEntry, ...] = ()
 
 
 ActiveChainEntry: TypeAlias = ProgramYield | EffectYield | SpawnBoundary | ContextEntry | ExceptionSite
@@ -268,6 +271,7 @@ def _coerce_handler_stack_entry(entry: Any) -> HandlerStackEntry:
     if isinstance(entry, dict):
         return HandlerStackEntry(
             handler_name=str(entry.get("handler_name", "<handler>")),
+            handler_scope_id=entry.get("handler_scope_id"),
             handler_kind=_coerce_handler_kind(entry.get("handler_kind", "rust_builtin")),
             source_file=entry.get("source_file"),
             source_line=entry.get("source_line"),
@@ -378,12 +382,15 @@ def coerce_active_chain_entry(entry: Any) -> ActiveChainEntry:
     elif kind == "context_entry":
         result = ContextEntry(data=entry.get("data"))
     elif kind == "exception_site":
+        stack_raw = entry.get("handler_stack", ())
         result = ExceptionSite(
             function_name=str(entry.get("function_name", "<unknown>")),
             source_file=str(entry.get("source_file", "<unknown>")),
             source_line=int(entry.get("source_line", 0)),
             exception_type=str(entry.get("exception_type", "Exception")),
             message=str(entry.get("message", "")),
+            handler_scope_id=entry.get("handler_scope_id"),
+            handler_stack=tuple(_coerce_handler_stack_entry(item) for item in stack_raw),
         )
     else:
         result = ContextEntry(data=entry)
@@ -398,6 +405,37 @@ def _entry_site(entry: ActiveChainEntry) -> tuple[str, str] | None:
     if isinstance(entry, ExceptionSite):
         return (entry.function_name, entry.source_file)
     return None
+
+
+def _suppress_hidden_effect_entries(entries: list[ActiveChainEntry]) -> list[ActiveChainEntry]:
+    keep = [True] * len(entries)
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, EffectYield):
+            continue
+
+        if isinstance(entry.result, EffectResultResumed):
+            keep[index] = False
+            continue
+
+        if not isinstance(entry.result, EffectResultThrew):
+            continue
+
+        saw_handler_wrapper = False
+        for later in entries[index + 1 :]:
+            if isinstance(later, ProgramYield) and later.is_handler:
+                saw_handler_wrapper = True
+                continue
+            if isinstance(later, ExceptionSite):
+                if (
+                    saw_handler_wrapper
+                    and later.function_name == entry.function_name
+                    and later.source_file == entry.source_file
+                ):
+                    keep[index] = False
+                break
+            break
+
+    return [entry for entry, should_keep in zip(entries, keep, strict=True) if should_keep]
 
 
 def coerce_active_chain_entries(entries: list[Any] | tuple[Any, ...]) -> list[ActiveChainEntry]:
@@ -439,7 +477,7 @@ def coerce_active_chain_entries(entries: list[Any] | tuple[Any, ...]) -> list[Ac
                     break
         active_chain.insert(insert_idx, boundary)
 
-    return active_chain
+    return _suppress_hidden_effect_entries(active_chain)
 
 
 __all__ = [

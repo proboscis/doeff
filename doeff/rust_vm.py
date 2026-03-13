@@ -1,3 +1,4 @@
+import gc
 import importlib
 import inspect
 import types as py_types
@@ -492,13 +493,12 @@ def default_handlers() -> list[Any]:
     do not mutate this list.
     """
     vm = _vm()
-    from doeff.handlers.await_handlers import sync_await_handler
     from doeff.handlers.spawn_handler import spawn_intercept_handler
 
     return [
         *_core_handler_sentinels(vm),
+        vm.sync_await_handler,
         spawn_intercept_handler,
-        sync_await_handler,
     ]
 
 
@@ -538,6 +538,7 @@ def run(
         run_fn = vm.run
     except AttributeError as exc:
         raise RuntimeError("Installed doeff_vm module does not expose run()") from exc
+    gc.collect()
     raise_unhandled = isinstance(program, vm.EffectBase)
     program = _coerce_program(program)
     program = _wrap_handlers(program, handlers, api_name="run()")
@@ -551,7 +552,10 @@ def run(
     doeff_tb = _build_doeff_traceback_if_present(result)
     if print_doeff_trace:
         _print_doeff_trace(doeff_tb)
-    return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
+    try:
+        return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
+    finally:
+        gc.collect()
 
 
 async def async_run(
@@ -567,6 +571,7 @@ async def async_run(
         run_fn = vm.async_run
     except AttributeError as exc:
         raise RuntimeError("Installed doeff_vm module does not expose async_run()") from exc
+    gc.collect()
     raise_unhandled = isinstance(program, vm.EffectBase)
     program = _coerce_program(program)
     program = _wrap_handlers(program, handlers, api_name="async_run()")
@@ -580,7 +585,10 @@ async def async_run(
     doeff_tb = _build_doeff_traceback_if_present(result)
     if print_doeff_trace:
         _print_doeff_trace(doeff_tb)
-    return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
+    try:
+        return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
+    finally:
+        gc.collect()
 
 
 def WithHandler(
@@ -633,6 +641,9 @@ _VM_LAZY_EXPORT_NAMES = {
     "ResumeContinuation",
     "GetTraceback",
     "GetExecutionContext",
+    "HandlerGet",
+    "HandlerSet",
+    "HandlerHas",
     "ExecutionContext",
     "TraceFrame",
     "TraceHop",
@@ -675,6 +686,9 @@ __all__ = [
     "ExecutionContext",
     "Expand",
     "GetExecutionContext",
+    "HandlerGet",
+    "HandlerSet",
+    "HandlerHas",
     "GetTraceback",
     "K",
     "NoMatchingHandlerError",

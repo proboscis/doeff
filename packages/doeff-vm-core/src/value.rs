@@ -266,6 +266,7 @@ impl Value {
     ) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("handler_name", entry.handler_name.as_str())?;
+        dict.set_item("handler_scope_id", entry.handler_scope_id.raw())?;
         dict.set_item(
             "handler_kind",
             Self::handler_kind_to_str(&entry.handler_kind),
@@ -329,6 +330,8 @@ impl Value {
                 function_name,
                 source_file,
                 source_line,
+                handler_scope_id,
+                handler_stack,
                 exception_type,
                 message,
             } => {
@@ -336,6 +339,12 @@ impl Value {
                 dict.set_item("function_name", function_name)?;
                 dict.set_item("source_file", source_file)?;
                 dict.set_item("source_line", *source_line)?;
+                dict.set_item("handler_scope_id", handler_scope_id.map(|id| id.raw()))?;
+                let stack = PyList::empty(py);
+                for item in handler_stack {
+                    stack.append(Self::handler_dispatch_to_pyobject(py, item)?)?;
+                }
+                dict.set_item("handler_stack", stack)?;
                 dict.set_item("exception_type", exception_type)?;
                 dict.set_item("message", message)?;
             }

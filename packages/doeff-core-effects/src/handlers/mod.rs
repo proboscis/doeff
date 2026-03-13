@@ -6,24 +6,28 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc::sync_channel;
+use std::thread::{self, JoinHandle};
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyCFunction, PyDict, PyTuple};
 
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::effect::{
-    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
-    PyAcquireSemaphore, PyAsk, PyCreateSemaphore, PyGet, PyLocal, PyModify, PyPut,
-    PyPythonAsyncioAwaitEffect, PyReleaseSemaphore, PyResultSafeEffect, PyTell,
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect, PyAcquireSemaphore,
+    PyAsk, PyCreateExternalPromise, PyCreateSemaphore, PyGather, PyGet, PyLocal,
+    PyModify, PyPut, PyPythonAsyncioAwaitEffect, PyReleaseSemaphore, PyResultSafeEffect, PyTell,
 };
 use crate::error::VMError;
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
+use crate::ids::HandlerScopeId;
+use doeff_vm_core::rust_store::HandlerStateKey;
 use crate::segment::ScopeStore;
 use crate::step::{PyException, PythonCall};
 use crate::value::Value;
@@ -299,20 +303,225 @@ fn parse_result_safe_python_effect(effect: &PyShared) -> Result<Option<PyShared>
     })
 }
 
-fn get_sync_await_runner() -> Result<PyShared, String> {
+fn make_create_external_promise_effect() -> Result<DispatchEffect, PyException> {
     Python::attach(|py| {
-        let module = PyModule::from_code(
-            py,
-            c"import asyncio\n\ndef _run_awaitable_sync(awaitable):\n    return asyncio.run(awaitable)\n",
-            c"_doeff_await_bridge",
-            c"_doeff_await_bridge",
-        )
-        .map_err(|e| e.to_string())?;
-        let runner = module
-            .getattr("_run_awaitable_sync")
-            .map_err(|e| e.to_string())?;
-        Ok(PyShared::new(runner.unbind()))
+        let effect = py
+            .get_type::<PyCreateExternalPromise>()
+            .call0()
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
     })
+}
+
+fn make_gather_single_waitable_effect(promise_obj: &Py<PyAny>) -> Result<DispatchEffect, PyException> {
+    Python::attach(|py| {
+        let future = promise_obj
+            .bind(py)
+            .getattr("future")
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let items = pyo3::types::PyList::empty(py);
+        items.append(&future).map_err(|e| pyerr_to_exception(py, e))?;
+        let effect = Bound::new(py, PyGather::create(py, items.into_any().unbind(), None))
+            .map_err(|e| pyerr_to_exception(py, e))?
+            .into_any();
+        Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
+    })
+}
+
+const AWAIT_RUNTIME_KEY: HandlerStateKey = HandlerStateKey::new("await_runtime");
+
+fn reject_loop_affine_awaitable(py: Python<'_>, awaitable: &Bound<'_, PyAny>) -> Result<(), PyException> {
+    let close_awaitable = || {
+        if let Ok(close) = awaitable.getattr("close") {
+            let _ = close.call0();
+        }
+    };
+    let asyncio = py.import("asyncio").map_err(|e| pyerr_to_exception(py, e))?;
+    let future_type = asyncio
+        .getattr("Future")
+        .map_err(|e| pyerr_to_exception(py, e))?;
+    if awaitable
+        .is_instance(&future_type)
+        .map_err(|e| pyerr_to_exception(py, e))?
+    {
+        close_awaitable();
+        return Err(PyException::runtime_error(
+            "Await(asyncio.Future) is not safe under Spawn/Gather in sync run(); use CreateSemaphore or async_run"
+                .to_string(),
+        ));
+    }
+
+    let qualname = awaitable
+        .getattr("__qualname__")
+        .ok()
+        .and_then(|v| v.extract::<String>().ok())
+        .or_else(|| {
+            awaitable
+                .getattr("cr_code")
+                .ok()
+                .and_then(|code| code.getattr("co_qualname").ok())
+                .and_then(|v| v.extract::<String>().ok())
+        });
+    let Some(qualname) = qualname else {
+        return Ok(());
+    };
+
+    const LOOP_AFFINE_PREFIXES: &[&str] = &[
+        "Semaphore",
+        "BoundedSemaphore",
+        "Lock",
+        "Event",
+        "Condition",
+        "Queue",
+        "PriorityQueue",
+        "LifoQueue",
+    ];
+    if LOOP_AFFINE_PREFIXES
+        .iter()
+        .any(|prefix| qualname == *prefix || qualname.starts_with(&format!("{prefix}.")))
+    {
+        close_awaitable();
+        return Err(PyException::runtime_error(format!(
+            "Await({qualname}) is not safe under Spawn/Gather in sync run(); use CreateSemaphore"
+        )));
+    }
+
+    Ok(())
+}
+
+#[derive(Debug)]
+struct AwaitRuntime {
+    loop_obj: Py<PyAny>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl AwaitRuntime {
+    fn new() -> Result<Self, PyException> {
+        let (tx, rx) = sync_channel::<Result<Py<PyAny>, String>>(1);
+        let thread = thread::Builder::new()
+            .name("doeff-await-runtime".to_string())
+            .spawn(move || {
+                Python::attach(|py| {
+                    let result = (|| -> Result<Py<PyAny>, String> {
+                        let asyncio = py.import("asyncio").map_err(|e| e.to_string())?;
+                        let loop_obj = asyncio
+                            .call_method0("new_event_loop")
+                            .map_err(|e| e.to_string())?;
+                        asyncio
+                            .call_method1("set_event_loop", (loop_obj.clone(),))
+                            .map_err(|e| e.to_string())?;
+                        let loop_py = loop_obj.unbind();
+                        tx.send(Ok(loop_py.clone_ref(py))).map_err(|e| e.to_string())?;
+                        let _ = loop_py.bind(py).call_method0("run_forever");
+                        let _ = asyncio.call_method1("set_event_loop", (py.None(),));
+                        let _ = loop_py.bind(py).call_method0("close");
+                        Ok(loop_py)
+                    })();
+                    if let Err(err) = result {
+                        let _ = tx.send(Err(err));
+                    }
+                });
+            })
+            .map_err(|err| {
+                PyException::runtime_error(format!(
+                    "failed to spawn sync Await runtime thread: {err}"
+                ))
+            })?;
+
+        let loop_obj = rx
+            .recv()
+            .map_err(|err| {
+                PyException::runtime_error(format!(
+                    "failed to initialize sync Await runtime: {err}"
+                ))
+            })?
+            .map_err(PyException::runtime_error)?;
+
+        Ok(Self {
+            loop_obj,
+            thread: Some(thread),
+        })
+    }
+
+    fn shutdown(&mut self) {
+        Python::attach(|py| {
+            if let Ok(stop) = self.loop_obj.bind(py).getattr("stop") {
+                let _ = self
+                    .loop_obj
+                    .bind(py)
+                    .call_method1("call_soon_threadsafe", (stop,));
+            }
+        });
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+
+    fn submit(&self, py: Python<'_>, awaitable: Py<PyAny>, promise: Py<PyAny>) -> Result<(), PyException> {
+        reject_loop_affine_awaitable(py, &awaitable.bind(py))?;
+
+        let loop_obj = self.loop_obj.clone_ref(py);
+        let schedule = PyCFunction::new_closure(py, None, None, move |args: &Bound<'_, PyTuple>, _kwargs| -> PyResult<()> {
+            let py = args.py();
+            let asyncio = py.import("asyncio")?;
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("loop", loop_obj.bind(py))?;
+
+            let promise_for_done = promise.clone_ref(py);
+            let done_cb = PyCFunction::new_closure(py, None, None, move |args: &Bound<'_, PyTuple>, _kwargs| -> PyResult<()> {
+                let py = args.py();
+                let future = args.get_item(0)?;
+                match future.call_method0("result") {
+                    Ok(value) => {
+                        promise_for_done.bind(py).call_method1("complete", (value,))?;
+                    }
+                    Err(err) => {
+                        promise_for_done.bind(py).call_method1(
+                            "fail",
+                            (err.value(py).clone().into_any().unbind(),),
+                        )?;
+                    }
+                }
+                Ok(())
+            })?;
+
+            let future =
+                asyncio.call_method("ensure_future", (awaitable.bind(py),), Some(&kwargs))?;
+            future.call_method1("add_done_callback", (&done_cb,))?;
+            Ok(())
+        })
+        .map_err(|e| pyerr_to_exception(py, e))?;
+
+        self.loop_obj
+            .bind(py)
+            .call_method1("call_soon_threadsafe", (&schedule,))?;
+        Ok(())
+    }
+}
+
+impl Drop for AwaitRuntime {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn await_runtime_for_scope(
+    store: &mut RustStore,
+    scope_id: HandlerScopeId,
+) -> Result<&Mutex<AwaitRuntime>, PyException> {
+    if store
+        .handler_rust_get::<Mutex<AwaitRuntime>>(scope_id, AWAIT_RUNTIME_KEY)
+        .is_none()
+    {
+        store.handler_rust_set(
+            scope_id,
+            AWAIT_RUNTIME_KEY,
+            Mutex::new(AwaitRuntime::new()?),
+        );
+    }
+    store
+        .handler_rust_get::<Mutex<AwaitRuntime>>(scope_id, AWAIT_RUNTIME_KEY)
+        .ok_or_else(|| PyException::runtime_error("missing sync Await runtime".to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -346,20 +555,36 @@ impl IRStreamFactory for AwaitHandlerFactory {
 }
 
 #[derive(Debug)]
+enum AwaitPhase {
+    Idle,
+    AwaitExternalPromise {
+        continuation: Continuation,
+        awaitable: Py<PyAny>,
+    },
+    AwaitResult {
+        continuation: Continuation,
+    },
+}
+
+#[derive(Debug)]
 struct AwaitHandlerProgram {
-    pending_k: Option<Continuation>,
+    phase: AwaitPhase,
+    handler_scope_id: Option<HandlerScopeId>,
 }
 
 impl AwaitHandlerProgram {
     fn new() -> Self {
-        AwaitHandlerProgram { pending_k: None }
+        AwaitHandlerProgram {
+            phase: AwaitPhase::Idle,
+            handler_scope_id: None,
+        }
     }
 
     fn current_phase_name(&self) -> &'static str {
-        if self.pending_k.is_some() {
-            "AwaitBridgeResult"
-        } else {
-            "Idle"
+        match self.phase {
+            AwaitPhase::Idle => "Idle",
+            AwaitPhase::AwaitExternalPromise { .. } => "AwaitExternalPromise",
+            AwaitPhase::AwaitResult { .. } => "AwaitResult",
         }
     }
 }
@@ -367,29 +592,24 @@ impl AwaitHandlerProgram {
 impl IRStreamProgram for AwaitHandlerProgram {
     fn start(
         &mut self,
-        _py: Python<'_>,
+        py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
+        self.handler_scope_id = k.handler_scope_id;
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_await_python_effect(&obj) {
                 Ok(Some(awaitable)) => {
-                    let runner = match get_sync_await_runner() {
-                        Ok(func) => func,
-                        Err(msg) => {
-                            return IRStreamStep::Throw(PyException::type_error(format!(
-                                "failed to initialize await runner: {msg}"
-                            )));
-                        }
+                    self.phase = AwaitPhase::AwaitExternalPromise {
+                        continuation: k,
+                        awaitable: awaitable.clone_ref(py),
                     };
-                    self.pending_k = Some(k);
-                    IRStreamStep::NeedsPython(PythonCall::CallFunc {
-                        func: runner,
-                        args: vec![Value::Python(awaitable)],
-                        kwargs: vec![],
-                    })
+                    match make_create_external_promise_effect() {
+                        Ok(effect) => IRStreamStep::Yield(DoCtrl::Delegate { effect }),
+                        Err(error) => IRStreamStep::Throw(error),
+                    }
                 }
                 Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
@@ -412,16 +632,61 @@ impl IRStreamProgram for AwaitHandlerProgram {
     fn resume(
         &mut self,
         value: Value,
-        _store: &mut RustStore,
+        store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        if let Some(continuation) = self.pending_k.take() {
-            return IRStreamStep::Yield(DoCtrl::Resume {
+        let phase = std::mem::replace(&mut self.phase, AwaitPhase::Idle);
+        match phase {
+            AwaitPhase::AwaitExternalPromise {
                 continuation,
-                value,
-            });
+                awaitable,
+            } => {
+                let Value::Python(promise_obj) = value else {
+                    return IRStreamStep::Throw(PyException::type_error(
+                        "AwaitHandler expected ExternalPromise from CreateExternalPromise"
+                            .to_string(),
+                    ));
+                };
+                let promise_clone = Python::attach(|py| promise_obj.clone_ref(py));
+                let Some(scope_id) = self.handler_scope_id else {
+                    return IRStreamStep::Throw(PyException::runtime_error(
+                        "sync Await handler missing handler scope id".to_string(),
+                    ));
+                };
+                let submit_result = Python::attach(|py| {
+                    let runtime = await_runtime_for_scope(store, scope_id)?;
+                    let runtime = runtime.lock().expect("Await runtime lock poisoned");
+                    runtime.submit(py, awaitable.clone_ref(py), promise_obj.clone_ref(py))
+                });
+                if let Err(error) = submit_result {
+                    return IRStreamStep::Throw(error);
+                }
+                self.phase = AwaitPhase::AwaitResult { continuation };
+                match make_gather_single_waitable_effect(&promise_clone) {
+                    Ok(effect) => IRStreamStep::Yield(DoCtrl::Delegate { effect }),
+                    Err(error) => IRStreamStep::Throw(error),
+                }
+            }
+            AwaitPhase::AwaitResult { continuation } => {
+                let value = match value {
+                    Value::List(mut items) => {
+                        if items.len() != 1 {
+                            return IRStreamStep::Throw(PyException::type_error(
+                                "AwaitHandler expected Gather([future]) to return exactly one value"
+                                    .to_string(),
+                            ));
+                        }
+                        items.remove(0)
+                    }
+                    other => other,
+                };
+                IRStreamStep::Yield(DoCtrl::Resume {
+                    continuation,
+                    value,
+                })
+            }
+            AwaitPhase::Idle => IRStreamStep::Return(value),
         }
-        IRStreamStep::Return(value)
     }
 
     fn throw(
@@ -430,13 +695,17 @@ impl IRStreamProgram for AwaitHandlerProgram {
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        if let Some(continuation) = self.pending_k.take() {
-            return IRStreamStep::Yield(DoCtrl::TransferThrow {
-                continuation,
-                exception: exc,
-            });
+        let phase = std::mem::replace(&mut self.phase, AwaitPhase::Idle);
+        match phase {
+            AwaitPhase::AwaitExternalPromise { continuation, .. }
+            | AwaitPhase::AwaitResult { continuation } => {
+                IRStreamStep::Yield(DoCtrl::TransferThrow {
+                    continuation,
+                    exception: exc,
+                })
+            }
+            AwaitPhase::Idle => IRStreamStep::Throw(exc),
         }
-        IRStreamStep::Throw(exc)
     }
 }
 
@@ -712,17 +981,16 @@ struct LazySemaphoreEntry {
     semaphore: Value,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct LazyAskState {
     cache: HashMap<HashedPyKey, LazyCacheEntry>,
     semaphores: HashMap<HashedPyKey, LazySemaphoreEntry>,
 }
 
-#[derive(Clone)]
-pub struct LazyAskHandlerFactory {
-    default_state: Arc<Mutex<LazyAskState>>,
-    run_states: Arc<Mutex<HashMap<u64, Arc<Mutex<LazyAskState>>>>>,
-}
+const LAZY_ASK_STATE_KEY: HandlerStateKey = HandlerStateKey::new("lazy_ask_state");
+
+#[derive(Clone, Default)]
+pub struct LazyAskHandlerFactory;
 
 impl std::fmt::Debug for LazyAskHandlerFactory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -732,29 +1000,7 @@ impl std::fmt::Debug for LazyAskHandlerFactory {
 
 impl LazyAskHandlerFactory {
     pub fn new() -> Self {
-        LazyAskHandlerFactory {
-            default_state: Arc::new(Mutex::new(LazyAskState::default())),
-            run_states: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    fn state_for_run(&self, run_token: Option<u64>) -> Arc<Mutex<LazyAskState>> {
-        match run_token {
-            Some(token) => {
-                let mut states = self.run_states.lock().expect("LazyAsk lock poisoned");
-                states
-                    .entry(token)
-                    .or_insert_with(|| Arc::new(Mutex::new(LazyAskState::default())))
-                    .clone()
-            }
-            None => self.default_state.clone(),
-        }
-    }
-}
-
-impl Default for LazyAskHandlerFactory {
-    fn default() -> Self {
-        Self::new()
+        LazyAskHandlerFactory
     }
 }
 
@@ -781,24 +1027,19 @@ impl IRStreamFactory for LazyAskHandlerFactory {
     }
 
     fn create_program(&self) -> IRStreamProgramRef {
-        Arc::new(Mutex::new(Box::new(LazyAskHandlerProgram::new(
-            self.state_for_run(None),
-        ))))
+        Arc::new(Mutex::new(Box::new(LazyAskHandlerProgram::new())))
     }
 
-    fn create_program_for_run(&self, run_token: Option<u64>) -> IRStreamProgramRef {
-        Arc::new(Mutex::new(Box::new(LazyAskHandlerProgram::new(
-            self.state_for_run(run_token),
-        ))))
+    fn create_program_for_run(
+        &self,
+        run_context: Option<doeff_vm_core::handler::RunContext>,
+    ) -> IRStreamProgramRef {
+        let _ = run_context;
+        Arc::new(Mutex::new(Box::new(LazyAskHandlerProgram::new())))
     }
 
     fn handler_name(&self) -> &'static str {
         "LazyAskHandler"
-    }
-
-    fn on_run_end(&self, run_token: u64) {
-        let mut states = self.run_states.lock().expect("LazyAsk lock poisoned");
-        states.remove(&run_token);
     }
 }
 
@@ -835,14 +1076,14 @@ enum LazyAskPhase {
 #[derive(Debug)]
 struct LazyAskHandlerProgram {
     phase: LazyAskPhase,
-    state: Arc<Mutex<LazyAskState>>,
+    handler_scope_id: Option<HandlerScopeId>,
 }
 
 impl LazyAskHandlerProgram {
-    fn new(state: Arc<Mutex<LazyAskState>>) -> Self {
+    fn new() -> Self {
         LazyAskHandlerProgram {
             phase: LazyAskPhase::Idle,
-            state,
+            handler_scope_id: None,
         }
     }
 
@@ -876,30 +1117,55 @@ impl LazyAskHandlerProgram {
         IRStreamStep::Yield(DoCtrl::Delegate { effect })
     }
 
+    fn scope_id(&self) -> Result<HandlerScopeId, PyException> {
+        self.handler_scope_id.ok_or_else(|| {
+            PyException::runtime_error("LazyAskHandler missing handler scope id".to_string())
+        })
+    }
+
     fn snapshot_lazy_state(
         &self,
-    ) -> (
+        store: &RustStore,
+    ) -> Result<
+        (
         HashMap<HashedPyKey, LazyCacheEntry>,
         HashMap<HashedPyKey, LazySemaphoreEntry>,
-    ) {
-        let state = self.state.lock().expect("LazyAsk lock poisoned");
-        (state.cache.clone(), state.semaphores.clone())
+    ),
+        PyException,
+    > {
+        let scope_id = self.scope_id()?;
+        let state = store
+            .handler_rust_get::<Mutex<LazyAskState>>(scope_id, LAZY_ASK_STATE_KEY)
+            .map(|state| state.lock().expect("LazyAsk lock poisoned").clone())
+            .unwrap_or_default();
+        Ok((state.cache, state.semaphores))
     }
 
     fn restore_lazy_state(
         &self,
+        store: &mut RustStore,
         cache_snapshot: HashMap<HashedPyKey, LazyCacheEntry>,
         semaphore_snapshot: HashMap<HashedPyKey, LazySemaphoreEntry>,
-    ) {
-        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        state.cache.clear();
-        state.cache.extend(cache_snapshot);
-        state.semaphores.clear();
-        state.semaphores.extend(semaphore_snapshot);
+    ) -> Result<(), PyException> {
+        let scope_id = self.scope_id()?;
+        if store
+            .handler_rust_get::<Mutex<LazyAskState>>(scope_id, LAZY_ASK_STATE_KEY)
+            .is_none()
+        {
+            store.handler_rust_set(scope_id, LAZY_ASK_STATE_KEY, Mutex::new(LazyAskState::default()));
+        }
+        let state = store
+            .handler_rust_get::<Mutex<LazyAskState>>(scope_id, LAZY_ASK_STATE_KEY)
+            .expect("LazyAsk state must exist after initialization");
+        let mut state = state.lock().expect("LazyAsk lock poisoned");
+        state.cache = cache_snapshot;
+        state.semaphores = semaphore_snapshot;
+        Ok(())
     }
 
     fn exit_local_scope(
         &self,
+        store: &mut RustStore,
         scope: &mut ScopeStore,
         cache_snapshot: HashMap<HashedPyKey, LazyCacheEntry>,
         semaphore_snapshot: HashMap<HashedPyKey, LazySemaphoreEntry>,
@@ -909,12 +1175,15 @@ impl LazyAskHandlerProgram {
                 "Local scope stack underflow in LazyAskHandler".to_string(),
             ));
         }
-        self.restore_lazy_state(cache_snapshot, semaphore_snapshot);
-        Ok(())
+        self.restore_lazy_state(store, cache_snapshot, semaphore_snapshot)
     }
 
-    fn lazy_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
-        let state = self.state.lock().expect("LazyAsk lock poisoned");
+    fn lazy_cache_get(&self, store: &RustStore, key: &HashedPyKey, source_id: usize) -> Option<Value> {
+        let scope_id = self.handler_scope_id?;
+        let state = store
+            .handler_rust_get::<Mutex<LazyAskState>>(scope_id, LAZY_ASK_STATE_KEY)?
+            .lock()
+            .expect("LazyAsk lock poisoned");
         let entry = state.cache.get(key)?;
         if entry.source_id == source_id {
             return Some(entry.value.clone());
@@ -922,13 +1191,37 @@ impl LazyAskHandlerProgram {
         None
     }
 
-    fn lazy_cache_put(&self, key: HashedPyKey, source_id: usize, value: Value) {
-        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        state.cache.insert(key, LazyCacheEntry { source_id, value });
+    fn lazy_cache_put(&self, store: &mut RustStore, key: HashedPyKey, source_id: usize, value: Value) {
+        let Ok(scope_id) = self.scope_id() else {
+            return;
+        };
+        if store
+            .handler_rust_get::<Mutex<LazyAskState>>(scope_id, LAZY_ASK_STATE_KEY)
+            .is_none()
+        {
+            store.handler_rust_set(scope_id, LAZY_ASK_STATE_KEY, Mutex::new(LazyAskState::default()));
+        }
+        let state = store
+            .handler_rust_get::<Mutex<LazyAskState>>(scope_id, LAZY_ASK_STATE_KEY)
+            .expect("LazyAsk state must exist after initialization");
+        state
+            .lock()
+            .expect("LazyAsk lock poisoned")
+            .cache
+            .insert(key, LazyCacheEntry { source_id, value });
     }
 
-    fn lazy_semaphore_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
-        let state = self.state.lock().expect("LazyAsk lock poisoned");
+    fn lazy_semaphore_get(
+        &self,
+        store: &RustStore,
+        key: &HashedPyKey,
+        source_id: usize,
+    ) -> Option<Value> {
+        let scope_id = self.handler_scope_id?;
+        let state = store
+            .handler_rust_get::<Mutex<LazyAskState>>(scope_id, LAZY_ASK_STATE_KEY)?
+            .lock()
+            .expect("LazyAsk lock poisoned");
         let entry = state.semaphores.get(key)?;
         if entry.source_id == source_id {
             return Some(entry.semaphore.clone());
@@ -936,9 +1229,26 @@ impl LazyAskHandlerProgram {
         None
     }
 
-    fn lazy_semaphore_put(&self, key: HashedPyKey, source_id: usize, semaphore: Value) {
-        let mut state = self.state.lock().expect("LazyAsk lock poisoned");
-        state.semaphores.insert(
+    fn lazy_semaphore_put(
+        &self,
+        store: &mut RustStore,
+        key: HashedPyKey,
+        source_id: usize,
+        semaphore: Value,
+    ) {
+        let Ok(scope_id) = self.scope_id() else {
+            return;
+        };
+        if store
+            .handler_rust_get::<Mutex<LazyAskState>>(scope_id, LAZY_ASK_STATE_KEY)
+            .is_none()
+        {
+            store.handler_rust_set(scope_id, LAZY_ASK_STATE_KEY, Mutex::new(LazyAskState::default()));
+        }
+        let state = store
+            .handler_rust_get::<Mutex<LazyAskState>>(scope_id, LAZY_ASK_STATE_KEY)
+            .expect("LazyAsk state must exist after initialization");
+        state.lock().expect("LazyAsk lock poisoned").semaphores.insert(
             key,
             LazySemaphoreEntry {
                 source_id,
@@ -998,6 +1308,7 @@ impl LazyAskHandlerProgram {
 
     fn handle_ask_value(
         &mut self,
+        store: &mut RustStore,
         key: HashedPyKey,
         continuation: Continuation,
         value: Value,
@@ -1011,14 +1322,14 @@ impl LazyAskHandlerProgram {
 
         let source_id = lazy_source_id(&value).unwrap_or_default();
 
-        if let Some(cached) = self.lazy_cache_get(&key, source_id) {
+        if let Some(cached) = self.lazy_cache_get(store, &key, source_id) {
             return IRStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value: cached,
             });
         }
 
-        if let Some(semaphore) = self.lazy_semaphore_get(&key, source_id) {
+        if let Some(semaphore) = self.lazy_semaphore_get(store, &key, source_id) {
             return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
         }
 
@@ -1035,19 +1346,23 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
+        self.handler_scope_id = k.handler_scope_id;
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
             let hashed_key = HashedPyKey::from_test_string(key);
             let Some(value) = ask_from_scope_or_env(store, scope, &hashed_key) else {
                 return IRStreamStep::Throw(missing_env_key_error(&hashed_key));
             };
-            return self.handle_ask_value(hashed_key, k, value);
+            return self.handle_ask_value(store, hashed_key, k, value);
         }
 
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             match parse_local_python_effect(&obj) {
                 Ok(Some(local_effect)) => {
-                    let (cache_snapshot, semaphore_snapshot) = self.snapshot_lazy_state();
+                    let (cache_snapshot, semaphore_snapshot) = match self.snapshot_lazy_state(store) {
+                        Ok(value) => value,
+                        Err(exc) => return IRStreamStep::Throw(exc),
+                    };
                     scope.scope_bindings.push(Arc::new(local_effect.overrides));
                     let eval_scope = k.clone();
                     self.phase = LazyAskPhase::AwaitLocalEval {
@@ -1072,7 +1387,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => {
                     if let Some(value) = ask_from_scope_or_env(store, scope, &key) {
-                        return self.handle_ask_value(key, k, value);
+                        return self.handle_ask_value(store, key, k, value);
                     }
                     self.begin_delegate_phase(k, dispatch_from_shared(obj))
                 }
@@ -1097,7 +1412,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
     fn resume(
         &mut self,
         value: Value,
-        _store: &mut RustStore,
+        store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
@@ -1110,7 +1425,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 cache_snapshot,
                 semaphore_snapshot,
             } => {
-                if let Err(exc) = self.exit_local_scope(scope, cache_snapshot, semaphore_snapshot) {
+                if let Err(exc) = self.exit_local_scope(store, scope, cache_snapshot, semaphore_snapshot) {
                     return IRStreamStep::Throw(exc);
                 }
                 IRStreamStep::Yield(DoCtrl::Resume {
@@ -1149,11 +1464,11 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                             ));
                         }
                     };
-                    self.lazy_semaphore_put(key.clone(), source_id, semaphore.clone());
+                    self.lazy_semaphore_put(store, key.clone(), source_id, semaphore.clone());
                     return self.begin_acquire_phase(key, continuation, expr, source_id, semaphore);
                 };
 
-                if let Some(cached) = self.lazy_cache_get(&key, source_id) {
+                if let Some(cached) = self.lazy_cache_get(store, &key, source_id) {
                     return self.begin_release_phase(continuation, Ok(cached), semaphore);
                 }
 
@@ -1176,7 +1491,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 source_id,
                 semaphore,
             } => {
-                self.lazy_cache_put(key, source_id, value.clone());
+                self.lazy_cache_put(store, key, source_id, value.clone());
                 self.begin_release_phase(continuation, Ok(value), semaphore)
             }
             LazyAskPhase::AwaitRelease {
@@ -1196,7 +1511,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
     fn throw(
         &mut self,
         exc: PyException,
-        _store: &mut RustStore,
+        store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
@@ -1209,7 +1524,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 semaphore_snapshot,
             } => {
                 if let Err(scope_exc) =
-                    self.exit_local_scope(scope, cache_snapshot, semaphore_snapshot)
+                    self.exit_local_scope(store, scope, cache_snapshot, semaphore_snapshot)
                 {
                     return IRStreamStep::Throw(scope_exc);
                 }
@@ -1988,7 +2303,7 @@ mod tests {
     fn test_lazy_ask_ast_stream_release_sequence() {
         let mut store = RustStore::new();
         let mut scope = ScopeStore::default();
-        let mut program = LazyAskHandlerProgram::new(Arc::new(Mutex::new(LazyAskState::default())));
+        let mut program = LazyAskHandlerProgram::new();
         let continuation = make_test_continuation();
         let continuation_id = continuation.cont_id;
         program.phase = LazyAskPhase::AwaitRelease {

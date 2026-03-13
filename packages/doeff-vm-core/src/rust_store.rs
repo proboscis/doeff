@@ -1,6 +1,8 @@
 //! Store model shared by handlers and VM.
 
+use std::any::Any;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::{Bound, PyAny, PyResult};
@@ -9,14 +11,31 @@ use pyo3::types::PyString;
 #[cfg(not(test))]
 use pyo3::Python;
 
+use crate::ids::HandlerScopeId;
 use crate::py_key::HashedPyKey;
 use crate::value::Value;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HandlerStateKey(&'static str);
+
+impl HandlerStateKey {
+    pub const fn new(name: &'static str) -> Self {
+        Self(name)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct RustStore {
     pub state: HashMap<String, Value>,
     pub env: HashMap<HashedPyKey, Value>,
     pub log: Vec<Value>,
+    pub handler_value_cells: HashMap<HandlerScopeId, HashMap<HashedPyKey, Value>>,
+    pub handler_rust_cells:
+        HashMap<HandlerScopeId, HashMap<HandlerStateKey, Arc<dyn Any + Send + Sync>>>,
 }
 
 impl From<&HashedPyKey> for HashedPyKey {
@@ -75,6 +94,8 @@ impl RustStore {
             state: HashMap::new(),
             env: HashMap::new(),
             log: Vec::new(),
+            handler_value_cells: HashMap::new(),
+            handler_rust_cells: HashMap::new(),
         }
     }
 
@@ -154,6 +175,69 @@ impl RustStore {
 
     pub fn clear_logs(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.log)
+    }
+
+    pub fn handler_has(
+        &self,
+        scope_id: HandlerScopeId,
+        key: impl Into<HashedPyKey>,
+    ) -> bool {
+        let key = key.into();
+        self.handler_value_cells
+            .get(&scope_id)
+            .is_some_and(|cells| cells.contains_key(&key))
+    }
+
+    pub fn handler_get(
+        &self,
+        scope_id: HandlerScopeId,
+        key: impl Into<HashedPyKey>,
+    ) -> Option<&Value> {
+        let key = key.into();
+        self.handler_value_cells.get(&scope_id)?.get(&key)
+    }
+
+    pub fn handler_set(
+        &mut self,
+        scope_id: HandlerScopeId,
+        key: impl Into<HashedPyKey>,
+        value: Value,
+    ) {
+        let key = key.into();
+        self.handler_value_cells
+            .entry(scope_id)
+            .or_default()
+            .insert(key, value);
+    }
+
+    pub fn clear_handler_scope(&mut self, scope_id: HandlerScopeId) {
+        self.handler_value_cells.remove(&scope_id);
+        self.handler_rust_cells.remove(&scope_id);
+    }
+
+    pub fn handler_rust_set<T>(
+        &mut self,
+        scope_id: HandlerScopeId,
+        key: HandlerStateKey,
+        value: T,
+    ) where
+        T: Any + Send + Sync + 'static,
+    {
+        self.handler_rust_cells
+            .entry(scope_id)
+            .or_default()
+            .insert(key, Arc::new(value));
+    }
+
+    pub fn handler_rust_get<T>(&self, scope_id: HandlerScopeId, key: HandlerStateKey) -> Option<&T>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        self.handler_rust_cells
+            .get(&scope_id)?
+            .get(&key)?
+            .as_ref()
+            .downcast_ref::<T>()
     }
 }
 

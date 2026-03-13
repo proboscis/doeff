@@ -5,9 +5,11 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
+use crate::dispatch::{ControlOwnership, DispatchRootRef};
+use crate::do_ctrl::InterceptMode;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{ContId, DispatchId, Marker, SegmentId};
+use crate::ids::{ContId, DispatchId, HandlerScopeId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::segment::{ScopeStore, Segment};
@@ -27,14 +29,43 @@ use crate::value::Value;
 /// - Captured continuations: materialize frames_snapshot into a new segment
 /// - Unstarted continuations: start the program with handlers installed
 #[derive(Debug, Clone)]
+pub struct UnstartedHandlerSpec {
+    pub handler: KleisliRef,
+    pub identity: Option<PyShared>,
+    pub handler_scope_id: Option<HandlerScopeId>,
+    pub types: Option<Vec<PyShared>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InterceptorInstallSpec {
+    pub interceptor: KleisliRef,
+    pub types: Option<Vec<PyShared>>,
+    pub mode: InterceptMode,
+    pub metadata: Option<CallMetadata>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ReinstallChainEntry {
+    Handler(UnstartedHandlerSpec),
+    Interceptor(InterceptorInstallSpec),
+}
+
+#[derive(Debug, Clone)]
 pub struct Continuation {
     pub cont_id: ContId,
     pub segment_id: SegmentId,
     pub scope_store: ScopeStore,
     pub frames_snapshot: Arc<Vec<Frame>>,
     pub marker: Marker,
-    pub dispatch_id: Option<DispatchId>,
-    pub dispatch_segment_id: Option<SegmentId>,
+    pub control_ownership: ControlOwnership,
+
+    /// Current handler installation for started continuations.
+    /// This is live metadata for the currently running handler frame only.
+    pub handler_scope_id: Option<HandlerScopeId>,
+    /// Snapshot-only handler chain metadata captured from the current continuation.
+    /// This is used for scope reuse when a captured continuation crosses handler/runtime
+    /// boundaries (for example, scheduler-owned tasks). It is not the live scope authority.
+    pub captured_handler_scope_ids: Vec<Option<HandlerScopeId>>,
     pub mode: Box<Mode>,
     pub pending_python: Option<Box<PendingPython>>,
     pub pending_error_context: Option<PyException>,
@@ -48,13 +79,14 @@ pub struct Continuation {
 
     pub program: Option<PyShared>,
 
-    /// Handlers to install when started=false (innermost first).
-    /// Empty for captured (started=true) continuations.
-    pub handlers: Vec<KleisliRef>,
+    /// Handler topology reinstall metadata (innermost first).
+    /// For started continuations this is snapshot-only topology metadata, not live authority.
+    pub unstarted_handlers: Vec<UnstartedHandlerSpec>,
 
-    /// Optional Python identities corresponding to handlers by index.
-    /// Used to preserve Rust sentinel identity across continuation round-trips.
-    pub handler_identities: Vec<Option<PyShared>>,
+    /// Full caller-topology reinstall metadata for started continuations.
+    /// This includes handlers and interceptors and is used only when resuming
+    /// captured continuations back into a delimited topology.
+    pub reinstall_chain: Vec<ReinstallChainEntry>,
 
     /// Optional call metadata to attach when starting unstarted continuations.
     pub metadata: Option<CallMetadata>,
@@ -64,6 +96,16 @@ pub struct Continuation {
 }
 
 impl Continuation {
+    fn current_handler_scope_id(segment: &Segment) -> Option<HandlerScopeId> {
+        segment.frames.iter().rev().find_map(|frame| match frame {
+            Frame::HandlerBoundary {
+                handler_scope_id,
+                plain_return_allowed: _,
+            } => Some(*handler_scope_id),
+            _ => None,
+        })
+    }
+
     fn capture_frames(segment: &Segment) -> Arc<Vec<Frame>> {
         Arc::new(
             segment
@@ -78,7 +120,7 @@ impl Continuation {
     pub fn capture(
         segment: &Segment,
         segment_id: SegmentId,
-        dispatch_id: Option<DispatchId>,
+        owner_dispatch: Option<DispatchRootRef>,
     ) -> Self {
         Continuation {
             cont_id: ContId::fresh(),
@@ -86,8 +128,12 @@ impl Continuation {
             scope_store: segment.scope_store.clone(),
             frames_snapshot: Self::capture_frames(segment),
             marker: segment.marker,
-            dispatch_id,
-            dispatch_segment_id: segment.dispatch_segment_id,
+            control_ownership: ControlOwnership::with_owner_and_visible(
+                owner_dispatch,
+                segment.visible_dispatch_ref(),
+            ),
+            handler_scope_id: Self::current_handler_scope_id(segment),
+            captured_handler_scope_ids: Vec::new(),
             mode: Box::new(segment.mode.clone()),
             pending_python: segment.pending_python.clone().map(Box::new),
             pending_error_context: segment.pending_error_context.clone(),
@@ -95,8 +141,8 @@ impl Continuation {
             interceptor_skip_stack: segment.interceptor_skip_stack.clone(),
             started: true,
             program: None,
-            handlers: Vec::new(),
-            handler_identities: Vec::new(),
+            unstarted_handlers: Vec::new(),
+            reinstall_chain: Vec::new(),
             metadata: None,
             parent: None,
         }
@@ -106,7 +152,7 @@ impl Continuation {
         cont_id: ContId,
         segment: &Segment,
         segment_id: SegmentId,
-        dispatch_id: Option<DispatchId>,
+        owner_dispatch: Option<DispatchRootRef>,
     ) -> Self {
         Continuation {
             cont_id,
@@ -114,8 +160,12 @@ impl Continuation {
             scope_store: segment.scope_store.clone(),
             frames_snapshot: Self::capture_frames(segment),
             marker: segment.marker,
-            dispatch_id,
-            dispatch_segment_id: segment.dispatch_segment_id,
+            control_ownership: ControlOwnership::with_owner_and_visible(
+                owner_dispatch,
+                segment.visible_dispatch_ref(),
+            ),
+            handler_scope_id: Self::current_handler_scope_id(segment),
+            captured_handler_scope_ids: Vec::new(),
             mode: Box::new(segment.mode.clone()),
             pending_python: segment.pending_python.clone().map(Box::new),
             pending_error_context: segment.pending_error_context.clone(),
@@ -123,8 +173,8 @@ impl Continuation {
             interceptor_skip_stack: segment.interceptor_skip_stack.clone(),
             started: true,
             program: None,
-            handlers: Vec::new(),
-            handler_identities: Vec::new(),
+            unstarted_handlers: Vec::new(),
+            reinstall_chain: Vec::new(),
             metadata: None,
             parent: None,
         }
@@ -139,15 +189,24 @@ impl Continuation {
         handlers: Vec<KleisliRef>,
         metadata: Option<CallMetadata>,
     ) -> Self {
-        let handler_identities = vec![None; handlers.len()];
+        let unstarted_handlers = handlers
+            .into_iter()
+            .map(|handler| UnstartedHandlerSpec {
+                handler,
+                identity: None,
+                handler_scope_id: None,
+                types: None,
+            })
+            .collect();
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
             scope_store: ScopeStore::default(),
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
-            dispatch_id: None,
-            dispatch_segment_id: None,
+            control_ownership: ControlOwnership::default(),
+            handler_scope_id: None,
+            captured_handler_scope_ids: Vec::new(),
             mode: Box::new(Mode::Deliver(Value::Unit)),
             pending_python: None,
             pending_error_context: None,
@@ -155,8 +214,8 @@ impl Continuation {
             interceptor_skip_stack: Vec::new(),
             started: false,
             program: Some(expr),
-            handlers,
-            handler_identities,
+            unstarted_handlers,
+            reinstall_chain: Vec::new(),
             metadata,
             parent: None,
         }
@@ -181,14 +240,25 @@ impl Continuation {
         handler_identities: Vec<Option<PyShared>>,
         metadata: Option<CallMetadata>,
     ) -> Self {
+        let unstarted_handlers = handlers
+            .into_iter()
+            .zip(handler_identities)
+            .map(|(handler, identity)| UnstartedHandlerSpec {
+                handler,
+                identity,
+                handler_scope_id: None,
+                types: None,
+            })
+            .collect();
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
             scope_store: ScopeStore::default(),
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
-            dispatch_id: None,
-            dispatch_segment_id: None,
+            control_ownership: ControlOwnership::default(),
+            handler_scope_id: None,
+            captured_handler_scope_ids: Vec::new(),
             mode: Box::new(Mode::Deliver(Value::Unit)),
             pending_python: None,
             pending_error_context: None,
@@ -196,8 +266,8 @@ impl Continuation {
             interceptor_skip_stack: Vec::new(),
             started: false,
             program: Some(expr),
-            handlers,
-            handler_identities,
+            unstarted_handlers,
+            reinstall_chain: Vec::new(),
             metadata,
             parent: None,
         }
@@ -207,6 +277,53 @@ impl Continuation {
         self.started
     }
 
+    pub fn owner_dispatch_ref(&self) -> Option<DispatchRootRef> {
+        self.control_ownership.owner_dispatch
+    }
+
+    pub fn owner_dispatch_id(&self) -> Option<DispatchId> {
+        self.control_ownership.owner_dispatch_id()
+    }
+
+    pub fn set_owner_dispatch(&mut self, owner_dispatch: Option<DispatchRootRef>) {
+        self.control_ownership.owner_dispatch = owner_dispatch;
+    }
+
+    pub fn visible_dispatch_ref(&self) -> Option<DispatchRootRef> {
+        self.control_ownership.visible_dispatch
+    }
+
+    pub fn visible_dispatch_id(&self) -> Option<DispatchId> {
+        self.control_ownership.visible_dispatch_id()
+    }
+
+    pub fn set_visible_dispatch(&mut self, visible_dispatch: Option<DispatchRootRef>) {
+        self.control_ownership.visible_dispatch = visible_dispatch;
+    }
+
+    pub fn set_handler_scope_id(&mut self, handler_scope_id: Option<HandlerScopeId>) {
+        self.handler_scope_id = handler_scope_id;
+    }
+
+    pub fn set_handler_scope_ids(&mut self, handler_scope_ids: Vec<Option<HandlerScopeId>>) {
+        if self.started {
+            self.captured_handler_scope_ids = handler_scope_ids;
+            return;
+        }
+
+        for (spec, scope_id) in self.unstarted_handlers.iter_mut().zip(handler_scope_ids) {
+            spec.handler_scope_id = scope_id;
+        }
+    }
+
+    pub fn set_reinstall_handlers(&mut self, handlers: Vec<UnstartedHandlerSpec>) {
+        self.unstarted_handlers = handlers;
+    }
+
+    pub fn set_reinstall_chain(&mut self, entries: Vec<ReinstallChainEntry>) {
+        self.reinstall_chain = entries;
+    }
+
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("cont_id", self.cont_id.raw())?;
@@ -214,14 +331,14 @@ impl Continuation {
         if let Some(ref program) = self.program {
             dict.set_item("program", program.bind(py))?;
         }
-        if !self.handlers.is_empty() {
+        if !self.unstarted_handlers.is_empty() {
             let list = PyList::empty(py);
-            for (idx, handler) in self.handlers.iter().enumerate() {
-                if let Some(Some(identity)) = self.handler_identities.get(idx) {
+            for spec in &self.unstarted_handlers {
+                if let Some(identity) = &spec.identity {
                     list.append(identity.bind(py))?;
                     continue;
                 }
-                if let Some(identity) = handler.py_identity() {
+                if let Some(identity) = spec.handler.py_identity() {
                     list.append(identity.bind(py))?;
                 } else {
                     list.append(py.None().into_bound(py))?;
@@ -255,8 +372,7 @@ mod tests {
         assert!(cont.frames_snapshot.is_empty());
         assert!(cont.is_started());
         assert!(cont.program.is_none());
-        assert!(cont.handlers.is_empty());
-        assert!(cont.handler_identities.is_empty());
+        assert!(cont.unstarted_handlers.is_empty());
         assert!(cont.parent.is_none());
     }
 

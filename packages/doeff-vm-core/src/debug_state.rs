@@ -143,6 +143,9 @@ impl DebugState {
             DoCtrl::Pass { .. } => "HandleYield(Pass)",
             DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
             DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+            DoCtrl::HandlerGet { .. } => "HandleYield(HandlerGet)",
+            DoCtrl::HandlerSet { .. } => "HandleYield(HandlerSet)",
+            DoCtrl::HandlerHas { .. } => "HandleYield(HandlerHas)",
             DoCtrl::GetTraceback { .. } => "HandleYield(GetTraceback)",
             DoCtrl::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
             DoCtrl::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
@@ -208,17 +211,43 @@ impl DebugState {
     pub(crate) fn record_trace_entry(
         &mut self,
         mode: &Mode,
+        current_segment: Option<SegmentId>,
+        segments: &SegmentArena,
         pending_python: &Option<PendingPython>,
         dispatch_depth: usize,
     ) {
+        let effect_repr = match mode {
+            Mode::HandleYield(DoCtrl::Perform { effect })
+            | Mode::HandleYield(DoCtrl::Delegate { effect })
+            | Mode::HandleYield(DoCtrl::Pass { effect }) => Some(Self::effect_repr(effect)),
+            _ => None,
+        };
         let mode = self.mode_kind(mode).to_string();
         let pending = self.pending_kind(pending_python).to_string();
+        let top_frame = current_segment
+            .and_then(|id| segments.get(id))
+            .and_then(|seg| seg.frames.last())
+            .map(|frame| match frame {
+                Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)".to_string(),
+                Frame::Program { .. } => "Program".to_string(),
+                Frame::Dispatch(_) => "Dispatch".to_string(),
+                Frame::HandlerBoundary { .. } => "HandlerBoundary".to_string(),
+                Frame::InterceptorApply(_) => "InterceptorApply".to_string(),
+                Frame::InterceptorEval(_) => "InterceptorEval".to_string(),
+                Frame::EvalReturn(_) => "EvalReturn".to_string(),
+                Frame::MapReturn { .. } => "MapReturn".to_string(),
+                Frame::FlatMapBindResult => "FlatMapBindResult".to_string(),
+                Frame::FlatMapBindSource { .. } => "FlatMapBindSource".to_string(),
+                Frame::InterceptBodyReturn { .. } => "InterceptBodyReturn".to_string(),
+            });
         self.trace_events.push(TraceEvent {
             step: self.step_counter,
             event: "enter".to_string(),
             mode,
             pending,
             dispatch_depth,
+            top_frame,
+            effect_repr,
             result: None,
         });
     }
@@ -226,18 +255,38 @@ impl DebugState {
     pub(crate) fn record_trace_exit(
         &mut self,
         mode: &Mode,
+        current_segment: Option<SegmentId>,
+        segments: &SegmentArena,
         pending_python: &Option<PendingPython>,
         dispatch_depth: usize,
         result: &StepEvent,
     ) {
         let mode = self.mode_kind(mode).to_string();
         let pending = self.pending_kind(pending_python).to_string();
+        let top_frame = current_segment
+            .and_then(|id| segments.get(id))
+            .and_then(|seg| seg.frames.last())
+            .map(|frame| match frame {
+                Frame::Program { metadata, .. } if metadata.is_some() => "Program(meta)".to_string(),
+                Frame::Program { .. } => "Program".to_string(),
+                Frame::Dispatch(_) => "Dispatch".to_string(),
+                Frame::HandlerBoundary { .. } => "HandlerBoundary".to_string(),
+                Frame::InterceptorApply(_) => "InterceptorApply".to_string(),
+                Frame::InterceptorEval(_) => "InterceptorEval".to_string(),
+                Frame::EvalReturn(_) => "EvalReturn".to_string(),
+                Frame::MapReturn { .. } => "MapReturn".to_string(),
+                Frame::FlatMapBindResult => "FlatMapBindResult".to_string(),
+                Frame::FlatMapBindSource { .. } => "FlatMapBindSource".to_string(),
+                Frame::InterceptBodyReturn { .. } => "InterceptBodyReturn".to_string(),
+            });
         self.trace_events.push(TraceEvent {
             step: self.step_counter,
             event: "exit".to_string(),
             mode,
             pending,
             dispatch_depth,
+            top_frame,
+            effect_repr: None,
             result: Some(Self::result_kind(result)),
         });
     }

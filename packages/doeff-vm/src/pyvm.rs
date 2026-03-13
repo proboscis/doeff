@@ -29,7 +29,6 @@ use crate::segment::{Segment, SegmentKind};
 use crate::step::{Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent};
 use crate::value::Value;
 use crate::vm::VM;
-use doeff_core_effects::scheduler::{set_run_external_wait_mode, ExternalWaitMode};
 use doeff_core_effects::sentinels::PyRustHandlerSentinel;
 use doeff_vm_core::{
     install_vm_hooks, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr,
@@ -497,6 +496,7 @@ impl PyVM {
             _ => DebugConfig::default(),
         };
         self.vm.set_debug(config);
+        self.vm.enable_trace(level == "trace");
     }
 
     pub fn py_store(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -542,6 +542,15 @@ impl PyVM {
             row.set_item("mode", event.mode.as_str())?;
             row.set_item("pending", event.pending.as_str())?;
             row.set_item("dispatch_depth", event.dispatch_depth)?;
+            row.set_item(
+                "top_frame",
+                event.top_frame.as_deref().unwrap_or_default(),
+            )?;
+            if let Some(effect_repr) = &event.effect_repr {
+                row.set_item("effect_repr", effect_repr.as_str())?;
+            } else {
+                row.set_item("effect_repr", py.None())?;
+            }
             if let Some(result) = &event.result {
                 row.set_item("result", result.as_str())?;
             } else {
@@ -1191,6 +1200,60 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 .into_any()
                 .unbind(),
             ),
+            DoCtrl::HandlerGet { key } => {
+                let key_obj = key.to_pyobject(py);
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::HandlerGet as u8,
+                            })
+                            .add_subclass(PyHandlerGet { key: key_obj }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::HandlerSet { key, value } => {
+                let key_obj = key.to_pyobject(py);
+                let value_obj = value
+                    .to_pyobject(py)
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?;
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::HandlerSet as u8,
+                            })
+                            .add_subclass(PyHandlerSet {
+                                key: key_obj,
+                                value: value_obj.unbind(),
+                            }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
+            DoCtrl::HandlerHas { key } => {
+                let key_obj = key.to_pyobject(py);
+                Some(
+                    Bound::new(
+                        py,
+                        PyClassInitializer::from(PyDoExprBase)
+                            .add_subclass(PyDoCtrlBase {
+                                tag: DoExprTag::HandlerHas as u8,
+                            })
+                            .add_subclass(PyHandlerHas { key: key_obj }),
+                    )
+                    .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                    .into_any()
+                    .unbind(),
+                )
+            }
             DoCtrl::GetTraceback { continuation } => {
                 let k = Bound::new(py, PyK::from_cont_id(continuation.cont_id))
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1725,6 +1788,30 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::GetContinuation => Ok(DoCtrl::GetContinuation),
             DoExprTag::GetHandlers => Ok(DoCtrl::GetHandlers),
+            DoExprTag::HandlerGet => {
+                let hg: PyRef<'_, PyHandlerGet> = obj.extract()?;
+                let key = HashedPyKey::from_bound(hg.key.bind(py)).map_err(|err| {
+                    PyTypeError::new_err(format!("HandlerGet key must be hashable: {err}"))
+                })?;
+                Ok(DoCtrl::HandlerGet { key })
+            }
+            DoExprTag::HandlerSet => {
+                let hs: PyRef<'_, PyHandlerSet> = obj.extract()?;
+                let key = HashedPyKey::from_bound(hs.key.bind(py)).map_err(|err| {
+                    PyTypeError::new_err(format!("HandlerSet key must be hashable: {err}"))
+                })?;
+                Ok(DoCtrl::HandlerSet {
+                    key,
+                    value: Value::from_pyobject(hs.value.bind(py)),
+                })
+            }
+            DoExprTag::HandlerHas => {
+                let hh: PyRef<'_, PyHandlerHas> = obj.extract()?;
+                let key = HashedPyKey::from_bound(hh.key.bind(py)).map_err(|err| {
+                    PyTypeError::new_err(format!("HandlerHas key must be hashable: {err}"))
+                })?;
+                Ok(DoCtrl::HandlerHas { key })
+            }
             DoExprTag::GetTraceback => {
                 let gt: PyRef<'_, PyGetTraceback> = obj.extract()?;
                 let k_pyobj = gt.continuation.bind(py).cast::<PyK>().map_err(|_| {
@@ -2819,6 +2906,62 @@ impl PyGetHandlers {
     }
 }
 
+#[pyclass(name = "HandlerGet", extends=PyDoCtrlBase)]
+pub struct PyHandlerGet {
+    #[pyo3(get)]
+    pub key: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyHandlerGet {
+    #[new]
+    fn new(key: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::HandlerGet as u8,
+            })
+            .add_subclass(PyHandlerGet { key })
+    }
+}
+
+#[pyclass(name = "HandlerSet", extends=PyDoCtrlBase)]
+pub struct PyHandlerSet {
+    #[pyo3(get)]
+    pub key: Py<PyAny>,
+    #[pyo3(get)]
+    pub value: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyHandlerSet {
+    #[new]
+    fn new(key: Py<PyAny>, value: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::HandlerSet as u8,
+            })
+            .add_subclass(PyHandlerSet { key, value })
+    }
+}
+
+#[pyclass(name = "HandlerHas", extends=PyDoCtrlBase)]
+pub struct PyHandlerHas {
+    #[pyo3(get)]
+    pub key: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyHandlerHas {
+    #[new]
+    fn new(key: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::HandlerHas as u8,
+            })
+            .add_subclass(PyHandlerHas { key })
+    }
+}
+
 /// Request the current call stack.
 #[pyclass(name = "GetCallStack", extends=PyDoCtrlBase)]
 pub struct PyGetCallStack;
@@ -3245,7 +3388,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class SpawnEffect(EffectBase):\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
+                c"class SpawnEffect(EffectBase):\n    def __init__(self, p, hs):\n        self.program = p\n        self.handlers = hs\nobj = SpawnEffect(None, [sentinel])\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -3540,7 +3683,7 @@ mod tests {
                 .set_item("EffectBase", py.get_type::<PyEffectBase>())
                 .unwrap();
             py.run(
-                c"class SpawnEffect(EffectBase):\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
+                c"class SpawnEffect(EffectBase):\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n\nobj = SpawnEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -4074,9 +4217,7 @@ fn async_run<'py>(
     }
 
     vm.start_with_expr(py, program)?;
-    if let Some(run_token) = vm.vm.current_run_token() {
-        set_run_external_wait_mode(run_token, ExternalWaitMode::AsyncYield);
-    }
+    vm.vm.set_async_external_wait_for_current_run(true);
 
     let py_vm = Bound::new(py, vm)?;
 
@@ -4165,6 +4306,9 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCreateContinuation>()?;
     m.add_class::<PyGetContinuation>()?;
     m.add_class::<PyGetHandlers>()?;
+    m.add_class::<PyHandlerGet>()?;
+    m.add_class::<PyHandlerSet>()?;
+    m.add_class::<PyHandlerHas>()?;
     m.add_class::<PyGetTraceback>()?;
     m.add_class::<PyGetCallStack>()?;
     m.add_class::<PyAsyncEscape>()?;
@@ -4187,6 +4331,9 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_PASS", DoExprTag::Pass as u8)?;
     m.add("TAG_GET_CONTINUATION", DoExprTag::GetContinuation as u8)?;
     m.add("TAG_GET_HANDLERS", DoExprTag::GetHandlers as u8)?;
+    m.add("TAG_HANDLER_GET", DoExprTag::HandlerGet as u8)?;
+    m.add("TAG_HANDLER_SET", DoExprTag::HandlerSet as u8)?;
+    m.add("TAG_HANDLER_HAS", DoExprTag::HandlerHas as u8)?;
     m.add("TAG_GET_TRACEBACK", DoExprTag::GetTraceback as u8)?;
     m.add("TAG_WITH_INTERCEPT", DoExprTag::WithIntercept as u8)?;
     m.add("TAG_DISCONTINUE", DoExprTag::Discontinue as u8)?;

@@ -99,7 +99,7 @@ def test_sa008_modify_atomic_on_transform_error() -> None:
     assert result.raw_store["value"] == 100
 
 
-def test_sa008_gather_uses_isolated_state_snapshots() -> None:
+def test_sa008_gather_uses_shared_state_snapshots() -> None:
     @do
     def increment():
         current = yield Get("counter")
@@ -118,8 +118,8 @@ def test_sa008_gather_uses_isolated_state_snapshots() -> None:
 
     result = run(prog(), handlers=default_handlers())
 
-    assert result.value == ([0, 0, 0], 0)
-    assert result.raw_store["counter"] == 0
+    assert result.value == ([0, 1, 2], 3)
+    assert result.raw_store["counter"] == 3
 
 
 def test_sa008_sync_await_runs_in_default_handlers() -> None:
@@ -150,7 +150,7 @@ def test_sa008_sync_await_propagates_coroutine_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sa008_gather_branch_state_changes_not_shared() -> None:
+async def test_sa008_gather_branch_state_changes_are_shared() -> None:
     @do
     def writer():
         yield Put("message", "written by branch 1")
@@ -173,4 +173,11 @@ async def test_sa008_gather_branch_state_changes_not_shared() -> None:
 
     result = await async_run(prog(), handlers=default_async_handlers())
 
-    assert result.value == (["writer done", "initial"], "initial")
+    assert result.value == (["writer done", "written by branch 1"], "written by branch 1")
+
+
+def test_sa008_spawn_store_mode_is_removed() -> None:
+    from doeff import Pure, Spawn
+
+    with pytest.raises(TypeError, match="store_mode is removed"):
+        Spawn(Pure(1), store_mode="isolated")

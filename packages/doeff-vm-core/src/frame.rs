@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::capture::HandlerKind;
 use crate::dispatch::DispatchFrame;
 use crate::do_ctrl::DoCtrl;
-use crate::ids::Marker;
+use crate::ids::{HandlerScopeId, Marker};
 use crate::ir_stream::IRStreamRef;
 use crate::py_shared::PyShared;
 
@@ -136,6 +136,7 @@ pub enum Frame {
     InterceptorEval(Box<InterceptorContinuation>),
     Dispatch(Box<DispatchFrame>),
     HandlerBoundary {
+        handler_scope_id: HandlerScopeId,
         plain_return_allowed: bool,
     },
     EvalReturn(Box<EvalReturnContinuation>),

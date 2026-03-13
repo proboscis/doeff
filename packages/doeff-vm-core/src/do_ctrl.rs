@@ -8,6 +8,7 @@ use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::value::Value;
 
@@ -99,6 +100,16 @@ pub enum DoCtrl {
     },
     GetContinuation,
     GetHandlers,
+    HandlerGet {
+        key: HashedPyKey,
+    },
+    HandlerSet {
+        key: HashedPyKey,
+        value: Value,
+    },
+    HandlerHas {
+        key: HashedPyKey,
+    },
     GetTraceback {
         continuation: Continuation,
     },
@@ -235,6 +246,12 @@ impl DoCtrl {
             },
             DoCtrl::GetContinuation => DoCtrl::GetContinuation,
             DoCtrl::GetHandlers => DoCtrl::GetHandlers,
+            DoCtrl::HandlerGet { key } => DoCtrl::HandlerGet { key: key.clone() },
+            DoCtrl::HandlerSet { key, value } => DoCtrl::HandlerSet {
+                key: key.clone(),
+                value: value.clone(),
+            },
+            DoCtrl::HandlerHas { key } => DoCtrl::HandlerHas { key: key.clone() },
             DoCtrl::GetTraceback { continuation } => DoCtrl::GetTraceback {
                 continuation: continuation.clone(),
             },

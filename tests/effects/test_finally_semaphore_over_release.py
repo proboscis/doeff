@@ -822,6 +822,50 @@ class TestLayer5WithHandlerResume:
         assert result.is_ok(), result.display()
         assert result.value == [i * 10 for i in range(high_task_count)]
 
+    def test_cache_decorator_in_memory_high_concurrency_sync_repeated_run_regression(self) -> None:
+        """Issue #282: repeated runs must not retain scheduler-owned state."""
+        from doeff import Ask, Local
+        from doeff.cache import cache
+        from doeff.handlers.cache_handlers import in_memory_cache_handler
+
+        high_task_count = 85
+        high_concurrency = 40
+
+        @do
+        def _interceptor(expr):
+            return expr
+
+        @cache(lifecycle="persistent")
+        @do
+        def _cached_compute(n: int):
+            result = yield Await(_fake_api_call(n))
+            return result
+
+        @do
+        def _worker(n: int):
+            yield Tell(f"start {n}")
+            compute_fn = yield Ask("compute_fn")
+            result = yield compute_fn(n=n)
+            yield Tell(f"done {n}")
+            return result
+
+        def _make_program():
+            programs = [_worker(i) for i in range(high_task_count)]
+            body = _throttled(programs, high_concurrency, with_tell=True)
+            env = {"compute_fn": _cached_compute}
+            return WithIntercept(
+                _interceptor,
+                WithHandler(in_memory_cache_handler(), Local(env, body)),
+            )
+
+        first = _run_sync_with_timeout(_make_program())
+        assert first.is_ok(), first.display()
+        assert first.value == [i * 10 for i in range(high_task_count)]
+
+        second = _run_sync_with_timeout(_make_program())
+        assert second.is_ok(), second.display()
+        assert second.value == [i * 10 for i in range(high_task_count)]
+
     @pytest.mark.asyncio
     async def test_handler_resume_full_stack_async(self) -> None:
         @do

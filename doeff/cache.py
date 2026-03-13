@@ -249,7 +249,7 @@ def cache(
         def ensure_serializable(
             key_obj: Any,
             *,
-            log_success: bool = True,
+            log_success: bool = False,
             level: str | None = None,
         ) -> EffectGenerator[None]:
             try:
@@ -341,11 +341,6 @@ def cache(
 
         @do
         def wrapper(*args, **kwargs) -> EffectGenerator[T]:
-            context = yield GetExecutionContext()
-            call_stack = getattr(context, "active_chain", ())
-            stack_frames = list(call_stack) if isinstance(call_stack, (list, tuple)) else []
-            call_site = _call_site_from_program_frames(stack_frames)
-
             args_for_key, kwargs_for_key = yield build_key_inputs(tuple(args), dict(kwargs))
 
             frozen_kwargs = FrozenDict(kwargs_for_key) if kwargs_for_key else FrozenDict()
@@ -355,16 +350,14 @@ def cache(
                 else (func_name, args_for_key, frozen_kwargs)
             )
 
-            yield ensure_serializable(cache_key_obj, level="DEBUG")
+            yield ensure_serializable(cache_key_obj)
 
             @do
             def compute_and_cache() -> EffectGenerator[T]:
-                yield slog(msg=f"Cache miss for {func_name}, computing...", level="DEBUG")
                 program_call = wrapped_func(*args, **kwargs)
                 result = _normalize_cache_result((yield Try(program_call)))
 
                 if result.is_ok():
-                    yield ensure_serializable(cache_key_obj)
                     yield CachePut(
                         cache_key_obj,
                         result,
@@ -374,11 +367,14 @@ def cache(
                         metadata=metadata,
                         policy=policy,
                     )
-                    yield slog(msg=f"Cache: stored result for {func_name}", level="DEBUG")
                     return result.value
 
                 yield slog(msg=f"Computation for {func_name} failed, not caching.", level="error")
                 error = result.error
+                context = yield GetExecutionContext()
+                call_stack = getattr(context, "active_chain", ())
+                stack_frames = list(call_stack) if isinstance(call_stack, (list, tuple)) else []
+                call_site = _call_site_from_program_frames(stack_frames)
                 _attach_exception_note(
                     error,
                     _cache_error_note(func_name, args, dict(kwargs), call_site),
@@ -387,7 +383,6 @@ def cache(
 
             @do
             def try_cache_get() -> EffectGenerator[T]:
-                yield ensure_serializable(cache_key_obj, log_success=False)
                 return (yield CacheGet(cache_key_obj))
 
             cache_result = yield Try(try_cache_get())

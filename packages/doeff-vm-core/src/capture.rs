@@ -2,7 +2,7 @@
 
 use pyo3::prelude::*;
 
-use crate::ids::DispatchId;
+use crate::ids::{DispatchId, HandlerScopeId};
 
 /// Unique identifier for a program frame instance.
 pub type FrameId = u64;
@@ -31,6 +31,7 @@ pub enum HandlerStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandlerSnapshotEntry {
     pub handler_name: String,
+    pub handler_scope_id: HandlerScopeId,
     pub handler_kind: HandlerKind,
     pub source_file: Option<String>,
     pub source_line: Option<u32>,
@@ -40,6 +41,7 @@ pub struct HandlerSnapshotEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandlerDispatchEntry {
     pub handler_name: String,
+    pub handler_scope_id: HandlerScopeId,
     pub handler_kind: HandlerKind,
     pub source_file: Option<String>,
     pub source_line: Option<u32>,
@@ -129,6 +131,8 @@ pub enum ActiveChainEntry {
         function_name: String,
         source_file: String,
         source_line: u32,
+        handler_scope_id: Option<HandlerScopeId>,
+        handler_stack: Vec<HandlerDispatchEntry>,
         exception_type: String,
         message: String,
     },

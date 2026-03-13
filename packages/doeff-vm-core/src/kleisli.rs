@@ -12,7 +12,7 @@ use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{dispatch_from_shared, DispatchEffect};
 use crate::error::VMError;
 use crate::frame::CallMetadata;
-use crate::handler::{IRStreamFactoryRef, IRStreamProgramRef};
+use crate::handler::{IRStreamFactoryRef, IRStreamProgramRef, RunContext};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::py_shared::PyShared;
 use crate::pyvm::PyK;
@@ -39,16 +39,16 @@ pub trait Kleisli: std::fmt::Debug + Send + Sync {
     /// Apply the arrow to arguments, producing a DoCtrl to evaluate.
     fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError>;
 
-    /// Apply with optional VM run token for run-scoped handler state.
+    /// Apply with optional VM run context for run-scoped handler state.
     ///
-    /// Non-Rust handlers ignore the run token and defer to `apply`.
-    fn apply_with_run_token(
+    /// Non-Rust handlers ignore the run context and defer to `apply`.
+    fn apply_with_run_context(
         &self,
         py: Python<'_>,
         args: Vec<Value>,
-        run_token: Option<u64>,
+        run_context: Option<RunContext>,
     ) -> Result<DoCtrl, VMError> {
-        let _ = run_token;
+        let _ = run_context;
         self.apply(py, args)
     }
 
@@ -105,13 +105,13 @@ impl Kleisli for IdentityKleisli {
         self.inner.apply(py, args)
     }
 
-    fn apply_with_run_token(
+    fn apply_with_run_context(
         &self,
         py: Python<'_>,
         args: Vec<Value>,
-        run_token: Option<u64>,
+        run_context: Option<RunContext>,
     ) -> Result<DoCtrl, VMError> {
-        self.inner.apply_with_run_token(py, args, run_token)
+        self.inner.apply_with_run_context(py, args, run_context)
     }
 
     fn debug_info(&self) -> KleisliDebugInfo {
@@ -623,14 +623,14 @@ impl IRStream for RustKleisliStream {
 
 impl Kleisli for RustKleisli {
     fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
-        self.apply_with_run_token(py, args, None)
+        self.apply_with_run_context(py, args, None)
     }
 
-    fn apply_with_run_token(
+    fn apply_with_run_context(
         &self,
         py: Python<'_>,
         args: Vec<Value>,
-        run_token: Option<u64>,
+        run_context: Option<RunContext>,
     ) -> Result<DoCtrl, VMError> {
         if args.len() != 2 {
             return Err(VMError::type_error(format!(
@@ -657,7 +657,7 @@ impl Kleisli for RustKleisli {
             }
         };
 
-        let program = self.factory.create_program_for_run(run_token);
+        let program = self.factory.create_program_for_run(run_context);
         let stream: IRStreamRef = Arc::new(Mutex::new(Box::new(RustKleisliStream::new(
             program,
             effect,
