@@ -1,24 +1,7 @@
-//! Dispatch context model.
+//! Dispatch-facing effect aliases re-exported for compatibility.
 
-use crate::continuation::Continuation;
-use crate::effect::DispatchEffect;
-use crate::ids::{DispatchId, Marker, SegmentId};
-use crate::step::PyException;
-
-#[derive(Debug, Clone)]
-pub struct DispatchContext {
-    pub dispatch_id: DispatchId,
-    pub effect: DispatchEffect,
-    pub is_execution_context_effect: bool,
-    pub handler_chain: Vec<Marker>,
-    pub handler_idx: usize,
-    /// Segment currently executing the active handler clause (ctx.handler_idx).
-    /// Used to scope self-dispatch exclusion to handler clause execution only.
-    pub active_handler_seg_id: SegmentId,
-    pub supports_error_context_conversion: bool,
-    pub k_origin: Continuation,
-    pub k_current: Continuation,
-    pub prompt_seg_id: SegmentId,
-    pub completed: bool,
-    pub original_exception: Option<PyException>,
-}
+pub use crate::effect::{
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, dispatch_to_pyobject,
+    make_execution_context_object, make_get_execution_context_effect, DispatchEffect, Effect,
+    PyEffectBase, PyExecutionContext, PyGetExecutionContext,
+};

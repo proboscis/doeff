@@ -86,7 +86,6 @@ pub use capture::{
     SpawnSite, TraceEntry, TraceFrame, TraceHop,
 };
 pub use continuation::Continuation;
-pub use dispatch::DispatchContext;
 pub use do_ctrl::DoCtrl;
 pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 pub use driver::{Mode, StepEvent};
