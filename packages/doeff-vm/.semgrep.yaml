@@ -185,6 +185,21 @@ rules:
       spec: SPEC-008
       invariants: ["R13-I"]
 
+  - id: doeff-vm-no-cfg-disabled-base-stubs
+    pattern-regex: '#\[cfg\(any\(\)\)\]'
+    message: |
+      SPEC VIOLATION: doeff-vm/src/pyvm.rs must not carry cfg-disabled duplicate
+      base-class stubs. The real base types live in doeff-vm-core and tests must
+      inspect their owning files directly.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      issue: gh-298
+
   - id: doeff-vm-no-isinstance-chain-in-classify
     pattern-regex: '(?s)fn classify_yielded\b.*?extract::<PyRef.*?extract::<PyRef.*?extract::<PyRef'
     message: |
