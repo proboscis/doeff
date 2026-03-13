@@ -79,27 +79,23 @@ impl DispatchState {
         self.dispatches.retain(|_, d| !d.completed);
     }
 
-    pub(crate) fn check_dispatch_completion(&mut self, k: &Continuation) {
+    pub(crate) fn check_dispatch_completion(
+        &mut self,
+        k: &Continuation,
+        consumed_cont_ids: &HashSet<ContId>,
+    ) {
         let Some(dispatch_id) = k.dispatch_id else {
             return;
         };
         let Some(d) = self.dispatches.get_mut(&dispatch_id) else {
             return;
         };
-        let Some(activation) = d.current_activation() else {
-            return;
-        };
-        // Walk from k_current through parent chain to find k's cont_id.
-        // If found at a terminal position (parent is None), the dispatch is complete.
-        let mut cursor = Some(activation.k_current.clone());
-        while let Some(current) = cursor {
-            if current.cont_id == k.cont_id {
-                if current.parent.is_none() {
-                    d.completed = true;
-                }
-                break;
+        // Dispatch is complete when the first activation's k_passed (the original
+        // user continuation) has been consumed via Resume or Transfer.
+        if let Some(first) = d.activations.first() {
+            if consumed_cont_ids.contains(&first.k_passed.cont_id) {
+                d.completed = true;
             }
-            cursor = current.parent.as_ref().map(|parent| (**parent).clone());
         }
     }
 

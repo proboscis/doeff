@@ -9,7 +9,7 @@ use crate::step::PyException;
 ///
 /// Each time a handler is invoked (initial dispatch, Delegate, or Pass),
 /// an activation record tracks the handler identity, the continuation state,
-/// and an optional throw target for exception replay.
+/// and the throw target for exception replay back to the yield site.
 #[derive(Debug, Clone)]
 pub struct HandlerActivation {
     pub handler_idx: usize,
@@ -50,6 +50,11 @@ impl Dispatch {
         self.current_activation().map(|a| &a.k_current)
     }
 
+    pub fn current_throw_target(&self) -> Option<&Continuation> {
+        self.current_activation()
+            .and_then(|a| a.throw_target.as_ref())
+    }
+
     pub fn current_active_handler_seg_id(&self) -> Option<SegmentId> {
         self.current_activation().map(|a| a.active_handler_seg_id)
     }
@@ -59,6 +64,3 @@ impl Dispatch {
             .is_some_and(|a| a.supports_error_context_conversion)
     }
 }
-
-/// Backward-compatible type alias during migration.
-pub type DispatchContext = Dispatch;

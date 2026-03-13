@@ -342,10 +342,6 @@ def test_async_escape_errors_reenter_try_except_in_sync_run() -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason="Tracked by #277: Rust-backed handlers do not yet replay to yield-site try/except",
-    strict=True,
-)
 def test_missing_env_key_is_catchable_at_yield_site_and_try_still_wraps() -> None:
     @do
     def catch_program():
@@ -370,10 +366,6 @@ def test_missing_env_key_is_catchable_at_yield_site_and_try_still_wraps() -> Non
     assert isinstance(safe_result.value.error, MissingEnvKeyError)
 
 
-@pytest.mark.xfail(
-    reason="Tracked by #277: Rust-backed handlers do not yet replay to yield-site try/except",
-    strict=True,
-)
 def test_state_missing_key_is_catchable_at_yield_site_and_try_still_wraps() -> None:
     @do
     def catch_program():
