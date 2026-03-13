@@ -26,7 +26,7 @@ pub struct ContId(pub u64);
 /// Unique identifier for dispatches.
 ///
 /// Tracks the lifecycle of an effect dispatch through handler chain.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct DispatchId(pub u64);
 
 /// Unique identifier for runnable continuations.

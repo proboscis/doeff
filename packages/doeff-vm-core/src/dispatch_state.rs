@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::continuation::Continuation;
-use crate::dispatch::DispatchContext;
+use crate::dispatch::Dispatch;
 use crate::effect::DispatchEffect;
 use crate::error::VMError;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
@@ -13,8 +13,7 @@ use crate::trace_state::ActiveChainAssemblyState;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DispatchState {
-    dispatch_stack: Vec<DispatchContext>,
-    dispatch_index: HashMap<DispatchId, usize>,
+    dispatches: HashMap<DispatchId, Dispatch>,
 }
 
 pub(crate) struct WithHandlerPlan {
@@ -25,100 +24,84 @@ pub(crate) struct WithHandlerPlan {
 
 impl DispatchState {
     pub(crate) fn depth(&self) -> usize {
-        self.dispatch_stack.len()
+        self.dispatches.len()
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.dispatch_stack.is_empty()
+        self.dispatches.is_empty()
     }
 
-    pub(crate) fn contexts(&self) -> &[DispatchContext] {
-        &self.dispatch_stack
+    pub(crate) fn dispatches_ref(&self) -> &HashMap<DispatchId, Dispatch> {
+        &self.dispatches
     }
 
-    pub(crate) fn get(&self, idx: usize) -> Option<&DispatchContext> {
-        self.dispatch_stack.get(idx)
+    pub(crate) fn dispatches_mut(&mut self) -> &mut HashMap<DispatchId, Dispatch> {
+        &mut self.dispatches
     }
 
-    pub(crate) fn get_mut(&mut self, idx: usize) -> Option<&mut DispatchContext> {
-        self.dispatch_stack.get_mut(idx)
+    pub(crate) fn insert(&mut self, dispatch: Dispatch) {
+        self.dispatches.insert(dispatch.dispatch_id, dispatch);
     }
 
-    pub(crate) fn push_dispatch(&mut self, ctx: DispatchContext) {
-        self.dispatch_index
-            .insert(ctx.dispatch_id, self.dispatch_stack.len());
-        self.dispatch_stack.push(ctx);
-    }
-
-    pub(crate) fn find_by_dispatch_id(&self, dispatch_id: DispatchId) -> Option<&DispatchContext> {
-        let idx = *self.dispatch_index.get(&dispatch_id)?;
-        self.dispatch_stack.get(idx)
+    pub(crate) fn find_by_dispatch_id(&self, dispatch_id: DispatchId) -> Option<&Dispatch> {
+        self.dispatches.get(&dispatch_id)
     }
 
     pub(crate) fn find_mut_by_dispatch_id(
         &mut self,
         dispatch_id: DispatchId,
-    ) -> Option<&mut DispatchContext> {
-        let idx = *self.dispatch_index.get(&dispatch_id)?;
-        self.dispatch_stack.get_mut(idx)
+    ) -> Option<&mut Dispatch> {
+        self.dispatches.get_mut(&dispatch_id)
     }
 
     pub(crate) fn effect_for_dispatch(&self, dispatch_id: DispatchId) -> Option<DispatchEffect> {
         self.find_by_dispatch_id(dispatch_id)
-            .map(|ctx| ctx.effect.clone())
+            .map(|d| d.effect.clone())
     }
 
     pub(crate) fn dispatch_is_execution_context_effect(&self, dispatch_id: DispatchId) -> bool {
         self.find_by_dispatch_id(dispatch_id)
-            .is_some_and(|ctx| ctx.is_execution_context_effect)
+            .is_some_and(|d| d.is_execution_context_effect)
     }
 
-    pub(crate) fn mark_completed_at(
+    pub(crate) fn mark_completed(
         &mut self,
-        idx: usize,
+        dispatch_id: DispatchId,
         consumed_cont_ids: &mut HashSet<ContId>,
     ) {
-        if let Some(ctx) = self.dispatch_stack.get_mut(idx) {
-            ctx.completed = true;
-            consumed_cont_ids.insert(ctx.k_current.cont_id);
+        if let Some(d) = self.dispatches.get_mut(&dispatch_id) {
+            d.completed = true;
+            if let Some(activation) = d.current_activation() {
+                consumed_cont_ids.insert(activation.k_current.cont_id);
+            }
         }
-    }
-
-    pub(crate) fn iter_mut_from(
-        &mut self,
-        start: usize,
-    ) -> impl Iterator<Item = &mut DispatchContext> {
-        self.dispatch_stack.iter_mut().skip(start)
     }
 
     pub(crate) fn lazy_pop_completed(&mut self) {
-        while let Some(top) = self.dispatch_stack.last() {
-            if top.completed {
-                let popped = self
-                    .dispatch_stack
-                    .pop()
-                    .expect("dispatch_stack.last() returned Some but pop failed");
-                self.dispatch_index.remove(&popped.dispatch_id);
-            } else {
-                break;
-            }
-        }
+        self.dispatches.retain(|_, d| !d.completed);
     }
 
     pub(crate) fn check_dispatch_completion(&mut self, k: &Continuation) {
-        if let Some(dispatch_id) = k.dispatch_id {
-            if let Some(ctx) = self.find_mut_by_dispatch_id(dispatch_id) {
-                let mut cursor = Some(ctx.k_current.clone());
-                while let Some(current) = cursor {
-                    if current.cont_id == k.cont_id {
-                        if current.parent.is_none() {
-                            ctx.completed = true;
-                        }
-                        break;
-                    }
-                    cursor = current.parent.as_ref().map(|parent| (**parent).clone());
+        let Some(dispatch_id) = k.dispatch_id else {
+            return;
+        };
+        let Some(d) = self.dispatches.get_mut(&dispatch_id) else {
+            return;
+        };
+        let Some(activation) = d.current_activation() else {
+            return;
+        };
+        // Walk from k_current through parent chain to find k's cont_id.
+        // If found at a terminal position (parent is None), the dispatch is complete.
+        let mut cursor = Some(activation.k_current.clone());
+        while let Some(current) = cursor {
+            if current.cont_id == k.cont_id {
+                if current.parent.is_none() {
+                    d.completed = true;
                 }
+                break;
             }
+            cursor = current.parent.as_ref().map(|parent| (**parent).clone());
         }
     }
 
@@ -126,30 +109,26 @@ impl DispatchState {
         &self,
         dispatch_id: DispatchId,
     ) -> bool {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-            .is_some_and(|ctx| ctx.supports_error_context_conversion)
+        self.dispatches
+            .get(&dispatch_id)
+            .is_some_and(|d| d.current_supports_error_context_conversion())
     }
 
     pub(crate) fn active_error_dispatch_original_exception(&self) -> Option<PyException> {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| !ctx.completed && ctx.original_exception.is_some())
-            .and_then(|ctx| ctx.original_exception.clone())
+        self.dispatches
+            .values()
+            .filter(|d| !d.completed && d.original_exception.is_some())
+            .max_by_key(|d| d.dispatch_id)
+            .and_then(|d| d.original_exception.clone())
     }
 
     pub(crate) fn original_exception_for_dispatch(
         &self,
         dispatch_id: DispatchId,
     ) -> Option<PyException> {
-        self.dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-            .and_then(|ctx| ctx.original_exception.clone())
+        self.dispatches
+            .get(&dispatch_id)
+            .and_then(|d| d.original_exception.clone())
     }
 
     pub(crate) fn error_dispatch_for_continuation(
@@ -157,13 +136,11 @@ impl DispatchState {
         k: &Continuation,
     ) -> Option<(DispatchId, PyException, bool)> {
         let dispatch_id = k.dispatch_id?;
-        let ctx = self
-            .dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)?;
-        let original = ctx.original_exception.clone()?;
-        let mut cursor = Some(ctx.k_current.clone());
+        let d = self.dispatches.get(&dispatch_id)?;
+        let original = d.original_exception.clone()?;
+        let activation = d.current_activation()?;
+        // Walk from k_current through parent chain to determine terminality.
+        let mut cursor = Some(activation.k_current.clone());
         while let Some(current) = cursor {
             if current.cont_id == k.cont_id {
                 return Some((dispatch_id, original, current.parent.is_none()));
@@ -178,10 +155,7 @@ impl DispatchState {
         dispatch_id: DispatchId,
         consumed_cont_ids: &mut HashSet<ContId>,
     ) {
-        if let Some(ctx) = self.find_mut_by_dispatch_id(dispatch_id) {
-            ctx.completed = true;
-            consumed_cont_ids.insert(ctx.k_current.cont_id);
-        }
+        self.mark_completed(dispatch_id, consumed_cont_ids);
     }
 
     pub(crate) fn mark_dispatch_completed(
@@ -189,15 +163,7 @@ impl DispatchState {
         dispatch_id: DispatchId,
         consumed_cont_ids: &mut HashSet<ContId>,
     ) {
-        if let Some(ctx) = self
-            .dispatch_stack
-            .iter_mut()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-        {
-            ctx.completed = true;
-            consumed_cont_ids.insert(ctx.k_current.cont_id);
-        }
+        self.mark_completed(dispatch_id, consumed_cont_ids);
     }
 
     pub(crate) fn dispatch_has_terminal_handler_action(

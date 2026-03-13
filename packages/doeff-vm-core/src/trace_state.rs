@@ -11,7 +11,7 @@ use crate::capture::{
     HandlerStatus, TraceEntry, TraceFrame, TraceHop,
 };
 use crate::continuation::Continuation;
-use crate::dispatch::DispatchContext;
+use crate::dispatch::Dispatch;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
 use crate::frame::{CallMetadata, Frame};
 use crate::ids::{DispatchId, SegmentId};
@@ -617,14 +617,14 @@ impl TraceState {
         exception: Option<&PyException>,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
-        dispatch_stack: &[DispatchContext],
+        dispatches: &HashMap<DispatchId, Dispatch>,
     ) -> Vec<ActiveChainEntry> {
         let mut state = self.active_chain_state.clone();
-        self.merge_live_frame_state(&mut state, segments, current_segment, dispatch_stack);
+        self.merge_live_frame_state(&mut state, segments, current_segment, dispatches);
         if let Some(exception) = exception {
             Self::finalize_unresolved_dispatches_as_threw(&mut state, exception);
         }
-        let entries = self.entries_from_active_chain_state(&state, dispatch_stack);
+        let entries = self.entries_from_active_chain_state(&state, dispatches);
         let entries = Self::dedup_adjacent(entries);
         Self::inject_context(entries, exception)
     }
@@ -634,10 +634,10 @@ impl TraceState {
         exception: &PyException,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
-        dispatch_stack: &[DispatchContext],
+        dispatches: &HashMap<DispatchId, Dispatch>,
     ) -> Vec<TraceEntry> {
         let mut state = self.active_chain_state.clone();
-        self.merge_live_frame_state(&mut state, segments, current_segment, dispatch_stack);
+        self.merge_live_frame_state(&mut state, segments, current_segment, dispatches);
         Self::finalize_unresolved_dispatches_as_threw(&mut state, exception);
 
         let mut entries = Vec::new();
@@ -968,14 +968,14 @@ impl TraceState {
         state: &mut ActiveChainAssemblyState,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
-        dispatch_stack: &[DispatchContext],
+        dispatches: &HashMap<DispatchId, Dispatch>,
     ) {
         self.merge_frame_lines_from_segments(&mut state.frame_stack, segments, current_segment);
-        let (frame_stack, dispatches) = (&mut state.frame_stack, &state.dispatches);
+        let (frame_stack, chain_dispatches) = (&mut state.frame_stack, &state.dispatches);
         self.merge_frame_lines_from_visible_dispatch_snapshot(
             frame_stack,
+            chain_dispatches,
             dispatches,
-            dispatch_stack,
         );
     }
 
@@ -1015,18 +1015,27 @@ impl TraceState {
     fn merge_frame_lines_from_visible_dispatch_snapshot(
         &self,
         frame_stack: &mut Vec<ActiveChainFrameState>,
-        dispatches: &HashMap<DispatchId, ActiveChainDispatchState>,
-        dispatch_stack: &[DispatchContext],
+        chain_dispatches: &HashMap<DispatchId, ActiveChainDispatchState>,
+        dispatches: &HashMap<DispatchId, Dispatch>,
     ) {
-        let Some(dispatch_ctx) = dispatch_stack.iter().rev().find(|ctx| {
-            dispatches
-                .get(&ctx.dispatch_id)
-                .is_some_and(|dispatch| Self::is_visible_dispatch(dispatch))
-        }) else {
+        // Find the most recent dispatch whose active chain state is visible.
+        let visible_dispatch = dispatches
+            .values()
+            .filter(|d| {
+                chain_dispatches
+                    .get(&d.dispatch_id)
+                    .is_some_and(|cd| Self::is_visible_dispatch(cd))
+            })
+            .max_by_key(|d| d.dispatch_id);
+
+        let Some(d) = visible_dispatch else {
+            return;
+        };
+        let Some(k_current) = d.current_k_current() else {
             return;
         };
 
-        for frame in dispatch_ctx.k_current.frames_snapshot.iter() {
+        for frame in k_current.frames_snapshot.iter() {
             let Frame::Program {
                 stream,
                 metadata: Some(metadata),
@@ -1090,11 +1099,11 @@ impl TraceState {
     fn entries_from_active_chain_state(
         &self,
         state: &ActiveChainAssemblyState,
-        dispatch_stack: &[DispatchContext],
+        dispatches: &HashMap<DispatchId, Dispatch>,
     ) -> Vec<ActiveChainEntry> {
         let mut active_chain = self.entries_from_frame_stack(state);
         if active_chain.is_empty() {
-            self.fallback_entries_when_chain_empty(state, dispatch_stack, &mut active_chain);
+            self.fallback_entries_when_chain_empty(state, dispatches, &mut active_chain);
         }
         active_chain
     }
@@ -1132,10 +1141,10 @@ impl TraceState {
     fn fallback_entries_when_chain_empty(
         &self,
         state: &ActiveChainAssemblyState,
-        dispatch_stack: &[DispatchContext],
+        dispatches: &HashMap<DispatchId, Dispatch>,
         active_chain: &mut Vec<ActiveChainEntry>,
     ) {
-        let Some(dispatch_id) = self.fallback_dispatch_id(state, dispatch_stack) else {
+        let Some(dispatch_id) = self.fallback_dispatch_id(state, dispatches) else {
             return;
         };
         let Some(dispatch) = state
@@ -1146,7 +1155,7 @@ impl TraceState {
             return;
         };
 
-        let snapshot_frames = self.snapshot_frames_for_dispatch(dispatch_id, dispatch_stack);
+        let snapshot_frames = self.snapshot_frames_for_dispatch(dispatch_id, dispatches);
         if snapshot_frames.is_empty() {
             Self::push_effect_yield_entry(active_chain, dispatch, None);
             return;
@@ -1168,19 +1177,19 @@ impl TraceState {
     fn fallback_dispatch_id(
         &self,
         state: &ActiveChainAssemblyState,
-        dispatch_stack: &[DispatchContext],
+        dispatches: &HashMap<DispatchId, Dispatch>,
     ) -> Option<DispatchId> {
-        dispatch_stack
-            .iter()
-            .rev()
-            .find_map(|ctx| {
-                let dispatch = state.dispatches.get(&ctx.dispatch_id)?;
-                if Self::is_visible_dispatch(dispatch) {
-                    Some(ctx.dispatch_id)
-                } else {
-                    None
-                }
+        // Try dispatches (most recent first) whose active chain state is visible.
+        dispatches
+            .values()
+            .filter(|d| {
+                state
+                    .dispatches
+                    .get(&d.dispatch_id)
+                    .is_some_and(|cd| Self::is_visible_dispatch(cd))
             })
+            .max_by_key(|d| d.dispatch_id)
+            .map(|d| d.dispatch_id)
             .or_else(|| {
                 state
                     .dispatch_order
@@ -1201,15 +1210,13 @@ impl TraceState {
     fn snapshot_frames_for_dispatch(
         &self,
         dispatch_id: DispatchId,
-        dispatch_stack: &[DispatchContext],
+        dispatches: &HashMap<DispatchId, Dispatch>,
     ) -> Vec<ActiveChainFrameState> {
-        dispatch_stack
-            .iter()
-            .rev()
-            .find(|ctx| ctx.dispatch_id == dispatch_id)
-            .map(|dispatch_ctx| {
-                dispatch_ctx
-                    .k_current
+        dispatches
+            .get(&dispatch_id)
+            .and_then(|d| d.current_k_current())
+            .map(|k_current| {
+                k_current
                     .frames_snapshot
                     .iter()
                     .filter_map(|frame| {

@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
-use crate::dispatch::DispatchContext;
+use crate::dispatch::Dispatch;
 use crate::do_ctrl::InterceptMode;
 use crate::doeff_generator::DoeffGenerator;
 use crate::error::VMError;
@@ -31,7 +31,7 @@ impl InterceptorState {
         &self,
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
-        dispatch_contexts: &[DispatchContext],
+        dispatches: &HashMap<DispatchId, Dispatch>,
     ) -> Vec<Marker> {
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
@@ -40,14 +40,11 @@ impl InterceptorState {
             .and_then(|sid| segments.get(sid))
             .and_then(|seg| seg.dispatch_id);
         while let Some(did) = dispatch_id {
-            let ctx = dispatch_contexts
-                .iter()
-                .rev()
-                .find(|ctx| ctx.dispatch_id == did && !ctx.completed);
-            let Some(ctx) = ctx else {
+            let d = dispatches.get(&did).filter(|d| !d.completed);
+            let Some(d) = d else {
                 break;
             };
-            let origin_seg_id = ctx.k_origin.segment_id;
+            let origin_seg_id = d.k_origin.segment_id;
             Self::walk_segment_chain(Some(origin_seg_id), segments, &mut chain, &mut seen);
             dispatch_id = segments.get(origin_seg_id).and_then(|seg| seg.dispatch_id);
         }
@@ -77,7 +74,7 @@ impl InterceptorState {
     pub(crate) fn visible_to_active_handler(
         &self,
         _interceptor_marker: Marker,
-        _dispatch_stack: &[DispatchContext],
+        _dispatches: &HashMap<DispatchId, Dispatch>,
         _current_segment: Option<SegmentId>,
         _segments: &SegmentArena,
     ) -> bool {
@@ -121,22 +118,23 @@ impl InterceptorState {
 
     pub(crate) fn current_active_handler_dispatch_id(
         &self,
-        dispatch_stack: &[DispatchContext],
+        dispatches: &HashMap<DispatchId, Dispatch>,
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
     ) -> Option<DispatchId> {
-        let top = dispatch_stack.last()?;
-        if top.completed {
-            return None;
-        }
-        let marker = *top.handler_chain.get(top.handler_idx)?;
+        // Find the most recent non-completed dispatch whose active handler
+        // marker matches the current segment's marker.
         let seg_id = current_segment?;
         let seg = segments.get(seg_id)?;
-        if seg.marker == marker {
-            Some(top.dispatch_id)
-        } else {
-            None
+
+        for d in dispatches.values().filter(|d| !d.completed) {
+            let activation = d.current_activation()?;
+            let marker = *d.handler_chain.get(activation.handler_idx)?;
+            if seg.marker == marker {
+                return Some(d.dispatch_id);
+            }
         }
+        None
     }
 
     pub(crate) fn insert(
