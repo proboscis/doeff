@@ -20,4 +20,10 @@ vm_debug_logs = []
 pyo3 = { version = "0.28", features = ["py-clone"], optional = true }
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }
+
+[[bench]]
+name = "vm_core"
+harness = false
+required-features = ["python_bridge"]

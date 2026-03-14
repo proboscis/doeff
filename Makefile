@@ -4,7 +4,7 @@
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
         test test-unit test-e2e test-packages test-all test-spec-audit-sa002 format check pre-commit-install clean \
-        install-opencode-spec-gap-tdd
+        install-opencode-spec-gap-tdd bench bench-rust bench-python
 
 # Default target
 help:
@@ -36,6 +36,11 @@ help:
 	@echo "Formatting:"
 	@echo "  make format            Format code with ruff"
 	@echo "  make check             Run format check without modifying files"
+	@echo ""
+	@echo "Benchmarks:"
+	@echo "  make bench             Run ALL benchmarks (Rust + Python)"
+	@echo "  make bench-rust        Run Criterion benchmarks (Rust VM internals)"
+	@echo "  make bench-python      Run Python benchmarks (end-to-end scenarios)"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean             Remove build artifacts and caches"
@@ -172,6 +177,27 @@ format:
 check:
 	uv run ruff format --check doeff/ tests/ packages/
 	uv run ruff check doeff/ tests/ packages/
+
+# =============================================================================
+# Benchmarks
+# =============================================================================
+
+# Run ALL benchmarks: Rust (Criterion) + Python
+bench: bench-rust bench-python
+	@echo ""
+	@echo "All benchmarks complete!"
+
+# Run Criterion benchmarks for Rust VM internals
+bench-rust:
+	@echo "Running Criterion benchmarks (doeff-vm-core)..."
+	cd packages/doeff-vm-core && \
+		LIBRARY_PATH=$$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LIBPL'))"):$$LIBRARY_PATH \
+		cargo bench --features python_bridge
+
+# Run Python benchmarks (end-to-end VM scenarios)
+bench-python:
+	@echo "Running Python benchmarks..."
+	uv run python benchmarks/benchmark_vm.py
 
 # =============================================================================
 # Utilities

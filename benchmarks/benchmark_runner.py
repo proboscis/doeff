@@ -80,5 +80,5 @@ def main() -> None:
     print(format_report([("stateful_workload", stats)]))
 
 
-if __name__ == "main":  # pragma: no cover - CLI script
+if __name__ == "__main__":  # pragma: no cover - CLI script
     main()
