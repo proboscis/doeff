@@ -12,8 +12,6 @@ use pyo3::types::{PyDict, PyModule};
 
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
-#[cfg(test)]
-use crate::effect::Effect;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
     PyAcquireSemaphore, PyAsk, PyCreateSemaphore, PyGet, PyLocal, PyModify, PyPut,
@@ -28,7 +26,9 @@ use crate::segment::ScopeStore;
 use crate::step::{PyException, PythonCall};
 use crate::value::Value;
 use crate::vm::RustStore;
-use doeff_vm_core::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
+#[cfg(test)]
+use doeff_vm_core::IRStreamFactoryRef;
+use doeff_vm_core::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
 
 enum ParsedStateEffect {
     Get { key: String },
@@ -478,14 +478,6 @@ pub struct StateHandlerFactory;
 
 impl IRStreamFactory for StateHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        #[cfg(test)]
-        if matches!(
-            effect,
-            Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. }
-        ) {
-            return Ok(true);
-        }
-
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
@@ -547,39 +539,6 @@ impl IRStreamProgram for StateHandlerProgram {
         store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        #[cfg(test)]
-        if let Effect::Get { key } = effect.clone() {
-            let Some(value) = store.get(&key).cloned() else {
-                return IRStreamStep::Throw(missing_state_key_error(&key));
-            };
-            return IRStreamStep::Yield(DoCtrl::Resume {
-                continuation: k,
-                value,
-            });
-        }
-
-        #[cfg(test)]
-        if let Effect::Put { key, value } = effect.clone() {
-            store.put(key, value);
-            return IRStreamStep::Yield(DoCtrl::Resume {
-                continuation: k,
-                value: Value::Unit,
-            });
-        }
-
-        #[cfg(test)]
-        if let Effect::Modify { key, modifier } = effect.clone() {
-            let old_value = store.get(&key).cloned().unwrap_or(Value::None);
-            self.pending_key = Some(key);
-            self.pending_k = Some(k);
-            self.pending_old_value = Some(old_value.clone());
-            return IRStreamStep::NeedsPython(PythonCall::CallFunc {
-                func: modifier,
-                args: vec![old_value],
-                kwargs: vec![],
-            });
-        }
-
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_state_python_effect(&obj) {
                 Ok(Some(parsed)) => match parsed {
@@ -619,14 +578,7 @@ impl IRStreamProgram for StateHandlerProgram {
                 ))),
             };
         }
-
-        #[cfg(test)]
-        {
-            return IRStreamStep::Yield(DoCtrl::Pass { effect });
-        }
-
-        #[cfg(not(test))]
-        unreachable!("runtime Effect is always Python")
+        IRStreamStep::Yield(DoCtrl::Pass { effect })
     }
 
     fn resume(
@@ -641,9 +593,10 @@ impl IRStreamProgram for StateHandlerProgram {
         }
         // Modify case: store modifier result but resume caller with OLD value.
         // SPEC-008 L1271: Modify is read-then-modify, returns the old value.
-        let key = self.pending_key.take().expect(
-            "StateHandler Modify invariant violated: pending key missing during resume",
-        );
+        let key = self
+            .pending_key
+            .take()
+            .expect("StateHandler Modify invariant violated: pending key missing during resume");
         let continuation = self.pending_k.take().expect(
             "StateHandler Modify invariant violated: pending continuation missing during resume",
         );
@@ -760,11 +713,6 @@ impl Default for LazyAskHandlerFactory {
 
 impl IRStreamFactory for LazyAskHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        #[cfg(test)]
-        if matches!(effect, Effect::Ask { .. }) {
-            return Ok(true);
-        }
-
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
@@ -1026,15 +974,6 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        #[cfg(test)]
-        if let Effect::Ask { key } = effect.clone() {
-            let hashed_key = HashedPyKey::from_test_string(key);
-            let Some(value) = ask_from_scope_or_env(store, scope, &hashed_key) else {
-                return IRStreamStep::Throw(missing_env_key_error(&hashed_key));
-            };
-            return self.handle_ask_value(hashed_key, k, value);
-        }
-
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             match parse_local_python_effect(&obj) {
                 Ok(Some(local_effect)) => {
@@ -1077,14 +1016,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 ))),
             };
         }
-
-        #[cfg(test)]
-        {
-            return IRStreamStep::Yield(DoCtrl::Pass { effect });
-        }
-
-        #[cfg(not(test))]
-        unreachable!("runtime Effect is always Python")
+        IRStreamStep::Yield(DoCtrl::Pass { effect })
     }
 
     fn resume(
@@ -1255,11 +1187,6 @@ pub struct ReaderHandlerFactory;
 
 impl IRStreamFactory for ReaderHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        #[cfg(test)]
-        if matches!(effect, Effect::Ask { .. }) {
-            return Ok(true);
-        }
-
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
@@ -1316,16 +1243,6 @@ impl IRStreamProgram for ReaderHandlerProgram {
         store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        #[cfg(test)]
-        if let Effect::Ask { key } = effect.clone() {
-            return ReaderHandlerProgram::handle_ask(
-                HashedPyKey::from_test_string(key),
-                k,
-                store,
-                scope,
-            );
-        }
-
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => ReaderHandlerProgram::handle_ask(key, k, store, scope),
@@ -1337,14 +1254,7 @@ impl IRStreamProgram for ReaderHandlerProgram {
                 ))),
             };
         }
-
-        #[cfg(test)]
-        {
-            return IRStreamStep::Yield(DoCtrl::Pass { effect });
-        }
-
-        #[cfg(not(test))]
-        unreachable!("runtime Effect is always Python")
+        IRStreamStep::Yield(DoCtrl::Pass { effect })
     }
 
     fn resume(
@@ -1407,11 +1317,6 @@ pub struct WriterHandlerFactory;
 
 impl IRStreamFactory for WriterHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        #[cfg(test)]
-        if matches!(effect, Effect::Tell { .. }) {
-            return Ok(true);
-        }
-
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(false);
         };
@@ -1452,15 +1357,6 @@ impl IRStreamProgram for WriterHandlerProgram {
         store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        #[cfg(test)]
-        if let Effect::Tell { message } = effect.clone() {
-            store.tell(message);
-            return IRStreamStep::Yield(DoCtrl::Resume {
-                continuation: k,
-                value: Value::Unit,
-            });
-        }
-
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_writer_python_effect(&obj) {
                 Ok(Some(message)) => {
@@ -1478,14 +1374,7 @@ impl IRStreamProgram for WriterHandlerProgram {
                 ))),
             };
         }
-
-        #[cfg(test)]
-        {
-            return IRStreamStep::Yield(DoCtrl::Pass { effect });
-        }
-
-        #[cfg(not(test))]
-        unreachable!("runtime Effect is always Python")
+        IRStreamStep::Yield(DoCtrl::Pass { effect })
     }
 
     fn resume(&mut self, value: Value, _: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
@@ -1719,7 +1608,16 @@ pub(crate) struct DoubleCallHandlerFactory;
 #[cfg(test)]
 impl IRStreamFactory for DoubleCallHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
-        Ok(matches!(effect, Effect::Modify { .. }))
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return Ok(false);
+        };
+        parse_state_python_effect(obj)
+            .map(|parsed| matches!(parsed, Some(ParsedStateEffect::Modify { .. })))
+            .map_err(|msg| {
+                VMError::internal(format!(
+                    "DoubleCallHandler can_handle failed to parse effect: {msg}"
+                ))
+            })
     }
 
     fn create_program(&self) -> IRStreamProgramRef {
@@ -1771,9 +1669,12 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        match effect {
-            Effect::Modify { modifier, .. } => {
-                // Store k and modifier for later. First Python call: modifier(10)
+        let Some(obj) = dispatch_into_python(effect.clone()) else {
+            return IRStreamStep::Yield(DoCtrl::Pass { effect });
+        };
+
+        match parse_state_python_effect(&obj) {
+            Ok(Some(ParsedStateEffect::Modify { modifier, .. })) => {
                 self.phase = DoubleCallPhase::AwaitingFirstResult {
                     k,
                     modifier: modifier.clone(),
@@ -1784,7 +1685,10 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
                     kwargs: vec![],
                 })
             }
-            other => IRStreamStep::Yield(DoCtrl::Pass { effect: other }),
+            Ok(Some(_)) | Ok(None) => IRStreamStep::Yield(DoCtrl::Pass { effect }),
+            Err(msg) => IRStreamStep::Throw(PyException::type_error(format!(
+                "failed to parse DoubleCall effect: {msg}"
+            ))),
         }
     }
 
@@ -1834,6 +1738,7 @@ impl IRStreamProgram for DoubleCallHandlerProgram {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::effect::{dispatch_from_shared, Effect};
     use crate::ids::Marker;
     use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::segment::Segment;
@@ -1845,6 +1750,22 @@ mod tests {
         let seg = Segment::new(marker, None);
         let seg_id = crate::ids::SegmentId::from_index(0);
         Continuation::capture(&seg, seg_id, None)
+    }
+
+    fn dispatch(effect: Effect) -> DispatchEffect {
+        effect.into_dispatch()
+    }
+
+    fn hashed_string_key(py: Python<'_>, key: &str) -> HashedPyKey {
+        let key_obj = key
+            .into_pyobject(py)
+            .expect("string keys must convert to Python objects")
+            .into_any();
+        HashedPyKey::from_bound(&key_obj).expect("string keys must be hashable")
+    }
+
+    fn set_env_str(store: &mut RustStore, py: Python<'_>, key: &str, value: Value) {
+        store.env.insert(hashed_string_key(py, key), value);
     }
 
     #[test]
@@ -2020,7 +1941,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::from_shared(PyShared::new(obj));
+            let effect = dispatch_from_shared(PyShared::new(obj));
 
             let step = IRStreamProgram::start(
                 &mut program,
@@ -2045,35 +1966,10 @@ mod tests {
     #[test]
     fn test_state_factory_can_handle() {
         let f = StateHandlerFactory;
-        assert!(IRStreamFactory::can_handle(
-            &f,
-            &Effect::Get {
-                key: "x".to_string()
-            }
-        )
-        .unwrap());
-        assert!(IRStreamFactory::can_handle(
-            &f,
-            &Effect::Put {
-                key: "x".to_string(),
-                value: Value::Unit
-            }
-        )
-        .unwrap());
-        assert!(!IRStreamFactory::can_handle(
-            &f,
-            &Effect::Ask {
-                key: "x".to_string()
-            }
-        )
-        .unwrap());
-        assert!(!IRStreamFactory::can_handle(
-            &f,
-            &Effect::Tell {
-                message: Value::Unit
-            }
-        )
-        .unwrap());
+        assert!(IRStreamFactory::can_handle(&f, &dispatch(Effect::get("x"))).unwrap());
+        assert!(IRStreamFactory::can_handle(&f, &dispatch(Effect::put("x", Value::Unit))).unwrap());
+        assert!(!IRStreamFactory::can_handle(&f, &dispatch(Effect::ask("x"))).unwrap());
+        assert!(!IRStreamFactory::can_handle(&f, &dispatch(Effect::tell(Value::Unit))).unwrap());
     }
 
     #[test]
@@ -2086,15 +1982,7 @@ mod tests {
             let program_ref = StateHandlerFactory.create_program();
             let step = {
                 let mut guard = program_ref.lock().unwrap();
-                guard.start(
-                    py,
-                    Effect::Get {
-                        key: "key".to_string(),
-                    },
-                    k,
-                    &mut store,
-                    &mut scope,
-                )
+                guard.start(py, dispatch(Effect::get("key")), k, &mut store, &mut scope)
             };
             match step {
                 IRStreamStep::Yield(DoCtrl::Resume { value, .. }) => {
@@ -2119,10 +2007,7 @@ mod tests {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
                     py,
-                    Effect::Put {
-                        key: "key".to_string(),
-                        value: Value::Int(99),
-                    },
+                    dispatch(Effect::put("key", Value::Int(99))),
                     k,
                     &mut store,
                     &mut scope,
@@ -2153,10 +2038,10 @@ mod tests {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
                     py,
-                    Effect::Modify {
+                    dispatch(Effect::Modify {
                         key: "key".to_string(),
                         modifier: PyShared::new(modifier),
-                    },
+                    }),
                     k,
                     &mut store,
                     &mut scope,
@@ -2187,10 +2072,10 @@ mod tests {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
                     py,
-                    Effect::Modify {
+                    dispatch(Effect::Modify {
                         key: "key".to_string(),
                         modifier: PyShared::new(modifier),
-                    },
+                    }),
                     k,
                     &mut store,
                     &mut scope,
@@ -2214,27 +2099,9 @@ mod tests {
     #[test]
     fn test_reader_factory_can_handle() {
         let f = ReaderHandlerFactory;
-        assert!(IRStreamFactory::can_handle(
-            &f,
-            &Effect::Ask {
-                key: "x".to_string()
-            }
-        )
-        .unwrap());
-        assert!(!IRStreamFactory::can_handle(
-            &f,
-            &Effect::Get {
-                key: "x".to_string()
-            }
-        )
-        .unwrap());
-        assert!(!IRStreamFactory::can_handle(
-            &f,
-            &Effect::Tell {
-                message: Value::Unit
-            }
-        )
-        .unwrap());
+        assert!(IRStreamFactory::can_handle(&f, &dispatch(Effect::ask("x"))).unwrap());
+        assert!(!IRStreamFactory::can_handle(&f, &dispatch(Effect::get("x"))).unwrap());
+        assert!(!IRStreamFactory::can_handle(&f, &dispatch(Effect::tell(Value::Unit))).unwrap());
     }
 
     #[test]
@@ -2242,16 +2109,14 @@ mod tests {
         Python::attach(|py| {
             let mut store = RustStore::new();
             let mut scope = ScopeStore::default();
-            store.set_env_str("config", Value::String("value".to_string()));
+            set_env_str(&mut store, py, "config", Value::String("value".to_string()));
             let k = make_test_continuation();
             let program_ref = ReaderHandlerFactory.create_program();
             let step = {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
                     py,
-                    Effect::Ask {
-                        key: "config".to_string(),
-                    },
+                    dispatch(Effect::ask("config")),
                     k,
                     &mut store,
                     &mut scope,
@@ -2269,27 +2134,9 @@ mod tests {
     #[test]
     fn test_writer_factory_can_handle() {
         let f = WriterHandlerFactory;
-        assert!(IRStreamFactory::can_handle(
-            &f,
-            &Effect::Tell {
-                message: Value::Unit
-            }
-        )
-        .unwrap());
-        assert!(!IRStreamFactory::can_handle(
-            &f,
-            &Effect::Get {
-                key: "x".to_string()
-            }
-        )
-        .unwrap());
-        assert!(!IRStreamFactory::can_handle(
-            &f,
-            &Effect::Ask {
-                key: "x".to_string()
-            }
-        )
-        .unwrap());
+        assert!(IRStreamFactory::can_handle(&f, &dispatch(Effect::tell(Value::Unit))).unwrap());
+        assert!(!IRStreamFactory::can_handle(&f, &dispatch(Effect::get("x"))).unwrap());
+        assert!(!IRStreamFactory::can_handle(&f, &dispatch(Effect::ask("x"))).unwrap());
     }
 
     #[test]
@@ -2303,9 +2150,7 @@ mod tests {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
                     py,
-                    Effect::Tell {
-                        message: Value::String("log".to_string()),
-                    },
+                    dispatch(Effect::tell(Value::String("log".to_string()))),
                     k,
                     &mut store,
                     &mut scope,
@@ -2339,7 +2184,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::from_shared(PyShared::new(obj));
+            let effect = dispatch_from_shared(PyShared::new(obj));
             let f = ResultSafeHandlerFactory;
             assert!(
                 IRStreamFactory::can_handle(&f, &effect).unwrap(),
@@ -2369,7 +2214,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::from_shared(PyShared::new(obj));
+            let effect = dispatch_from_shared(PyShared::new(obj));
 
             let ok_program = ResultSafeHandlerFactory.create_program();
             let start_step = {
@@ -2447,10 +2292,10 @@ mod tests {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
                     py,
-                    Effect::Modify {
+                    dispatch(Effect::Modify {
                         key: "key".to_string(),
                         modifier: PyShared::new(modifier),
-                    },
+                    }),
                     k,
                     &mut store,
                     &mut scope,

@@ -9,6 +9,14 @@ def _handler_source() -> str:
     return HANDLERS_RS.read_text(encoding="utf-8")
 
 
+def _normalized_handler_source() -> str:
+    """Return handler source with whitespace collapsed for robust matching."""
+    import re
+
+    collapsed = re.sub(r"\s+", " ", _handler_source())
+    return collapsed.replace(" .", ".").replace(". ", ".")
+
+
 def test_modify_resume_does_not_use_ambiguous_take_unwrap() -> None:
     source = _handler_source()
     assert "self.pending_key.take().unwrap()" not in source
@@ -17,7 +25,7 @@ def test_modify_resume_does_not_use_ambiguous_take_unwrap() -> None:
 
 
 def test_modify_resume_has_explicit_invariant_messages() -> None:
-    source = _handler_source()
+    source = _normalized_handler_source()
     assert "self.pending_key.take().expect(" in source
     assert "self.pending_k.take().expect(" in source
     assert "self.pending_old_value.take().expect(" in source
