@@ -1799,9 +1799,11 @@ pub(crate) fn classify_yielded_bound(
         });
     }
 
-    Err(PyTypeError::new_err(
-        "yielded value must be EffectBase or DoExpr",
-    ))
+    let ty = py_type_name(obj);
+    let repr = py_repr_text(obj);
+    Err(PyTypeError::new_err(format!(
+        "yielded value must be EffectBase or DoExpr, got {repr} (type: {ty})"
+    )))
 }
 
 pub(crate) fn classify_yielded_for_vm(
