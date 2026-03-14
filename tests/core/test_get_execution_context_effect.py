@@ -87,7 +87,9 @@ def test_eval_typeerror_dispatches_get_execution_context_to_handlers() -> None:
 
     result = run(WithHandler(observer, program()), handlers=default_handlers())
     assert result.is_ok(), result.error
-    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+    assert result.value[0:2] == ("caught", "TypeError")
+    assert result.value[2].startswith("yielded value must be EffectBase or DoExpr, got ")
+    assert "(type: object)" in result.value[2]
     assert seen == ["GetExecutionContext"]
 
 
@@ -368,7 +370,9 @@ def test_eval_typeerror_caught_exception_keeps_active_chain() -> None:
 
     result = run(program(), handlers=default_handlers())
     assert result.is_ok(), result.error
-    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+    assert result.value[0:2] == ("caught", "TypeError")
+    assert result.value[2].startswith("yielded value must be EffectBase or DoExpr, got ")
+    assert "(type: object)" in result.value[2]
 
     context = captured.get("context")
     assert context is not None
@@ -387,7 +391,7 @@ def test_eval_typeerror_caught_exception_keeps_active_chain() -> None:
     assert any(
         entry.get("kind") == "exception_site"
         and entry.get("exception_type") == "TypeError"
-        and entry.get("message") == "yielded value must be EffectBase or DoExpr"
+        and str(entry.get("message", "")).startswith("yielded value must be EffectBase or DoExpr, got ")
         for entry in entries
     )
 
@@ -414,7 +418,9 @@ def test_eval_typeerror_keeps_context_entries_out_of_active_chain_storage() -> N
 
     result = run(program(), handlers=[*default_handlers(), enrich])
     assert result.is_ok(), result.error
-    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+    assert result.value[0:2] == ("caught", "TypeError")
+    assert result.value[2].startswith("yielded value must be EffectBase or DoExpr, got ")
+    assert "(type: object)" in result.value[2]
 
     context = captured.get("context")
     assert context is not None
