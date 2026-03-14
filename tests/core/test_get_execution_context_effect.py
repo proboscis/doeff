@@ -319,6 +319,50 @@ def test_eval_typeerror_caught_exception_keeps_active_chain() -> None:
         and entry.get("source_line") == expected_line
         for entry in entries
     )
+    assert any(
+        entry.get("kind") == "exception_site"
+        and entry.get("exception_type") == "TypeError"
+        and entry.get("message") == "yielded value must be EffectBase or DoExpr"
+        for entry in entries
+    )
+
+
+def test_eval_typeerror_keeps_context_entries_out_of_active_chain_storage() -> None:
+    captured: dict[str, Any] = {}
+
+    @do
+    def enrich(effect: Effect, k: object):
+        if isinstance(effect, GetExecutionContext):
+            context = yield Delegate()
+            context.add({"kind": "test_marker", "value": "enriched"})
+            return (yield Resume(k, context))
+        yield Pass()
+
+    @do
+    def program() -> Program[tuple[str, str, str]]:
+        try:
+            _ = yield doeff_vm.Eval(object())
+            return ("unexpected", "", "")
+        except Exception as exc:
+            captured["context"] = getattr(exc, "doeff_execution_context", None)
+            return ("caught", type(exc).__name__, str(exc))
+
+    result = run(program(), handlers=[*default_handlers(), enrich])
+    assert result.is_ok(), result.error
+    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+
+    context = captured.get("context")
+    assert context is not None
+    entries = list(getattr(context, "entries", ()))
+    assert any(isinstance(entry, dict) and entry.get("kind") == "test_marker" for entry in entries)
+
+    active_chain = _active_chain_entries(getattr(context, "active_chain", None))
+    assert not any(
+        entry.get("kind") == "context_entry"
+        and isinstance(entry.get("data"), dict)
+        and entry.get("data", {}).get("kind") == "test_marker"
+        for entry in active_chain
+    )
 
 
 def test_get_execution_context_active_chain_renderable() -> None:
