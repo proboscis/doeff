@@ -950,11 +950,7 @@ impl VM {
     }
 
     fn current_interceptor_chain(&self) -> Vec<Marker> {
-        let dispatch_origin_callers = self
-            .dispatch_origins()
-            .into_iter()
-            .map(|origin| origin.k_origin.segment_id)
-            .collect::<Vec<_>>();
+        let dispatch_origin_callers = self.dispatch_origin_callers();
         self.interceptor_state.current_chain(
             self.current_segment,
             &self.segments,
