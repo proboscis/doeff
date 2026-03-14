@@ -48,5 +48,7 @@ def test_invalid_top_level_yield_returns_err_run_result_with_traceback_data() ->
 
     assert result.is_err()
     assert isinstance(result.error, TypeError)
-    assert str(result.error) == "yielded value must be EffectBase or DoExpr"
+    assert str(result.error).startswith("yielded value must be EffectBase or DoExpr, got ")
+    assert "(type: object)" in str(result.error)
+    assert "<object object at " in str(result.error)
     assert result.traceback_data is not None
