@@ -373,29 +373,14 @@ impl TraceState {
         active_chain: Vec<ActiveChainEntry>,
     ) -> Result<PyException, PyException> {
         let original = Self::materialize_exception(&original);
-        let preserve_original_on_invalid_resume = original.requires_safe_error_context_dispatch();
         let Value::Python(new_context) = context_value else {
-            if preserve_original_on_invalid_resume {
-                return Ok(original);
-            }
-            let err = PyException::type_error(
-                "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
-            );
-            Self::set_exception_cause(&err, &original);
-            return Err(err);
+            return Ok(original);
         };
 
         Python::attach(|py| {
             let context_bound = new_context.bind(py);
             if !context_bound.is_instance_of::<PyExecutionContext>() {
-                if preserve_original_on_invalid_resume {
-                    return Ok(original);
-                }
-                let err = PyException::type_error(
-                    "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
-                );
-                Self::set_exception_cause(&err, &original);
-                return Err(err);
+                return Ok(original);
             }
 
             let mut merged_entries = Self::context_entries_from_context_obj(context_bound);

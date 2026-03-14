@@ -205,6 +205,27 @@ def test_handler_return_protocol_error_also_enriches_execution_context() -> None
     assert getattr(result.error, "doeff_execution_context", None) is not None
 
 
+def test_invalid_enrichment_resume_preserves_original_handler_exception() -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class ProbeEffect(EffectBase):
+        pass
+
+    @do
+    def bad_handler(effect: Effect, _k: object):
+        if isinstance(effect, ProbeEffect):
+            raise RuntimeError("handler exploded")
+        yield Delegate()
+
+    @do
+    def program() -> Program[None]:
+        yield ProbeEffect()
+
+    result = run(program(), handlers=[*default_handlers(), bad_handler])
+    assert result.is_err()
+    assert isinstance(result.error, RuntimeError)
+    assert str(result.error) == "handler exploded"
+
+
 def test_nested_generror_guard_blocks_recursive_error_dispatch() -> None:
     calls: list[int] = []
 
