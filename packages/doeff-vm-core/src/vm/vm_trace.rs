@@ -108,6 +108,7 @@ impl VM {
             debug.line.unwrap_or(0),
             None,
             None,
+            false,
         );
 
         Ok(DoCtrl::Expand {

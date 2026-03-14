@@ -456,6 +456,9 @@ impl Value {
                     } else {
                         dict.set_item("program_call", py.None())?;
                     }
+                    if m.auto_unwrap_programlike {
+                        dict.set_item("auto_unwrap_programlike", true)?;
+                    }
                     list.append(dict)?;
                 }
                 Ok(list.into_any())
