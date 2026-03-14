@@ -1,24 +1,18 @@
 """Shared type aliases for effect functions that accept programs."""
 
 
-from typing import TYPE_CHECKING, Any
+from typing import Any, TypeAlias
 
-if TYPE_CHECKING:
-    from typing import TypeAlias
+from doeff.program import ProgramBase
+from doeff.types import Effect
 
-    from doeff.program import ProgramBase
-    from doeff.types import Effect
-
-    # Use ProgramBase[Any] to accept any Program regardless of
-    # result type. ProgramBase is invariant in T, so ProgramBase[object] would
-    # reject ProgramBase[str] etc. Using Any avoids this variance issue.
-    #
-    # Effect is included because effect values are accepted as data at API
-    # boundaries and normalized via Perform(effect). EffectBase is not ProgramBase
-    # under explicit EffectValue/DoExpr separation semantics.
-    ProgramLike: TypeAlias = ProgramBase[Any] | Effect
-else:  # pragma: no cover - runtime fallback for type-only alias
-    ProgramLike = object  # type: ignore[assignment]
+# Use ProgramBase[Any] to accept any Program regardless of
+# result type. ProgramBase is invariant in T, so ProgramBase[object] would
+# reject ProgramBase[str] etc. Using Any avoids this variance issue.
+#
+# Keep this as a real runtime union so @do auto-unwrap can inspect annotations
+# like ``*programs: ProgramLike`` and preserve program/effect objects as data.
+ProgramLike: TypeAlias = ProgramBase[Any] | Effect
 
 
 __all__ = ["ProgramLike"]
