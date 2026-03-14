@@ -1846,6 +1846,47 @@ rules:
     languages: [rust]
     severity: ERROR
 
+  - id: vm-gil-cleanup-no-caller-attach-on-kleisli-apply
+    pattern-either:
+      - pattern: Python::attach(|$PY| $KLEISLI.apply($PY, $ARGS))
+      - pattern: Python::attach(|$PY| $KLEISLI.apply_with_run_token($PY, $ARGS, $RUN_TOKEN))
+    message: |
+      GIL ownership belongs inside Kleisli implementations.
+      Call kleisli.apply(...) / apply_with_run_token(...) directly without forcing Python::attach
+      at the call site. Ref: vm-perf-gil-cleanup.
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - /packages/doeff-vm-core/src/**
+
+  - id: vm-gil-cleanup-no-caller-attach-on-ir-stream-program
+    pattern-either:
+      - pattern: |
+          Python::attach(|$PY| {
+              ...
+              $PROGRAM.start($PY, $EFFECT, $K, $STORE, $SCOPE)
+          })
+      - pattern: |
+          Python::attach(|$PY| {
+              ...
+              $PROGRAM.resume($VALUE, $STORE, $SCOPE)
+          })
+      - pattern: |
+          Python::attach(|$PY| {
+              ...
+              $PROGRAM.throw($EXC, $STORE, $SCOPE)
+          })
+    message: |
+      IRStreamProgram implementations must acquire the GIL internally when needed.
+      Do not wrap start/resume/throw in Python::attach at the RustKleisliStream call site.
+      Ref: vm-perf-gil-cleanup.
+    languages: [rust]
+    severity: ERROR
+    paths:
+      include:
+        - /packages/doeff-vm-core/src/kleisli.rs
+
   - id: no-getattr-in-classify-yielded
     patterns:
       - pattern-inside: |

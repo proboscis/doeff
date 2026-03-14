@@ -367,7 +367,6 @@ impl AwaitHandlerProgram {
 impl IRStreamProgram for AwaitHandlerProgram {
     fn start(
         &mut self,
-        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
@@ -541,7 +540,6 @@ impl StateHandlerProgram {
 impl IRStreamProgram for StateHandlerProgram {
     fn start(
         &mut self,
-        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
@@ -641,9 +639,10 @@ impl IRStreamProgram for StateHandlerProgram {
         }
         // Modify case: store modifier result but resume caller with OLD value.
         // SPEC-008 L1271: Modify is read-then-modify, returns the old value.
-        let key = self.pending_key.take().expect(
-            "StateHandler Modify invariant violated: pending key missing during resume",
-        );
+        let key = self
+            .pending_key
+            .take()
+            .expect("StateHandler Modify invariant violated: pending key missing during resume");
         let continuation = self.pending_k.take().expect(
             "StateHandler Modify invariant violated: pending continuation missing during resume",
         );
@@ -1020,7 +1019,6 @@ impl LazyAskHandlerProgram {
 impl IRStreamProgram for LazyAskHandlerProgram {
     fn start(
         &mut self,
-        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
@@ -1310,7 +1308,6 @@ impl ReaderHandlerProgram {
 impl IRStreamProgram for ReaderHandlerProgram {
     fn start(
         &mut self,
-        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
@@ -1446,7 +1443,6 @@ impl WriterHandlerProgram {
 impl IRStreamProgram for WriterHandlerProgram {
     fn start(
         &mut self,
-        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
@@ -1614,7 +1610,6 @@ impl ResultSafeHandlerProgram {
 impl IRStreamProgram for ResultSafeHandlerProgram {
     fn start(
         &mut self,
-        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
@@ -1765,7 +1760,6 @@ impl std::fmt::Debug for DoubleCallHandlerProgram {
 impl IRStreamProgram for DoubleCallHandlerProgram {
     fn start(
         &mut self,
-        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
@@ -2022,14 +2016,8 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
             let effect = Effect::from_shared(PyShared::new(obj));
 
-            let step = IRStreamProgram::start(
-                &mut program,
-                py,
-                effect,
-                continuation,
-                &mut store,
-                &mut scope,
-            );
+            let step =
+                IRStreamProgram::start(&mut program, effect, continuation, &mut store, &mut scope);
             assert!(matches!(
                 step,
                 IRStreamStep::Yield(DoCtrl::EvalInScope { .. })
@@ -2374,7 +2362,7 @@ mod tests {
             let ok_program = ResultSafeHandlerFactory.create_program();
             let start_step = {
                 let mut guard = ok_program.lock().unwrap();
-                guard.start(py, effect.clone(), k.clone(), &mut store, &mut scope)
+                guard.start(effect.clone(), k.clone(), &mut store, &mut scope)
             };
             assert!(matches!(
                 start_step,
@@ -2402,7 +2390,7 @@ mod tests {
             let err_program = ResultSafeHandlerFactory.create_program();
             let _ = {
                 let mut guard = err_program.lock().unwrap();
-                guard.start(py, effect, k, &mut store, &mut scope)
+                guard.start(effect, k, &mut store, &mut scope)
             };
 
             let err_step = {
