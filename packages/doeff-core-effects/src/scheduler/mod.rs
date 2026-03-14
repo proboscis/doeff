@@ -20,8 +20,8 @@ use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn, PyTaskCompleted,
-    TaskCancelledError,
+    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn,
+    PyTaskCompleted, TaskCancelledError,
 };
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
@@ -528,10 +528,13 @@ pub fn debug_semaphore_exists(semaphore_id: u64) -> bool {
         registry
             .iter()
             .filter_map(|(state_id, weak_state)| {
-                weak_state.upgrade().map(|state| (*state_id, state)).or_else(|| {
-                    stale_state_ids.push(*state_id);
-                    None
-                })
+                weak_state
+                    .upgrade()
+                    .map(|state| (*state_id, state))
+                    .or_else(|| {
+                        stale_state_ids.push(*state_id);
+                        None
+                    })
             })
             .collect()
     };
@@ -559,7 +562,10 @@ pub fn notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
     let mut notifications = semaphore_drop_notifications()
         .lock()
         .expect("Scheduler lock poisoned");
-    notifications.entry(state_id).or_default().push(semaphore_id);
+    notifications
+        .entry(state_id)
+        .or_default()
+        .push(semaphore_id);
 }
 
 fn parse_task_completed_result(
@@ -586,7 +592,9 @@ fn parse_task_completed_result(
 }
 
 fn extract_semaphore_id(obj: &Bound<'_, PyAny>) -> Option<u64> {
-    obj.extract::<PyRef<'_, PySemaphore>>().ok().map(|semaphore| semaphore.id)
+    obj.extract::<PyRef<'_, PySemaphore>>()
+        .ok()
+        .map(|semaphore| semaphore.id)
 }
 
 fn is_internal_source_file(source_file: &str) -> bool {
@@ -910,12 +918,12 @@ fn make_python_semaphore_value(semaphore_id: u64, state_id: u64) -> Result<Value
                 state_id,
             },
         )
-            .map_err(|e| {
-                PyException::runtime_error(format!(
-                    "failed to instantiate runtime Semaphore({semaphore_id}): {e}"
-                ))
-            })?
-            .into_any();
+        .map_err(|e| {
+            PyException::runtime_error(format!(
+                "failed to instantiate runtime Semaphore({semaphore_id}): {e}"
+            ))
+        })?
+        .into_any();
         Ok(Value::Python(PyShared::new(semaphore.unbind())))
     })
 }
@@ -1051,11 +1059,9 @@ impl SchedulerState {
     }
 
     fn has_external_waiters(&self) -> bool {
-        self.waiters
-            .iter()
-            .any(|(item, waiters)| {
-                matches!(item, Waitable::ExternalPromise(_)) && !waiters.is_empty()
-            })
+        self.waiters.iter().any(|(item, waiters)| {
+            matches!(item, Waitable::ExternalPromise(_)) && !waiters.is_empty()
+        })
     }
 
     fn parse_external_completion_item(
@@ -2661,7 +2667,6 @@ impl SchedulerProgram {
 impl IRStreamProgram for SchedulerProgram {
     fn start(
         &mut self,
-        _py: Python<'_>,
         effect: DispatchEffect,
         k_user: Continuation,
         store: &mut RustStore,
@@ -3815,7 +3820,6 @@ mod tests {
 
             let step = IRStreamProgram::start(
                 &mut program,
-                py,
                 complete,
                 idle_k.clone(),
                 &mut store,
@@ -4045,7 +4049,6 @@ mod tests {
 
             let first_step = IRStreamProgram::start(
                 &mut program,
-                py,
                 complete,
                 idle_driver_k.clone(),
                 &mut store,
@@ -4154,7 +4157,6 @@ mod tests {
 
             let resolver_step = IRStreamProgram::start(
                 &mut resolver_program,
-                py,
                 complete,
                 resolver_k.clone(),
                 &mut store,
@@ -4298,7 +4300,6 @@ mod tests {
             );
             let first_step = IRStreamProgram::start(
                 &mut program,
-                py,
                 wake_normal,
                 idle_k.clone(),
                 &mut store,
@@ -4325,7 +4326,6 @@ mod tests {
             );
             let second_step = IRStreamProgram::start(
                 &mut program,
-                py,
                 wake_high,
                 normal_k.clone(),
                 &mut store,
@@ -4413,14 +4413,8 @@ mod tests {
                 .into_any();
             let fail = make_fail_promise_effect(py, promise_obj, error_obj);
 
-            let step = IRStreamProgram::start(
-                &mut program,
-                py,
-                fail,
-                idle_k.clone(),
-                &mut store,
-                &mut _scope,
-            );
+            let step =
+                IRStreamProgram::start(&mut program, fail, idle_k.clone(), &mut store, &mut _scope);
             assert!(
                 matches!(
                     &step,
@@ -4996,7 +4990,6 @@ mod tests {
 
             let step = IRStreamProgram::start(
                 &mut program,
-                py,
                 make_acquire_semaphore_effect(py, make_semaphore_object(py, semaphore_id)),
                 driver_k,
                 &mut store,

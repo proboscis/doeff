@@ -60,10 +60,10 @@ def test_ir_stream_program_start_no_longer_requires_python_at_call_site() -> Non
     )
 
 
-def test_step_kleisli_calls_do_not_force_python_attach() -> None:
+def test_step_kleisli_calls_use_new_kleisli_signature() -> None:
     source = _runtime_source(VM_STEP_RS)
 
-    assert "Python::attach(|py| kleisli.apply_with_run_token(py, args_values, run_token))" not in source
+    assert "kleisli.apply_with_run_token(py, args_values, run_token)" not in source
     assert source.count("kleisli.apply_with_run_token(args_values, run_token)") >= 2
 
 

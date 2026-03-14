@@ -1563,7 +1563,7 @@ impl VM {
 
                 let run_token = self.current_run_token();
                 let result =
-                    Python::attach(|py| kleisli.apply_with_run_token(py, args_values, run_token));
+                    Python::attach(|_py| kleisli.apply_with_run_token(args_values, run_token));
                 return match result {
                     Ok(doctrl) => self.evaluate(doctrl),
                     Err(vm_err) => StepEvent::Error(vm_err),
@@ -1654,8 +1654,7 @@ impl VM {
                 }
 
                 let run_token = self.current_run_token();
-                let result =
-                    Python::attach(|py| kleisli.apply_with_run_token(py, args_values, run_token));
+                let result = kleisli.apply_with_run_token(args_values, run_token);
                 return match result {
                     Ok(doctrl) => {
                         if let DoCtrl::IRStream { stream, metadata } = doctrl {

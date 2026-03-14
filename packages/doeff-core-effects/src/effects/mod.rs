@@ -938,7 +938,10 @@ pub fn register_effect_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCreateExternalPromise>()?;
     m.add_class::<PyCancelEffect>()?;
     m.add_class::<PyTaskCompleted>()?;
-    m.add("TaskCancelledError", m.py().get_type::<TaskCancelledError>())?;
+    m.add(
+        "TaskCancelledError",
+        m.py().get_type::<TaskCancelledError>(),
+    )?;
     m.add_class::<PySemaphore>()?;
     m.add_class::<PyCreateSemaphore>()?;
     m.add_class::<PyAcquireSemaphore>()?;

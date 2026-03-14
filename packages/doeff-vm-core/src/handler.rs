@@ -2,8 +2,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use pyo3::prelude::*;
-
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::effect::DispatchEffect;
@@ -20,7 +18,6 @@ use crate::value::Value;
 pub trait IRStreamProgram: std::fmt::Debug + Send {
     fn start(
         &mut self,
-        py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
@@ -74,13 +71,12 @@ impl<T> Kleisli for T
 where
     T: IRStreamFactory + Clone + std::fmt::Debug + Send + Sync + 'static,
 {
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
-        self.apply_with_run_token(py, args, None)
+    fn apply(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        self.apply_with_run_token(args, None)
     }
 
     fn apply_with_run_token(
         &self,
-        py: Python<'_>,
         args: Vec<Value>,
         run_token: Option<u64>,
     ) -> Result<DoCtrl, VMError> {
@@ -88,7 +84,7 @@ where
             Arc::new(self.clone()),
             <Self as IRStreamFactory>::handler_name(self).to_string(),
         );
-        kleisli.apply_with_run_token(py, args, run_token)
+        kleisli.apply_with_run_token(args, run_token)
     }
 
     fn debug_info(&self) -> KleisliDebugInfo {

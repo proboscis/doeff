@@ -165,7 +165,7 @@ impl VM {
     pub(super) fn should_invoke_handler(
         &self,
         entry: &HandlerChainEntry,
-        effect_obj: &Py<PyAny>,
+        effect_obj: &PyShared,
     ) -> Result<bool, PyException> {
         self.should_invoke_handler_types(entry.types.as_ref(), effect_obj)
     }
@@ -173,7 +173,7 @@ impl VM {
     pub(super) fn should_invoke_handler_types(
         &self,
         types: Option<&Vec<PyShared>>,
-        effect_obj: &Py<PyAny>,
+        effect_obj: &PyShared,
     ) -> Result<bool, PyException> {
         let Some(types) = types else {
             return Ok(true);

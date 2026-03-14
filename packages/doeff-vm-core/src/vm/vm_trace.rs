@@ -90,17 +90,35 @@ impl VM {
         (info.name, kind, info.file, info.line)
     }
 
-    pub(super) fn invoke_kleisli_handler_expr(
-        kleisli: KleisliRef,
-        effect: DispatchEffect,
-        continuation: Continuation,
-    ) -> Result<DoCtrl, VMError> {
-        let effect_obj = Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|v| v.unbind()))
+    pub(super) fn materialize_dispatch_effect_object(
+        effect: &DispatchEffect,
+    ) -> Result<PyShared, VMError> {
+        Python::attach(|py| dispatch_to_pyobject(py, effect).map(|v| PyShared::new(v.unbind())))
             .map_err(|err| {
                 VMError::python_error(format!(
                     "failed to convert dispatch effect to Python object: {err}"
                 ))
-            })?;
+            })
+    }
+
+    pub(super) fn ensure_dispatch_effect_object(
+        effect: &DispatchEffect,
+        effect_obj: &mut Option<PyShared>,
+    ) -> Result<PyShared, VMError> {
+        if let Some(effect_obj) = effect_obj {
+            return Ok(effect_obj.clone());
+        }
+
+        let materialized = Self::materialize_dispatch_effect_object(effect)?;
+        *effect_obj = Some(materialized.clone());
+        Ok(materialized)
+    }
+
+    pub(super) fn invoke_kleisli_handler_expr(
+        kleisli: KleisliRef,
+        effect_obj: PyShared,
+        continuation: Continuation,
+    ) -> Result<DoCtrl, VMError> {
         let debug = kleisli.debug_info();
         let metadata = CallMetadata::new(
             debug.name,
@@ -116,7 +134,7 @@ impl VM {
             }),
             args: vec![
                 DoCtrl::Pure {
-                    value: Value::Python(PyShared::new(effect_obj)),
+                    value: Value::Python(effect_obj),
                 },
                 DoCtrl::Pure {
                     value: Value::Continuation(continuation),
