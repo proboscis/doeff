@@ -117,6 +117,37 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
     vmerror_to_pyerr_with_traceback_data(py, e).0
 }
 
+fn attach_doeff_traceback_to_exception_if_present(
+    py: Python<'_>,
+    error: &Bound<'_, PyAny>,
+    traceback_data: Option<&Bound<'_, PyDoeffTracebackData>>,
+) {
+    let Some(traceback_data) = traceback_data else {
+        return;
+    };
+
+    let attach_result = (|| -> PyResult<()> {
+        let importlib = py.import("importlib")?;
+        let traceback_mod = importlib.call_method1("import_module", ("doeff.traceback",))?;
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("traceback_data", traceback_data)?;
+        let doeff_tb = traceback_mod
+            .getattr("attach_doeff_traceback")?
+            .call((error,), Some(&kwargs))?;
+        if doeff_tb.is_none() {
+            return Ok(());
+        }
+        traceback_mod
+            .getattr("set_attached_doeff_traceback")?
+            .call1((error, doeff_tb))?;
+        Ok(())
+    })();
+
+    if let Err(err) = attach_result {
+        eprintln!("[VM WARNING] failed to attach doeff traceback: {err}");
+    }
+}
+
 const HANDLER_HELP_URL: &str = "https://docs.doeff.dev/handlers";
 
 fn py_type_name(obj: &Bound<'_, PyAny>) -> String {
@@ -378,26 +409,19 @@ impl PyVM {
     }
 
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.start_with_expr(py, program)?;
+        let run_result = self.run_with_result(py, program)?;
 
-        loop {
-            let event = py.detach(|| self.run_rust_steps());
-
-            match event {
-                StepEvent::Done(value) => {
-                    let py_value = value.to_pyobject(py).map(|v| v.unbind());
-                    self.vm.end_active_run_session();
-                    return py_value;
-                }
-                StepEvent::Error(e) => {
-                    self.vm.end_active_run_session();
-                    return Err(vmerror_to_pyerr(e));
-                }
-                StepEvent::NeedsPython(call) => {
-                    let outcome = self.execute_python_call(py, call)?;
-                    self.vm.receive_python_result(outcome);
-                }
-                StepEvent::Continue => unreachable!("handled in run_rust_steps"),
+        match &run_result.result {
+            Ok(value) => Ok(value.clone_ref(py)),
+            Err(error) => {
+                let error_obj = error.value_clone_ref(py);
+                let error_bound = error_obj.bind(py);
+                attach_doeff_traceback_to_exception_if_present(
+                    py,
+                    error_bound,
+                    run_result.traceback_data.as_ref().map(|data| data.bind(py)),
+                );
+                Err(PyErr::from_value(error_bound.clone()))
             }
         }
     }
