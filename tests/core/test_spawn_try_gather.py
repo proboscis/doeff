@@ -75,6 +75,8 @@ def throttled_gather(
     *programs: ProgramLike, concurrency: int
 ) -> EffectGenerator[list]:
     """Wrapper: CreateSemaphore + wrap each program + Spawn + Gather."""
+    # ProgramLike is required here: @do auto-unwraps Any/unannotated varargs,
+    # which would eagerly resolve child programs before Spawn receives them.
     sem = yield CreateSemaphore(concurrency)
     wrapped = [wrap_sem(p, sem) for p in programs]
     tasks = []
