@@ -291,15 +291,20 @@ impl VM {
     ) -> Mode {
         let active_dispatch_id = self.current_active_handler_dispatch_id();
         let current_dispatch_id = self.current_dispatch_id().or(active_dispatch_id);
+        let active_handler_supports_conversion = active_dispatch_id.is_some_and(|dispatch_id| {
+            self.dispatch_supports_error_context_conversion(dispatch_id)
+        });
+        let allow_repeat_enrichment = active_handler_supports_conversion
+            && matches!(
+                site,
+                GenErrorSite::StepUserGeneratorConverted | GenErrorSite::RustProgramContinuation
+            );
         let allow_handler_context_conversion = conversion_hint
-            || active_dispatch_id.is_some_and(|dispatch_id| {
-                self.dispatch_supports_error_context_conversion(dispatch_id)
-                    && matches!(
-                        site,
-                        GenErrorSite::RustProgramContinuation
-                            | GenErrorSite::StepUserGeneratorDirect
-                    )
-            });
+            || active_handler_supports_conversion
+                && matches!(
+                    site,
+                    GenErrorSite::RustProgramContinuation | GenErrorSite::StepUserGeneratorDirect
+                );
         let in_get_execution_context_dispatch = current_dispatch_id
             .is_some_and(|dispatch_id| self.is_execution_context_effect_for_dispatch(dispatch_id));
 
@@ -320,6 +325,14 @@ impl VM {
                     TraceState::set_exception_cause(&exception, &original);
                 }
             }
+            return Mode::Throw(exception);
+        }
+
+        if exception.is_materialized_synthetic_vm_error() && !active_handler_supports_conversion {
+            return Mode::Throw(exception);
+        }
+
+        if TraceState::has_execution_context(&exception) && !allow_repeat_enrichment {
             return Mode::Throw(exception);
         }
 

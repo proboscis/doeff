@@ -106,8 +106,8 @@ impl DebugState {
                     .map(|v| v.to_string())
                     .unwrap_or_else(|_| MISSING_EXCEPTION.to_string())
             }),
-            PyException::RuntimeError { message } => format!("RuntimeError({message:?})"),
-            PyException::TypeError { message } => format!("TypeError({message:?})"),
+            PyException::RuntimeError { message, .. } => format!("RuntimeError({message:?})"),
+            PyException::TypeError { message, .. } => format!("TypeError({message:?})"),
         };
         Some(Self::truncate_repr(repr))
     }
