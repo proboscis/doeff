@@ -1,19 +1,18 @@
 use super::*;
 
 impl VM {
-    fn dispatch_origin_in_segment(&self, seg_id: SegmentId) -> Option<DispatchOriginView> {
+    fn dispatch_origin_in_segment_by<T>(
+        &self,
+        seg_id: SegmentId,
+        mut map: impl FnMut(DispatchId, &DispatchEffect, &Continuation) -> Option<T>,
+    ) -> Option<T> {
         let seg = self.segments.get(seg_id)?;
         seg.frames.iter().rev().find_map(|frame| match frame {
             Frame::DispatchOrigin {
                 dispatch_id,
                 effect,
                 k_origin,
-            } => Some(DispatchOriginView {
-                dispatch_id: *dispatch_id,
-                effect: effect.clone(),
-                k_origin: k_origin.clone(),
-                original_exception: k_origin.pending_error_context.clone(),
-            }),
+            } => map(*dispatch_id, effect, k_origin),
             Frame::Program { .. }
             | Frame::InterceptorApply(_)
             | Frame::InterceptorEval(_)
@@ -23,6 +22,20 @@ impl VM {
             | Frame::FlatMapBindResult
             | Frame::FlatMapBindSource { .. }
             | Frame::InterceptBodyReturn { .. } => None,
+        })
+    }
+
+    fn dispatch_origin_in_segment(
+        &self,
+        seg_id: SegmentId,
+    ) -> Option<DispatchOriginView> {
+        self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, effect, k_origin| {
+            Some(DispatchOriginView {
+                dispatch_id,
+                effect: effect.clone(),
+                k_origin: k_origin.clone(),
+                original_exception: k_origin.pending_error_context.clone(),
+            })
         })
     }
 
@@ -31,67 +44,26 @@ impl VM {
         seg_id: SegmentId,
         dispatch_id: DispatchId,
     ) -> Option<DispatchOriginView> {
-        let seg = self.segments.get(seg_id)?;
-        seg.frames.iter().rev().find_map(|frame| match frame {
-            Frame::DispatchOrigin {
+        self.dispatch_origin_in_segment_by(seg_id, |frame_dispatch_id, effect, k_origin| {
+            (frame_dispatch_id == dispatch_id).then(|| DispatchOriginView {
                 dispatch_id: frame_dispatch_id,
-                effect,
-                k_origin,
-            } if *frame_dispatch_id == dispatch_id => Some(DispatchOriginView {
-                dispatch_id: *frame_dispatch_id,
                 effect: effect.clone(),
                 k_origin: k_origin.clone(),
                 original_exception: k_origin.pending_error_context.clone(),
-            }),
-            Frame::Program { .. }
-            | Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
-            | Frame::HandlerDispatch { .. }
-            | Frame::DispatchOrigin { .. }
-            | Frame::EvalReturn(_)
-            | Frame::MapReturn { .. }
-            | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
+            })
         })
     }
 
     fn dispatch_origin_id_in_segment(&self, seg_id: SegmentId) -> Option<DispatchId> {
-        let seg = self.segments.get(seg_id)?;
-        seg.frames.iter().rev().find_map(|frame| match frame {
-            Frame::DispatchOrigin { dispatch_id, .. } => Some(*dispatch_id),
-            Frame::Program { .. }
-            | Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
-            | Frame::HandlerDispatch { .. }
-            | Frame::EvalReturn(_)
-            | Frame::MapReturn { .. }
-            | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
-        })
+        self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, _, _| Some(dispatch_id))
     }
 
     fn dispatch_origin_caller_in_segment(
         &self,
         seg_id: SegmentId,
     ) -> Option<(DispatchId, SegmentId)> {
-        let seg = self.segments.get(seg_id)?;
-        seg.frames.iter().rev().find_map(|frame| match frame {
-            Frame::DispatchOrigin {
-                dispatch_id,
-                k_origin,
-                ..
-            } => Some((*dispatch_id, k_origin.segment_id)),
-            Frame::Program { .. }
-            | Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
-            | Frame::HandlerDispatch { .. }
-            | Frame::EvalReturn(_)
-            | Frame::MapReturn { .. }
-            | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => None,
+        self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, _, k_origin| {
+            Some((dispatch_id, k_origin.segment_id))
         })
     }
 
@@ -122,27 +94,15 @@ impl VM {
     ) -> Option<SegmentId> {
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
-            let seg = self.segments.get(seg_id)?;
-            if let Some(user_seg_id) = seg.frames.iter().rev().find_map(|frame| match frame {
-                Frame::DispatchOrigin {
-                    dispatch_id: frame_dispatch_id,
-                    k_origin,
-                    ..
-                } if *frame_dispatch_id == dispatch_id => Some(k_origin.segment_id),
-                Frame::Program { .. }
-                | Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
-                | Frame::HandlerDispatch { .. }
-                | Frame::DispatchOrigin { .. }
-                | Frame::EvalReturn(_)
-                | Frame::MapReturn { .. }
-                | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => None,
-            }) {
+            if let Some(user_seg_id) = self.dispatch_origin_in_segment_by(
+                seg_id,
+                |frame_dispatch_id, _, k_origin| {
+                    (frame_dispatch_id == dispatch_id).then_some(k_origin.segment_id)
+                },
+            ) {
                 return Some(user_seg_id);
             }
-            cursor = seg.caller;
+            cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
         }
         None
     }
