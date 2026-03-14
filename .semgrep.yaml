@@ -2580,6 +2580,19 @@ rules:
               Err($ERROR) => StepEvent::Error($ERROR),
           }
 
+  - id: vm-no-raw-runtime-or-type-throw
+    languages: [rust]
+    severity: ERROR
+    message: |
+      gh-312: VM-generated RuntimeError/TypeError must go through contextual_throw_mode()
+      or set_contextual_throw() so doeff_execution_context is attached consistently
+      across VM error paths.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm.rs"
+        - "**/packages/doeff-vm-core/src/vm/*.rs"
+    pattern-regex: 'Mode::Throw\s*\(\s*PyException::(?:runtime_error|type_error)\s*\('
+
   - id: vm-no-apply-auto-eval-type-probing
     languages: [rust]
     severity: ERROR

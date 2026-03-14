@@ -18,6 +18,7 @@ use crate::step::PyException;
 use crate::value::Value;
 
 const EXECUTION_CONTEXT_ATTR: &str = "doeff_execution_context";
+const SYNTHETIC_VM_ERROR_ATTR: &str = "doeff_synthetic_vm_error";
 const MISSING_UNKNOWN: &str = "[MISSING] <unknown>";
 const MISSING_SUB_PROGRAM: &str = "[MISSING] <sub_program>";
 const MISSING_TARGET: &str = "[MISSING] <target>";
@@ -277,6 +278,35 @@ impl TraceState {
         })
     }
 
+    pub(crate) fn has_execution_context(exception: &PyException) -> bool {
+        let PyException::Materialized { exc_value, .. } = exception else {
+            return false;
+        };
+
+        Python::attach(|py| {
+            exc_value
+                .bind(py)
+                .getattr(EXECUTION_CONTEXT_ATTR)
+                .ok()
+                .is_some_and(|ctx| !ctx.is_none())
+        })
+    }
+
+    pub(crate) fn is_marked_synthetic_vm_error(exception: &PyException) -> bool {
+        let PyException::Materialized { exc_value, .. } = exception else {
+            return false;
+        };
+
+        Python::attach(|py| {
+            exc_value
+                .bind(py)
+                .getattr(SYNTHETIC_VM_ERROR_ATTR)
+                .ok()
+                .and_then(|value| value.extract::<bool>().ok())
+                .unwrap_or(false)
+        })
+    }
+
     fn context_entries_from_context_obj(context: &Bound<'_, PyAny>) -> Vec<Py<PyAny>> {
         if !context.is_instance_of::<PyExecutionContext>() {
             return Vec::new();
@@ -314,6 +344,21 @@ impl TraceState {
         Ok(context)
     }
 
+    fn materialize_exception(exception: &PyException) -> PyException {
+        match exception {
+            PyException::Materialized { .. } => exception.clone(),
+            PyException::RuntimeError { .. } | PyException::TypeError { .. } => {
+                Python::attach(|py| {
+                    let materialized = PyException::from(exception.to_pyerr(py));
+                    if let PyException::Materialized { exc_value, .. } = &materialized {
+                        let _ = exc_value.bind(py).setattr(SYNTHETIC_VM_ERROR_ATTR, true);
+                    }
+                    materialized
+                })
+            }
+        }
+    }
+
     fn attach_execution_context(exception: &PyException, context: &Py<PyAny>) {
         let PyException::Materialized { exc_value, .. } = exception else {
             return;
@@ -325,12 +370,33 @@ impl TraceState {
         });
     }
 
+    pub(crate) fn ensure_execution_context(exception: PyException) -> PyException {
+        let exception = Self::materialize_exception(&exception);
+        if Self::has_execution_context(&exception) {
+            return exception;
+        }
+
+        Python::attach(|py| {
+            if let Ok(context) = make_execution_context_object(py) {
+                Self::attach_execution_context(&exception, &context);
+            }
+            exception
+        })
+    }
+
     pub(crate) fn enrich_original_exception_with_context(
         original: PyException,
         context_value: Value,
         active_chain: Vec<ActiveChainEntry>,
     ) -> Result<PyException, PyException> {
+        let original_was_synthetic = !matches!(original, PyException::Materialized { .. });
+        let original = Self::materialize_exception(&original);
+        let preserve_original_on_invalid_resume =
+            original_was_synthetic || Self::is_marked_synthetic_vm_error(&original);
         let Value::Python(new_context) = context_value else {
+            if preserve_original_on_invalid_resume {
+                return Ok(original);
+            }
             let err = PyException::type_error(
                 "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
             );
@@ -341,6 +407,9 @@ impl TraceState {
         Python::attach(|py| {
             let context_bound = new_context.bind(py);
             if !context_bound.is_instance_of::<PyExecutionContext>() {
+                if preserve_original_on_invalid_resume {
+                    return Ok(original);
+                }
                 let err = PyException::type_error(
                     "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
                 );
@@ -358,13 +427,7 @@ impl TraceState {
                 Some(&active_chain),
             ) {
                 Ok(context) => context,
-                Err(err) => {
-                    let err = PyException::runtime_error(format!(
-                        "failed to merge ExecutionContext entries: {err}"
-                    ));
-                    Self::set_exception_cause(&err, &original);
-                    return Err(err);
-                }
+                Err(_) => return Ok(original),
             };
 
             Self::attach_execution_context(&original, &merged_context);
@@ -402,9 +465,7 @@ impl TraceState {
                         if let Ok(Some((resolved_function, resolved_file, resolved_line))) =
                             resolve_location
                                 .call1((exc_value_bound.clone(),))
-                                .and_then(|value| {
-                                    value.extract::<Option<(String, String, u32)>>()
-                                })
+                                .and_then(|value| value.extract::<Option<(String, String, u32)>>())
                         {
                             function_name = resolved_function;
                             source_file = resolved_file;
@@ -1072,9 +1133,9 @@ impl TraceState {
             .rev()
             .find(|ctx| ctx.dispatch_id == dispatch_id)
             .map(|dispatch_ctx| {
-                    dispatch_ctx
-                        .continuation
-                        .frames_snapshot
+                dispatch_ctx
+                    .continuation
+                    .frames_snapshot
                     .iter()
                     .filter_map(|frame| {
                         let Frame::Program {
