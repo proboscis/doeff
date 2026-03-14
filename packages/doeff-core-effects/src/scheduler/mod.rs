@@ -20,8 +20,8 @@ use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn, PyTaskCompleted,
-    TaskCancelledError,
+    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn,
+    PyTaskCompleted, TaskCancelledError,
 };
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
@@ -176,13 +176,13 @@ struct SemaphoreRuntimeState {
     holders: HashMap<Option<TaskId>, u64>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum WaitMode {
     All,
     Any,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum WaitOwner {
     Task { task_id: TaskId, cont_id: ContId },
     Root { cont_id: ContId },
@@ -203,6 +203,27 @@ struct WaitRequest {
     mode: WaitMode,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
+}
+
+impl WaitRequest {
+    fn owner(&self) -> WaitOwner {
+        match self.waiting_task {
+            Some(task_id) => WaitOwner::Task {
+                task_id,
+                cont_id: self.continuation.cont_id,
+            },
+            None => WaitOwner::Root {
+                cont_id: self.continuation.cont_id,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingGatherFailFast {
+    waiter: WaitRequest,
+    error: PyException,
+    pending_cleanup_tasks: HashSet<TaskId>,
 }
 
 static RUN_EXTERNAL_WAIT_MODES: OnceLock<Mutex<HashMap<u64, ExternalWaitMode>>> = OnceLock::new();
@@ -457,6 +478,7 @@ pub struct SchedulerState {
     pub promises: HashMap<PromiseId, PromiseState>,
     semaphores: HashMap<u64, SemaphoreRuntimeState>,
     waiters: HashMap<Waitable, Vec<WaitRequest>>,
+    pending_gather_fail_fast: HashMap<WaitOwner, PendingGatherFailFast>,
     external_completion_queue: Option<PyShared>,
     cancel_requested: HashSet<TaskId>,
     pub next_task: u64,
@@ -993,6 +1015,7 @@ impl SchedulerState {
             promises: HashMap::new(),
             semaphores: HashMap::new(),
             waiters: HashMap::new(),
+            pending_gather_fail_fast: HashMap::new(),
             external_completion_queue: None,
             cancel_requested: HashSet::new(),
             next_task: 0,
@@ -1305,21 +1328,55 @@ impl SchedulerState {
         }
     }
 
-    pub fn request_task_cancellation(&mut self, task_id: TaskId) {
+    fn request_task_cancellation_internal(&mut self, task_id: TaskId) -> bool {
         let Some(task_state) = self.tasks.get(&task_id) else {
-            return;
+            return false;
         };
 
         if matches!(task_state, TaskState::Done { .. }) {
-            return;
+            return false;
         }
 
         if self.current_task == Some(task_id) {
             self.cancel_requested.insert(task_id);
-            return;
+            return false;
         }
 
-        self.finalize_task_cancellation(task_id);
+        let (cont_id, priority, started) = match task_state {
+            TaskState::Pending { cont, priority, .. } => (cont.cont_id, *priority, cont.started),
+            TaskState::Done { .. } => return false,
+        };
+
+        if !started {
+            self.finalize_task_cancellation(task_id);
+            return false;
+        }
+
+        self.clear_waiters_for_owner(Some(task_id), cont_id);
+        self.cancel_requested.remove(&task_id);
+
+        let cancelled_waiters = self.remove_semaphore_waiters_for_task(task_id);
+        for promise_id in cancelled_waiters {
+            self.mark_promise_done(promise_id, Err(task_cancelled_error()));
+        }
+
+        let Some(TaskState::Pending {
+            resume_outcome,
+            pending_log_merge_items,
+            ..
+        }) = self.tasks.get_mut(&task_id)
+        else {
+            return false;
+        };
+
+        *resume_outcome = Some(Err(task_cancelled_error()));
+        *pending_log_merge_items = None;
+        self.enqueue_ready_task(task_id, priority);
+        true
+    }
+
+    pub fn request_task_cancellation(&mut self, task_id: TaskId) -> bool {
+        self.request_task_cancellation_internal(task_id)
     }
 
     pub fn cancel_requested_for_running_task(&self) -> Option<TaskId> {
@@ -1614,11 +1671,15 @@ impl SchedulerState {
     }
 
     fn wake_waiters(&mut self, waitable: Waitable) -> Option<WokenTask> {
-        let Some(waiters_for_item) = self.waiters.remove(&waitable) else {
-            return None;
+        let mut highest_ready = if let Waitable::Task(task_id) = waitable {
+            self.record_gather_fail_fast_task_completion(task_id)
+        } else {
+            None
         };
 
-        let mut highest_ready: Option<WokenTask> = None;
+        let Some(waiters_for_item) = self.waiters.remove(&waitable) else {
+            return highest_ready;
+        };
 
         for waiter in waiters_for_item {
             let waiter_id = waiter.continuation.cont_id;
@@ -1693,17 +1754,20 @@ impl SchedulerState {
     }
 
     fn clear_waiters_for_owner(&mut self, waiting_task: Option<TaskId>, cont_id: ContId) {
+        let owner = match waiting_task {
+            Some(task_id) => WaitOwner::Task { task_id, cont_id },
+            None => WaitOwner::Root { cont_id },
+        };
+        self.pending_gather_fail_fast.remove(&owner);
         if let Some(ready_resume) = self.ready_root_resumes.get(&cont_id) {
             if ready_resume.waiting_task == waiting_task {
                 self.ready_root_resumes.remove(&cont_id);
             }
         }
-        if waiting_task.is_none() {
-            self.ready.retain(|entry| match entry.target {
-                ReadyTarget::Root(root_id) => root_id != cont_id,
-                ReadyTarget::Task(_) => true,
-            });
-        }
+        self.ready.retain(|entry| match entry.target {
+            ReadyTarget::Root(root_id) => root_id != cont_id,
+            ReadyTarget::Task(_) => true,
+        });
 
         if let Some(task_id) = waiting_task {
             self.ready_task_ids.remove(&task_id);
@@ -1758,6 +1822,147 @@ impl SchedulerState {
             Some(TaskState::Pending { cont, .. }) => Some(cont.clone()),
             Some(TaskState::Done { .. }) | None => None,
         }
+    }
+
+    fn owner_is_waiting(&self, owner: WaitOwner) -> bool {
+        if self.pending_gather_fail_fast.contains_key(&owner) {
+            return true;
+        }
+        match owner {
+            WaitOwner::Task { task_id, cont_id } => matches!(
+                self.tasks.get(&task_id),
+                Some(TaskState::Pending { cont, .. }) if cont.cont_id == cont_id
+            ),
+            WaitOwner::Root { cont_id } => self.waiters.values().any(|requests| {
+                requests.iter().any(|request| {
+                    request.waiting_task.is_none() && request.continuation.cont_id == cont_id
+                })
+            }),
+        }
+    }
+
+    fn gather_wait_request_for_failed_task(&self, running_task: TaskId) -> Option<WaitRequest> {
+        self.waiters
+            .values()
+            .flat_map(|waiters| waiters.iter())
+            .find(|waiter| {
+                waiter.mode == WaitMode::All
+                    && waiter
+                        .items
+                        .iter()
+                        .any(|item| matches!(item, Waitable::Task(task_id) if *task_id == running_task))
+                    && waiter
+                        .items
+                        .iter()
+                        .filter(|item| matches!(item, Waitable::Task(task_id) if *task_id != running_task))
+                        .count()
+                        > 0
+            })
+            .cloned()
+    }
+
+    fn has_pending_gather_fail_fast(&self, owner: WaitOwner) -> bool {
+        self.pending_gather_fail_fast.contains_key(&owner)
+    }
+
+    fn register_gather_fail_fast(
+        &mut self,
+        waiter: WaitRequest,
+        error: PyException,
+        failed_task: TaskId,
+    ) -> Option<WokenTask> {
+        let mut pending_cleanup_tasks = HashSet::new();
+        for item in &waiter.items {
+            let Waitable::Task(task_id) = item else {
+                continue;
+            };
+            if *task_id == failed_task {
+                continue;
+            }
+            if self.request_task_cancellation_internal(*task_id) {
+                pending_cleanup_tasks.insert(*task_id);
+            }
+        }
+        let owner = waiter.owner();
+        self.clear_waiters_for_owner(waiter.waiting_task, waiter.continuation.cont_id);
+        self.pending_gather_fail_fast.insert(
+            owner,
+            PendingGatherFailFast {
+                waiter,
+                error,
+                pending_cleanup_tasks,
+            },
+        );
+        self.stage_fail_fast_waiter(owner)
+    }
+
+    fn record_gather_fail_fast_task_completion(&mut self, task_id: TaskId) -> Option<WokenTask> {
+        let mut ready_owners = Vec::new();
+        for (owner, fail_fast) in self.pending_gather_fail_fast.iter_mut() {
+            fail_fast.pending_cleanup_tasks.remove(&task_id);
+            if fail_fast.pending_cleanup_tasks.is_empty() {
+                ready_owners.push(*owner);
+            }
+        }
+
+        let mut highest_ready: Option<WokenTask> = None;
+        for owner in ready_owners {
+            if let Some(woken) = self.stage_fail_fast_waiter(owner) {
+                highest_ready = match highest_ready {
+                    Some(current_max) if current_max.priority >= woken.priority => {
+                        Some(current_max)
+                    }
+                    Some(_) | None => Some(woken),
+                };
+            }
+        }
+        highest_ready
+    }
+
+    fn stage_fail_fast_waiter(&mut self, owner: WaitOwner) -> Option<WokenTask> {
+        let fail_fast = self.pending_gather_fail_fast.remove(&owner)?;
+        if !fail_fast.pending_cleanup_tasks.is_empty() {
+            self.pending_gather_fail_fast.insert(owner, fail_fast);
+            return None;
+        }
+
+        let waiter = fail_fast.waiter;
+        let waiter_id = waiter.continuation.cont_id;
+
+        if let Some(waiting_task) = waiter.waiting_task {
+            let priority = match self.tasks.get_mut(&waiting_task) {
+                Some(TaskState::Pending {
+                    cont,
+                    resume_outcome,
+                    priority,
+                    pending_log_merge_items,
+                    ..
+                }) => {
+                    if cont.cont_id != waiter_id {
+                        return None;
+                    }
+                    *resume_outcome = Some(Err(fail_fast.error));
+                    *pending_log_merge_items = None;
+                    *priority
+                }
+                Some(TaskState::Done { .. }) | None => return None,
+            };
+            self.enqueue_ready_task(waiting_task, priority);
+            return Some(WokenTask { priority });
+        }
+
+        self.ready_root_resumes.insert(
+            waiter_id,
+            ReadyRootResume {
+                continuation: waiter.continuation,
+                outcome: Err(fail_fast.error),
+                waiting_task: None,
+                waiting_store: waiter.waiting_store,
+                merge_items: None,
+            },
+        );
+        self.enqueue_ready_root(waiter_id);
+        None
     }
 
     pub fn try_collect(&self, items: &[Waitable]) -> Option<Value> {
@@ -2588,26 +2793,37 @@ impl SchedulerProgram {
         store: &mut RustStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let outcome_for_fallback = outcome.clone();
 
-        let owner_still_waiting = match &owner {
-            WaitOwner::Task { task_id, cont_id } => matches!(
-                state.tasks.get(task_id),
-                Some(TaskState::Pending { cont, .. }) if cont.cont_id == *cont_id
-            ),
-            WaitOwner::Root { cont_id } => state.waiters.values().any(|requests| {
-                requests.iter().any(|request| {
-                    request.waiting_task.is_none() && request.continuation.cont_id == *cont_id
-                })
-            }),
-        };
+        let mut owner_still_waiting = state.owner_is_waiting(owner);
 
         if state.current_task == Some(running_task) {
             state.current_task = None;
         }
 
-        let outcome_for_fallback = outcome.clone();
-        let task_already_done =
+        let mut task_already_done =
             matches!(state.tasks.get(&running_task), Some(TaskState::Done { .. }));
+        let fail_fast_error = outcome.as_ref().err().cloned();
+        if let Some(error) = fail_fast_error {
+            if let Some(wait_request) = state.gather_wait_request_for_failed_task(running_task) {
+                let wait_owner = wait_request.owner();
+                if !state.has_pending_gather_fail_fast(wait_owner) {
+                    if let Err(store_error) = state.save_task_store(running_task, store) {
+                        return IRStreamStep::Throw(store_error);
+                    }
+                    if let Err(done_error) =
+                        state.mark_task_done(running_task, Err(error.clone()))
+                    {
+                        return IRStreamStep::Throw(done_error);
+                    }
+                    let _ = state.register_gather_fail_fast(wait_request, error, running_task);
+                    state.wake_waiters(Waitable::Task(running_task));
+                    task_already_done = true;
+                    owner_still_waiting = state.owner_is_waiting(owner);
+                }
+            }
+        }
+
         if task_already_done && !owner_still_waiting {
             self.phase = SchedulerPhase::Idle;
             return match outcome_for_fallback {
@@ -2624,6 +2840,7 @@ impl SchedulerProgram {
                 return IRStreamStep::Throw(error);
             }
             state.wake_waiters(Waitable::Task(running_task));
+            owner_still_waiting = state.owner_is_waiting(owner);
         }
 
         match state.transfer_next(store) {
@@ -2720,7 +2937,7 @@ impl IRStreamProgram for SchedulerProgram {
 
             SchedulerEffect::CancelTask { task } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                state.request_task_cancellation(task);
+                let _ = state.request_task_cancellation(task);
                 resume_to_continuation(k_user, Value::Unit)
             }
 
