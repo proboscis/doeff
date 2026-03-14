@@ -29,6 +29,7 @@ pub struct CallMetadata {
     pub source_line: u32,
     pub args_repr: Option<String>,
     pub program_call: Option<PyShared>,
+    pub auto_unwrap_programlike: bool,
 }
 
 impl CallMetadata {
@@ -38,6 +39,7 @@ impl CallMetadata {
         source_line: u32,
         args_repr: Option<String>,
         program_call: Option<PyShared>,
+        auto_unwrap_programlike: bool,
     ) -> Self {
         CallMetadata {
             frame_id: fresh_frame_id(),
@@ -46,6 +48,7 @@ impl CallMetadata {
             source_line,
             args_repr,
             program_call,
+            auto_unwrap_programlike,
         }
     }
 
@@ -60,6 +63,7 @@ impl CallMetadata {
             0,
             None,
             None,
+            false,
         )
     }
 }

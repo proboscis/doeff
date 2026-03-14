@@ -39,6 +39,84 @@ pub use crate::rust_store::RustStore;
 
 static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Default)]
+struct AutoUnwrappedProgramlikeTracker {
+    python_ptrs: HashSet<usize>,
+    ints: HashSet<i64>,
+    strings: HashSet<String>,
+    saw_true: bool,
+    saw_false: bool,
+    saw_none: bool,
+}
+
+impl AutoUnwrappedProgramlikeTracker {
+    fn clear(&mut self) {
+        self.python_ptrs.clear();
+        self.ints.clear();
+        self.strings.clear();
+        self.saw_true = false;
+        self.saw_false = false;
+        self.saw_none = false;
+    }
+
+    fn record(&mut self, value: &Value) {
+        match value {
+            Value::Python(obj) => {
+                Python::attach(|py| {
+                    self.python_ptrs.insert(obj.bind(py).as_ptr() as usize);
+                });
+            }
+            Value::Int(value) => {
+                self.ints.insert(*value);
+            }
+            Value::String(value) => {
+                self.strings.insert(value.clone());
+            }
+            Value::Bool(true) => {
+                self.saw_true = true;
+            }
+            Value::Bool(false) => {
+                self.saw_false = true;
+            }
+            Value::None => {
+                self.saw_none = true;
+            }
+            Value::Unit
+            | Value::Continuation(_)
+            | Value::Handlers(_)
+            | Value::Kleisli(_)
+            | Value::Task(_)
+            | Value::Promise(_)
+            | Value::ExternalPromise(_)
+            | Value::CallStack(_)
+            | Value::Trace(_)
+            | Value::Traceback(_)
+            | Value::ActiveChain(_)
+            | Value::List(_) => {}
+        }
+    }
+
+    fn matches_bound(&self, obj: &Bound<'_, PyAny>) -> bool {
+        if obj.is_none() {
+            return self.saw_none;
+        }
+        if let Ok(value) = obj.cast::<pyo3::types::PyBool>() {
+            return if value.is_true() {
+                self.saw_true
+            } else {
+                self.saw_false
+            };
+        }
+        if let Ok(value) = obj.extract::<i64>() {
+            return self.ints.contains(&value);
+        }
+        if let Ok(value) = obj.extract::<String>() {
+            return self.strings.contains(&value);
+        }
+        self.python_ptrs.contains(&(obj.as_ptr() as usize))
+    }
+}
+
 const MISSING_UNKNOWN: &str = "[MISSING] <unknown>";
 
 #[path = "vm/handler.rs"]
@@ -290,6 +368,7 @@ pub struct VM {
     pub(crate) pending_trace_events: Vec<CaptureEvent>,
     pub continuation_registry: HashMap<ContId, Continuation>,
     pub active_run_token: Option<u64>,
+    auto_unwrapped_programlike: AutoUnwrappedProgramlikeTracker,
 }
 
 impl VM {
@@ -308,6 +387,7 @@ impl VM {
             pending_trace_events: Vec::new(),
             continuation_registry: HashMap::new(),
             active_run_token: None,
+            auto_unwrapped_programlike: AutoUnwrappedProgramlikeTracker::default(),
         }
     }
 
@@ -327,6 +407,7 @@ impl VM {
         self.trace_state.clear();
         self.interceptor_state.clear_for_run();
         self.run_handlers.clear();
+        self.auto_unwrapped_programlike.clear();
         token
     }
 
@@ -345,6 +426,7 @@ impl VM {
         self.run_handlers.clear();
         self.continuation_registry.clear();
         self.consumed_cont_ids.clear();
+        self.auto_unwrapped_programlike.clear();
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -388,6 +470,14 @@ impl VM {
 
     pub fn current_segment_ref(&self) -> Option<&Segment> {
         self.current_segment.and_then(|id| self.segments.get(id))
+    }
+
+    pub fn record_auto_unwrapped_programlike_value(&mut self, value: &Value) {
+        self.auto_unwrapped_programlike.record(value);
+    }
+
+    pub fn matches_auto_unwrapped_programlike_value(&self, obj: &Bound<'_, PyAny>) -> bool {
+        self.auto_unwrapped_programlike.matches_bound(obj)
     }
 
     #[inline]

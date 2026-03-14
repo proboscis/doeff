@@ -1293,6 +1293,7 @@ def test_module_level_run_wraps_invalid_top_level_yield_in_run_result():
     assert isinstance(result.error, TypeError)
     assert str(result.error).startswith("yielded value must be EffectBase or DoExpr, got ")
     assert "(type: object)" in str(result.error)
+    assert "Hint: this may be a resolved ProgramLike value." not in str(result.error)
     assert result.traceback_data is not None
 
 
