@@ -179,7 +179,7 @@ fn wrap_value_as_result_ok(value: Value) -> Result<Value, PyException> {
             },
         )
         .map_err(|e| pyerr_to_exception(py, e))?;
-        Ok(Value::Python(wrapped.into_any().unbind()))
+        Ok(Value::Python(PyShared::new(wrapped.into_any().unbind())))
     })
 }
 
@@ -193,7 +193,7 @@ fn wrap_exception_as_result_err(error: PyException) -> Result<Value, PyException
             },
         )
         .map_err(|e| pyerr_to_exception(py, e))?;
-        Ok(Value::Python(wrapped.into_any().unbind()))
+        Ok(Value::Python(PyShared::new(wrapped.into_any().unbind())))
     })
 }
 
@@ -210,7 +210,7 @@ fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
         let is_effect = bound.is_instance_of::<PyEffectBase>();
 
         if is_doctrl || is_doexpr || is_effect {
-            Some(PyShared::new(obj.clone_ref(py)))
+            Some(obj.clone())
         } else {
             None
         }
@@ -387,7 +387,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
                     self.pending_k = Some(k);
                     IRStreamStep::NeedsPython(PythonCall::CallFunc {
                         func: runner,
-                        args: vec![Value::Python(awaitable)],
+                        args: vec![Value::Python(PyShared::new(awaitable))],
                         kwargs: vec![],
                     })
                 }

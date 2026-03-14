@@ -321,21 +321,21 @@ impl PyKleisli {
         (file, line)
     }
 
-    fn resolve_apply_callable(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    fn resolve_apply_callable(&self, py: Python<'_>) -> PyResult<PyShared> {
         if let Ok(factory) = self.func.bind(py).getattr("_doeff_generator_factory") {
-            return Ok(factory.unbind());
+            return Ok(PyShared::new(factory.unbind()));
         }
-        Ok(self.func.clone_ref(py))
+        Ok(self.func.clone())
     }
 
-    fn default_get_frame(py: Python<'_>) -> Result<Py<PyAny>, VMError> {
+    fn default_get_frame(py: Python<'_>) -> Result<PyShared, VMError> {
         let callable = py
             .import("doeff.do")
             .and_then(|mod_| mod_.getattr("_default_get_frame"))
             .map_err(|e| {
                 VMError::python_error(format!("failed to resolve default get_frame: {e}"))
             })?;
-        Ok(callable.unbind())
+        Ok(PyShared::new(callable.unbind()))
     }
 
     fn runtime_arg_to_pyobject<'py>(
@@ -390,8 +390,8 @@ impl Kleisli for PyKleisli {
                 .extract::<PyRef<'_, DoeffGenerator>>()
                 .map_err(|e| VMError::python_error(e.to_string()))?;
             (
-                doeff_gen.generator.clone_ref(py),
-                doeff_gen.get_frame.clone_ref(py),
+                PyShared::new(doeff_gen.generator.clone_ref(py)),
+                PyShared::new(doeff_gen.get_frame.clone_ref(py)),
             )
         } else {
             let is_generator_like = produced.hasattr("__next__").unwrap_or(false)
@@ -408,10 +408,13 @@ impl Kleisli for PyKleisli {
                     self.name
                 )));
             }
-            (produced.unbind(), Self::default_get_frame(py)?)
+            (
+                PyShared::new(produced.unbind()),
+                Self::default_get_frame(py)?,
+            )
         };
 
-        let stream = PythonGeneratorStream::new(PyShared::new(generator), PyShared::new(get_frame));
+        let stream = PythonGeneratorStream::new(generator, get_frame);
         let stream_ref: IRStreamRef = Arc::new(Mutex::new(Box::new(stream)));
         let metadata = CallMetadata::new(
             self.name.clone(),
@@ -533,7 +536,7 @@ impl Kleisli for PyCallableKleisli {
             .call1(arg_tuple)
             .map_err(PyKleisli::map_pyerr)?;
         Ok(DoCtrl::Pure {
-            value: Value::Python(produced.unbind()),
+            value: Value::Python(PyShared::new(produced.unbind())),
         })
     }
 
@@ -628,7 +631,7 @@ impl Kleisli for RustKleisli {
 
     fn apply_with_run_token(
         &self,
-        py: Python<'_>,
+        _py: Python<'_>,
         args: Vec<Value>,
         run_token: Option<u64>,
     ) -> Result<DoCtrl, VMError> {
@@ -640,7 +643,7 @@ impl Kleisli for RustKleisli {
         }
 
         let effect = match &args[0] {
-            Value::Python(obj) => dispatch_from_shared(PyShared::new(obj.clone_ref(py))),
+            Value::Python(obj) => dispatch_from_shared(obj.clone()),
             other => {
                 return Err(VMError::type_error(format!(
                     "RustKleisli arg[0] must be Python effect, got {other:?}"

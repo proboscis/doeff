@@ -29,7 +29,10 @@ impl PyEffectBase {
 impl PyEffectBase {
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, pyo3::types::PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
+    fn new(
+        _args: &Bound<'_, pyo3::types::PyTuple>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> Self {
         Self::new_base()
     }
 }
@@ -41,8 +44,7 @@ pub struct PyGetExecutionContext {}
 pub struct PyExecutionContext {
     #[pyo3(get)]
     pub entries: Py<PyList>,
-    #[pyo3(get)]
-    pub active_chain: Option<Py<PyAny>>,
+    pub active_chain: Option<PyShared>,
 }
 
 #[pymethods]
@@ -67,12 +69,17 @@ impl PyExecutionContext {
         }
     }
 
+    #[getter]
+    fn active_chain(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.active_chain.as_ref().map(|value| value.clone_ref(py))
+    }
+
     pub fn add(&mut self, py: Python<'_>, entry: Py<PyAny>) -> PyResult<()> {
         self.entries.bind(py).append(entry.bind(py))
     }
 
     pub fn set_active_chain(&mut self, active_chain: Option<Py<PyAny>>) {
-        self.active_chain = active_chain;
+        self.active_chain = active_chain.map(PyShared::new);
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {

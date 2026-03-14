@@ -1,6 +1,6 @@
 //! Value types that flow through the VM.
 //!
-//! Values can be either Rust-native (for optimization) or Python objects.
+//! Values can be either Rust-native (for optimization) or Python handles.
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
@@ -36,11 +36,11 @@ pub struct ExternalPromise {
 
 /// A value that can flow through the VM.
 ///
-/// Can be either a Rust-native value or a Python object.
+/// Can be either a Rust-native value or a Python handle.
 /// Rust-native variants avoid Python overhead for common cases.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Value {
-    Python(Py<PyAny>),
+    Python(PyShared),
     Unit,
     Int(i64),
     String(String),
@@ -464,7 +464,7 @@ impl Value {
 
     /// Preserve a Python object as-is without VM-side type coercion.
     pub fn from_python_opaque(obj: &Bound<'_, PyAny>) -> Self {
-        Value::Python(obj.clone().unbind())
+        Value::Python(PyShared::new(obj.clone().unbind()))
     }
 
     pub fn from_pyobject(obj: &Bound<'_, PyAny>) -> Self {
@@ -480,7 +480,7 @@ impl Value {
         if let Ok(s) = obj.extract::<String>() {
             return Value::String(s);
         }
-        Value::Python(obj.clone().unbind())
+        Value::Python(PyShared::new(obj.clone().unbind()))
     }
 
     /// Create from Python object, consuming it.
@@ -599,8 +599,9 @@ impl Default for Value {
 
 impl Value {
     pub fn clone_ref(&self, py: Python<'_>) -> Self {
+        let _ = py;
         match self {
-            Value::Python(obj) => Value::Python(obj.clone_ref(py)),
+            Value::Python(obj) => Value::Python(obj.clone()),
             Value::Unit => Value::Unit,
             Value::Int(i) => Value::Int(*i),
             Value::String(s) => Value::String(s.clone()),
@@ -621,19 +622,10 @@ impl Value {
     }
 }
 
-impl Clone for Value {
-    fn clone(&self) -> Self {
-        Python::attach(|py| self.clone_ref(py))
-    }
-}
-
 impl Value {
     pub fn from_effect(effect: &crate::effect::Effect) -> Self {
         if let Some(py_obj) = effect.as_python() {
-            // SAFETY: from_effect only clones an existing Py<PyAny> from VM-managed effect values,
-            // and all callers execute under attached Python contexts.
-            let py = unsafe { pyo3::Python::assume_attached() };
-            return Value::Python(py_obj.clone_ref(py));
+            return Value::Python(py_obj.clone());
         }
         Value::None
     }
@@ -672,6 +664,28 @@ impl From<()> for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyo3::Python;
+
+    use crate::do_ctrl::DoCtrl;
+    use crate::error::VMError;
+    use crate::kleisli::{Kleisli, KleisliDebugInfo, KleisliRef};
+
+    #[derive(Debug)]
+    struct DummyKleisli;
+
+    impl Kleisli for DummyKleisli {
+        fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+            unreachable!("test dummy should never be invoked")
+        }
+
+        fn debug_info(&self) -> KleisliDebugInfo {
+            KleisliDebugInfo {
+                name: "DummyKleisli".to_string(),
+                file: None,
+                line: None,
+            }
+        }
+    }
 
     #[test]
     fn test_value_from_primitives() {
@@ -692,10 +706,7 @@ mod tests {
 
     #[test]
     fn test_value_handlers() {
-        let handlers = vec![std::sync::Arc::new(crate::kleisli::RustKleisli::new(
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            "StateHandler".to_string(),
-        )) as KleisliRef];
+        let handlers = vec![std::sync::Arc::new(DummyKleisli) as KleisliRef];
         let val = Value::Handlers(handlers);
         assert!(val.as_handlers().is_some());
         assert_eq!(val.as_handlers().unwrap().len(), 1);
@@ -704,7 +715,6 @@ mod tests {
     #[test]
     fn test_value_task_and_promise() {
         use crate::ids::{PromiseId, TaskId};
-        use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 
         let task = Value::Task(TaskHandle {
             id: TaskId::from_raw(1),
