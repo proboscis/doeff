@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import traceback
 import warnings
 from dataclasses import dataclass
+
+import doeff_vm
+import pytest
 
 from doeff import Effect, Program, do
 from doeff._types_internal import EffectBase
 from doeff.effects import ProgramCallStack, Put
 from doeff.rust_vm import Delegate, Pass, Resume, WithHandler, default_handlers, run
 from doeff.trace import TraceDispatch
-from doeff.traceback import attach_doeff_traceback
+from doeff.traceback import attach_doeff_traceback, get_attached_doeff_traceback
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -68,6 +72,27 @@ def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
 
     assert "RunResult status: err" in result.display(verbose=False)
     assert "RunResult status: err" in result.display(verbose=True)
+
+
+def test_raw_vm_run_attaches_doeff_traceback_to_direct_exception() -> None:
+    vm = doeff_vm.PyVM()
+
+    @do
+    def body() -> Program[object]:
+        yield object()
+        return "unreachable"
+
+    with pytest.raises(TypeError) as exc_info:
+        vm.run(body())
+
+    error = exc_info.value
+    doeff_tb = get_attached_doeff_traceback(error)
+    assert doeff_tb is not None
+
+    rendered = "".join(traceback.format_exception(error))
+    assert "doeff Traceback (most recent call last):" in rendered
+    assert "body()" in rendered
+    assert "yielded value must be EffectBase or DoExpr, got " in rendered
 
 
 def test_delegation_chain_routes_to_outer_handler() -> None:
