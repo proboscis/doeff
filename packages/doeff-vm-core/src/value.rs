@@ -672,6 +672,28 @@ impl From<()> for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyo3::Python;
+
+    use crate::do_ctrl::DoCtrl;
+    use crate::error::VMError;
+    use crate::kleisli::{Kleisli, KleisliDebugInfo, KleisliRef};
+
+    #[derive(Debug)]
+    struct DummyKleisli;
+
+    impl Kleisli for DummyKleisli {
+        fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+            unreachable!("test dummy should never be invoked")
+        }
+
+        fn debug_info(&self) -> KleisliDebugInfo {
+            KleisliDebugInfo {
+                name: "DummyKleisli".to_string(),
+                file: None,
+                line: None,
+            }
+        }
+    }
 
     #[test]
     fn test_value_from_primitives() {
@@ -692,10 +714,7 @@ mod tests {
 
     #[test]
     fn test_value_handlers() {
-        let handlers = vec![std::sync::Arc::new(crate::kleisli::RustKleisli::new(
-            std::sync::Arc::new(crate::handler::StateHandlerFactory),
-            "StateHandler".to_string(),
-        )) as KleisliRef];
+        let handlers = vec![std::sync::Arc::new(DummyKleisli) as KleisliRef];
         let val = Value::Handlers(handlers);
         assert!(val.as_handlers().is_some());
         assert_eq!(val.as_handlers().unwrap().len(), 1);
@@ -704,7 +723,6 @@ mod tests {
     #[test]
     fn test_value_task_and_promise() {
         use crate::ids::{PromiseId, TaskId};
-        use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 
         let task = Value::Task(TaskHandle {
             id: TaskId::from_raw(1),
