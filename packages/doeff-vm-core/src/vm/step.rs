@@ -77,7 +77,7 @@ impl VM {
     }
 
     fn extract_doeff_generator(
-        value: Py<PyAny>,
+        value: PyShared,
         inherited_metadata: Option<CallMetadata>,
         context: &str,
     ) -> Result<(IRStreamRef, Option<CallMetadata>), PyException> {
@@ -711,7 +711,7 @@ impl VM {
             Mode::Deliver(value) => {
                 self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
                     f: Box::new(DoCtrl::Pure {
-                        value: Value::Python(mapper.into_inner()),
+                        value: Value::Python(mapper),
                     }),
                     args: vec![DoCtrl::Pure { value }],
                     kwargs: vec![],
@@ -767,7 +767,7 @@ impl VM {
                 seg.push_frame(Frame::FlatMapBindResult);
                 seg.mode = Mode::HandleYield(DoCtrl::Expand {
                     factory: Box::new(DoCtrl::Pure {
-                        value: Value::Python(binder.into_inner()),
+                        value: Value::Python(binder),
                     }),
                     args: vec![DoCtrl::Pure { value }],
                     kwargs: vec![],
@@ -980,7 +980,7 @@ impl VM {
 
     fn classify_interceptor_result_object(
         &self,
-        result_obj: Py<PyAny>,
+        result_obj: PyShared,
         original_obj: &PyShared,
         original_yielded: DoCtrl,
     ) -> Result<DoCtrl, PyException> {
@@ -1009,7 +1009,7 @@ impl VM {
     fn should_invoke_interceptor(
         &self,
         entry: &InterceptorEntry,
-        yielded_obj: &Py<PyAny>,
+        yielded_obj: &PyShared,
     ) -> Result<bool, PyException> {
         let Some(types) = entry.types.as_ref() else {
             return Ok(true);
@@ -1058,7 +1058,7 @@ impl VM {
             };
 
             let yielded_obj = match doctrl_to_pyexpr_for_vm(&current) {
-                Ok(Some(obj)) => obj,
+                Ok(Some(obj)) => PyShared::new(obj),
                 Ok(None) => continue,
                 Err(exc) => return self.contextual_throw_mode(exc),
             };
@@ -1100,7 +1100,7 @@ impl VM {
         marker: Marker,
         entry: InterceptorEntry,
         yielded: DoCtrl,
-        yielded_obj: Py<PyAny>,
+        yielded_obj: PyShared,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
@@ -1110,7 +1110,6 @@ impl VM {
         let interceptor_kleisli = entry.interceptor.clone();
         let guard_eval_depth = entry.types.is_some();
         let interceptor_meta = entry.metadata.clone();
-        let yielded_obj_for_continuation = Python::attach(|py| yielded_obj.clone_ref(py));
         let apply_metadata = interceptor_meta
             .clone()
             .unwrap_or_else(Self::fallback_interceptor_metadata);
@@ -1128,7 +1127,7 @@ impl VM {
         let continuation = InterceptorContinuation {
             marker,
             original_yielded: yielded,
-            original_obj: PyShared::new(yielded_obj_for_continuation),
+            original_obj: yielded_obj.clone(),
             emitter_stream: stream,
             emitter_metadata: metadata,
             emitter_handler_kind: handler_kind,
@@ -1231,7 +1230,7 @@ impl VM {
             })));
 
             return Mode::HandleYield(DoCtrl::Eval {
-                expr: PyShared::new(result_obj),
+                expr: result_obj,
                 metadata: None,
             });
         }
@@ -1487,10 +1486,10 @@ impl VM {
         self.handle_resume_continuation(continuation, value)
     }
 
-    fn handle_yield_python_async_syntax_escape(&mut self, action: Py<PyAny>) -> StepEvent {
+    fn handle_yield_python_async_syntax_escape(&mut self, action: PyShared) -> StepEvent {
         self.current_seg_mut().pending_python = Some(PendingPython::AsyncEscape);
         StepEvent::NeedsPython(PythonCall::CallAsync {
-            func: PyShared::new(action),
+            func: action,
             args: vec![],
         })
     }
@@ -1551,7 +1550,7 @@ impl VM {
         };
 
         let func = match f_value {
-            Value::Python(func) => PyShared::new(func),
+            Value::Python(func) => func,
             Value::Kleisli(kleisli) => {
                 let args_values = Self::collect_value_args(args);
                 let kwargs_values = Self::collect_value_kwargs(kwargs);
@@ -1643,7 +1642,7 @@ impl VM {
         };
 
         let (func, handler_return) = match factory_value {
-            Value::Python(factory) => (PyShared::new(factory), false),
+            Value::Python(factory) => (factory, false),
             Value::Kleisli(kleisli) => {
                 let args_values = Self::collect_value_args(args);
                 let kwargs_values = Self::collect_value_kwargs(kwargs);
@@ -2237,7 +2236,7 @@ impl VM {
             let bound = result_obj.bind(py);
             if bound.is_instance_of::<DoeffGenerator>() {
                 let (stream, metadata) =
-                    Self::extract_doeff_generator(result_obj.clone_ref(py), metadata, context)?;
+                    Self::extract_doeff_generator(result_obj.clone(), metadata, context)?;
                 return Ok(DoCtrl::IRStream { stream, metadata });
             }
             if bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<PyEffectBase>() {
