@@ -1302,7 +1302,7 @@ impl VM {
         if let Some((_dispatch_id, original_exception, terminal)) = error_dispatch {
             if terminal {
                 let enriched_exception =
-                    match Self::enrich_original_exception_with_context(original_exception, value) {
+                    match self.enrich_original_exception_with_context(original_exception, value) {
                         Ok(exception) => exception,
                         Err(effect_err) => effect_err,
                     };

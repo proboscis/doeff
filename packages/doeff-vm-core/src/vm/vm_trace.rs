@@ -436,10 +436,16 @@ impl VM {
     }
 
     pub(super) fn enrich_original_exception_with_context(
+        &mut self,
         original: PyException,
         context_value: Value,
     ) -> Result<PyException, PyException> {
-        TraceState::enrich_original_exception_with_context(original, context_value)
+        let active_chain = self
+            .assemble_active_chain(Some(&original))
+            .into_iter()
+            .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
+            .collect();
+        TraceState::enrich_original_exception_with_context(original, context_value, active_chain)
     }
 
     pub fn assemble_active_chain(&mut self, exception: Option<&PyException>) -> Vec<ActiveChainEntry> {
@@ -515,24 +521,12 @@ impl VM {
                 });
             }
 
-            let active_chain_obj =
-                Value::ActiveChain(active_chain)
-                    .to_pyobject(py)
-                    .map_err(|err| {
-                        VMError::python_error(format!(
-                            "failed to convert active_chain snapshot to Python object: {err}"
-                        ))
-                    })?;
-            let active_chain_list = active_chain_obj.cast::<PyList>().map_err(|err| {
-                VMError::python_error(format!(
-                    "active_chain snapshot serialization did not produce list: {err}"
-                ))
-            })?;
-            let active_chain_tuple = PyTuple::new(py, active_chain_list.iter()).map_err(|err| {
-                VMError::python_error(format!(
-                    "failed to convert active_chain snapshot to tuple: {err}"
-                ))
-            })?;
+            let active_chain_tuple =
+                Value::active_chain_to_pytuple(py, &active_chain).map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to convert active_chain snapshot to tuple: {err}"
+                    ))
+                })?;
 
             let mut context_ref = context_bound
                 .extract::<PyRefMut<'_, PyExecutionContext>>()
