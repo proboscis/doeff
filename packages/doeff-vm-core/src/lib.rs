@@ -6,6 +6,8 @@ pub mod py_shared;
 #[cfg(feature = "python_bridge")]
 pub mod arena;
 #[cfg(feature = "python_bridge")]
+pub mod bridge;
+#[cfg(feature = "python_bridge")]
 pub mod capture;
 #[cfg(feature = "python_bridge")]
 pub mod continuation;
@@ -38,9 +40,9 @@ pub mod kleisli;
 #[cfg(feature = "python_bridge")]
 pub mod py_key;
 #[cfg(feature = "python_bridge")]
-pub mod pyvm;
-#[cfg(feature = "python_bridge")]
 pub mod python_call;
+#[cfg(feature = "python_bridge")]
+pub mod result;
 #[cfg(feature = "python_bridge")]
 pub mod rust_store;
 #[cfg(feature = "python_bridge")]
@@ -59,15 +61,20 @@ mod vm_logging;
 #[cfg(feature = "python_bridge")]
 pub use arena::SegmentArena;
 #[cfg(feature = "python_bridge")]
+pub use bridge::{
+    classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, install_vm_hooks, is_doexpr_like,
+    is_effect_base_like, VmHooks,
+};
+#[cfg(feature = "python_bridge")]
 pub use capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
     HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus,
     SpawnSite, TraceEntry, TraceFrame, TraceHop,
 };
 #[cfg(feature = "python_bridge")]
-pub use continuation::Continuation;
+pub use continuation::{Continuation, PyK};
 #[cfg(feature = "python_bridge")]
-pub use do_ctrl::DoCtrl;
+pub use do_ctrl::{DoCtrl, DoExprTag, PyDoCtrlBase, PyDoExprBase};
 #[cfg(feature = "python_bridge")]
 pub use doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 #[cfg(feature = "python_bridge")]
@@ -83,9 +90,7 @@ pub use error::VMError;
 #[cfg(feature = "python_bridge")]
 pub use frame::Frame;
 #[cfg(feature = "python_bridge")]
-pub use handler::{
-    IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef,
-};
+pub use handler::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
 #[cfg(feature = "python_bridge")]
 pub use ids::{ContId, DispatchId, Marker, PromiseId, RunnableId, SegmentId, TaskId};
 #[cfg(feature = "python_bridge")]
@@ -95,13 +100,9 @@ pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli}
 #[cfg(feature = "python_bridge")]
 pub use py_key::HashedPyKey;
 #[cfg(feature = "python_bridge")]
-pub use pyvm::{
-    classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, install_vm_hooks,
-    is_doexpr_like, is_effect_base_like, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyK, PyResultErr,
-    PyResultOk, PyTraceFrame, PyTraceHop, VmHooks,
-};
-#[cfg(feature = "python_bridge")]
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
+#[cfg(feature = "python_bridge")]
+pub use result::{PyResultErr, PyResultOk};
 #[cfg(feature = "python_bridge")]
 pub use rust_store::RustStore;
 #[cfg(feature = "python_bridge")]
@@ -109,6 +110,6 @@ pub use segment::{Segment, SegmentKind};
 #[cfg(feature = "python_bridge")]
 pub use step::PyException;
 #[cfg(feature = "python_bridge")]
-pub use value::Value;
+pub use value::{PyTraceFrame, PyTraceHop, Value};
 #[cfg(feature = "python_bridge")]
 pub use vm::{DebugConfig, DebugLevel, TraceEvent, VM};

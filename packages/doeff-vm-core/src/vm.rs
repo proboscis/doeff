@@ -9,18 +9,19 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
 
 use crate::arena::SegmentArena;
+use crate::bridge::{classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm};
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, EffectCreationSite, FrameId, HandlerAction, HandlerKind,
     HandlerSnapshotEntry, TraceEntry,
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
-use crate::do_ctrl::{DoCtrl, InterceptMode};
+use crate::do_ctrl::{DoCtrl, DoExprTag, InterceptMode, PyDoExprBase};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
     dispatch_ref_as_python, dispatch_to_pyobject, make_get_execution_context_effect,
-    DispatchEffect, PyExecutionContext, PyGetExecutionContext,
+    DispatchEffect, PyEffectBase, PyExecutionContext, PyGetExecutionContext,
 };
 use crate::error::VMError;
 use crate::frame::{CallMetadata, EvalReturnContinuation, Frame, InterceptorContinuation};
@@ -30,10 +31,6 @@ use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStrea
 use crate::kleisli::{IdentityKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::pyvm::{
-    classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, DoExprTag, PyDoExprBase,
-    PyEffectBase,
-};
 use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::{LiveDispatchSnapshot, TraceState};
 use crate::value::Value;

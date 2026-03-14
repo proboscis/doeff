@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 
-use pyo3::prelude::*;
 use crate::arena::SegmentArena;
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
@@ -16,6 +15,7 @@ use crate::ids::{DispatchId, SegmentId};
 use crate::ir_stream::{IRStreamRef, StreamLocation};
 use crate::step::PyException;
 use crate::value::Value;
+use pyo3::prelude::*;
 
 const EXECUTION_CONTEXT_ATTR: &str = "doeff_execution_context";
 const MISSING_UNKNOWN: &str = "[MISSING] <unknown>";
@@ -317,7 +317,9 @@ impl TraceState {
         active_chain: Option<&[ActiveChainEntry]>,
     ) -> PyResult<Py<PyAny>> {
         let context = make_execution_context_object(py)?;
-        let mut context_ref = context.bind(py).extract::<PyRefMut<'_, PyExecutionContext>>()?;
+        let mut context_ref = context
+            .bind(py)
+            .extract::<PyRefMut<'_, PyExecutionContext>>()?;
         for entry in entries {
             context_ref.add(py, entry.clone_ref(py))?;
         }
@@ -1011,7 +1013,8 @@ impl TraceState {
         dispatch_order: &[DispatchId],
         dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<ActiveChainEntry> {
-        let mut active_chain = self.entries_from_frame_stack(frame_stack, dispatches, frame_dispatch);
+        let mut active_chain =
+            self.entries_from_frame_stack(frame_stack, dispatches, frame_dispatch);
         if active_chain.is_empty() {
             self.fallback_entries_when_chain_empty(
                 dispatches,

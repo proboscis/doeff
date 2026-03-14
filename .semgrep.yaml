@@ -499,6 +499,31 @@ rules:
       category: architecture
       issue: VM-HANDLER-METADATA-001
 
+  - id: vm-core-no-pyvm-module-export
+    languages: [rust]
+    severity: ERROR
+    message: |
+      gh-298: doeff-vm-core must not export a dedicated pyvm.rs module.
+      Keep the single pyvm.rs in packages/doeff-vm/src/pyvm.rs and distribute
+      shared bridge types across core modules instead of reintroducing
+      packages/doeff-vm-core/src/pyvm.rs.
+    pattern-regex: (?m)^\s*(?:pub\s+)?mod\s+pyvm\s*;
+    paths:
+      include:
+        - /packages/doeff-vm-core/src/lib.rs
+
+  - id: doeff-vm-no-cfg-disabled-pyvm-base-stubs
+    languages: [rust]
+    severity: ERROR
+    message: |
+      gh-298: remove cfg-disabled duplicate base declarations from doeff-vm/src/pyvm.rs.
+      PyDoExprBase/PyDoCtrlBase must come from real runtime definitions, not
+      #[cfg(any())] compatibility stubs kept for source-audit tests.
+    pattern-regex: (?m)^\s*#\[cfg\(any\(\)\)\]
+    paths:
+      include:
+        - /packages/doeff-vm/src/pyvm.rs
+
   - id: no-is-instance-from-in-handlers
     pattern: is_instance_from($OBJ, $MODULE, $CLASS)
     message: |

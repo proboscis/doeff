@@ -32,9 +32,9 @@ mod python_bridge {
     use std::any::Any;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use pyo3::prelude::*;
     use crate::handle::HandleToken;
     use crate::py_shared::{PyObjectTag, PyShared};
+    use pyo3::prelude::*;
 
     static NEXT_PY_SHARED_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -62,10 +62,9 @@ mod python_bridge {
         pub fn new(obj: Py<PyAny>) -> Self {
             // Process-local monotonic handle ids avoid pointer-reuse collisions after Python GC.
             let stable_id = NEXT_PY_SHARED_ID.fetch_add(1, Ordering::Relaxed);
-            Self::from_handle(crate::handle::Handle::<PyObjectTag>::from_token(PyObjectToken {
-                stable_id,
-                obj,
-            }))
+            Self::from_handle(crate::handle::Handle::<PyObjectTag>::from_token(
+                PyObjectToken { stable_id, obj },
+            ))
         }
 
         pub fn inner(&self) -> &Py<PyAny> {
@@ -85,11 +84,13 @@ mod python_bridge {
 
         pub fn into_inner(self) -> Py<PyAny> {
             match self.into_handle().try_unwrap_token() {
-                Ok(token) => token
-                    .into_any()
-                    .downcast::<PyObjectToken>()
-                    .expect("PyShared must unwrap back into PyObjectToken")
-                    .obj,
+                Ok(token) => {
+                    token
+                        .into_any()
+                        .downcast::<PyObjectToken>()
+                        .expect("PyShared must unwrap back into PyObjectToken")
+                        .obj
+                }
                 Err(handle) => {
                     let shared = PyShared::from_handle(handle);
                     Python::try_attach(|py| shared.clone_ref(py)).unwrap_or_else(|| {
