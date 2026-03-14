@@ -68,6 +68,10 @@ dmypy.json
 # Rust build artifacts
 rust/**/target/
 packages/**/target/
+packages/*/Cargo.lock
+
+# Benchmark artifacts
+benchmarks/results/
 
 # Local deploy keys
 proboscis_doeff_deploy
