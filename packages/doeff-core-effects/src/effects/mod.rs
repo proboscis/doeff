@@ -651,7 +651,6 @@ impl PyProgramCallFrame {
 #[derive(Debug, Clone)]
 pub struct Effect(pub PyShared);
 
-#[cfg(not(test))]
 pub type DispatchEffect = PyShared;
 
 #[cfg(test)]
@@ -669,79 +668,16 @@ pub enum Effect {
     Python(PyShared),
 }
 
-#[cfg(test)]
-pub type DispatchEffect = Effect;
-
 pub fn dispatch_from_shared(obj: PyShared) -> DispatchEffect {
-    #[cfg(test)]
-    {
-        if let Some(effect) = Python::attach(|py| {
-            let any = obj.bind(py);
-
-            if let Ok(get) = any.extract::<PyRef<'_, PyGet>>() {
-                return Some(Effect::Get {
-                    key: get.key.clone(),
-                });
-            }
-
-            if let Ok(put) = any.extract::<PyRef<'_, PyPut>>() {
-                return Some(Effect::Put {
-                    key: put.key.clone(),
-                    value: Value::from_pyobject(put.value.bind(py)),
-                });
-            }
-
-            if let Ok(modify) = any.extract::<PyRef<'_, PyModify>>() {
-                return Some(Effect::Modify {
-                    key: modify.key.clone(),
-                    modifier: PyShared::new(modify.func.clone_ref(py)),
-                });
-            }
-
-            if let Ok(ask) = any.extract::<PyRef<'_, PyAsk>>() {
-                if let Ok(key) = ask.key.bind(py).extract::<String>() {
-                    return Some(Effect::Ask { key });
-                }
-            }
-
-            if let Ok(tell) = any.extract::<PyRef<'_, PyTell>>() {
-                return Some(Effect::Tell {
-                    message: Value::from_pyobject(tell.message.bind(py)),
-                });
-            }
-
-            None
-        }) {
-            return effect;
-        }
-        return Effect::Python(obj);
-    }
-    #[cfg(not(test))]
-    {
-        obj
-    }
+    obj
 }
 
 pub fn dispatch_ref_as_python(effect: &DispatchEffect) -> Option<&PyShared> {
-    #[cfg(test)]
-    {
-        return effect.as_python();
-    }
-    #[cfg(not(test))]
-    {
-        Some(effect)
-    }
+    Some(effect)
 }
 
 pub fn dispatch_into_python(effect: DispatchEffect) -> Option<PyShared> {
-    #[cfg(test)]
-    {
-        return effect.into_python();
-    }
-    #[cfg(not(test))]
-    {
-        Some(effect)
-    }
+    Some(effect)
 }
 
 pub fn make_get_execution_context_effect() -> PyResult<DispatchEffect> {
@@ -768,14 +704,7 @@ pub fn dispatch_to_pyobject<'py>(
     py: Python<'py>,
     effect: &DispatchEffect,
 ) -> PyResult<Bound<'py, PyAny>> {
-    #[cfg(test)]
-    {
-        return effect.to_pyobject(py);
-    }
-    #[cfg(not(test))]
-    {
-        Ok(effect.bind(py).clone())
-    }
+    Ok(effect.bind(py).clone())
 }
 
 impl Effect {
@@ -836,6 +765,19 @@ impl Effect {
         #[cfg(not(test))]
         {
             Some(self.0)
+        }
+    }
+
+    #[cfg(test)]
+    pub fn into_dispatch(self) -> DispatchEffect {
+        match self {
+            Effect::Python(obj) => obj,
+            effect => Python::attach(|py| {
+                let obj = effect
+                    .to_pyobject(py)
+                    .expect("test effect must convert to a Python effect object");
+                PyShared::new(obj.unbind())
+            }),
         }
     }
 
@@ -938,7 +880,10 @@ pub fn register_effect_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCreateExternalPromise>()?;
     m.add_class::<PyCancelEffect>()?;
     m.add_class::<PyTaskCompleted>()?;
-    m.add("TaskCancelledError", m.py().get_type::<TaskCancelledError>())?;
+    m.add(
+        "TaskCancelledError",
+        m.py().get_type::<TaskCancelledError>(),
+    )?;
     m.add_class::<PySemaphore>()?;
     m.add_class::<PyCreateSemaphore>()?;
     m.add_class::<PyAcquireSemaphore>()?;
@@ -986,5 +931,17 @@ mod tests {
             !sched.is_standard(),
             "opaque Python effects should not be standard"
         );
+    }
+
+    #[test]
+    fn test_effect_into_dispatch_converts_to_python_effect() {
+        Python::attach(|py| {
+            let dispatch = Effect::get("answer").into_dispatch();
+            let get = dispatch
+                .bind(py)
+                .extract::<PyRef<'_, PyGet>>()
+                .expect("dispatch effect should be a PyGet");
+            assert_eq!(get.key, "answer");
+        });
     }
 }
