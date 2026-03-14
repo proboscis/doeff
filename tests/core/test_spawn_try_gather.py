@@ -29,6 +29,7 @@ from doeff import (
     do,
     run,
 )
+from doeff.effects._program_types import ProgramLike
 from doeff.effects.base import Effect, EffectBase
 
 
@@ -71,7 +72,7 @@ def wrap_sem(p, sem):
 
 @do
 def throttled_gather(
-    *programs: Any, concurrency: int
+    *programs: ProgramLike, concurrency: int
 ) -> EffectGenerator[list]:
     """Wrapper: CreateSemaphore + wrap each program + Spawn + Gather."""
     sem = yield CreateSemaphore(concurrency)
