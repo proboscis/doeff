@@ -12,12 +12,31 @@ impl VM {
         StepEvent::Continue
     }
 
+    pub(super) fn throw_handler_protocol_error(&mut self, message: impl Into<String>) -> StepEvent {
+        if self.current_segment.is_none() {
+            return StepEvent::Error(VMError::internal(
+                "throw_handler_protocol_error called without current segment",
+            ));
+        }
+        self.set_contextual_throw(PyException::handler_protocol_error(message));
+        StepEvent::Continue
+    }
+
     pub(super) fn contextual_throw_mode(&mut self, exception: PyException) -> Mode {
-        self.mode_after_generror(GenErrorSite::VmRaised, exception, false)
+        self.mode_after_generror(GenErrorSite::VmRaisedUser, exception, false)
+    }
+
+    pub(super) fn contextual_internal_throw_mode(&mut self, exception: PyException) -> Mode {
+        self.mode_after_generror(GenErrorSite::VmRaisedInternal, exception, false)
     }
 
     pub(super) fn set_contextual_throw(&mut self, exception: PyException) {
         let mode = self.contextual_throw_mode(exception);
+        self.current_seg_mut().mode = mode;
+    }
+
+    pub(super) fn set_contextual_internal_throw(&mut self, exception: PyException) {
+        let mode = self.contextual_internal_throw_mode(exception);
         self.current_seg_mut().mode = mode;
     }
 
@@ -301,19 +320,23 @@ impl VM {
             (
                 PyException::RuntimeError {
                     message: lhs_message,
+                    metadata: lhs_metadata,
                 },
                 PyException::RuntimeError {
                     message: rhs_message,
+                    metadata: rhs_metadata,
                 },
             )
             | (
                 PyException::TypeError {
                     message: lhs_message,
+                    metadata: lhs_metadata,
                 },
                 PyException::TypeError {
                     message: rhs_message,
+                    metadata: rhs_metadata,
                 },
-            ) => lhs_message == rhs_message,
+            ) => lhs_message == rhs_message && lhs_metadata == rhs_metadata,
             (
                 PyException::Materialized { .. },
                 PyException::RuntimeError { .. } | PyException::TypeError { .. },
@@ -323,8 +346,7 @@ impl VM {
                 PyException::Materialized { .. },
             )
             | (PyException::RuntimeError { .. }, PyException::TypeError { .. })
-            | (PyException::TypeError { .. }, PyException::RuntimeError { .. })
-            | (PyException::TypeError { .. }, PyException::TypeError { .. }) => false,
+            | (PyException::TypeError { .. }, PyException::RuntimeError { .. }) => false,
         }
     }
 
@@ -420,7 +442,7 @@ impl VM {
                     && !self.is_one_shot_consumed(continuation.cont_id)
                 {
                     self.mark_one_shot_consumed(continuation.cont_id);
-                    return self.throw_runtime_error(&format!(
+                    return self.throw_handler_protocol_error(format!(
                         "handler returned without consuming continuation {}; use Resume(k, v), Transfer(k, v), Discontinue(k, exn), or Pass()",
                         continuation.cont_id.raw(),
                     ));
@@ -513,7 +535,7 @@ impl VM {
                 unreachable!("dispatch origin frame received HandleYield mode: {yielded:?}")
             }
             Mode::Return(value) => {
-                return self.throw_runtime_error(&format!(
+                return self.throw_handler_protocol_error(format!(
                     "handler returned without consuming continuation before dispatch {} completed: {:?}",
                     dispatch_id.raw(),
                     value,
@@ -591,7 +613,7 @@ impl VM {
                 metadata,
             } => {
                 let Some(slot) = args.get_mut(arg_idx) else {
-                    return self.contextual_throw_mode(PyException::runtime_error(
+                    return self.contextual_internal_throw_mode(PyException::runtime_error(
                         "apply continuation arg index out of bounds",
                     ));
                 };
@@ -611,7 +633,7 @@ impl VM {
                 metadata,
             } => {
                 let Some((_, slot)) = kwargs.get_mut(kwarg_idx) else {
-                    return self.contextual_throw_mode(PyException::runtime_error(
+                    return self.contextual_internal_throw_mode(PyException::runtime_error(
                         "apply continuation kwarg index out of bounds",
                     ));
                 };
@@ -641,7 +663,7 @@ impl VM {
                 metadata,
             } => {
                 let Some(slot) = args.get_mut(arg_idx) else {
-                    return self.contextual_throw_mode(PyException::runtime_error(
+                    return self.contextual_internal_throw_mode(PyException::runtime_error(
                         "expand continuation arg index out of bounds",
                     ));
                 };
@@ -661,7 +683,7 @@ impl VM {
                 metadata,
             } => {
                 let Some((_, slot)) = kwargs.get_mut(kwarg_idx) else {
-                    return self.contextual_throw_mode(PyException::runtime_error(
+                    return self.contextual_internal_throw_mode(PyException::runtime_error(
                         "expand continuation kwarg index out of bounds",
                     ));
                 };
@@ -917,7 +939,7 @@ impl VM {
                     handler_kind,
                 }),
                 None => {
-                    return self.contextual_throw_mode(PyException::runtime_error(
+                    return self.contextual_internal_throw_mode(PyException::runtime_error(
                         "current_segment_mut() returned None in apply_stream_step \
                          (Yield non-terminal)",
                     ))
@@ -1100,7 +1122,7 @@ impl VM {
 
         if self.current_segment.is_none() {
             self.pop_interceptor_skip(marker);
-            return self.contextual_throw_mode(PyException::runtime_error(
+            return self.contextual_internal_throw_mode(PyException::runtime_error(
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         }
@@ -1121,7 +1143,7 @@ impl VM {
         };
         let Some(seg) = self.current_segment_mut() else {
             self.pop_interceptor_skip(marker);
-            return self.contextual_throw_mode(PyException::runtime_error(
+            return self.contextual_internal_throw_mode(PyException::runtime_error(
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         };
@@ -1194,7 +1216,7 @@ impl VM {
         if is_doexpr {
             let Some(seg) = self.current_segment_mut() else {
                 self.pop_interceptor_skip(marker);
-                return self.contextual_throw_mode(PyException::runtime_error(
+                return self.contextual_internal_throw_mode(PyException::runtime_error(
                     "current_segment_mut() returned None while evaluating interceptor result",
                 ));
             };
@@ -2032,7 +2054,7 @@ impl VM {
             Some(p) => p,
             None => {
                 if self.current_segment.is_some() {
-                    let mode = self.contextual_throw_mode(PyException::runtime_error(
+                    let mode = self.contextual_internal_throw_mode(PyException::runtime_error(
                         "receive_python_result called with no pending_python",
                     ));
                     self.current_seg_mut().mode = mode;
@@ -2121,7 +2143,7 @@ impl VM {
 
     fn returned_control_primitive_exception(value: &Value) -> Option<PyException> {
         let signature = Self::returned_control_primitive_signature(value)?;
-        Some(PyException::runtime_error(format!(
+        Some(PyException::handler_protocol_error(format!(
             "Handler returned {signature} but control primitives must be yielded, not returned.\n  Change: return {signature}  ->  yield {signature}"
         )))
     }
@@ -2158,7 +2180,7 @@ impl VM {
                             .current_dispatch_id()
                             .or_else(|| self.current_active_handler_dispatch_id())
                         else {
-                            self.set_contextual_throw(PyException::runtime_error(
+                            self.set_contextual_internal_throw(PyException::runtime_error(
                                 "handler dispatch continuation outside dispatch",
                             ));
                             return;
@@ -2170,12 +2192,12 @@ impl VM {
                         ) {
                             StepEvent::Continue => {}
                             StepEvent::Error(err) => {
-                                self.set_contextual_throw(PyException::runtime_error(
+                                self.set_contextual_internal_throw(PyException::runtime_error(
                                     err.to_string(),
                                 ));
                             }
                             StepEvent::NeedsPython(_) | StepEvent::Done(_) => {
-                                self.set_contextual_throw(PyException::runtime_error(
+                                self.set_contextual_internal_throw(PyException::runtime_error(
                                     "unexpected StepEvent from handle_yield_ir_stream",
                                 ));
                             }
@@ -2374,7 +2396,7 @@ impl VM {
     }
 
     fn receive_unexpected_outcome(&mut self) {
-        self.set_contextual_throw(PyException::runtime_error(
+        self.set_contextual_internal_throw(PyException::runtime_error(
             "unexpected pending/outcome combination in receive_python_result",
         ));
     }
