@@ -118,6 +118,7 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
 }
 
 const HANDLER_HELP_URL: &str = "https://docs.doeff.dev/handlers";
+const INVALID_YIELD_LOCATION_ATTR: &str = "doeff_invalid_yield_location";
 
 fn py_type_name(obj: &Bound<'_, PyAny>) -> String {
     obj.get_type()
@@ -130,6 +131,99 @@ fn py_repr_text(obj: &Bound<'_, PyAny>) -> String {
     obj.repr()
         .map(|value| value.to_string())
         .unwrap_or_else(|_| "<unrepresentable>".to_string())
+}
+
+fn current_pending_generator_info(vm: &VM, py: Python<'_>) -> Option<(String, String, u32)> {
+    let segment = vm.current_segment_ref()?;
+    let PendingPython::StepUserGenerator { stream, .. } = segment.pending_python.as_ref()? else {
+        return None;
+    };
+    let guard = stream.lock().ok()?;
+    let generator = guard.python_generator()?;
+    let generator = generator.bind(py);
+    let mut user_generator = generator.clone();
+
+    if let Ok(frame) = generator.getattr("gi_frame") {
+        if !frame.is_none() {
+            if let Ok(locals) = frame.getattr("f_locals") {
+                if let Ok(get_value) = locals.getattr("get") {
+                    if get_value.is_callable() {
+                        if let Ok(inner_generator) = get_value.call1(("gen",)) {
+                            if !inner_generator.is_none() {
+                                user_generator = inner_generator;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let code = user_generator.getattr("gi_code").ok()?;
+    let function_name = if let Ok(value) = code.getattr("co_qualname") {
+        value
+            .extract::<String>()
+            .unwrap_or_else(|_| "<generator>".to_string())
+    } else if let Ok(value) = code.getattr("co_name") {
+        value
+            .extract::<String>()
+            .unwrap_or_else(|_| "<generator>".to_string())
+    } else {
+        "<generator>".to_string()
+    };
+
+    let source_file = code
+        .getattr("co_filename")
+        .ok()
+        .and_then(|value| value.extract::<String>().ok())
+        .unwrap_or_else(|| "<unknown>".to_string());
+
+    let source_line = if let Ok(frame) = user_generator.getattr("gi_frame") {
+        if !frame.is_none() {
+            frame
+                .getattr("f_lineno")
+                .ok()
+                .and_then(|value| value.extract::<u32>().ok())
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let source_line = if source_line > 0 {
+        source_line
+    } else {
+        code.getattr("co_firstlineno")
+            .ok()
+            .and_then(|value| value.extract::<u32>().ok())
+            .unwrap_or(0)
+    };
+    Some((function_name, source_file, source_line))
+}
+
+fn invalid_yield_type_error(vm: &VM, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyErr {
+    let ty = py_type_name(obj);
+    let repr = py_repr_text(obj);
+    let generator_info = current_pending_generator_info(vm, py);
+
+    let mut message =
+        format!("yielded value must be EffectBase or DoExpr; got {repr} (type: {ty})");
+    if let Some((function_name, source_file, source_line)) = &generator_info {
+        message.push_str(&format!(
+            " from generator {function_name} at {source_file}:{source_line}"
+        ));
+    }
+
+    let err = PyTypeError::new_err(message);
+    if let Some((function_name, source_file, source_line)) = generator_info {
+        let value = err.value(py);
+        let _ = value.setattr(
+            INVALID_YIELD_LOCATION_ATTR,
+            (function_name, source_file, source_line),
+        );
+    }
+    err
 }
 
 fn strict_handler_type_error(api_name: &str, role: &str, obj: &Bound<'_, PyAny>) -> PyErr {
@@ -1799,9 +1893,7 @@ pub(crate) fn classify_yielded_bound(
         });
     }
 
-    Err(PyTypeError::new_err(
-        "yielded value must be EffectBase or DoExpr",
-    ))
+    Err(invalid_yield_type_error(vm, py, obj))
 }
 
 pub(crate) fn classify_yielded_for_vm(
@@ -2060,11 +2152,16 @@ impl PyRunResult {
             }
             Err(e) => {
                 let err_obj = e.value_clone_ref(py);
+                let captured_traceback = self
+                    .traceback_data
+                    .as_ref()
+                    .map(|traceback| traceback.clone_ref(py).into_any())
+                    .unwrap_or_else(|| py.None());
                 let err_obj = Bound::new(
                     py,
                     PyResultErr {
                         error: err_obj,
-                        captured_traceback: py.None(),
+                        captured_traceback,
                     },
                 )?;
                 Ok(err_obj.into_any().unbind())

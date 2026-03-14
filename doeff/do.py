@@ -5,7 +5,6 @@ This module provides the @do decorator that converts generator functions
 into KleisliPrograms, enabling do-notation for monadic computations.
 """
 
-
 import inspect
 from collections.abc import Callable, Generator
 from functools import wraps
@@ -24,6 +23,7 @@ T = TypeVar("T")
 _GeneratorFunc = Callable[..., Generator[Effect | Program, Any, T]]
 
 _BRIDGE_CODE_OBJECTS: set[object] = set()
+_INVALID_YIELD_LOCATION_ATTR = "doeff_invalid_yield_location"
 
 
 def _safe_get_attr(target: Any, attr: str) -> Any:
@@ -82,6 +82,21 @@ def resolve_generator_location(generator: object) -> tuple[str, int] | None:
 
 
 def resolve_exception_location(exc: BaseException) -> tuple[str, str, int] | None:
+    try:
+        invalid_yield_location = exc.doeff_invalid_yield_location
+    except AttributeError:
+        invalid_yield_location = None
+
+    if (
+        isinstance(invalid_yield_location, tuple)
+        and len(invalid_yield_location) == 3
+        and isinstance(invalid_yield_location[0], str)
+        and isinstance(invalid_yield_location[1], str)
+        and isinstance(invalid_yield_location[2], int)
+        and invalid_yield_location[2] > 0
+    ):
+        return invalid_yield_location
+
     tb = getattr(exc, "__traceback__", None)
     if tb is None:
         return None

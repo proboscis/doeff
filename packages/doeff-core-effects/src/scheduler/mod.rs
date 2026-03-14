@@ -19,9 +19,9 @@ use crate::effect::Effect;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
-    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn, PyTaskCompleted,
-    TaskCancelledError,
+    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore,
+    PyExecutionContext, PyFailPromise, PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore,
+    PySemaphore, PySpawn, PyTaskCompleted, TaskCancelledError,
 };
 use crate::error::VMError;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
@@ -528,10 +528,13 @@ pub fn debug_semaphore_exists(semaphore_id: u64) -> bool {
         registry
             .iter()
             .filter_map(|(state_id, weak_state)| {
-                weak_state.upgrade().map(|state| (*state_id, state)).or_else(|| {
-                    stale_state_ids.push(*state_id);
-                    None
-                })
+                weak_state
+                    .upgrade()
+                    .map(|state| (*state_id, state))
+                    .or_else(|| {
+                        stale_state_ids.push(*state_id);
+                        None
+                    })
             })
             .collect()
     };
@@ -559,7 +562,10 @@ pub fn notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
     let mut notifications = semaphore_drop_notifications()
         .lock()
         .expect("Scheduler lock poisoned");
-    notifications.entry(state_id).or_default().push(semaphore_id);
+    notifications
+        .entry(state_id)
+        .or_default()
+        .push(semaphore_id);
 }
 
 fn parse_task_completed_result(
@@ -579,14 +585,23 @@ fn parse_task_completed_result(
 
     if result_obj.extract::<PyRef<'_, PyResultErr>>().is_ok() {
         let error_obj = result_obj.getattr("error").map_err(|e| e.to_string())?;
-        return Ok(Err(pyobject_to_exception(py, &error_obj)));
+        let captured_traceback = result_obj
+            .getattr("captured_traceback")
+            .map_err(|e| e.to_string())?;
+        return Ok(Err(pyobject_to_exception(
+            py,
+            &error_obj,
+            Some(&captured_traceback),
+        )));
     }
 
     Err("TaskCompleted.result must be Ok(...) or Err(...)".to_string())
 }
 
 fn extract_semaphore_id(obj: &Bound<'_, PyAny>) -> Option<u64> {
-    obj.extract::<PyRef<'_, PySemaphore>>().ok().map(|semaphore| semaphore.id)
+    obj.extract::<PyRef<'_, PySemaphore>>()
+        .ok()
+        .map(|semaphore| semaphore.id)
 }
 
 fn is_internal_source_file(source_file: &str) -> bool {
@@ -715,7 +730,7 @@ fn parse_scheduler_python_effect(
                     "FailPromiseEffect.promise must carry _promise_handle.promise_id".to_string(),
                 );
             };
-            let error = pyobject_to_exception(py, fail.error.bind(py));
+            let error = pyobject_to_exception(py, fail.error.bind(py), None);
             return Ok(Some(SchedulerEffect::FailPromise { promise, error }));
         }
 
@@ -882,10 +897,72 @@ fn parse_priority(obj: &Bound<'_, PyAny>) -> Result<u32, String> {
         .map_err(|_| "Spawn.priority must be a non-negative integer".to_string())
 }
 
-fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyException {
+const EXECUTION_CONTEXT_ATTR: &str = "doeff_execution_context";
+const CAPTURED_TRACEBACK_ATTR: &str = "doeff_captured_traceback_data";
+
+fn attach_captured_traceback_context(
+    py: Python<'_>,
+    error_obj: &Bound<'_, PyAny>,
+    captured_traceback: &Bound<'_, PyAny>,
+) {
+    if captured_traceback.is_none() {
+        return;
+    }
+
+    let entries = match captured_traceback.getattr("entries") {
+        Ok(value) if !value.is_none() => value,
+        Ok(_) | Err(_) => return,
+    };
+    let active_chain = captured_traceback
+        .getattr("active_chain")
+        .ok()
+        .filter(|value| !value.is_none());
+
+    let context = match make_execution_context_object(py) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    let mut context_ref = match context
+        .bind(py)
+        .extract::<PyRefMut<'_, PyExecutionContext>>()
+    {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+
+    let iter = match entries.try_iter() {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    for entry in iter.flatten() {
+        if context_ref.add(py, entry.unbind()).is_err() {
+            return;
+        }
+    }
+    if let Some(active_chain) = active_chain {
+        context_ref.set_active_chain(Some(active_chain.unbind()));
+    }
+
+    let _ = error_obj.setattr(EXECUTION_CONTEXT_ATTR, context);
+    let _ = error_obj.setattr(CAPTURED_TRACEBACK_ATTR, captured_traceback.clone().unbind());
+}
+
+fn pyobject_to_exception(
+    py: Python<'_>,
+    error_obj: &Bound<'_, PyAny>,
+    captured_traceback: Option<&Bound<'_, PyAny>>,
+) -> PyException {
+    if let Some(captured_traceback) = captured_traceback {
+        attach_captured_traceback_context(py, error_obj, captured_traceback);
+    }
     let exc_type = error_obj.get_type().into_any().unbind();
     let exc_value = error_obj.clone().unbind();
-    let exc_tb = py.None();
+    let exc_tb = error_obj
+        .getattr("__traceback__")
+        .ok()
+        .filter(|value| !value.is_none())
+        .map(Bound::unbind)
+        .unwrap_or_else(|| py.None());
     PyException::new(exc_type, exc_value, Some(exc_tb))
 }
 
@@ -895,7 +972,7 @@ fn task_cancelled_error() -> PyException {
         let cancelled = py.get_type::<TaskCancelledError>().call1((message,));
 
         match cancelled {
-            Ok(exc_obj) => pyobject_to_exception(py, &exc_obj),
+            Ok(exc_obj) => pyobject_to_exception(py, &exc_obj, None),
             Err(_) => PyException::runtime_error(message.to_string()),
         }
     })
@@ -910,12 +987,12 @@ fn make_python_semaphore_value(semaphore_id: u64, state_id: u64) -> Result<Value
                 state_id,
             },
         )
-            .map_err(|e| {
-                PyException::runtime_error(format!(
-                    "failed to instantiate runtime Semaphore({semaphore_id}): {e}"
-                ))
-            })?
-            .into_any();
+        .map_err(|e| {
+            PyException::runtime_error(format!(
+                "failed to instantiate runtime Semaphore({semaphore_id}): {e}"
+            ))
+        })?
+        .into_any();
         Ok(Value::Python(PyShared::new(semaphore.unbind())))
     })
 }
@@ -1051,11 +1128,9 @@ impl SchedulerState {
     }
 
     fn has_external_waiters(&self) -> bool {
-        self.waiters
-            .iter()
-            .any(|(item, waiters)| {
-                matches!(item, Waitable::ExternalPromise(_)) && !waiters.is_empty()
-            })
+        self.waiters.iter().any(|(item, waiters)| {
+            matches!(item, Waitable::ExternalPromise(_)) && !waiters.is_empty()
+        })
     }
 
     fn parse_external_completion_item(
@@ -1100,7 +1175,7 @@ impl SchedulerState {
         let result = if error_obj.is_none() {
             Ok(Value::from_pyobject(&value_obj))
         } else {
-            Err(pyobject_to_exception(py, &error_obj))
+            Err(pyobject_to_exception(py, &error_obj, None))
         };
 
         Ok((PromiseId::from_raw(pid_raw), result))
@@ -2479,7 +2554,7 @@ impl SchedulerProgram {
                 Ok(ctx) => ctx,
                 Err(err) => {
                     let err_obj = err.value(py).clone().into_any().unbind();
-                    return IRStreamStep::Throw(pyobject_to_exception(py, err_obj.bind(py)));
+                    return IRStreamStep::Throw(pyobject_to_exception(py, err_obj.bind(py), None));
                 }
             };
 
@@ -2511,7 +2586,7 @@ impl SchedulerProgram {
 
                 if let Err(err) = result {
                     let err_obj = err.value(py).clone().into_any().unbind();
-                    return IRStreamStep::Throw(pyobject_to_exception(py, err_obj.bind(py)));
+                    return IRStreamStep::Throw(pyobject_to_exception(py, err_obj.bind(py), None));
                 }
             }
 

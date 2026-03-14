@@ -1291,7 +1291,11 @@ def test_module_level_run_wraps_invalid_top_level_yield_in_run_result():
 
     assert result.is_err()
     assert isinstance(result.error, TypeError)
-    assert str(result.error) == "yielded value must be EffectBase or DoExpr"
+    message = str(result.error)
+    assert "yielded value must be EffectBase or DoExpr" in message
+    assert "(type: object)" in message
+    assert "from generator " in message
+    assert "invalid_program" in message
     assert result.traceback_data is not None
 
 

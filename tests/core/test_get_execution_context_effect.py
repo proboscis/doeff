@@ -87,7 +87,10 @@ def test_eval_typeerror_dispatches_get_execution_context_to_handlers() -> None:
 
     result = run(WithHandler(observer, program()), handlers=default_handlers())
     assert result.is_ok(), result.error
-    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+    status, exc_type, message = result.value
+    assert (status, exc_type) == ("caught", "TypeError")
+    assert "yielded value must be EffectBase or DoExpr" in message
+    assert "(type: object)" in message
     assert seen == ["GetExecutionContext"]
 
 
@@ -368,7 +371,10 @@ def test_eval_typeerror_caught_exception_keeps_active_chain() -> None:
 
     result = run(program(), handlers=default_handlers())
     assert result.is_ok(), result.error
-    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+    status, exc_type, message = result.value
+    assert (status, exc_type) == ("caught", "TypeError")
+    assert "yielded value must be EffectBase or DoExpr" in message
+    assert "(type: object)" in message
 
     context = captured.get("context")
     assert context is not None
@@ -387,7 +393,8 @@ def test_eval_typeerror_caught_exception_keeps_active_chain() -> None:
     assert any(
         entry.get("kind") == "exception_site"
         and entry.get("exception_type") == "TypeError"
-        and entry.get("message") == "yielded value must be EffectBase or DoExpr"
+        and "yielded value must be EffectBase or DoExpr" in entry.get("message", "")
+        and "(type: object)" in entry.get("message", "")
         for entry in entries
     )
 
@@ -414,7 +421,10 @@ def test_eval_typeerror_keeps_context_entries_out_of_active_chain_storage() -> N
 
     result = run(program(), handlers=[*default_handlers(), enrich])
     assert result.is_ok(), result.error
-    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+    status, exc_type, message = result.value
+    assert (status, exc_type) == ("caught", "TypeError")
+    assert "yielded value must be EffectBase or DoExpr" in message
+    assert "(type: object)" in message
 
     context = captured.get("context")
     assert context is not None
@@ -462,8 +472,7 @@ def test_program_call_stack_deprecation_warning() -> None:
     assert result.is_ok(), result.error
     warning_messages = [str(item.message) for item in caught]
     assert any(
-        issubclass(item.category, DeprecationWarning)
-        and "GetExecutionContext" in str(item.message)
+        issubclass(item.category, DeprecationWarning) and "GetExecutionContext" in str(item.message)
         for item in caught
     )
     assert warning_messages
