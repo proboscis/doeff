@@ -56,6 +56,97 @@ impl VM {
         })
     }
 
+    fn dispatch_origin_id_in_segment(&self, seg_id: SegmentId) -> Option<DispatchId> {
+        let seg = self.segments.get(seg_id)?;
+        seg.frames.iter().rev().find_map(|frame| match frame {
+            Frame::DispatchOrigin { dispatch_id, .. } => Some(*dispatch_id),
+            Frame::Program { .. }
+            | Frame::InterceptorApply(_)
+            | Frame::InterceptorEval(_)
+            | Frame::HandlerDispatch { .. }
+            | Frame::EvalReturn(_)
+            | Frame::MapReturn { .. }
+            | Frame::FlatMapBindResult
+            | Frame::FlatMapBindSource { .. }
+            | Frame::InterceptBodyReturn { .. } => None,
+        })
+    }
+
+    fn dispatch_origin_caller_in_segment(
+        &self,
+        seg_id: SegmentId,
+    ) -> Option<(DispatchId, SegmentId)> {
+        let seg = self.segments.get(seg_id)?;
+        seg.frames.iter().rev().find_map(|frame| match frame {
+            Frame::DispatchOrigin {
+                dispatch_id,
+                k_origin,
+                ..
+            } => Some((*dispatch_id, k_origin.segment_id)),
+            Frame::Program { .. }
+            | Frame::InterceptorApply(_)
+            | Frame::InterceptorEval(_)
+            | Frame::HandlerDispatch { .. }
+            | Frame::EvalReturn(_)
+            | Frame::MapReturn { .. }
+            | Frame::FlatMapBindResult
+            | Frame::FlatMapBindSource { .. }
+            | Frame::InterceptBodyReturn { .. } => None,
+        })
+    }
+
+    pub(super) fn dispatch_origin_callers(&self) -> Vec<SegmentId> {
+        let mut seen = HashSet::new();
+        let mut callers = Vec::new();
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            if let Some((dispatch_id, caller_seg_id)) = self.dispatch_origin_caller_in_segment(seg_id)
+            {
+                if seen.insert(dispatch_id) {
+                    callers.push((dispatch_id, caller_seg_id));
+                }
+            }
+            cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
+        }
+
+        callers.sort_by_key(|(dispatch_id, _)| dispatch_id.raw());
+        callers
+            .into_iter()
+            .map(|(_, caller_seg_id)| caller_seg_id)
+            .collect()
+    }
+
+    pub(super) fn dispatch_origin_user_segment_id(
+        &self,
+        dispatch_id: DispatchId,
+    ) -> Option<SegmentId> {
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            let seg = self.segments.get(seg_id)?;
+            if let Some(user_seg_id) = seg.frames.iter().rev().find_map(|frame| match frame {
+                Frame::DispatchOrigin {
+                    dispatch_id: frame_dispatch_id,
+                    k_origin,
+                    ..
+                } if *frame_dispatch_id == dispatch_id => Some(k_origin.segment_id),
+                Frame::Program { .. }
+                | Frame::InterceptorApply(_)
+                | Frame::InterceptorEval(_)
+                | Frame::HandlerDispatch { .. }
+                | Frame::DispatchOrigin { .. }
+                | Frame::EvalReturn(_)
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. }
+                | Frame::InterceptBodyReturn { .. } => None,
+            }) {
+                return Some(user_seg_id);
+            }
+            cursor = seg.caller;
+        }
+        None
+    }
+
     pub(super) fn dispatch_origins(&self) -> Vec<DispatchOriginView> {
         let mut seen = HashSet::new();
         let mut origins = Vec::new();
@@ -122,6 +213,29 @@ impl VM {
     ) -> Option<DispatchOriginView> {
         let dispatch_id = continuation.dispatch_id?;
         self.dispatch_origin_for_dispatch_id(dispatch_id)
+    }
+
+    pub(super) fn active_handler_marker_for_dispatch(
+        &self,
+        dispatch_id: DispatchId,
+    ) -> Option<Marker> {
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            let seg = self.segments.get(seg_id)?;
+            if seg.frames.iter().rev().any(|frame| {
+                matches!(
+                    frame,
+                    Frame::HandlerDispatch {
+                        dispatch_id: frame_dispatch_id,
+                        ..
+                    } if *frame_dispatch_id == dispatch_id
+                )
+            }) {
+                return Some(seg.marker);
+            }
+            cursor = seg.caller;
+        }
+        None
     }
 
     pub(super) fn current_handler_dispatch(
@@ -821,8 +935,14 @@ impl VM {
     }
 
     pub(super) fn current_segment_dispatch_id(&self) -> Option<DispatchId> {
-        self.current_dispatch_origin()
-            .map(|origin| origin.dispatch_id)
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            if let Some(dispatch_id) = self.dispatch_origin_id_in_segment(seg_id) {
+                return Some(dispatch_id);
+            }
+            cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
+        }
+        None
     }
 
     pub(super) fn current_segment_dispatch_id_any(&self) -> Option<DispatchId> {
@@ -953,21 +1073,82 @@ impl VM {
         if let Some(seg) = self.current_segment_mut() {
             seg.pending_error_context = None;
         }
-        let mut handler_chain = self.handlers_in_caller_chain(seg_id);
-        if !restricted_excluded_prompts.is_empty() {
-            handler_chain
-                .retain(|entry| !restricted_excluded_prompts.contains(&entry.prompt_seg_id));
-        }
-        if restricted_error_context_dispatch {
-            handler_chain.retain(|entry| {
-                entry.handler.is_rust_builtin() || entry.handler.supports_error_context_conversion()
-            });
-        }
-        if let Some(excluded_prompt) = exclude_prompt {
-            handler_chain.retain(|entry| entry.prompt_seg_id != excluded_prompt);
+        let effect_obj =
+            Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind()))
+                .map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to convert dispatch effect to Python object: {err}"
+                    ))
+                })?;
+
+        let mut selected: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
+        let mut first_type_filtered_skip: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
+        let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
+        let mut handler_count = 0usize;
+        let mut cursor = Some(seg_id);
+        while let Some(cursor_id) = cursor {
+            let Some(seg) = self.segments.get(cursor_id) else {
+                break;
+            };
+            let next = seg.caller;
+            if let SegmentKind::PromptBoundary {
+                handled_marker,
+                handler,
+                types,
+                ..
+            } = &seg.kind
+            {
+                let restricted_excluded =
+                    restricted_excluded_prompts.contains(&cursor_id);
+                let restricted_handler_blocked = restricted_error_context_dispatch
+                    && !(handler.is_rust_builtin()
+                        || handler.supports_error_context_conversion());
+                if Some(cursor_id) != exclude_prompt
+                    && !restricted_excluded
+                    && !restricted_handler_blocked
+                {
+                    let (name, kind, file, line) = Self::handler_trace_info(handler);
+                    handler_chain_snapshot.push(HandlerSnapshotEntry {
+                        handler_name: name,
+                        handler_kind: kind,
+                        source_file: file,
+                        source_line: line,
+                    });
+
+                    if handler.can_handle(&effect)? {
+                        let should_invoke = self
+                            .should_invoke_handler_types(types.as_ref(), &effect_obj)
+                            .map_err(|err| {
+                                VMError::python_error(format!(
+                                    "failed to evaluate WithHandler type filter: {err:?}"
+                                ))
+                            })?;
+                        if should_invoke {
+                            if selected.is_none() {
+                                selected = Some((
+                                    handler_count,
+                                    *handled_marker,
+                                    cursor_id,
+                                    handler.clone(),
+                                ));
+                            }
+                        } else if first_type_filtered_skip.is_none() {
+                            first_type_filtered_skip = Some((
+                                handler_count,
+                                *handled_marker,
+                                cursor_id,
+                                handler.clone(),
+                            ));
+                        }
+                    }
+
+                    handler_count += 1;
+                }
+            }
+            cursor = next;
         }
 
-        if handler_chain.is_empty() {
+        if handler_count == 0 {
             if let Some(original) = original_exception.clone() {
                 let exception = if restricted_error_context_dispatch {
                     TraceState::ensure_execution_context(original)
@@ -980,38 +1161,6 @@ impl VM {
             return Err(VMError::unhandled_effect(effect));
         }
 
-        let effect_obj =
-            Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind()))
-                .map_err(|err| {
-                    VMError::python_error(format!(
-                        "failed to convert dispatch effect to Python object: {err}"
-                    ))
-                })?;
-
-        let mut selected: Option<(usize, HandlerChainEntry)> = None;
-        let mut first_type_filtered_skip: Option<(usize, HandlerChainEntry)> = None;
-        for (idx, entry) in handler_chain.iter().enumerate() {
-            let can_handle = entry.handler.can_handle(&effect)?;
-            if !can_handle {
-                continue;
-            }
-
-            let should_invoke = self
-                .should_invoke_handler(entry, &effect_obj)
-                .map_err(|err| {
-                    VMError::python_error(format!(
-                        "failed to evaluate WithHandler type filter: {err:?}"
-                    ))
-                })?;
-            if should_invoke {
-                selected = Some((idx, entry.clone()));
-                break;
-            }
-
-            if first_type_filtered_skip.is_none() {
-                first_type_filtered_skip = Some((idx, entry.clone()));
-            }
-        }
         let mut bootstrap_with_pass = false;
         let selected = match selected {
             Some(found) => {
@@ -1035,20 +1184,10 @@ impl VM {
             }
         };
 
-        let handler_marker = selected.1.marker;
-        let prompt_seg_id = selected.1.prompt_seg_id;
-        let handler = selected.1.handler.clone();
+        let handler_marker = selected.1;
+        let prompt_seg_id = selected.2;
+        let handler = selected.3;
         let is_execution_context_effect = Self::is_execution_context_effect(&effect);
-        let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
-        for entry in &handler_chain {
-            let (name, kind, file, line) = Self::handler_trace_info(&entry.handler);
-            handler_chain_snapshot.push(HandlerSnapshotEntry {
-                handler_name: name,
-                handler_kind: kind,
-                source_file: file,
-                source_line: line,
-            });
-        }
 
         if self.segments.get(prompt_seg_id).is_none() {
             return Err(VMError::invalid_segment("dispatch prompt not found"));
