@@ -355,7 +355,7 @@ impl VM {
 
     pub(super) fn dispatch_fatal_error_event(&mut self, error: VMError) -> StepEvent {
         if let Some(exception) = self.recoverable_eval_in_scope_dispatch_exception(&error) {
-            self.set_contextual_throw(exception);
+            self.set_contextual_internal_throw(exception);
             return StepEvent::Continue;
         }
         StepEvent::Error(error)
@@ -906,13 +906,11 @@ impl VM {
         let original_exception = self
             .current_segment_ref()
             .and_then(|seg| seg.pending_error_context.clone());
-        let synthetic_error_context_dispatch = Self::is_execution_context_effect(&effect)
-            && original_exception.as_ref().is_some_and(|exception| {
-                !matches!(exception, PyException::Materialized { .. })
-                    || TraceState::is_marked_synthetic_vm_error(exception)
-                    || Self::is_handler_protocol_exception(exception)
-            });
-        let synthetic_excluded_prompts: HashSet<SegmentId> = if synthetic_error_context_dispatch {
+        let restricted_error_context_dispatch = Self::is_execution_context_effect(&effect)
+            && original_exception
+                .as_ref()
+                .is_some_and(PyException::requires_safe_error_context_dispatch);
+        let restricted_excluded_prompts: HashSet<SegmentId> = if restricted_error_context_dispatch {
             self.segments
                 .get(seg_id)
                 .and_then(|seg| seg.dispatch_id)
@@ -956,11 +954,11 @@ impl VM {
             seg.pending_error_context = None;
         }
         let mut handler_chain = self.handlers_in_caller_chain(seg_id);
-        if !synthetic_excluded_prompts.is_empty() {
+        if !restricted_excluded_prompts.is_empty() {
             handler_chain
-                .retain(|entry| !synthetic_excluded_prompts.contains(&entry.prompt_seg_id));
+                .retain(|entry| !restricted_excluded_prompts.contains(&entry.prompt_seg_id));
         }
-        if synthetic_error_context_dispatch {
+        if restricted_error_context_dispatch {
             handler_chain.retain(|entry| {
                 entry.handler.is_rust_builtin() || entry.handler.supports_error_context_conversion()
             });
@@ -971,7 +969,7 @@ impl VM {
 
         if handler_chain.is_empty() {
             if let Some(original) = original_exception.clone() {
-                let exception = if synthetic_error_context_dispatch {
+                let exception = if restricted_error_context_dispatch {
                     TraceState::ensure_execution_context(original)
                 } else {
                     original

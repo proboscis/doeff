@@ -17,3 +17,14 @@ macro_rules! vm_debug_log {
         }
     }};
 }
+
+/// Emit a VM warning to stderr.
+///
+/// Warning paths are rare failure cases where silent recovery would make later
+/// debugging materially harder, so this macro is always enabled.
+#[macro_export]
+macro_rules! vm_warn_log {
+    ($($arg:tt)*) => {{
+        eprintln!("[doeff-vm warning] {}", format_args!($($arg)*));
+    }};
+}

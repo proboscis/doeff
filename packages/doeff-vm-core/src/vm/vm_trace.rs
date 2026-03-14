@@ -283,25 +283,6 @@ impl VM {
         })
     }
 
-    pub(super) fn is_handler_protocol_exception(exception: &PyException) -> bool {
-        match exception {
-            PyException::RuntimeError { message } | PyException::TypeError { message } => {
-                message.contains("handler returned without consuming continuation")
-            }
-            PyException::Materialized { exc_value, .. } => Python::attach(|py| {
-                let bound = exc_value.bind(py);
-                if !bound.is_instance_of::<pyo3::exceptions::PyRuntimeError>() {
-                    return false;
-                }
-                bound
-                    .str()
-                    .map(|value| value.to_string())
-                    .unwrap_or_default()
-                    .contains("handler returned without consuming continuation")
-            }),
-        }
-    }
-
     pub(super) fn mode_after_generror(
         &mut self,
         site: GenErrorSite,
@@ -347,9 +328,7 @@ impl VM {
             return Mode::Throw(exception);
         }
 
-        if TraceState::is_marked_synthetic_vm_error(&exception)
-            && !active_handler_supports_conversion
-        {
+        if exception.is_materialized_synthetic_vm_error() && !active_handler_supports_conversion {
             return Mode::Throw(exception);
         }
 
