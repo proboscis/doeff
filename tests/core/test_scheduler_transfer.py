@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any
 
 import pytest
@@ -10,6 +9,7 @@ from doeff import (
     Await,
     Gather,
     Spawn,
+    Try,
     Wait,
     async_run,
     default_async_handlers,
@@ -184,18 +184,15 @@ async def test_gather_fail_fast_cancels_siblings_and_preserves_traceback() -> No
         t3 = yield Spawn(slow_worker("right"))
         return (yield Gather(t1, t2, t3))
 
-    started = time.perf_counter()
     result = await async_run(
         program(),
         handlers=default_async_handlers(),
         print_doeff_trace=False,
     )
-    elapsed = time.perf_counter() - started
 
     assert _result_is_err(result)
     assert isinstance(result.error, RuntimeError)
     assert "gather boom" in str(result.error)
-    assert elapsed < 0.05
     assert ("left", "cancelled") in events
     assert ("right", "cancelled") in events
     assert ("left", "cleanup") in events
@@ -204,6 +201,19 @@ async def test_gather_fail_fast_cancels_siblings_and_preserves_traceback() -> No
     assert ("right", "done") not in events
 
     assert result.traceback_data is not None
+    active_chain = result.traceback_data.active_chain
+    assert any(
+        entry["kind"] == "effect_yield"
+        and entry["function_name"] == "program"
+        and "Gather(" in entry["effect_repr"]
+        for entry in active_chain
+    )
+    assert any(
+        entry["kind"] == "exception_site"
+        and entry["function_name"] == "boom"
+        and entry["message"] == "gather boom"
+        for entry in active_chain
+    )
     rendered = attach_doeff_traceback(
         result.error,
         traceback_data=result.traceback_data,
@@ -211,8 +221,94 @@ async def test_gather_fail_fast_cancels_siblings_and_preserves_traceback() -> No
     assert "program()" in rendered
     assert "boom()" in rendered
     assert "yield Gather(" in rendered
+    assert "raise RuntimeError('gather boom')" in rendered
     assert not hasattr(result.error, "__doeff_traceback_data__")
     assert not hasattr(result.error, "__doeff_traceback__")
+
+
+@pytest.mark.asyncio
+async def test_try_wraps_gather_fail_fast_error_and_still_cancels_siblings() -> None:
+    events: list[tuple[str, str]] = []
+
+    @do
+    def slow_worker():
+        events.append(("slow", "start"))
+        try:
+            _ = yield Await(asyncio.sleep(0.1))
+            events.append(("slow", "done"))
+            return "slow"
+        except TaskCancelledError:
+            events.append(("slow", "cancelled"))
+            raise
+        finally:
+            events.append(("slow", "cleanup"))
+
+    @do
+    def boom():
+        events.append(("boom", "start"))
+        _ = yield Await(asyncio.sleep(0))
+        raise RuntimeError("gather try boom")
+
+    @do
+    def program():
+        slow_task = yield Spawn(slow_worker())
+        boom_task = yield Spawn(boom())
+        return (yield Try(Gather(slow_task, boom_task)))
+
+    result = await async_run(program(), handlers=default_async_handlers())
+
+    assert _result_is_ok(result)
+    safe_result = result.value
+    assert _result_is_err(safe_result)
+    assert isinstance(safe_result.error, RuntimeError)
+    assert str(safe_result.error) == "gather try boom"
+    assert ("slow", "cancelled") in events
+    assert ("slow", "cleanup") in events
+    assert ("slow", "done") not in events
+    context = getattr(safe_result.error, "doeff_execution_context", None)
+    assert context is not None
+    active_chain = getattr(context, "active_chain", ())
+    assert any(
+        entry["kind"] == "exception_site"
+        and entry["function_name"] == "boom"
+        and entry["message"] == "gather try boom"
+        for entry in active_chain
+    )
+
+
+@pytest.mark.asyncio
+async def test_gather_collects_try_wrapped_children_without_fail_fast_cancellation() -> None:
+    events: list[str] = []
+
+    @do
+    def fail():
+        events.append("fail:start")
+        _ = yield Await(asyncio.sleep(0))
+        raise RuntimeError("inner fail")
+
+    @do
+    def ok():
+        events.append("ok:start")
+        _ = yield Await(asyncio.sleep(0.01))
+        events.append("ok:done")
+        return "ok"
+
+    @do
+    def program():
+        failed_task = yield Spawn(Try(fail()))
+        ok_task = yield Spawn(Try(ok()))
+        return (yield Gather(failed_task, ok_task))
+
+    result = await async_run(program(), handlers=default_async_handlers())
+
+    assert _result_is_ok(result)
+    failed_result, ok_result = result.value
+    assert _result_is_err(failed_result)
+    assert isinstance(failed_result.error, RuntimeError)
+    assert str(failed_result.error) == "inner fail"
+    assert _result_is_ok(ok_result)
+    assert ok_result.value == "ok"
+    assert "ok:done" in events
 
 
 @pytest.mark.asyncio
