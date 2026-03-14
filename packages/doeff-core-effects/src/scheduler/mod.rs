@@ -528,10 +528,13 @@ pub fn debug_semaphore_exists(semaphore_id: u64) -> bool {
         registry
             .iter()
             .filter_map(|(state_id, weak_state)| {
-                weak_state.upgrade().map(|state| (*state_id, state)).or_else(|| {
-                    stale_state_ids.push(*state_id);
-                    None
-                })
+                weak_state
+                    .upgrade()
+                    .map(|state| (*state_id, state))
+                    .or_else(|| {
+                        stale_state_ids.push(*state_id);
+                        None
+                    })
             })
             .collect()
     };
@@ -559,7 +562,10 @@ pub fn notify_semaphore_handle_dropped(state_id: u64, semaphore_id: u64) {
     let mut notifications = semaphore_drop_notifications()
         .lock()
         .expect("Scheduler lock poisoned");
-    notifications.entry(state_id).or_default().push(semaphore_id);
+    notifications
+        .entry(state_id)
+        .or_default()
+        .push(semaphore_id);
 }
 
 fn parse_task_completed_result(
@@ -586,7 +592,9 @@ fn parse_task_completed_result(
 }
 
 fn extract_semaphore_id(obj: &Bound<'_, PyAny>) -> Option<u64> {
-    obj.extract::<PyRef<'_, PySemaphore>>().ok().map(|semaphore| semaphore.id)
+    obj.extract::<PyRef<'_, PySemaphore>>()
+        .ok()
+        .map(|semaphore| semaphore.id)
 }
 
 fn is_internal_source_file(source_file: &str) -> bool {
@@ -910,12 +918,12 @@ fn make_python_semaphore_value(semaphore_id: u64, state_id: u64) -> Result<Value
                 state_id,
             },
         )
-            .map_err(|e| {
-                PyException::runtime_error(format!(
-                    "failed to instantiate runtime Semaphore({semaphore_id}): {e}"
-                ))
-            })?
-            .into_any();
+        .map_err(|e| {
+            PyException::runtime_error(format!(
+                "failed to instantiate runtime Semaphore({semaphore_id}): {e}"
+            ))
+        })?
+        .into_any();
         Ok(Value::Python(PyShared::new(semaphore.unbind())))
     })
 }
@@ -1051,11 +1059,9 @@ impl SchedulerState {
     }
 
     fn has_external_waiters(&self) -> bool {
-        self.waiters
-            .iter()
-            .any(|(item, waiters)| {
-                matches!(item, Waitable::ExternalPromise(_)) && !waiters.is_empty()
-            })
+        self.waiters.iter().any(|(item, waiters)| {
+            matches!(item, Waitable::ExternalPromise(_)) && !waiters.is_empty()
+        })
     }
 
     fn parse_external_completion_item(
@@ -1693,9 +1699,10 @@ impl SchedulerState {
             }
         }
         if waiting_task.is_none() {
-            self.ready.retain(
-                |entry| !matches!(entry.target, ReadyTarget::Root(root_id) if root_id == cont_id),
-            );
+            self.ready.retain(|entry| match entry.target {
+                ReadyTarget::Root(root_id) => root_id != cont_id,
+                ReadyTarget::Task(_) => true,
+            });
         }
 
         if let Some(task_id) = waiting_task {
@@ -1777,11 +1784,10 @@ impl SchedulerState {
     pub fn try_race(&self, items: &[Waitable]) -> Option<Value> {
         for item in items {
             match item {
-                Waitable::Task(task_id) => {
-                    if let Some(TaskState::Done { result: Ok(v), .. }) = self.tasks.get(task_id) {
-                        return Some(v.clone());
-                    }
-                }
+                Waitable::Task(task_id) => match self.tasks.get(task_id) {
+                    Some(TaskState::Done { result: Ok(v), .. }) => return Some(v.clone()),
+                    Some(TaskState::Done { .. }) | Some(TaskState::Pending { .. }) | None => {}
+                },
                 Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
                     if let Some(PromiseState::Done(Ok(v))) = self.promises.get(pid) {
                         return Some(v.clone());
