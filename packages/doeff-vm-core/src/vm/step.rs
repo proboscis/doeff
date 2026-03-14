@@ -87,45 +87,69 @@ impl VM {
     }
 
     pub fn step(&mut self) -> StepEvent {
-        let mode_kind = {
-            let Some(seg) = self.current_segment_ref() else {
-                return StepEvent::Error(VMError::internal("no current segment"));
+        let step_started = self.dispatch_lookup_profiler.start_step_timer();
+        let result = (|| {
+            let mode_kind = {
+                let Some(seg) = self.current_segment_ref() else {
+                    return StepEvent::Error(VMError::internal("no current segment"));
+                };
+                match &seg.mode {
+                    Mode::Deliver(_) | Mode::Throw(_) => 0_u8,
+                    Mode::HandleYield(_) => 1_u8,
+                    Mode::Return(_) => 2_u8,
+                }
             };
-            match &seg.mode {
-                Mode::Deliver(_) | Mode::Throw(_) => 0_u8,
-                Mode::HandleYield(_) => 1_u8,
-                Mode::Return(_) => 2_u8,
+
+            self.debug.advance_step();
+
+            if self.debug.trace_enabled {
+                self.record_trace_entry();
             }
-        };
 
-        self.debug.advance_step();
+            if self.debug.is_enabled() {
+                self.debug_step_entry();
+            }
 
-        if self.debug.trace_enabled {
-            self.record_trace_entry();
-        }
+            let result = match mode_kind {
+                0 => {
+                    let mode_started = self.dispatch_lookup_profiler.start_lookup_timer();
+                    let result = self.step_deliver_or_throw();
+                    self.dispatch_lookup_profiler
+                        .record_step_deliver_or_throw(mode_started);
+                    result
+                }
+                1 => {
+                    let mode_started = self.dispatch_lookup_profiler.start_lookup_timer();
+                    let result = self.step_handle_yield();
+                    self.dispatch_lookup_profiler
+                        .record_step_handle_yield(mode_started);
+                    result
+                }
+                2 => {
+                    let mode_started = self.dispatch_lookup_profiler.start_lookup_timer();
+                    let result = self.step_return();
+                    self.dispatch_lookup_profiler
+                        .record_step_return(mode_started);
+                    result
+                }
+                other => unreachable!("invalid mode discriminator in VM::step: {other}"),
+            };
 
-        if self.debug.is_enabled() {
-            self.debug_step_entry();
-        }
+            // Single observation point: flush all buffered trace events to trace_state.
+            self.flush_trace_events();
 
-        let result = match mode_kind {
-            0 => self.step_deliver_or_throw(),
-            1 => self.step_handle_yield(),
-            2 => self.step_return(),
-            other => unreachable!("invalid mode discriminator in VM::step: {other}"),
-        };
+            if self.debug.is_enabled() {
+                self.debug_step_exit(&result);
+            }
 
-        // Single observation point: flush all buffered trace events to trace_state.
-        self.flush_trace_events();
+            if self.debug.trace_enabled {
+                self.record_trace_exit(&result);
+            }
 
-        if self.debug.is_enabled() {
-            self.debug_step_exit(&result);
-        }
-
-        if self.debug.trace_enabled {
-            self.record_trace_exit(&result);
-        }
-
+            result
+        })();
+        self.dispatch_lookup_profiler
+            .record_step_duration(step_started);
         result
     }
 
@@ -209,6 +233,7 @@ impl VM {
                     Mode::Throw(exc) => Some(exc.clone()),
                     Mode::Deliver(_) | Mode::HandleYield(_) | Mode::Return(_) => None,
                 };
+                let resume_started = self.dispatch_lookup_profiler.start_lookup_timer();
                 let step = {
                     let Some(seg) = self.segments.get_mut(seg_id) else {
                         return StepEvent::Error(VMError::invalid_segment("segment not found"));
@@ -226,6 +251,8 @@ impl VM {
                         }
                     }
                 };
+                self.dispatch_lookup_profiler
+                    .record_program_frame_resume(resume_started);
                 self.apply_stream_step(step, stream, metadata, handler_kind, incoming_throw)
             }
             Frame::InterceptorApply(cont) => self.step_interceptor_apply_frame(*cont, mode),
@@ -319,10 +346,7 @@ impl VM {
         }
     }
 
-    fn chain_exception_context(
-        original_exception: &PyException,
-        cleanup_exception: &PyException,
-    ) {
+    fn chain_exception_context(original_exception: &PyException, cleanup_exception: &PyException) {
         if Self::same_exception(original_exception, cleanup_exception) {
             return;
         }
@@ -751,11 +775,7 @@ impl VM {
         }
     }
 
-    fn step_intercept_body_return_frame(
-        &mut self,
-        _marker: Marker,
-        mode: Mode,
-    ) -> StepEvent {
+    fn step_intercept_body_return_frame(&mut self, _marker: Marker, mode: Mode) -> StepEvent {
         match mode {
             Mode::Deliver(value) => self.handle_handler_return(value),
             Mode::Throw(exc) => {
@@ -917,16 +937,49 @@ impl VM {
     }
 
     fn current_interceptor_chain(&self) -> Vec<Marker> {
-        let dispatch_origin_callers = self
-            .dispatch_origins()
-            .into_iter()
-            .map(|origin| origin.k_origin.segment_id)
-            .collect::<Vec<_>>();
-        self.interceptor_state.current_chain(
+        let started = self.dispatch_lookup_profiler.start_lookup_timer();
+        let dispatch_origin_callers = self.dispatch_origin_caller_segments();
+        let chain = self.interceptor_state.current_chain(
             self.current_segment,
             &self.segments,
             &dispatch_origin_callers,
-        )
+        );
+        self.dispatch_lookup_profiler
+            .record_current_interceptor_chain(started);
+        chain
+    }
+
+    fn dispatch_origin_caller_segments(&self) -> Vec<SegmentId> {
+        let started = self.dispatch_lookup_profiler.start_lookup_timer();
+        let mut seen = HashSet::new();
+        let mut callers = Vec::new();
+        let mut segments_walked = 0usize;
+        let mut cursor = self.current_segment;
+        while let Some(seg_id) = cursor {
+            segments_walked += 1;
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            if let Some(Frame::DispatchOrigin {
+                dispatch_id,
+                k_origin,
+                ..
+            }) = seg.current_dispatch_origin_frame()
+            {
+                if seen.insert(*dispatch_id) {
+                    callers.push((*dispatch_id, k_origin.segment_id));
+                }
+            }
+            cursor = seg.caller;
+        }
+        callers.sort_by_key(|(dispatch_id, _)| dispatch_id.raw());
+        let caller_segments = callers
+            .into_iter()
+            .map(|(_dispatch_id, segment_id)| segment_id)
+            .collect();
+        self.dispatch_lookup_profiler
+            .record_dispatch_origin_caller_segments(segments_walked, started);
+        caller_segments
     }
 
     fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
@@ -1258,66 +1311,167 @@ impl VM {
                 }
             };
         match yielded {
-            DoCtrl::Pure { value } => self.handle_yield_pure(value),
+            DoCtrl::Pure { value } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_pure(value);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::Map {
                 source,
                 mapper,
                 mapper_meta,
-            } => self.handle_yield_map(source, mapper, mapper_meta),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_map(source, mapper, mapper_meta);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::FlatMap {
                 source,
                 binder,
                 binder_meta,
-            } => self.handle_yield_flat_map(source, binder, binder_meta),
-            DoCtrl::Perform { effect } => self.handle_yield_effect(effect),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_flat_map(source, binder, binder_meta);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::Perform { effect } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_effect(effect);
+                self.dispatch_lookup_profiler.record_yield_perform(started);
+                result
+            }
             DoCtrl::Resume {
                 continuation,
                 value,
-            } => self.handle_yield_resume(continuation, value),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_resume(continuation, value);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
             DoCtrl::Transfer {
                 continuation,
                 value,
-            } => self.handle_yield_transfer(continuation, value),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_transfer(continuation, value);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
             DoCtrl::TransferThrow {
                 continuation,
                 exception,
-            } => self.handle_yield_transfer_throw(continuation, exception),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_transfer_throw(continuation, exception);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
             DoCtrl::ResumeThrow {
                 continuation,
                 exception,
-            } => self.handle_yield_resume_throw(continuation, exception),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_resume_throw(continuation, exception);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
             DoCtrl::WithHandler {
                 handler,
                 body,
                 types,
-            } => self.handle_with_handler(handler, *body, types),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_with_handler(handler, *body, types);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::WithIntercept {
                 interceptor,
                 body,
                 types,
                 mode,
                 metadata,
-            } => self.handle_yield_with_intercept(interceptor, *body, types, mode, metadata),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result =
+                    self.handle_yield_with_intercept(interceptor, *body, types, mode, metadata);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::Discontinue {
                 continuation,
                 exception,
-            } => self.handle_yield_discontinue(continuation, exception),
-            DoCtrl::Delegate { effect } => self.handle_yield_delegate(effect),
-            DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
-            DoCtrl::GetContinuation => self.handle_yield_get_continuation(),
-            DoCtrl::GetHandlers => self.handle_yield_get_handlers(),
-            DoCtrl::GetTraceback { continuation } => self.handle_yield_get_traceback(continuation),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_discontinue(continuation, exception);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
+            DoCtrl::Delegate { effect } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_delegate(effect);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::Pass { effect } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_pass(effect);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::GetContinuation => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_get_continuation();
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::GetHandlers => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_get_handlers();
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::GetTraceback { continuation } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_get_traceback(continuation);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::CreateContinuation {
                 expr,
                 handlers,
                 handler_identities,
-            } => self.handle_yield_create_continuation(expr, handlers, handler_identities),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result =
+                    self.handle_yield_create_continuation(expr, handlers, handler_identities);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::ResumeContinuation {
                 continuation,
                 value,
-            } => self.handle_yield_resume_continuation(continuation, value),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_resume_continuation(continuation, value);
+                self.dispatch_lookup_profiler
+                    .record_yield_transfer_like(started);
+                result
+            }
             DoCtrl::PythonAsyncSyntaxEscape { action } => {
-                self.handle_yield_python_async_syntax_escape(action)
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_python_async_syntax_escape(action);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
             }
             // PendingPython::CallFuncReturn is set in handle_yield_apply.
             DoCtrl::Apply {
@@ -1325,26 +1479,57 @@ impl VM {
                 args,
                 kwargs,
                 metadata,
-            } => self.handle_yield_apply(*f, args, kwargs, metadata),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_apply(*f, args, kwargs, metadata);
+                self.dispatch_lookup_profiler.record_yield_apply(started);
+                result
+            }
             // PendingPython::ExpandReturn is set in handle_yield_expand.
             DoCtrl::Expand {
                 factory,
                 args,
                 kwargs,
                 metadata,
-            } => self.handle_yield_expand(*factory, args, kwargs, metadata),
-            DoCtrl::IRStream { stream, metadata } => self.handle_yield_ir_stream(
-                stream,
-                metadata,
-                self.current_program_frame_handler_kind(),
-            ),
-            DoCtrl::Eval { expr, metadata } => self.handle_yield_eval(expr, metadata),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_expand(*factory, args, kwargs, metadata);
+                self.dispatch_lookup_profiler.record_yield_expand(started);
+                result
+            }
+            DoCtrl::IRStream { stream, metadata } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_ir_stream(
+                    stream,
+                    metadata,
+                    self.current_program_frame_handler_kind(),
+                );
+                self.dispatch_lookup_profiler
+                    .record_yield_ir_stream(started);
+                result
+            }
+            DoCtrl::Eval { expr, metadata } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_eval(expr, metadata);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
             DoCtrl::EvalInScope {
                 expr,
                 scope,
                 metadata,
-            } => self.handle_yield_eval_in_scope(expr, scope, metadata),
-            DoCtrl::GetCallStack => self.handle_yield_get_call_stack(),
+            } => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_eval_in_scope(expr, scope, metadata);
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
+            DoCtrl::GetCallStack => {
+                let started = self.dispatch_lookup_profiler.start_lookup_timer();
+                let result = self.handle_yield_get_call_stack();
+                self.dispatch_lookup_profiler.record_yield_other(started);
+                result
+            }
         }
     }
 
@@ -1378,19 +1563,11 @@ impl VM {
         }
     }
 
-    fn handle_yield_resume(
-        &mut self,
-        continuation: Continuation,
-        value: Value,
-    ) -> StepEvent {
+    fn handle_yield_resume(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_resume(continuation, value)
     }
 
-    fn handle_yield_transfer(
-        &mut self,
-        continuation: Continuation,
-        value: Value,
-    ) -> StepEvent {
+    fn handle_yield_transfer(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_transfer(continuation, value)
     }
 
@@ -1466,10 +1643,7 @@ impl VM {
         self.handle_resume_continuation(continuation, value)
     }
 
-    fn handle_yield_python_async_syntax_escape(
-        &mut self,
-        action: Py<PyAny>,
-    ) -> StepEvent {
+    fn handle_yield_python_async_syntax_escape(&mut self, action: Py<PyAny>) -> StepEvent {
         self.current_seg_mut().pending_python = Some(PendingPython::AsyncEscape);
         StepEvent::NeedsPython(PythonCall::CallAsync {
             func: PyShared::new(action),
@@ -1708,11 +1882,7 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn handle_yield_eval(
-        &mut self,
-        expr: PyShared,
-        metadata: Option<CallMetadata>,
-    ) -> StepEvent {
+    fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
         let handlers = self.current_visible_handlers();
         let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
         self.handle_resume_continuation(cont, Value::None)
@@ -2151,11 +2321,7 @@ impl VM {
         }
     }
 
-    fn receive_expand_handler_value(
-        &mut self,
-        metadata: Option<CallMetadata>,
-        value: Value,
-    ) {
+    fn receive_expand_handler_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
         match value {
             Value::Python(handler_gen) => {
                 match Self::extract_doeff_generator(handler_gen, metadata, "ExpandReturn(handler)")
@@ -2199,11 +2365,7 @@ impl VM {
         }
     }
 
-    fn receive_expand_program_value(
-        &mut self,
-        metadata: Option<CallMetadata>,
-        value: Value,
-    ) {
+    fn receive_expand_program_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
         match self.classify_expand_result_as_doctrl(metadata, value, "ExpandReturn") {
             Ok(doctrl) => {
                 self.current_seg_mut().mode = Mode::HandleYield(doctrl);
@@ -2247,11 +2409,7 @@ impl VM {
         })
     }
 
-    fn receive_expand_gen_error(
-        &mut self,
-        handler_return: bool,
-        exception: PyException,
-    ) {
+    fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
         if handler_return {
             let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
                 let dispatch_id = self.current_segment_dispatch_id_any()?;

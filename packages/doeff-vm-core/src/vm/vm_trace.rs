@@ -43,11 +43,7 @@ impl VM {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return false;
         };
-        Python::attach(|py| {
-            obj.bind(py)
-                .extract::<PyRef<'_, PyGetExecutionContext>>()
-                .is_ok()
-        })
+        Python::attach(|py| obj.bind(py).is_instance_of::<PyGetExecutionContext>())
     }
 
     pub(super) fn dispatch_supports_error_context_conversion(
@@ -442,7 +438,10 @@ impl VM {
         TraceState::enrich_original_exception_with_context(original, context_value)
     }
 
-    pub fn assemble_active_chain(&mut self, exception: Option<&PyException>) -> Vec<ActiveChainEntry> {
+    pub fn assemble_active_chain(
+        &mut self,
+        exception: Option<&PyException>,
+    ) -> Vec<ActiveChainEntry> {
         self.flush_trace_events();
         self.trace_state.assemble_active_chain(
             exception,
@@ -467,7 +466,11 @@ impl VM {
         let Some(dispatch_id) = dispatch_id else {
             return Ok(());
         };
-        if !self.should_attach_active_chain_for_dispatch(dispatch_id) {
+        let check_started = self.dispatch_lookup_profiler.start_lookup_timer();
+        let should_attach = self.should_attach_active_chain_for_dispatch(dispatch_id);
+        self.dispatch_lookup_profiler
+            .record_attach_active_chain_check(check_started, should_attach);
+        if !should_attach {
             return Ok(());
         }
         let context_obj = match value {
@@ -480,7 +483,11 @@ impl VM {
             }
         };
 
+        let assemble_started = self.dispatch_lookup_profiler.start_lookup_timer();
         let mut active_chain = self.assemble_active_chain(None);
+        self.dispatch_lookup_profiler
+            .record_attach_active_chain_assemble(assemble_started);
+        let serialize_started = self.dispatch_lookup_profiler.start_lookup_timer();
         Python::attach(|py| {
             let context_bound = context_obj.bind(py);
             if !context_bound.is_instance_of::<PyExecutionContext>() {
@@ -494,46 +501,6 @@ impl VM {
                 )));
             }
 
-            let entries_obj = context_bound.getattr("entries").map_err(|err| {
-                VMError::python_error(format!(
-                    "GetExecutionContext handler returned invalid ExecutionContext.entries: {err}"
-                ))
-            })?;
-            let iter = entries_obj.try_iter().map_err(|err| {
-                VMError::python_error(format!(
-                    "GetExecutionContext handler returned non-iterable ExecutionContext.entries: {err}"
-                ))
-            })?;
-            for entry_result in iter {
-                let entry = entry_result.map_err(|err| {
-                    VMError::python_error(format!(
-                        "failed to iterate ExecutionContext.entries while attaching active_chain: {err}"
-                    ))
-                })?;
-                active_chain.push(ActiveChainEntry::ContextEntry {
-                    data: entry.unbind(),
-                });
-            }
-
-            let active_chain_obj =
-                Value::ActiveChain(active_chain)
-                    .to_pyobject(py)
-                    .map_err(|err| {
-                        VMError::python_error(format!(
-                            "failed to convert active_chain snapshot to Python object: {err}"
-                        ))
-                    })?;
-            let active_chain_list = active_chain_obj.cast::<PyList>().map_err(|err| {
-                VMError::python_error(format!(
-                    "active_chain snapshot serialization did not produce list: {err}"
-                ))
-            })?;
-            let active_chain_tuple = PyTuple::new(py, active_chain_list.iter()).map_err(|err| {
-                VMError::python_error(format!(
-                    "failed to convert active_chain snapshot to tuple: {err}"
-                ))
-            })?;
-
             let mut context_ref = context_bound
                 .extract::<PyRefMut<'_, PyExecutionContext>>()
                 .map_err(|err| {
@@ -541,9 +508,17 @@ impl VM {
                         "failed to access ExecutionContext for active_chain assignment: {err}"
                     ))
                 })?;
-            context_ref.set_active_chain(Some(active_chain_tuple.into_any().unbind()));
+            for entry in context_ref.entries.bind(py).iter() {
+                active_chain.push(ActiveChainEntry::ContextEntry {
+                    data: entry.unbind(),
+                });
+            }
+            context_ref.set_active_chain_snapshot(Some(active_chain));
             Ok(())
-        })
+        })?;
+        self.dispatch_lookup_profiler
+            .record_attach_active_chain_serialize(serialize_started);
+        Ok(())
     }
 
     pub(super) fn record_trace_entry(&mut self) {

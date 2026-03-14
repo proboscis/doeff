@@ -35,9 +35,12 @@ impl VM {
         &self,
         start_seg_id: SegmentId,
     ) -> Vec<HandlerChainEntry> {
+        let started = self.dispatch_lookup_profiler.start_lookup_timer();
         let mut chain = Vec::new();
+        let mut segments_walked = 0usize;
         let mut cursor = Some(start_seg_id);
         while let Some(seg_id) = cursor {
+            segments_walked += 1;
             let Some(seg) = self.segments.get(seg_id) else {
                 break;
             };
@@ -57,6 +60,8 @@ impl VM {
             }
             cursor = seg.caller;
         }
+        self.dispatch_lookup_profiler
+            .record_handlers_in_caller_chain(segments_walked, started);
         chain
     }
 
