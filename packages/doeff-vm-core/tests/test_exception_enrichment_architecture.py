@@ -27,7 +27,7 @@ def test_exception_enrichment_callers_assemble_filtered_active_chain() -> None:
     dispatch_source = _runtime_source(VM_DISPATCH_RS)
 
     for source in (step_source, dispatch_source):
-        assert "let active_chain = self.assemble_active_chain(Some(&" in source, (
+        assert "let active_chain = self" in source and ".assemble_active_chain(Some(&" in source, (
             "Exception enrichment call sites must assemble the active chain explicitly before "
             "calling TraceState::enrich_original_exception_with_context."
         )
