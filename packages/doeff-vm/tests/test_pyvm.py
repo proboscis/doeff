@@ -1278,6 +1278,23 @@ def test_module_level_run_basic():
     assert result.value == 42
 
 
+def test_module_level_run_wraps_invalid_top_level_yield_in_run_result():
+    """G11: invalid yielded values surface as Err RunResult, not raw TypeError."""
+    from doeff_vm import run
+
+    @do
+    def invalid_program() -> Program[object]:
+        yield object()
+        return "unreachable"
+
+    result = run(invalid_program())
+
+    assert result.is_err()
+    assert isinstance(result.error, TypeError)
+    assert str(result.error) == "yielded value must be EffectBase or DoExpr"
+    assert result.traceback_data is not None
+
+
 def test_module_level_run_with_env_and_store():
     """G11: run() accepts env and store dicts to seed the VM."""
     from doeff_vm import WithHandler, run, state
