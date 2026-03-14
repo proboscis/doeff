@@ -54,7 +54,7 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> bool {
-        let Some((_, _, marker)) = self.active_handler_dispatch_for(dispatch_id) else {
+        let Some(marker) = self.active_handler_marker_for_dispatch(dispatch_id) else {
             return false;
         };
         self.find_prompt_boundary_by_marker(marker)
@@ -132,12 +132,8 @@ impl VM {
         marker: Marker,
     ) -> Option<(String, HandlerKind, Option<String>, Option<u32>)> {
         if let Some(seg_id) = self.current_segment {
-            if let Some(entry) = self
-                .handlers_in_caller_chain(seg_id)
-                .into_iter()
-                .find(|entry| entry.marker == marker)
-            {
-                return Some(Self::handler_trace_info(&entry.handler));
+            if let Some(info) = self.handler_trace_info_for_marker_in_caller_chain(seg_id, marker) {
+                return Some(info);
             }
         }
         self.find_prompt_boundary_by_marker(marker)
@@ -149,19 +145,15 @@ impl VM {
         dispatch_id: DispatchId,
     ) -> Option<(usize, String)> {
         let marker = self
-            .active_handler_dispatch_for(dispatch_id)
-            .map(|(_, _, marker)| marker)
+            .active_handler_marker_for_dispatch(dispatch_id)
             .or_else(|| {
                 self.current_segment_ref()
                     .filter(|seg| seg.dispatch_id == Some(dispatch_id))
                     .map(|seg| seg.marker)
             })?;
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
-        let origin = self.dispatch_origin_for_dispatch_id(dispatch_id)?;
-        let handler_idx = self
-            .handlers_in_caller_chain(origin.k_origin.segment_id)
-            .into_iter()
-            .position(|entry| entry.marker == marker)?;
+        let origin_seg_id = self.dispatch_origin_user_segment_id(dispatch_id)?;
+        let handler_idx = self.handler_index_in_caller_chain(origin_seg_id, marker)?;
         Some((handler_idx, name))
     }
 

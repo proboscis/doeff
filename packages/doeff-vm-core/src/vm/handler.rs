@@ -167,7 +167,15 @@ impl VM {
         entry: &HandlerChainEntry,
         effect_obj: &Py<PyAny>,
     ) -> Result<bool, PyException> {
-        let Some(types) = entry.types.as_ref() else {
+        self.should_invoke_handler_types(entry.types.as_ref(), effect_obj)
+    }
+
+    pub(super) fn should_invoke_handler_types(
+        &self,
+        types: Option<&Vec<PyShared>>,
+        effect_obj: &Py<PyAny>,
+    ) -> Result<bool, PyException> {
+        let Some(types) = types else {
             return Ok(true);
         };
         if types.is_empty() {
@@ -179,5 +187,48 @@ impl VM {
             let type_tuple = PyTuple::new(py, types.iter().map(|ty| ty.clone_ref(py)))?;
             effect.is_instance(&type_tuple)
         })?)
+    }
+
+    pub(super) fn handler_index_in_caller_chain(
+        &self,
+        start_seg_id: SegmentId,
+        marker: Marker,
+    ) -> Option<usize> {
+        let mut cursor = Some(start_seg_id);
+        let mut handler_index = 0usize;
+        while let Some(seg_id) = cursor {
+            let seg = self.segments.get(seg_id)?;
+            if let SegmentKind::PromptBoundary { handled_marker, .. } = &seg.kind {
+                if *handled_marker == marker {
+                    return Some(handler_index);
+                }
+                handler_index += 1;
+            }
+            cursor = seg.caller;
+        }
+        None
+    }
+
+    pub(super) fn handler_trace_info_for_marker_in_caller_chain(
+        &self,
+        start_seg_id: SegmentId,
+        marker: Marker,
+    ) -> Option<(String, HandlerKind, Option<String>, Option<u32>)> {
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let seg = self.segments.get(seg_id)?;
+            if let SegmentKind::PromptBoundary {
+                handled_marker,
+                handler,
+                ..
+            } = &seg.kind
+            {
+                if *handled_marker == marker {
+                    return Some(Self::handler_trace_info(handler));
+                }
+            }
+            cursor = seg.caller;
+        }
+        None
     }
 }
