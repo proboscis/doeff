@@ -276,14 +276,18 @@ class TestG22FrozenBases:
 
     def test_pyclass_declarations_include_frozen(self) -> None:
         """All three base class #[pyclass] macros must include 'frozen'."""
-        pyvm_src = (ROOT / "packages" / "doeff-vm" / "src" / "pyvm.rs").read_text()
+        base_sources = {
+            "DoExprBase": ROOT / "packages" / "doeff-vm-core" / "src" / "do_ctrl.rs",
+            "DoCtrlBase": ROOT / "packages" / "doeff-vm-core" / "src" / "do_ctrl.rs",
+            "EffectBase": ROOT / "packages" / "doeff-vm-core" / "src" / "effect.rs",
+        }
 
-        bases = ["DoExprBase", "EffectBase", "DoCtrlBase"]
-        for name in bases:
+        for name, path in base_sources.items():
+            source = path.read_text()
             # Find the #[pyclass(...)] line preceding the struct with this name
             pattern = rf"#\[pyclass\(([^)]*)\)\]\s*pub struct Py{name}"
-            m = re.search(pattern, pyvm_src)
-            assert m is not None, f"Could not find #[pyclass] for Py{name}"
+            m = re.search(pattern, source)
+            assert m is not None, f"Could not find #[pyclass] for Py{name} in {path}"
             attrs = m.group(1)
             assert "frozen" in attrs, (
                 f"Py{name} #[pyclass({attrs})] is missing 'frozen' attribute. "
