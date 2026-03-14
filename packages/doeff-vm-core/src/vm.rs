@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
+use pyo3::types::{PyDict, PyModule, PyTuple};
 
 use crate::arena::SegmentArena;
 use crate::bridge::{classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm};
@@ -388,6 +388,82 @@ impl VM {
 
     pub fn current_segment_ref(&self) -> Option<&Segment> {
         self.current_segment.and_then(|id| self.segments.get(id))
+    }
+
+    fn nearest_auto_unwrap_programlike_metadata(&self) -> Option<CallMetadata> {
+        let mut seg_id = self.current_segment;
+        while let Some(id) = seg_id {
+            let Some(seg) = self.segments.get(id) else {
+                break;
+            };
+            for frame in seg.frames.iter().rev() {
+                match frame {
+                    Frame::Program {
+                        metadata: Some(metadata),
+                        ..
+                    } if metadata.auto_unwrap_programlike => return Some(metadata.clone()),
+                    Frame::Program { .. } => {}
+                    Frame::InterceptorApply(continuation)
+                    | Frame::InterceptorEval(continuation) => {
+                        if let Some(metadata) = continuation
+                            .emitter_metadata
+                            .as_ref()
+                            .filter(|metadata| metadata.auto_unwrap_programlike)
+                        {
+                            return Some(metadata.clone());
+                        }
+                        if let Some(metadata) = continuation
+                            .interceptor_metadata
+                            .as_ref()
+                            .filter(|metadata| metadata.auto_unwrap_programlike)
+                        {
+                            return Some(metadata.clone());
+                        }
+                    }
+                    Frame::EvalReturn(continuation) => match continuation.as_ref() {
+                        EvalReturnContinuation::ApplyResolveFunction { metadata, .. }
+                        | EvalReturnContinuation::ApplyResolveArg { metadata, .. }
+                        | EvalReturnContinuation::ApplyResolveKwarg { metadata, .. }
+                        | EvalReturnContinuation::ExpandResolveFactory { metadata, .. }
+                        | EvalReturnContinuation::ExpandResolveArg { metadata, .. }
+                        | EvalReturnContinuation::ExpandResolveKwarg { metadata, .. }
+                            if metadata.auto_unwrap_programlike =>
+                        {
+                            return Some(metadata.clone());
+                        }
+                        EvalReturnContinuation::EvalInScopeReturn { .. } => {}
+                        _ => {}
+                    },
+                    Frame::HandlerDispatch { .. }
+                    | Frame::DispatchOrigin { .. }
+                    | Frame::MapReturn { .. }
+                    | Frame::FlatMapBindResult
+                    | Frame::FlatMapBindSource { .. }
+                    | Frame::InterceptBodyReturn { .. } => {}
+                }
+            }
+            seg_id = seg.caller;
+        }
+        None
+    }
+
+    fn pending_auto_unwrap_programlike_metadata(&self) -> Option<&CallMetadata> {
+        let pending = self.current_segment_ref()?.pending_python.as_ref()?;
+        match pending {
+            PendingPython::EvalExpr { metadata }
+            | PendingPython::ExpandReturn { metadata, .. }
+            | PendingPython::StepUserGenerator { metadata, .. } => metadata
+                .as_ref()
+                .filter(|metadata| metadata.auto_unwrap_programlike),
+            PendingPython::CallFuncReturn
+            | PendingPython::RustProgramContinuation { .. }
+            | PendingPython::AsyncEscape => None,
+        }
+    }
+
+    pub fn has_nearby_auto_unwrap_programlike(&self) -> bool {
+        self.pending_auto_unwrap_programlike_metadata().is_some()
+            || self.nearest_auto_unwrap_programlike_metadata().is_some()
     }
 
     #[inline]

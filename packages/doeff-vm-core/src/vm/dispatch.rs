@@ -1916,9 +1916,14 @@ impl VM {
         program: PyShared,
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
+        metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        let k =
-            Continuation::create_unstarted_with_identities(program, handlers, handler_identities);
+        let k = Continuation::create_unstarted_with_identities_and_metadata(
+            program,
+            handlers,
+            handler_identities,
+            metadata,
+        );
         self.register_continuation(k.clone());
         self.current_seg_mut().mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue

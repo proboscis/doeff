@@ -72,6 +72,7 @@ impl VM {
                 source_line,
                 None,
                 None,
+                false,
             )),
         }
     }
@@ -814,6 +815,7 @@ impl VM {
     ) -> StepEvent {
         match step {
             IRStreamStep::Yield(yielded) => {
+                self.propagate_auto_unwrap_program_context_to_yielded(metadata.as_ref(), &yielded);
                 self.handle_stream_yield(yielded, stream, metadata, handler_kind)
             }
             IRStreamStep::Return(value) => {
@@ -902,6 +904,54 @@ impl VM {
                 StepEvent::NeedsPython(call)
             }
         }
+    }
+
+    fn propagate_auto_unwrap_program_context_to_yielded(
+        &self,
+        metadata: Option<&CallMetadata>,
+        yielded: &DoCtrl,
+    ) {
+        let Some(metadata) = metadata else {
+            return;
+        };
+        if !metadata.auto_unwrap_programlike {
+            return;
+        }
+        let DoCtrl::Perform { effect } = yielded else {
+            return;
+        };
+        let Some(effect_obj) = dispatch_ref_as_python(effect) else {
+            return;
+        };
+        Python::attach(|py| {
+            let _ = Self::tag_program_auto_unwrap_metadata(effect_obj.bind(py));
+        });
+    }
+
+    fn tag_program_auto_unwrap_metadata(obj: &Bound<'_, PyAny>) -> PyResult<()> {
+        for attr in ["program", "sub_program"] {
+            let Ok(program) = obj.getattr(attr) else {
+                continue;
+            };
+            Self::tag_programlike_meta_recursive(program.as_any())?;
+        }
+        Ok(())
+    }
+
+    fn tag_programlike_meta_recursive(obj: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(meta) = obj.getattr("meta") {
+            if let Ok(meta_dict) = meta.cast::<PyDict>() {
+                meta_dict.set_item("auto_unwrap_programlike", true)?;
+                return Ok(());
+            }
+        }
+        for attr in ["program", "sub_program", "expr", "inner"] {
+            let Ok(inner) = obj.getattr(attr) else {
+                continue;
+            };
+            Self::tag_programlike_meta_recursive(inner.as_any())?;
+        }
+        Ok(())
     }
 
     fn handle_stream_yield(
@@ -1092,6 +1142,7 @@ impl VM {
             0,
             None,
             None,
+            false,
         )
     }
 
@@ -1475,7 +1526,8 @@ impl VM {
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
     ) -> StepEvent {
-        self.handle_create_continuation(expr, handlers, handler_identities)
+        let metadata = self.nearest_auto_unwrap_programlike_metadata();
+        self.handle_create_continuation(expr, handlers, handler_identities, metadata)
     }
 
     fn handle_yield_resume_continuation(
@@ -2086,11 +2138,7 @@ impl VM {
         }
     }
 
-    fn receive_eval_expr_result(
-        &mut self,
-        _metadata: Option<CallMetadata>,
-        outcome: PyCallOutcome,
-    ) {
+    fn receive_eval_expr_result(&mut self, metadata: Option<CallMetadata>, outcome: PyCallOutcome) {
         match outcome {
             PyCallOutcome::GenYield(yielded) => {
                 self.current_seg_mut().mode = Mode::HandleYield(yielded);
@@ -2100,7 +2148,18 @@ impl VM {
                     self.mode_after_generror(GenErrorSite::EvalExpr, exception, false);
             }
             PyCallOutcome::GenReturn(value) | PyCallOutcome::Value(value) => {
-                self.current_seg_mut().mode = Mode::Deliver(value);
+                if metadata.is_some() && matches!(value, Value::Python(_)) {
+                    match self.classify_expand_result_as_doctrl(metadata, value, "EvalExpr") {
+                        Ok(doctrl) => {
+                            self.current_seg_mut().mode = Mode::HandleYield(doctrl);
+                        }
+                        Err(exception) => {
+                            self.current_seg_mut().mode = Mode::Throw(exception);
+                        }
+                    }
+                } else {
+                    self.current_seg_mut().mode = Mode::Deliver(value);
+                }
             }
         }
     }
@@ -2240,7 +2299,8 @@ impl VM {
                 return Ok(DoCtrl::IRStream { stream, metadata });
             }
             if bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<PyEffectBase>() {
-                return classify_yielded_for_vm(self, py, bound);
+                let yielded = classify_yielded_for_vm(self, py, bound)?;
+                return Ok(self.propagate_auto_unwrap_programlike(metadata, yielded));
             }
             let ty = bound
                 .get_type()
@@ -2251,6 +2311,88 @@ impl VM {
                 "{context}: expected DoeffGenerator, DoExpr, or EffectBase, got {ty}"
             )))
         })
+    }
+
+    fn propagate_auto_unwrap_programlike(
+        &self,
+        inherited: Option<CallMetadata>,
+        yielded: DoCtrl,
+    ) -> DoCtrl {
+        let Some(inherited) = inherited else {
+            return yielded;
+        };
+        if !inherited.auto_unwrap_programlike {
+            return yielded;
+        }
+
+        match yielded {
+            DoCtrl::Apply {
+                f,
+                args,
+                kwargs,
+                mut metadata,
+            } => {
+                metadata.auto_unwrap_programlike = true;
+                DoCtrl::Apply {
+                    f,
+                    args,
+                    kwargs,
+                    metadata,
+                }
+            }
+            DoCtrl::Expand {
+                factory,
+                args,
+                kwargs,
+                mut metadata,
+            } => {
+                metadata.auto_unwrap_programlike = true;
+                DoCtrl::Expand {
+                    factory,
+                    args,
+                    kwargs,
+                    metadata,
+                }
+            }
+            DoCtrl::IRStream { stream, metadata } => {
+                let metadata = Some(match metadata {
+                    Some(mut metadata) => {
+                        metadata.auto_unwrap_programlike = true;
+                        metadata
+                    }
+                    None => inherited,
+                });
+                DoCtrl::IRStream { stream, metadata }
+            }
+            DoCtrl::WithHandler {
+                handler,
+                body,
+                types,
+            } => DoCtrl::WithHandler {
+                handler,
+                body: Box::new(self.propagate_auto_unwrap_programlike(Some(inherited), *body)),
+                types,
+            },
+            DoCtrl::WithIntercept {
+                interceptor,
+                body,
+                types,
+                mode,
+                metadata,
+            } => DoCtrl::WithIntercept {
+                interceptor,
+                body: Box::new(
+                    self.propagate_auto_unwrap_programlike(Some(inherited.clone()), *body),
+                ),
+                types,
+                mode,
+                metadata: metadata.map(|mut metadata| {
+                    metadata.auto_unwrap_programlike = true;
+                    metadata
+                }),
+            },
+            other => other,
+        }
     }
 
     fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
@@ -2291,6 +2433,7 @@ impl VM {
                 if self.current_segment.is_none() {
                     return;
                 }
+                self.propagate_auto_unwrap_program_context_to_yielded(metadata.as_ref(), &yielded);
                 let _ = self.handle_stream_yield(yielded, stream, metadata, handler_kind);
             }
             PyCallOutcome::GenReturn(value) => {
