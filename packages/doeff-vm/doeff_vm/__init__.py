@@ -55,39 +55,12 @@ def _coerce_handlers(handlers, *, api_name: str):
     return [_coerce_handler(handler, api_name=api_name, role="handler") for handler in handlers]
 
 
-def _attach_doeff_traceback_if_present(error: BaseException, traceback_data):
-    if traceback_data is None:
-        return None
-
-    traceback_mod = import_module("doeff.traceback")
-    get_attached = traceback_mod.get_attached_doeff_traceback
-    attached = get_attached(error)
-    if attached is not None:
-        return attached
-
-    doeff_tb = traceback_mod.attach_doeff_traceback(error, traceback_data=traceback_data)
-    if doeff_tb is None:
-        return None
-
-    traceback_mod.set_attached_doeff_traceback(error, doeff_tb)
-
-    add_note = getattr(error, "add_note", None)
-    if callable(add_note):
-        rendered = doeff_tb.format_default()
-        notes = getattr(error, "__notes__", ())
-        if rendered not in notes:
-            add_note(rendered)
-
-    return doeff_tb
-
-
 def _install_validated_runtime_api() -> None:
     if bool(getattr(_ext, "__doeff_handler_validation_patched__", False)):
         return
 
     raw_with_handler = _ext.WithHandler
     raw_with_intercept = _ext.WithIntercept
-    raw_pyvm_run_with_result = _ext.PyVM.run_with_result
     raw_run = _ext.run
     raw_async_run = _ext.async_run
     raw_doexpr_to_generator = _ext.DoExpr.to_generator
@@ -116,15 +89,6 @@ def _install_validated_runtime_api() -> None:
             meta=meta,
         )
 
-    def validated_pyvm_run(self, program):
-        result = raw_pyvm_run_with_result(self, program)
-        if result.is_err():
-            error = result.error
-            if isinstance(error, BaseException):
-                _attach_doeff_traceback_if_present(error, result.traceback_data)
-            raise error
-        return result.value
-
     def validated_run(program, env=None, store=None, trace=False):
         return raw_run(program, env=env, store=store, trace=trace)
 
@@ -144,7 +108,6 @@ def _install_validated_runtime_api() -> None:
 
     _ext.WithHandler = validated_with_handler
     _ext.WithIntercept = validated_with_intercept
-    _ext.PyVM.run = validated_pyvm_run
     _ext.run = validated_run
     _ext.async_run = validated_async_run
     _ext.DoExpr.to_generator = validated_doexpr_to_generator

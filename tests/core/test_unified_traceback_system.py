@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import traceback
 import warnings
 from dataclasses import dataclass
 
@@ -88,8 +87,9 @@ def test_raw_vm_run_attaches_doeff_traceback_to_direct_exception() -> None:
     error = exc_info.value
     doeff_tb = get_attached_doeff_traceback(error)
     assert doeff_tb is not None
+    assert not getattr(error, "__notes__", ())
 
-    rendered = "".join(traceback.format_exception(error))
+    rendered = doeff_tb.format_default()
     assert "doeff Traceback (most recent call last):" in rendered
     assert "body()" in rendered
     assert "yielded value must be EffectBase or DoExpr, got " in rendered
