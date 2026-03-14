@@ -35,6 +35,7 @@ from doeff import (
     slog,
 )
 from doeff.effects.base import Effect, EffectBase
+from doeff.effects._program_types import ProgramLike
 
 
 # --- Custom effect + handler ---
@@ -103,7 +104,7 @@ def my_async_gather(*programs):
 
 @do
 def throttled_gather(
-    *programs: Any, concurrency: int
+    *programs: ProgramLike, concurrency: int
 ) -> EffectGenerator[List[Any]]:
     """Wrapper that adds slog before delegating to async_gather."""
     semaphore = yield CreateSemaphore(concurrency)
@@ -116,7 +117,7 @@ def throttled_gather(
 
 @do
 def throttled_gather_with_progress(
-    *programs: Any, concurrency: int, description: str = ""
+    *programs: ProgramLike, concurrency: int, description: str = ""
 ) -> EffectGenerator[List[Any]]:
     """Another wrapper layer (like the real code)."""
     if description:
