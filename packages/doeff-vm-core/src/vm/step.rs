@@ -3,13 +3,22 @@ use super::*;
 impl VM {
     /// Set mode to Throw with a RuntimeError and return Continue.
     pub(super) fn throw_runtime_error(&mut self, message: &str) -> StepEvent {
-        let Some(seg) = self.current_segment_mut() else {
+        if self.current_segment.is_none() {
             return StepEvent::Error(VMError::internal(
                 "throw_runtime_error called without current segment",
             ));
-        };
-        seg.mode = Mode::Throw(PyException::runtime_error(message.to_string()));
+        }
+        self.set_contextual_throw(PyException::runtime_error(message.to_string()));
         StepEvent::Continue
+    }
+
+    pub(super) fn contextual_throw_mode(&mut self, exception: PyException) -> Mode {
+        self.mode_after_generror(GenErrorSite::VmRaised, exception, false)
+    }
+
+    pub(super) fn set_contextual_throw(&mut self, exception: PyException) {
+        let mode = self.contextual_throw_mode(exception);
+        self.current_seg_mut().mode = mode;
     }
 
     fn eval_then_reenter_call(
@@ -319,10 +328,7 @@ impl VM {
         }
     }
 
-    fn chain_exception_context(
-        original_exception: &PyException,
-        cleanup_exception: &PyException,
-    ) {
+    fn chain_exception_context(original_exception: &PyException, cleanup_exception: &PyException) {
         if Self::same_exception(original_exception, cleanup_exception) {
             return;
         }
@@ -585,7 +591,7 @@ impl VM {
                 metadata,
             } => {
                 let Some(slot) = args.get_mut(arg_idx) else {
-                    return Mode::Throw(PyException::runtime_error(
+                    return self.contextual_throw_mode(PyException::runtime_error(
                         "apply continuation arg index out of bounds",
                     ));
                 };
@@ -605,7 +611,7 @@ impl VM {
                 metadata,
             } => {
                 let Some((_, slot)) = kwargs.get_mut(kwarg_idx) else {
-                    return Mode::Throw(PyException::runtime_error(
+                    return self.contextual_throw_mode(PyException::runtime_error(
                         "apply continuation kwarg index out of bounds",
                     ));
                 };
@@ -635,7 +641,7 @@ impl VM {
                 metadata,
             } => {
                 let Some(slot) = args.get_mut(arg_idx) else {
-                    return Mode::Throw(PyException::runtime_error(
+                    return self.contextual_throw_mode(PyException::runtime_error(
                         "expand continuation arg index out of bounds",
                     ));
                 };
@@ -655,7 +661,7 @@ impl VM {
                 metadata,
             } => {
                 let Some((_, slot)) = kwargs.get_mut(kwarg_idx) else {
-                    return Mode::Throw(PyException::runtime_error(
+                    return self.contextual_throw_mode(PyException::runtime_error(
                         "expand continuation kwarg index out of bounds",
                     ));
                 };
@@ -760,11 +766,7 @@ impl VM {
         }
     }
 
-    fn step_intercept_body_return_frame(
-        &mut self,
-        _marker: Marker,
-        mode: Mode,
-    ) -> StepEvent {
+    fn step_intercept_body_return_frame(&mut self, _marker: Marker, mode: Mode) -> StepEvent {
         match mode {
             Mode::Deliver(value) => self.handle_handler_return(value),
             Mode::Throw(exc) => {
@@ -826,7 +828,7 @@ impl VM {
                 if let Some(dispatch_id) = dispatch_id.filter(|_| !propagated_throw) {
                     self.emit_handler_threw_for_dispatch(dispatch_id, &exc);
                 }
-                self.current_seg_mut().mode = Mode::Throw(exc);
+                self.set_contextual_throw(exc);
                 StepEvent::Continue
             }
             IRStreamStep::NeedsPython(call) => {
@@ -915,7 +917,7 @@ impl VM {
                     handler_kind,
                 }),
                 None => {
-                    return Mode::Throw(PyException::runtime_error(
+                    return self.contextual_throw_mode(PyException::runtime_error(
                         "current_segment_mut() returned None in apply_stream_step \
                          (Yield non-terminal)",
                     ))
@@ -1040,13 +1042,13 @@ impl VM {
             let yielded_obj = match doctrl_to_pyexpr_for_vm(&current) {
                 Ok(Some(obj)) => obj,
                 Ok(None) => continue,
-                Err(exc) => return Mode::Throw(exc),
+                Err(exc) => return self.contextual_throw_mode(exc),
             };
 
             match self.should_invoke_interceptor(&entry, &yielded_obj) {
                 Ok(true) => {}
                 Ok(false) => continue,
-                Err(exc) => return Mode::Throw(exc),
+                Err(exc) => return self.contextual_throw_mode(exc),
             }
 
             return self.start_interceptor_invocation_mode(
@@ -1098,7 +1100,7 @@ impl VM {
 
         if self.current_segment.is_none() {
             self.pop_interceptor_skip(marker);
-            return Mode::Throw(PyException::runtime_error(
+            return self.contextual_throw_mode(PyException::runtime_error(
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         }
@@ -1119,7 +1121,7 @@ impl VM {
         };
         let Some(seg) = self.current_segment_mut() else {
             self.pop_interceptor_skip(marker);
-            return Mode::Throw(PyException::runtime_error(
+            return self.contextual_throw_mode(PyException::runtime_error(
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         };
@@ -1159,7 +1161,7 @@ impl VM {
         } = continuation;
         let Value::Python(result_obj) = value else {
             self.pop_interceptor_skip(marker);
-            return Mode::Throw(PyException::type_error(
+            return self.contextual_throw_mode(PyException::type_error(
                 "WithIntercept interceptor must return DoExpr",
             ));
         };
@@ -1175,7 +1177,7 @@ impl VM {
                 Ok(expr) => expr,
                 Err(exc) => {
                     self.pop_interceptor_skip(marker);
-                    return Mode::Throw(exc);
+                    return self.contextual_throw_mode(exc);
                 }
             };
             self.pop_interceptor_skip(marker);
@@ -1192,7 +1194,7 @@ impl VM {
         if is_doexpr {
             let Some(seg) = self.current_segment_mut() else {
                 self.pop_interceptor_skip(marker);
-                return Mode::Throw(PyException::runtime_error(
+                return self.contextual_throw_mode(PyException::runtime_error(
                     "current_segment_mut() returned None while evaluating interceptor result",
                 ));
             };
@@ -1217,7 +1219,7 @@ impl VM {
         }
 
         self.pop_interceptor_skip(marker);
-        Mode::Throw(PyException::type_error(
+        self.contextual_throw_mode(PyException::type_error(
             "WithIntercept interceptor must return DoExpr",
         ))
     }
@@ -1243,7 +1245,7 @@ impl VM {
                 Ok(expr) => expr,
                 Err(exc) => {
                     self.pop_interceptor_skip(marker);
-                    return Mode::Throw(exc);
+                    return self.contextual_throw_mode(exc);
                 }
             };
         self.pop_interceptor_skip(marker);
@@ -1387,19 +1389,11 @@ impl VM {
         }
     }
 
-    fn handle_yield_resume(
-        &mut self,
-        continuation: Continuation,
-        value: Value,
-    ) -> StepEvent {
+    fn handle_yield_resume(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_resume(continuation, value)
     }
 
-    fn handle_yield_transfer(
-        &mut self,
-        continuation: Continuation,
-        value: Value,
-    ) -> StepEvent {
+    fn handle_yield_transfer(&mut self, continuation: Continuation, value: Value) -> StepEvent {
         self.handle_transfer(continuation, value)
     }
 
@@ -1475,10 +1469,7 @@ impl VM {
         self.handle_resume_continuation(continuation, value)
     }
 
-    fn handle_yield_python_async_syntax_escape(
-        &mut self,
-        action: Py<PyAny>,
-    ) -> StepEvent {
+    fn handle_yield_python_async_syntax_escape(&mut self, action: Py<PyAny>) -> StepEvent {
         self.current_seg_mut().pending_python = Some(PendingPython::AsyncEscape);
         StepEvent::NeedsPython(PythonCall::CallAsync {
             func: PyShared::new(action),
@@ -1533,7 +1524,7 @@ impl VM {
         let f_value = match f {
             DoCtrl::Pure { value } => value,
             other => {
-                self.current_seg_mut().mode = Mode::Throw(PyException::type_error(format!(
+                self.set_contextual_throw(PyException::type_error(format!(
                     "DoCtrl::Apply f must be a pure callable value, got {:?}",
                     other
                 )));
@@ -1547,7 +1538,7 @@ impl VM {
                 let args_values = Self::collect_value_args(args);
                 let kwargs_values = Self::collect_value_kwargs(kwargs);
                 if !kwargs_values.is_empty() {
-                    self.current_seg_mut().mode = Mode::Throw(PyException::type_error(
+                    self.set_contextual_throw(PyException::type_error(
                         "Kleisli apply does not support keyword arguments".to_string(),
                     ));
                     return StepEvent::Continue;
@@ -1562,7 +1553,7 @@ impl VM {
                 };
             }
             other => {
-                self.current_seg_mut().mode = Mode::Throw(PyException::type_error(format!(
+                self.set_contextual_throw(PyException::type_error(format!(
                     "DoCtrl::Apply f must be Python callable value, got {:?}",
                     other
                 )));
@@ -1625,7 +1616,7 @@ impl VM {
         let factory_value = match factory {
             DoCtrl::Pure { value } => value,
             other => {
-                self.current_seg_mut().mode = Mode::Throw(PyException::type_error(format!(
+                self.set_contextual_throw(PyException::type_error(format!(
                     "DoCtrl::Expand factory must be a pure callable value, got {:?}",
                     other
                 )));
@@ -1639,7 +1630,7 @@ impl VM {
                 let args_values = Self::collect_value_args(args);
                 let kwargs_values = Self::collect_value_kwargs(kwargs);
                 if !kwargs_values.is_empty() {
-                    self.current_seg_mut().mode = Mode::Throw(PyException::type_error(
+                    self.set_contextual_throw(PyException::type_error(
                         "Kleisli expand does not support keyword arguments".to_string(),
                     ));
                     return StepEvent::Continue;
@@ -1675,7 +1666,7 @@ impl VM {
                 };
             }
             other => {
-                self.current_seg_mut().mode = Mode::Throw(PyException::type_error(format!(
+                self.set_contextual_throw(PyException::type_error(format!(
                     "DoCtrl::Expand factory must be Python callable value, got {:?}",
                     other
                 )));
@@ -1717,11 +1708,7 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn handle_yield_eval(
-        &mut self,
-        expr: PyShared,
-        metadata: Option<CallMetadata>,
-    ) -> StepEvent {
+    fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
         let handlers = self.current_visible_handlers();
         let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
         self.handle_resume_continuation(cont, Value::None)
@@ -2044,10 +2031,11 @@ impl VM {
         {
             Some(p) => p,
             None => {
-                if let Some(seg) = self.current_segment_mut() {
-                    seg.mode = Mode::Throw(PyException::runtime_error(
+                if self.current_segment.is_some() {
+                    let mode = self.contextual_throw_mode(PyException::runtime_error(
                         "receive_python_result called with no pending_python",
                     ));
+                    self.current_seg_mut().mode = mode;
                 }
                 return;
             }
@@ -2160,11 +2148,7 @@ impl VM {
         }
     }
 
-    fn receive_expand_handler_value(
-        &mut self,
-        metadata: Option<CallMetadata>,
-        value: Value,
-    ) {
+    fn receive_expand_handler_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
         match value {
             Value::Python(handler_gen) => {
                 match Self::extract_doeff_generator(handler_gen, metadata, "ExpandReturn(handler)")
@@ -2174,7 +2158,7 @@ impl VM {
                             .current_dispatch_id()
                             .or_else(|| self.current_active_handler_dispatch_id())
                         else {
-                            self.current_seg_mut().mode = Mode::Throw(PyException::runtime_error(
+                            self.set_contextual_throw(PyException::runtime_error(
                                 "handler dispatch continuation outside dispatch",
                             ));
                             return;
@@ -2186,19 +2170,19 @@ impl VM {
                         ) {
                             StepEvent::Continue => {}
                             StepEvent::Error(err) => {
-                                self.current_seg_mut().mode =
-                                    Mode::Throw(PyException::runtime_error(err.to_string()));
+                                self.set_contextual_throw(PyException::runtime_error(
+                                    err.to_string(),
+                                ));
                             }
                             StepEvent::NeedsPython(_) | StepEvent::Done(_) => {
-                                self.current_seg_mut().mode =
-                                    Mode::Throw(PyException::runtime_error(
-                                        "unexpected StepEvent from handle_yield_ir_stream",
-                                    ));
+                                self.set_contextual_throw(PyException::runtime_error(
+                                    "unexpected StepEvent from handle_yield_ir_stream",
+                                ));
                             }
                         }
                     }
                     Err(exception) => {
-                        self.current_seg_mut().mode = Mode::Throw(exception);
+                        self.set_contextual_throw(exception);
                     }
                 }
             }
@@ -2208,17 +2192,13 @@ impl VM {
         }
     }
 
-    fn receive_expand_program_value(
-        &mut self,
-        metadata: Option<CallMetadata>,
-        value: Value,
-    ) {
+    fn receive_expand_program_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
         match self.classify_expand_result_as_doctrl(metadata, value, "ExpandReturn") {
             Ok(doctrl) => {
                 self.current_seg_mut().mode = Mode::HandleYield(doctrl);
             }
             Err(exception) => {
-                self.current_seg_mut().mode = Mode::Throw(exception);
+                self.set_contextual_throw(exception);
             }
         }
     }
@@ -2256,11 +2236,7 @@ impl VM {
         })
     }
 
-    fn receive_expand_gen_error(
-        &mut self,
-        handler_return: bool,
-        exception: PyException,
-    ) {
+    fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
         if handler_return {
             let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
                 let dispatch_id = self.current_segment_dispatch_id_any()?;
@@ -2306,7 +2282,7 @@ impl VM {
                 }
                 if handler_kind == Some(HandlerKind::Python) {
                     if let Some(exception) = Self::returned_control_primitive_exception(&value) {
-                        self.current_seg_mut().mode = Mode::Throw(exception);
+                        self.set_contextual_throw(exception);
                         return;
                     }
                 }
@@ -2398,7 +2374,7 @@ impl VM {
     }
 
     fn receive_unexpected_outcome(&mut self) {
-        self.current_seg_mut().mode = Mode::Throw(PyException::runtime_error(
+        self.set_contextual_throw(PyException::runtime_error(
             "unexpected pending/outcome combination in receive_python_result",
         ));
     }
