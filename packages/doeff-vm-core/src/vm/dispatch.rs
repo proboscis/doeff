@@ -1301,11 +1301,19 @@ impl VM {
 
         if let Some((_dispatch_id, original_exception, terminal)) = error_dispatch {
             if terminal {
-                let enriched_exception =
-                    match self.enrich_original_exception_with_context(original_exception, value) {
-                        Ok(exception) => exception,
-                        Err(effect_err) => effect_err,
-                    };
+                let active_chain = self
+                    .assemble_active_chain(Some(&original_exception))
+                    .into_iter()
+                    .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
+                    .collect();
+                let enriched_exception = match TraceState::enrich_original_exception_with_context(
+                    original_exception,
+                    value,
+                    active_chain,
+                ) {
+                    Ok(exception) => exception,
+                    Err(effect_err) => effect_err,
+                };
                 // Terminal error-context dispatches must detach from the active handler
                 // segment so normal completion does not re-pop the same DispatchOrigin.
                 let caller = self.segments.get(k.segment_id).and_then(|seg| seg.caller);

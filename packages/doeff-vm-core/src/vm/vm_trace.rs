@@ -435,19 +435,6 @@ impl VM {
         )
     }
 
-    pub(super) fn enrich_original_exception_with_context(
-        &mut self,
-        original: PyException,
-        context_value: Value,
-    ) -> Result<PyException, PyException> {
-        let active_chain = self
-            .assemble_active_chain(Some(&original))
-            .into_iter()
-            .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
-            .collect();
-        TraceState::enrich_original_exception_with_context(original, context_value, active_chain)
-    }
-
     pub fn assemble_active_chain(&mut self, exception: Option<&PyException>) -> Vec<ActiveChainEntry> {
         self.flush_trace_events();
         self.trace_state.assemble_active_chain(
