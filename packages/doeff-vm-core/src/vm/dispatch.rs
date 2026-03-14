@@ -1,10 +1,7 @@
 use super::*;
 
 impl VM {
-    fn dispatch_origin_in_segment(
-        &self,
-        seg_id: SegmentId,
-    ) -> Option<DispatchOriginView> {
+    fn dispatch_origin_in_segment(&self, seg_id: SegmentId) -> Option<DispatchOriginView> {
         let seg = self.segments.get(seg_id)?;
         seg.frames.iter().rev().find_map(|frame| match frame {
             Frame::DispatchOrigin {
@@ -255,9 +252,7 @@ impl VM {
         seg.pending_error_context = None;
     }
 
-    fn continuation_chain_contains_eval_in_scope_return(
-        continuation: &Continuation,
-    ) -> bool {
+    fn continuation_chain_contains_eval_in_scope_return(continuation: &Continuation) -> bool {
         let mut cursor = Some(continuation);
         while let Some(current) = cursor {
             if current.frames_snapshot.iter().any(|frame| {
@@ -310,10 +305,7 @@ impl VM {
             || Self::continuation_chain_contains_eval_in_scope_return(&origin.k_origin)
     }
 
-    fn materialize_vm_error_exception(
-        module_attr: &str,
-        message: &str,
-    ) -> Option<PyException> {
+    fn materialize_vm_error_exception(module_attr: &str, message: &str) -> Option<PyException> {
         Python::attach(|py| {
             for module_name in ["doeff_vm", "doeff_vm.doeff_vm"] {
                 let Ok(module) = PyModule::import(py, module_name) else {
@@ -335,10 +327,7 @@ impl VM {
         })
     }
 
-    fn recoverable_eval_in_scope_dispatch_exception(
-        &self,
-        error: &VMError,
-    ) -> Option<PyException> {
+    fn recoverable_eval_in_scope_dispatch_exception(&self, error: &VMError) -> Option<PyException> {
         if !self.is_inside_eval_in_scope_subtopology() {
             return None;
         }
@@ -366,7 +355,7 @@ impl VM {
 
     pub(super) fn dispatch_fatal_error_event(&mut self, error: VMError) -> StepEvent {
         if let Some(exception) = self.recoverable_eval_in_scope_dispatch_exception(&error) {
-            self.current_seg_mut().mode = Mode::Throw(exception);
+            self.set_contextual_internal_throw(exception);
             return StepEvent::Continue;
         }
         StepEvent::Error(error)
@@ -488,10 +477,7 @@ impl VM {
         child_seg.scope_store = source_seg.scope_store.clone();
     }
 
-    fn remap_interceptor_skip_markers(
-        seg: &mut Segment,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
+    fn remap_interceptor_skip_markers(seg: &mut Segment, marker_remap: &HashMap<Marker, Marker>) {
         if marker_remap.is_empty() {
             return;
         }
@@ -917,6 +903,30 @@ impl VM {
         //
         // Scheduler/AST-stream paths rely on strict tail handoff (Transfer) and this exclusion
         // together to keep dispatch/switch behavior bounded under heavy task churn.
+        let original_exception = self
+            .current_segment_ref()
+            .and_then(|seg| seg.pending_error_context.clone());
+        let restricted_error_context_dispatch = Self::is_execution_context_effect(&effect)
+            && original_exception
+                .as_ref()
+                .is_some_and(PyException::requires_safe_error_context_dispatch);
+        let restricted_excluded_prompts: HashSet<SegmentId> = if restricted_error_context_dispatch {
+            self.segments
+                .get(seg_id)
+                .and_then(|seg| seg.dispatch_id)
+                .and_then(|dispatch_id| {
+                    self.dispatch_origin_for_dispatch_id(dispatch_id)
+                        .map(|origin| {
+                            self.handlers_in_caller_chain(origin.k_origin.segment_id)
+                                .into_iter()
+                                .map(|entry| entry.prompt_seg_id)
+                                .collect()
+                        })
+                })
+                .unwrap_or_default()
+        } else {
+            HashSet::new()
+        };
         let exclude_prompt = self.current_handler_dispatch().and_then(
             |(active_seg_id, dispatch_id, _, active_marker, active_prompt_seg_id)| {
                 if active_seg_id != seg_id {
@@ -933,9 +943,6 @@ impl VM {
                 Some(active_prompt_seg_id)
             },
         );
-        let original_exception = self
-            .current_segment_ref()
-            .and_then(|seg| seg.pending_error_context.clone());
         let current_seg = self
             .segments
             .get(seg_id)
@@ -947,13 +954,27 @@ impl VM {
             seg.pending_error_context = None;
         }
         let mut handler_chain = self.handlers_in_caller_chain(seg_id);
+        if !restricted_excluded_prompts.is_empty() {
+            handler_chain
+                .retain(|entry| !restricted_excluded_prompts.contains(&entry.prompt_seg_id));
+        }
+        if restricted_error_context_dispatch {
+            handler_chain.retain(|entry| {
+                entry.handler.is_rust_builtin() || entry.handler.supports_error_context_conversion()
+            });
+        }
         if let Some(excluded_prompt) = exclude_prompt {
             handler_chain.retain(|entry| entry.prompt_seg_id != excluded_prompt);
         }
 
         if handler_chain.is_empty() {
             if let Some(original) = original_exception.clone() {
-                self.current_seg_mut().mode = Mode::Throw(original);
+                let exception = if restricted_error_context_dispatch {
+                    TraceState::ensure_execution_context(original)
+                } else {
+                    original
+                };
+                self.current_seg_mut().mode = Mode::Throw(exception);
                 return Ok(StepEvent::Continue);
             }
             return Err(VMError::unhandled_effect(effect));
@@ -1220,10 +1241,7 @@ impl VM {
         }
     }
 
-    fn continuation_segment_dispatch_id(
-        &mut self,
-        k: &Continuation,
-    ) -> Option<DispatchId> {
+    fn continuation_segment_dispatch_id(&mut self, k: &Continuation) -> Option<DispatchId> {
         if let Some(dispatch_id) = k.dispatch_id {
             if self.dispatch_origin_for_dispatch_id(dispatch_id).is_some() {
                 return Some(dispatch_id);
@@ -1266,11 +1284,7 @@ impl VM {
         self.current_segment = Some(exec_seg_id);
     }
 
-    fn enter_continuation_segment(
-        &mut self,
-        k: &Continuation,
-        caller: Option<SegmentId>,
-    ) {
+    fn enter_continuation_segment(&mut self, k: &Continuation, caller: Option<SegmentId>) {
         let dispatch_id = self.continuation_segment_dispatch_id(k);
         self.enter_continuation_segment_with_dispatch(k, caller, dispatch_id);
     }
@@ -1502,39 +1516,31 @@ impl VM {
             (from_name, to_info)
         {
             match kind {
-                ForwardKind::Delegate => {
-                    self.pending_trace_events.push(CaptureEvent::Delegated {
-                        dispatch_id,
-                        from_handler_name: from_name,
-                        from_handler_index: from_idx,
-                        to_handler_name: to_name,
-                        to_handler_index: to_idx,
-                        to_handler_kind: to_kind,
-                        to_handler_source_file: to_source_file,
-                        to_handler_source_line: to_source_line,
-                    })
-                }
-                ForwardKind::Pass => {
-                    self.pending_trace_events.push(CaptureEvent::Passed {
-                        dispatch_id,
-                        from_handler_name: from_name,
-                        from_handler_index: from_idx,
-                        to_handler_name: to_name,
-                        to_handler_index: to_idx,
-                        to_handler_kind: to_kind,
-                        to_handler_source_file: to_source_file,
-                        to_handler_source_line: to_source_line,
-                    })
-                }
+                ForwardKind::Delegate => self.pending_trace_events.push(CaptureEvent::Delegated {
+                    dispatch_id,
+                    from_handler_name: from_name,
+                    from_handler_index: from_idx,
+                    to_handler_name: to_name,
+                    to_handler_index: to_idx,
+                    to_handler_kind: to_kind,
+                    to_handler_source_file: to_source_file,
+                    to_handler_source_line: to_source_line,
+                }),
+                ForwardKind::Pass => self.pending_trace_events.push(CaptureEvent::Passed {
+                    dispatch_id,
+                    from_handler_name: from_name,
+                    from_handler_index: from_idx,
+                    to_handler_name: to_name,
+                    to_handler_index: to_idx,
+                    to_handler_kind: to_kind,
+                    to_handler_source_file: to_source_file,
+                    to_handler_source_line: to_source_line,
+                }),
             }
         }
     }
 
-    fn handle_forward(
-        &mut self,
-        kind: ForwardKind,
-        effect: DispatchEffect,
-    ) -> StepEvent {
+    fn handle_forward(&mut self, kind: ForwardKind, effect: DispatchEffect) -> StepEvent {
         let Some(dispatch_id) = self.current_dispatch_id() else {
             return StepEvent::Error(VMError::internal(kind.outside_dispatch_error()));
         };

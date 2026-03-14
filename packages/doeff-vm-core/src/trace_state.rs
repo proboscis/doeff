@@ -277,6 +277,20 @@ impl TraceState {
         })
     }
 
+    pub(crate) fn has_execution_context(exception: &PyException) -> bool {
+        let PyException::Materialized { exc_value, .. } = exception else {
+            return false;
+        };
+
+        Python::attach(|py| {
+            exc_value
+                .bind(py)
+                .getattr(EXECUTION_CONTEXT_ATTR)
+                .ok()
+                .is_some_and(|ctx| !ctx.is_none())
+        })
+    }
+
     fn context_entries_from_context_obj(context: &Bound<'_, PyAny>) -> Vec<Py<PyAny>> {
         if !context.is_instance_of::<PyExecutionContext>() {
             return Vec::new();
@@ -314,6 +328,17 @@ impl TraceState {
         Ok(context)
     }
 
+    fn materialize_exception(exception: &PyException) -> PyException {
+        match exception {
+            PyException::Materialized { .. } => exception.clone(),
+            PyException::RuntimeError { .. } | PyException::TypeError { .. } => {
+                Python::attach(|py| {
+                    PyException::from(exception.to_pyerr(py)).with_metadata(exception.metadata())
+                })
+            }
+        }
+    }
+
     fn attach_execution_context(exception: &PyException, context: &Py<PyAny>) {
         let PyException::Materialized { exc_value, .. } = exception else {
             return;
@@ -325,27 +350,37 @@ impl TraceState {
         });
     }
 
+    pub(crate) fn ensure_execution_context(exception: PyException) -> PyException {
+        let exception = Self::materialize_exception(&exception);
+        if Self::has_execution_context(&exception) {
+            return exception;
+        }
+
+        Python::attach(|py| {
+            match make_execution_context_object(py) {
+                Ok(context) => Self::attach_execution_context(&exception, &context),
+                Err(err) => crate::vm_warn_log!(
+                    "failed to create ExecutionContext while enriching exception context: {err}"
+                ),
+            }
+            exception
+        })
+    }
+
     pub(crate) fn enrich_original_exception_with_context(
         original: PyException,
         context_value: Value,
         active_chain: Vec<ActiveChainEntry>,
     ) -> Result<PyException, PyException> {
+        let original = Self::materialize_exception(&original);
         let Value::Python(new_context) = context_value else {
-            let err = PyException::type_error(
-                "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
-            );
-            Self::set_exception_cause(&err, &original);
-            return Err(err);
+            return Ok(original);
         };
 
         Python::attach(|py| {
             let context_bound = new_context.bind(py);
             if !context_bound.is_instance_of::<PyExecutionContext>() {
-                let err = PyException::type_error(
-                    "GetExecutionContext handlers must Resume with ExecutionContext".to_string(),
-                );
-                Self::set_exception_cause(&err, &original);
-                return Err(err);
+                return Ok(original);
             }
 
             let mut merged_entries = Self::context_entries_from_context_obj(context_bound);
@@ -358,13 +393,7 @@ impl TraceState {
                 Some(&active_chain),
             ) {
                 Ok(context) => context,
-                Err(err) => {
-                    let err = PyException::runtime_error(format!(
-                        "failed to merge ExecutionContext entries: {err}"
-                    ));
-                    Self::set_exception_cause(&err, &original);
-                    return Err(err);
-                }
+                Err(_) => return Ok(original),
             };
 
             Self::attach_execution_context(&original, &merged_context);
@@ -378,6 +407,7 @@ impl TraceState {
                 exc_type: _exc_type,
                 exc_value,
                 exc_tb,
+                ..
             } => Python::attach(|py| {
                 let exc_value_bound = exc_value.bind(py);
 
@@ -402,9 +432,7 @@ impl TraceState {
                         if let Ok(Some((resolved_function, resolved_file, resolved_line))) =
                             resolve_location
                                 .call1((exc_value_bound.clone(),))
-                                .and_then(|value| {
-                                    value.extract::<Option<(String, String, u32)>>()
-                                })
+                                .and_then(|value| value.extract::<Option<(String, String, u32)>>())
                         {
                             function_name = resolved_function;
                             source_file = resolved_file;
@@ -459,14 +487,14 @@ impl TraceState {
                     message,
                 }
             }),
-            PyException::RuntimeError { message } => ActiveChainEntry::ExceptionSite {
+            PyException::RuntimeError { message, .. } => ActiveChainEntry::ExceptionSite {
                 function_name: "<runtime>".to_string(),
                 source_file: "<runtime>".to_string(),
                 source_line: 0,
                 exception_type: "RuntimeError".to_string(),
                 message: message.clone(),
             },
-            PyException::TypeError { message } => ActiveChainEntry::ExceptionSite {
+            PyException::TypeError { message, .. } => ActiveChainEntry::ExceptionSite {
                 function_name: "<runtime>".to_string(),
                 source_file: "<runtime>".to_string(),
                 source_line: 0,
@@ -590,6 +618,7 @@ impl TraceState {
                 exc_type: _,
                 exc_value,
                 exc_tb: _,
+                ..
             } => Python::attach(|py| {
                 exc_value
                     .bind(py)
@@ -597,8 +626,8 @@ impl TraceState {
                     .map(|v| v.to_string())
                     .unwrap_or_else(|_| MISSING_EXCEPTION.to_string())
             }),
-            PyException::RuntimeError { message } => format!("RuntimeError({message:?})"),
-            PyException::TypeError { message } => format!("TypeError({message:?})"),
+            PyException::RuntimeError { message, .. } => format!("RuntimeError({message:?})"),
+            PyException::TypeError { message, .. } => format!("TypeError({message:?})"),
         }
     }
 
@@ -1072,9 +1101,9 @@ impl TraceState {
             .rev()
             .find(|ctx| ctx.dispatch_id == dispatch_id)
             .map(|dispatch_ctx| {
-                    dispatch_ctx
-                        .continuation
-                        .frames_snapshot
+                dispatch_ctx
+                    .continuation
+                    .frames_snapshot
                     .iter()
                     .filter_map(|frame| {
                         let Frame::Program {
