@@ -480,8 +480,17 @@ impl VM {
         match mode {
             Mode::Deliver(value) => {
                 if let Some(original) = k_origin.pending_error_context {
+                    let active_chain = self
+                        .assemble_active_chain(Some(&original))
+                        .into_iter()
+                        .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
+                        .collect();
                     self.current_seg_mut().mode =
-                        match self.enrich_original_exception_with_context(original, value) {
+                        match TraceState::enrich_original_exception_with_context(
+                            original,
+                            value,
+                            active_chain,
+                        ) {
                             Ok(exception) => Mode::Throw(exception),
                             Err(effect_err) => Mode::Throw(effect_err),
                         };
