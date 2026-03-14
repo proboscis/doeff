@@ -14,8 +14,6 @@ use pyo3::types::{PyDict, PyTuple};
 use crate::capture::{SpawnSite, TraceHop};
 use crate::continuation::Continuation;
 use crate::doeff_generator::DoeffGeneratorFn;
-#[cfg(test)]
-use crate::effect::Effect;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
@@ -3253,6 +3251,7 @@ impl IRStreamFactory for SchedulerHandler {
 mod tests {
     use super::*;
     use crate::capture::TraceFrame;
+    use crate::effect::Effect;
     use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::pyvm::{DoExprTag, PyEffectBase};
     use pyo3::types::PyDict;
@@ -3272,6 +3271,10 @@ mod tests {
         let mut cont = make_test_continuation();
         cont.started = false;
         cont
+    }
+
+    fn dispatch(effect: Effect) -> DispatchEffect {
+        effect.into_dispatch()
     }
 
     fn make_promise_object(py: Python<'_>, promise_id: PromiseId) -> Py<PyAny> {
@@ -3297,22 +3300,16 @@ mod tests {
             .into_any()
     }
 
-    fn make_semaphore_object(py: Python<'_>, semaphore_id: u64) -> Py<PyAny> {
-        let types_mod = py
-            .import("types")
-            .expect("failed to import Python types module");
-        let namespace = types_mod
-            .getattr("SimpleNamespace")
-            .expect("types.SimpleNamespace must exist");
-        let kwargs = PyDict::new(py);
-        kwargs
-            .set_item("id", semaphore_id)
-            .expect("namespace should accept semaphore id");
-        namespace
-            .call((), Some(&kwargs))
-            .expect("failed to construct semaphore-like object")
-            .unbind()
-            .into_any()
+    fn make_semaphore_object(py: Python<'_>, semaphore_id: u64, state_id: u64) -> Py<PyAny> {
+        Py::new(
+            py,
+            crate::effect::PySemaphore {
+                id: semaphore_id,
+                state_id,
+            },
+        )
+        .expect("failed to construct semaphore handle")
+        .into_any()
     }
 
     fn make_complete_promise_effect(
@@ -3411,9 +3408,7 @@ mod tests {
                 exception: PyException::runtime_error("boom".to_string()),
             }),
             IRStreamStep::Yield(DoCtrl::Pass {
-                effect: Effect::Get {
-                    key: "k".to_string(),
-                },
+                effect: dispatch(Effect::get("k")),
             }),
         ];
         for step in terminal_steps {
@@ -3424,9 +3419,7 @@ mod tests {
             let expr = PyShared::new(py.None());
             let non_terminal_steps = vec![
                 IRStreamStep::Yield(DoCtrl::Delegate {
-                    effect: Effect::Get {
-                        key: "k".to_string(),
-                    },
+                    effect: dispatch(Effect::get("k")),
                 }),
                 IRStreamStep::Yield(DoCtrl::Resume {
                     continuation: cont.clone(),
@@ -4836,13 +4829,7 @@ mod tests {
     #[test]
     fn test_scheduler_handler_can_handle() {
         let handler = SchedulerHandler::new();
-        assert!(!IRStreamFactory::can_handle(
-            &handler,
-            &Effect::Get {
-                key: "x".to_string()
-            }
-        )
-        .unwrap());
+        assert!(!IRStreamFactory::can_handle(&handler, &dispatch(Effect::get("x"))).unwrap());
     }
 
     #[test]
@@ -4937,9 +4924,10 @@ mod tests {
             let runnable_k = make_test_continuation();
             let driver_k = make_test_continuation();
 
-            let (semaphore_id, waiting_task, runnable_task) = {
+            let (semaphore_id, state_id, waiting_task, runnable_task) = {
                 let mut guard = state.lock().expect("Scheduler lock poisoned");
                 let semaphore_id = guard.create_semaphore(1);
+                let state_id = guard.state_id();
 
                 let holder_task = guard.alloc_task_id();
                 guard.tasks.insert(
@@ -4984,7 +4972,7 @@ mod tests {
                 guard.enqueue_ready_task(runnable_task, PRIORITY_NORMAL);
                 guard.current_task = Some(waiting_task);
 
-                (semaphore_id, waiting_task, runnable_task)
+                (semaphore_id, state_id, waiting_task, runnable_task)
             };
 
             program.phase = SchedulerPhase::Driving {
@@ -4997,7 +4985,10 @@ mod tests {
             let step = IRStreamProgram::start(
                 &mut program,
                 py,
-                make_acquire_semaphore_effect(py, make_semaphore_object(py, semaphore_id)),
+                make_acquire_semaphore_effect(
+                    py,
+                    make_semaphore_object(py, semaphore_id, state_id),
+                ),
                 driver_k,
                 &mut store,
                 &mut _scope,

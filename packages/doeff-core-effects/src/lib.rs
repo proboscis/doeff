@@ -63,8 +63,10 @@ pub mod effect {
 }
 
 pub mod handler {
-    pub use doeff_vm_core::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
     pub use crate::handlers::*;
+    pub use doeff_vm_core::{
+        IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef,
+    };
 }
 
 pub fn register_all(m: &pyo3::Bound<'_, pyo3::types::PyModule>) -> pyo3::PyResult<()> {
