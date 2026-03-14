@@ -3,8 +3,8 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
+use crate::do_ctrl::DoExprTag;
 use crate::py_shared::PyShared;
-use crate::pyvm::DoExprTag;
 
 #[derive(Debug, Clone)]
 pub struct Effect(pub PyShared);
