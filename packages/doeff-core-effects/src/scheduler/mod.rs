@@ -1369,6 +1369,11 @@ impl SchedulerState {
             return false;
         };
 
+        // Cancellation for an already-started suspended task is cooperative:
+        // inject TaskCancelledError and resume the task so user cleanup
+        // (try/finally) runs before final removal. This applies to every
+        // cancellation path, including user-facing CancelTask, not just
+        // Gather fail-fast sibling cancellation.
         *resume_outcome = Some(Err(task_cancelled_error()));
         *pending_log_merge_items = None;
         self.enqueue_ready_task(task_id, priority);
