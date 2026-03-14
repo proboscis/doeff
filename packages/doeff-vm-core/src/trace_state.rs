@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use pyo3::prelude::*;
-
 use crate::arena::SegmentArena;
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
@@ -301,11 +300,16 @@ impl TraceState {
     fn build_execution_context_from_entries(
         py: Python<'_>,
         entries: &[Py<PyAny>],
+        active_chain: Option<&[ActiveChainEntry]>,
     ) -> PyResult<Py<PyAny>> {
         let context = make_execution_context_object(py)?;
-        let add = context.bind(py).getattr("add")?;
+        let mut context_ref = context.bind(py).extract::<PyRefMut<'_, PyExecutionContext>>()?;
         for entry in entries {
-            add.call1((entry.clone_ref(py),))?;
+            context_ref.add(py, entry.clone_ref(py))?;
+        }
+        if let Some(active_chain) = active_chain {
+            let active_chain_tuple = Value::active_chain_to_pytuple(py, active_chain)?;
+            context_ref.set_active_chain(Some(active_chain_tuple.into_any().unbind()));
         }
         Ok(context)
     }
@@ -324,6 +328,7 @@ impl TraceState {
     pub(crate) fn enrich_original_exception_with_context(
         original: PyException,
         context_value: Value,
+        active_chain: Vec<ActiveChainEntry>,
     ) -> Result<PyException, PyException> {
         let Value::Python(new_context) = context_value else {
             let err = PyException::type_error(
@@ -347,17 +352,20 @@ impl TraceState {
             let existing_entries = Self::context_entries_from_exception(&original);
             merged_entries.extend(existing_entries);
 
-            let merged_context =
-                match Self::build_execution_context_from_entries(py, &merged_entries) {
-                    Ok(context) => context,
-                    Err(err) => {
-                        let err = PyException::runtime_error(format!(
-                            "failed to merge ExecutionContext entries: {err}"
-                        ));
-                        Self::set_exception_cause(&err, &original);
-                        return Err(err);
-                    }
-                };
+            let merged_context = match Self::build_execution_context_from_entries(
+                py,
+                &merged_entries,
+                Some(&active_chain),
+            ) {
+                Ok(context) => context,
+                Err(err) => {
+                    let err = PyException::runtime_error(format!(
+                        "failed to merge ExecutionContext entries: {err}"
+                    ));
+                    Self::set_exception_cause(&err, &original);
+                    return Err(err);
+                }
+            };
 
             Self::attach_execution_context(&original, &merged_context);
             Ok(original)
