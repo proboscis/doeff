@@ -25,10 +25,7 @@ impl VM {
         })
     }
 
-    fn dispatch_origin_in_segment(
-        &self,
-        seg_id: SegmentId,
-    ) -> Option<DispatchOriginView> {
+    fn dispatch_origin_in_segment(&self, seg_id: SegmentId) -> Option<DispatchOriginView> {
         self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, effect, k_origin| {
             Some(DispatchOriginView {
                 dispatch_id,
@@ -72,7 +69,8 @@ impl VM {
         let mut callers = Vec::new();
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
-            if let Some((dispatch_id, caller_seg_id)) = self.dispatch_origin_caller_in_segment(seg_id)
+            if let Some((dispatch_id, caller_seg_id)) =
+                self.dispatch_origin_caller_in_segment(seg_id)
             {
                 if seen.insert(dispatch_id) {
                     callers.push((dispatch_id, caller_seg_id));
@@ -94,12 +92,11 @@ impl VM {
     ) -> Option<SegmentId> {
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
-            if let Some(user_seg_id) = self.dispatch_origin_in_segment_by(
-                seg_id,
-                |frame_dispatch_id, _, k_origin| {
+            if let Some(user_seg_id) =
+                self.dispatch_origin_in_segment_by(seg_id, |frame_dispatch_id, _, k_origin| {
                     (frame_dispatch_id == dispatch_id).then_some(k_origin.segment_id)
-                },
-            ) {
+                })
+            {
                 return Some(user_seg_id);
             }
             cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
@@ -1058,11 +1055,9 @@ impl VM {
                 ..
             } = &seg.kind
             {
-                let restricted_excluded =
-                    restricted_excluded_prompts.contains(&cursor_id);
+                let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
                 let restricted_handler_blocked = restricted_error_context_dispatch
-                    && !(handler.is_rust_builtin()
-                        || handler.supports_error_context_conversion());
+                    && !(handler.is_rust_builtin() || handler.supports_error_context_conversion());
                 if Some(cursor_id) != exclude_prompt
                     && !restricted_excluded
                     && !restricted_handler_blocked
@@ -1093,12 +1088,8 @@ impl VM {
                                 ));
                             }
                         } else if first_type_filtered_skip.is_none() {
-                            first_type_filtered_skip = Some((
-                                handler_count,
-                                *handled_marker,
-                                cursor_id,
-                                handler.clone(),
-                            ));
+                            first_type_filtered_skip =
+                                Some((handler_count, *handled_marker, cursor_id, handler.clone()));
                         }
                     }
 

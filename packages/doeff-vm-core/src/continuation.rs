@@ -14,6 +14,24 @@ use crate::segment::{ScopeStore, Segment};
 use crate::step::{Mode, PendingPython, PyException};
 use crate::value::Value;
 
+#[pyclass(name = "K")]
+pub struct PyK {
+    pub cont_id: ContId,
+}
+
+impl PyK {
+    pub fn from_cont_id(cont_id: ContId) -> Self {
+        Self { cont_id }
+    }
+}
+
+#[pymethods]
+impl PyK {
+    fn __repr__(&self) -> String {
+        format!("K({})", self.cont_id.raw())
+    }
+}
+
 /// Capturable continuation with frozen frame snapshot.
 ///
 /// Contains Arc snapshots of frames at capture time.

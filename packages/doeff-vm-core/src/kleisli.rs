@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
 use crate::continuation::Continuation;
+use crate::continuation::PyK;
 use crate::do_ctrl::DoCtrl;
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{dispatch_from_shared, DispatchEffect};
@@ -15,7 +16,6 @@ use crate::frame::CallMetadata;
 use crate::handler::{IRStreamFactoryRef, IRStreamProgramRef};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::py_shared::PyShared;
-use crate::pyvm::PyK;
 use crate::segment::ScopeStore;
 use crate::value::Value;
 use crate::vm::RustStore;

@@ -6,13 +6,14 @@ use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
 use crate::do_ctrl::InterceptMode;
+use crate::do_ctrl::PyDoExprBase;
 use crate::doeff_generator::DoeffGenerator;
+use crate::effect::PyEffectBase;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::ids::{Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
-use crate::pyvm::{PyDoExprBase, PyEffectBase};
 use crate::segment::{Segment, SegmentKind};
 use crate::vm::InterceptorEntry;
 
