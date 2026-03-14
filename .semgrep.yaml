@@ -2677,3 +2677,24 @@ rules:
         - "**/packages/doeff-vm-core/src/vm.rs"
         - "**/packages/doeff-vm-core/src/vm/*.rs"
     pattern-regex: 'prompt_seg\.push_frame\(Frame::DispatchOrigin|fn remove_dispatch_origin\b|dispatch_origin_segments\b'
+
+  - id: vm-no-mutating-exception-enrichment-wrapper
+    languages: [rust]
+    severity: ERROR
+    message: |
+      ISSUE-313: Exception enrichment must remain a pure TraceState operation.
+      Do not reintroduce a `&mut self` VM wrapper that assembles active_chain
+      and flushes pending trace events as a side effect. Callers must assemble
+      and filter the active chain explicitly, then pass it to
+      TraceState::enrich_original_exception_with_context.
+    paths:
+      include:
+        - "/packages/doeff-vm-core/src/vm/vm_trace.rs"
+    pattern: |
+      fn enrich_original_exception_with_context(
+          &mut self,
+          $ORIGINAL: $ORIGINAL_T,
+          $CONTEXT_VALUE: $CONTEXT_T,
+      ) -> $RET {
+          ...
+      }
