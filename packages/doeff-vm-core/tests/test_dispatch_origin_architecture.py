@@ -26,6 +26,26 @@ def _vm_runtime_source() -> str:
     )
 
 
+def _function_block(source: str, signature: str) -> str:
+    start = source.find(signature)
+    assert start != -1, f"missing function signature: {signature}"
+
+    brace = source.find("{", start)
+    assert brace != -1, f"missing opening brace for function: {signature}"
+
+    depth = 0
+    for index in range(brace, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+
+    raise AssertionError(f"unterminated function block: {signature}")
+
+
 def test_frame_dispatch_origin_is_runtime_dispatch_anchor() -> None:
     source = _runtime_source(FRAME_RS)
     assert "DispatchOrigin {" in source, (
@@ -87,3 +107,36 @@ def test_vm_runtime_has_no_parent_chain_completion_inference() -> None:
     )
     for needle in banned:
         assert needle not in source, f"dispatch completion/routing must not depend on `{needle}`"
+
+
+def test_current_interceptor_chain_hot_path_skips_dispatch_origin_view_materialization() -> None:
+    source = _runtime_source(VM_STEP_RS)
+    block = _function_block(source, "fn current_interceptor_chain(&self) -> Vec<Marker>")
+
+    assert "dispatch_origins()" not in block, (
+        "current_interceptor_chain is on the step-loop hot path and should collect dispatch-origin "
+        "caller segments directly instead of materializing/sorting DispatchOriginView values."
+    )
+
+
+def test_current_handler_identity_hot_path_skips_full_handler_chain_materialization() -> None:
+    source = _runtime_source(VM_TRACE_RS)
+    block = _function_block(source, "pub(super) fn current_handler_identity_for_dispatch(")
+
+    assert "handlers_in_caller_chain(" not in block, (
+        "current_handler_identity_for_dispatch should walk to the needed handler index directly "
+        "instead of allocating/cloning the whole caller-chain handler list."
+    )
+
+
+def test_start_dispatch_hot_path_skips_full_handler_chain_materialization() -> None:
+    source = _runtime_source(VM_DISPATCH_RS)
+    block = _function_block(
+        source,
+        "pub fn start_dispatch(&mut self, effect: DispatchEffect) -> Result<StepEvent, VMError>",
+    )
+
+    assert "handlers_in_caller_chain(seg_id)" not in block, (
+        "start_dispatch is on the effect-dispatch hot path and should not pre-materialize full "
+        "HandlerChainEntry vectors before selection/snapshot derivation."
+    )
