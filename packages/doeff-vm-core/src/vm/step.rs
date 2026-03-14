@@ -481,7 +481,7 @@ impl VM {
             Mode::Deliver(value) => {
                 if let Some(original) = k_origin.pending_error_context {
                     self.current_seg_mut().mode =
-                        match Self::enrich_original_exception_with_context(original, value) {
+                        match self.enrich_original_exception_with_context(original, value) {
                             Ok(exception) => Mode::Throw(exception),
                             Err(effect_err) => Mode::Throw(effect_err),
                         };

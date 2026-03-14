@@ -3,7 +3,7 @@
 //! Values can be either Rust-native (for optimization) or Python objects.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyList, PyString};
+use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
 
 use crate::capture::{
     ActiveChainEntry, DispatchAction, EffectResult, HandlerDispatchEntry, HandlerKind,
@@ -341,6 +341,17 @@ impl Value {
             }
         }
         Ok(dict.into_any())
+    }
+
+    pub fn active_chain_to_pytuple<'py>(
+        py: Python<'py>,
+        entries: &[ActiveChainEntry],
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        let items = entries
+            .iter()
+            .map(|entry| Self::active_chain_entry_to_pyobject(py, entry).map(|obj| obj.unbind()))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, items)
     }
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
