@@ -3,8 +3,6 @@
 use std::collections::HashMap;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyTuple};
-
 use crate::arena::SegmentArena;
 use crate::capture::{
     ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
@@ -310,9 +308,7 @@ impl TraceState {
             context_ref.add(py, entry.clone_ref(py))?;
         }
         if let Some(active_chain) = active_chain {
-            let active_chain_obj = Value::ActiveChain(active_chain.to_vec()).to_pyobject(py)?;
-            let active_chain_list = active_chain_obj.cast::<PyList>()?;
-            let active_chain_tuple = PyTuple::new(py, active_chain_list.iter())?;
+            let active_chain_tuple = Value::active_chain_to_pytuple(py, active_chain)?;
             context_ref.set_active_chain(Some(active_chain_tuple.into_any().unbind()));
         }
         Ok(context)
@@ -355,17 +351,11 @@ impl TraceState {
             let mut merged_entries = Self::context_entries_from_context_obj(context_bound);
             let existing_entries = Self::context_entries_from_exception(&original);
             merged_entries.extend(existing_entries);
-            let mut merged_active_chain = active_chain;
-            for entry in &merged_entries {
-                merged_active_chain.push(ActiveChainEntry::ContextEntry {
-                    data: entry.clone_ref(py),
-                });
-            }
 
             let merged_context = match Self::build_execution_context_from_entries(
                 py,
                 &merged_entries,
-                Some(&merged_active_chain),
+                Some(&active_chain),
             ) {
                 Ok(context) => context,
                 Err(err) => {
