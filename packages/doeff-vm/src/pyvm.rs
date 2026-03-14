@@ -18,7 +18,7 @@ use crate::effect::{
 };
 
 use crate::error::VMError;
-use crate::frame::{CallMetadata, EvalReturnContinuation, Frame};
+use crate::frame::CallMetadata;
 use crate::ids::Marker;
 use crate::ir_stream::{IRStream, PythonGeneratorStream};
 use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli};
@@ -1808,7 +1808,7 @@ pub(crate) fn classify_yielded_bound(
             0,
             None,
             Some(PyShared::new(obj.clone().unbind())),
-            false,
+            vm_has_nearby_programlike_auto_unwrap(vm),
         );
         return classify_doeff_generator_as_irstream(
             py,
@@ -1856,78 +1856,15 @@ fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
     Ok(PyException::new(exc_type, exc_value, exc_tb))
 }
 
-fn maybe_programlike_auto_unwrap_hint(vm: &VM, obj: &Bound<'_, PyAny>) -> Option<&'static str> {
-    let looks_like_resolved_program_value = obj.is_none()
-        || obj.extract::<bool>().is_ok()
-        || obj.extract::<i64>().is_ok()
-        || obj.extract::<f64>().is_ok()
-        || obj.extract::<String>().is_ok()
-        || obj.is_instance_of::<PyList>()
-        || obj.is_instance_of::<PyTuple>()
-        || obj.is_instance_of::<PyDict>()
-        || obj.is_instance_of::<PyResultOk>()
-        || obj.is_instance_of::<PyResultErr>();
-
-    (looks_like_resolved_program_value
-        && (vm_has_nearby_programlike_auto_unwrap(vm)
-            || vm.matches_auto_unwrapped_programlike_value(obj)))
-    .then_some(
+fn maybe_programlike_auto_unwrap_hint(vm: &VM, _obj: &Bound<'_, PyAny>) -> Option<&'static str> {
+    vm_has_nearby_programlike_auto_unwrap(vm).then_some(
         "Hint: this may be a resolved ProgramLike value. If you passed a Program or Effect to a \
 @do function, ensure the parameter is annotated as ProgramLike (not Any) to prevent auto-unwrapping.",
     )
 }
 
 fn vm_has_nearby_programlike_auto_unwrap(vm: &VM) -> bool {
-    let mut seg_id = vm.current_segment;
-    while let Some(id) = seg_id {
-        let Some(seg) = vm.segments.get(id) else {
-            break;
-        };
-        for frame in seg.frames.iter().rev() {
-            match frame {
-                Frame::Program {
-                    metadata: Some(metadata),
-                    ..
-                } if metadata.auto_unwrap_programlike => return true,
-                Frame::Program { .. } => {}
-                Frame::InterceptorApply(continuation) | Frame::InterceptorEval(continuation) => {
-                    if continuation
-                        .emitter_metadata
-                        .as_ref()
-                        .is_some_and(|metadata| metadata.auto_unwrap_programlike)
-                        || continuation
-                            .interceptor_metadata
-                            .as_ref()
-                            .is_some_and(|metadata| metadata.auto_unwrap_programlike)
-                    {
-                        return true;
-                    }
-                }
-                Frame::EvalReturn(continuation) => match continuation.as_ref() {
-                    EvalReturnContinuation::ApplyResolveFunction { metadata, .. }
-                    | EvalReturnContinuation::ApplyResolveArg { metadata, .. }
-                    | EvalReturnContinuation::ApplyResolveKwarg { metadata, .. }
-                    | EvalReturnContinuation::ExpandResolveFactory { metadata, .. }
-                    | EvalReturnContinuation::ExpandResolveArg { metadata, .. }
-                    | EvalReturnContinuation::ExpandResolveKwarg { metadata, .. }
-                        if metadata.auto_unwrap_programlike =>
-                    {
-                        return true;
-                    }
-                    EvalReturnContinuation::EvalInScopeReturn { .. } => {}
-                    _ => {}
-                },
-                Frame::HandlerDispatch { .. }
-                | Frame::DispatchOrigin { .. }
-                | Frame::MapReturn { .. }
-                | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => {}
-            }
-        }
-        seg_id = seg.caller;
-    }
-    false
+    vm.has_nearby_auto_unwrap_programlike()
 }
 
 fn default_discontinued_exception(py: Python<'_>) -> PyResult<Py<PyAny>> {
