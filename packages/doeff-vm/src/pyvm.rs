@@ -809,10 +809,10 @@ impl PyVM {
                 let exc_obj = exc.value_clone_ref(py);
                 let exc_bound = exc_obj.bind(py);
                 match gen.bind(py).call_method1("throw", (exc_bound,)) {
-                    Ok(yielded) => {
-                        let classified = self.classify_yielded(py, &yielded)?;
-                        Ok(PyCallOutcome::GenYield(classified))
-                    }
+                    Ok(yielded) => match self.classify_yielded(py, &yielded) {
+                        Ok(classified) => Ok(PyCallOutcome::GenYield(classified)),
+                        Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
+                    },
                     Err(e) if e.is_instance_of::<PyStopIteration>(py) => {
                         let return_value = extract_stop_iteration_value(py, &e)?;
                         Ok(PyCallOutcome::GenReturn(return_value))
@@ -869,10 +869,10 @@ impl PyVM {
         };
 
         match result {
-            Ok(yielded) => {
-                let classified = self.classify_yielded(py, &yielded)?;
-                Ok(PyCallOutcome::GenYield(classified))
-            }
+            Ok(yielded) => match self.classify_yielded(py, &yielded) {
+                Ok(classified) => Ok(PyCallOutcome::GenYield(classified)),
+                Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
+            },
             Err(e) if e.is_instance_of::<PyStopIteration>(py) => {
                 let return_value = extract_stop_iteration_value(py, &e)?;
                 Ok(PyCallOutcome::GenReturn(return_value))

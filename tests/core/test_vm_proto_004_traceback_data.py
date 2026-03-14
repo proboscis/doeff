@@ -36,3 +36,17 @@ def test_run_result_exposes_typed_traceback_data_without_exception_dunders() -> 
     assert isinstance(error, ValueError)
     assert not hasattr(error, "__doeff_traceback_data__")
     assert not hasattr(error, "__doeff_traceback__")
+
+
+def test_invalid_top_level_yield_returns_err_run_result_with_traceback_data() -> None:
+    @do
+    def body() -> Program[object]:
+        yield object()
+        return "unreachable"
+
+    result = run(body(), handlers=default_handlers())
+
+    assert result.is_err()
+    assert isinstance(result.error, TypeError)
+    assert str(result.error) == "yielded value must be EffectBase or DoExpr"
+    assert result.traceback_data is not None
