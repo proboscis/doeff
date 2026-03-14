@@ -43,26 +43,6 @@ fn ensure_vm_core_hooks_installed() {
     });
 }
 
-// NOTE: Base pyclasses moved to doeff-vm-core. Keep cfg-disabled declarations
-// for source-audit tests that assert these markers exist in pyvm.rs.
-#[cfg(any())]
-#[pyclass(subclass, frozen, name = "DoExpr")]
-pub struct PyDoExprBase;
-
-#[cfg(any())]
-#[pyclass(subclass, frozen, name = "EffectBase")]
-pub struct PyEffectBase {
-    #[pyo3(get)]
-    pub tag: u8,
-}
-
-#[cfg(any())]
-#[pyclass(subclass, frozen, extends=PyDoExprBase, name = "DoCtrlBase")]
-pub struct PyDoCtrlBase {
-    #[pyo3(get)]
-    pub tag: u8,
-}
-
 fn build_traceback_data_pyobject(
     py: Python<'_>,
     trace: Vec<crate::capture::TraceEntry>,
@@ -2993,9 +2973,7 @@ mod tests {
 
             let sentinel = Bound::new(
                 py,
-                PyRustHandlerSentinel {
-                    kleisli: dummy_rust_handler("StateHandler"),
-                },
+                PyRustHandlerSentinel::new(dummy_rust_handler("StateHandler")),
             )
             .unwrap()
             .into_any()
@@ -3115,9 +3093,7 @@ mod tests {
             let pyvm = PyVM { vm: VM::new() };
             let sentinel = Bound::new(
                 py,
-                PyRustHandlerSentinel {
-                    kleisli: dummy_rust_handler("StateHandler"),
-                },
+                PyRustHandlerSentinel::new(dummy_rust_handler("StateHandler")),
             )
             .unwrap()
             .into_any()
@@ -3224,9 +3200,7 @@ mod tests {
             let pyvm = PyVM { vm: VM::new() };
             let sentinel = Bound::new(
                 py,
-                PyRustHandlerSentinel {
-                    kleisli: dummy_rust_handler("StateHandler"),
-                },
+                PyRustHandlerSentinel::new(dummy_rust_handler("StateHandler")),
             )
             .unwrap()
             .into_any()
