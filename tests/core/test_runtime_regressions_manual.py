@@ -309,7 +309,9 @@ def test_eval_expr_errors_reenter_try_except() -> None:
 
     result = run(program(), handlers=default_handlers())
     assert result.is_ok()
-    assert result.value == ("caught", "TypeError", "yielded value must be EffectBase or DoExpr")
+    assert result.value[0:2] == ("caught", "TypeError")
+    assert result.value[2].startswith("yielded value must be EffectBase or DoExpr, got ")
+    assert "(type: object)" in result.value[2]
 
 
 def test_async_escape_errors_reenter_try_except_in_sync_run() -> None:
