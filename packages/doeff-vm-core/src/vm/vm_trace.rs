@@ -116,7 +116,7 @@ impl VM {
             }),
             args: vec![
                 DoCtrl::Pure {
-                    value: Value::Python(effect_obj),
+                    value: Value::Python(PyShared::new(effect_obj)),
                 },
                 DoCtrl::Pure {
                     value: Value::Continuation(continuation),
@@ -440,7 +440,10 @@ impl VM {
         )
     }
 
-    pub fn assemble_active_chain(&mut self, exception: Option<&PyException>) -> Vec<ActiveChainEntry> {
+    pub fn assemble_active_chain(
+        &mut self,
+        exception: Option<&PyException>,
+    ) -> Vec<ActiveChainEntry> {
         self.flush_trace_events();
         self.trace_state.assemble_active_chain(
             exception,

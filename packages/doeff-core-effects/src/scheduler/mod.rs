@@ -916,7 +916,7 @@ fn make_python_semaphore_value(semaphore_id: u64, state_id: u64) -> Result<Value
                 ))
             })?
             .into_any();
-        Ok(Value::Python(semaphore.unbind()))
+        Ok(Value::Python(PyShared::new(semaphore.unbind())))
     })
 }
 
@@ -2515,7 +2515,7 @@ impl SchedulerProgram {
                 }
             }
 
-            resume_to_continuation(k_user, Value::Python(context))
+            resume_to_continuation(k_user, Value::Python(PyShared::new(context)))
         })
     }
 

@@ -155,6 +155,28 @@ impl Segment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyo3::Python;
+
+    use crate::do_ctrl::DoCtrl;
+    use crate::error::VMError;
+    use crate::kleisli::{Kleisli, KleisliDebugInfo};
+
+    #[derive(Debug)]
+    struct DummyKleisli;
+
+    impl Kleisli for DummyKleisli {
+        fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+            unreachable!("test dummy should never be invoked")
+        }
+
+        fn debug_info(&self) -> KleisliDebugInfo {
+            KleisliDebugInfo {
+                name: "DummyKleisli".to_string(),
+                file: None,
+                line: None,
+            }
+        }
+    }
 
     #[test]
     fn test_segment_creation() {
@@ -170,16 +192,7 @@ mod tests {
     fn test_prompt_segment_creation() {
         let marker = Marker::fresh();
         let handled = Marker::fresh();
-        let seg = Segment::new_prompt(
-            marker,
-            None,
-            handled,
-            std::sync::Arc::new(crate::kleisli::RustKleisli::new(
-                std::sync::Arc::new(crate::handler::StateHandlerFactory),
-                "StateHandler".to_string(),
-            )),
-            None,
-        );
+        let seg = Segment::new_prompt(marker, None, handled, std::sync::Arc::new(DummyKleisli));
         assert!(seg.is_prompt_boundary());
         assert_eq!(seg.handled_marker(), Some(handled));
     }
@@ -188,8 +201,11 @@ mod tests {
     fn test_segment_frame_push_pop_o1() {
         let marker = Marker::fresh();
         let mut seg = Segment::new(marker, None);
-        let continuation =
-            crate::continuation::Continuation::capture(&Segment::new(marker, None), SegmentId::from_index(0), None);
+        let continuation = crate::continuation::Continuation::capture(
+            &Segment::new(marker, None),
+            SegmentId::from_index(0),
+            None,
+        );
 
         seg.push_frame(Frame::FlatMapBindResult);
         seg.push_frame(Frame::HandlerDispatch {

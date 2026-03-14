@@ -22,8 +22,6 @@ use crate::effect::{
     dispatch_ref_as_python, dispatch_to_pyobject, make_get_execution_context_effect,
     DispatchEffect, PyExecutionContext, PyGetExecutionContext,
 };
-#[cfg(test)]
-use crate::effect::{Effect, PySpawn};
 use crate::error::VMError;
 use crate::frame::{CallMetadata, EvalReturnContinuation, Frame, InterceptorContinuation};
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};

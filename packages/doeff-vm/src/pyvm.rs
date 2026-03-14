@@ -1765,7 +1765,7 @@ pub(crate) fn classify_yielded_bound(
             DoExprTag::AsyncEscape => {
                 let ae: PyRef<'_, PyAsyncEscape> = obj.extract()?;
                 Ok(DoCtrl::PythonAsyncSyntaxEscape {
-                    action: ae.action.clone_ref(py),
+                    action: PyShared::new(ae.action.clone_ref(py)),
                 })
             }
             DoExprTag::Effect | DoExprTag::Unknown => Err(PyTypeError::new_err(
@@ -3781,7 +3781,7 @@ mod tests {
             let inner_f = py.eval(c"lambda: 7", None, None).unwrap().unbind();
             let inner_apply = DoCtrl::Apply {
                 f: Box::new(DoCtrl::Pure {
-                    value: Value::Python(inner_f),
+                    value: Value::Python(PyShared::new(inner_f)),
                 }),
                 args: vec![],
                 kwargs: vec![],
@@ -3798,10 +3798,10 @@ mod tests {
                 .expect("inner Apply conversion should produce object");
             let outer_apply = DoCtrl::Apply {
                 f: Box::new(DoCtrl::Pure {
-                    value: Value::Python(outer_f),
+                    value: Value::Python(PyShared::new(outer_f)),
                 }),
                 args: vec![DoCtrl::Pure {
-                    value: Value::Python(inner_program.clone_ref(py)),
+                    value: Value::Python(PyShared::new(inner_program.clone_ref(py))),
                 }],
                 kwargs: vec![],
                 metadata: CallMetadata::new(
