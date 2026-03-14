@@ -37,19 +37,18 @@ pub struct KleisliDebugInfo {
 /// SPEC-VM-017 R1-A.
 pub trait Kleisli: std::fmt::Debug + Send + Sync {
     /// Apply the arrow to arguments, producing a DoCtrl to evaluate.
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError>;
+    fn apply(&self, args: Vec<Value>) -> Result<DoCtrl, VMError>;
 
     /// Apply with optional VM run token for run-scoped handler state.
     ///
     /// Non-Rust handlers ignore the run token and defer to `apply`.
     fn apply_with_run_token(
         &self,
-        py: Python<'_>,
         args: Vec<Value>,
         run_token: Option<u64>,
     ) -> Result<DoCtrl, VMError> {
         let _ = run_token;
-        self.apply(py, args)
+        self.apply(args)
     }
 
     /// Debug metadata for tracing/error reporting.
@@ -101,17 +100,16 @@ impl IdentityKleisli {
 }
 
 impl Kleisli for IdentityKleisli {
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
-        self.inner.apply(py, args)
+    fn apply(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        self.inner.apply(args)
     }
 
     fn apply_with_run_token(
         &self,
-        py: Python<'_>,
         args: Vec<Value>,
         run_token: Option<u64>,
     ) -> Result<DoCtrl, VMError> {
-        self.inner.apply_with_run_token(py, args, run_token)
+        self.inner.apply_with_run_token(args, run_token)
     }
 
     fn debug_info(&self) -> KleisliDebugInfo {
@@ -364,10 +362,8 @@ impl PyKleisli {
             | Value::List(_) => value.to_pyobject(py).map_err(Self::map_pyerr),
         }
     }
-}
 
-impl Kleisli for PyKleisli {
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+    fn apply_attached(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
         let arg_values: Vec<Bound<'_, PyAny>> = args
             .iter()
             .map(|value| Self::runtime_arg_to_pyobject(py, value))
@@ -429,6 +425,12 @@ impl Kleisli for PyKleisli {
             metadata: Some(metadata),
         })
     }
+}
+
+impl Kleisli for PyKleisli {
+    fn apply(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        Python::attach(|py| self.apply_attached(py, args))
+    }
 
     fn debug_info(&self) -> KleisliDebugInfo {
         KleisliDebugInfo {
@@ -471,8 +473,8 @@ impl DgfnKleisli {
 }
 
 impl Kleisli for DgfnKleisli {
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
-        self.inner.apply(py, args)
+    fn apply(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        self.inner.apply(args)
     }
 
     fn debug_info(&self) -> KleisliDebugInfo {
@@ -524,19 +526,21 @@ impl PyCallableKleisli {
 }
 
 impl Kleisli for PyCallableKleisli {
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
-        let arg_values: Vec<Bound<'_, PyAny>> = args
-            .iter()
-            .map(|value| PyKleisli::runtime_arg_to_pyobject(py, value))
-            .collect::<Result<Vec<_>, VMError>>()?;
-        let arg_tuple = PyTuple::new(py, &arg_values).map_err(PyKleisli::map_pyerr)?;
-        let produced = self
-            .func
-            .bind(py)
-            .call1(arg_tuple)
-            .map_err(PyKleisli::map_pyerr)?;
-        Ok(DoCtrl::Pure {
-            value: Value::Python(PyShared::new(produced.unbind())),
+    fn apply(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        Python::attach(|py| {
+            let arg_values: Vec<Bound<'_, PyAny>> = args
+                .iter()
+                .map(|value| PyKleisli::runtime_arg_to_pyobject(py, value))
+                .collect::<Result<Vec<_>, VMError>>()?;
+            let arg_tuple = PyTuple::new(py, &arg_values).map_err(PyKleisli::map_pyerr)?;
+            let produced = self
+                .func
+                .bind(py)
+                .call1(arg_tuple)
+                .map_err(PyKleisli::map_pyerr)?;
+            Ok(DoCtrl::Pure {
+                value: Value::Python(PyShared::new(produced.unbind())),
+            })
         })
     }
 
@@ -600,15 +604,11 @@ impl IRStream for RustKleisliStream {
         if let (Some(effect), Some(continuation)) =
             (self.start_effect.take(), self.start_continuation.take())
         {
-            return Python::attach(|py| {
-                let mut guard = self.program.lock().expect("Rust program lock poisoned");
-                guard.start(py, effect, continuation, store, scope)
-            });
-        }
-        Python::attach(|_py| {
             let mut guard = self.program.lock().expect("Rust program lock poisoned");
-            guard.resume(value, store, scope)
-        })
+            return guard.start(effect, continuation, store, scope);
+        }
+        let mut guard = self.program.lock().expect("Rust program lock poisoned");
+        guard.resume(value, store, scope)
     }
 
     fn throw(
@@ -617,21 +617,18 @@ impl IRStream for RustKleisliStream {
         store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        Python::attach(|_py| {
-            let mut guard = self.program.lock().expect("Rust program lock poisoned");
-            guard.throw(exc, store, scope)
-        })
+        let mut guard = self.program.lock().expect("Rust program lock poisoned");
+        guard.throw(exc, store, scope)
     }
 }
 
 impl Kleisli for RustKleisli {
-    fn apply(&self, py: Python<'_>, args: Vec<Value>) -> Result<DoCtrl, VMError> {
-        self.apply_with_run_token(py, args, None)
+    fn apply(&self, args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        self.apply_with_run_token(args, None)
     }
 
     fn apply_with_run_token(
         &self,
-        _py: Python<'_>,
         args: Vec<Value>,
         run_token: Option<u64>,
     ) -> Result<DoCtrl, VMError> {

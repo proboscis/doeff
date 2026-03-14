@@ -921,14 +921,7 @@ impl VM {
         handler_chain: &[Marker],
         effect: &DispatchEffect,
     ) -> Result<(usize, Marker, KleisliRef), VMError> {
-        let effect_obj =
-            Python::attach(|py| dispatch_to_pyobject(py, effect).map(|obj| obj.unbind())).map_err(
-                |err| {
-                    VMError::python_error(format!(
-                        "failed to convert dispatch effect to Python object: {err}"
-                    ))
-                },
-            )?;
+        let mut effect_obj = None;
         for (idx, marker) in handler_chain.iter().copied().enumerate() {
             let Some((prompt_seg_id, handler, types)) = self.find_prompt_boundary_by_marker(marker)
             else {
@@ -938,9 +931,10 @@ impl VM {
                     idx
                 )));
             };
-            if handler.can_handle(effect)?
-                && self
-                    .should_invoke_handler(
+            if handler.can_handle(effect)? {
+                let should_invoke = if types.is_some() {
+                    let effect_obj = Self::ensure_dispatch_effect_object(effect, &mut effect_obj)?;
+                    self.should_invoke_handler(
                         &HandlerChainEntry {
                             marker,
                             prompt_seg_id,
@@ -954,8 +948,12 @@ impl VM {
                             "failed to evaluate WithHandler type filter: {err:?}"
                         ))
                     })?
-            {
-                return Ok((idx, marker, handler));
+                } else {
+                    true
+                };
+                if should_invoke {
+                    return Ok((idx, marker, handler));
+                }
             }
         }
         Err(VMError::no_matching_handler(effect.clone()))
@@ -1030,13 +1028,7 @@ impl VM {
         if let Some(seg) = self.current_segment_mut() {
             seg.pending_error_context = None;
         }
-        let effect_obj =
-            Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind()))
-                .map_err(|err| {
-                    VMError::python_error(format!(
-                        "failed to convert dispatch effect to Python object: {err}"
-                    ))
-                })?;
+        let mut effect_obj = None;
 
         let mut selected: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
         let mut first_type_filtered_skip: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
@@ -1071,13 +1063,18 @@ impl VM {
                     });
 
                     if handler.can_handle(&effect)? {
-                        let should_invoke = self
-                            .should_invoke_handler_types(types.as_ref(), &effect_obj)
-                            .map_err(|err| {
-                                VMError::python_error(format!(
-                                    "failed to evaluate WithHandler type filter: {err:?}"
-                                ))
-                            })?;
+                        let should_invoke = if types.is_some() {
+                            let effect_obj =
+                                Self::ensure_dispatch_effect_object(&effect, &mut effect_obj)?;
+                            self.should_invoke_handler_types(types.as_ref(), &effect_obj)
+                                .map_err(|err| {
+                                    VMError::python_error(format!(
+                                        "failed to evaluate WithHandler type filter: {err:?}"
+                                    ))
+                                })?
+                        } else {
+                            true
+                        };
                         if should_invoke {
                             if selected.is_none() {
                                 selected = Some((
@@ -1196,7 +1193,8 @@ impl VM {
         if handler.py_identity().is_some() {
             self.register_continuation(k_user.clone());
         }
-        let ir_node = Self::invoke_kleisli_handler_expr(handler, effect, k_user)?;
+        let effect_obj = Self::ensure_dispatch_effect_object(&effect, &mut effect_obj)?;
+        let ir_node = Self::invoke_kleisli_handler_expr(handler, effect_obj, k_user)?;
         Ok(self.evaluate(ir_node))
     }
 
@@ -1688,15 +1686,7 @@ impl VM {
             ForwardKind::Delegate | ForwardKind::Pass => {}
         }
 
-        let effect_obj =
-            match Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|obj| obj.unbind())) {
-                Ok(obj) => obj,
-                Err(err) => {
-                    return StepEvent::Error(VMError::python_error(format!(
-                        "failed to convert dispatch effect to Python object: {err}"
-                    )))
-                }
-            };
+        let mut effect_obj = None;
 
         for entry in visible_chain {
             let handler = entry.handler.clone();
@@ -1705,13 +1695,22 @@ impl VM {
                 Err(err) => return StepEvent::Error(err),
             };
             if can_handle {
-                let should_invoke = match self.should_invoke_handler(&entry, &effect_obj) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        return StepEvent::Error(VMError::python_error(format!(
-                            "failed to evaluate WithHandler type filter: {err:?}"
-                        )))
+                let should_invoke = if entry.types.is_some() {
+                    let effect_obj =
+                        match Self::ensure_dispatch_effect_object(&effect, &mut effect_obj) {
+                            Ok(effect_obj) => effect_obj,
+                            Err(err) => return StepEvent::Error(err),
+                        };
+                    match self.should_invoke_handler(&entry, &effect_obj) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            return StepEvent::Error(VMError::python_error(format!(
+                                "failed to evaluate WithHandler type filter: {err:?}"
+                            )))
+                        }
                     }
+                } else {
+                    true
                 };
                 if !should_invoke {
                     continue;
@@ -1781,14 +1780,16 @@ impl VM {
                 if handler.py_identity().is_some() {
                     self.register_continuation(next_k.clone());
                 }
-                let ir_node = match Self::invoke_kleisli_handler_expr(
-                    handler,
-                    effect.clone(),
-                    next_k.clone(),
-                ) {
-                    Ok(node) => node,
+                let effect_obj = match Self::ensure_dispatch_effect_object(&effect, &mut effect_obj)
+                {
+                    Ok(effect_obj) => effect_obj,
                     Err(err) => return StepEvent::Error(err),
                 };
+                let ir_node =
+                    match Self::invoke_kleisli_handler_expr(handler, effect_obj, next_k.clone()) {
+                        Ok(node) => node,
+                        Err(err) => return StepEvent::Error(err),
+                    };
                 return self.evaluate(ir_node);
             }
         }

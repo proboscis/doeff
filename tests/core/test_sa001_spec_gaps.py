@@ -335,14 +335,14 @@ class TestSA001G14SchedulerSentinel:
 class TestSA001G15HandlerSigs:
     """G15: Handler trait sigs diverge."""
 
-    def test_start_receives_py_and_bound(self):
-        """ASTStreamProgram::start must receive py: Python<'_>. SPEC-008 L1111."""
+    def test_start_does_not_require_py_at_call_site(self):
+        """IRStreamProgram::start should no longer require py: Python<'_> at the call site."""
         src = _read_rust("handler.rs")
         m = re.search(r"fn start\s*\(\s*&mut self,\s*([^)]*)\)", src, re.S)
         assert m, "Could not find ASTStreamProgram::start"
         params = m.group(1)
-        assert "py:" in params or "Python" in params, (
-            f"start() missing py parameter: start(&mut self, {params})"
+        assert "py:" not in params and "Python" not in params, (
+            f"start() should not require py parameter anymore: start(&mut self, {params})"
         )
 
 

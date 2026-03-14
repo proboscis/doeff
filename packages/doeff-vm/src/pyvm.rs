@@ -2938,7 +2938,7 @@ mod tests {
     }
 
     impl Kleisli for DummyRustHandler {
-        fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        fn apply(&self, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
             unreachable!("dummy test handler should never be applied")
         }
 

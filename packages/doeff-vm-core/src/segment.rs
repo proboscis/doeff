@@ -155,7 +155,6 @@ impl Segment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyo3::Python;
 
     use crate::do_ctrl::DoCtrl;
     use crate::error::VMError;
@@ -165,7 +164,7 @@ mod tests {
     struct DummyKleisli;
 
     impl Kleisli for DummyKleisli {
-        fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        fn apply(&self, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
             unreachable!("test dummy should never be invoked")
         }
 
