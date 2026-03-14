@@ -13,7 +13,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 pyo3 = { version = "0.28", features = ["py-clone"] }
-doeff-vm-core = { path = "../doeff-vm-core" }
+doeff-vm-core = { path = "../doeff-vm-core", features = ["python_bridge"] }
 
 [dev-dependencies]
 pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }
