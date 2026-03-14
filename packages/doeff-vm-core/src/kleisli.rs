@@ -422,6 +422,7 @@ impl Kleisli for PyKleisli {
             self.line.unwrap_or(0),
             args_repr,
             None,
+            false,
         );
 
         Ok(DoCtrl::IRStream {
@@ -675,6 +676,7 @@ impl Kleisli for RustKleisli {
                 0,
                 None,
                 None,
+                false,
             )),
         })
     }

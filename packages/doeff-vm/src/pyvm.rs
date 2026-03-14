@@ -18,7 +18,7 @@ use crate::effect::{
 };
 
 use crate::error::VMError;
-use crate::frame::CallMetadata;
+use crate::frame::{CallMetadata, EvalReturnContinuation, Frame};
 use crate::ids::Marker;
 use crate::ir_stream::{IRStream, PythonGeneratorStream};
 use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli};
@@ -940,6 +940,9 @@ fn call_metadata_to_dict(py: Python<'_>, metadata: &CallMetadata) -> PyResult<Py
     if let Some(program_call) = &metadata.program_call {
         dict.set_item("program_call", program_call.bind(py))?;
     }
+    if metadata.auto_unwrap_programlike {
+        dict.set_item("auto_unwrap_programlike", true)?;
+    }
     Ok(dict.into_any().unbind())
 }
 
@@ -1458,6 +1461,7 @@ fn merged_metadata_from_doeff(
             source_line,
             None,
             None,
+            false,
         )),
     }
 }
@@ -1804,6 +1808,7 @@ pub(crate) fn classify_yielded_bound(
             0,
             None,
             Some(PyShared::new(obj.clone().unbind())),
+            false,
         );
         return classify_doeff_generator_as_irstream(
             py,
@@ -1825,8 +1830,11 @@ pub(crate) fn classify_yielded_bound(
 
     let ty = py_type_name(obj);
     let repr = py_repr_text(obj);
+    let hint = maybe_programlike_auto_unwrap_hint(vm, obj)
+        .map(|text| format!("\n{text}"))
+        .unwrap_or_default();
     Err(PyTypeError::new_err(format!(
-        "yielded value must be EffectBase or DoExpr, got {repr} (type: {ty})"
+        "yielded value must be EffectBase or DoExpr, got {repr} (type: {ty}){hint}"
     )))
 }
 
@@ -1846,6 +1854,80 @@ fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
     let exc_value = e.value(py).clone().into_any().unbind();
     let exc_tb = e.traceback(py).map(|tb| tb.into_any().unbind());
     Ok(PyException::new(exc_type, exc_value, exc_tb))
+}
+
+fn maybe_programlike_auto_unwrap_hint(vm: &VM, obj: &Bound<'_, PyAny>) -> Option<&'static str> {
+    let looks_like_resolved_program_value = obj.is_none()
+        || obj.extract::<bool>().is_ok()
+        || obj.extract::<i64>().is_ok()
+        || obj.extract::<f64>().is_ok()
+        || obj.extract::<String>().is_ok()
+        || obj.is_instance_of::<PyList>()
+        || obj.is_instance_of::<PyTuple>()
+        || obj.is_instance_of::<PyDict>()
+        || obj.is_instance_of::<PyResultOk>()
+        || obj.is_instance_of::<PyResultErr>();
+
+    (looks_like_resolved_program_value
+        && (vm_has_nearby_programlike_auto_unwrap(vm)
+            || vm.matches_auto_unwrapped_programlike_value(obj)))
+    .then_some(
+        "Hint: this may be a resolved ProgramLike value. If you passed a Program or Effect to a \
+@do function, ensure the parameter is annotated as ProgramLike (not Any) to prevent auto-unwrapping.",
+    )
+}
+
+fn vm_has_nearby_programlike_auto_unwrap(vm: &VM) -> bool {
+    let mut seg_id = vm.current_segment;
+    while let Some(id) = seg_id {
+        let Some(seg) = vm.segments.get(id) else {
+            break;
+        };
+        for frame in seg.frames.iter().rev() {
+            match frame {
+                Frame::Program {
+                    metadata: Some(metadata),
+                    ..
+                } if metadata.auto_unwrap_programlike => return true,
+                Frame::Program { .. } => {}
+                Frame::InterceptorApply(continuation) | Frame::InterceptorEval(continuation) => {
+                    if continuation
+                        .emitter_metadata
+                        .as_ref()
+                        .is_some_and(|metadata| metadata.auto_unwrap_programlike)
+                        || continuation
+                            .interceptor_metadata
+                            .as_ref()
+                            .is_some_and(|metadata| metadata.auto_unwrap_programlike)
+                    {
+                        return true;
+                    }
+                }
+                Frame::EvalReturn(continuation) => match continuation.as_ref() {
+                    EvalReturnContinuation::ApplyResolveFunction { metadata, .. }
+                    | EvalReturnContinuation::ApplyResolveArg { metadata, .. }
+                    | EvalReturnContinuation::ApplyResolveKwarg { metadata, .. }
+                    | EvalReturnContinuation::ExpandResolveFactory { metadata, .. }
+                    | EvalReturnContinuation::ExpandResolveArg { metadata, .. }
+                    | EvalReturnContinuation::ExpandResolveKwarg { metadata, .. }
+                        if metadata.auto_unwrap_programlike =>
+                    {
+                        return true;
+                    }
+                    EvalReturnContinuation::EvalInScopeReturn { .. } => {}
+                    _ => {}
+                },
+                Frame::HandlerDispatch { .. }
+                | Frame::DispatchOrigin { .. }
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. }
+                | Frame::InterceptBodyReturn { .. } => {}
+            }
+        }
+        seg_id = seg.caller;
+    }
+    false
 }
 
 fn default_discontinued_exception(py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -1872,6 +1954,13 @@ fn metadata_attr_as_u32(meta: &Bound<'_, PyAny>, key: &str) -> Option<u32> {
         .and_then(|v| v.extract::<u32>().ok())
 }
 
+fn metadata_attr_as_bool(meta: &Bound<'_, PyAny>, key: &str) -> Option<bool> {
+    meta.cast::<PyDict>()
+        .ok()
+        .and_then(|dict| dict.get_item(key).ok().flatten())
+        .and_then(|v| v.extract::<bool>().ok())
+}
+
 fn metadata_attr_as_py(meta: &Bound<'_, PyAny>, key: &str) -> Option<PyShared> {
     meta.cast::<PyDict>()
         .ok()
@@ -1893,12 +1982,15 @@ fn call_metadata_from_meta_obj(meta_obj: &Bound<'_, PyAny>) -> CallMetadata {
     let source_line = metadata_attr_as_u32(meta_obj, "source_line").unwrap_or(0);
     let args_repr = metadata_attr_as_string(meta_obj, "args_repr");
     let program_call = metadata_attr_as_py(meta_obj, "program_call");
+    let auto_unwrap_programlike =
+        metadata_attr_as_bool(meta_obj, "auto_unwrap_programlike").unwrap_or(false);
     CallMetadata::new(
         function_name,
         source_file,
         source_line,
         args_repr,
         program_call,
+        auto_unwrap_programlike,
     )
 }
 
@@ -3791,6 +3883,7 @@ mod tests {
                     1,
                     None,
                     None,
+                    false,
                 ),
             };
             let inner_program = doctrl_to_pyexpr_for_vm(&inner_apply)
@@ -3810,6 +3903,7 @@ mod tests {
                     2,
                     None,
                     None,
+                    false,
                 ),
             };
 

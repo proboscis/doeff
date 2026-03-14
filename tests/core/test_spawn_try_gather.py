@@ -71,6 +71,20 @@ def wrap_sem(p, sem):
 
 
 @do
+def throttled_gather_untyped(
+    *programs: Any, concurrency: int
+) -> EffectGenerator[list]:
+    """Same wrapper shape, but untyped varargs trigger @do auto-unwrapping."""
+    sem = yield CreateSemaphore(concurrency)
+    wrapped = [wrap_sem(p, sem) for p in programs]
+    tasks = []
+    for w in wrapped:
+        t = yield Spawn(w, daemon=False)
+        tasks.append(t)
+    return list((yield Gather(*tasks)))
+
+
+@do
 def throttled_gather(
     *programs: ProgramLike, concurrency: int
 ) -> EffectGenerator[list]:
@@ -132,3 +146,33 @@ def test_sequential_try_compute_with_handler():
     result = run(wrapped, handlers=default_handlers())
     assert result.is_ok(), f"Failed: {result.error}"
     assert len(result.value) == 3
+
+
+def test_spawn_untyped_wrapper_error_mentions_programlike_hint_for_plain_value():
+    @do
+    def test_program() -> EffectGenerator[list]:
+        programs = [compute("k0")]
+        return (yield throttled_gather_untyped(*programs, concurrency=1))
+
+    wrapped = WithHandler(handler, test_program())
+    result = run(wrapped, handlers=default_handlers())
+    assert result.is_err()
+    message = str(result.error)
+    assert message.startswith("yielded value must be EffectBase or DoExpr, got ")
+    assert "Hint: this may be a resolved ProgramLike value." in message
+    assert "annotated as ProgramLike" in message
+
+
+def test_spawn_untyped_wrapper_error_mentions_programlike_hint_for_ok_value():
+    @do
+    def test_program() -> EffectGenerator[list]:
+        programs = [Try(compute("k0"))]
+        return (yield throttled_gather_untyped(*programs, concurrency=1))
+
+    wrapped = WithHandler(handler, test_program())
+    result = run(wrapped, handlers=default_handlers())
+    assert result.is_err()
+    message = str(result.error)
+    assert message.startswith("yielded value must be EffectBase or DoExpr, got ")
+    assert "Hint: this may be a resolved ProgramLike value." in message
+    assert "annotated as ProgramLike" in message

@@ -99,10 +99,15 @@ class KleisliProgram(ABC, Generic[P, T]):
             strategy = _build_auto_unwrap_strategy(self)
             object.__setattr__(self, "_auto_unwrap_strategy", strategy)
 
+        auto_unwrap_programlike = False
+
         def classify_arg(arg: Any, should_unwrap: bool) -> Any:
+            nonlocal auto_unwrap_programlike
             if should_unwrap and isinstance(arg, EffectBase):
+                auto_unwrap_programlike = True
                 return Perform(arg)
             if should_unwrap and isinstance(arg, DoCtrlBase):
+                auto_unwrap_programlike = True
                 return arg
             return Pure(arg)
 
@@ -130,6 +135,7 @@ class KleisliProgram(ABC, Generic[P, T]):
             "source_line": int(getattr(code_obj, "co_firstlineno", 0) or 0),
             "args_repr": f"args={tuple(args)!r}, kwargs={dict(kwargs)!r}",
             "program_call": None,
+            "auto_unwrap_programlike": auto_unwrap_programlike,
         }
 
         if bool(self._is_do_decorated):

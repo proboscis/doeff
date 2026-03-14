@@ -72,6 +72,7 @@ impl VM {
                 source_line,
                 None,
                 None,
+                false,
             )),
         }
     }
@@ -662,6 +663,9 @@ impl VM {
                 arg_idx,
                 metadata,
             } => {
+                if metadata.auto_unwrap_programlike {
+                    self.record_auto_unwrapped_programlike_value(&value);
+                }
                 let Some(slot) = args.get_mut(arg_idx) else {
                     return self.contextual_internal_throw_mode(PyException::runtime_error(
                         "expand continuation arg index out of bounds",
@@ -682,6 +686,9 @@ impl VM {
                 kwarg_idx,
                 metadata,
             } => {
+                if metadata.auto_unwrap_programlike {
+                    self.record_auto_unwrapped_programlike_value(&value);
+                }
                 let Some((_, slot)) = kwargs.get_mut(kwarg_idx) else {
                     return self.contextual_internal_throw_mode(PyException::runtime_error(
                         "expand continuation kwarg index out of bounds",
@@ -1092,6 +1099,7 @@ impl VM {
             0,
             None,
             None,
+            false,
         )
     }
 
