@@ -68,6 +68,8 @@ enum GenErrorSite {
     StepUserGeneratorDirect,
     RustProgramContinuation,
     AsyncEscape,
+    VmRaisedUser,
+    VmRaisedInternal,
 }
 
 impl GenErrorSite {
@@ -76,8 +78,14 @@ impl GenErrorSite {
             self,
             GenErrorSite::EvalExpr
                 | GenErrorSite::CallFuncReturn
+                | GenErrorSite::ExpandReturnHandler
                 | GenErrorSite::ExpandReturnProgram
                 | GenErrorSite::StepUserGeneratorConverted
+                | GenErrorSite::StepUserGeneratorDirect
+                | GenErrorSite::RustProgramContinuation
+                | GenErrorSite::AsyncEscape
+                | GenErrorSite::VmRaisedUser
+                | GenErrorSite::VmRaisedInternal
         )
     }
 }
