@@ -30,32 +30,31 @@ This spec defines the **default error traceback format** for doeff — what user
 
 ### Runtime State (`TraceState`)
 
-The VM stores traceback capture state in `VM.trace_state: TraceState`. `TraceState` owns
-`ActiveChainAssemblyState`, which tracks:
+The VM stores traceback capture state in `VM.trace_state: TraceState`. `TraceState` tracks:
 
-- `frame_stack`: active `Program` frame snapshots (`function_name`, `source_file`, `source_line`, args, etc.)
-- `dispatches`: per-dispatch `effect_repr`, handler stack, and terminal/non-terminal result
-- `frame_dispatch`: mapping from frame id to the dispatch currently associated with that frame
+- `frame_stack`: active `Program` frame snapshots (`function_name`, `source_file`, `source_line`,
+  args, etc.), with optional per-frame `dispatch_display`
+- `trace_dispatches`: per-dispatch `effect_repr`, handler stack, and terminal/non-terminal result
 - `transfer_targets`: transfer destination text keyed by `dispatch_id`
 - `dispatch_order`: dispatch ids in start order
 
 There is no persisted event-log field on `VM` for traceback assembly. State is reset per run via
 `VM::begin_run_session()` -> `trace_state.clear()`.
 
-### `CaptureEvent` Role (Transient)
+### Direct Mutation Path
 
-`CaptureEvent` is still the mutation carrier between VM control flow and
-`ActiveChainAssemblyState`, but it is transient:
+VM mutates `TraceState` directly at the control-flow site:
 
-1. VM emitters (`emit_frame_entered`, `emit_dispatch_started`, `emit_handler_completed`, etc.) construct a `CaptureEvent`
-2. `TraceState::apply_capture_event()` immediately applies it with `apply_active_chain_event(...)`
-3. The event object is dropped (not retained in a chronological log)
+1. Frame entry/exit records update `frame_stack`
+2. Dispatch start attaches `dispatch_display` to the owning frame snapshot and records a trace
+   dispatch entry
+3. Handler completion/transfer/delegation updates mutate the stored dispatch state in place
 
 ### `assemble_active_chain()` Algorithm
 
 `VM::assemble_active_chain()` delegates to `TraceState::assemble_active_chain(...)`, which:
 
-1. Clones the current `ActiveChainAssemblyState`
+1. Clones the current `frame_stack` / `trace_dispatches`
 2. Merges live line/stack data from current segments and visible dispatch snapshots
 3. If an exception is present, finalizes unresolved visible dispatches as `EffectResult::Threw`
 4. Builds ordered `ActiveChainEntry` values (`ProgramYield`, `EffectYield`, `ContextEntry`, `ExceptionSite`)

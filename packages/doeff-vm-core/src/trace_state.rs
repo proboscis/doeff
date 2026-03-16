@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use crate::arena::SegmentArena;
 use crate::capture::{
-    ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
-    HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus,
-    TraceEntry, TraceFrame, TraceHop,
+    ActiveChainEntry, DelegationEntry, DispatchAction, EffectResult, FrameId, HandlerAction,
+    HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus, TraceEntry, TraceFrame,
+    TraceHop,
 };
 use crate::continuation::Continuation;
 use crate::effect::{make_execution_context_object, PyExecutionContext};
@@ -40,10 +40,12 @@ struct ActiveChainFrameState {
     args_repr: Option<String>,
     sub_program_repr: String,
     handler_kind: Option<HandlerKind>,
+    dispatch_display: Option<DispatchDisplayState>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ActiveChainDispatchState {
+struct DispatchDisplayState {
+    dispatch_id: DispatchId,
     function_name: Option<String>,
     source_file: Option<String>,
     source_line: Option<u32>,
@@ -54,63 +56,241 @@ pub(crate) struct ActiveChainDispatchState {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ActiveChainAssemblyState {
+pub(crate) struct TraceState {
     frame_stack: Vec<ActiveChainFrameState>,
-    dispatches: HashMap<DispatchId, ActiveChainDispatchState>,
-    frame_dispatch: HashMap<FrameId, DispatchId>,
+    trace_dispatches: HashMap<DispatchId, DispatchDisplayState>,
     transfer_targets: HashMap<DispatchId, String>,
     dispatch_order: Vec<DispatchId>,
-}
-
-impl ActiveChainAssemblyState {
-    fn new() -> Self {
-        Self {
-            frame_stack: Vec::new(),
-            dispatches: HashMap::new(),
-            frame_dispatch: HashMap::new(),
-            transfer_targets: HashMap::new(),
-            dispatch_order: Vec::new(),
-        }
-    }
-
-    pub(crate) fn dispatch_has_terminal_result(&self, dispatch_id: DispatchId) -> bool {
-        self.dispatches.get(&dispatch_id).is_some_and(|dispatch| {
-            matches!(
-                dispatch.result,
-                EffectResult::Resumed { .. }
-                    | EffectResult::Transferred { .. }
-                    | EffectResult::Threw { .. }
-            )
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TraceState {
-    active_chain_state: ActiveChainAssemblyState,
 }
 
 impl Default for TraceState {
     fn default() -> Self {
         Self {
-            active_chain_state: ActiveChainAssemblyState::new(),
+            frame_stack: Vec::new(),
+            trace_dispatches: HashMap::new(),
+            transfer_targets: HashMap::new(),
+            dispatch_order: Vec::new(),
         }
     }
 }
 
 impl TraceState {
-    pub(crate) fn active_chain_state(&self) -> &ActiveChainAssemblyState {
-        &self.active_chain_state
+    pub(crate) fn dispatch_has_terminal_result(&self, dispatch_id: DispatchId) -> bool {
+        self.trace_dispatches
+            .get(&dispatch_id)
+            .is_some_and(|dispatch| {
+                matches!(
+                    dispatch.result,
+                    EffectResult::Resumed { .. }
+                        | EffectResult::Transferred { .. }
+                        | EffectResult::Threw { .. }
+                )
+            })
     }
 
     pub(crate) fn clear(&mut self) {
-        self.active_chain_state = ActiveChainAssemblyState::new();
+        *self = Self::default();
     }
 
-    /// Apply a single capture event to the active chain state.
-    /// Called from VM::flush_trace_events() — the single observation point.
-    pub(crate) fn apply_capture_event(&mut self, event: CaptureEvent) {
-        Self::apply_active_chain_event(&mut self.active_chain_state, &event);
+    pub(crate) fn record_frame_entered(
+        &mut self,
+        metadata: &CallMetadata,
+        handler_kind: Option<HandlerKind>,
+    ) {
+        self.frame_stack.push(ActiveChainFrameState {
+            frame_id: metadata.frame_id as FrameId,
+            function_name: metadata.function_name.clone(),
+            source_file: metadata.source_file.clone(),
+            source_line: metadata.source_line,
+            args_repr: metadata.args_repr.clone(),
+            sub_program_repr: Self::program_call_repr(metadata)
+                .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
+            handler_kind,
+            dispatch_display: None,
+        });
+    }
+
+    pub(crate) fn record_frame_exited(&mut self) {
+        let _ = self.frame_stack.pop();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_dispatch_started(
+        &mut self,
+        dispatch_id: DispatchId,
+        effect_repr: String,
+        is_execution_context_effect: bool,
+        handler_chain_snapshot: &[HandlerSnapshotEntry],
+        effect_frame_id: Option<FrameId>,
+        effect_function_name: Option<String>,
+        effect_source_file: Option<String>,
+        effect_source_line: Option<u32>,
+    ) {
+        let dispatch_display = DispatchDisplayState {
+            dispatch_id,
+            function_name: effect_function_name.clone(),
+            source_file: effect_source_file.clone(),
+            source_line: effect_source_line,
+            effect_repr,
+            is_execution_context_effect,
+            handler_stack: Self::handler_stack_from_snapshot(handler_chain_snapshot),
+            result: EffectResult::Active,
+        };
+        if let Some(frame_id) = effect_frame_id {
+            if let Some(frame) = self
+                .frame_stack
+                .iter_mut()
+                .find(|frame| frame.frame_id == frame_id)
+            {
+                if let Some(line) = effect_source_line {
+                    frame.source_line = line;
+                }
+                frame.dispatch_display = Some(dispatch_display.clone());
+            }
+        }
+        self.dispatch_order.push(dispatch_id);
+        self.trace_dispatches.insert(dispatch_id, dispatch_display);
+    }
+
+    pub(crate) fn record_delegated(
+        &mut self,
+        dispatch_id: DispatchId,
+        from_handler_index: usize,
+        to_handler_index: usize,
+    ) {
+        self.update_dispatch_display(dispatch_id, |dispatch| {
+            if let Some(from_entry) = dispatch.handler_stack.get_mut(from_handler_index) {
+                if from_entry.status == HandlerStatus::Active {
+                    from_entry.status = HandlerStatus::Delegated;
+                }
+            }
+            if let Some(to_entry) = dispatch.handler_stack.get_mut(to_handler_index) {
+                to_entry.status = HandlerStatus::Active;
+            }
+            false
+        });
+    }
+
+    pub(crate) fn record_passed(
+        &mut self,
+        dispatch_id: DispatchId,
+        from_handler_index: usize,
+        to_handler_index: usize,
+    ) {
+        self.update_dispatch_display(dispatch_id, |dispatch| {
+            if let Some(from_entry) = dispatch.handler_stack.get_mut(from_handler_index) {
+                if from_entry.status == HandlerStatus::Active {
+                    from_entry.status = HandlerStatus::Passed;
+                }
+            }
+            if let Some(to_entry) = dispatch.handler_stack.get_mut(to_handler_index) {
+                to_entry.status = HandlerStatus::Active;
+            }
+            false
+        });
+    }
+
+    pub(crate) fn record_handler_completed(
+        &mut self,
+        dispatch_id: DispatchId,
+        handler_name: &str,
+        handler_index: usize,
+        action: &HandlerAction,
+    ) {
+        let transferred_target = match action {
+            HandlerAction::Transferred { value_repr } => self
+                .transfer_targets
+                .get(&dispatch_id)
+                .cloned()
+                .or_else(|| value_repr.clone())
+                .unwrap_or_else(|| MISSING_TARGET.to_string()),
+            HandlerAction::Resumed { .. }
+            | HandlerAction::Returned { .. }
+            | HandlerAction::Threw { .. } => String::new(),
+        };
+        self.update_dispatch_display(dispatch_id, |dispatch| {
+            let status = match action {
+                HandlerAction::Resumed { .. } => HandlerStatus::Resumed,
+                HandlerAction::Transferred { .. } => HandlerStatus::Transferred,
+                HandlerAction::Returned { .. } => HandlerStatus::Returned,
+                HandlerAction::Threw { .. } => HandlerStatus::Threw,
+            };
+            if let Some(target) = dispatch.handler_stack.get_mut(handler_index) {
+                target.status = status;
+            }
+
+            dispatch.result = match action {
+                HandlerAction::Resumed { value_repr } | HandlerAction::Returned { value_repr } => {
+                    EffectResult::Resumed {
+                        value_repr: value_repr
+                            .clone()
+                            .unwrap_or_else(|| MISSING_NONE_REPR.to_string()),
+                    }
+                }
+                HandlerAction::Transferred { value_repr } => EffectResult::Transferred {
+                    handler_name: handler_name.to_string(),
+                    target_repr: if transferred_target.is_empty() {
+                        value_repr
+                            .clone()
+                            .unwrap_or_else(|| MISSING_TARGET.to_string())
+                    } else {
+                        transferred_target.clone()
+                    },
+                },
+                HandlerAction::Threw { exception_repr } => EffectResult::Threw {
+                    handler_name: handler_name.to_string(),
+                    exception_repr: exception_repr
+                        .clone()
+                        .unwrap_or_else(|| MISSING_EXCEPTION.to_string()),
+                },
+            };
+
+            false
+        });
+    }
+
+    pub(crate) fn record_transfer_target(
+        &mut self,
+        dispatch_id: DispatchId,
+        resumed_function_name: &str,
+        source_file: &str,
+        source_line: u32,
+    ) {
+        let target_repr = format!("{resumed_function_name}() {source_file}:{source_line}");
+        self.transfer_targets
+            .insert(dispatch_id, target_repr.clone());
+        self.update_dispatch_display(dispatch_id, |dispatch| {
+            if let EffectResult::Transferred {
+                target_repr: current_target,
+                ..
+            } = &mut dispatch.result
+            {
+                *current_target = target_repr.clone();
+            }
+            false
+        });
+    }
+
+    fn update_dispatch_display<F>(&mut self, dispatch_id: DispatchId, update: F)
+    where
+        F: FnOnce(&mut DispatchDisplayState) -> bool,
+    {
+        if let Some(dispatch) = self.trace_dispatches.get_mut(&dispatch_id) {
+            let should_clear_frame_display = update(dispatch);
+            let updated_dispatch = dispatch.clone();
+            if let Some(frame) = self.frame_stack.iter_mut().find(|frame| {
+                frame
+                    .dispatch_display
+                    .as_ref()
+                    .is_some_and(|display| display.dispatch_id == dispatch_id)
+            }) {
+                if should_clear_frame_display {
+                    frame.dispatch_display = None;
+                } else {
+                    frame.dispatch_display = Some(updated_dispatch);
+                }
+            }
+        }
     }
 
     pub(crate) fn stream_debug_location(stream: &IRStreamRef) -> Option<StreamLocation> {
@@ -513,37 +693,32 @@ impl TraceState {
         current_segment: Option<SegmentId>,
         dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<ActiveChainEntry> {
-        if exception.is_none() {
-            let mut frame_stack = self.active_chain_state.frame_stack.clone();
-            self.merge_frame_lines_from_segments(&mut frame_stack, segments, current_segment);
-            self.merge_frame_lines_from_visible_dispatch_snapshot(
+        let mut frame_stack = self.frame_stack.clone();
+        let mut trace_dispatches = self.trace_dispatches.clone();
+        self.merge_live_frame_state(
+            &mut frame_stack,
+            &trace_dispatches,
+            segments,
+            current_segment,
+            dispatch_stack,
+        );
+
+        if let Some(exception) = exception {
+            Self::finalize_unresolved_dispatches_as_threw(
                 &mut frame_stack,
-                &self.active_chain_state.dispatches,
-                dispatch_stack,
+                &mut trace_dispatches,
+                exception,
             );
-            let entries = self.entries_from_active_chain_parts(
-                &frame_stack,
-                &self.active_chain_state.dispatches,
-                &self.active_chain_state.frame_dispatch,
-                &self.active_chain_state.dispatch_order,
-                dispatch_stack,
-            );
-            return Self::dedup_adjacent(entries);
         }
 
-        let mut state = self.active_chain_state.clone();
-        self.merge_live_frame_state(&mut state, segments, current_segment, dispatch_stack);
-        let exception = exception.expect("exception checked above");
-        Self::finalize_unresolved_dispatches_as_threw(&mut state, exception);
         let entries = self.entries_from_active_chain_parts(
-            &state.frame_stack,
-            &state.dispatches,
-            &state.frame_dispatch,
-            &state.dispatch_order,
+            &frame_stack,
+            &trace_dispatches,
+            &self.dispatch_order,
             dispatch_stack,
         );
         let entries = Self::dedup_adjacent(entries);
-        Self::inject_context(entries, Some(exception))
+        Self::inject_context(entries, exception)
     }
 
     pub(crate) fn assemble_traceback_entries(
@@ -553,12 +728,23 @@ impl TraceState {
         current_segment: Option<SegmentId>,
         dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<TraceEntry> {
-        let mut state = self.active_chain_state.clone();
-        self.merge_live_frame_state(&mut state, segments, current_segment, dispatch_stack);
-        Self::finalize_unresolved_dispatches_as_threw(&mut state, exception);
+        let mut frame_stack = self.frame_stack.clone();
+        let mut trace_dispatches = self.trace_dispatches.clone();
+        self.merge_live_frame_state(
+            &mut frame_stack,
+            &trace_dispatches,
+            segments,
+            current_segment,
+            dispatch_stack,
+        );
+        Self::finalize_unresolved_dispatches_as_threw(
+            &mut frame_stack,
+            &mut trace_dispatches,
+            exception,
+        );
 
         let mut entries = Vec::new();
-        for frame in &state.frame_stack {
+        for frame in &frame_stack {
             entries.push(TraceEntry::Frame {
                 frame_id: frame.frame_id,
                 function_name: frame.function_name.clone(),
@@ -568,8 +754,8 @@ impl TraceState {
             });
         }
 
-        for dispatch_id in &state.dispatch_order {
-            let Some(dispatch) = state.dispatches.get(dispatch_id) else {
+        for dispatch_id in &self.dispatch_order {
+            let Some(dispatch) = trace_dispatches.get(dispatch_id) else {
                 continue;
             };
             if !Self::is_visible_dispatch(dispatch) {
@@ -657,11 +843,12 @@ impl TraceState {
     }
 
     fn finalize_unresolved_dispatches_as_threw(
-        state: &mut ActiveChainAssemblyState,
+        frame_stack: &mut [ActiveChainFrameState],
+        trace_dispatches: &mut HashMap<DispatchId, DispatchDisplayState>,
         exception: &PyException,
     ) {
         let exception_repr = Self::exception_repr(exception);
-        for dispatch in state.dispatches.values_mut() {
+        for dispatch in trace_dispatches.values_mut() {
             if !matches!(dispatch.result, EffectResult::Active) {
                 continue;
             }
@@ -684,179 +871,13 @@ impl TraceState {
                 handler_name,
                 exception_repr: exception_repr.clone(),
             };
-        }
-    }
-
-    fn apply_active_chain_event(state: &mut ActiveChainAssemblyState, event: &CaptureEvent) {
-        match event {
-            CaptureEvent::FrameEntered {
-                frame_id,
-                function_name,
-                source_file,
-                source_line,
-                args_repr,
-                program_call_repr,
-                handler_kind,
-            } => {
-                state.frame_stack.push(ActiveChainFrameState {
-                    frame_id: *frame_id,
-                    function_name: function_name.clone(),
-                    source_file: source_file.clone(),
-                    source_line: *source_line,
-                    args_repr: args_repr.clone(),
-                    sub_program_repr: program_call_repr
-                        .clone()
-                        .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
-                    handler_kind: *handler_kind,
-                });
-            }
-            CaptureEvent::FrameExited { .. } => {
-                let _ = state.frame_stack.pop();
-            }
-            CaptureEvent::DispatchStarted {
-                dispatch_id,
-                effect_repr,
-                is_execution_context_effect,
-                creation_site: _,
-                handler_name: _,
-                handler_kind: _,
-                handler_source_file: _,
-                handler_source_line: _,
-                handler_chain_snapshot,
-                effect_frame_id,
-                effect_function_name,
-                effect_source_file,
-                effect_source_line,
-            } => {
-                let visible_effect = !*is_execution_context_effect;
-                if let Some(frame_id) = effect_frame_id {
-                    if visible_effect {
-                        state.frame_dispatch.insert(*frame_id, *dispatch_id);
-                        if let Some(frame) = state
-                            .frame_stack
-                            .iter_mut()
-                            .find(|f| f.frame_id == *frame_id)
-                        {
-                            if let Some(line) = effect_source_line {
-                                frame.source_line = *line;
-                            }
-                        }
-                    }
-                }
-                state.dispatch_order.push(*dispatch_id);
-
-                state.dispatches.insert(
-                    *dispatch_id,
-                    ActiveChainDispatchState {
-                        function_name: effect_function_name.clone(),
-                        source_file: effect_source_file.clone(),
-                        source_line: *effect_source_line,
-                        effect_repr: effect_repr.clone(),
-                        is_execution_context_effect: *is_execution_context_effect,
-                        handler_stack: Self::handler_stack_from_snapshot(handler_chain_snapshot),
-                        result: EffectResult::Active,
-                    },
-                );
-            }
-            CaptureEvent::Delegated {
-                dispatch_id,
-                from_handler_name: _,
-                from_handler_index,
-                to_handler_name: _,
-                to_handler_index,
-                to_handler_kind: _,
-                to_handler_source_file: _,
-                to_handler_source_line: _,
-            } => {
-                if let Some(dispatch) = state.dispatches.get_mut(dispatch_id) {
-                    if let Some(from_entry) = dispatch.handler_stack.get_mut(*from_handler_index) {
-                        if from_entry.status == HandlerStatus::Active {
-                            from_entry.status = HandlerStatus::Delegated;
-                        }
-                    }
-                    if let Some(to_entry) = dispatch.handler_stack.get_mut(*to_handler_index) {
-                        to_entry.status = HandlerStatus::Active;
-                    }
-                }
-            }
-            CaptureEvent::Passed {
-                dispatch_id,
-                from_handler_name: _,
-                from_handler_index,
-                to_handler_name: _,
-                to_handler_index,
-                to_handler_kind: _,
-                to_handler_source_file: _,
-                to_handler_source_line: _,
-            } => {
-                if let Some(dispatch) = state.dispatches.get_mut(dispatch_id) {
-                    if let Some(from_entry) = dispatch.handler_stack.get_mut(*from_handler_index) {
-                        if from_entry.status == HandlerStatus::Active {
-                            from_entry.status = HandlerStatus::Passed;
-                        }
-                    }
-                    if let Some(to_entry) = dispatch.handler_stack.get_mut(*to_handler_index) {
-                        to_entry.status = HandlerStatus::Active;
-                    }
-                }
-            }
-            CaptureEvent::HandlerCompleted {
-                dispatch_id,
-                handler_name,
-                handler_index,
-                action,
-            } => {
-                if let Some(dispatch) = state.dispatches.get_mut(dispatch_id) {
-                    let status = match action {
-                        HandlerAction::Resumed { .. } => HandlerStatus::Resumed,
-                        HandlerAction::Transferred { .. } => HandlerStatus::Transferred,
-                        HandlerAction::Returned { .. } => HandlerStatus::Returned,
-                        HandlerAction::Threw { .. } => HandlerStatus::Threw,
-                    };
-                    if let Some(target) = dispatch.handler_stack.get_mut(*handler_index) {
-                        target.status = status;
-                    }
-
-                    dispatch.result = match action {
-                        HandlerAction::Resumed { value_repr }
-                        | HandlerAction::Returned { value_repr } => EffectResult::Resumed {
-                            value_repr: value_repr
-                                .clone()
-                                .unwrap_or_else(|| MISSING_NONE_REPR.to_string()),
-                        },
-                        HandlerAction::Transferred { value_repr } => EffectResult::Transferred {
-                            handler_name: handler_name.clone(),
-                            target_repr: state
-                                .transfer_targets
-                                .get(dispatch_id)
-                                .cloned()
-                                .unwrap_or_else(|| {
-                                    value_repr
-                                        .clone()
-                                        .unwrap_or_else(|| MISSING_TARGET.to_string())
-                                }),
-                        },
-                        HandlerAction::Threw { exception_repr } => EffectResult::Threw {
-                            handler_name: handler_name.clone(),
-                            exception_repr: exception_repr
-                                .clone()
-                                .unwrap_or_else(|| MISSING_EXCEPTION.to_string()),
-                        },
-                    };
-                }
-            }
-            CaptureEvent::Resumed { .. } => {}
-            CaptureEvent::Transferred {
-                dispatch_id,
-                resumed_function_name,
-                source_file,
-                source_line,
-                ..
-            } => {
-                state.transfer_targets.insert(
-                    *dispatch_id,
-                    format!("{resumed_function_name}() {source_file}:{source_line}"),
-                );
+            if let Some(frame_dispatch) = frame_stack.iter_mut().find_map(|frame| {
+                frame
+                    .dispatch_display
+                    .as_mut()
+                    .filter(|frame_dispatch| frame_dispatch.dispatch_id == dispatch.dispatch_id)
+            }) {
+                *frame_dispatch = dispatch.clone();
             }
         }
     }
@@ -883,18 +904,36 @@ impl TraceState {
 
     fn merge_live_frame_state(
         &self,
-        state: &mut ActiveChainAssemblyState,
+        frame_stack: &mut Vec<ActiveChainFrameState>,
+        trace_dispatches: &HashMap<DispatchId, DispatchDisplayState>,
         segments: &SegmentArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[LiveDispatchSnapshot],
     ) {
-        self.merge_frame_lines_from_segments(&mut state.frame_stack, segments, current_segment);
-        let (frame_stack, dispatches) = (&mut state.frame_stack, &state.dispatches);
         self.merge_frame_lines_from_visible_dispatch_snapshot(
             frame_stack,
-            dispatches,
+            trace_dispatches,
             dispatch_stack,
         );
+        self.merge_frame_lines_from_segments(frame_stack, segments, current_segment);
+        for frame in frame_stack.iter_mut() {
+            let Some(stored) = self
+                .frame_stack
+                .iter()
+                .find(|stored| stored.frame_id == frame.frame_id)
+            else {
+                continue;
+            };
+            if frame.args_repr.is_none() {
+                frame.args_repr = stored.args_repr.clone();
+            }
+            if frame.sub_program_repr == MISSING_SUB_PROGRAM {
+                frame.sub_program_repr = stored.sub_program_repr.clone();
+            }
+            if frame.dispatch_display.is_none() {
+                frame.dispatch_display = stored.dispatch_display.clone();
+            }
+        }
     }
 
     fn merge_frame_lines_from_segments(
@@ -933,11 +972,11 @@ impl TraceState {
     fn merge_frame_lines_from_visible_dispatch_snapshot(
         &self,
         frame_stack: &mut Vec<ActiveChainFrameState>,
-        dispatches: &HashMap<DispatchId, ActiveChainDispatchState>,
+        trace_dispatches: &HashMap<DispatchId, DispatchDisplayState>,
         dispatch_stack: &[LiveDispatchSnapshot],
     ) {
         let Some(dispatch_ctx) = dispatch_stack.iter().rev().find(|ctx| {
-            dispatches
+            trace_dispatches
                 .get(&ctx.dispatch_id)
                 .is_some_and(|dispatch| Self::is_visible_dispatch(dispatch))
         }) else {
@@ -1002,22 +1041,21 @@ impl TraceState {
             sub_program_repr: Self::program_call_repr(metadata)
                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
             handler_kind: *handler_kind,
+            dispatch_display: None,
         });
     }
 
     fn entries_from_active_chain_parts(
         &self,
         frame_stack: &[ActiveChainFrameState],
-        dispatches: &HashMap<DispatchId, ActiveChainDispatchState>,
-        frame_dispatch: &HashMap<FrameId, DispatchId>,
+        trace_dispatches: &HashMap<DispatchId, DispatchDisplayState>,
         dispatch_order: &[DispatchId],
         dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<ActiveChainEntry> {
-        let mut active_chain =
-            self.entries_from_frame_stack(frame_stack, dispatches, frame_dispatch);
+        let mut active_chain = self.entries_from_frame_stack(frame_stack);
         if active_chain.is_empty() {
             self.fallback_entries_when_chain_empty(
-                dispatches,
+                trace_dispatches,
                 dispatch_order,
                 dispatch_stack,
                 &mut active_chain,
@@ -1029,45 +1067,49 @@ impl TraceState {
     fn entries_from_frame_stack(
         &self,
         frame_stack: &[ActiveChainFrameState],
-        dispatches: &HashMap<DispatchId, ActiveChainDispatchState>,
-        frame_dispatch: &HashMap<FrameId, DispatchId>,
     ) -> Vec<ActiveChainEntry> {
         let mut active_chain = Vec::new();
         for (index, frame) in frame_stack.iter().enumerate() {
-            let dispatch_id = frame_dispatch.get(&frame.frame_id).copied();
-            let dispatch = dispatch_id.and_then(|id| dispatches.get(&id));
-            if let Some(dispatch) = dispatch.filter(|dispatch| Self::is_visible_dispatch(dispatch))
+            if let Some(dispatch) = frame
+                .dispatch_display
+                .as_ref()
+                .filter(|dispatch| Self::is_visible_dispatch(dispatch))
             {
-                let dispatch_completed = matches!(
+                if matches!(
                     dispatch.result,
-                    EffectResult::Resumed { .. } | EffectResult::Transferred { .. }
-                );
-                if frame.handler_kind.is_some() && dispatch_completed {
-                    active_chain.push(Self::program_yield_entry(frame, frame_stack.get(index + 1)));
+                    EffectResult::Active
+                        | EffectResult::Transferred { .. }
+                        | EffectResult::Threw { .. }
+                ) {
+                    Self::push_effect_yield_entry(&mut active_chain, dispatch, Some(frame));
                     continue;
                 }
-                Self::push_effect_yield_entry(&mut active_chain, dispatch, Some(frame));
-                continue;
             }
 
-            active_chain.push(Self::program_yield_entry(frame, frame_stack.get(index + 1)));
+            if Self::should_skip_program_frame(frame_stack, index) {
+                continue;
+            }
+            active_chain.push(Self::program_yield_entry(
+                frame,
+                Self::next_visible_program_frame(frame_stack, index + 1),
+            ));
         }
         active_chain
     }
 
     fn fallback_entries_when_chain_empty(
         &self,
-        dispatches: &HashMap<DispatchId, ActiveChainDispatchState>,
+        trace_dispatches: &HashMap<DispatchId, DispatchDisplayState>,
         dispatch_order: &[DispatchId],
         dispatch_stack: &[LiveDispatchSnapshot],
         active_chain: &mut Vec<ActiveChainEntry>,
     ) {
         let Some(dispatch_id) =
-            self.fallback_dispatch_id(dispatches, dispatch_order, dispatch_stack)
+            self.fallback_dispatch_id(trace_dispatches, dispatch_order, dispatch_stack)
         else {
             return;
         };
-        let Some(dispatch) = dispatches
+        let Some(dispatch) = trace_dispatches
             .get(&dispatch_id)
             .filter(|dispatch| Self::is_visible_dispatch(dispatch))
         else {
@@ -1088,14 +1130,14 @@ impl TraceState {
             }
             active_chain.push(Self::program_yield_entry(
                 frame,
-                snapshot_frames.get(index + 1),
+                Self::next_visible_program_frame(&snapshot_frames, index + 1),
             ));
         }
     }
 
     fn fallback_dispatch_id(
         &self,
-        dispatches: &HashMap<DispatchId, ActiveChainDispatchState>,
+        trace_dispatches: &HashMap<DispatchId, DispatchDisplayState>,
         dispatch_order: &[DispatchId],
         dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Option<DispatchId> {
@@ -1103,7 +1145,7 @@ impl TraceState {
             .iter()
             .rev()
             .find_map(|ctx| {
-                let dispatch = dispatches.get(&ctx.dispatch_id)?;
+                let dispatch = trace_dispatches.get(&ctx.dispatch_id)?;
                 if Self::is_visible_dispatch(dispatch) {
                     Some(ctx.dispatch_id)
                 } else {
@@ -1116,7 +1158,7 @@ impl TraceState {
                     .rev()
                     .copied()
                     .find_map(|dispatch_id| {
-                        let dispatch = dispatches.get(&dispatch_id)?;
+                        let dispatch = trace_dispatches.get(&dispatch_id)?;
                         if Self::is_visible_dispatch(dispatch) {
                             Some(dispatch_id)
                         } else {
@@ -1163,6 +1205,7 @@ impl TraceState {
                             sub_program_repr: Self::program_call_repr(metadata)
                                 .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
                             handler_kind: *handler_kind,
+                            dispatch_display: None,
                         })
                     })
                     .collect()
@@ -1172,7 +1215,7 @@ impl TraceState {
 
     fn push_effect_yield_entry(
         chain: &mut Vec<ActiveChainEntry>,
-        dispatch: &ActiveChainDispatchState,
+        dispatch: &DispatchDisplayState,
         frame: Option<&ActiveChainFrameState>,
     ) {
         let function_name = dispatch.function_name.clone().unwrap_or_else(|| {
@@ -1218,8 +1261,34 @@ impl TraceState {
         }
     }
 
+    fn next_visible_program_frame(
+        frame_stack: &[ActiveChainFrameState],
+        start_index: usize,
+    ) -> Option<&ActiveChainFrameState> {
+        frame_stack
+            .iter()
+            .skip(start_index)
+            .find(|frame| frame.handler_kind.is_none())
+    }
+
+    fn should_skip_program_frame(frame_stack: &[ActiveChainFrameState], index: usize) -> bool {
+        let Some(frame) = frame_stack.get(index) else {
+            return false;
+        };
+        if frame.handler_kind.is_some() {
+            return false;
+        }
+        let Some(next_frame) = frame_stack.get(index + 1) else {
+            return false;
+        };
+        if next_frame.handler_kind.is_none() {
+            return false;
+        }
+        Self::next_visible_program_frame(frame_stack, index + 1).is_some()
+    }
+
     fn active_handler_trace_info(
-        dispatch: &ActiveChainDispatchState,
+        dispatch: &DispatchDisplayState,
     ) -> (String, HandlerKind, Option<String>, Option<u32>) {
         let handler = dispatch
             .handler_stack
@@ -1419,7 +1488,7 @@ impl TraceState {
         active_chain
     }
 
-    fn is_visible_dispatch(dispatch: &ActiveChainDispatchState) -> bool {
+    fn is_visible_dispatch(dispatch: &DispatchDisplayState) -> bool {
         !dispatch.is_execution_context_effect
     }
 }
