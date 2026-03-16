@@ -48,6 +48,7 @@ impl PyK {
 pub struct Continuation {
     pub cont_id: ContId,
     pub segment_id: SegmentId,
+    pub captured_caller: Option<SegmentId>,
     pub scope_store: ScopeStore,
     pub frames_snapshot: Arc<Vec<Frame>>,
     pub marker: Marker,
@@ -106,6 +107,7 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id,
+            captured_caller: segment.caller,
             scope_store: segment.scope_store.clone(),
             frames_snapshot: Self::snapshot_frames(segment),
             marker: segment.marker,
@@ -133,6 +135,7 @@ impl Continuation {
         Continuation {
             cont_id,
             segment_id,
+            captured_caller: segment.caller,
             scope_store: segment.scope_store.clone(),
             frames_snapshot: Self::snapshot_frames(segment),
             marker: segment.marker,
@@ -164,6 +167,7 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
+            captured_caller: None,
             scope_store: ScopeStore::default(),
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
@@ -204,6 +208,7 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
+            captured_caller: None,
             scope_store: ScopeStore::default(),
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
@@ -269,6 +274,7 @@ mod tests {
         let cont = Continuation::capture(&seg, seg_id, None);
 
         assert_eq!(cont.segment_id, seg_id);
+        assert_eq!(cont.captured_caller, seg.caller);
         assert!(cont.dispatch_id.is_none());
         assert_eq!(cont.marker, seg.marker);
         assert!(cont.frames_snapshot.is_empty());
