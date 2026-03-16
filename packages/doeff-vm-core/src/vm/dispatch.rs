@@ -1377,11 +1377,12 @@ impl VM {
 
         if let Some((_dispatch_id, original_exception, terminal)) = error_dispatch {
             if terminal {
-                let active_chain = self
+                let active_chain: Vec<ActiveChainEntry> = self
                     .assemble_active_chain(Some(&original_exception))
                     .into_iter()
                     .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
                     .collect();
+                self.set_last_active_chain(active_chain.clone());
                 let enriched_exception = match TraceState::enrich_original_exception_with_context(
                     original_exception,
                     value,

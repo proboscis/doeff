@@ -322,6 +322,8 @@ impl VM {
             return Mode::Throw(exception);
         }
 
+        self.capture_last_active_chain(Some(&exception));
+
         if exception.is_materialized_synthetic_vm_error() && !active_handler_supports_conversion {
             return Mode::Throw(exception);
         }
@@ -428,6 +430,18 @@ impl VM {
             self.current_segment,
             &self.live_dispatch_snapshots(),
         )
+    }
+
+    pub(crate) fn capture_last_active_chain(&mut self, exception: Option<&PyException>) {
+        self.last_active_chain = self.assemble_active_chain(exception);
+    }
+
+    pub(crate) fn set_last_active_chain(&mut self, active_chain: Vec<ActiveChainEntry>) {
+        self.last_active_chain = active_chain;
+    }
+
+    pub fn last_active_chain(&self) -> &[ActiveChainEntry] {
+        &self.last_active_chain
     }
 
     fn should_attach_active_chain_for_dispatch(&self, dispatch_id: DispatchId) -> bool {

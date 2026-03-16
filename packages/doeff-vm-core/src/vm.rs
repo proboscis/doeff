@@ -277,6 +277,7 @@ pub struct VM {
     pub current_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
+    pub(crate) last_active_chain: Vec<ActiveChainEntry>,
     pub continuation_registry: HashMap<ContId, Continuation>,
     pub active_run_token: Option<u64>,
 }
@@ -294,6 +295,7 @@ impl VM {
             current_segment: None,
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
+            last_active_chain: Vec::new(),
             continuation_registry: HashMap::new(),
             active_run_token: None,
         }
@@ -313,6 +315,7 @@ impl VM {
         let token = NEXT_RUN_TOKEN.fetch_add(1, Ordering::Relaxed);
         self.active_run_token = Some(token);
         self.trace_state.clear();
+        self.last_active_chain.clear();
         self.interceptor_state.clear_for_run();
         self.run_handlers.clear();
         token
