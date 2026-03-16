@@ -1355,6 +1355,7 @@ impl VM {
         kind: ContinuationActivationKind,
         k: Continuation,
         mut value: Value,
+        caller: Option<SegmentId>,
     ) -> StepEvent {
         if !k.started {
             return self.throw_runtime_error(kind.unstarted_error_message());
@@ -1398,29 +1399,31 @@ impl VM {
             }
         }
 
-        let caller = match kind {
-            ContinuationActivationKind::Resume => {
-                if self.current_handler_dispatch().is_some() {
-                    self.current_segment
-                } else {
-                    k.captured_caller
-                }
-            }
-            ContinuationActivationKind::Transfer => {
-                self.segments.get(k.segment_id).and_then(|seg| seg.caller)
-            }
-        };
         self.enter_continuation_segment(&k, caller);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }
 
-    pub(super) fn handle_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
-        self.activate_continuation(ContinuationActivationKind::Resume, k, value)
+    pub(super) fn handle_resume_from_handler(
+        &mut self,
+        k: Continuation,
+        value: Value,
+    ) -> StepEvent {
+        self.activate_continuation(
+            ContinuationActivationKind::Resume,
+            k,
+            value,
+            self.current_segment,
+        )
     }
 
-    pub(super) fn handle_transfer(&mut self, k: Continuation, value: Value) -> StepEvent {
-        self.activate_continuation(ContinuationActivationKind::Transfer, k, value)
+    pub(super) fn handle_transfer_from_handler(
+        &mut self,
+        k: Continuation,
+        value: Value,
+    ) -> StepEvent {
+        let caller = self.segments.get(k.segment_id).and_then(|seg| seg.caller);
+        self.activate_continuation(ContinuationActivationKind::Transfer, k, value, caller)
     }
 
     fn activate_throw_continuation(
@@ -1878,7 +1881,13 @@ impl VM {
         value: Value,
     ) -> StepEvent {
         if k.started {
-            return self.handle_resume(k, value);
+            let caller = k.captured_caller;
+            return self.activate_continuation(
+                ContinuationActivationKind::Resume,
+                k,
+                value,
+                caller,
+            );
         }
 
         if self.is_one_shot_consumed(k.cont_id) {
