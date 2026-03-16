@@ -157,13 +157,6 @@ impl ContinuationActivationKind {
     fn is_transferred(self) -> bool {
         matches!(self, ContinuationActivationKind::Transfer)
     }
-
-    fn caller_segment(self, current_segment: Option<SegmentId>) -> Option<SegmentId> {
-        match self {
-            ContinuationActivationKind::Resume => current_segment,
-            ContinuationActivationKind::Transfer => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

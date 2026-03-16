@@ -1399,7 +1399,13 @@ impl VM {
         }
 
         let caller = match kind {
-            ContinuationActivationKind::Resume => kind.caller_segment(self.current_segment),
+            ContinuationActivationKind::Resume => {
+                if self.current_handler_dispatch().is_some() {
+                    self.current_segment
+                } else {
+                    k.captured_caller
+                }
+            }
             ContinuationActivationKind::Transfer => {
                 self.segments.get(k.segment_id).and_then(|seg| seg.caller)
             }

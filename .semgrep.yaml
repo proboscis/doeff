@@ -758,6 +758,19 @@ rules:
       spec: SPEC-SCHED-001
       section: "§resume_task, Invariant S1"
 
+  - id: vm-resume-must-use-captured-caller
+    pattern-regex: 'ContinuationActivationKind::Resume\s*=>\s*(?:kind\.caller_segment\s*\(\s*self\.current_segment\s*\)|self\.current_segment)'
+    message: |
+      ISSUE gh-336-caller-chain: Resume activation must restore the continuation's
+      captured caller. Using self.current_segment here can attach resumed
+      continuations to sibling task segments when SegmentId slots are reused.
+      Use k.captured_caller instead.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      issue: gh-336-caller-chain
+      category: correctness
+
   - id: vm-no-segment-ruststore-scope-sync
     pattern-either:
       - pattern: $RUST.scope_bindings = $SEG.scope_store
