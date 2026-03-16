@@ -178,7 +178,7 @@ impl VM {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_traceback_entries(&exc);
                             let active_chain = self.assemble_active_chain(Some(&exc));
-                            self.set_last_active_chain(active_chain.clone());
+                            self.set_last_active_chain(&active_chain);
                             self.segments.reparent_children(seg_id, None);
                             self.segments.free(seg_id);
                             self.current_segment = None;
@@ -500,7 +500,7 @@ impl VM {
                         .into_iter()
                         .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
                         .collect();
-                    self.set_last_active_chain(active_chain.clone());
+                    self.set_last_active_chain(&active_chain);
                     self.current_seg_mut().mode =
                         match TraceState::enrich_original_exception_with_context(
                             original,

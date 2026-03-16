@@ -432,12 +432,21 @@ impl VM {
         )
     }
 
-    pub(crate) fn capture_last_active_chain(&mut self, exception: Option<&PyException>) {
-        self.last_active_chain = self.assemble_active_chain(exception);
+    fn clone_last_active_chain_entries(active_chain: &[ActiveChainEntry]) -> Vec<ActiveChainEntry> {
+        active_chain
+            .iter()
+            .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
+            .cloned()
+            .collect()
     }
 
-    pub(crate) fn set_last_active_chain(&mut self, active_chain: Vec<ActiveChainEntry>) {
-        self.last_active_chain = active_chain;
+    pub(crate) fn capture_last_active_chain(&mut self, exception: Option<&PyException>) {
+        let active_chain = self.assemble_active_chain(exception);
+        self.set_last_active_chain(&active_chain);
+    }
+
+    pub(crate) fn set_last_active_chain(&mut self, active_chain: &[ActiveChainEntry]) {
+        self.last_active_chain = Self::clone_last_active_chain_entries(active_chain);
     }
 
     pub fn last_active_chain(&self) -> &[ActiveChainEntry] {

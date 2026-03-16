@@ -631,6 +631,7 @@ async def async_run(
     store: dict[str, Any] | None = None,
     trace: bool = False,
     print_doeff_trace: bool = False,
+    warn_early_termination: bool = True,
 ) -> Any:
     vm = _vm()
     try:
@@ -650,6 +651,8 @@ async def async_run(
     doeff_tb = _build_doeff_traceback_if_present(result)
     if print_doeff_trace:
         _print_doeff_trace(doeff_tb)
+    if warn_early_termination:
+        _warn_early_termination_if_present(result)
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
