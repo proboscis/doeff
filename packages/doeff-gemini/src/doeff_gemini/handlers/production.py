@@ -191,6 +191,7 @@ def _streaming_chat_impl(effect: LLMStreamingChat | LLMChat) -> EffectGenerator[
 def _structured_impl(effect: LLMStructuredQuery) -> EffectGenerator[Any]:
     prompt, content_parts = _messages_to_prompt_and_parts(effect.messages)
     max_output_tokens = effect.max_tokens if effect.max_tokens is not None else 2048
+    extra = getattr(effect, "extra", None) or {}
     return (
         yield structured_llm__gemini(
             text=prompt,
@@ -199,6 +200,7 @@ def _structured_impl(effect: LLMStructuredQuery) -> EffectGenerator[Any]:
             max_output_tokens=max_output_tokens,
             content_parts=content_parts or None,
             response_format=effect.response_format,
+            generation_config_overrides=extra or None,
         )
     )
 

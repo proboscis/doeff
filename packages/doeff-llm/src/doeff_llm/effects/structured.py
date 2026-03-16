@@ -1,7 +1,7 @@
 """Provider-agnostic structured-output effects."""
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from doeff import EffectBase
@@ -16,6 +16,7 @@ class LLMStructuredQuery(EffectBase):
     model: str
     temperature: float = 0.7
     max_tokens: int | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 __all__ = [
