@@ -307,7 +307,7 @@ impl TraceState {
     }
 
     pub(crate) fn continuation_resume_location(k: &Continuation) -> Option<(String, String, u32)> {
-        Self::resume_location_from_frames(k.frames_snapshot.as_ref())
+        Self::resume_location_from_frames(k.frames())
     }
 
     fn is_internal_source_file(source_file: &str) -> bool {
@@ -320,7 +320,7 @@ impl TraceState {
     ) -> Option<(FrameId, String, String, u32)> {
         let mut fallback: Option<(FrameId, String, String, u32)> = None;
 
-        for frame in k.frames_snapshot.iter().rev() {
+        for frame in k.frames().iter().rev() {
             if let Frame::Program {
                 stream,
                 metadata: Some(metadata),
@@ -754,7 +754,7 @@ impl TraceState {
 
         while let Some(cont) = current {
             let mut frames = Vec::new();
-            for frame in cont.frames_snapshot.iter() {
+            for frame in cont.frames() {
                 if let Frame::Program {
                     stream,
                     metadata: Some(metadata),
@@ -915,7 +915,7 @@ impl TraceState {
             return;
         };
 
-        for frame in dispatch_ctx.continuation.frames_snapshot.iter() {
+        for frame in dispatch_ctx.continuation.frames() {
             let Frame::Program {
                 stream,
                 metadata: Some(metadata),
@@ -1078,7 +1078,7 @@ impl TraceState {
             .map(|dispatch_ctx| {
                 dispatch_ctx
                     .continuation
-                    .frames_snapshot
+                    .frames()
                     .iter()
                     .filter_map(|frame| {
                         let Frame::Program {

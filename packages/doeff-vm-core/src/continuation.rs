@@ -7,12 +7,11 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{ContId, DispatchId, Marker, SegmentId};
+use crate::ids::{ContId, DispatchId, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
-use crate::segment::{ScopeStore, Segment, SegmentKind};
-use crate::step::{Mode, PendingPython, PyException};
-use crate::value::Value;
+use crate::segment::Segment;
+use crate::step::PyException;
 
 #[pyclass(name = "K")]
 pub struct PyK {
@@ -32,9 +31,9 @@ impl PyK {
     }
 }
 
-/// Capturable continuation with frozen frame snapshot.
+/// Capturable continuation with frozen segment snapshot.
 ///
-/// Contains Arc snapshots of frames at capture time.
+/// Contains an Arc snapshot of the captured segment state.
 /// Resume materializes this snapshot into a new execution segment.
 ///
 /// Continuations can be in two states:
@@ -42,23 +41,14 @@ impl PyK {
 /// - **started=false** (unstarted): Created via `create()` with a program and handlers
 ///
 /// When resuming:
-/// - Captured continuations: materialize frames_snapshot into a new segment
+/// - Captured continuations: materialize segment_snapshot into a new segment
 /// - Unstarted continuations: start the program with handlers installed
 #[derive(Debug, Clone)]
 pub struct Continuation {
     pub cont_id: ContId,
     pub segment_id: SegmentId,
     pub captured_caller: Option<SegmentId>,
-    pub scope_store: ScopeStore,
-    pub frames_snapshot: Arc<Vec<Frame>>,
-    pub marker: Marker,
-    pub kind: SegmentKind,
-    pub dispatch_id: Option<DispatchId>,
-    pub mode: Box<Mode>,
-    pub pending_python: Option<Box<PendingPython>>,
-    pub pending_error_context: Option<PyException>,
-    pub interceptor_eval_depth: usize,
-    pub interceptor_skip_stack: Vec<Marker>,
+    pub segment_snapshot: Arc<Segment>,
 
     /// Whether this continuation is already started.
     /// started=true  => captured continuation (from running code)
@@ -83,21 +73,13 @@ pub struct Continuation {
 }
 
 impl Continuation {
-    fn snapshot_frames(segment: &Segment) -> Arc<Vec<Frame>> {
-        let keep_dispatch_origin = segment
-            .frames
-            .iter()
-            .any(|frame| matches!(frame, Frame::HandlerDispatch { .. }));
-        Arc::new(
-            segment
-                .frames
-                .iter()
-                .filter(|frame| {
-                    keep_dispatch_origin || !matches!(frame, Frame::DispatchOrigin { .. })
-                })
-                .cloned()
-                .collect(),
-        )
+    fn captured_segment_snapshot(
+        segment: &Segment,
+        dispatch_id: Option<DispatchId>,
+    ) -> Arc<Segment> {
+        let mut snapshot = segment.clone();
+        snapshot.dispatch_id = dispatch_id;
+        Arc::new(snapshot)
     }
 
     pub fn capture(
@@ -109,16 +91,7 @@ impl Continuation {
             cont_id: ContId::fresh(),
             segment_id,
             captured_caller: segment.caller,
-            scope_store: segment.scope_store.clone(),
-            frames_snapshot: Self::snapshot_frames(segment),
-            marker: segment.marker,
-            kind: segment.kind.clone(),
-            dispatch_id,
-            mode: Box::new(segment.mode.clone()),
-            pending_python: segment.pending_python.clone().map(Box::new),
-            pending_error_context: segment.pending_error_context.clone(),
-            interceptor_eval_depth: segment.interceptor_eval_depth,
-            interceptor_skip_stack: segment.interceptor_skip_stack.clone(),
+            segment_snapshot: Self::captured_segment_snapshot(segment, dispatch_id),
             started: true,
             program: None,
             handlers: Vec::new(),
@@ -138,16 +111,7 @@ impl Continuation {
             cont_id,
             segment_id,
             captured_caller: segment.caller,
-            scope_store: segment.scope_store.clone(),
-            frames_snapshot: Self::snapshot_frames(segment),
-            marker: segment.marker,
-            kind: segment.kind.clone(),
-            dispatch_id,
-            mode: Box::new(segment.mode.clone()),
-            pending_python: segment.pending_python.clone().map(Box::new),
-            pending_error_context: segment.pending_error_context.clone(),
-            interceptor_eval_depth: segment.interceptor_eval_depth,
-            interceptor_skip_stack: segment.interceptor_skip_stack.clone(),
+            segment_snapshot: Self::captured_segment_snapshot(segment, dispatch_id),
             started: true,
             program: None,
             handlers: Vec::new(),
@@ -167,20 +131,12 @@ impl Continuation {
         metadata: Option<CallMetadata>,
     ) -> Self {
         let handler_identities = vec![None; handlers.len()];
+        let snapshot = Arc::new(Segment::new(crate::ids::Marker::placeholder(), None));
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
             captured_caller: None,
-            scope_store: ScopeStore::default(),
-            frames_snapshot: Arc::new(Vec::new()),
-            marker: Marker::placeholder(),
-            kind: SegmentKind::Normal,
-            dispatch_id: None,
-            mode: Box::new(Mode::Deliver(Value::Unit)),
-            pending_python: None,
-            pending_error_context: None,
-            interceptor_eval_depth: 0,
-            interceptor_skip_stack: Vec::new(),
+            segment_snapshot: snapshot,
             started: false,
             program: Some(expr),
             handlers,
@@ -209,20 +165,12 @@ impl Continuation {
         handler_identities: Vec<Option<PyShared>>,
         metadata: Option<CallMetadata>,
     ) -> Self {
+        let snapshot = Arc::new(Segment::new(crate::ids::Marker::placeholder(), None));
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
             captured_caller: None,
-            scope_store: ScopeStore::default(),
-            frames_snapshot: Arc::new(Vec::new()),
-            marker: Marker::placeholder(),
-            kind: SegmentKind::Normal,
-            dispatch_id: None,
-            mode: Box::new(Mode::Deliver(Value::Unit)),
-            pending_python: None,
-            pending_error_context: None,
-            interceptor_eval_depth: 0,
-            interceptor_skip_stack: Vec::new(),
+            segment_snapshot: snapshot,
             started: false,
             program: Some(expr),
             handlers,
@@ -234,6 +182,30 @@ impl Continuation {
 
     pub fn is_started(&self) -> bool {
         self.started
+    }
+
+    pub fn segment(&self) -> &Segment {
+        self.segment_snapshot.as_ref()
+    }
+
+    pub fn segment_mut(&mut self) -> &mut Segment {
+        Arc::make_mut(&mut self.segment_snapshot)
+    }
+
+    pub fn frames(&self) -> &[Frame] {
+        &self.segment().frames
+    }
+
+    pub fn dispatch_id(&self) -> Option<DispatchId> {
+        self.segment().dispatch_id
+    }
+
+    pub fn marker(&self) -> crate::ids::Marker {
+        self.segment().marker
+    }
+
+    pub fn pending_error_context(&self) -> Option<&PyException> {
+        self.segment().pending_error_context.as_ref()
     }
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -280,9 +252,9 @@ mod tests {
 
         assert_eq!(cont.segment_id, seg_id);
         assert_eq!(cont.captured_caller, seg.caller);
-        assert!(cont.dispatch_id.is_none());
-        assert_eq!(cont.marker, seg.marker);
-        assert!(cont.frames_snapshot.is_empty());
+        assert!(cont.dispatch_id().is_none());
+        assert_eq!(cont.segment().marker, seg.marker);
+        assert!(cont.frames().is_empty());
         assert!(cont.is_started());
         assert!(cont.program.is_none());
         assert!(cont.handlers.is_empty());
@@ -307,10 +279,10 @@ mod tests {
         seg.push_frame(Frame::FlatMapBindResult);
 
         let cont = Continuation::capture(&seg, seg_id, None);
-        assert_eq!(cont.frames_snapshot.len(), 1);
+        assert_eq!(cont.frames().len(), 1);
 
         seg.push_frame(Frame::FlatMapBindResult);
-        assert_eq!(cont.frames_snapshot.len(), 1);
+        assert_eq!(cont.frames().len(), 1);
         assert_eq!(seg.frame_count(), 2);
     }
 }

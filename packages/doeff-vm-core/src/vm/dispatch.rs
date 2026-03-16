@@ -31,7 +31,7 @@ impl VM {
                 dispatch_id,
                 effect: effect.clone(),
                 k_origin: k_origin.clone(),
-                original_exception: k_origin.pending_error_context.clone(),
+                original_exception: k_origin.pending_error_context().cloned(),
             })
         })
     }
@@ -46,7 +46,7 @@ impl VM {
                 dispatch_id: frame_dispatch_id,
                 effect: effect.clone(),
                 k_origin: k_origin.clone(),
-                original_exception: k_origin.pending_error_context.clone(),
+                original_exception: k_origin.pending_error_context().cloned(),
             })
         })
     }
@@ -168,7 +168,7 @@ impl VM {
         &self,
         continuation: &Continuation,
     ) -> Option<DispatchOriginView> {
-        let dispatch_id = continuation.dispatch_id?;
+        let dispatch_id = continuation.dispatch_id()?;
         self.dispatch_origin_for_dispatch_id(dispatch_id)
     }
 
@@ -297,8 +297,8 @@ impl VM {
         dispatch_id: DispatchId,
         replacement: Continuation,
     ) {
-        let mut frames = (*continuation.frames_snapshot).clone();
-        for frame in frames.iter_mut().rev() {
+        let snapshot = continuation.segment_mut();
+        for frame in snapshot.frames.iter_mut().rev() {
             if let Frame::HandlerDispatch {
                 dispatch_id: frame_dispatch_id,
                 continuation: frame_continuation,
@@ -311,7 +311,6 @@ impl VM {
                 }
             }
         }
-        continuation.frames_snapshot = Arc::new(frames);
     }
 
     fn clear_forwarded_handler_segment(&mut self, seg_id: SegmentId) {
@@ -326,7 +325,7 @@ impl VM {
     fn continuation_chain_contains_eval_in_scope_return(continuation: &Continuation) -> bool {
         let mut cursor = Some(continuation);
         while let Some(current) = cursor {
-            if current.frames_snapshot.iter().any(|frame| {
+            if current.frames().iter().any(|frame| {
                 matches!(
                     frame,
                     Frame::EvalReturn(eval_return)
@@ -448,7 +447,7 @@ impl VM {
         let mut cursor = scope.parent.as_deref();
         while let Some(parent) = cursor {
             assert!(
-                parent.dispatch_id.is_some(),
+                parent.dispatch_id().is_some(),
                 "EvalInScope parent chain must be Delegate-created dispatch continuations"
             );
             if self.segments.get(parent.segment_id).is_none() {
@@ -755,41 +754,7 @@ impl VM {
         if marker_remap.is_empty() {
             return;
         }
-
-        Self::remap_marker(&mut continuation.marker, marker_remap);
-        Self::remap_interceptor_markers_in_segment_kind(&mut continuation.kind, marker_remap);
-        for marker in &mut continuation.interceptor_skip_stack {
-            Self::remap_marker(marker, marker_remap);
-        }
-
-        match continuation.mode.as_mut() {
-            Mode::HandleYield(yielded) => {
-                Self::remap_interceptor_markers_in_doctrl(yielded, marker_remap);
-            }
-            Mode::Deliver(_) => {}
-            Mode::Throw(_) => {}
-            Mode::Return(_) => {}
-        }
-
-        if let Some(pending) = continuation.pending_python.as_mut() {
-            match pending.as_mut() {
-                PendingPython::RustProgramContinuation { marker, k } => {
-                    Self::remap_marker(marker, marker_remap);
-                    Self::remap_interceptor_markers_in_continuation(k, marker_remap);
-                }
-                PendingPython::EvalExpr { .. } => {}
-                PendingPython::CallFuncReturn => {}
-                PendingPython::StepUserGenerator { .. } => {}
-                PendingPython::ExpandReturn { .. } => {}
-                PendingPython::AsyncEscape => {}
-            }
-        }
-
-        let mut frames = (*continuation.frames_snapshot).clone();
-        for frame in &mut frames {
-            Self::remap_interceptor_markers_in_frame(frame, marker_remap);
-        }
-        continuation.frames_snapshot = Arc::new(frames);
+        Self::remap_interceptor_markers_in_segment(continuation.segment_mut(), marker_remap);
 
         if let Some(parent) = continuation.parent.as_ref() {
             let mut parent_remapped = (**parent).clone();
@@ -1288,7 +1253,7 @@ impl VM {
         k: &Continuation,
         value: &Value,
     ) {
-        if let Some(dispatch_id) = k.dispatch_id {
+        if let Some(dispatch_id) = k.dispatch_id() {
             if let Some((handler_index, handler_name)) =
                 self.current_handler_identity_for_dispatch(dispatch_id)
             {
@@ -1305,7 +1270,7 @@ impl VM {
     }
 
     fn continuation_segment_dispatch_id(&mut self, k: &Continuation) -> Option<DispatchId> {
-        if let Some(dispatch_id) = k.dispatch_id {
+        if let Some(dispatch_id) = k.dispatch_id() {
             if self.dispatch_origin_for_dispatch_id(dispatch_id).is_some() {
                 return Some(dispatch_id);
             }
@@ -1324,25 +1289,13 @@ impl VM {
         caller: Option<SegmentId>,
         dispatch_id: Option<DispatchId>,
     ) {
-        let exec_seg = Segment {
-            marker: k.marker,
-            frames: (*k.frames_snapshot).clone(),
-            caller,
-            scope_store: k.scope_store.clone(),
-            kind: k.kind.clone(),
-            dispatch_id,
-            mode: k.mode.as_ref().clone(),
-            pending_python: k
-                .pending_python
-                .as_ref()
-                .map(|pending| pending.as_ref().clone()),
-            // The original exception lives on the active DispatchOrigin.k_origin.
-            // Reinstalling it onto resumed continuation segments makes unrelated
-            // nested Perform() calls look like fresh GetExecutionContext dispatches.
-            pending_error_context: None,
-            interceptor_eval_depth: k.interceptor_eval_depth,
-            interceptor_skip_stack: k.interceptor_skip_stack.clone(),
-        };
+        let mut exec_seg = (*k.segment_snapshot).clone();
+        exec_seg.caller = caller;
+        exec_seg.dispatch_id = dispatch_id;
+        // The original exception lives on the active DispatchOrigin.k_origin.
+        // Reinstalling it onto resumed continuation segments makes unrelated
+        // nested Perform() calls look like fresh GetExecutionContext dispatches.
+        exec_seg.pending_error_context = None;
         let exec_seg_id = self.alloc_segment(exec_seg);
         self.current_segment = Some(exec_seg_id);
     }
@@ -1372,7 +1325,7 @@ impl VM {
         let error_dispatch = self.error_dispatch_for_continuation(&k);
         self.record_continuation_activation(kind, &k, &value);
         if let Err(err) =
-            self.maybe_attach_active_chain_to_execution_context(k.dispatch_id, &mut value)
+            self.maybe_attach_active_chain_to_execution_context(k.dispatch_id(), &mut value)
         {
             return StepEvent::Error(err);
         }
@@ -1443,7 +1396,7 @@ impl VM {
             .is_some_and(|dispatch_id| {
                 self.dispatch_supports_error_context_conversion(dispatch_id)
             });
-        if let Some(dispatch_id) = k.dispatch_id {
+        if let Some(dispatch_id) = k.dispatch_id() {
             let throws_into_dispatch_origin = self
                 .dispatch_origin_for_dispatch_id(dispatch_id)
                 .is_some_and(|origin| origin.k_origin.cont_id == k.cont_id);

@@ -499,7 +499,7 @@ impl VM {
     ) -> StepEvent {
         match mode {
             Mode::Deliver(value) => {
-                if let Some(original) = k_origin.pending_error_context {
+                if let Some(original) = k_origin.pending_error_context().cloned() {
                     let active_chain = self
                         .assemble_active_chain(Some(&original))
                         .into_iter()
