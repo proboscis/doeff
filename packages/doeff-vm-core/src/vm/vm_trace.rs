@@ -432,7 +432,9 @@ impl VM {
         )
     }
 
-    fn clone_last_active_chain_entries(active_chain: &[ActiveChainEntry]) -> Vec<ActiveChainEntry> {
+    fn snapshot_active_chain_without_context(
+        active_chain: &[ActiveChainEntry],
+    ) -> Vec<ActiveChainEntry> {
         active_chain
             .iter()
             .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
@@ -446,7 +448,7 @@ impl VM {
     }
 
     pub(crate) fn set_last_active_chain(&mut self, active_chain: &[ActiveChainEntry]) {
-        self.last_active_chain = Self::clone_last_active_chain_entries(active_chain);
+        self.last_active_chain = Self::snapshot_active_chain_without_context(active_chain);
     }
 
     pub fn last_active_chain(&self) -> &[ActiveChainEntry] {

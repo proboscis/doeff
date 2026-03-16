@@ -351,6 +351,7 @@ impl VM {
             .is_some_and(|root_stream| Arc::ptr_eq(root_stream, stream))
         {
             self.root_program_completed = true;
+            self.root_program_stream = None;
         }
     }
 
