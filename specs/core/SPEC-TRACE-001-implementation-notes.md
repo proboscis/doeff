@@ -11,9 +11,7 @@ Traceback state is stored on `VM` as `trace_state: TraceState` (`packages/doeff-
 `packages/doeff-vm-core/src/trace_state.rs` with:
 
 - `frame_stack`
-- `trace_dispatches`
-- `transfer_targets`
-- `dispatch_order`
+- per-frame `dispatch_display`
 
 State is reset per run by `VM::begin_run_session()` via `trace_state.clear()`.
 
@@ -24,8 +22,7 @@ State is reset per run by `VM::begin_run_session()` via `trace_state.clear()`.
 VM execution mutates `TraceState` directly through `record_*` helpers:
 
 1. Frame entry/exit updates `frame_stack`
-2. Dispatch start installs `dispatch_display` on the owning frame snapshot and records the
-   dispatch in `trace_dispatches`
+2. Dispatch start installs `dispatch_display` on the owning frame snapshot
 3. Delegate/pass/completion/transfer updates mutate the stored dispatch state in place
 
 There is no transient `CaptureEvent` replay queue in the runtime path.
@@ -39,7 +36,7 @@ There is no transient `CaptureEvent` replay queue in the runtime path.
 `VM::assemble_active_chain(exception)` delegates to
 `TraceState::assemble_active_chain(...)`, which:
 
-1. Clones `frame_stack` / `trace_dispatches`
+1. Clones `frame_stack`
 2. Merges live frame/line data from current segments and visible dispatch snapshots
 3. Finalizes unresolved visible dispatches as `Threw` when exception context exists
 4. Builds `ActiveChainEntry` rows from frame snapshots plus per-frame `dispatch_display`
@@ -75,9 +72,8 @@ into output.
 
 ### Transfer
 
-- Transfer destination text is stored in `transfer_targets`
-- Terminal handler completion reads `transfer_targets` to produce
-  `EffectResult::Transferred { target_repr, ... }`
+- Transfer destination text is stored on the frame's `dispatch_display`
+- Terminal handler completion reads that field to produce `EffectResult::Transferred { target_repr, ... }`
 - Pre-transfer chain visibility comes from incremental frame/dispatch state, not log backtracking
 
 ### Spawn boundaries

@@ -42,6 +42,18 @@ def test_dispatch_display_lives_on_frame_snapshots_not_frame_dispatch_side_map()
         "Dispatch/frame association must be structural on the frame snapshot itself, "
         "not a side map."
     )
+    assert "trace_dispatches:" not in source, (
+        "TraceState must not retain a dispatch_id -> display accumulator once the data "
+        "lives on frames."
+    )
+    assert "dispatch_order:" not in source, (
+        "Traceback ordering must come from walking frame_stack, not a separate dispatch_order "
+        "vector."
+    )
+    assert "transfer_targets:" not in source, (
+        "Transfer target text must live on the frame-owned dispatch display, not in a "
+        "separate TraceState map."
+    )
 
 
 def test_vm_runtime_has_no_buffered_capture_events() -> None:

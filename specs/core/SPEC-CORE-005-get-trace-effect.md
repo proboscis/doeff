@@ -88,8 +88,8 @@ Key property: this path enriches a thrown exception; it does not return an
 
 ## 4. Active Chain Assembly and Attachment
 
-`trace_state.rs` maintains frame-based `TraceState` data (`frame_stack`, per-frame
-`dispatch_display`, `trace_dispatches`) plus live-state merges during assembly.
+`trace_state.rs` maintains frame-based `TraceState` data (`frame_stack` with per-frame
+`dispatch_display`) plus live-state merges during assembly.
 `assemble_active_chain(...)` is the source of the active chain snapshot.
 
 For on-demand `GetExecutionContext`:

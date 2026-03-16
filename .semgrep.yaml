@@ -2744,11 +2744,13 @@ rules:
       ISSUE-336: Frame-based traceback state must not reintroduce the legacy
       event-driven assembly path. Keep dispatch display metadata on frame
       snapshots and mutate TraceState directly; do not add
-      ActiveChainAssemblyState, pending_trace_events, or CaptureEvent back into
+      ActiveChainAssemblyState, pending_trace_events, CaptureEvent, or renamed
+      dispatch accumulators (`trace_dispatches`, `dispatch_order`,
+      `transfer_targets`) back into
       packages/doeff-vm-core/src.
     paths:
       include:
         - "**/packages/doeff-vm-core/src/**"
       exclude:
         - "**/tests/**"
-    pattern-regex: '\bActiveChainAssemblyState\b|\bpending_trace_events\b|\bCaptureEvent\b'
+    pattern-regex: '\bActiveChainAssemblyState\b|\bpending_trace_events\b|\bCaptureEvent\b|\btrace_dispatches\b|\bdispatch_order\b|\btransfer_targets\b'
