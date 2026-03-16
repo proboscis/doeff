@@ -1355,6 +1355,7 @@ impl VM {
         kind: ContinuationActivationKind,
         k: Continuation,
         mut value: Value,
+        caller: Option<SegmentId>,
     ) -> StepEvent {
         if !k.started {
             return self.throw_runtime_error(kind.unstarted_error_message());
@@ -1398,29 +1399,23 @@ impl VM {
             }
         }
 
-        let caller = match kind {
-            ContinuationActivationKind::Resume => {
-                if self.current_handler_dispatch().is_some() {
-                    self.current_segment
-                } else {
-                    k.captured_caller
-                }
-            }
-            ContinuationActivationKind::Transfer => {
-                self.segments.get(k.segment_id).and_then(|seg| seg.caller)
-            }
-        };
         self.enter_continuation_segment(&k, caller);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }
 
-    pub(super) fn handle_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
-        self.activate_continuation(ContinuationActivationKind::Resume, k, value)
+    pub(super) fn handle_dispatch_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
+        self.activate_continuation(
+            ContinuationActivationKind::Resume,
+            k,
+            value,
+            self.current_segment,
+        )
     }
 
-    pub(super) fn handle_transfer(&mut self, k: Continuation, value: Value) -> StepEvent {
-        self.activate_continuation(ContinuationActivationKind::Transfer, k, value)
+    pub(super) fn handle_dispatch_transfer(&mut self, k: Continuation, value: Value) -> StepEvent {
+        let caller = k.captured_caller;
+        self.activate_continuation(ContinuationActivationKind::Transfer, k, value, caller)
     }
 
     fn activate_throw_continuation(
@@ -1468,11 +1463,7 @@ impl VM {
             }
         }
 
-        let caller = self
-            .segments
-            .get(k.segment_id)
-            .and_then(|seg| seg.caller)
-            .or(self.current_segment);
+        let caller = k.captured_caller;
         let dispatch_id = self.continuation_segment_dispatch_id(&k);
         self.enter_continuation_segment_with_dispatch(&k, caller, dispatch_id);
         self.current_seg_mut().mode =
@@ -1878,7 +1869,13 @@ impl VM {
         value: Value,
     ) -> StepEvent {
         if k.started {
-            return self.handle_resume(k, value);
+            let caller = k.captured_caller;
+            return self.activate_continuation(
+                ContinuationActivationKind::Resume,
+                k,
+                value,
+                caller,
+            );
         }
 
         if self.is_one_shot_consumed(k.cont_id) {
