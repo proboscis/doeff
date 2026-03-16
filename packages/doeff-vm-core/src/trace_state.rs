@@ -149,17 +149,21 @@ impl TraceState {
             transfer_target_repr: None,
             result: EffectResult::Active,
         };
-        if let Some(frame_id) = effect_frame_id {
-            if let Some(frame) = self
-                .frame_stack
-                .iter_mut()
-                .find(|frame| frame.frame_id == frame_id)
-            {
-                if let Some(line) = effect_source_line {
-                    frame.source_line = line;
-                }
-                frame.dispatch_display = Some(dispatch_display.clone());
+        let Some(frame_id) = effect_frame_id else {
+            // Internal effects such as execution-context enrichment can have no user-visible
+            // owning frame, so there is nowhere to attach frame-local display state.
+            return;
+        };
+
+        if let Some(frame) = self
+            .frame_stack
+            .iter_mut()
+            .find(|frame| frame.frame_id == frame_id)
+        {
+            if let Some(line) = effect_source_line {
+                frame.source_line = line;
             }
+            frame.dispatch_display = Some(dispatch_display);
         }
     }
 
