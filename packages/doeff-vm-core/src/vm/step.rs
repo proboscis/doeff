@@ -144,9 +144,6 @@ impl VM {
             other => unreachable!("invalid mode discriminator in VM::step: {other}"),
         };
 
-        // Single observation point: flush all buffered trace events to trace_state.
-        self.flush_trace_events();
-
         if self.debug.is_enabled() {
             self.debug_step_exit(&result);
         }
@@ -460,22 +457,15 @@ impl VM {
                     self.current_handler_identity_for_dispatch(dispatch_id)
                 {
                     let value_repr = Self::value_repr(&value);
-                    self.pending_trace_events
-                        .push(CaptureEvent::HandlerCompleted {
-                            dispatch_id,
-                            handler_name: handler_name.clone(),
-                            handler_index,
-                            action: HandlerAction::Returned {
-                                value_repr: value_repr.clone(),
-                            },
-                        });
-                    self.emit_resume_event(
+                    self.trace_state.record_handler_completed(
                         dispatch_id,
-                        handler_name,
-                        value_repr,
-                        &continuation,
-                        false,
+                        &handler_name,
+                        handler_index,
+                        &HandlerAction::Returned {
+                            value_repr: value_repr.clone(),
+                        },
                     );
+                    self.emit_resume_event(dispatch_id, &continuation, false);
                 }
 
                 self.current_seg_mut().mode = Mode::Deliver(value);

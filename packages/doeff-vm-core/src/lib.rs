@@ -67,9 +67,9 @@ pub use bridge::{
 };
 #[cfg(feature = "python_bridge")]
 pub use capture::{
-    ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
-    HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus,
-    SpawnSite, TraceEntry, TraceFrame, TraceHop,
+    ActiveChainEntry, DelegationEntry, DispatchAction, EffectResult, FrameId, HandlerAction,
+    HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus, SpawnSite, TraceEntry,
+    TraceFrame, TraceHop,
 };
 #[cfg(feature = "python_bridge")]
 pub use continuation::{Continuation, PyK};

@@ -120,7 +120,7 @@ def test_delegation_chain_routes_to_outer_handler() -> None:
     assert result.value == 7
 
 
-def test_handler_sources_and_exception_repr_for_thrown_handler() -> None:
+def test_handler_sources_and_exception_repr_for_thrown_handler_excludes_completed_dispatches() -> None:
     @do
     def crashing_handler(effect: Effect, _k):
         if isinstance(effect, Explode):
@@ -154,7 +154,4 @@ def test_handler_sources_and_exception_repr_for_thrown_handler() -> None:
     assert python_throw.exception_repr is not None
     assert "handler exploded" in python_throw.exception_repr
 
-    rust_builtin = next(dispatch for dispatch in dispatches if "Put" in dispatch.effect_repr)
-    assert rust_builtin.handler_kind == "rust_builtin"
-    assert rust_builtin.handler_source_file is None
-    assert rust_builtin.handler_source_line is None
+    assert all("Put" not in dispatch.effect_repr for dispatch in dispatches)
