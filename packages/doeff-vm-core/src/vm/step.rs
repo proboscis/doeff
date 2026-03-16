@@ -435,6 +435,7 @@ impl VM {
                         "handler returned without consuming continuation {}; use Resume(k, v), Transfer(k, v), Discontinue(k, exn), or Pass()",
                         continuation.cont_id.raw(),
                     ));
+                    self.mark_early_terminated();
                     self.mark_one_shot_consumed(continuation.cont_id);
                     self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
                     self.current_seg_mut().mode = self.contextual_throw_mode(exception);
@@ -527,6 +528,7 @@ impl VM {
                     dispatch_id.raw(),
                     value,
                 ));
+                self.mark_early_terminated();
                 self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
                 self.current_seg_mut().mode = self.contextual_throw_mode(exception);
                 StepEvent::Continue
@@ -808,6 +810,7 @@ impl VM {
                 self.handle_stream_yield(yielded, stream, metadata, handler_kind)
             }
             IRStreamStep::Return(value) => {
+                self.maybe_mark_root_program_completed(&stream);
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
@@ -1749,6 +1752,7 @@ impl VM {
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
+        self.register_root_program_stream(&stream, handler_kind);
         if let Some(ref m) = metadata {
             self.emit_frame_entered(m, handler_kind);
         }
@@ -2442,6 +2446,7 @@ impl VM {
                 let _ = self.handle_stream_yield(yielded, stream, metadata, handler_kind);
             }
             PyCallOutcome::GenReturn(value) => {
+                self.maybe_mark_root_program_completed(&stream);
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }

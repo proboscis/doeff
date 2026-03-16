@@ -278,6 +278,9 @@ pub struct VM {
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
     pub(crate) last_active_chain: Vec<ActiveChainEntry>,
+    pub(crate) root_program_stream: Option<IRStreamRef>,
+    pub(crate) root_program_completed: bool,
+    pub(crate) early_terminated: bool,
     pub continuation_registry: HashMap<ContId, Continuation>,
     pub active_run_token: Option<u64>,
 }
@@ -296,6 +299,9 @@ impl VM {
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
             last_active_chain: Vec::new(),
+            root_program_stream: None,
+            root_program_completed: false,
+            early_terminated: false,
             continuation_registry: HashMap::new(),
             active_run_token: None,
         }
@@ -316,9 +322,52 @@ impl VM {
         self.active_run_token = Some(token);
         self.trace_state.clear();
         self.last_active_chain.clear();
+        self.root_program_stream = None;
+        self.root_program_completed = false;
+        self.early_terminated = false;
         self.interceptor_state.clear_for_run();
         self.run_handlers.clear();
         token
+    }
+
+    pub(crate) fn register_root_program_stream(
+        &mut self,
+        stream: &IRStreamRef,
+        handler_kind: Option<HandlerKind>,
+    ) {
+        if handler_kind.is_some() || self.root_program_stream.is_some() {
+            return;
+        }
+        self.root_program_stream = Some(stream.clone());
+    }
+
+    pub(crate) fn maybe_mark_root_program_completed(&mut self, stream: &IRStreamRef) {
+        if self.root_program_completed {
+            return;
+        }
+        if self
+            .root_program_stream
+            .as_ref()
+            .is_some_and(|root_stream| Arc::ptr_eq(root_stream, stream))
+        {
+            self.root_program_completed = true;
+        }
+    }
+
+    pub fn has_root_program_stream(&self) -> bool {
+        self.root_program_stream.is_some()
+    }
+
+    pub fn root_program_completed(&self) -> bool {
+        self.root_program_completed
+    }
+
+    pub fn early_terminated(&self) -> bool {
+        self.early_terminated
+    }
+
+    pub(crate) fn mark_early_terminated(&mut self) {
+        self.early_terminated = true;
     }
 
     pub fn current_run_token(&self) -> Option<u64> {

@@ -194,6 +194,109 @@ def test_print_doeff_trace_warns_on_format_failure(monkeypatch: pytest.MonkeyPat
         rust_vm_module._print_doeff_trace(BrokenTrace())
 
 
+def test_run_warns_on_early_termination(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class ErrValueStub:
+        error = RuntimeError("handler returned without consuming continuation")
+
+        @staticmethod
+        def is_err() -> bool:
+            return True
+
+    class RunResultStub:
+        early_terminated = True
+        last_active_chain = [
+            {
+                "kind": "effect_yield",
+                "function_name": "body",
+                "source_file": "test_program.py",
+                "source_line": 12,
+                "effect_repr": "ProbeEffect()",
+                "handler_stack": [
+                    {
+                        "handler_name": "bad_handler",
+                        "handler_kind": "python",
+                        "source_file": "handlers.py",
+                        "source_line": 7,
+                        "status": "threw",
+                    }
+                ],
+                "result": {
+                    "kind": "threw",
+                    "handler_name": "bad_handler",
+                    "exception_repr": "RuntimeError('handler returned without consuming continuation')",
+                },
+            }
+        ]
+        value = ErrValueStub()
+
+        @staticmethod
+        def is_err() -> bool:
+            return False
+
+    def fake_run(
+        program: object,
+        *,
+        env: dict[str, object] | None,
+        store: dict[str, object] | None,
+    ) -> RunResultStub:
+        return RunResultStub()
+
+    fake_vm = SimpleNamespace(
+        run=fake_run,
+        EffectBase=doeff_vm.EffectBase,
+        DoExpr=doeff_vm.DoExpr,
+        Perform=doeff_vm.Perform,
+    )
+    monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
+
+    result = rust_vm_module.run(Program.pure(1), handlers=[])
+
+    assert result.early_terminated is True
+    captured = capsys.readouterr()
+    assert "Program terminated early before the root program completed." in captured.err
+    assert "doeff Traceback" in captured.err
+    assert "bad_handler" in captured.err
+
+
+def test_run_can_suppress_early_termination_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class RunResultStub:
+        early_terminated = True
+        last_active_chain = []
+        value = object()
+
+        @staticmethod
+        def is_err() -> bool:
+            return False
+
+    def fake_run(
+        program: object,
+        *,
+        env: dict[str, object] | None,
+        store: dict[str, object] | None,
+    ) -> RunResultStub:
+        return RunResultStub()
+
+    fake_vm = SimpleNamespace(
+        run=fake_run,
+        EffectBase=doeff_vm.EffectBase,
+        DoExpr=doeff_vm.DoExpr,
+        Perform=doeff_vm.Perform,
+    )
+    monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
+
+    result = rust_vm_module.run(Program.pure(1), handlers=[], warn_early_termination=False)
+
+    assert result.early_terminated is True
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
 def test_raise_unhandled_effect_uses_typed_exception_classes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
