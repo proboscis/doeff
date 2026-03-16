@@ -153,8 +153,4 @@ def test_handler_sources_and_exception_repr_for_thrown_handler() -> None:
     assert python_throw.handler_source_line is not None
     assert python_throw.exception_repr is not None
     assert "handler exploded" in python_throw.exception_repr
-
-    rust_builtin = next(dispatch for dispatch in dispatches if "Put" in dispatch.effect_repr)
-    assert rust_builtin.handler_kind == "rust_builtin"
-    assert rust_builtin.handler_source_file is None
-    assert rust_builtin.handler_source_line is None
+    assert all("Put" not in dispatch.effect_repr for dispatch in dispatches)

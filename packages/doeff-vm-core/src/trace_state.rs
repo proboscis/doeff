@@ -83,6 +83,27 @@ impl ActiveChainAssemblyState {
             )
         })
     }
+
+    fn maybe_prune_completed_dispatch(&mut self, dispatch_id: DispatchId) {
+        let should_prune = self
+            .dispatches
+            .get(&dispatch_id)
+            .is_some_and(|dispatch| match dispatch.result {
+                EffectResult::Resumed { .. } | EffectResult::Threw { .. } => true,
+                EffectResult::Transferred { .. } => {
+                    self.transfer_targets.contains_key(&dispatch_id)
+                }
+                EffectResult::Active => false,
+            });
+        if !should_prune {
+            return;
+        }
+
+        self.dispatches.remove(&dispatch_id);
+        self.frame_dispatch.retain(|_, id| *id != dispatch_id);
+        self.transfer_targets.remove(&dispatch_id);
+        self.dispatch_order.retain(|id| *id != dispatch_id);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -843,6 +864,7 @@ impl TraceState {
                                 .unwrap_or_else(|| MISSING_EXCEPTION.to_string()),
                         },
                     };
+                    state.maybe_prune_completed_dispatch(*dispatch_id);
                 }
             }
             CaptureEvent::Resumed { .. } => {}
@@ -853,10 +875,20 @@ impl TraceState {
                 source_line,
                 ..
             } => {
-                state.transfer_targets.insert(
-                    *dispatch_id,
-                    format!("{resumed_function_name}() {source_file}:{source_line}"),
-                );
+                let target_repr = format!("{resumed_function_name}() {source_file}:{source_line}");
+                if let Some(dispatch) = state.dispatches.get_mut(dispatch_id) {
+                    if let EffectResult::Transferred {
+                        target_repr: existing,
+                        ..
+                    } = &mut dispatch.result
+                    {
+                        *existing = target_repr.clone();
+                    }
+                    state.transfer_targets.insert(*dispatch_id, target_repr);
+                    state.maybe_prune_completed_dispatch(*dispatch_id);
+                } else {
+                    state.transfer_targets.remove(dispatch_id);
+                }
             }
         }
     }
@@ -1421,5 +1453,129 @@ impl TraceState {
 
     fn is_visible_dispatch(dispatch: &ActiveChainDispatchState) -> bool {
         !dispatch.is_execution_context_effect
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FRAME_ID: FrameId = 41;
+
+    fn frame_entered() -> CaptureEvent {
+        CaptureEvent::FrameEntered {
+            frame_id: FRAME_ID,
+            function_name: "caller".to_string(),
+            source_file: "caller.py".to_string(),
+            source_line: 10,
+            args_repr: Some("(arg=1)".to_string()),
+            program_call_repr: Some("program()".to_string()),
+            handler_kind: None,
+        }
+    }
+
+    fn dispatch_started(dispatch_id: DispatchId) -> CaptureEvent {
+        CaptureEvent::DispatchStarted {
+            dispatch_id,
+            effect_repr: "Ping()".to_string(),
+            is_execution_context_effect: false,
+            creation_site: None,
+            handler_name: "ping_handler".to_string(),
+            handler_kind: HandlerKind::Python,
+            handler_source_file: Some("handlers.py".to_string()),
+            handler_source_line: Some(99),
+            handler_chain_snapshot: vec![HandlerSnapshotEntry {
+                handler_name: "ping_handler".to_string(),
+                handler_kind: HandlerKind::Python,
+                source_file: Some("handlers.py".to_string()),
+                source_line: Some(99),
+            }],
+            effect_frame_id: Some(FRAME_ID),
+            effect_function_name: Some("caller".to_string()),
+            effect_source_file: Some("caller.py".to_string()),
+            effect_source_line: Some(11),
+        }
+    }
+
+    #[test]
+    fn test_completed_dispatch_is_pruned_from_active_chain_state() {
+        let dispatch_id = DispatchId::fresh();
+        let mut trace_state = TraceState::default();
+
+        trace_state.apply_capture_event(frame_entered());
+        trace_state.apply_capture_event(dispatch_started(dispatch_id));
+        trace_state.apply_capture_event(CaptureEvent::HandlerCompleted {
+            dispatch_id,
+            handler_name: "ping_handler".to_string(),
+            handler_index: 0,
+            action: HandlerAction::Resumed {
+                value_repr: Some("42".to_string()),
+            },
+        });
+
+        let state = trace_state.active_chain_state();
+        assert!(state.dispatches.is_empty());
+        assert!(state.frame_dispatch.is_empty());
+        assert!(state.dispatch_order.is_empty());
+        assert!(state.transfer_targets.is_empty());
+    }
+
+    #[test]
+    fn test_pruned_dispatch_falls_back_to_program_yield_entry() {
+        let dispatch_id = DispatchId::fresh();
+        let mut trace_state = TraceState::default();
+
+        trace_state.apply_capture_event(frame_entered());
+        trace_state.apply_capture_event(dispatch_started(dispatch_id));
+        trace_state.apply_capture_event(CaptureEvent::HandlerCompleted {
+            dispatch_id,
+            handler_name: "ping_handler".to_string(),
+            handler_index: 0,
+            action: HandlerAction::Resumed {
+                value_repr: Some("42".to_string()),
+            },
+        });
+
+        let entries = trace_state.assemble_active_chain(None, &SegmentArena::new(), None, &[]);
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(
+            &entries[0],
+            ActiveChainEntry::ProgramYield {
+                function_name,
+                source_file,
+                source_line,
+                ..
+            } if function_name == "caller" && source_file == "caller.py" && *source_line == 11
+        ));
+    }
+
+    #[test]
+    fn test_transferred_dispatch_prunes_transfer_bookkeeping() {
+        let dispatch_id = DispatchId::fresh();
+        let mut trace_state = TraceState::default();
+
+        trace_state.apply_capture_event(dispatch_started(dispatch_id));
+        trace_state.apply_capture_event(CaptureEvent::HandlerCompleted {
+            dispatch_id,
+            handler_name: "ping_handler".to_string(),
+            handler_index: 0,
+            action: HandlerAction::Transferred {
+                value_repr: Some("'target'".to_string()),
+            },
+        });
+        trace_state.apply_capture_event(CaptureEvent::Transferred {
+            dispatch_id,
+            handler_name: "ping_handler".to_string(),
+            value_repr: Some("'target'".to_string()),
+            resumed_function_name: "child".to_string(),
+            source_file: "child.py".to_string(),
+            source_line: 12,
+        });
+
+        let state = trace_state.active_chain_state();
+        assert!(state.dispatches.is_empty());
+        assert!(state.frame_dispatch.is_empty());
+        assert!(state.dispatch_order.is_empty());
+        assert!(state.transfer_targets.is_empty());
     }
 }

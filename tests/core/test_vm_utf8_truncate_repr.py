@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from doeff import Effect, Program, do
 from doeff._types_internal import EffectBase
-from doeff.rust_vm import Pass, Resume, WithHandler, default_handlers, run
+from doeff.rust_vm import Pass, WithHandler, default_handlers, run
 from doeff.trace import TraceDispatch
 
 
@@ -18,32 +18,31 @@ class Utf8BoundaryEffect(EffectBase):
 
 
 @do
-def _resume_utf8_boundary_effect(effect: Effect, k: object):
+def _throw_utf8_boundary_effect(effect: Effect, _k: object):
     if isinstance(effect, Utf8BoundaryEffect):
-        return (yield Resume(k, effect.text))
+        raise RuntimeError("utf8 boundary boom")
     yield Pass()
 
 
 @do
 def _program_with_effect(text: str) -> Program[None]:
     _ = yield Utf8BoundaryEffect(text=text)
-    raise ValueError("boom")
-    yield
+    return None
 
 
 def _dispatch_from_trace(text: str) -> TraceDispatch:
     result = run(
-        WithHandler(_resume_utf8_boundary_effect, _program_with_effect(text)),
+        WithHandler(_throw_utf8_boundary_effect, _program_with_effect(text)),
         handlers=default_handlers(),
         print_doeff_trace=False,
     )
     assert result.is_err()
-    assert isinstance(result.error, ValueError)
+    assert isinstance(result.error, RuntimeError)
     traceback_data = result.traceback_data
     assert traceback_data is not None
     dispatches = [entry for entry in traceback_data.entries if isinstance(entry, TraceDispatch)]
     assert dispatches
-    return dispatches[-1]
+    return dispatches[0]
 
 
 def _assert_truncated_utf8(text: str) -> None:
