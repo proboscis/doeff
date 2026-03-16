@@ -450,7 +450,11 @@ impl PyVM {
                 }
                 StepEvent::NeedsPython(call) => {
                     let outcome = self.execute_python_call(py, call)?;
-                    self.vm.receive_python_result(outcome);
+                    if let Err(e) = self.vm.receive_python_result(outcome) {
+                        let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
+                        let exc = pyerr_to_exception(py, pyerr)?;
+                        break (Err(exc), traceback_data);
+                    }
                 }
                 StepEvent::Continue => unreachable!("handled in run_rust_steps"),
             }
@@ -641,18 +645,7 @@ impl PyVM {
             }
             StepEvent::Error(e) => {
                 self.vm.end_active_run_session();
-                let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
-                let err_obj = pyerr.value(py).clone().into_any();
-                let traceback_obj = traceback_data
-                    .map(|obj| obj.into_bound(py).into_any().unbind())
-                    .unwrap_or_else(|| py.None());
-                let elems: Vec<Bound<'_, pyo3::PyAny>> = vec![
-                    "error".into_pyobject(py)?.into_any(),
-                    err_obj,
-                    traceback_obj.bind(py).clone(),
-                ];
-                let tuple = PyTuple::new(py, elems)?;
-                Ok(tuple.into())
+                self.step_once_error_tuple(py, e)
             }
             StepEvent::NeedsPython(call) => {
                 if let PythonCall::CallAsync { func, args } = call {
@@ -665,7 +658,10 @@ impl PyVM {
                 } else {
                     // Handle synchronously like run() does
                     let outcome = self.execute_python_call(py, call)?;
-                    self.vm.receive_python_result(outcome);
+                    if let Err(e) = self.vm.receive_python_result(outcome) {
+                        self.vm.end_active_run_session();
+                        return self.step_once_error_tuple(py, e);
+                    }
                     let elems: Vec<Bound<'_, pyo3::PyAny>> =
                         vec!["continue".into_pyobject(py)?.into_any()];
                     let tuple = PyTuple::new(py, elems)?;
@@ -678,8 +674,9 @@ impl PyVM {
 
     pub fn feed_async_result(&mut self, _py: Python<'_>, value: Bound<'_, PyAny>) -> PyResult<()> {
         let val = Value::from_pyobject(&value);
-        self.vm.receive_python_result(PyCallOutcome::Value(val));
-        Ok(())
+        self.vm
+            .receive_python_result(PyCallOutcome::Value(val))
+            .map_err(vmerror_to_pyerr)
     }
 
     pub fn feed_async_error(
@@ -694,8 +691,8 @@ impl PyVM {
         let exc_tb = py.None();
         let py_exc = crate::step::PyException::new(exc_type, exc_value, Some(exc_tb));
         self.vm
-            .receive_python_result(PyCallOutcome::GenError(py_exc));
-        Ok(())
+            .receive_python_result(PyCallOutcome::GenError(py_exc))
+            .map_err(vmerror_to_pyerr)
     }
 }
 
@@ -770,6 +767,21 @@ impl PyVM {
                 other => return other,
             }
         }
+    }
+
+    fn step_once_error_tuple(&self, py: Python<'_>, e: VMError) -> PyResult<Py<PyAny>> {
+        let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
+        let err_obj = pyerr.value(py).clone().into_any();
+        let traceback_obj = traceback_data
+            .map(|obj| obj.into_bound(py).into_any().unbind())
+            .unwrap_or_else(|| py.None());
+        let elems: Vec<Bound<'_, pyo3::PyAny>> = vec![
+            "error".into_pyobject(py)?.into_any(),
+            err_obj,
+            traceback_obj.bind(py).clone(),
+        ];
+        let tuple = PyTuple::new(py, elems)?;
+        Ok(tuple.into())
     }
 
     fn execute_python_call(&self, py: Python<'_>, call: PythonCall) -> PyResult<PyCallOutcome> {

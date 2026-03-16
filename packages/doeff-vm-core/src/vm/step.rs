@@ -193,6 +193,7 @@ impl VM {
                             let active_chain = self.assemble_active_chain(Some(&exc));
                             self.segments.reparent_children(seg_id, None);
                             self.segments.free(seg_id);
+                            self.current_segment = None;
                             return StepEvent::Error(VMError::uncaught_exception(
                                 exc,
                                 trace,
@@ -2088,25 +2089,39 @@ impl VM {
             None => {
                 self.segments.reparent_children(seg_id, None);
                 self.segments.free(seg_id);
+                self.current_segment = None;
                 StepEvent::Done(value)
             }
         }
     }
 
-    pub fn receive_python_result(&mut self, outcome: PyCallOutcome) {
+    pub fn receive_python_result(&mut self, outcome: PyCallOutcome) -> Result<(), VMError> {
+        let Some(seg_id) = self.current_segment else {
+            return Err(VMError::internal(
+                "receive_python_result called without current segment",
+            ));
+        };
+
         let pending = match self
-            .current_segment_mut()
+            .segments
+            .get_mut(seg_id)
             .and_then(|seg| seg.pending_python.take())
         {
             Some(p) => p,
             None => {
-                if self.current_segment.is_some() {
-                    let mode = self.contextual_internal_throw_mode(PyException::runtime_error(
-                        "receive_python_result called with no pending_python",
+                let mode = self.contextual_internal_throw_mode(PyException::runtime_error(
+                    "receive_python_result called with no pending_python",
+                ));
+                let Some(seg) = self.segments.get_mut(seg_id) else {
+                    self.current_segment = None;
+                    return Err(VMError::internal(
+                        "receive_python_result called without current segment",
                     ));
-                    self.current_seg_mut().mode = mode;
-                }
-                return;
+                };
+                // We record the internal throw on the live segment here; the driver observes it
+                // on the next step() rather than via receive_python_result's return value.
+                seg.mode = mode;
+                return Ok(());
             }
         };
 
@@ -2136,6 +2151,8 @@ impl VM {
             }
             PendingPython::AsyncEscape => self.receive_async_escape_result(outcome),
         }
+
+        Ok(())
     }
 
     fn receive_eval_expr_result(&mut self, metadata: Option<CallMetadata>, outcome: PyCallOutcome) {
