@@ -74,6 +74,7 @@ def _handle_embedding(effect: LLMEmbedding, k):
 
 @do
 def _handle_structured_output(effect: LLMStructuredQuery, k):
+    extra = getattr(effect, "extra", None) or {}
     api_params = yield build_api_parameters(
         model=effect.model,
         messages=effect.messages,
@@ -83,9 +84,9 @@ def _handle_structured_output(effect: LLMStructuredQuery, k):
         max_tokens=(
             effect.max_tokens if effect.max_tokens is not None else DEFAULT_STRUCTURED_MAX_TOKENS
         ),
-        reasoning_effort=None,
-        verbosity=None,
-        service_tier=None,
+        reasoning_effort=extra.get("reasoning_effort"),
+        verbosity=extra.get("verbosity"),
+        service_tier=extra.get("service_tier"),
         response_format=effect.response_format,
     )
     response = yield chat_completion(**api_params)
