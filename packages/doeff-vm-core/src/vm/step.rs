@@ -12,16 +12,6 @@ impl VM {
         StepEvent::Continue
     }
 
-    pub(super) fn throw_handler_protocol_error(&mut self, message: impl Into<String>) -> StepEvent {
-        if self.current_segment.is_none() {
-            return StepEvent::Error(VMError::internal(
-                "throw_handler_protocol_error called without current segment",
-            ));
-        }
-        self.set_contextual_throw(PyException::handler_protocol_error(message));
-        StepEvent::Continue
-    }
-
     pub(super) fn contextual_throw_mode(&mut self, exception: PyException) -> Mode {
         self.mode_after_generror(GenErrorSite::VmRaisedUser, exception, false)
     }
@@ -188,6 +178,7 @@ impl VM {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_traceback_entries(&exc);
                             let active_chain = self.assemble_active_chain(Some(&exc));
+                            self.set_last_active_chain(&active_chain);
                             self.segments.reparent_children(seg_id, None);
                             self.segments.free(seg_id);
                             self.current_segment = None;
@@ -440,11 +431,15 @@ impl VM {
                         .contains_key(&continuation.cont_id)
                     && !self.is_one_shot_consumed(continuation.cont_id)
                 {
-                    self.mark_one_shot_consumed(continuation.cont_id);
-                    return self.throw_handler_protocol_error(format!(
+                    let exception = PyException::handler_protocol_error(format!(
                         "handler returned without consuming continuation {}; use Resume(k, v), Transfer(k, v), Discontinue(k, exn), or Pass()",
                         continuation.cont_id.raw(),
                     ));
+                    self.mark_early_terminated();
+                    self.mark_one_shot_consumed(continuation.cont_id);
+                    self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                    self.current_seg_mut().mode = self.contextual_throw_mode(exception);
+                    return StepEvent::Continue;
                 }
 
                 if let Err(err) = self
@@ -500,11 +495,12 @@ impl VM {
         match mode {
             Mode::Deliver(value) => {
                 if let Some(original) = k_origin.pending_error_context {
-                    let active_chain = self
+                    let active_chain: Vec<ActiveChainEntry> = self
                         .assemble_active_chain(Some(&original))
                         .into_iter()
                         .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
                         .collect();
+                    self.set_last_active_chain(&active_chain);
                     self.current_seg_mut().mode =
                         match TraceState::enrich_original_exception_with_context(
                             original,
@@ -527,11 +523,15 @@ impl VM {
                 unreachable!("dispatch origin frame received HandleYield mode: {yielded:?}")
             }
             Mode::Return(value) => {
-                return self.throw_handler_protocol_error(format!(
+                let exception = PyException::handler_protocol_error(format!(
                     "handler returned without consuming continuation before dispatch {} completed: {:?}",
                     dispatch_id.raw(),
                     value,
-                ))
+                ));
+                self.mark_early_terminated();
+                self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                self.current_seg_mut().mode = self.contextual_throw_mode(exception);
+                StepEvent::Continue
             }
         }
     }
@@ -810,6 +810,7 @@ impl VM {
                 self.handle_stream_yield(yielded, stream, metadata, handler_kind)
             }
             IRStreamStep::Return(value) => {
+                self.maybe_mark_root_program_completed(&stream);
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
@@ -1751,6 +1752,7 @@ impl VM {
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
+        self.register_root_program_stream(&stream, handler_kind);
         if let Some(ref m) = metadata {
             self.emit_frame_entered(m, handler_kind);
         }
@@ -2444,12 +2446,26 @@ impl VM {
                 let _ = self.handle_stream_yield(yielded, stream, metadata, handler_kind);
             }
             PyCallOutcome::GenReturn(value) => {
+                self.maybe_mark_root_program_completed(&stream);
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
                 if handler_kind == Some(HandlerKind::Python) {
                     if let Some(exception) = Self::returned_control_primitive_exception(&value) {
-                        self.set_contextual_throw(exception);
+                        if let Some(dispatch_id) =
+                            self.current_active_handler_dispatch_id().or_else(|| {
+                                let dispatch_id = self.current_segment_dispatch_id_any()?;
+                                if self.current_segment_is_active_handler_for_dispatch(dispatch_id)
+                                {
+                                    Some(dispatch_id)
+                                } else {
+                                    None
+                                }
+                            })
+                        {
+                            self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                        }
+                        self.current_seg_mut().mode = self.contextual_throw_mode(exception);
                         return;
                     }
                 }

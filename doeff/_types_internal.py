@@ -4,7 +4,6 @@ Core types for the doeff effects system.
 This module contains the foundational types with zero internal dependencies.
 """
 
-
 import json
 import traceback
 import warnings
@@ -692,6 +691,12 @@ class RunResult(Protocol[T]):
 
     @property
     def traceback_data(self) -> Any | None: ...
+
+    @property
+    def last_active_chain(self) -> Any: ...
+
+    @property
+    def early_terminated(self) -> bool: ...
 
     def is_ok(self) -> bool: ...
 

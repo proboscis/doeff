@@ -469,10 +469,15 @@ impl PyVM {
         for entry in self.vm.rust_store.logs() {
             log_list.append(entry.to_pyobject(py)?)?;
         }
+        let last_active_chain =
+            self.build_last_active_chain(py, traceback_data.as_ref().map(|data| data.bind(py)))?;
+        let early_terminated = self.build_early_terminated(result.is_ok());
 
         Ok(PyRunResult {
             result,
             traceback_data,
+            last_active_chain,
+            early_terminated,
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
@@ -580,6 +585,33 @@ impl PyVM {
         Ok(trace_list.into_any().unbind())
     }
 
+    fn build_last_active_chain(
+        &self,
+        py: Python<'_>,
+        traceback_data: Option<&Bound<'_, PyDoeffTracebackData>>,
+    ) -> PyResult<Py<PyAny>> {
+        if !self.vm.last_active_chain().is_empty() {
+            return Ok(Value::ActiveChain(self.vm.last_active_chain().to_vec())
+                .to_pyobject(py)?
+                .unbind());
+        }
+
+        if let Some(traceback_data) = traceback_data {
+            let active_chain = traceback_data.borrow().active_chain.clone_ref(py);
+            if !active_chain.bind(py).is_none() {
+                return Ok(active_chain);
+            }
+        }
+
+        Ok(PyList::empty(py).into_any().unbind())
+    }
+
+    fn build_early_terminated(&self, result_is_ok: bool) -> bool {
+        result_is_ok
+            && (self.vm.early_terminated()
+                || (self.vm.has_root_program_stream() && !self.vm.root_program_completed()))
+    }
+
     pub fn build_run_result(
         &self,
         py: Python<'_>,
@@ -596,6 +628,8 @@ impl PyVM {
         Ok(PyRunResult {
             result: Ok(value.unbind()),
             traceback_data: None,
+            last_active_chain: self.build_last_active_chain(py, None)?,
+            early_terminated: self.build_early_terminated(true),
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
@@ -618,9 +652,12 @@ impl PyVM {
             log_list.append(entry.to_pyobject(py)?)?;
         }
         let exc = pyerr_to_exception(py, PyErr::from_value(error))?;
+        let last_active_chain = self.build_last_active_chain(py, traceback_data.as_ref())?;
         Ok(PyRunResult {
             result: Err(exc),
             traceback_data: traceback_data.map(Bound::unbind),
+            last_active_chain,
+            early_terminated: false,
             raw_store: raw_store.unbind(),
             log: log_list.into_any().unbind(),
             trace: self.build_trace_list(py)?,
@@ -2024,6 +2061,8 @@ pub struct PyRunResult {
     result: Result<Py<PyAny>, PyException>,
     #[pyo3(get)]
     traceback_data: Option<Py<PyDoeffTracebackData>>,
+    last_active_chain: Py<PyAny>,
+    early_terminated: bool,
     raw_store: Py<pyo3::types::PyDict>,
     log: Py<PyAny>,
     trace: Py<PyAny>,
@@ -2142,6 +2181,16 @@ impl PyRunResult {
     #[getter]
     fn raw_store(&self, py: Python<'_>) -> Py<PyAny> {
         self.raw_store.clone_ref(py).into_any()
+    }
+
+    #[getter]
+    fn last_active_chain(&self, py: Python<'_>) -> Py<PyAny> {
+        self.last_active_chain.clone_ref(py)
+    }
+
+    #[getter]
+    fn early_terminated(&self) -> bool {
+        self.early_terminated
     }
 
     #[getter]

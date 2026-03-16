@@ -10,6 +10,7 @@ from doeff import (
     Effect,
     EffectBase,
     Program,
+    Try,
     WithHandler,
     async_run,
     default_async_handlers,
@@ -85,6 +86,72 @@ async def test_async_run_prints_trace_when_flag_is_true(
     assert "nonexistent_key" in captured.err
 
 
+@pytest.mark.asyncio
+async def test_async_run_warns_on_caught_early_termination(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class Boom(EffectBase):
+        pass
+
+    @do
+    def bad_handler(effect: Effect, _k: object):
+        if isinstance(effect, Boom):
+            return "bad-return"
+        yield Delegate()
+
+    @do
+    def inner() -> Program[None]:
+        yield Boom()
+
+    @do
+    def body():
+        return (yield Try(WithHandler(bad_handler, inner())))
+
+    result = await async_run(body(), handlers=default_async_handlers())
+    assert result.is_ok()
+    assert result.early_terminated is True
+
+    captured = capsys.readouterr()
+    assert "Program terminated early before the root program completed." in captured.err
+    assert "doeff Traceback" in captured.err
+    assert "bad_handler" in captured.err
+
+
+@pytest.mark.asyncio
+async def test_async_run_can_suppress_caught_early_termination_warning(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class Boom(EffectBase):
+        pass
+
+    @do
+    def bad_handler(effect: Effect, _k: object):
+        if isinstance(effect, Boom):
+            return "bad-return"
+        yield Delegate()
+
+    @do
+    def inner() -> Program[None]:
+        yield Boom()
+
+    @do
+    def body():
+        return (yield Try(WithHandler(bad_handler, inner())))
+
+    result = await async_run(
+        body(),
+        handlers=default_async_handlers(),
+        warn_early_termination=False,
+    )
+    assert result.is_ok()
+    assert result.early_terminated is True
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
 def test_run_no_stderr_on_success(capsys: pytest.CaptureFixture[str]) -> None:
     @do
     def ok() -> Program[int]:
@@ -92,6 +159,68 @@ def test_run_no_stderr_on_success(capsys: pytest.CaptureFixture[str]) -> None:
 
     result = run(ok(), handlers=default_handlers())
     assert result.is_ok()
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+def test_run_warns_on_caught_early_termination(capsys: pytest.CaptureFixture[str]) -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class Boom(EffectBase):
+        pass
+
+    @do
+    def bad_handler(effect: Effect, _k: object):
+        if isinstance(effect, Boom):
+            return "bad-return"
+        yield Delegate()
+
+    @do
+    def inner() -> Program[None]:
+        yield Boom()
+
+    @do
+    def body():
+        return (yield Try(WithHandler(bad_handler, inner())))
+
+    result = run(body(), handlers=default_handlers())
+    assert result.is_ok()
+    assert result.early_terminated is True
+
+    captured = capsys.readouterr()
+    assert "Program terminated early before the root program completed." in captured.err
+    assert "doeff Traceback" in captured.err
+    assert "bad_handler" in captured.err
+
+
+def test_run_can_suppress_caught_early_termination_warning(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class Boom(EffectBase):
+        pass
+
+    @do
+    def bad_handler(effect: Effect, _k: object):
+        if isinstance(effect, Boom):
+            return "bad-return"
+        yield Delegate()
+
+    @do
+    def inner() -> Program[None]:
+        yield Boom()
+
+    @do
+    def body():
+        return (yield Try(WithHandler(bad_handler, inner())))
+
+    result = run(
+        body(),
+        handlers=default_handlers(),
+        warn_early_termination=False,
+    )
+    assert result.is_ok()
+    assert result.early_terminated is True
 
     captured = capsys.readouterr()
     assert captured.err == ""

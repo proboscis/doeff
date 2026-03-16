@@ -128,6 +128,8 @@ RunResultValue: TypeAlias = Ok[_T] | Err
 
 class RunResult(Generic[_T]):
     traceback_data: DoeffTracebackData | None
+    last_active_chain: Any
+    early_terminated: bool
     @property
     def value(self) -> _T: ...
     @property

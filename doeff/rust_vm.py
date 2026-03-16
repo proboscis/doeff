@@ -412,6 +412,68 @@ def _print_doeff_trace(doeff_tb: Any | None) -> None:
         return
 
 
+_EARLY_TERMINATION_MESSAGE = "Program terminated early before the root program completed."
+
+
+def _early_termination_exception(run_result: Any) -> BaseException:
+    try:
+        value = run_result.value
+        if isinstance(value, BaseException):
+            return value
+        try:
+            is_err = value.is_err
+        except AttributeError:
+            is_err = None
+        if callable(is_err) and is_err():
+            try:
+                error = value.error
+            except AttributeError:
+                error = None
+            if isinstance(error, BaseException):
+                return error
+    except Exception:
+        pass
+    return RuntimeError(_EARLY_TERMINATION_MESSAGE)
+
+
+def _warn_early_termination_if_present(run_result: Any) -> None:
+    try:
+        early_terminated = run_result.early_terminated
+    except AttributeError:
+        return
+    if early_terminated is not True:
+        return
+
+    try:
+        active_chain = run_result.last_active_chain
+    except AttributeError:
+        active_chain = ()
+    if not isinstance(active_chain, (list, tuple)):
+        active_chain = ()
+
+    try:
+        from doeff.traceback import build_doeff_traceback
+
+        doeff_tb = build_doeff_traceback(
+            _early_termination_exception(run_result),
+            (),
+            active_chain,
+            allow_active=True,
+        )
+    except Exception as exc:
+        warnings.warn(f"Failed to build early termination warning: {exc}", stacklevel=2)
+        doeff_tb = None
+
+    try:
+        import sys
+
+        print(_EARLY_TERMINATION_MESSAGE, file=sys.stderr)
+    except Exception as exc:
+        warnings.warn(f"Failed to print early termination warning: {exc}", stacklevel=2)
+
+    _print_doeff_trace(doeff_tb)
+
+
 def _run_call_kwargs(
     run_fn: Any,
     *,
@@ -532,6 +594,7 @@ def run(
     store: dict[str, Any] | None = None,
     trace: bool = False,
     print_doeff_trace: bool = False,
+    warn_early_termination: bool = True,
 ) -> Any:
     vm = _vm()
     try:
@@ -551,6 +614,8 @@ def run(
     doeff_tb = _build_doeff_traceback_if_present(result)
     if print_doeff_trace:
         _print_doeff_trace(doeff_tb)
+    if warn_early_termination:
+        _warn_early_termination_if_present(result)
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
@@ -561,6 +626,7 @@ async def async_run(
     store: dict[str, Any] | None = None,
     trace: bool = False,
     print_doeff_trace: bool = False,
+    warn_early_termination: bool = True,
 ) -> Any:
     vm = _vm()
     try:
@@ -580,6 +646,8 @@ async def async_run(
     doeff_tb = _build_doeff_traceback_if_present(result)
     if print_doeff_trace:
         _print_doeff_trace(doeff_tb)
+    if warn_early_termination:
+        _warn_early_termination_if_present(result)
     return _raise_unhandled_effect_if_present(result, raise_unhandled=raise_unhandled)
 
 
