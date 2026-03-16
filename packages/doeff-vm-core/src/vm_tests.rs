@@ -77,7 +77,7 @@ fn test_resume_continuation_uses_captured_caller_instead_of_current_sibling_segm
 }
 
 #[test]
-fn test_handler_resume_uses_current_handler_segment_as_caller() {
+fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
     let mut vm = VM::new();
 
     let parent_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
@@ -97,7 +97,7 @@ fn test_handler_resume_uses_current_handler_segment_as_caller() {
     let handler_seg_id = vm.alloc_segment(handler_seg);
     vm.current_segment = Some(handler_seg_id);
 
-    let event = vm.handle_resume_from_handler(continuation, Value::Unit);
+    let event = vm.handle_dispatch_resume(continuation, Value::Unit);
     assert!(matches!(event, StepEvent::Continue));
 
     let resumed_seg_id = vm
@@ -111,12 +111,12 @@ fn test_handler_resume_uses_current_handler_segment_as_caller() {
     assert_eq!(
         resumed_segment.caller,
         Some(handler_seg_id),
-        "Handler Resume must return into the current handler segment"
+        "Dispatch Resume must return into the current handler segment"
     );
     assert_ne!(
         resumed_segment.caller,
         Some(parent_id),
-        "Handler Resume must not restore the continuation's captured caller"
+        "Dispatch Resume must not restore the continuation's captured caller"
     );
 }
 

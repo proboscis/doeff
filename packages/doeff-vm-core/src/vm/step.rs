@@ -1449,11 +1449,11 @@ impl VM {
     }
 
     fn handle_yield_resume(&mut self, continuation: Continuation, value: Value) -> StepEvent {
-        self.handle_resume_from_handler(continuation, value)
+        self.handle_dispatch_resume(continuation, value)
     }
 
     fn handle_yield_transfer(&mut self, continuation: Continuation, value: Value) -> StepEvent {
-        self.handle_transfer_from_handler(continuation, value)
+        self.handle_dispatch_transfer(continuation, value)
     }
 
     fn handle_yield_transfer_throw(

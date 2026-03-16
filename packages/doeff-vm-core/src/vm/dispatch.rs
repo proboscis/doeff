@@ -1404,11 +1404,7 @@ impl VM {
         StepEvent::Continue
     }
 
-    pub(super) fn handle_resume_from_handler(
-        &mut self,
-        k: Continuation,
-        value: Value,
-    ) -> StepEvent {
+    pub(super) fn handle_dispatch_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
         self.activate_continuation(
             ContinuationActivationKind::Resume,
             k,
@@ -1417,11 +1413,7 @@ impl VM {
         )
     }
 
-    pub(super) fn handle_transfer_from_handler(
-        &mut self,
-        k: Continuation,
-        value: Value,
-    ) -> StepEvent {
+    pub(super) fn handle_dispatch_transfer(&mut self, k: Continuation, value: Value) -> StepEvent {
         let caller = k.captured_caller;
         self.activate_continuation(ContinuationActivationKind::Transfer, k, value, caller)
     }
