@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use crate::capture::HandlerKind;
 use crate::continuation::Continuation;
-use crate::do_ctrl::DoCtrl;
+use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::effect::DispatchEffect;
 use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::ir_stream::IRStreamRef;
+use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
@@ -68,6 +69,15 @@ impl CallMetadata {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct InterceptorChainLink {
+    pub marker: Marker,
+    pub interceptor: KleisliRef,
+    pub types: Option<Vec<PyShared>>,
+    pub mode: InterceptMode,
+    pub metadata: Option<CallMetadata>,
+}
+
 /// A frame in the continuation stack.
 ///
 /// Frames must be Clone to allow continuation capture (Arc snapshots).
@@ -79,7 +89,7 @@ pub struct InterceptorContinuation {
     pub emitter_stream: IRStreamRef,
     pub emitter_metadata: Option<CallMetadata>,
     pub emitter_handler_kind: Option<HandlerKind>,
-    pub chain: Arc<Vec<Marker>>,
+    pub chain: Arc<Vec<InterceptorChainLink>>,
     pub next_idx: usize,
     pub interceptor_metadata: Option<CallMetadata>,
     pub guard_eval_depth: bool,

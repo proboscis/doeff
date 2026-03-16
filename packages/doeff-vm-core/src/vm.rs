@@ -23,7 +23,9 @@ use crate::effect::{
     DispatchEffect, PyEffectBase, PyExecutionContext, PyGetExecutionContext,
 };
 use crate::error::VMError;
-use crate::frame::{CallMetadata, EvalReturnContinuation, Frame, InterceptorContinuation};
+use crate::frame::{
+    CallMetadata, EvalReturnContinuation, Frame, InterceptorChainLink, InterceptorContinuation,
+};
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::interceptor_state::InterceptorState;
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
@@ -219,18 +221,9 @@ struct DispatchOriginView {
 }
 
 #[derive(Clone)]
-struct InterceptorChainEntry {
-    marker: Marker,
-    interceptor: KleisliRef,
-    types: Option<Vec<PyShared>>,
-    mode: InterceptMode,
-    metadata: Option<CallMetadata>,
-}
-
-#[derive(Clone)]
 enum CallerChainEntry {
     Handler(HandlerChainEntry),
-    Interceptor(InterceptorChainEntry),
+    Interceptor(InterceptorChainLink),
 }
 
 impl Default for DebugConfig {

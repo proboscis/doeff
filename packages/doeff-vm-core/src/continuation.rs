@@ -10,7 +10,7 @@ use crate::frame::Frame;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
-use crate::segment::{ScopeStore, Segment};
+use crate::segment::{ScopeStore, Segment, SegmentKind};
 use crate::step::{Mode, PendingPython, PyException};
 use crate::value::Value;
 
@@ -52,6 +52,7 @@ pub struct Continuation {
     pub scope_store: ScopeStore,
     pub frames_snapshot: Arc<Vec<Frame>>,
     pub marker: Marker,
+    pub kind: SegmentKind,
     pub dispatch_id: Option<DispatchId>,
     pub mode: Box<Mode>,
     pub pending_python: Option<Box<PendingPython>>,
@@ -111,6 +112,7 @@ impl Continuation {
             scope_store: segment.scope_store.clone(),
             frames_snapshot: Self::snapshot_frames(segment),
             marker: segment.marker,
+            kind: segment.kind.clone(),
             dispatch_id,
             mode: Box::new(segment.mode.clone()),
             pending_python: segment.pending_python.clone().map(Box::new),
@@ -139,6 +141,7 @@ impl Continuation {
             scope_store: segment.scope_store.clone(),
             frames_snapshot: Self::snapshot_frames(segment),
             marker: segment.marker,
+            kind: segment.kind.clone(),
             dispatch_id,
             mode: Box::new(segment.mode.clone()),
             pending_python: segment.pending_python.clone().map(Box::new),
@@ -171,6 +174,7 @@ impl Continuation {
             scope_store: ScopeStore::default(),
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
+            kind: SegmentKind::Normal,
             dispatch_id: None,
             mode: Box::new(Mode::Deliver(Value::Unit)),
             pending_python: None,
@@ -212,6 +216,7 @@ impl Continuation {
             scope_store: ScopeStore::default(),
             frames_snapshot: Arc::new(Vec::new()),
             marker: Marker::placeholder(),
+            kind: SegmentKind::Normal,
             dispatch_id: None,
             mode: Box::new(Mode::Deliver(Value::Unit)),
             pending_python: None,

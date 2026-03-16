@@ -87,7 +87,7 @@ impl VM {
                     types,
                     mode,
                     metadata,
-                } => chain.push(CallerChainEntry::Interceptor(InterceptorChainEntry {
+                } => chain.push(CallerChainEntry::Interceptor(InterceptorChainLink {
                     marker: seg.marker,
                     interceptor: interceptor.clone(),
                     types: types.clone(),

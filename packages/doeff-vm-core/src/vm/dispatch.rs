@@ -460,18 +460,6 @@ impl VM {
         Some(start_seg_id)
     }
 
-    fn structural_kind_for_marker(&self, marker: Marker) -> SegmentKind {
-        let Some(entry) = self.interceptor_state.get_entry(marker) else {
-            return SegmentKind::Normal;
-        };
-        SegmentKind::InterceptorBoundary {
-            interceptor: entry.interceptor,
-            types: entry.types,
-            mode: entry.mode,
-            metadata: entry.metadata,
-        }
-    }
-
     pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
         let installed = self.installed_handlers.clone();
         let mut outside_seg_id: Option<SegmentId> = None;
@@ -646,10 +634,14 @@ impl VM {
         marker_remap: &HashMap<Marker, Marker>,
     ) {
         Self::remap_marker(&mut continuation.marker, marker_remap);
-        let remapped_chain: Vec<Marker> = continuation
+        let remapped_chain: Vec<InterceptorChainLink> = continuation
             .chain
             .iter()
-            .map(|marker| marker_remap.get(marker).copied().unwrap_or(*marker))
+            .cloned()
+            .map(|mut link| {
+                Self::remap_marker(&mut link.marker, marker_remap);
+                link
+            })
             .collect();
         continuation.chain = Arc::new(remapped_chain);
         Self::remap_interceptor_markers_in_doctrl(&mut continuation.original_yielded, marker_remap);
@@ -765,6 +757,7 @@ impl VM {
         }
 
         Self::remap_marker(&mut continuation.marker, marker_remap);
+        Self::remap_interceptor_markers_in_segment_kind(&mut continuation.kind, marker_remap);
         for marker in &mut continuation.interceptor_skip_stack {
             Self::remap_marker(marker, marker_remap);
         }
@@ -814,6 +807,7 @@ impl VM {
         }
         Self::remap_marker(&mut seg.marker, marker_remap);
         Self::remap_interceptor_skip_markers(seg, marker_remap);
+        Self::remap_interceptor_markers_in_segment_kind(&mut seg.kind, marker_remap);
 
         match &mut seg.mode {
             Mode::HandleYield(yielded) => {
@@ -841,8 +835,16 @@ impl VM {
         for frame in &mut seg.frames {
             Self::remap_interceptor_markers_in_frame(frame, marker_remap);
         }
+    }
 
-        if let SegmentKind::PromptBoundary { handled_marker, .. } = &mut seg.kind {
+    fn remap_interceptor_markers_in_segment_kind(
+        kind: &mut SegmentKind,
+        marker_remap: &HashMap<Marker, Marker>,
+    ) {
+        if marker_remap.is_empty() {
+            return;
+        }
+        if let SegmentKind::PromptBoundary { handled_marker, .. } = kind {
             Self::remap_marker(handled_marker, marker_remap);
         }
     }
@@ -1327,7 +1329,7 @@ impl VM {
             frames: (*k.frames_snapshot).clone(),
             caller,
             scope_store: k.scope_store.clone(),
-            kind: self.structural_kind_for_marker(k.marker),
+            kind: k.kind.clone(),
             dispatch_id,
             mode: k.mode.as_ref().clone(),
             pending_python: k

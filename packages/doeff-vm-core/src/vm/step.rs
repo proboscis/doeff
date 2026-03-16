@@ -990,13 +990,46 @@ impl VM {
         Mode::HandleYield(yielded)
     }
 
-    fn current_interceptor_chain(&self) -> Vec<Marker> {
-        let dispatch_origin_callers = self.dispatch_origin_callers();
-        self.interceptor_state.current_chain(
-            self.current_segment,
-            &self.segments,
-            &dispatch_origin_callers,
-        )
+    fn current_interceptor_chain(&self) -> Vec<InterceptorChainLink> {
+        fn extend_chain(
+            vm: &VM,
+            start: Option<SegmentId>,
+            chain: &mut Vec<InterceptorChainLink>,
+            seen: &mut HashSet<Marker>,
+        ) {
+            let mut cursor = start;
+            while let Some(seg_id) = cursor {
+                let Some(seg) = vm.segments.get(seg_id) else {
+                    break;
+                };
+                if let SegmentKind::InterceptorBoundary {
+                    interceptor,
+                    types,
+                    mode,
+                    metadata,
+                } = &seg.kind
+                {
+                    if seen.insert(seg.marker) {
+                        chain.push(InterceptorChainLink {
+                            marker: seg.marker,
+                            interceptor: interceptor.clone(),
+                            types: types.clone(),
+                            mode: *mode,
+                            metadata: metadata.clone(),
+                        });
+                    }
+                }
+                cursor = seg.caller;
+            }
+        }
+
+        let mut chain = Vec::new();
+        let mut seen = HashSet::new();
+        extend_chain(self, self.current_segment, &mut chain, &mut seen);
+        for origin_seg_id in self.dispatch_origin_callers() {
+            extend_chain(self, Some(origin_seg_id), &mut chain, &mut seen);
+        }
+        chain
     }
 
     fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
@@ -1078,14 +1111,15 @@ impl VM {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
-        chain: Arc<Vec<Marker>>,
+        chain: Arc<Vec<InterceptorChainLink>>,
         start_idx: usize,
     ) -> Mode {
         let current = yielded;
         let mut idx = start_idx;
 
         while idx < chain.len() {
-            let marker = chain[idx];
+            let link = &chain[idx];
+            let marker = link.marker;
             idx += 1;
             if self.is_interceptor_skipped(marker) {
                 continue;
@@ -1094,14 +1128,17 @@ impl VM {
                 continue;
             }
 
-            let Some(entry) = self.interceptor_state.get_entry(marker) else {
-                continue;
-            };
-
             let yielded_obj = match doctrl_to_pyexpr_for_vm(&current) {
                 Ok(Some(obj)) => PyShared::new(obj),
                 Ok(None) => continue,
                 Err(exc) => return self.contextual_throw_mode(exc),
+            };
+
+            let entry = InterceptorEntry {
+                interceptor: link.interceptor.clone(),
+                types: link.types.clone(),
+                mode: link.mode,
+                metadata: link.metadata.clone(),
             };
 
             match self.should_invoke_interceptor(&entry, &yielded_obj) {
@@ -1146,7 +1183,7 @@ impl VM {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
-        chain: Arc<Vec<Marker>>,
+        chain: Arc<Vec<InterceptorChainLink>>,
         next_idx: usize,
     ) -> Mode {
         let interceptor_kleisli = entry.interceptor.clone();

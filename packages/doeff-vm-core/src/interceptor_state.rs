@@ -1,6 +1,6 @@
 //! Interceptor-domain state and helper logic for VM composition.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use pyo3::prelude::*;
 
@@ -25,41 +25,6 @@ pub(crate) struct InterceptorState {
 impl InterceptorState {
     pub(crate) fn clear_for_run(&mut self) {
         self.interceptors.clear();
-    }
-
-    pub(crate) fn current_chain(
-        &self,
-        current_segment: Option<SegmentId>,
-        segments: &SegmentArena,
-        dispatch_origin_segments: &[SegmentId],
-    ) -> Vec<Marker> {
-        let mut chain = Vec::new();
-        let mut seen = HashSet::new();
-        Self::walk_segment_chain(current_segment, segments, &mut chain, &mut seen);
-        for origin_seg_id in dispatch_origin_segments {
-            Self::walk_segment_chain(Some(*origin_seg_id), segments, &mut chain, &mut seen);
-        }
-        chain
-    }
-
-    fn walk_segment_chain(
-        start: Option<SegmentId>,
-        segments: &SegmentArena,
-        chain: &mut Vec<Marker>,
-        seen: &mut HashSet<Marker>,
-    ) {
-        let mut cursor = start;
-        while let Some(seg_id) = cursor {
-            let Some(seg) = segments.get(seg_id) else {
-                break;
-            };
-            if matches!(seg.kind, SegmentKind::InterceptorBoundary { .. })
-                && seen.insert(seg.marker)
-            {
-                chain.push(seg.marker);
-            }
-            cursor = seg.caller;
-        }
     }
 
     pub(crate) fn visible_to_active_handler(&self, _interceptor_marker: Marker) -> bool {
