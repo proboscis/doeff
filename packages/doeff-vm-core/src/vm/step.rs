@@ -1082,7 +1082,7 @@ impl VM {
 
     fn should_invoke_interceptor(
         &self,
-        entry: &InterceptorEntry,
+        entry: &InterceptorChainLink,
         yielded_obj: &PyShared,
     ) -> Result<bool, PyException> {
         let Some(types) = entry.types.as_ref() else {
@@ -1134,14 +1134,7 @@ impl VM {
                 Err(exc) => return self.contextual_throw_mode(exc),
             };
 
-            let entry = InterceptorEntry {
-                interceptor: link.interceptor.clone(),
-                types: link.types.clone(),
-                mode: link.mode,
-                metadata: link.metadata.clone(),
-            };
-
-            match self.should_invoke_interceptor(&entry, &yielded_obj) {
+            match self.should_invoke_interceptor(link, &yielded_obj) {
                 Ok(true) => {}
                 Ok(false) => continue,
                 Err(exc) => return self.contextual_throw_mode(exc),
@@ -1149,7 +1142,7 @@ impl VM {
 
             return self.start_interceptor_invocation_mode(
                 marker,
-                entry,
+                link.clone(),
                 current,
                 yielded_obj,
                 stream,
@@ -1177,7 +1170,7 @@ impl VM {
     fn start_interceptor_invocation_mode(
         &mut self,
         marker: Marker,
-        entry: InterceptorEntry,
+        entry: InterceptorChainLink,
         yielded: DoCtrl,
         yielded_obj: PyShared,
         stream: IRStreamRef,
@@ -1885,13 +1878,6 @@ impl VM {
                     } else {
                         let fresh_marker = Marker::fresh();
                         interceptor_marker_remap.insert(entry.marker, fresh_marker);
-                        self.interceptor_state.insert(
-                            fresh_marker,
-                            entry.interceptor.clone(),
-                            entry.types.clone(),
-                            entry.mode,
-                            entry.metadata.clone(),
-                        );
                         fresh_marker
                     };
 
@@ -1928,9 +1914,6 @@ impl VM {
                 continuation: return_to,
             },
         )));
-        for old_marker in interceptor_marker_remap.keys() {
-            self.interceptor_state.remove(*old_marker);
-        }
 
         self.current_segment = outside_seg_id;
         self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr { metadata });

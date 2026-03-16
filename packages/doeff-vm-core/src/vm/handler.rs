@@ -94,13 +94,7 @@ impl VM {
                     mode: *mode,
                     metadata: metadata.clone(),
                 })),
-                SegmentKind::Normal | SegmentKind::MaskBoundary { .. } => {
-                    assert!(
-                        self.interceptor_state.get_entry(seg.marker).is_none(),
-                        "normal segment marker {} unexpectedly has interceptor state entry",
-                        seg.marker.raw()
-                    );
-                }
+                SegmentKind::Normal | SegmentKind::MaskBoundary { .. } => {}
             }
             cursor = seg.caller;
         }

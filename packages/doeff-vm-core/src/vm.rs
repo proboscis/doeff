@@ -184,14 +184,6 @@ impl ForwardKind {
 }
 
 #[derive(Clone)]
-pub struct InterceptorEntry {
-    pub(crate) interceptor: KleisliRef,
-    pub(crate) types: Option<Vec<PyShared>>,
-    pub(crate) mode: InterceptMode,
-    pub(crate) metadata: Option<CallMetadata>,
-}
-
-#[derive(Clone)]
 struct InstalledHandler {
     marker: Marker,
     handler: KleisliRef,

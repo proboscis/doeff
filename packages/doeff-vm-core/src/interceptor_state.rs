@@ -1,7 +1,5 @@
 //! Interceptor-domain state and helper logic for VM composition.
 
-use std::collections::HashMap;
-
 use pyo3::prelude::*;
 
 use crate::arena::SegmentArena;
@@ -15,17 +13,14 @@ use crate::ids::{Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::segment::{Segment, SegmentKind};
-use crate::vm::InterceptorEntry;
 
+// Interceptor metadata now lives on SegmentKind/Continuation snapshots directly.
+// This helper remains as the home for interceptor-specific guard operations.
 #[derive(Clone, Default)]
-pub(crate) struct InterceptorState {
-    interceptors: HashMap<Marker, InterceptorEntry>,
-}
+pub(crate) struct InterceptorState;
 
 impl InterceptorState {
-    pub(crate) fn clear_for_run(&mut self) {
-        self.interceptors.clear();
-    }
+    pub(crate) fn clear_for_run(&mut self) {}
 
     pub(crate) fn visible_to_active_handler(&self, _interceptor_marker: Marker) -> bool {
         // WithIntercept sees ALL effects regardless of handler nesting.
@@ -65,33 +60,6 @@ impl InterceptorState {
         })
     }
 
-    pub(crate) fn insert(
-        &mut self,
-        marker: Marker,
-        interceptor: KleisliRef,
-        types: Option<Vec<PyShared>>,
-        mode: InterceptMode,
-        metadata: Option<CallMetadata>,
-    ) {
-        self.interceptors.insert(
-            marker,
-            InterceptorEntry {
-                interceptor,
-                types,
-                mode,
-                metadata,
-            },
-        );
-    }
-
-    pub(crate) fn get_entry(&self, marker: Marker) -> Option<InterceptorEntry> {
-        self.interceptors.get(&marker).cloned()
-    }
-
-    pub(crate) fn remove(&mut self, marker: Marker) {
-        self.interceptors.remove(&marker);
-    }
-
     pub(crate) fn prepare_with_intercept(
         &mut self,
         interceptor: KleisliRef,
@@ -108,14 +76,6 @@ impl InterceptorState {
         let outside_seg = segments.get(outside_seg_id).ok_or_else(|| {
             VMError::invalid_segment("current segment not found for WithIntercept")
         })?;
-
-        self.insert(
-            interceptor_marker,
-            interceptor.clone(),
-            types.clone(),
-            mode,
-            metadata.clone(),
-        );
 
         let mut body_seg = Segment::new(interceptor_marker, Some(outside_seg_id));
         body_seg.kind = SegmentKind::InterceptorBoundary {
