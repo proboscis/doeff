@@ -140,8 +140,8 @@ impl TraceState {
     ) {
         let dispatch_display = DispatchDisplayState {
             dispatch_id,
-            function_name: effect_function_name.clone(),
-            source_file: effect_source_file.clone(),
+            function_name: effect_function_name,
+            source_file: effect_source_file,
             source_line: effect_source_line,
             effect_repr,
             is_execution_context_effect,

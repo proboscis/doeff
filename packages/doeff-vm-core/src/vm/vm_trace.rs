@@ -392,8 +392,6 @@ impl VM {
     pub(super) fn emit_resume_event(
         &mut self,
         dispatch_id: DispatchId,
-        _handler_name: String,
-        _value_repr: Option<String>,
         continuation: &Continuation,
         transferred: bool,
     ) {

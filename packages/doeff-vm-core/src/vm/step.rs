@@ -465,13 +465,7 @@ impl VM {
                             value_repr: value_repr.clone(),
                         },
                     );
-                    self.emit_resume_event(
-                        dispatch_id,
-                        handler_name,
-                        value_repr,
-                        &continuation,
-                        false,
-                    );
+                    self.emit_resume_event(dispatch_id, &continuation, false);
                 }
 
                 self.current_seg_mut().mode = Mode::Deliver(value);

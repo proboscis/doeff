@@ -1297,13 +1297,7 @@ impl VM {
                     handler_index,
                     &kind.handler_action(value_repr.clone()),
                 );
-                self.emit_resume_event(
-                    dispatch_id,
-                    handler_name,
-                    value_repr,
-                    k,
-                    kind.is_transferred(),
-                );
+                self.emit_resume_event(dispatch_id, k, kind.is_transferred());
             }
         }
     }
@@ -1568,30 +1562,17 @@ impl VM {
         &mut self,
         kind: ForwardKind,
         dispatch_id: DispatchId,
-        handler_chain: &[Marker],
         from_idx: usize,
         to_idx: usize,
-        to_marker: Marker,
     ) {
-        let from_marker = handler_chain.get(from_idx).copied();
-        let from_name = from_marker
-            .and_then(|m| self.marker_handler_trace_info(m))
-            .map(|(name, _, _, _)| name);
-        let to_info = self.marker_handler_trace_info(to_marker);
-        if let (Some(from_name), Some((to_name, to_kind, to_source_file, to_source_line))) =
-            (from_name, to_info)
-        {
-            match kind {
-                ForwardKind::Delegate => {
-                    let _ = (from_name, to_name, to_kind, to_source_file, to_source_line);
-                    self.trace_state
-                        .record_delegated(dispatch_id, from_idx, to_idx);
-                }
-                ForwardKind::Pass => {
-                    let _ = (from_name, to_name, to_kind, to_source_file, to_source_line);
-                    self.trace_state
-                        .record_passed(dispatch_id, from_idx, to_idx);
-                }
+        match kind {
+            ForwardKind::Delegate => {
+                self.trace_state
+                    .record_delegated(dispatch_id, from_idx, to_idx);
+            }
+            ForwardKind::Pass => {
+                self.trace_state
+                    .record_passed(dispatch_id, from_idx, to_idx);
             }
         }
     }
@@ -1692,17 +1673,7 @@ impl VM {
                         entry.marker.raw()
                     )));
                 };
-                self.emit_forward_active_chain_event(
-                    kind,
-                    dispatch_id,
-                    &handler_chain
-                        .iter()
-                        .map(|chain_entry| chain_entry.marker)
-                        .collect::<Vec<_>>(),
-                    from_idx,
-                    idx,
-                    entry.marker,
-                );
+                self.emit_forward_active_chain_event(kind, dispatch_id, from_idx, idx);
 
                 let handler_seg_id = if matches!(kind, ForwardKind::Pass) {
                     let Some(handler_seg) = self.segments.get_mut(inner_seg_id) else {
