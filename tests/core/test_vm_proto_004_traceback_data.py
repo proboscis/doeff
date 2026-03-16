@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from doeff import Program, do
+from dataclasses import dataclass
+
+from doeff import Effect, Pass, Program, Try, WithHandler, do
 from doeff.effects import Put
+from doeff.effects.base import EffectBase
 from doeff.rust_vm import default_handlers, run
 
 
@@ -14,6 +17,7 @@ def test_run_result_traceback_data_is_none_on_success() -> None:
     result = run(body(), handlers=default_handlers())
     assert result.is_ok(), result.error
     assert result.traceback_data is None
+    assert result.last_active_chain == []
 
 
 def test_run_result_exposes_typed_traceback_data_without_exception_dunders() -> None:
@@ -52,3 +56,49 @@ def test_invalid_top_level_yield_returns_err_run_result_with_traceback_data() ->
     assert "(type: object)" in str(result.error)
     assert "<object object at " in str(result.error)
     assert result.traceback_data is not None
+    assert result.last_active_chain == result.traceback_data.active_chain
+
+
+def test_run_result_last_active_chain_tracks_caught_handler_protocol_error() -> None:
+    @dataclass(frozen=True, kw_only=True)
+    class ProbeEffect(EffectBase):
+        pass
+
+    @do
+    def bad_handler(effect: Effect, _k: object):
+        if isinstance(effect, ProbeEffect):
+            return "bad-return"
+        yield Pass()
+
+    @do
+    def inner() -> Program[None]:
+        yield ProbeEffect()
+
+    @do
+    def body():
+        return (yield Try(WithHandler(bad_handler, inner())))
+
+    result = run(body(), handlers=default_handlers())
+
+    assert result.is_ok(), result.error
+    assert result.traceback_data is None
+    assert result.value.is_err()
+    assert result.last_active_chain
+
+    effect_entries = [
+        entry
+        for entry in result.last_active_chain
+        if isinstance(entry, dict) and entry.get("kind") == "effect_yield"
+    ]
+    assert effect_entries
+
+    assert any(entry["result"]["kind"] == "threw" for entry in effect_entries)
+    assert any(
+        "handler returned without consuming continuation" in entry["result"]["exception_repr"]
+        for entry in effect_entries
+    )
+    assert any(
+        str(handler["handler_name"]).endswith("bad_handler") and handler["status"] == "threw"
+        for entry in effect_entries
+        for handler in entry["handler_stack"]
+    )
