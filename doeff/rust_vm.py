@@ -418,26 +418,21 @@ _EARLY_TERMINATION_MESSAGE = "Program terminated early before the root program c
 def _early_termination_exception(run_result: Any) -> BaseException:
     try:
         value = run_result.value
-    except AttributeError:
-        return RuntimeError(_EARLY_TERMINATION_MESSAGE)
-
-    try:
-        is_err = value.is_err
-    except AttributeError:
         if isinstance(value, BaseException):
             return value
-        return RuntimeError(_EARLY_TERMINATION_MESSAGE)
-
-    if callable(is_err) and is_err():
         try:
-            error = value.error
+            is_err = value.is_err
         except AttributeError:
-            return RuntimeError(_EARLY_TERMINATION_MESSAGE)
-        if isinstance(error, BaseException):
-            return error
-
-    if isinstance(value, BaseException):
-        return value
+            is_err = None
+        if callable(is_err) and is_err():
+            try:
+                error = value.error
+            except AttributeError:
+                error = None
+            if isinstance(error, BaseException):
+                return error
+    except Exception:
+        pass
     return RuntimeError(_EARLY_TERMINATION_MESSAGE)
 
 
