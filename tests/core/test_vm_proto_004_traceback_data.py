@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import doeff_vm
+
 from doeff import Effect, Pass, Program, Try, WithHandler, do
 from doeff.effects import Put
 from doeff.effects.base import EffectBase
@@ -18,6 +20,7 @@ def test_run_result_traceback_data_is_none_on_success() -> None:
     assert result.is_ok(), result.error
     assert result.traceback_data is None
     assert result.last_active_chain == []
+    assert result.early_terminated is False
 
 
 def test_run_result_exposes_typed_traceback_data_without_exception_dunders() -> None:
@@ -83,6 +86,7 @@ def test_run_result_last_active_chain_tracks_caught_handler_protocol_error() -> 
     assert result.is_ok(), result.error
     assert result.traceback_data is None
     assert result.value.is_err()
+    assert result.early_terminated is True
     assert result.last_active_chain
 
     effect_entries = [
@@ -102,3 +106,27 @@ def test_run_result_last_active_chain_tracks_caught_handler_protocol_error() -> 
         for entry in effect_entries
         for handler in entry["handler_stack"]
     )
+
+
+def test_build_run_result_marks_early_terminated_when_root_program_is_unfinished() -> None:
+    vm = doeff_vm.PyVM()
+
+    @do
+    def body() -> Program[int]:
+        value = yield Program.pure(7)
+        return value
+
+    vm.start_program(body())
+
+    result = None
+    for _ in range(4):
+        step = vm.step_once()
+        assert step[0] in {"continue", "done"}
+        result = vm.build_run_result(123)
+        if result.early_terminated:
+            break
+
+    assert result is not None
+    assert result.is_ok(), result.error
+    assert result.value == 123
+    assert result.early_terminated is True
