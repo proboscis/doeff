@@ -1422,7 +1422,7 @@ impl VM {
         k: Continuation,
         value: Value,
     ) -> StepEvent {
-        let caller = self.segments.get(k.segment_id).and_then(|seg| seg.caller);
+        let caller = k.captured_caller;
         self.activate_continuation(ContinuationActivationKind::Transfer, k, value, caller)
     }
 
@@ -1471,11 +1471,7 @@ impl VM {
             }
         }
 
-        let caller = self
-            .segments
-            .get(k.segment_id)
-            .and_then(|seg| seg.caller)
-            .or(self.current_segment);
+        let caller = k.captured_caller;
         let dispatch_id = self.continuation_segment_dispatch_id(&k);
         self.enter_continuation_segment_with_dispatch(&k, caller, dispatch_id);
         self.current_seg_mut().mode =
