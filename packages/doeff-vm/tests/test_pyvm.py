@@ -783,6 +783,28 @@ async def test_async_run_with_state_effects():
     assert result == 100
 
 
+def test_feed_async_result_after_completion_raises_runtime_error():
+    """Late async results must not be silently dropped after the VM is done."""
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+    assert vm.run(simple_program()) == 42
+
+    with pytest.raises(RuntimeError, match="receive_python_result called without current segment"):
+        vm.feed_async_result(123)
+
+
+def test_feed_async_error_after_completion_raises_runtime_error():
+    """Late async errors must not be silently dropped after the VM is done."""
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+    assert vm.run(simple_program()) == 42
+
+    with pytest.raises(RuntimeError, match="receive_python_result called without current segment"):
+        vm.feed_async_error(RuntimeError("late async boom"))
+
+
 ## -- Scoped handler behavior tests (WithHandler) ----------------------------
 
 
