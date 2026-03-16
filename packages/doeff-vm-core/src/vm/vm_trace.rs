@@ -1,4 +1,5 @@
 use super::*;
+use crate::capture::EffectCreationSite;
 
 impl VM {
     pub(super) fn value_repr(value: &Value) -> Option<String> {
@@ -350,21 +351,12 @@ impl VM {
         metadata: &CallMetadata,
         handler_kind: Option<HandlerKind>,
     ) {
-        self.pending_trace_events.push(CaptureEvent::FrameEntered {
-            frame_id: metadata.frame_id as FrameId,
-            function_name: metadata.function_name.clone(),
-            source_file: metadata.source_file.clone(),
-            source_line: metadata.source_line,
-            args_repr: metadata.args_repr.clone(),
-            program_call_repr: Self::program_call_repr(metadata),
-            handler_kind,
-        });
+        self.trace_state
+            .record_frame_entered(metadata, handler_kind);
     }
 
-    pub(super) fn emit_frame_exited(&mut self, metadata: &CallMetadata) {
-        self.pending_trace_events.push(CaptureEvent::FrameExited {
-            function_name: metadata.function_name.clone(),
-        });
+    pub(super) fn emit_frame_exited(&mut self, _metadata: &CallMetadata) {
+        self.trace_state.record_frame_exited();
     }
 
     pub(super) fn emit_handler_threw_for_dispatch(
@@ -387,22 +379,19 @@ impl VM {
         let Some((handler_index, handler_name)) = handler_identity else {
             return;
         };
-        self.pending_trace_events
-            .push(CaptureEvent::HandlerCompleted {
-                dispatch_id,
-                handler_name,
-                handler_index,
-                action: HandlerAction::Threw {
-                    exception_repr: Self::exception_repr(exc),
-                },
-            });
+        self.trace_state.record_handler_completed(
+            dispatch_id,
+            &handler_name,
+            handler_index,
+            &HandlerAction::Threw {
+                exception_repr: Self::exception_repr(exc),
+            },
+        );
     }
 
     pub(super) fn emit_resume_event(
         &mut self,
         dispatch_id: DispatchId,
-        handler_name: String,
-        value_repr: Option<String>,
         continuation: &Continuation,
         transferred: bool,
     ) {
@@ -410,29 +399,17 @@ impl VM {
             TraceState::continuation_resume_location(continuation)
         {
             if transferred {
-                self.pending_trace_events.push(CaptureEvent::Transferred {
+                self.trace_state.record_transfer_target(
                     dispatch_id,
-                    handler_name,
-                    value_repr,
-                    resumed_function_name,
-                    source_file,
+                    &resumed_function_name,
+                    &source_file,
                     source_line,
-                });
-            } else {
-                self.pending_trace_events.push(CaptureEvent::Resumed {
-                    dispatch_id,
-                    handler_name,
-                    value_repr,
-                    resumed_function_name,
-                    source_file,
-                    source_line,
-                });
+                );
             }
         }
     }
 
     pub fn assemble_traceback_entries(&mut self, exception: &PyException) -> Vec<TraceEntry> {
-        self.flush_trace_events();
         self.trace_state.assemble_traceback_entries(
             exception,
             &self.segments,
@@ -445,7 +422,6 @@ impl VM {
         &mut self,
         exception: Option<&PyException>,
     ) -> Vec<ActiveChainEntry> {
-        self.flush_trace_events();
         self.trace_state.assemble_active_chain(
             exception,
             &self.segments,

@@ -7,28 +7,25 @@ These notes document the current traceback assembly architecture in this reposit
 ## Active-chain storage model
 
 Traceback state is stored on `VM` as `trace_state: TraceState` (`packages/doeff-vm-core/src/vm.rs`).
-`TraceState` owns one `ActiveChainAssemblyState` (`packages/doeff-vm-core/src/trace_state.rs`)
-with:
+`TraceState` directly owns the frame-based traceback state in
+`packages/doeff-vm-core/src/trace_state.rs` with:
 
 - `frame_stack`
-- `dispatches`
-- `frame_dispatch`
-- `transfer_targets`
-- `dispatch_order`
+- per-frame `dispatch_display`
 
 State is reset per run by `VM::begin_run_session()` via `trace_state.clear()`.
 
 ---
 
-## Event application path
+## Mutation path
 
-VM execution emits transient `CaptureEvent` values through `TraceState::emit_*` helpers.
-Each event is immediately applied to `ActiveChainAssemblyState` by:
+VM execution mutates `TraceState` directly through `record_*` helpers:
 
-1. `TraceState::apply_capture_event(...)`
-2. `TraceState::apply_active_chain_event(...)`
+1. Frame entry/exit updates `frame_stack`
+2. Dispatch start installs `dispatch_display` on the owning frame snapshot
+3. Delegate/pass/completion/transfer updates mutate the stored dispatch state in place
 
-`CaptureEvent` is not retained as a long-lived chronological log.
+There is no transient `CaptureEvent` replay queue in the runtime path.
 
 ---
 
@@ -39,10 +36,10 @@ Each event is immediately applied to `ActiveChainAssemblyState` by:
 `VM::assemble_active_chain(exception)` delegates to
 `TraceState::assemble_active_chain(...)`, which:
 
-1. Clones `active_chain_state`
+1. Clones `frame_stack`
 2. Merges live frame/line data from current segments and visible dispatch snapshots
 3. Finalizes unresolved visible dispatches as `Threw` when exception context exists
-4. Builds `ActiveChainEntry` rows from frame/dispatch snapshots
+4. Builds `ActiveChainEntry` rows from frame snapshots plus per-frame `dispatch_display`
 5. Deduplicates adjacent identical rows
 6. Injects context entries and `ExceptionSite`
 
@@ -75,9 +72,8 @@ into output.
 
 ### Transfer
 
-- `CaptureEvent::Transferred` stores destination text in `transfer_targets`
-- Terminal handler completion reads `transfer_targets` to produce
-  `EffectResult::Transferred { target_repr, ... }`
+- Transfer destination text is stored on the frame's `dispatch_display`
+- Terminal handler completion reads that field to produce `EffectResult::Transferred { target_repr, ... }`
 - Pre-transfer chain visibility comes from incremental frame/dispatch state, not log backtracking
 
 ### Spawn boundaries
@@ -92,5 +88,5 @@ entries (dict payload with `kind == "spawn_boundary"`). Python coercion promotes
 
 - No persisted event-log field in traceback assembly path
 - No legacy full-log assembler function in VM core traceback path
-- Traceback assembly is on-demand from `ActiveChainAssemblyState`
+- Traceback assembly is on-demand from `TraceState` frame snapshots plus live dispatch snapshots
 - Python `format_default()` is render-only and does not reconstruct VM state

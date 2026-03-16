@@ -30,32 +30,27 @@ This spec defines the **default error traceback format** for doeff — what user
 
 ### Runtime State (`TraceState`)
 
-The VM stores traceback capture state in `VM.trace_state: TraceState`. `TraceState` owns
-`ActiveChainAssemblyState`, which tracks:
+The VM stores traceback capture state in `VM.trace_state: TraceState`. `TraceState` tracks:
 
-- `frame_stack`: active `Program` frame snapshots (`function_name`, `source_file`, `source_line`, args, etc.)
-- `dispatches`: per-dispatch `effect_repr`, handler stack, and terminal/non-terminal result
-- `frame_dispatch`: mapping from frame id to the dispatch currently associated with that frame
-- `transfer_targets`: transfer destination text keyed by `dispatch_id`
-- `dispatch_order`: dispatch ids in start order
+- `frame_stack`: active `Program` frame snapshots (`function_name`, `source_file`, `source_line`,
+  args, etc.), with optional per-frame `dispatch_display`
 
 There is no persisted event-log field on `VM` for traceback assembly. State is reset per run via
 `VM::begin_run_session()` -> `trace_state.clear()`.
 
-### `CaptureEvent` Role (Transient)
+### Direct Mutation Path
 
-`CaptureEvent` is still the mutation carrier between VM control flow and
-`ActiveChainAssemblyState`, but it is transient:
+VM mutates `TraceState` directly at the control-flow site:
 
-1. VM emitters (`emit_frame_entered`, `emit_dispatch_started`, `emit_handler_completed`, etc.) construct a `CaptureEvent`
-2. `TraceState::apply_capture_event()` immediately applies it with `apply_active_chain_event(...)`
-3. The event object is dropped (not retained in a chronological log)
+1. Frame entry/exit records update `frame_stack`
+2. Dispatch start attaches `dispatch_display` to the owning frame snapshot
+3. Handler completion/transfer/delegation updates mutate the stored dispatch state in place
 
 ### `assemble_active_chain()` Algorithm
 
 `VM::assemble_active_chain()` delegates to `TraceState::assemble_active_chain(...)`, which:
 
-1. Clones the current `ActiveChainAssemblyState`
+1. Clones the current `frame_stack`
 2. Merges live line/stack data from current segments and visible dispatch snapshots
 3. If an exception is present, finalizes unresolved visible dispatches as `EffectResult::Threw`
 4. Builds ordered `ActiveChainEntry` values (`ProgramYield`, `EffectYield`, `ContextEntry`, `ExceptionSite`)
@@ -173,7 +168,7 @@ Handler program frames remain available in `format_chained()` (full chronologica
 
 **Exception — Transfer**: When a Transfer severs the caller chain (`caller: None`), the pre-transfer
 call chain is still shown. Pre-transfer frames come from the incremental
-`ActiveChainAssemblyState` (`frame_stack` + dispatch snapshots), not from a chronological log scan.
+`frame_stack` plus per-frame dispatch snapshots, not from a chronological log scan.
 The trace shows: pre-transfer chain → transfer (inline `⇢`) → post-transfer chain → crash.
 
 **Exception — Spawn chain**: When a spawned task crashes, the trace includes:
@@ -718,21 +713,19 @@ To render this format, the following data is needed per frame:
 
 ### Incremental active-chain state
 
-`TraceState` stores an `ActiveChainAssemblyState` snapshot that is mutated incrementally. It
-contains:
+`TraceState` stores the live `frame_stack`, and each frame may carry a
+`dispatch_display` snapshot for the currently active effect on that frame. Together they contain:
 
 - Active frame snapshots (`frame_stack`)
-- Per-dispatch snapshots (`dispatches`) including `effect_repr`, handler stack, and result
-- Frame->dispatch links (`frame_dispatch`)
-- Transfer destination text (`transfer_targets`)
-- Dispatch ordering (`dispatch_order`)
+- Per-frame dispatch snapshots (`dispatch_display`) including `effect_repr`, handler stack,
+  transfer target, and result
 
 This state is the source of truth for active-chain rendering.
 
 ### Live frame supplement
 
 Before rendering, `assemble_active_chain()` merges live runtime state into a clone of
-`ActiveChainAssemblyState`:
+`frame_stack`:
 
 - Segment caller chain (`SegmentArena` + `current_segment`) for active program frames
 - Visible dispatch continuation snapshots (`dispatch_stack`) as fallback when frame stack is empty
@@ -747,16 +740,16 @@ For the most recent effect yielded by each active generator:
 - `result` — `EffectResult::{Active, Resumed, Threw, Transferred}`
 - `function_name` / `source_file` / `source_line` for effect-site rendering
 
-`CaptureEvent::DispatchStarted` currently also carries optional `creation_site` metadata, but
-active-chain rendering is driven by the dispatch snapshot fields above.
+Dispatch start also carries optional effect-site metadata, but active-chain rendering is driven by
+the frame-local dispatch snapshot fields above.
 
 ### Transfer chain reconstruction
 
 When Transfer severs the live caller chain (`caller: None`):
 
-- `CaptureEvent::Transferred` stores destination text in `transfer_targets[dispatch_id]`
+- transfer handling stores destination text on the frame's `dispatch_display`
 - Terminal handler completion sets `EffectResult::Transferred { target_repr, ... }`
-- Pre-transfer frames come from incremental frame/dispatch snapshots kept in `ActiveChainAssemblyState`
+- Pre-transfer frames come from incremental frame/dispatch snapshots kept in `frame_stack`
 
 ### Spawn chain
 
@@ -800,7 +793,7 @@ These are rendering concerns, not data concerns. Programmatic consumers (e.g., `
 Dispatch-site metadata is captured from continuation/frame state, not from effect-object creation metadata:
 
 1. **Rust VM**: At dispatch start, resolve site info from continuation snapshots (`TraceState::effect_site_from_continuation`)
-2. **Dispatch snapshot**: Store function/file/line on dispatch state (`CaptureEvent::DispatchStarted`)
+2. **Dispatch snapshot**: Store function/file/line on the owning frame's `dispatch_display`
 3. **Consumers**: Use dispatch snapshots and traceback hops for rendering/spawn-site attribution
 
 This avoids per-effect object contracts and keeps traceback assembly sourced from VM execution state.

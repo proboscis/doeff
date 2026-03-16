@@ -81,9 +81,9 @@ mod vm {
 // Re-exports for convenience
 pub use arena::SegmentArena;
 pub use capture::{
-    ActiveChainEntry, CaptureEvent, DelegationEntry, DispatchAction, EffectResult, FrameId,
-    HandlerAction, HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus,
-    SpawnSite, TraceEntry, TraceFrame, TraceHop,
+    ActiveChainEntry, DelegationEntry, DispatchAction, EffectResult, FrameId, HandlerAction,
+    HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus, SpawnSite, TraceEntry,
+    TraceFrame, TraceHop,
 };
 pub use continuation::Continuation;
 pub use do_ctrl::DoCtrl;
