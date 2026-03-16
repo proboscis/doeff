@@ -1382,7 +1382,7 @@ impl VM {
                     .into_iter()
                     .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
                     .collect();
-                self.set_last_active_chain(active_chain.clone());
+                self.set_last_active_chain(&active_chain);
                 let enriched_exception = match TraceState::enrich_original_exception_with_context(
                     original_exception,
                     value,
