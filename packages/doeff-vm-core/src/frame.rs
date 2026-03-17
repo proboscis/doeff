@@ -73,15 +73,26 @@ impl CallMetadata {
 #[derive(Debug, Clone)]
 pub struct InterceptorChainLink {
     pub marker: Marker,
-    boundary: SegmentKind,
+    pub interceptor: KleisliRef,
+    pub types: Option<Vec<PyShared>>,
+    pub mode: InterceptMode,
+    pub metadata: Option<CallMetadata>,
 }
 
 impl InterceptorChainLink {
     pub fn from_boundary(marker: Marker, boundary: &SegmentKind) -> Option<Self> {
         match boundary {
-            SegmentKind::InterceptorBoundary { .. } => Some(Self {
+            SegmentKind::InterceptorBoundary {
+                interceptor,
+                types,
+                mode,
+                metadata,
+            } => Some(Self {
                 marker,
-                boundary: boundary.clone(),
+                interceptor: interceptor.clone(),
+                types: types.clone(),
+                mode: *mode,
+                metadata: metadata.clone(),
             }),
             SegmentKind::Normal
             | SegmentKind::PromptBoundary { .. }
@@ -89,52 +100,13 @@ impl InterceptorChainLink {
         }
     }
 
-    pub fn interceptor(&self) -> &KleisliRef {
-        match &self.boundary {
-            SegmentKind::InterceptorBoundary { interceptor, .. } => interceptor,
-            SegmentKind::Normal
-            | SegmentKind::PromptBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => {
-                unreachable!("InterceptorChainLink must store an InterceptorBoundary")
-            }
-        }
-    }
-
-    pub fn types(&self) -> Option<&[PyShared]> {
-        match &self.boundary {
-            SegmentKind::InterceptorBoundary { types, .. } => types.as_deref(),
-            SegmentKind::Normal
-            | SegmentKind::PromptBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => {
-                unreachable!("InterceptorChainLink must store an InterceptorBoundary")
-            }
-        }
-    }
-
-    pub fn mode(&self) -> InterceptMode {
-        match &self.boundary {
-            SegmentKind::InterceptorBoundary { mode, .. } => *mode,
-            SegmentKind::Normal
-            | SegmentKind::PromptBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => {
-                unreachable!("InterceptorChainLink must store an InterceptorBoundary")
-            }
-        }
-    }
-
-    pub fn metadata(&self) -> Option<&CallMetadata> {
-        match &self.boundary {
-            SegmentKind::InterceptorBoundary { metadata, .. } => metadata.as_ref(),
-            SegmentKind::Normal
-            | SegmentKind::PromptBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => {
-                unreachable!("InterceptorChainLink must store an InterceptorBoundary")
-            }
-        }
-    }
-
     pub fn into_boundary(self) -> SegmentKind {
-        self.boundary
+        SegmentKind::InterceptorBoundary {
+            interceptor: self.interceptor,
+            types: self.types,
+            mode: self.mode,
+            metadata: self.metadata,
+        }
     }
 }
 

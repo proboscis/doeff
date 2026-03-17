@@ -1289,7 +1289,7 @@ impl VM {
         caller: Option<SegmentId>,
         dispatch_id: Option<DispatchId>,
     ) {
-        let mut exec_seg = (*k.segment_snapshot).clone();
+        let mut exec_seg = k.segment().clone();
         exec_seg.caller = caller;
         exec_seg.dispatch_id = dispatch_id;
         // The original exception lives on the active DispatchOrigin.k_origin.

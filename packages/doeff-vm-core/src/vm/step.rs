@@ -1083,11 +1083,11 @@ impl VM {
         entry: &InterceptorChainLink,
         yielded_obj: &PyShared,
     ) -> Result<bool, PyException> {
-        let Some(types) = entry.types() else {
+        let Some(types) = entry.types.as_deref() else {
             return Ok(true);
         };
         if types.is_empty() {
-            return Ok(entry.mode().should_invoke(false));
+            return Ok(entry.mode.should_invoke(false));
         }
 
         let matches_filter = Python::attach(|py| -> PyResult<bool> {
@@ -1100,7 +1100,7 @@ impl VM {
             }
             Ok(false)
         })?;
-        Ok(entry.mode().should_invoke(matches_filter))
+        Ok(entry.mode.should_invoke(matches_filter))
     }
 
     fn continue_interceptor_chain_mode(
@@ -1174,9 +1174,9 @@ impl VM {
         chain: Arc<Vec<InterceptorChainLink>>,
         next_idx: usize,
     ) -> Mode {
-        let interceptor_kleisli = entry.interceptor().clone();
-        let guard_eval_depth = entry.types().is_some();
-        let interceptor_meta = entry.metadata().cloned();
+        let interceptor_kleisli = entry.interceptor.clone();
+        let guard_eval_depth = entry.types.is_some();
+        let interceptor_meta = entry.metadata.clone();
         let apply_metadata = interceptor_meta
             .clone()
             .unwrap_or_else(Self::fallback_interceptor_metadata);

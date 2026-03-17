@@ -47,7 +47,7 @@ impl PyK {
 pub struct Continuation {
     pub cont_id: ContId,
     pub segment_id: SegmentId,
-    pub segment_snapshot: Arc<Segment>,
+    segment_snapshot: Arc<Segment>,
 
     /// Whether this continuation is already started.
     /// started=true  => captured continuation (from running code)
@@ -227,10 +227,6 @@ impl Continuation {
     // Dispatch Resume is the explicit override that re-enters the active handler segment.
     pub fn captured_caller(&self) -> Option<SegmentId> {
         self.segment().caller
-    }
-
-    pub fn marker(&self) -> crate::ids::Marker {
-        self.segment().marker
     }
 
     pub fn pending_error_context(&self) -> Option<&PyException> {
