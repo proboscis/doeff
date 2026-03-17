@@ -15,6 +15,7 @@ from doeff.effects.external_promise import CreateExternalPromise
 from doeff.effects.wait import wait
 
 PythonAsyncioAwaitEffect = doeff_vm.PythonAsyncioAwaitEffect
+AWAIT_SHIM_ATTR = "__doeff_await_shim__"
 
 _loop_lock = threading.Lock()
 _loop_thread: threading.Thread | None = None
@@ -169,7 +170,7 @@ def sync_await_handler(effect: Effect, k: Any):
     yield doeff_vm.Pass()
 
 
-sync_await_handler.__doeff_await_shim__ = True
+setattr(sync_await_handler, AWAIT_SHIM_ATTR, True)
 
 @do
 def async_await_handler(effect: Effect, k: Any):
@@ -194,7 +195,7 @@ def async_await_handler(effect: Effect, k: Any):
     yield doeff_vm.Pass()
 
 
-async_await_handler.__doeff_await_shim__ = True
+setattr(async_await_handler, AWAIT_SHIM_ATTR, True)
 
 
 # Backward-compat alias. New code should use async_await_handler.

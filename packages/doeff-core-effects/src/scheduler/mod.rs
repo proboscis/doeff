@@ -226,12 +226,12 @@ impl WaitRequest {
     }
 
     fn note_completion(&self) -> bool {
-        let remaining = self.remaining.load(Ordering::Relaxed);
-        if remaining == 0 {
+        let prev = self.remaining.fetch_sub(1, Ordering::Relaxed);
+        if prev == 0 {
+            self.remaining.store(0, Ordering::Relaxed);
             return false;
         }
-        self.remaining.store(remaining - 1, Ordering::Relaxed);
-        remaining == 1
+        prev == 1
     }
 }
 
@@ -2076,6 +2076,11 @@ impl SchedulerState {
             None => WaitOwner::Root { cont_id: k.cont_id },
         };
         self.active_wait_owners.insert(owner);
+        debug_assert!(
+            !self.waitables_by_owner.contains_key(&owner),
+            "register_waiter called twice for owner {:?} without clearing prior waitables",
+            owner
+        );
         self.waitables_by_owner.insert(owner, pending_items.clone());
 
         let remaining = match mode {
@@ -3731,7 +3736,10 @@ mod tests {
             let program = SchedulerProgram::new(state);
 
             let code = pyo3::ffi::c_str!(
-                "def handler(effect, k):\n    yield effect\nhandler.__doeff_await_shim__ = True\n"
+                "from doeff.handlers.await_handlers import AWAIT_SHIM_ATTR\n\
+                 def handler(effect, k):\n\
+                     yield effect\n\
+                 setattr(handler, AWAIT_SHIM_ATTR, True)\n"
             );
             let filename = pyo3::ffi::c_str!("test_sync_await_shim.py");
             let module_name = pyo3::ffi::c_str!("test_sync_await_shim");
