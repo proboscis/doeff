@@ -400,6 +400,12 @@ pub struct PyVM {
     vm: VM,
 }
 
+enum SyncDriverLoopOutcome {
+    Done(Value),
+    VmError(VMError),
+    PythonException(PyException),
+}
+
 #[pymethods]
 impl PyVM {
     #[new]
@@ -433,31 +439,20 @@ impl PyVM {
     ) -> PyResult<PyRunResult> {
         self.start_with_expr(py, program)?;
 
-        let (result, traceback_data) = loop {
-            let event = py.detach(|| self.run_rust_steps());
-            match event {
-                StepEvent::Done(value) => match value.to_pyobject(py) {
-                    Ok(v) => break (Ok(v.unbind()), None),
-                    Err(e) => {
-                        let exc = pyerr_to_exception(py, e)?;
-                        break (Err(exc), None);
-                    }
-                },
-                StepEvent::Error(e) => {
-                    let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
-                    let exc = pyerr_to_exception(py, pyerr)?;
-                    break (Err(exc), traceback_data);
+        let (result, traceback_data) = match py.detach(|| self.run_sync_driver_loop()) {
+            SyncDriverLoopOutcome::Done(value) => match value.to_pyobject(py) {
+                Ok(v) => (Ok(v.unbind()), None),
+                Err(e) => {
+                    let exc = pyerr_to_exception(py, e)?;
+                    (Err(exc), None)
                 }
-                StepEvent::NeedsPython(call) => {
-                    let outcome = self.execute_python_call(py, call)?;
-                    if let Err(e) = self.vm.receive_python_result(outcome) {
-                        let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
-                        let exc = pyerr_to_exception(py, pyerr)?;
-                        break (Err(exc), traceback_data);
-                    }
-                }
-                StepEvent::Continue => unreachable!("handled in run_rust_steps"),
+            },
+            SyncDriverLoopOutcome::VmError(e) => {
+                let (pyerr, traceback_data) = vmerror_to_pyerr_with_traceback_data(py, e);
+                let exc = pyerr_to_exception(py, pyerr)?;
+                (Err(exc), traceback_data)
             }
+            SyncDriverLoopOutcome::PythonException(exc) => (Err(exc), None),
         };
         self.vm.end_active_run_session();
 
@@ -765,6 +760,35 @@ impl PyVM {
             match self.vm.step() {
                 StepEvent::Continue => continue,
                 other => return other,
+            }
+        }
+    }
+
+    fn run_sync_driver_loop(&mut self) -> SyncDriverLoopOutcome {
+        loop {
+            match self.run_rust_steps() {
+                StepEvent::Done(value) => return SyncDriverLoopOutcome::Done(value),
+                StepEvent::Error(error) => return SyncDriverLoopOutcome::VmError(error),
+                StepEvent::NeedsPython(call) => {
+                    let outcome = Python::attach(|py| self.execute_python_call(py, call));
+                    match outcome {
+                        Ok(outcome) => {
+                            if let Err(error) = self.vm.receive_python_result(outcome) {
+                                return SyncDriverLoopOutcome::VmError(error);
+                            }
+                        }
+                        Err(pyerr) => {
+                            let exception = Python::attach(|py| pyerr_to_exception(py, pyerr))
+                                .unwrap_or_else(|err| {
+                                    PyException::runtime_error(format!(
+                                        "failed to convert Python error during sync driver loop: {err}"
+                                    ))
+                                });
+                            return SyncDriverLoopOutcome::PythonException(exception);
+                        }
+                    }
+                }
+                StepEvent::Continue => unreachable!("handled in run_rust_steps"),
             }
         }
     }

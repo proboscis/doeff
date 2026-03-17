@@ -996,9 +996,13 @@ impl VM {
             start: Option<SegmentId>,
             chain: &mut Vec<InterceptorChainLink>,
             seen: &mut HashSet<Marker>,
+            visited_segments: &mut HashSet<SegmentId>,
         ) {
             let mut cursor = start;
             while let Some(seg_id) = cursor {
+                if !visited_segments.insert(seg_id) {
+                    break;
+                }
                 let Some(seg) = vm.segments.get(seg_id) else {
                     break;
                 };
@@ -1013,9 +1017,22 @@ impl VM {
 
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
-        extend_chain(self, self.current_segment, &mut chain, &mut seen);
+        let mut visited_segments = HashSet::new();
+        extend_chain(
+            self,
+            self.current_segment,
+            &mut chain,
+            &mut seen,
+            &mut visited_segments,
+        );
         for origin_seg_id in self.dispatch_origin_callers() {
-            extend_chain(self, Some(origin_seg_id), &mut chain, &mut seen);
+            extend_chain(
+                self,
+                Some(origin_seg_id),
+                &mut chain,
+                &mut seen,
+                &mut visited_segments,
+            );
         }
         chain
     }

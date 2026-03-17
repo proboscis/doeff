@@ -144,7 +144,6 @@ class TestHandlerImmutabilityContract:
             vm_handler_stack=_result_value(result),
         )
 
-
 class TestNoHandlerSwapContract:
     def test_no_normalize_async_handlers_function(self) -> None:
         import doeff.rust_vm as rust_vm
@@ -232,6 +231,16 @@ class TestAwaitHandlerEffectSystemContract:
             "handler.rs still contains get_blocking_await_runner. "
             "Await handlers must use the effect system (ExternalPromise + Wait), "
             "not bypass it with blocking executor calls."
+        )
+        assert "get_sync_await_runner" not in handler_rs, (
+            "handler.rs still contains get_sync_await_runner. "
+            "Await handlers must use the effect system (ExternalPromise + Wait), "
+            "not a blocking sync bridge."
+        )
+        assert "get_sync_await_runner" not in handler_rs, (
+            "handler.rs still contains get_sync_await_runner. "
+            "Await handlers must use the effect system (ExternalPromise + Wait), "
+            "not a blocking sync bridge."
         )
 
     def test_rust_handler_source_has_no_threadpoolexecutor(self) -> None:
