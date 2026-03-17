@@ -226,11 +226,12 @@ impl WaitRequest {
     }
 
     fn note_completion(&self) -> bool {
-        let prev = self.remaining.fetch_sub(1, Ordering::Relaxed);
+        let prev = self.remaining.load(Ordering::Relaxed);
+        debug_assert!(prev > 0, "note_completion on already-completed waiter");
         if prev == 0 {
-            self.remaining.store(0, Ordering::Relaxed);
             return false;
         }
+        self.remaining.fetch_sub(1, Ordering::Relaxed);
         prev == 1
     }
 }
