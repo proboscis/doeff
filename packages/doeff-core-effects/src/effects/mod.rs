@@ -87,6 +87,12 @@ pub struct PyRace {
     pub futures: Py<PyAny>,
 }
 
+#[pyclass(frozen, name = "WaitEffect", extends=PyEffectBase)]
+pub struct PyWait {
+    #[pyo3(get)]
+    pub future: Py<PyAny>,
+}
+
 #[pyclass(frozen, name = "CreatePromiseEffect", extends=PyEffectBase)]
 pub struct PyCreatePromise;
 
@@ -388,6 +394,22 @@ impl PyRace {
     fn __repr__(&self, py: Python<'_>) -> String {
         let futures_repr = py_repr_or(py, &self.futures, "<futures>");
         format!("Race({})", futures_repr)
+    }
+}
+
+#[pymethods]
+impl PyWait {
+    #[new]
+    fn new(future: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyWait { future })
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let future_repr = py_repr_or(py, &self.future, "<future>");
+        format!("Wait({})", future_repr)
     }
 }
 
@@ -874,6 +896,7 @@ pub fn register_effect_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySpawn>()?;
     m.add_class::<PyGather>()?;
     m.add_class::<PyRace>()?;
+    m.add_class::<PyWait>()?;
     m.add_class::<PyCreatePromise>()?;
     m.add_class::<PyCompletePromise>()?;
     m.add_class::<PyFailPromise>()?;

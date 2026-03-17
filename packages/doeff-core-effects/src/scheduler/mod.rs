@@ -18,7 +18,7 @@ use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn,
+    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn, PyWait,
     PyTaskCompleted, TaskCancelledError,
 };
 use crate::error::VMError;
@@ -330,37 +330,30 @@ impl PartialOrd for ReadyEntry {
 
 #[derive(Debug)]
 enum ReadySet {
-    // Spec supports both queue modes; scheduler currently defaults to Priority.
-    #[allow(dead_code)]
-    Fifo(VecDeque<ReadyEntry>),
     Priority(BinaryHeap<ReadyEntry>),
 }
 
 impl ReadySet {
     fn push(&mut self, entry: ReadyEntry) {
         match self {
-            ReadySet::Fifo(queue) => queue.push_back(entry),
             ReadySet::Priority(heap) => heap.push(entry),
         }
     }
 
     fn pop_next(&mut self) -> Option<ReadyEntry> {
         match self {
-            ReadySet::Fifo(queue) => queue.pop_front(),
             ReadySet::Priority(heap) => heap.pop(),
         }
     }
 
     fn is_empty(&self) -> bool {
         match self {
-            ReadySet::Fifo(queue) => queue.is_empty(),
             ReadySet::Priority(heap) => heap.is_empty(),
         }
     }
 
     fn retain(&mut self, mut f: impl FnMut(&ReadyEntry) -> bool) {
         match self {
-            ReadySet::Fifo(queue) => queue.retain(|entry| f(entry)),
             ReadySet::Priority(heap) => {
                 let mut retained = BinaryHeap::with_capacity(heap.len());
                 while let Some(entry) = heap.pop() {
@@ -728,12 +721,8 @@ fn parse_scheduler_python_effect(
             return Ok(Some(SchedulerEffect::Race { items: waitables }));
         }
 
-        let wait_effect_type = py
-            .import("doeff.effects.wait")
-            .and_then(|module| module.getattr("WaitEffect"))
-            .map_err(|e| e.to_string())?;
-        if obj.is_instance(&wait_effect_type).map_err(|e| e.to_string())? {
-            let future = obj.getattr("future").map_err(|e| e.to_string())?;
+        if let Ok(wait_effect) = obj.extract::<PyRef<'_, PyWait>>() {
+            let future = wait_effect.future.bind(py);
             let Some(item) = extract_waitable(&future) else {
                 return Err("WaitEffect.future must be a waitable handle".to_string());
             };
