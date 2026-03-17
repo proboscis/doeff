@@ -181,6 +181,7 @@ result_safe = _ext.result_safe
 scheduler = _ext.scheduler
 lazy_ask = _ext.lazy_ask
 await_handler = _ext.await_handler
+sync_await_handler = _ext.sync_await_handler
 CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
 GetHandlers = _ext.GetHandlers
@@ -356,6 +357,7 @@ __all__ = [
     "_SchedulerTaskCompleted",
     "async_run",
     "await_handler",
+    "sync_await_handler",
     "lazy_ask",
     "reader",
     "result_safe",

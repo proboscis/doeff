@@ -2,8 +2,7 @@
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from .base import Effect, EffectBase
-from .gather import gather
+from .base import EffectBase
 from .spawn import Waitable, normalize_waitable
 
 T = TypeVar("T")
@@ -30,8 +29,7 @@ def Wait(future: Waitable[T]):
 
     @do
     def _program():
-        values = yield gather(normalized)
-        return values[0]
+        return (yield wait(normalized))
 
     return _program()
 
