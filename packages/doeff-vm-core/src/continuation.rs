@@ -37,8 +37,8 @@ impl PyK {
 /// Resume materializes this snapshot into a new execution segment.
 ///
 /// Continuations can be in two states:
-/// - **started=true** (captured): Created from a running segment via `capture()`
-/// - **started=false** (unstarted): Created via `create()` with a program and handlers
+/// - **captured**: Created from a running segment via `capture()`
+/// - **unstarted**: Created via `create()` with a program and handlers
 ///
 /// When resuming:
 /// - Captured continuations: materialize segment_snapshot into a new segment
@@ -208,6 +208,10 @@ impl Continuation {
         self.segment_snapshot.as_deref()
     }
 
+    /// Returns a mutable snapshot view.
+    ///
+    /// Uses `Arc::make_mut`, so mutating a shared snapshot triggers copy-on-write of the whole
+    /// `Segment`.
     pub fn segment_mut(&mut self) -> Option<&mut Segment> {
         self.segment_snapshot.as_mut().map(Arc::make_mut)
     }
@@ -309,8 +313,30 @@ impl Continuation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::do_ctrl::{DoCtrl, InterceptMode};
     use crate::effect::make_get_execution_context_effect;
+    use crate::error::VMError;
     use crate::ids::Marker;
+    use crate::kleisli::{Kleisli, KleisliDebugInfo};
+    use crate::segment::SegmentKind;
+    use crate::value::Value;
+
+    #[derive(Debug)]
+    struct DummyKleisli;
+
+    impl Kleisli for DummyKleisli {
+        fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+            unreachable!("test dummy should never be invoked")
+        }
+
+        fn debug_info(&self) -> KleisliDebugInfo {
+            KleisliDebugInfo {
+                name: "DummyKleisli".to_string(),
+                file: None,
+                line: None,
+            }
+        }
+    }
 
     fn make_test_segment() -> (Segment, SegmentId) {
         let marker = Marker::fresh();
@@ -372,6 +398,46 @@ mod tests {
         seg.push_frame(Frame::FlatMapBindResult);
         assert_eq!(cont.frames().map(|frames| frames.len()), Some(1));
         assert_eq!(seg.frame_count(), 2);
+    }
+
+    #[test]
+    fn test_continuation_preserves_interceptor_boundary_snapshot_on_resume() {
+        let marker = Marker::fresh();
+        let seg_id = SegmentId::from_index(0);
+        let interceptor = Arc::new(DummyKleisli) as KleisliRef;
+        let mut seg = Segment::new(marker, None);
+        seg.kind = SegmentKind::InterceptorBoundary {
+            interceptor,
+            types: None,
+            mode: InterceptMode::Include,
+            metadata: None,
+        };
+
+        let cont = Continuation::capture(&seg, seg_id, None);
+        let captured_kind = cont
+            .segment()
+            .expect("captured continuation should have a segment snapshot")
+            .kind
+            .clone();
+        assert!(matches!(
+            captured_kind,
+            SegmentKind::InterceptorBoundary {
+                mode: InterceptMode::Include,
+                ..
+            }
+        ));
+
+        let resumed_seg = cont
+            .segment()
+            .expect("captured continuation should have a segment snapshot")
+            .clone();
+        assert!(matches!(
+            resumed_seg.kind,
+            SegmentKind::InterceptorBoundary {
+                mode: InterceptMode::Include,
+                ..
+            }
+        ));
     }
 
     fn make_dispatch_origin_frame(dispatch_id: DispatchId) -> Frame {
