@@ -32,8 +32,6 @@ pub mod handler;
 #[cfg(feature = "python_bridge")]
 pub mod ids;
 #[cfg(feature = "python_bridge")]
-mod interceptor_state;
-#[cfg(feature = "python_bridge")]
 pub mod ir_stream;
 #[cfg(feature = "python_bridge")]
 pub mod kleisli;

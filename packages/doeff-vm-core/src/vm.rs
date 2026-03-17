@@ -23,9 +23,10 @@ use crate::effect::{
     DispatchEffect, PyEffectBase, PyExecutionContext, PyGetExecutionContext,
 };
 use crate::error::VMError;
-use crate::frame::{CallMetadata, EvalReturnContinuation, Frame, InterceptorContinuation};
+use crate::frame::{
+    CallMetadata, EvalReturnContinuation, Frame, InterceptorChainLink, InterceptorContinuation,
+};
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
-use crate::interceptor_state::InterceptorState;
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{IdentityKleisli, KleisliRef};
 use crate::py_shared::PyShared;
@@ -182,14 +183,6 @@ impl ForwardKind {
 }
 
 #[derive(Clone)]
-pub struct InterceptorEntry {
-    pub(crate) interceptor: KleisliRef,
-    pub(crate) types: Option<Vec<PyShared>>,
-    pub(crate) mode: InterceptMode,
-    pub(crate) metadata: Option<CallMetadata>,
-}
-
-#[derive(Clone)]
 struct InstalledHandler {
     marker: Marker,
     handler: KleisliRef,
@@ -219,18 +212,9 @@ struct DispatchOriginView {
 }
 
 #[derive(Clone)]
-struct InterceptorChainEntry {
-    marker: Marker,
-    interceptor: KleisliRef,
-    types: Option<Vec<PyShared>>,
-    mode: InterceptMode,
-    metadata: Option<CallMetadata>,
-}
-
-#[derive(Clone)]
 enum CallerChainEntry {
     Handler(HandlerChainEntry),
-    Interceptor(InterceptorChainEntry),
+    Interceptor(InterceptorChainLink),
 }
 
 impl Default for DebugConfig {
@@ -271,7 +255,6 @@ pub struct VM {
     pub consumed_cont_ids: HashSet<ContId>,
     installed_handlers: Vec<InstalledHandler>,
     run_handlers: Vec<KleisliRef>,
-    pub(crate) interceptor_state: InterceptorState,
     pub rust_store: RustStore,
     pub py_store: Option<PyStore>,
     pub current_segment: Option<SegmentId>,
@@ -288,7 +271,6 @@ impl VM {
             consumed_cont_ids: HashSet::new(),
             installed_handlers: Vec::new(),
             run_handlers: Vec::new(),
-            interceptor_state: InterceptorState::default(),
             rust_store: RustStore::new(),
             py_store: None,
             current_segment: None,
@@ -313,7 +295,6 @@ impl VM {
         let token = NEXT_RUN_TOKEN.fetch_add(1, Ordering::Relaxed);
         self.active_run_token = Some(token);
         self.trace_state.clear();
-        self.interceptor_state.clear_for_run();
         self.run_handlers.clear();
         token
     }
