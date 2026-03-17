@@ -356,7 +356,7 @@ impl ReadySet {
 }
 
 fn transfer_to_continuation(k: Continuation, value: Value) -> IRStreamStep {
-    if k.started {
+    if k.is_started() {
         return IRStreamStep::Yield(DoCtrl::Transfer {
             continuation: k,
             value,
@@ -389,7 +389,7 @@ fn transfer_to_continuation(k: Continuation, value: Value) -> IRStreamStep {
 // This helper intentionally delegates started continuations to Transfer via
 // transfer_to_continuation(). Do not change started-path behavior back to Resume.
 fn resume_to_continuation(cont: Continuation, result: Value) -> IRStreamStep {
-    if cont.started {
+    if cont.is_started() {
         return transfer_to_continuation(cont, result);
     }
     IRStreamStep::Yield(DoCtrl::ResumeContinuation {
@@ -399,7 +399,7 @@ fn resume_to_continuation(cont: Continuation, result: Value) -> IRStreamStep {
 }
 
 fn throw_to_continuation(k: Continuation, error: PyException) -> IRStreamStep {
-    if k.started {
+    if k.is_started() {
         return IRStreamStep::Yield(DoCtrl::TransferThrow {
             continuation: k,
             exception: error,
@@ -1341,7 +1341,9 @@ impl SchedulerState {
         }
 
         let (cont_id, priority, started) = match task_state {
-            TaskState::Pending { cont, priority, .. } => (cont.cont_id, *priority, cont.started),
+            TaskState::Pending { cont, priority, .. } => {
+                (cont.cont_id, *priority, cont.is_started())
+            }
             TaskState::Done { .. } => return false,
         };
 
@@ -3496,9 +3498,7 @@ mod tests {
     }
 
     fn make_unstarted_test_continuation() -> Continuation {
-        let mut cont = make_test_continuation();
-        cont.started = false;
-        cont
+        Python::attach(|py| Continuation::create_unstarted(PyShared::new(py.None()), Vec::new()))
     }
 
     fn dispatch(effect: Effect) -> DispatchEffect {

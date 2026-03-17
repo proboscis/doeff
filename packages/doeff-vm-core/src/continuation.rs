@@ -44,31 +44,21 @@ impl PyK {
 /// - Captured continuations: materialize segment_snapshot into a new segment
 /// - Unstarted continuations: start the program with handlers installed
 #[derive(Debug, Clone)]
+struct UnstartedContinuation {
+    program: PyShared,
+    handlers: Vec<KleisliRef>,
+    handler_identities: Vec<Option<PyShared>>,
+    metadata: Option<CallMetadata>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Continuation {
     pub cont_id: ContId,
-    pub segment_id: SegmentId,
-    segment_snapshot: Arc<Segment>,
-
-    /// Whether this continuation is already started.
-    /// started=true  => captured continuation (from running code)
-    /// started=false => created (unstarted) continuation
-    pub started: bool,
-
-    pub program: Option<PyShared>,
-
-    /// Handlers to install when started=false (innermost first).
-    /// Empty for captured (started=true) continuations.
-    pub handlers: Vec<KleisliRef>,
-
-    /// Optional Python identities corresponding to handlers by index.
-    /// Used to preserve Rust sentinel identity across continuation round-trips.
-    pub handler_identities: Vec<Option<PyShared>>,
-
-    /// Optional call metadata to attach when starting unstarted continuations.
-    pub metadata: Option<CallMetadata>,
-
+    segment_id: Option<SegmentId>,
+    segment_snapshot: Option<Arc<Segment>>,
+    unstarted: Option<UnstartedContinuation>,
     /// Parent continuation captured during Delegate chaining.
-    pub parent: Option<Arc<Continuation>>,
+    parent: Option<Arc<Continuation>>,
 }
 
 impl Continuation {
@@ -103,10 +93,19 @@ impl Continuation {
         segment: &Segment,
         dispatch_id: Option<DispatchId>,
     ) -> Arc<Segment> {
-        let mut snapshot = segment.clone();
-        snapshot.frames = Self::captured_frames(segment);
-        snapshot.dispatch_id = dispatch_id;
-        Arc::new(snapshot)
+        Arc::new(Segment {
+            marker: segment.marker,
+            frames: Self::captured_frames(segment),
+            caller: segment.caller,
+            scope_store: segment.scope_store.clone(),
+            kind: segment.kind.clone(),
+            dispatch_id,
+            mode: segment.mode.clone(),
+            pending_python: segment.pending_python.clone(),
+            pending_error_context: segment.pending_error_context.clone(),
+            interceptor_eval_depth: segment.interceptor_eval_depth,
+            interceptor_skip_stack: segment.interceptor_skip_stack.clone(),
+        })
     }
 
     pub fn capture(
@@ -116,13 +115,9 @@ impl Continuation {
     ) -> Self {
         Continuation {
             cont_id: ContId::fresh(),
-            segment_id,
-            segment_snapshot: Self::captured_segment_snapshot(segment, dispatch_id),
-            started: true,
-            program: None,
-            handlers: Vec::new(),
-            handler_identities: Vec::new(),
-            metadata: None,
+            segment_id: Some(segment_id),
+            segment_snapshot: Some(Self::captured_segment_snapshot(segment, dispatch_id)),
+            unstarted: None,
             parent: None,
         }
     }
@@ -135,13 +130,9 @@ impl Continuation {
     ) -> Self {
         Continuation {
             cont_id,
-            segment_id,
-            segment_snapshot: Self::captured_segment_snapshot(segment, dispatch_id),
-            started: true,
-            program: None,
-            handlers: Vec::new(),
-            handler_identities: Vec::new(),
-            metadata: None,
+            segment_id: Some(segment_id),
+            segment_snapshot: Some(Self::captured_segment_snapshot(segment, dispatch_id)),
+            unstarted: None,
             parent: None,
         }
     }
@@ -155,17 +146,17 @@ impl Continuation {
         handlers: Vec<KleisliRef>,
         metadata: Option<CallMetadata>,
     ) -> Self {
-        let handler_identities = vec![None; handlers.len()];
-        let snapshot = Arc::new(Segment::new(crate::ids::Marker::placeholder(), None));
+        let handler_count = handlers.len();
         Continuation {
             cont_id: ContId::fresh(),
-            segment_id: SegmentId::from_index(0),
-            segment_snapshot: snapshot,
-            started: false,
-            program: Some(expr),
-            handlers,
-            handler_identities,
-            metadata,
+            segment_id: None,
+            segment_snapshot: None,
+            unstarted: Some(UnstartedContinuation {
+                program: expr,
+                handlers,
+                handler_identities: vec![None; handler_count],
+                metadata,
+            }),
             parent: None,
         }
     }
@@ -189,61 +180,117 @@ impl Continuation {
         handler_identities: Vec<Option<PyShared>>,
         metadata: Option<CallMetadata>,
     ) -> Self {
-        let snapshot = Arc::new(Segment::new(crate::ids::Marker::placeholder(), None));
         Continuation {
             cont_id: ContId::fresh(),
-            segment_id: SegmentId::from_index(0),
-            segment_snapshot: snapshot,
-            started: false,
-            program: Some(expr),
-            handlers,
-            handler_identities,
-            metadata,
+            segment_id: None,
+            segment_snapshot: None,
+            unstarted: Some(UnstartedContinuation {
+                program: expr,
+                handlers,
+                handler_identities,
+                metadata,
+            }),
             parent: None,
         }
     }
 
     pub fn is_started(&self) -> bool {
-        self.started
+        debug_assert_eq!(self.segment_id.is_some(), self.segment_snapshot.is_some());
+        debug_assert_eq!(self.segment_snapshot.is_some(), self.unstarted.is_none());
+        self.segment_snapshot.is_some()
     }
 
-    pub fn segment(&self) -> &Segment {
-        self.segment_snapshot.as_ref()
+    pub fn segment_id(&self) -> Option<SegmentId> {
+        self.segment_id
     }
 
-    pub fn segment_mut(&mut self) -> &mut Segment {
-        Arc::make_mut(&mut self.segment_snapshot)
+    pub fn segment(&self) -> Option<&Segment> {
+        self.segment_snapshot.as_deref()
     }
 
-    pub fn frames(&self) -> &[Frame] {
-        &self.segment().frames
+    pub fn segment_mut(&mut self) -> Option<&mut Segment> {
+        self.segment_snapshot.as_mut().map(Arc::make_mut)
+    }
+
+    pub fn frames(&self) -> Option<&[Frame]> {
+        self.segment().map(|segment| segment.frames.as_slice())
     }
 
     pub fn dispatch_id(&self) -> Option<DispatchId> {
-        self.segment().dispatch_id
+        self.segment().and_then(|segment| segment.dispatch_id)
     }
 
     // Plain Resume/Transfer restore the capture-time caller from the segment snapshot.
     // Dispatch Resume is the explicit override that re-enters the active handler segment.
     pub fn captured_caller(&self) -> Option<SegmentId> {
-        self.segment().caller
+        self.segment().and_then(|segment| segment.caller)
     }
 
     pub fn pending_error_context(&self) -> Option<&PyException> {
-        self.segment().pending_error_context.as_ref()
+        self.segment()
+            .and_then(|segment| segment.pending_error_context.as_ref())
+    }
+
+    pub fn program(&self) -> Option<&PyShared> {
+        self.unstarted.as_ref().map(|unstarted| &unstarted.program)
+    }
+
+    pub fn handlers(&self) -> Option<&[KleisliRef]> {
+        self.unstarted
+            .as_ref()
+            .map(|unstarted| unstarted.handlers.as_slice())
+    }
+
+    pub fn handler_identities(&self) -> Option<&[Option<PyShared>]> {
+        self.unstarted
+            .as_ref()
+            .map(|unstarted| unstarted.handler_identities.as_slice())
+    }
+
+    pub fn metadata(&self) -> Option<&CallMetadata> {
+        self.unstarted
+            .as_ref()
+            .and_then(|unstarted| unstarted.metadata.as_ref())
+    }
+
+    pub fn parent(&self) -> Option<&Continuation> {
+        self.parent.as_deref()
+    }
+
+    pub(crate) fn set_parent(&mut self, parent: Option<Arc<Continuation>>) {
+        self.parent = parent;
+    }
+
+    pub(crate) fn into_unstarted_parts(
+        self,
+    ) -> Option<(
+        PyShared,
+        Vec<KleisliRef>,
+        Vec<Option<PyShared>>,
+        Option<CallMetadata>,
+    )> {
+        self.unstarted.map(
+            |UnstartedContinuation {
+                 program,
+                 handlers,
+                 handler_identities,
+                 metadata,
+             }| { (program, handlers, handler_identities, metadata) },
+        )
     }
 
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("cont_id", self.cont_id.raw())?;
-        dict.set_item("started", self.started)?;
-        if let Some(ref program) = self.program {
+        dict.set_item("started", self.is_started())?;
+        if let Some(program) = self.program() {
             dict.set_item("program", program.bind(py))?;
         }
-        if !self.handlers.is_empty() {
+        if let Some(handlers) = self.handlers() {
             let list = PyList::empty(py);
-            for (idx, handler) in self.handlers.iter().enumerate() {
-                if let Some(Some(identity)) = self.handler_identities.get(idx) {
+            for (idx, handler) in handlers.iter().enumerate() {
+                if let Some(Some(identity)) = self.handler_identities().and_then(|ids| ids.get(idx))
+                {
                     list.append(identity.bind(py))?;
                     continue;
                 }
@@ -277,16 +324,19 @@ mod tests {
         let (seg, seg_id) = make_test_segment();
         let cont = Continuation::capture(&seg, seg_id, None);
 
-        assert_eq!(cont.segment_id, seg_id);
+        assert_eq!(cont.segment_id(), Some(seg_id));
         assert_eq!(cont.captured_caller(), seg.caller);
         assert!(cont.dispatch_id().is_none());
-        assert_eq!(cont.segment().marker, seg.marker);
-        assert!(cont.frames().is_empty());
+        assert_eq!(
+            cont.segment().map(|segment| segment.marker),
+            Some(seg.marker)
+        );
+        assert!(cont.frames().is_some_and(|frames| frames.is_empty()));
         assert!(cont.is_started());
-        assert!(cont.program.is_none());
-        assert!(cont.handlers.is_empty());
-        assert!(cont.handler_identities.is_empty());
-        assert!(cont.parent.is_none());
+        assert!(cont.program().is_none());
+        assert!(cont.handlers().is_none());
+        assert!(cont.handler_identities().is_none());
+        assert!(cont.parent().is_none());
     }
 
     #[test]
@@ -298,6 +348,17 @@ mod tests {
     }
 
     #[test]
+    fn test_unstarted_continuation_has_no_segment_snapshot() {
+        Python::attach(|py| {
+            let cont = Continuation::create_unstarted(PyShared::new(py.None()), Vec::new());
+            assert!(!cont.is_started());
+            assert!(cont.segment_id().is_none());
+            assert!(cont.segment().is_none());
+            assert!(cont.frames().is_none());
+        });
+    }
+
+    #[test]
     fn test_continuation_snapshot_is_independent() {
         let marker = Marker::fresh();
         let mut seg = Segment::new(marker, None);
@@ -306,10 +367,10 @@ mod tests {
         seg.push_frame(Frame::FlatMapBindResult);
 
         let cont = Continuation::capture(&seg, seg_id, None);
-        assert_eq!(cont.frames().len(), 1);
+        assert_eq!(cont.frames().map(|frames| frames.len()), Some(1));
 
         seg.push_frame(Frame::FlatMapBindResult);
-        assert_eq!(cont.frames().len(), 1);
+        assert_eq!(cont.frames().map(|frames| frames.len()), Some(1));
         assert_eq!(seg.frame_count(), 2);
     }
 
@@ -332,7 +393,7 @@ mod tests {
 
         let cont = Continuation::capture(&seg, seg_id, None);
 
-        assert!(cont.frames().is_empty());
+        assert!(cont.frames().is_some_and(|frames| frames.is_empty()));
     }
 
     #[test]
@@ -351,9 +412,9 @@ mod tests {
 
         let cont = Continuation::capture(&seg, seg_id, None);
 
-        assert_eq!(cont.frames().len(), 2);
+        assert_eq!(cont.frames().map(|frames| frames.len()), Some(2));
         assert!(matches!(
-            cont.frames()[1],
+            cont.frames().expect("captured continuation should have frames")[1],
             Frame::DispatchOrigin { dispatch_id: kept_id, .. } if kept_id == dispatch_id
         ));
     }
