@@ -46,7 +46,7 @@ class SQLiteStorage:
     def _get_conn(self) -> sqlite3.Connection:
         """Get thread-local connection."""
         if not hasattr(self._local, "conn"):
-            conn = sqlite3.connect(self._db_path, timeout=5)
+            conn = sqlite3.connect(self._db_path)
             # Cache writes happen one entry at a time, so use WAL + NORMAL sync to avoid
             # paying a full fsync per commit while preserving crash-safe durability.
             conn.execute("PRAGMA journal_mode=WAL")
