@@ -436,28 +436,47 @@ impl VM {
         &self,
         scope: &Continuation,
     ) -> Option<SegmentId> {
-        let mut start_seg_id = scope.segment_id;
-        if self.segments.get(start_seg_id).is_none() {
-            return None;
-        }
+        self.root_delegate_parent_segment_id(
+            scope,
+            "EvalInScope parent chain must be Delegate-created dispatch continuations",
+        )
+    }
 
-        // When EvalInScope is reached through Delegate chains, the continuation
-        // passed to handlers may wrap the original effect-site continuation in
-        // `parent`. Replay should use the origin scope so wrapper interceptors
-        // around the effect site remain visible.
-        let mut cursor = scope.parent.as_deref();
+    fn root_delegate_parent_segment_id(
+        &self,
+        continuation: &Continuation,
+        assert_message: &str,
+    ) -> Option<SegmentId> {
+        let mut start_seg_id = self
+            .continuation_chain_segment_id(continuation)
+            .or_else(|| continuation.captured_caller)?;
+
+        // Delegate wraps the original effect-site continuation in `parent`.
+        // Operations that need the caller-visible handler stack or interceptor
+        // topology must resolve that wrapper back to the original segment.
+        let mut cursor = continuation.parent.as_deref();
         while let Some(parent) = cursor {
-            assert!(
-                parent.dispatch_id.is_some(),
-                "EvalInScope parent chain must be Delegate-created dispatch continuations"
-            );
-            if self.segments.get(parent.segment_id).is_none() {
-                break;
+            assert!(parent.dispatch_id.is_some(), "{}", assert_message);
+            if let Some(parent_seg_id) = self
+                .continuation_chain_segment_id(parent)
+                .or_else(|| parent.captured_caller)
+            {
+                start_seg_id = parent_seg_id;
             }
-            start_seg_id = parent.segment_id;
             cursor = parent.parent.as_deref();
         }
         Some(start_seg_id)
+    }
+
+    fn continuation_chain_segment_id(&self, continuation: &Continuation) -> Option<SegmentId> {
+        continuation
+            .captured_caller
+            .filter(|seg_id| self.segments.get(*seg_id).is_some())
+            .or_else(|| {
+                self.segments
+                    .get(continuation.segment_id)
+                    .map(|_| continuation.segment_id)
+            })
     }
 
     fn structural_kind_for_marker(&self, marker: Marker) -> SegmentKind {
@@ -994,7 +1013,13 @@ impl VM {
                 .and_then(|dispatch_id| {
                     self.dispatch_origin_for_dispatch_id(dispatch_id)
                         .map(|origin| {
-                            self.handlers_in_caller_chain(origin.k_origin.segment_id)
+                            let chain_start = self
+                                .root_delegate_parent_segment_id(
+                                    &origin.k_origin,
+                                    "Dispatch parent chain must be Delegate-created continuations",
+                                )
+                                .unwrap_or(origin.k_origin.segment_id);
+                            self.handlers_in_caller_chain(chain_start)
                                 .into_iter()
                                 .map(|entry| entry.prompt_seg_id)
                                 .collect()
@@ -1594,7 +1619,13 @@ impl VM {
                 dispatch_id.raw()
             )));
         };
-        let handler_chain = self.handlers_in_caller_chain(origin.k_origin.segment_id);
+        let handler_chain_start = self
+            .root_delegate_parent_segment_id(
+                &origin.k_origin,
+                "Delegate parent chain must be Delegate-created continuations",
+            )
+            .unwrap_or(origin.k_origin.segment_id);
+        let handler_chain = self.handlers_in_caller_chain(handler_chain_start);
         let Some(from_idx) = handler_chain
             .iter()
             .position(|entry| entry.marker == current_marker)
@@ -1731,7 +1762,6 @@ impl VM {
             self.current_seg_mut().mode = Mode::Throw(original_exception);
             return StepEvent::Continue;
         }
-
         self.dispatch_fatal_error_event(VMError::delegate_no_outer_handler(effect))
     }
 
@@ -1826,7 +1856,12 @@ impl VM {
         // handlers. Continuation installation handles deduplication when these
         // handlers are reapplied from within active dispatch contexts.
         let handlers = self
-            .handlers_in_caller_chain(origin.k_origin.segment_id)
+            .root_delegate_parent_segment_id(
+                &origin.k_origin,
+                "GetHandlers parent chain must be Delegate-created continuations",
+            )
+            .map(|seg_id| self.handlers_in_caller_chain(seg_id))
+            .unwrap_or_else(|| self.handlers_in_caller_chain(origin.k_origin.segment_id))
             .into_iter()
             .map(|entry| entry.handler)
             .collect::<Vec<_>>();

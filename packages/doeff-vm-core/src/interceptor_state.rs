@@ -35,9 +35,22 @@ impl InterceptorState {
     ) -> Vec<Marker> {
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
-        Self::walk_segment_chain(current_segment, segments, &mut chain, &mut seen);
+        let mut visited_segments = HashSet::new();
+        Self::walk_segment_chain(
+            current_segment,
+            segments,
+            &mut chain,
+            &mut seen,
+            &mut visited_segments,
+        );
         for origin_seg_id in dispatch_origin_segments {
-            Self::walk_segment_chain(Some(*origin_seg_id), segments, &mut chain, &mut seen);
+            Self::walk_segment_chain(
+                Some(*origin_seg_id),
+                segments,
+                &mut chain,
+                &mut seen,
+                &mut visited_segments,
+            );
         }
         chain
     }
@@ -47,9 +60,13 @@ impl InterceptorState {
         segments: &SegmentArena,
         chain: &mut Vec<Marker>,
         seen: &mut HashSet<Marker>,
+        visited_segments: &mut HashSet<SegmentId>,
     ) {
         let mut cursor = start;
         while let Some(seg_id) = cursor {
+            if !visited_segments.insert(seg_id) {
+                break;
+            }
             let Some(seg) = segments.get(seg_id) else {
                 break;
             };
@@ -164,5 +181,78 @@ impl InterceptorState {
         body_seg.interceptor_eval_depth = outside_seg.interceptor_eval_depth;
         body_seg.interceptor_skip_stack = outside_seg.interceptor_skip_stack.clone();
         Ok(body_seg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyo3::Python;
+    use std::sync::Arc;
+
+    use crate::do_ctrl::DoCtrl;
+    use crate::kleisli::{Kleisli, KleisliDebugInfo};
+    use crate::value::Value;
+
+    #[derive(Debug)]
+    struct DummyKleisli;
+
+    impl Kleisli for DummyKleisli {
+        fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+            unreachable!("test dummy should never be invoked")
+        }
+
+        fn debug_info(&self) -> KleisliDebugInfo {
+            KleisliDebugInfo {
+                name: "DummyKleisli".to_string(),
+                file: None,
+                line: None,
+            }
+        }
+    }
+
+    fn dummy_interceptor_segment(marker: Marker, caller: Option<SegmentId>) -> Segment {
+        let mut seg = Segment::new(marker, caller);
+        seg.kind = SegmentKind::InterceptorBoundary {
+            interceptor: Arc::new(DummyKleisli),
+            types: None,
+            mode: InterceptMode::Include,
+            metadata: None,
+        };
+        seg
+    }
+
+    #[test]
+    fn current_chain_deduplicates_shared_segment_tails() {
+        let mut arena = SegmentArena::new();
+
+        let tail_marker = Marker::fresh();
+        let tail = arena.alloc(dummy_interceptor_segment(tail_marker, None));
+
+        let shared_marker = Marker::fresh();
+        let shared = arena.alloc(dummy_interceptor_segment(shared_marker, Some(tail)));
+
+        let current_marker = Marker::fresh();
+        let current = arena.alloc(dummy_interceptor_segment(current_marker, Some(shared)));
+
+        let origin_a_marker = Marker::fresh();
+        let origin_a = arena.alloc(dummy_interceptor_segment(origin_a_marker, Some(shared)));
+
+        let origin_b_marker = Marker::fresh();
+        let origin_b = arena.alloc(dummy_interceptor_segment(origin_b_marker, Some(shared)));
+
+        let state = InterceptorState::default();
+        let chain = state.current_chain(Some(current), &arena, &[origin_a, origin_b]);
+
+        assert_eq!(
+            chain,
+            vec![
+                current_marker,
+                shared_marker,
+                tail_marker,
+                origin_a_marker,
+                origin_b_marker,
+            ]
+        );
     }
 }
