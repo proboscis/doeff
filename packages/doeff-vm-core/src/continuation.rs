@@ -47,7 +47,6 @@ impl PyK {
 pub struct Continuation {
     pub cont_id: ContId,
     pub segment_id: SegmentId,
-    pub captured_caller: Option<SegmentId>,
     pub segment_snapshot: Arc<Segment>,
 
     /// Whether this continuation is already started.
@@ -73,11 +72,39 @@ pub struct Continuation {
 }
 
 impl Continuation {
+    fn captured_frames(segment: &Segment) -> Vec<Frame> {
+        let keep_dispatch_origin = segment
+            .frames
+            .iter()
+            .any(|frame| matches!(frame, Frame::HandlerDispatch { .. }));
+        // DispatchOrigin frames are only meaningful when the snapshot is resuming the
+        // handler segment that owns them. Plain continuation snapshots keep the older
+        // behavior and drop orphan origins.
+        segment
+            .frames
+            .iter()
+            .filter(|frame| match frame {
+                Frame::DispatchOrigin { .. } => keep_dispatch_origin,
+                Frame::Program { .. }
+                | Frame::InterceptorApply(_)
+                | Frame::InterceptorEval(_)
+                | Frame::HandlerDispatch { .. }
+                | Frame::EvalReturn(_)
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. }
+                | Frame::InterceptBodyReturn { .. } => true,
+            })
+            .cloned()
+            .collect()
+    }
+
     fn captured_segment_snapshot(
         segment: &Segment,
         dispatch_id: Option<DispatchId>,
     ) -> Arc<Segment> {
         let mut snapshot = segment.clone();
+        snapshot.frames = Self::captured_frames(segment);
         snapshot.dispatch_id = dispatch_id;
         Arc::new(snapshot)
     }
@@ -90,7 +117,6 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id,
-            captured_caller: segment.caller,
             segment_snapshot: Self::captured_segment_snapshot(segment, dispatch_id),
             started: true,
             program: None,
@@ -110,7 +136,6 @@ impl Continuation {
         Continuation {
             cont_id,
             segment_id,
-            captured_caller: segment.caller,
             segment_snapshot: Self::captured_segment_snapshot(segment, dispatch_id),
             started: true,
             program: None,
@@ -135,7 +160,6 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
-            captured_caller: None,
             segment_snapshot: snapshot,
             started: false,
             program: Some(expr),
@@ -169,7 +193,6 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
-            captured_caller: None,
             segment_snapshot: snapshot,
             started: false,
             program: Some(expr),
@@ -198,6 +221,12 @@ impl Continuation {
 
     pub fn dispatch_id(&self) -> Option<DispatchId> {
         self.segment().dispatch_id
+    }
+
+    // Plain Resume/Transfer restore the capture-time caller from the segment snapshot.
+    // Dispatch Resume is the explicit override that re-enters the active handler segment.
+    pub fn captured_caller(&self) -> Option<SegmentId> {
+        self.segment().caller
     }
 
     pub fn marker(&self) -> crate::ids::Marker {
@@ -237,6 +266,8 @@ impl Continuation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::effect::make_get_execution_context_effect;
+    use crate::ids::Marker;
 
     fn make_test_segment() -> (Segment, SegmentId) {
         let marker = Marker::fresh();
@@ -251,7 +282,7 @@ mod tests {
         let cont = Continuation::capture(&seg, seg_id, None);
 
         assert_eq!(cont.segment_id, seg_id);
-        assert_eq!(cont.captured_caller, seg.caller);
+        assert_eq!(cont.captured_caller(), seg.caller);
         assert!(cont.dispatch_id().is_none());
         assert_eq!(cont.segment().marker, seg.marker);
         assert!(cont.frames().is_empty());
@@ -284,5 +315,50 @@ mod tests {
         seg.push_frame(Frame::FlatMapBindResult);
         assert_eq!(cont.frames().len(), 1);
         assert_eq!(seg.frame_count(), 2);
+    }
+
+    fn make_dispatch_origin_frame(dispatch_id: DispatchId) -> Frame {
+        let origin_seg = Segment::new(Marker::fresh(), None);
+        let k_origin =
+            Continuation::capture(&origin_seg, SegmentId::from_index(99), Some(dispatch_id));
+        Frame::DispatchOrigin {
+            dispatch_id,
+            effect: make_get_execution_context_effect()
+                .expect("test dispatch effect should be constructible"),
+            k_origin,
+        }
+    }
+
+    #[test]
+    fn test_continuation_capture_filters_orphan_dispatch_origin_frames() {
+        let (mut seg, seg_id) = make_test_segment();
+        seg.push_frame(make_dispatch_origin_frame(DispatchId::fresh()));
+
+        let cont = Continuation::capture(&seg, seg_id, None);
+
+        assert!(cont.frames().is_empty());
+    }
+
+    #[test]
+    fn test_continuation_capture_keeps_dispatch_origin_with_handler_dispatch() {
+        let (mut seg, seg_id) = make_test_segment();
+        let dispatch_id = DispatchId::fresh();
+        let handler_seg = Segment::new(Marker::fresh(), None);
+        let handler_cont =
+            Continuation::capture(&handler_seg, SegmentId::from_index(7), Some(dispatch_id));
+        seg.push_frame(Frame::HandlerDispatch {
+            dispatch_id,
+            continuation: handler_cont,
+            prompt_seg_id: SegmentId::from_index(8),
+        });
+        seg.push_frame(make_dispatch_origin_frame(dispatch_id));
+
+        let cont = Continuation::capture(&seg, seg_id, None);
+
+        assert_eq!(cont.frames().len(), 2);
+        assert!(matches!(
+            cont.frames()[1],
+            Frame::DispatchOrigin { dispatch_id: kept_id, .. } if kept_id == dispatch_id
+        ));
     }
 }

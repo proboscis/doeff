@@ -1360,6 +1360,8 @@ impl VM {
     }
 
     pub(super) fn handle_dispatch_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
+        // Dispatch Resume re-enters the active handler segment so the continuation
+        // returns to the in-flight dispatch rather than its original capture site.
         self.activate_continuation(
             ContinuationActivationKind::Resume,
             k,
@@ -1369,7 +1371,7 @@ impl VM {
     }
 
     pub(super) fn handle_dispatch_transfer(&mut self, k: Continuation, value: Value) -> StepEvent {
-        let caller = k.captured_caller;
+        let caller = k.captured_caller();
         self.activate_continuation(ContinuationActivationKind::Transfer, k, value, caller)
     }
 
@@ -1418,7 +1420,7 @@ impl VM {
             }
         }
 
-        let caller = k.captured_caller;
+        let caller = k.captured_caller();
         let dispatch_id = self.continuation_segment_dispatch_id(&k);
         self.enter_continuation_segment_with_dispatch(&k, caller, dispatch_id);
         self.current_seg_mut().mode =
@@ -1491,7 +1493,7 @@ impl VM {
         mode: InterceptMode,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        let body_seg = match self.interceptor_state.prepare_with_intercept(
+        let body_seg = match Self::prepare_with_intercept(
             interceptor,
             types,
             mode,
@@ -1508,6 +1510,34 @@ impl VM {
 
         self.current_segment = Some(body_seg_id);
         self.evaluate(program)
+    }
+
+    fn prepare_with_intercept(
+        interceptor: KleisliRef,
+        types: Option<Vec<PyShared>>,
+        mode: InterceptMode,
+        metadata: Option<CallMetadata>,
+        current_segment: Option<SegmentId>,
+        segments: &SegmentArena,
+    ) -> Result<Segment, VMError> {
+        let interceptor_marker = Marker::fresh();
+        let Some(outside_seg_id) = current_segment else {
+            return Err(VMError::internal("no current segment for WithIntercept"));
+        };
+        let outside_seg = segments.get(outside_seg_id).ok_or_else(|| {
+            VMError::invalid_segment("current segment not found for WithIntercept")
+        })?;
+
+        let mut body_seg = Segment::new(interceptor_marker, Some(outside_seg_id));
+        body_seg.kind = SegmentKind::InterceptorBoundary {
+            interceptor,
+            types,
+            mode,
+            metadata,
+        };
+        body_seg.interceptor_eval_depth = outside_seg.interceptor_eval_depth;
+        body_seg.interceptor_skip_stack = outside_seg.interceptor_skip_stack.clone();
+        Ok(body_seg)
     }
 
     fn emit_forward_active_chain_event(
@@ -1824,7 +1854,7 @@ impl VM {
         value: Value,
     ) -> StepEvent {
         if k.started {
-            let caller = k.captured_caller;
+            let caller = k.captured_caller();
             return self.activate_continuation(
                 ContinuationActivationKind::Resume,
                 k,

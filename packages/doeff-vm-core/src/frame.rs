@@ -11,6 +11,7 @@ use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
+use crate::segment::SegmentKind;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -72,10 +73,69 @@ impl CallMetadata {
 #[derive(Debug, Clone)]
 pub struct InterceptorChainLink {
     pub marker: Marker,
-    pub interceptor: KleisliRef,
-    pub types: Option<Vec<PyShared>>,
-    pub mode: InterceptMode,
-    pub metadata: Option<CallMetadata>,
+    boundary: SegmentKind,
+}
+
+impl InterceptorChainLink {
+    pub fn from_boundary(marker: Marker, boundary: &SegmentKind) -> Option<Self> {
+        match boundary {
+            SegmentKind::InterceptorBoundary { .. } => Some(Self {
+                marker,
+                boundary: boundary.clone(),
+            }),
+            SegmentKind::Normal
+            | SegmentKind::PromptBoundary { .. }
+            | SegmentKind::MaskBoundary { .. } => None,
+        }
+    }
+
+    pub fn interceptor(&self) -> &KleisliRef {
+        match &self.boundary {
+            SegmentKind::InterceptorBoundary { interceptor, .. } => interceptor,
+            SegmentKind::Normal
+            | SegmentKind::PromptBoundary { .. }
+            | SegmentKind::MaskBoundary { .. } => {
+                unreachable!("InterceptorChainLink must store an InterceptorBoundary")
+            }
+        }
+    }
+
+    pub fn types(&self) -> Option<&[PyShared]> {
+        match &self.boundary {
+            SegmentKind::InterceptorBoundary { types, .. } => types.as_deref(),
+            SegmentKind::Normal
+            | SegmentKind::PromptBoundary { .. }
+            | SegmentKind::MaskBoundary { .. } => {
+                unreachable!("InterceptorChainLink must store an InterceptorBoundary")
+            }
+        }
+    }
+
+    pub fn mode(&self) -> InterceptMode {
+        match &self.boundary {
+            SegmentKind::InterceptorBoundary { mode, .. } => *mode,
+            SegmentKind::Normal
+            | SegmentKind::PromptBoundary { .. }
+            | SegmentKind::MaskBoundary { .. } => {
+                unreachable!("InterceptorChainLink must store an InterceptorBoundary")
+            }
+        }
+    }
+
+    pub fn metadata(&self) -> Option<&CallMetadata> {
+        match &self.boundary {
+            SegmentKind::InterceptorBoundary { metadata, .. } => metadata.as_ref(),
+            SegmentKind::Normal
+            | SegmentKind::PromptBoundary { .. }
+            | SegmentKind::MaskBoundary { .. } => {
+                unreachable!("InterceptorChainLink must store an InterceptorBoundary")
+            }
+        }
+    }
+
+    pub fn into_boundary(self) -> SegmentKind {
+        self.boundary
+    }
 }
 
 /// A frame in the continuation stack.
@@ -89,6 +149,12 @@ pub struct InterceptorContinuation {
     pub emitter_stream: IRStreamRef,
     pub emitter_metadata: Option<CallMetadata>,
     pub emitter_handler_kind: Option<HandlerKind>,
+    /// Snapshot of the remaining interceptor chain for the current yielded effect.
+    ///
+    /// Effectful interceptor execution can suspend and later resume through this frame.
+    /// Resuming must continue with the exact tail that was visible when the yield was first
+    /// classified, not a freshly rebuilt live chain that may have diverged while the interceptor
+    /// itself was running. Marker remaps are applied to this snapshot when continuations move.
     pub chain: Arc<Vec<InterceptorChainLink>>,
     pub next_idx: usize,
     pub interceptor_metadata: Option<CallMetadata>,

@@ -82,18 +82,11 @@ impl VM {
                     handler: handler.clone(),
                     types: types.clone(),
                 })),
-                SegmentKind::InterceptorBoundary {
-                    interceptor,
-                    types,
-                    mode,
-                    metadata,
-                } => chain.push(CallerChainEntry::Interceptor(InterceptorChainLink {
-                    marker: seg.marker,
-                    interceptor: interceptor.clone(),
-                    types: types.clone(),
-                    mode: *mode,
-                    metadata: metadata.clone(),
-                })),
+                SegmentKind::InterceptorBoundary { .. } => {
+                    let link = InterceptorChainLink::from_boundary(seg.marker, &seg.kind)
+                        .expect("InterceptorBoundary should always produce a chain link");
+                    chain.push(CallerChainEntry::Interceptor(link));
+                }
                 SegmentKind::Normal | SegmentKind::MaskBoundary { .. } => {}
             }
             cursor = seg.caller;

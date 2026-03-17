@@ -1002,21 +1002,9 @@ impl VM {
                 let Some(seg) = vm.segments.get(seg_id) else {
                     break;
                 };
-                if let SegmentKind::InterceptorBoundary {
-                    interceptor,
-                    types,
-                    mode,
-                    metadata,
-                } = &seg.kind
-                {
+                if let Some(link) = InterceptorChainLink::from_boundary(seg.marker, &seg.kind) {
                     if seen.insert(seg.marker) {
-                        chain.push(InterceptorChainLink {
-                            marker: seg.marker,
-                            interceptor: interceptor.clone(),
-                            types: types.clone(),
-                            mode: *mode,
-                            metadata: metadata.clone(),
-                        });
+                        chain.push(link);
                     }
                 }
                 cursor = seg.caller;
@@ -1032,24 +1020,34 @@ impl VM {
         chain
     }
 
-    fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
-        self.interceptor_state
-            .visible_to_active_handler(interceptor_marker)
-    }
-
     fn is_interceptor_skipped(&self, marker: Marker) -> bool {
-        InterceptorState::is_skipped(self.current_seg(), marker)
+        self.current_seg().interceptor_skip_stack.contains(&marker)
     }
 
     fn pop_interceptor_skip(&mut self, marker: Marker) {
         let seg = self.current_seg_mut();
-        if InterceptorState::is_skipped(seg, marker) {
-            InterceptorState::pop_skip(seg, marker);
+        if let Some(pos) = seg
+            .interceptor_skip_stack
+            .iter()
+            .rposition(|active| *active == marker)
+        {
+            seg.interceptor_skip_stack.remove(pos);
         }
     }
 
     fn push_interceptor_skip(&mut self, marker: Marker) {
-        InterceptorState::push_skip(self.current_seg_mut(), marker);
+        self.current_seg_mut().interceptor_skip_stack.push(marker);
+    }
+
+    fn classify_interceptor_result_shape(result_obj: &PyShared) -> (bool, bool) {
+        Python::attach(|py| {
+            let bound = result_obj.bind(py);
+            let is_effect_base = bound.is_instance_of::<PyEffectBase>();
+            let is_py_doexpr = bound.is_instance_of::<PyDoExprBase>();
+            let is_doexpr = is_py_doexpr || bound.is_instance_of::<DoeffGenerator>();
+            let is_direct_expr = is_effect_base || is_py_doexpr;
+            (is_direct_expr, is_doexpr)
+        })
     }
 
     fn classify_interceptor_result_object(
@@ -1085,11 +1083,11 @@ impl VM {
         entry: &InterceptorChainLink,
         yielded_obj: &PyShared,
     ) -> Result<bool, PyException> {
-        let Some(types) = entry.types.as_ref() else {
+        let Some(types) = entry.types() else {
             return Ok(true);
         };
         if types.is_empty() {
-            return Ok(entry.mode.should_invoke(false));
+            return Ok(entry.mode().should_invoke(false));
         }
 
         let matches_filter = Python::attach(|py| -> PyResult<bool> {
@@ -1102,7 +1100,7 @@ impl VM {
             }
             Ok(false)
         })?;
-        Ok(entry.mode.should_invoke(matches_filter))
+        Ok(entry.mode().should_invoke(matches_filter))
     }
 
     fn continue_interceptor_chain_mode(
@@ -1122,9 +1120,6 @@ impl VM {
             let marker = link.marker;
             idx += 1;
             if self.is_interceptor_skipped(marker) {
-                continue;
-            }
-            if !self.interceptor_visible_to_active_handler(marker) {
                 continue;
             }
 
@@ -1179,9 +1174,9 @@ impl VM {
         chain: Arc<Vec<InterceptorChainLink>>,
         next_idx: usize,
     ) -> Mode {
-        let interceptor_kleisli = entry.interceptor.clone();
-        let guard_eval_depth = entry.types.is_some();
-        let interceptor_meta = entry.metadata.clone();
+        let interceptor_kleisli = entry.interceptor().clone();
+        let guard_eval_depth = entry.types().is_some();
+        let interceptor_meta = entry.metadata().cloned();
         let apply_metadata = interceptor_meta
             .clone()
             .unwrap_or_else(Self::fallback_interceptor_metadata);
@@ -1255,7 +1250,7 @@ impl VM {
             ));
         };
 
-        let (is_direct_expr, is_doexpr) = InterceptorState::classify_result_shape(&result_obj);
+        let (is_direct_expr, is_doexpr) = Self::classify_interceptor_result_shape(&result_obj);
 
         if is_direct_expr {
             let transformed = match self.classify_interceptor_result_object(
@@ -1882,12 +1877,7 @@ impl VM {
                     };
 
                     let mut body_seg = Segment::new(interceptor_marker, outside_seg_id);
-                    body_seg.kind = SegmentKind::InterceptorBoundary {
-                        interceptor: entry.interceptor,
-                        types: entry.types,
-                        mode: entry.mode,
-                        metadata: entry.metadata,
-                    };
+                    body_seg.kind = entry.into_boundary();
                     self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
                     self.copy_scope_store_from(outside_seg_id, &mut body_seg);
                     let body_seg_id = self.alloc_segment(body_seg);
