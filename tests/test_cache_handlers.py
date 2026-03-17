@@ -23,7 +23,7 @@ from doeff import (
     run,
 )
 from doeff.cache import CacheCallSite
-from doeff.effects.cache import CacheExistsEffect, CacheGetEffect, CachePutEffect
+from doeff.effects.cache import CacheGetEffect, CachePutEffect
 from doeff.handlers import cache_handler, in_memory_cache_handler, sqlite_cache_handler
 from doeff.handlers.cache_handlers import content_address, make_memo_rewriter, memo_rewriters
 from doeff.storage import InMemoryStorage, SQLiteStorage
@@ -225,16 +225,13 @@ def test_cache_decorator_miss_then_hit() -> None:
     assert calls["count"] == 1
 
 
-def test_cache_decorator_uses_exists_fast_path_on_miss() -> None:
+def test_cache_decorator_uses_single_cache_get_path() -> None:
     calls = {"count": 0}
     storage: dict[object, object] = {}
     seen: list[str] = []
 
     @do
     def handler(effect: Effect, k: object):
-        if isinstance(effect, CacheExistsEffect):
-            seen.append("exists")
-            return (yield Resume(k, effect.key in storage))
         if isinstance(effect, CacheGetEffect):
             seen.append("get")
             if effect.key not in storage:
@@ -254,12 +251,18 @@ def test_cache_decorator_uses_exists_fast_path_on_miss() -> None:
         calls["count"] += 1
         return value * 3
 
-    result = _run_with_handlers(expensive(7), handler)
+    @do
+    def workflow() -> EffectGenerator[tuple[int, int]]:
+        first = yield expensive(7)
+        second = yield expensive(7)
+        return first, second
+
+    result = _run_with_handlers(workflow(), handler)
 
     assert result.is_ok(), result.error
-    assert result.value == 21
+    assert result.value == (21, 21)
     assert calls["count"] == 1
-    assert seen == ["exists", "put"]
+    assert seen == ["get", "put", "get"]
 
 
 def test_cache_call_site_formats_rust_and_unknown_sentinel_locations() -> None:

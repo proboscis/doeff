@@ -7,17 +7,16 @@ import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Any, Generic, TypeVar, cast
 
 import doeff_vm
 
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
 from doeff.do import do
-from doeff.effects.cache import CacheExists, CacheGet, CachePut
-from doeff.effects.execution_context import GetExecutionContext
+from doeff.effects.cache import CacheGet, CachePut
 from doeff.kleisli import KleisliProgram
-from doeff.types import EffectGenerator, Err, FrozenDict, Ok, Result
+from doeff.types import EffectGenerator, FrozenDict, Result
 
 
 @dataclass(frozen=True)
@@ -41,20 +40,9 @@ class CacheCallSite:
 T = TypeVar("T")
 
 
-def _normalize_cache_result(result: object) -> Result[Any]:
-    if isinstance(result, Result):
-        return result
-    if isinstance(result, doeff_vm.Ok):
-        return Ok(result.value)
-    if isinstance(result, doeff_vm.Err):
-        error = result.error
-        if not isinstance(error, Exception):
-            raise TypeError(
-                "cache() expected Err.error to be Exception, "
-                f"got {type(error).__name__}"
-            )
-        return Err(error)
-    raise TypeError(f"cache() expected a Result value, got {type(result).__name__}")
+@dataclass(frozen=True)
+class _CachedSuccess(Generic[T]):
+    value: T
 
 
 def _function_identifier(target: Any) -> str:
@@ -160,6 +148,42 @@ def _attach_exception_note(error: BaseException, note: str) -> None:
         error.add_note(note)
 
 
+def _call_site_from_error(error: BaseException) -> CacheCallSite | None:
+    error_obj = cast(Any, error)
+    try:
+        context = error_obj.doeff_execution_context
+    except AttributeError:
+        return None
+
+    context_obj = cast(Any, context)
+    try:
+        active_chain = context_obj.active_chain
+    except AttributeError:
+        return None
+
+    if not isinstance(active_chain, (list, tuple)):
+        return None
+    return _call_site_from_program_frames(list(active_chain))
+
+
+def _unwrap_cached_payload(value: Any) -> Any:
+    if isinstance(value, _CachedSuccess):
+        return value.value
+    if isinstance(value, Result):
+        return value.unwrap()
+    if isinstance(value, doeff_vm.Ok):
+        return value.value
+    if isinstance(value, doeff_vm.Err):
+        error = value.error
+        if not isinstance(error, BaseException):
+            raise TypeError(
+                "cache() expected cached Err.error to be BaseException, "
+                f"got {type(error).__name__}"
+            )
+        raise error.with_traceback(error.__traceback__)
+    return value
+
+
 @do_wrapper
 def cache(  # noqa: PLR0915
     ttl: float | None = None,
@@ -171,11 +195,11 @@ def cache(  # noqa: PLR0915
     metadata: Mapping[str, Any] | None = None,
     policy: CachePolicy | Mapping[str, Any] | None = None,
 ):
-    """Cache decorator that uses CacheGet/CachePut effects with Try for misses.
+    """Cache decorator that uses CacheGet/CachePut effects for memoization.
 
     The decorator automatically caches results produced by the wrapped function. On a cache miss
-    (when ``CacheGet`` fails), it evaluates the original function, caches the ``Result`` via
-    ``CachePut``, and then unwraps it for the caller.
+    (when ``CacheGet`` raises ``KeyError``), it evaluates the original function and stores the
+    successful result via ``CachePut``.
 
     The default interpreter stores entries in the sqlite/LZMA handler. Only ``ttl`` is acted on by
     that handler today; ``lifecycle``, ``storage``, and ``metadata`` are preserved for custom
@@ -304,14 +328,6 @@ def cache(  # noqa: PLR0915
             return tuple(args_list), kwargs_for_key
 
         @do
-        def resolve_call_site() -> EffectGenerator[CacheCallSite | None]:
-            context = yield GetExecutionContext()
-            active_chain = context.active_chain
-            if not isinstance(active_chain, (list, tuple)):
-                return None
-            return _call_site_from_program_frames(list(active_chain))
-
-        @do
         def wrapper(*args, **kwargs) -> EffectGenerator[T]:
             args_for_key, kwargs_for_key = yield build_key_inputs(tuple(args), dict(kwargs))
 
@@ -322,40 +338,33 @@ def cache(  # noqa: PLR0915
                 else (func_name, args_for_key, frozen_kwargs)
             )
 
-            cache_miss = object()
-            if (yield CacheExists(cache_key_obj)):
-                try:
-                    result = yield CacheGet(cache_key_obj)
-                except KeyError:
-                    result = cache_miss
+            try:
+                cached_value: Any = yield CacheGet(cache_key_obj)
+            except KeyError:
+                pass
             else:
-                result = cache_miss
+                return _unwrap_cached_payload(cached_value)
 
-            if result is cache_miss:
-                try:
-                    computed_value = yield wrapped_func(*args, **kwargs)
-                except BaseException as error:
-                    call_site = yield resolve_call_site()
-                    _attach_exception_note(
-                        error,
-                        _cache_error_note(func_name, args, dict(kwargs), call_site),
-                    )
-                    raise error
-                computed_result = Ok(computed_value)
-                yield CachePut(
-                    cache_key_obj,
-                    computed_result,
-                    ttl,
-                    lifecycle=lifecycle,
-                    storage=storage,
-                    metadata=metadata,
-                    policy=policy,
+            try:
+                computed_value = yield wrapped_func(*args, **kwargs)
+            except BaseException as error:
+                call_site = _call_site_from_error(error)
+                _attach_exception_note(
+                    error,
+                    _cache_error_note(func_name, args, dict(kwargs), call_site),
                 )
-                result = computed_value
+                raise
 
-            if isinstance(result, Result):
-                return result.unwrap()
-            return cast(T, result)
+            yield CachePut(
+                cache_key_obj,
+                _CachedSuccess(computed_value),
+                ttl,
+                lifecycle=lifecycle,
+                storage=storage,
+                metadata=metadata,
+                policy=policy,
+            )
+            return computed_value
 
         try:
             wrapper.__name__ = getattr(func, "__name__", wrapper.__name__)
@@ -429,7 +438,7 @@ def cache_key(*key_args: str) -> Callable:
 
         # Create a simpler key using only specified arguments
         key_values = []
-        for i, _arg_name in enumerate(key_args):
+        for i, _ in enumerate(key_args):
             if i < len(args):
                 key_values.append(args[i])
 
