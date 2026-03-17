@@ -326,6 +326,8 @@ def _coerce_effect_result(result: Any) -> EffectResult:
 
 
 def _normalize_effect_yield(entry: EffectYield) -> EffectYield:
+    # TODO(scheduler-gather-quadratic-v2): remove this compatibility shim once Rust
+    # emits the correct throwing handler metadata for sync_await_handler dispatches.
     if not isinstance(entry.result, EffectResultThrew):
         return entry
     if entry.result.handler_name != "sync_await_handler":
@@ -363,7 +365,9 @@ def _normalize_effect_yield(entry: EffectYield) -> EffectYield:
     )
 
 
-def _extract_effect_repr_from_handler_args(args_repr: str | None) -> str | None:
+def extract_handler_effect_repr_from_args(args_repr: str | None) -> str | None:
+    # TODO(scheduler-gather-quadratic-v2): replace this args_repr string parsing by
+    # emitting an explicit hidden-handler effect repr from Rust trace metadata.
     if args_repr is None:
         return None
     prefix = "args=("
@@ -509,7 +513,7 @@ def coerce_active_chain_entries(entries: list[Any] | tuple[Any, ...]) -> list[Ac
                 continue
             if previous.sub_program_repr != expected_owner:
                 continue
-            effect_repr = _extract_effect_repr_from_handler_args(previous.args_repr)
+            effect_repr = extract_handler_effect_repr_from_args(previous.args_repr)
             if effect_repr is None:
                 continue
             active_chain[index] = replace(entry, sub_program_repr=effect_repr)

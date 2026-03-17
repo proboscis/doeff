@@ -70,6 +70,7 @@ else:
         TraceResumePoint,
         coerce_active_chain_entries,
         coerce_trace_entries,
+        extract_handler_effect_repr_from_args,
     )
 
     _DOEFF_TRACEBACK_ATTR = "doeff_traceback"
@@ -430,15 +431,7 @@ else:
 
         @staticmethod
         def _hidden_handler_sub_program(entry: ProgramYield) -> str | None:
-            args_repr = entry.args_repr
-            if args_repr is None or not args_repr.startswith("args=("):
-                return None
-            if ", K(" not in args_repr:
-                return None
-            candidate = args_repr[len("args=(") : args_repr.index(", K(")]
-            if candidate.startswith(("Gather(", "Spawn(", "Race(", "Wait(")):
-                return candidate
-            return None
+            return extract_handler_effect_repr_from_args(entry.args_repr)
 
         @staticmethod
         def _format_spawn_boundary(boundary: SpawnBoundary) -> str:
@@ -455,6 +448,9 @@ else:
             lines: list[str] = ["doeff Traceback (most recent call last):", ""]
             previous_handler_stack: tuple[HandlerStackEntry, ...] | None = None
             previous_spawn_boundary: SpawnBoundary | None = None
+            # Hidden sync_spawn_intercept_handler frames can carry the only surviving
+            # user-visible Gather(...) repr for a spawned child. Carry it forward until
+            # the next real program/effect row consumes it.
             pending_hidden_sub_program: str | None = None
             for entry in self.active_chain:
                 if isinstance(entry, ProgramYield):
