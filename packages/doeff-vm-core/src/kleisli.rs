@@ -158,6 +158,7 @@ pub struct PyKleisli {
     name: String,
     file: Option<String>,
     line: Option<u32>,
+    is_await_shim: bool,
 }
 
 #[pymethods]
@@ -179,6 +180,7 @@ impl PyKleisli {
             name,
             file,
             line,
+            is_await_shim: false,
         })
     }
 
@@ -281,6 +283,13 @@ impl PyKleisli {
                 name: dgfn.function_name.clone(),
                 file: Some(dgfn.source_file.clone()),
                 line: Some(dgfn.source_line),
+                is_await_shim: dgfn
+                    .callable
+                    .bind(py)
+                    .getattr("__doeff_await_shim__")
+                    .ok()
+                    .and_then(|value| value.extract::<bool>().ok())
+                    .unwrap_or(false),
             });
         }
 
@@ -297,12 +306,18 @@ impl PyKleisli {
             })
             .unwrap_or_else(|| "<python_handler>".to_string());
         let (file, line) = Self::source_info(callable);
+        let is_await_shim = callable
+            .getattr("__doeff_await_shim__")
+            .ok()
+            .and_then(|value| value.extract::<bool>().ok())
+            .unwrap_or(false);
 
         Ok(Self {
             func: PyShared::new(func),
             name,
             file,
             line,
+            is_await_shim,
         })
     }
 
@@ -503,6 +518,7 @@ pub struct PyCallableKleisli {
     name: String,
     file: Option<String>,
     line: Option<u32>,
+    is_await_shim: bool,
 }
 
 impl PyCallableKleisli {
@@ -523,11 +539,17 @@ impl PyCallableKleisli {
             })
             .unwrap_or_else(|| "<python_callable>".to_string());
         let (file, line) = PyKleisli::source_info(callable);
+        let is_await_shim = callable
+            .getattr("__doeff_await_shim__")
+            .ok()
+            .and_then(|value| value.extract::<bool>().ok())
+            .unwrap_or(false);
         Ok(Self {
             func: PyShared::new(func),
             name,
             file,
             line,
+            is_await_shim,
         })
     }
 }
@@ -562,14 +584,7 @@ impl Kleisli for PyCallableKleisli {
     }
 
     fn is_sync_await_shim(&self) -> bool {
-        Python::attach(|py| {
-            self.func
-                .bind(py)
-                .getattr("__doeff_sync_await_shim__")
-                .ok()
-                .and_then(|value| value.extract::<bool>().ok())
-                .unwrap_or(false)
-        })
+        self.is_await_shim
     }
 }
 
