@@ -227,7 +227,7 @@ impl WaitRequest {
 
     fn note_completion(&self) -> bool {
         let prev = self.remaining.load(Ordering::Relaxed);
-        debug_assert!(prev > 0, "note_completion on already-completed waiter");
+        assert!(prev > 0, "note_completion on already-completed waiter");
         if prev == 0 {
             return false;
         }
@@ -1016,7 +1016,7 @@ impl SchedulerState {
 
     pub fn with_external_wait_mode(external_wait_mode: ExternalWaitMode) -> Self {
         SchedulerState {
-            ready: ReadySet::Priority(BinaryHeap::new()),
+            ready: ReadySet(BinaryHeap::new()),
             ready_task_ids: HashSet::new(),
             ready_root_resumes: HashMap::new(),
             tasks: HashMap::new(),
@@ -1778,12 +1778,13 @@ impl SchedulerState {
         };
         self.pending_gather_fail_fast.remove(&owner);
         let owner_was_active = self.active_wait_owners.remove(&owner);
-        debug_assert!(
-            !owner_was_active || self.waitables_by_owner.contains_key(&owner),
-            "waitables_by_owner desynced from active_wait_owners for owner {:?}",
-            owner
-        );
-        let waitables = self.waitables_by_owner.remove(&owner).unwrap_or_default();
+        let waitables = if owner_was_active {
+            self.waitables_by_owner
+                .remove(&owner)
+                .expect("waitables_by_owner desynced from active_wait_owners")
+        } else {
+            self.waitables_by_owner.remove(&owner).unwrap_or_default()
+        };
         if let Some(ready_resume) = self.ready_root_resumes.get(&cont_id) {
             if ready_resume.waiting_task == waiting_task {
                 self.ready_root_resumes.remove(&cont_id);
@@ -2054,7 +2055,7 @@ impl SchedulerState {
             None => WaitOwner::Root { cont_id: k.cont_id },
         };
         self.active_wait_owners.insert(owner);
-        debug_assert!(
+        assert!(
             !self.waitables_by_owner.contains_key(&owner),
             "register_waiter called twice for owner {:?} without clearing prior waitables",
             owner
