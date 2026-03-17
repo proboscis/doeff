@@ -29,6 +29,8 @@ def spawn_intercept_handler(effect: Effect, k: Any):
 
 @do
 def sync_spawn_intercept_handler(effect: Effect, k: Any):
+    # Sync Spawn stays on the scheduler hot path. Transfer preserves the same
+    # task-handle result as Resume while avoiding scheduler-induced stack growth.
     return (yield _spawn_intercept(effect, k, doeff_vm.Transfer))
 
 
