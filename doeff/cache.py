@@ -155,9 +155,8 @@ def _call_site_from_error(error: BaseException) -> CacheCallSite | None:
     except AttributeError:
         return None
 
-    context_obj = cast(Any, context)
     try:
-        active_chain = context_obj.active_chain
+        active_chain = context.active_chain
     except AttributeError:
         return None
 
@@ -338,7 +337,7 @@ def cache(  # noqa: PLR0915
 
             try:
                 computed_value = yield wrapped_func(*args, **kwargs)
-            except BaseException as error:
+            except Exception as error:
                 call_site = _call_site_from_error(error)
                 _attach_exception_note(
                     error,
