@@ -472,6 +472,10 @@ impl Kleisli for PyKleisli {
             Some(self.func.clone())
         })
     }
+
+    fn is_sync_await_shim(&self) -> bool {
+        self.is_await_shim
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -505,6 +509,10 @@ impl Kleisli for DgfnKleisli {
 
     fn py_identity(&self) -> Option<PyShared> {
         Some(self.callable_identity.clone())
+    }
+
+    fn is_sync_await_shim(&self) -> bool {
+        self.inner.is_sync_await_shim()
     }
 }
 

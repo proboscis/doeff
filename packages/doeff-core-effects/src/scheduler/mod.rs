@@ -3,11 +3,9 @@
 //! The scheduler is a IRStreamFactory that manages tasks, promises,
 //! and cooperative scheduling via Transfer-only semantics.
 
-use std::cell::Cell;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
-use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use pyo3::prelude::*;
@@ -202,28 +200,6 @@ impl WaitOwner {
 }
 
 #[derive(Clone, Debug)]
-struct SharedRemaining(Rc<Cell<usize>>);
-
-// Safety: SharedRemaining is only touched while SchedulerState is held via the
-// outer scheduler mutex. It is never accessed concurrently.
-unsafe impl Send for SharedRemaining {}
-unsafe impl Sync for SharedRemaining {}
-
-impl SharedRemaining {
-    fn new(value: usize) -> Self {
-        Self(Rc::new(Cell::new(value)))
-    }
-
-    fn get(&self) -> usize {
-        self.0.get()
-    }
-
-    fn set(&self, value: usize) {
-        self.0.set(value);
-    }
-}
-
-#[derive(Clone, Debug)]
 struct WaitRequest {
     continuation: Continuation,
     items: Vec<Waitable>,
@@ -231,7 +207,7 @@ struct WaitRequest {
     // Cloned WaitRequests live in multiple waiter buckets, so completion bookkeeping
     // needs shared mutable state across those clones even though SchedulerState itself
     // is mutex-protected.
-    remaining: SharedRemaining,
+    remaining: Arc<AtomicUsize>,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
 }
@@ -250,11 +226,11 @@ impl WaitRequest {
     }
 
     fn note_completion(&self) -> bool {
-        let remaining = self.remaining.get();
+        let remaining = self.remaining.load(Ordering::Relaxed);
         if remaining == 0 {
             return false;
         }
-        self.remaining.set(remaining - 1);
+        self.remaining.store(remaining - 1, Ordering::Relaxed);
         remaining == 1
     }
 }
@@ -2110,7 +2086,7 @@ impl SchedulerState {
             continuation: k,
             items: items.to_vec(),
             mode,
-            remaining: SharedRemaining::new(remaining),
+            remaining: Arc::new(AtomicUsize::new(remaining)),
             waiting_task: self.current_task,
             waiting_store: store.clone(),
         };
@@ -3746,6 +3722,36 @@ mod tests {
             assert_eq!(handlers.len(), 1, "must not duplicate handler named {name}");
             assert_eq!(handlers[0].debug_info().name, name);
         }
+    }
+
+    #[test]
+    fn test_maybe_prepend_sync_await_handler_dedups_python_kleisli_marker() {
+        Python::attach(|py| {
+            let state = Arc::new(Mutex::new(SchedulerState::new()));
+            let program = SchedulerProgram::new(state);
+
+            let code = pyo3::ffi::c_str!(
+                "def handler(effect, k):\n    yield effect\nhandler.__doeff_await_shim__ = True\n"
+            );
+            let filename = pyo3::ffi::c_str!("test_sync_await_shim.py");
+            let module_name = pyo3::ffi::c_str!("test_sync_await_shim");
+            let module = pyo3::types::PyModule::from_code(py, code, filename, module_name)
+                .expect("failed to construct shim test module");
+            let callable = module
+                .getattr("handler")
+                .expect("shim handler must exist")
+                .unbind();
+
+            let mut handlers = vec![Arc::new(
+                doeff_vm_core::PyKleisli::from_handler(py, callable)
+                    .expect("PyKleisli construction must succeed"),
+            ) as KleisliRef];
+
+            program.maybe_prepend_sync_await_handler(&mut handlers);
+
+            assert_eq!(handlers.len(), 1, "python await shim marker must dedup");
+            assert!(handlers[0].is_sync_await_shim());
+        });
     }
 
     fn make_promise_object(py: Python<'_>, promise_id: PromiseId) -> Py<PyAny> {
