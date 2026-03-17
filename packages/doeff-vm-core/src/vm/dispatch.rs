@@ -481,7 +481,7 @@ impl VM {
 
         let mut cursor = continuation.parent();
         while let Some(parent) = cursor {
-            assert!(parent.dispatch_id().is_some(), "{}", assert_message);
+            debug_assert!(parent.dispatch_id().is_some(), "{}", assert_message);
             if let Some(parent_seg_id) = self
                 .continuation_chain_segment_id(parent)
                 .or_else(|| parent.captured_caller())

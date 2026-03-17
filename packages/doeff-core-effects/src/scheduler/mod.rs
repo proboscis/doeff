@@ -3,8 +3,10 @@
 //! The scheduler is a IRStreamFactory that manages tasks, promises,
 //! and cooperative scheduling via Transfer-only semantics.
 
+use std::cell::Cell;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
@@ -200,15 +202,36 @@ impl WaitOwner {
 }
 
 #[derive(Clone, Debug)]
+struct SharedRemaining(Rc<Cell<usize>>);
+
+// Safety: SharedRemaining is only touched while SchedulerState is held via the
+// outer scheduler mutex. It is never accessed concurrently.
+unsafe impl Send for SharedRemaining {}
+unsafe impl Sync for SharedRemaining {}
+
+impl SharedRemaining {
+    fn new(value: usize) -> Self {
+        Self(Rc::new(Cell::new(value)))
+    }
+
+    fn get(&self) -> usize {
+        self.0.get()
+    }
+
+    fn set(&self, value: usize) {
+        self.0.set(value);
+    }
+}
+
+#[derive(Clone, Debug)]
 struct WaitRequest {
     continuation: Continuation,
     items: Vec<Waitable>,
     mode: WaitMode,
     // Cloned WaitRequests live in multiple waiter buckets, so completion bookkeeping
     // needs shared mutable state across those clones even though SchedulerState itself
-    // is mutex-protected. Use a plain mutexed counter instead of atomics so the
-    // synchronization model stays explicit.
-    remaining: Arc<Mutex<usize>>,
+    // is mutex-protected.
+    remaining: SharedRemaining,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
 }
@@ -227,15 +250,12 @@ impl WaitRequest {
     }
 
     fn note_completion(&self) -> bool {
-        let mut remaining = self
-            .remaining
-            .lock()
-            .expect("WaitRequest remaining counter lock poisoned");
-        if *remaining == 0 {
+        let remaining = self.remaining.get();
+        if remaining == 0 {
             return false;
         }
-        *remaining -= 1;
-        *remaining == 0
+        self.remaining.set(remaining - 1);
+        remaining == 1
     }
 }
 
@@ -1724,13 +1744,10 @@ impl SchedulerState {
             return highest_ready;
         };
         if matches!(waitable, Waitable::ExternalPromise(_)) {
-            debug_assert!(
-                self.external_waiter_count >= waiters_for_item.len(),
-                "external_waiter_count underflow while waking external waiters"
-            );
             self.external_waiter_count = self
                 .external_waiter_count
-                .saturating_sub(waiters_for_item.len());
+                .checked_sub(waiters_for_item.len())
+                .expect("external_waiter_count underflow while waking external waiters");
         }
 
         for waiter in waiters_for_item {
@@ -1872,11 +1889,10 @@ impl SchedulerState {
                 });
                 let removed = original_len.saturating_sub(pending.len());
                 if matches!(waitable, Waitable::ExternalPromise(_)) {
-                    debug_assert!(
-                        self.external_waiter_count >= removed,
-                        "external_waiter_count underflow while clearing owner waiters"
-                    );
-                    self.external_waiter_count = self.external_waiter_count.saturating_sub(removed);
+                    self.external_waiter_count = self
+                        .external_waiter_count
+                        .checked_sub(removed)
+                        .expect("external_waiter_count underflow while clearing owner waiters");
                 }
                 should_remove_key = pending.is_empty();
             }
@@ -2094,7 +2110,7 @@ impl SchedulerState {
             continuation: k,
             items: items.to_vec(),
             mode,
-            remaining: Arc::new(Mutex::new(remaining)),
+            remaining: SharedRemaining::new(remaining),
             waiting_task: self.current_task,
             waiting_store: store.clone(),
         };
