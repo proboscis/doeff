@@ -915,7 +915,11 @@ impl TraceState {
             return;
         };
 
-        for frame in dispatch_ctx.continuation.frames().unwrap_or(&[]) {
+        for frame in dispatch_ctx
+            .continuation
+            .frames()
+            .expect("dispatch context continuation must be captured")
+        {
             let Frame::Program {
                 stream,
                 metadata: Some(metadata),
@@ -1079,7 +1083,7 @@ impl TraceState {
                 dispatch_ctx
                     .continuation
                     .frames()
-                    .unwrap_or(&[])
+                    .expect("dispatch context continuation must be captured")
                     .iter()
                     .filter_map(|frame| {
                         let Frame::Program {
