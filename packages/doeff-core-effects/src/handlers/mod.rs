@@ -5,17 +5,17 @@
 //! stepping semantics.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::PyDict;
 
 use crate::continuation::Continuation;
 use crate::do_ctrl::DoCtrl;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
-    PyAcquireSemaphore, PyAsk, PyCreateSemaphore, PyGet, PyLocal, PyModify, PyPut,
-    PyPythonAsyncioAwaitEffect, PyReleaseSemaphore, PyResultSafeEffect, PyTell,
+    PyAcquireSemaphore, PyAsk, PyCreateExternalPromise, PyCreateSemaphore, PyGet, PyLocal,
+    PyModify, PyPut, PyPythonAsyncioAwaitEffect, PyReleaseSemaphore, PyResultSafeEffect, PyTell,
 };
 use crate::error::VMError;
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
@@ -299,19 +299,74 @@ fn parse_result_safe_python_effect(effect: &PyShared) -> Result<Option<PyShared>
     })
 }
 
-fn get_sync_await_runner() -> Result<PyShared, String> {
+static SYNC_AWAIT_SUBMITTER: OnceLock<Result<Py<PyAny>, String>> = OnceLock::new();
+
+fn get_sync_await_submitter() -> Result<PyShared, String> {
     Python::attach(|py| {
-        let module = PyModule::from_code(
-            py,
-            c"import asyncio\n\ndef _run_awaitable_sync(awaitable):\n    return asyncio.run(awaitable)\n",
-            c"_doeff_await_bridge",
-            c"_doeff_await_bridge",
-        )
-        .map_err(|e| e.to_string())?;
-        let runner = module
-            .getattr("_run_awaitable_sync")
-            .map_err(|e| e.to_string())?;
-        Ok(PyShared::new(runner.unbind()))
+        let runner = SYNC_AWAIT_SUBMITTER.get_or_init(|| {
+            let module = py
+                .import("doeff.handlers.await_handlers")
+                .map_err(|e| e.to_string())?;
+            module
+                .getattr("_submit_awaitable_handle")
+                .map(|runner| runner.unbind())
+                .map_err(|e| e.to_string())
+        });
+        Ok(PyShared::new(runner.as_ref().map_err(Clone::clone)?.clone_ref(py)))
+    })
+}
+
+fn create_external_promise_effect() -> Result<DispatchEffect, PyException> {
+    Python::attach(|py| {
+        let effect = py
+            .get_type::<PyCreateExternalPromise>()
+            .call0()
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
+    })
+}
+
+fn external_promise_future(value: &Value) -> Result<Py<PyAny>, PyException> {
+    let Value::ExternalPromise(external_promise) = value else {
+        return Err(PyException::type_error(format!(
+            "CreateExternalPromise returned non-external-promise value: {:?}",
+            value
+        )));
+    };
+
+    Python::attach(|py| {
+        let handle_obj = value
+            .to_pyobject(py)
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let future_type = py
+            .import("doeff.effects.spawn")
+            .and_then(|module| module.getattr("Future"))
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let kwargs = PyDict::new(py);
+        kwargs
+            .set_item("_handle", handle_obj)
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        if let Some(queue) = &external_promise.completion_queue {
+            kwargs
+                .set_item("_completion_queue", queue.bind(py))
+                .map_err(|e| pyerr_to_exception(py, e))?;
+        }
+        future_type
+            .call((), Some(&kwargs))
+            .map(|future| future.unbind().into_any())
+            .map_err(|e| pyerr_to_exception(py, e))
+    })
+}
+
+fn wait_on_external_promise_effect(value: &Value) -> Result<DispatchEffect, PyException> {
+    let future = external_promise_future(value)?;
+    Python::attach(|py| {
+        let effect = py
+            .import("doeff.effects.wait")
+            .and_then(|module| module.getattr("wait"))
+            .and_then(|wait_fn| wait_fn.call1((future.bind(py),)))
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(dispatch_from_shared(PyShared::new(effect.unbind())))
     })
 }
 
@@ -343,24 +398,61 @@ impl IRStreamFactory for AwaitHandlerFactory {
     fn handler_name(&self) -> &'static str {
         "AwaitHandler"
     }
+
+    fn is_sync_await_shim(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug)]
+enum AwaitPhase {
+    Idle,
+    AwaitExternalPromise {
+        continuation: Continuation,
+        awaitable: PyShared,
+    },
+    AwaitSubmission {
+        continuation: Continuation,
+        promise: Value,
+    },
+    AwaitResult {
+        continuation: Continuation,
+    },
 }
 
 #[derive(Debug)]
 struct AwaitHandlerProgram {
-    pending_k: Option<Continuation>,
+    phase: AwaitPhase,
 }
 
 impl AwaitHandlerProgram {
     fn new() -> Self {
-        AwaitHandlerProgram { pending_k: None }
+        AwaitHandlerProgram {
+            phase: AwaitPhase::Idle,
+        }
     }
 
     fn current_phase_name(&self) -> &'static str {
-        if self.pending_k.is_some() {
-            "AwaitBridgeResult"
-        } else {
-            "Idle"
+        match self.phase {
+            AwaitPhase::Idle => "Idle",
+            AwaitPhase::AwaitExternalPromise { .. } => "AwaitExternalPromise",
+            AwaitPhase::AwaitSubmission { .. } => "AwaitSubmission",
+            AwaitPhase::AwaitResult { .. } => "AwaitResult",
         }
+    }
+
+    fn yield_perform(effect: Result<DispatchEffect, PyException>) -> IRStreamStep {
+        match effect {
+            Ok(effect) => IRStreamStep::Yield(DoCtrl::Perform { effect }),
+            Err(exc) => IRStreamStep::Throw(exc),
+        }
+    }
+
+    fn transfer_throw(continuation: Continuation, exception: PyException) -> IRStreamStep {
+        IRStreamStep::Yield(DoCtrl::TransferThrow {
+            continuation,
+            exception,
+        })
     }
 }
 
@@ -376,20 +468,11 @@ impl IRStreamProgram for AwaitHandlerProgram {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_await_python_effect(&obj) {
                 Ok(Some(awaitable)) => {
-                    let runner = match get_sync_await_runner() {
-                        Ok(func) => func,
-                        Err(msg) => {
-                            return IRStreamStep::Throw(PyException::type_error(format!(
-                                "failed to initialize await runner: {msg}"
-                            )));
-                        }
+                    self.phase = AwaitPhase::AwaitExternalPromise {
+                        continuation: k,
+                        awaitable: PyShared::new(awaitable),
                     };
-                    self.pending_k = Some(k);
-                    IRStreamStep::NeedsPython(PythonCall::CallFunc {
-                        func: runner,
-                        args: vec![Value::Python(PyShared::new(awaitable))],
-                        kwargs: vec![],
-                    })
+                    Self::yield_perform(create_external_promise_effect())
                 }
                 Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
@@ -415,13 +498,45 @@ impl IRStreamProgram for AwaitHandlerProgram {
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        if let Some(continuation) = self.pending_k.take() {
-            return IRStreamStep::Yield(DoCtrl::Resume {
+        match std::mem::replace(&mut self.phase, AwaitPhase::Idle) {
+            AwaitPhase::AwaitExternalPromise {
+                continuation,
+                awaitable,
+            } => {
+                let submitter = match get_sync_await_submitter() {
+                    Ok(func) => func,
+                    Err(msg) => {
+                        return Self::transfer_throw(
+                            continuation,
+                            PyException::type_error(format!(
+                                "failed to initialize await submitter: {msg}"
+                            )),
+                        )
+                    }
+                };
+                self.phase = AwaitPhase::AwaitSubmission {
+                    continuation,
+                    promise: value.clone(),
+                };
+                IRStreamStep::NeedsPython(PythonCall::CallFunc {
+                    func: submitter,
+                    args: vec![Value::Python(awaitable), value],
+                    kwargs: vec![],
+                })
+            }
+            AwaitPhase::AwaitSubmission {
+                continuation,
+                promise,
+            } => {
+                self.phase = AwaitPhase::AwaitResult { continuation };
+                Self::yield_perform(wait_on_external_promise_effect(&promise))
+            }
+            AwaitPhase::AwaitResult { continuation } => IRStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value,
-            });
+            }),
+            AwaitPhase::Idle => IRStreamStep::Return(value),
         }
-        IRStreamStep::Return(value)
     }
 
     fn throw(
@@ -430,13 +545,14 @@ impl IRStreamProgram for AwaitHandlerProgram {
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        if let Some(continuation) = self.pending_k.take() {
-            return IRStreamStep::Yield(DoCtrl::TransferThrow {
-                continuation,
-                exception: exc,
-            });
+        match std::mem::replace(&mut self.phase, AwaitPhase::Idle) {
+            AwaitPhase::AwaitExternalPromise { continuation, .. }
+            | AwaitPhase::AwaitSubmission { continuation, .. }
+            | AwaitPhase::AwaitResult { continuation } => {
+                Self::transfer_throw(continuation, exc)
+            }
+            AwaitPhase::Idle => IRStreamStep::Throw(exc),
         }
-        IRStreamStep::Throw(exc)
     }
 }
 
@@ -1782,11 +1898,11 @@ mod tests {
         let mut program = AwaitHandlerProgram::new();
         let continuation = make_test_continuation();
         let continuation_id = continuation.cont_id;
-        program.pending_k = Some(continuation);
+        program.phase = AwaitPhase::AwaitResult { continuation };
 
         let location = IRStream::debug_location(&program).expect("await debug location");
         assert_eq!(location.function_name, "AwaitHandler");
-        assert_eq!(location.phase.as_deref(), Some("AwaitBridgeResult"));
+        assert_eq!(location.phase.as_deref(), Some("AwaitResult"));
 
         let step = IRStream::resume(&mut program, Value::Int(12), &mut store, &mut scope);
         match step {

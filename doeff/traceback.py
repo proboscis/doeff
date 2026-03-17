@@ -70,6 +70,7 @@ else:
         TraceResumePoint,
         coerce_active_chain_entries,
         coerce_trace_entries,
+        extract_handler_effect_repr_from_args,
     )
 
     _DOEFF_TRACEBACK_ATTR = "doeff_traceback"
@@ -421,9 +422,16 @@ else:
             result = entry.result
             if isinstance(result, EffectResultResumed):
                 return False
+            if isinstance(result, EffectResultTransferred):
+                if result.target_repr.startswith(f"{entry.function_name}() "):
+                    return False
             if isinstance(result, EffectResultThrew):
                 return self._is_final_exception_type(result.exception_repr)
             return True
+
+        @staticmethod
+        def _hidden_handler_sub_program(entry: ProgramYield) -> str | None:
+            return extract_handler_effect_repr_from_args(entry.args_repr)
 
         @staticmethod
         def _format_spawn_boundary(boundary: SpawnBoundary) -> str:
@@ -440,17 +448,31 @@ else:
             lines: list[str] = ["doeff Traceback (most recent call last):", ""]
             previous_handler_stack: tuple[HandlerStackEntry, ...] | None = None
             previous_spawn_boundary: SpawnBoundary | None = None
+            # Hidden sync_spawn_intercept_handler frames can carry the only surviving
+            # user-visible Gather(...) repr for a spawned child. Carry it forward until
+            # the next real program/effect row consumes it.
+            pending_hidden_sub_program: str | None = None
             for entry in self.active_chain:
                 if isinstance(entry, ProgramYield):
                     if entry.is_handler:
+                        hidden_sub_program = self._hidden_handler_sub_program(entry)
+                        if hidden_sub_program is not None:
+                            pending_hidden_sub_program = hidden_sub_program
                         continue
+                    sub_program_repr = entry.sub_program_repr
+                    if (
+                        sub_program_repr == "[MISSING] <sub_program>"
+                        and pending_hidden_sub_program is not None
+                    ):
+                        sub_program_repr = pending_hidden_sub_program
                     previous_handler_stack = None
                     previous_spawn_boundary = None
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )
-                    lines.append(f"    yield {entry.sub_program_repr}")
+                    lines.append(f"    yield {sub_program_repr}")
                     lines.append("")
+                    pending_hidden_sub_program = None
                     continue
 
                 if isinstance(entry, EffectYield):
@@ -467,6 +489,7 @@ else:
                         )
                     previous_handler_stack = entry.handler_stack
                     previous_spawn_boundary = None
+                    pending_hidden_sub_program = None
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )

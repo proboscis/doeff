@@ -181,6 +181,7 @@ result_safe = _ext.result_safe
 scheduler = _ext.scheduler
 lazy_ask = _ext.lazy_ask
 await_handler = _ext.await_handler
+sync_await_handler = _ext.sync_await_handler
 CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
 GetHandlers = _ext.GetHandlers
@@ -200,6 +201,7 @@ PyTell = _ext.PyTell
 SpawnEffect = _ext.SpawnEffect
 GatherEffect = _ext.GatherEffect
 RaceEffect = _ext.RaceEffect
+WaitEffect = _ext.WaitEffect
 CreatePromiseEffect = _ext.CreatePromiseEffect
 CompletePromiseEffect = _ext.CompletePromiseEffect
 FailPromiseEffect = _ext.FailPromiseEffect
@@ -246,6 +248,7 @@ TAG_UNKNOWN = _ext.TAG_UNKNOWN
 PySpawn = SpawnEffect
 PyGather = GatherEffect
 PyRace = RaceEffect
+PyWait = WaitEffect
 PyCreatePromise = CreatePromiseEffect
 PyCompletePromise = CompletePromiseEffect
 PyFailPromise = FailPromiseEffect
@@ -333,6 +336,7 @@ __all__ = [
     "PySpawn",
     "PyTaskCompleted",
     "PyTell",
+    "PyWait",
     "PyVM",
     "PythonAsyncSyntaxEscape",
     "PythonAsyncioAwaitEffect",
@@ -351,11 +355,13 @@ __all__ = [
     "TraceHop",
     "Transfer",
     "UnhandledEffectError",
+    "WaitEffect",
     "WithHandler",
     "WithIntercept",
     "_SchedulerTaskCompleted",
     "async_run",
     "await_handler",
+    "sync_await_handler",
     "lazy_ask",
     "reader",
     "result_safe",

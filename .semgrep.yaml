@@ -2767,3 +2767,47 @@ rules:
       exclude:
         - "**/tests/**"
     pattern-regex: '\bActiveChainAssemblyState\b|\bpending_trace_events\b|\bCaptureEvent\b|\btrace_dispatches\b|\bdispatch_order\b|\btransfer_targets\b'
+
+  - id: scheduler-no-global-waiter-retain
+    languages: [rust]
+    severity: ERROR
+    message: |
+      scheduler-gather-quadratic-v2: waiter cleanup must stay owner-indexed.
+      Do not reintroduce `self.waiters.retain(...)` in scheduler waiter removal paths.
+    paths:
+      include:
+        - "/packages/doeff-core-effects/src/scheduler/mod.rs"
+    pattern-regex: 'self\.waiters\.retain\s*\('
+
+  - id: scheduler-no-global-owner-wait-scan
+    languages: [rust]
+    severity: ERROR
+    message: |
+      scheduler-gather-quadratic-v2: owner wait checks must be O(1).
+      Do not scan all waiter buckets to answer owner_is_waiting-style queries.
+    paths:
+      include:
+        - "/packages/doeff-core-effects/src/scheduler/mod.rs"
+    pattern-regex: 'self\.waiters\.values\(\)\.any\s*\('
+
+  - id: scheduler-no-item-rescan-done-check
+    languages: [rust]
+    severity: ERROR
+    message: |
+      scheduler-gather-quadratic-v2: wait completion should use per-waiter counters,
+      not repeated `items.iter().all/any(self.is_done)` rescans.
+    paths:
+      include:
+        - "/packages/doeff-core-effects/src/scheduler/mod.rs"
+    pattern-regex: 'items\.iter\(\)\.(all|any)\(\|item\|\s*self\.is_done\(\*item\)\)'
+
+  - id: scheduler-no-external-waiter-iter-scan
+    languages: [rust]
+    severity: ERROR
+    message: |
+      scheduler-gather-quadratic-v2: external waiter detection must use a counter,
+      not a full scan over waiter buckets.
+    paths:
+      include:
+        - "/packages/doeff-core-effects/src/scheduler/mod.rs"
+    pattern-regex: 'self\.waiters\.iter\(\)\.any\s*\('
