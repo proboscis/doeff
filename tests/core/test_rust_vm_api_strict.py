@@ -29,7 +29,7 @@ def test_default_handlers_requires_module_sentinels(monkeypatch: pytest.MonkeyPa
 
 def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPatch) -> None:
     from doeff.effects.future import sync_await_handler
-    from doeff.effects.spawn import spawn_intercept_handler
+    from doeff.effects.spawn import sync_spawn_intercept_handler
 
     sentinels = {
         "state": object(),
@@ -51,7 +51,7 @@ def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPa
         sentinels["result_safe"],
         sentinels["scheduler"],
         sentinels["lazy_ask"],
-        spawn_intercept_handler,
+        sync_spawn_intercept_handler,
         sync_await_handler,
     ]
 

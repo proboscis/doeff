@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use pyo3::prelude::*;
@@ -63,6 +63,9 @@ pub enum SchedulerEffect {
     },
     Gather {
         items: Vec<Waitable>,
+    },
+    Wait {
+        item: Waitable,
     },
     Race {
         items: Vec<Waitable>,
@@ -174,7 +177,7 @@ struct SemaphoreRuntimeState {
     holders: HashMap<Option<TaskId>, u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WaitMode {
     All,
     Any,
@@ -199,6 +202,8 @@ struct WaitRequest {
     continuation: Continuation,
     items: Vec<Waitable>,
     mode: WaitMode,
+    // Shared across per-item registrations so each completion updates the same waiter state.
+    remaining: Arc<AtomicUsize>,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
 }
@@ -213,6 +218,28 @@ impl WaitRequest {
             None => WaitOwner::Root {
                 cont_id: self.continuation.cont_id,
             },
+        }
+    }
+
+    fn note_completion(&self) -> bool {
+        loop {
+            let remaining = self.remaining.load(Ordering::Relaxed);
+            if remaining == 0 {
+                return true;
+            }
+
+            if self
+                .remaining
+                .compare_exchange(
+                    remaining,
+                    remaining - 1,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
+                return remaining == 1;
+            }
         }
     }
 }
@@ -476,6 +503,9 @@ pub struct SchedulerState {
     pub promises: HashMap<PromiseId, PromiseState>,
     semaphores: HashMap<u64, SemaphoreRuntimeState>,
     waiters: HashMap<Waitable, Vec<WaitRequest>>,
+    waitables_by_owner: HashMap<WaitOwner, Vec<Waitable>>,
+    active_wait_owners: HashSet<WaitOwner>,
+    external_waiter_count: usize,
     pending_gather_fail_fast: HashMap<WaitOwner, PendingGatherFailFast>,
     external_completion_queue: Option<PyShared>,
     cancel_requested: HashSet<TaskId>,
@@ -704,6 +734,21 @@ fn parse_scheduler_python_effect(
                 }
             }
             return Ok(Some(SchedulerEffect::Race { items: waitables }));
+        }
+
+        let wait_effect_type = py
+            .import("doeff.effects.wait")
+            .and_then(|module| module.getattr("WaitEffect"))
+            .map_err(|e| e.to_string())?;
+        if obj
+            .is_instance(&wait_effect_type)
+            .map_err(|e| e.to_string())?
+        {
+            let future = obj.getattr("future").map_err(|e| e.to_string())?;
+            let Some(item) = extract_waitable(&future) else {
+                return Err("WaitEffect.future must be a waitable handle".to_string());
+            };
+            return Ok(Some(SchedulerEffect::Wait { item }));
         }
 
         if obj.extract::<PyRef<'_, PyCreatePromise>>().is_ok() {
@@ -1013,6 +1058,9 @@ impl SchedulerState {
             promises: HashMap::new(),
             semaphores: HashMap::new(),
             waiters: HashMap::new(),
+            waitables_by_owner: HashMap::new(),
+            active_wait_owners: HashSet::new(),
+            external_waiter_count: 0,
             pending_gather_fail_fast: HashMap::new(),
             external_completion_queue: None,
             cancel_requested: HashSet::new(),
@@ -1080,9 +1128,7 @@ impl SchedulerState {
     }
 
     fn has_external_waiters(&self) -> bool {
-        self.waiters.iter().any(|(item, waiters)| {
-            matches!(item, Waitable::ExternalPromise(_)) && !waiters.is_empty()
-        })
+        self.external_waiter_count > 0
     }
 
     fn parse_external_completion_item(
@@ -1683,6 +1729,11 @@ impl SchedulerState {
         let Some(waiters_for_item) = self.waiters.remove(&waitable) else {
             return highest_ready;
         };
+        if matches!(waitable, Waitable::ExternalPromise(_)) {
+            self.external_waiter_count = self
+                .external_waiter_count
+                .saturating_sub(waiters_for_item.len());
+        }
 
         for waiter in waiters_for_item {
             let waiter_id = waiter.continuation.cont_id;
@@ -1694,10 +1745,7 @@ impl SchedulerState {
                 continue;
             }
 
-            let ready = match waiter.mode {
-                WaitMode::All => self.all_done(&waiter.items),
-                WaitMode::Any => self.any_done(&waiter.items),
-            };
+            let ready = waiter.note_completion();
 
             if ready {
                 if let Some(woken) = self.stage_ready_waiter(waiter) {
@@ -1762,6 +1810,8 @@ impl SchedulerState {
             None => WaitOwner::Root { cont_id },
         };
         self.pending_gather_fail_fast.remove(&owner);
+        self.active_wait_owners.remove(&owner);
+        let waitables = self.waitables_by_owner.remove(&owner).unwrap_or_default();
         if let Some(ready_resume) = self.ready_root_resumes.get(&cont_id) {
             if ready_resume.waiting_task == waiting_task {
                 self.ready_root_resumes.remove(&cont_id);
@@ -1812,12 +1862,23 @@ impl SchedulerState {
             }
         }
 
-        self.waiters.retain(|_key, pending| {
-            pending.retain(|waiter| {
-                !(waiter.waiting_task == waiting_task && waiter.continuation.cont_id == cont_id)
-            });
-            !pending.is_empty()
-        });
+        for waitable in waitables {
+            let mut should_remove_key = false;
+            if let Some(pending) = self.waiters.get_mut(&waitable) {
+                let original_len = pending.len();
+                pending.retain(|waiter| {
+                    !(waiter.waiting_task == waiting_task && waiter.continuation.cont_id == cont_id)
+                });
+                let removed = original_len.saturating_sub(pending.len());
+                if matches!(waitable, Waitable::ExternalPromise(_)) {
+                    self.external_waiter_count = self.external_waiter_count.saturating_sub(removed);
+                }
+                should_remove_key = pending.is_empty();
+            }
+            if should_remove_key {
+                self.waiters.remove(&waitable);
+            }
+        }
     }
 
     pub fn task_cont(&self, task_id: TaskId) -> Option<Continuation> {
@@ -1828,20 +1889,8 @@ impl SchedulerState {
     }
 
     fn owner_is_waiting(&self, owner: WaitOwner) -> bool {
-        if self.pending_gather_fail_fast.contains_key(&owner) {
-            return true;
-        }
-        match owner {
-            WaitOwner::Task { task_id, cont_id } => matches!(
-                self.tasks.get(&task_id),
-                Some(TaskState::Pending { cont, .. }) if cont.cont_id == cont_id
-            ),
-            WaitOwner::Root { cont_id } => self.waiters.values().any(|requests| {
-                requests.iter().any(|request| {
-                    request.waiting_task.is_none() && request.continuation.cont_id == cont_id
-                })
-            }),
-        }
+        self.pending_gather_fail_fast.contains_key(&owner)
+            || self.active_wait_owners.contains(&owner)
     }
 
     fn gather_wait_request_for_failed_task(&self, running_task: TaskId) -> Option<WaitRequest> {
@@ -2006,36 +2055,59 @@ impl SchedulerState {
         None
     }
 
-    pub fn wait_on_all(&mut self, items: &[Waitable], k: Continuation, store: &RustStore) {
+    fn register_waiter(
+        &mut self,
+        items: &[Waitable],
+        k: Continuation,
+        store: &RustStore,
+        mode: WaitMode,
+    ) {
+        let pending_items: Vec<_> = items
+            .iter()
+            .copied()
+            .filter(|item| !self.is_done(*item))
+            .collect();
+        if pending_items.is_empty() {
+            return;
+        }
+
+        let owner = match self.current_task {
+            Some(task_id) => WaitOwner::Task {
+                task_id,
+                cont_id: k.cont_id,
+            },
+            None => WaitOwner::Root { cont_id: k.cont_id },
+        };
+        self.active_wait_owners.insert(owner);
+        self.waitables_by_owner.insert(owner, pending_items.clone());
+
+        let remaining = match mode {
+            WaitMode::All => pending_items.len(),
+            WaitMode::Any => 1,
+        };
         let waiter = WaitRequest {
             continuation: k,
             items: items.to_vec(),
-            mode: WaitMode::All,
+            mode,
+            remaining: Arc::new(AtomicUsize::new(remaining)),
             waiting_task: self.current_task,
             waiting_store: store.clone(),
         };
 
-        for item in items {
-            if !self.is_done(*item) {
-                self.waiters.entry(*item).or_default().push(waiter.clone());
+        for item in pending_items {
+            if matches!(item, Waitable::ExternalPromise(_)) {
+                self.external_waiter_count += 1;
             }
+            self.waiters.entry(item).or_default().push(waiter.clone());
         }
     }
 
-    pub fn wait_on_any(&mut self, items: &[Waitable], k: Continuation, store: &RustStore) {
-        let waiter = WaitRequest {
-            continuation: k,
-            items: items.to_vec(),
-            mode: WaitMode::Any,
-            waiting_task: self.current_task,
-            waiting_store: store.clone(),
-        };
+    pub fn wait_on_all(&mut self, items: &[Waitable], k: Continuation, store: &RustStore) {
+        self.register_waiter(items, k, store, WaitMode::All);
+    }
 
-        for item in items {
-            if !self.is_done(*item) {
-                self.waiters.entry(*item).or_default().push(waiter.clone());
-            }
-        }
+    pub fn wait_on_any(&mut self, items: &[Waitable], k: Continuation, store: &RustStore) {
+        self.register_waiter(items, k, store, WaitMode::Any);
     }
 
     fn is_done(&self, item: Waitable) -> bool {
@@ -2045,14 +2117,6 @@ impl SchedulerState {
                 matches!(self.promises.get(&pid), Some(PromiseState::Done(_)))
             }
         }
-    }
-
-    fn all_done(&self, items: &[Waitable]) -> bool {
-        items.iter().all(|item| self.is_done(*item))
-    }
-
-    fn any_done(&self, items: &[Waitable]) -> bool {
-        items.iter().any(|item| self.is_done(*item))
     }
 
     fn collect_all_result(&mut self, items: &[Waitable]) -> Option<Result<Value, PyException>> {
@@ -2288,6 +2352,78 @@ impl SchedulerState {
             TransferNextOutcome::None => resume_to_continuation(k, Value::Unit),
         }
     }
+
+    fn transfer_ready_owner(
+        &mut self,
+        owner: WaitOwner,
+        store: &mut RustStore,
+    ) -> Result<Option<IRStreamStep>, PyException> {
+        match owner {
+            WaitOwner::Task { task_id, cont_id } => {
+                if !self.ready_task_ids.contains(&task_id) {
+                    return Ok(None);
+                }
+
+                let (task_k, resume_outcome, merge_items) = match self.tasks.get_mut(&task_id) {
+                    Some(TaskState::Pending {
+                        cont,
+                        resume_outcome,
+                        pending_log_merge_items,
+                        ..
+                    }) if cont.cont_id == cont_id => {
+                        let continuation = cont.clone();
+                        let outcome = resume_outcome.take();
+                        let pending_merge = pending_log_merge_items.take();
+                        (continuation, outcome, pending_merge)
+                    }
+                    _ => return Ok(None),
+                };
+
+                self.ready_task_ids.remove(&task_id);
+                if let Some(old_id) = self.current_task {
+                    if old_id != task_id {
+                        self.save_task_store(old_id, store)?;
+                    }
+                }
+                self.load_task_store(task_id, store)?;
+                self.current_task = Some(task_id);
+                if let Some(items) = merge_items.as_ref() {
+                    self.merge_gather_logs(items, store);
+                }
+                let step = match resume_outcome {
+                    Some(Err(error)) => throw_to_continuation(task_k, error),
+                    Some(Ok(value)) => resume_to_continuation(task_k, value),
+                    None => transfer_to_continuation(task_k, Value::Unit),
+                };
+                Ok(Some(step))
+            }
+            WaitOwner::Root { cont_id } => {
+                let Some(ready_root) = self.ready_root_resumes.remove(&cont_id) else {
+                    return Ok(None);
+                };
+                self.clear_waiters_for_owner(
+                    ready_root.waiting_task,
+                    ready_root.continuation.cont_id,
+                );
+                if let Some(waiting_task) = ready_root.waiting_task {
+                    self.load_task_store(waiting_task, store)?;
+                    self.current_task = Some(waiting_task);
+                } else {
+                    *store = ready_root.waiting_store;
+                    self.current_task = None;
+                }
+                if let Some(items) = &ready_root.merge_items {
+                    self.merge_gather_logs(items, store);
+                }
+
+                let step = match ready_root.outcome {
+                    Ok(value) => resume_to_continuation(ready_root.continuation, value),
+                    Err(error) => throw_to_continuation(ready_root.continuation, error),
+                };
+                Ok(Some(step))
+            }
+        }
+    }
 }
 
 impl Drop for SchedulerState {
@@ -2397,6 +2533,22 @@ impl SchedulerProgram {
         make_async_external_wait_step().unwrap_or_else(IRStreamStep::Throw)
     }
 
+    fn wait_owner(&self, waiting_task: Option<TaskId>, cont_id: ContId) -> WaitOwner {
+        match (&self.phase, waiting_task) {
+            (
+                SchedulerPhase::Driving {
+                    owner,
+                    running_task,
+                },
+                Some(task_id),
+            ) if *running_task == task_id => *owner,
+            _ => match waiting_task {
+                Some(task_id) => WaitOwner::Task { task_id, cont_id },
+                None => WaitOwner::Root { cont_id },
+            },
+        }
+    }
+
     fn continue_simple_transfer(
         &mut self,
         k_user: Continuation,
@@ -2450,6 +2602,16 @@ impl SchedulerProgram {
         store: &mut RustStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        if !state.owner_is_waiting(owner) {
+            match state.transfer_ready_owner(owner, store) {
+                Ok(Some(step)) => {
+                    self.phase = SchedulerPhase::Idle;
+                    return step;
+                }
+                Ok(None) => {}
+                Err(error) => return IRStreamStep::Throw(error),
+            }
+        }
         match state.transfer_next(store) {
             TransferNextOutcome::Step(step) => {
                 let next_running_task = state.current_task;
@@ -2534,6 +2696,16 @@ impl SchedulerProgram {
         store: &mut RustStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        if !state.owner_is_waiting(owner) {
+            match state.transfer_ready_owner(owner, store) {
+                Ok(Some(step)) => {
+                    self.phase = SchedulerPhase::Idle;
+                    return step;
+                }
+                Ok(None) => {}
+                Err(error) => return IRStreamStep::Throw(error),
+            }
+        }
         match state.transfer_next(store) {
             TransferNextOutcome::Step(step) => {
                 let next_running_task = state.current_task;
@@ -2592,6 +2764,38 @@ impl SchedulerProgram {
         }
 
         state.wait_on_all(&items, k_user.clone(), store);
+        let owner = self.wait_owner(waiting_task, k_user.cont_id);
+        drop(state);
+        self.continue_wait_transfer(
+            owner,
+            "deadlock: Gather blocked with no runnable tasks".to_string(),
+            store,
+        )
+    }
+
+    fn handle_wait(
+        &mut self,
+        k_user: Continuation,
+        item: Waitable,
+        store: &mut RustStore,
+    ) -> IRStreamStep {
+        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        let items = [item];
+        let waiting_task = state.current_task;
+        if let Some(result) = state.collect_any_result(&items) {
+            state.clear_waiters_for_owner(waiting_task, k_user.cont_id);
+            return match result {
+                Ok(value) => resume_to_continuation(k_user, value),
+                Err(error) => throw_to_continuation(k_user, error),
+            };
+        }
+        if let Some(waiting_task) = waiting_task {
+            if let Err(error) = state.suspend_task_for_wait(waiting_task, k_user.clone()) {
+                return IRStreamStep::Throw(error);
+            }
+        }
+
+        state.wait_on_any(&items, k_user.clone(), store);
         let owner = match waiting_task {
             Some(task_id) => WaitOwner::Task {
                 task_id,
@@ -2604,7 +2808,7 @@ impl SchedulerProgram {
         drop(state);
         self.continue_wait_transfer(
             owner,
-            "deadlock: Gather blocked with no runnable tasks".to_string(),
+            "deadlock: Wait blocked with no runnable tasks".to_string(),
             store,
         )
     }
@@ -2631,15 +2835,7 @@ impl SchedulerProgram {
         }
 
         state.wait_on_any(&items, k_user.clone(), store);
-        let owner = match waiting_task {
-            Some(task_id) => WaitOwner::Task {
-                task_id,
-                cont_id: k_user.cont_id,
-            },
-            None => WaitOwner::Root {
-                cont_id: k_user.cont_id,
-            },
-        };
+        let owner = self.wait_owner(waiting_task, k_user.cont_id);
         drop(state);
         self.continue_wait_transfer(
             owner,
@@ -2814,8 +3010,7 @@ impl SchedulerProgram {
                     if let Err(store_error) = state.save_task_store(running_task, store) {
                         return IRStreamStep::Throw(store_error);
                     }
-                    if let Err(done_error) =
-                        state.mark_task_done(running_task, Err(error.clone()))
+                    if let Err(done_error) = state.mark_task_done(running_task, Err(error.clone()))
                     {
                         return IRStreamStep::Throw(done_error);
                     }
@@ -2827,14 +3022,6 @@ impl SchedulerProgram {
             }
         }
 
-        if task_already_done && !owner_still_waiting {
-            self.phase = SchedulerPhase::Idle;
-            return match outcome_for_fallback {
-                Ok(value) => IRStreamStep::Return(value),
-                Err(error) => IRStreamStep::Throw(error),
-            };
-        }
-
         if !task_already_done {
             if let Err(error) = state.save_task_store(running_task, store) {
                 return IRStreamStep::Throw(error);
@@ -2844,6 +3031,17 @@ impl SchedulerProgram {
             }
             state.wake_waiters(Waitable::Task(running_task));
             owner_still_waiting = state.owner_is_waiting(owner);
+        }
+
+        if !owner_still_waiting {
+            match state.transfer_ready_owner(owner, store) {
+                Ok(Some(step)) => {
+                    self.phase = SchedulerPhase::Idle;
+                    return step;
+                }
+                Ok(None) => {}
+                Err(error) => return IRStreamStep::Throw(error),
+            }
         }
 
         match state.transfer_next(store) {
@@ -2959,6 +3157,8 @@ impl IRStreamProgram for SchedulerProgram {
 
             SchedulerEffect::Gather { items } => self.handle_gather(k_user, items, store),
 
+            SchedulerEffect::Wait { item } => self.handle_wait(k_user, item, store),
+
             SchedulerEffect::Race { items } => self.handle_race(k_user, items, store),
 
             SchedulerEffect::CreatePromise => {
@@ -3027,24 +3227,7 @@ impl IRStreamProgram for SchedulerProgram {
                             }
                         }
                         state.wait_on_any(&items, k_user.clone(), store);
-                        let owner = match (&self.phase, waiting_task) {
-                            (
-                                SchedulerPhase::Driving {
-                                    owner,
-                                    running_task,
-                                },
-                                Some(task_id),
-                            ) if *running_task == task_id => *owner,
-                            _ => match waiting_task {
-                                Some(task_id) => WaitOwner::Task {
-                                    task_id,
-                                    cont_id: k_user.cont_id,
-                                },
-                                None => WaitOwner::Root {
-                                    cont_id: k_user.cont_id,
-                                },
-                            },
-                        };
+                        let owner = self.wait_owner(waiting_task, k_user.cont_id);
                         drop(state);
                         self.continue_wait_transfer(
                             owner,
@@ -3528,6 +3711,68 @@ mod tests {
             .into_any()
     }
 
+    fn make_waitable_promise_object(py: Python<'_>, promise_id: PromiseId) -> Py<PyAny> {
+        let handle = PyDict::new(py);
+        handle
+            .set_item("type", "Promise")
+            .expect("waitable promise should accept type");
+        handle
+            .set_item("promise_id", promise_id.raw())
+            .expect("waitable promise should accept promise_id");
+
+        let types_mod = py
+            .import("types")
+            .expect("failed to import Python types module");
+        let namespace = types_mod
+            .getattr("SimpleNamespace")
+            .expect("types.SimpleNamespace must exist");
+        let kwargs = PyDict::new(py);
+        kwargs
+            .set_item("_handle", handle)
+            .expect("namespace should accept _handle");
+        namespace
+            .call((), Some(&kwargs))
+            .expect("failed to construct waitable promise object")
+            .unbind()
+            .into_any()
+    }
+
+    fn make_waitable_external_promise_object(py: Python<'_>, promise_id: PromiseId) -> Py<PyAny> {
+        let handle = PyDict::new(py);
+        handle
+            .set_item("type", "ExternalPromise")
+            .expect("waitable external promise should accept type");
+        handle
+            .set_item("promise_id", promise_id.raw())
+            .expect("waitable external promise should accept promise_id");
+
+        let types_mod = py
+            .import("types")
+            .expect("failed to import Python types module");
+        let namespace = types_mod
+            .getattr("SimpleNamespace")
+            .expect("types.SimpleNamespace must exist");
+        let kwargs = PyDict::new(py);
+        kwargs
+            .set_item("_handle", handle)
+            .expect("namespace should accept _handle");
+        namespace
+            .call((), Some(&kwargs))
+            .expect("failed to construct waitable external promise object")
+            .unbind()
+            .into_any()
+    }
+
+    fn make_wait_effect(py: Python<'_>, item: Py<PyAny>) -> DispatchEffect {
+        let effect = py
+            .import("doeff.effects.wait")
+            .and_then(|module| module.getattr("wait"))
+            .and_then(|wait_fn| wait_fn.call1((item.bind(py),)))
+            .expect("failed to construct WaitEffect")
+            .unbind();
+        dispatch_from_shared(PyShared::new(effect))
+    }
+
     fn make_semaphore_object(py: Python<'_>, semaphore_id: u64, state_id: u64) -> Py<PyAny> {
         Py::new(
             py,
@@ -3583,6 +3828,44 @@ mod tests {
             .add_subclass(PyAcquireSemaphore { semaphore }),
         )
         .expect("failed to construct AcquireSemaphoreEffect")
+        .into_any();
+        dispatch_from_shared(PyShared::new(effect))
+    }
+
+    fn make_gather_effect(py: Python<'_>, items: Vec<Py<PyAny>>) -> DispatchEffect {
+        let items = PyTuple::new(py, items)
+            .expect("failed to build GatherEffect.items tuple")
+            .unbind()
+            .into_any();
+        let partial_results = py.None();
+        let effect = Py::new(
+            py,
+            PyClassInitializer::from(PyEffectBase {
+                tag: DoExprTag::Effect as u8,
+            })
+            .add_subclass(PyGather {
+                items,
+                _partial_results: partial_results,
+            }),
+        )
+        .expect("failed to construct GatherEffect")
+        .into_any();
+        dispatch_from_shared(PyShared::new(effect))
+    }
+
+    fn make_race_effect(py: Python<'_>, items: Vec<Py<PyAny>>) -> DispatchEffect {
+        let futures = PyTuple::new(py, items)
+            .expect("failed to build RaceEffect.futures tuple")
+            .unbind()
+            .into_any();
+        let effect = Py::new(
+            py,
+            PyClassInitializer::from(PyEffectBase {
+                tag: DoExprTag::Effect as u8,
+            })
+            .add_subclass(PyRace { futures }),
+        )
+        .expect("failed to construct RaceEffect")
         .into_any();
         dispatch_from_shared(PyShared::new(effect))
     }
@@ -5238,6 +5521,244 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_blocked_gather_preserves_outer_driving_owner() {
+        Python::attach(|py| {
+            let state = Arc::new(Mutex::new(SchedulerState::new()));
+            let mut program = SchedulerProgram::new(state.clone());
+            let mut store = RustStore::new();
+            let mut _scope = ScopeStore::default();
+
+            let gather_owner_k = make_test_continuation();
+            let waiter_k = make_test_continuation();
+            let runnable_k = make_test_continuation();
+            let driver_k = make_test_continuation();
+
+            let (promise_id, waiting_task, runnable_task) = {
+                let mut guard = state.lock().expect("Scheduler lock poisoned");
+                let promise_id = guard.alloc_promise_id();
+                guard.promises.insert(promise_id, PromiseState::Pending);
+
+                let waiting_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    waiting_task,
+                    TaskState::Pending {
+                        cont: waiter_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+
+                let runnable_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    runnable_task,
+                    TaskState::Pending {
+                        cont: runnable_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.enqueue_ready_task(runnable_task, PRIORITY_NORMAL);
+                guard.current_task = Some(waiting_task);
+
+                (promise_id, waiting_task, runnable_task)
+            };
+
+            program.phase = SchedulerPhase::Driving {
+                owner: WaitOwner::Root {
+                    cont_id: gather_owner_k.cont_id,
+                },
+                running_task: waiting_task,
+            };
+
+            let step = IRStreamProgram::start(
+                &mut program,
+                py,
+                make_gather_effect(py, vec![make_waitable_promise_object(py, promise_id)]),
+                driver_k,
+                &mut store,
+                &mut _scope,
+            );
+
+            assert!(
+                step_targets_cont_id(&step, runnable_k.cont_id),
+                "blocked gather should transfer into another runnable task, got {:?}",
+                step
+            );
+            assert!(matches!(
+                &program.phase,
+                SchedulerPhase::Driving {
+                    owner: WaitOwner::Root { cont_id },
+                    running_task,
+                } if *cont_id == gather_owner_k.cont_id
+                    && *running_task == runnable_task
+            ));
+        });
+    }
+
+    #[test]
+    fn test_blocked_race_preserves_outer_driving_owner() {
+        Python::attach(|py| {
+            let state = Arc::new(Mutex::new(SchedulerState::new()));
+            let mut program = SchedulerProgram::new(state.clone());
+            let mut store = RustStore::new();
+            let mut _scope = ScopeStore::default();
+
+            let race_owner_k = make_test_continuation();
+            let waiter_k = make_test_continuation();
+            let runnable_k = make_test_continuation();
+            let driver_k = make_test_continuation();
+
+            let (promise_id, waiting_task, runnable_task) = {
+                let mut guard = state.lock().expect("Scheduler lock poisoned");
+                let promise_id = guard.alloc_promise_id();
+                guard.promises.insert(promise_id, PromiseState::Pending);
+
+                let waiting_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    waiting_task,
+                    TaskState::Pending {
+                        cont: waiter_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+
+                let runnable_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    runnable_task,
+                    TaskState::Pending {
+                        cont: runnable_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.enqueue_ready_task(runnable_task, PRIORITY_NORMAL);
+                guard.current_task = Some(waiting_task);
+
+                (promise_id, waiting_task, runnable_task)
+            };
+
+            program.phase = SchedulerPhase::Driving {
+                owner: WaitOwner::Root {
+                    cont_id: race_owner_k.cont_id,
+                },
+                running_task: waiting_task,
+            };
+
+            let step = IRStreamProgram::start(
+                &mut program,
+                py,
+                make_race_effect(py, vec![make_waitable_promise_object(py, promise_id)]),
+                driver_k,
+                &mut store,
+                &mut _scope,
+            );
+
+            assert!(
+                step_targets_cont_id(&step, runnable_k.cont_id),
+                "blocked race should transfer into another runnable task, got {:?}",
+                step
+            );
+            assert!(matches!(
+                &program.phase,
+                SchedulerPhase::Driving {
+                    owner: WaitOwner::Root { cont_id },
+                    running_task,
+                } if *cont_id == race_owner_k.cont_id
+                    && *running_task == runnable_task
+            ));
+        });
+    }
+
+    #[test]
+    fn test_blocked_wait_uses_direct_wait_owner() {
+        Python::attach(|py| {
+            let state = Arc::new(Mutex::new(SchedulerState::new()));
+            let mut program = SchedulerProgram::new(state.clone());
+            let mut store = RustStore::new();
+            let mut _scope = ScopeStore::default();
+
+            let outer_owner_k = make_test_continuation();
+            let waiter_k = make_test_continuation();
+            let runnable_k = make_test_continuation();
+            let driver_k = make_test_continuation();
+
+            let (promise_id, waiting_task, runnable_task) = {
+                let mut guard = state.lock().expect("Scheduler lock poisoned");
+                let promise_id = guard.alloc_promise_id();
+                guard.promises.insert(promise_id, PromiseState::Pending);
+
+                let waiting_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    waiting_task,
+                    TaskState::Pending {
+                        cont: waiter_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+
+                let runnable_task = guard.alloc_task_id();
+                guard.tasks.insert(
+                    runnable_task,
+                    TaskState::Pending {
+                        cont: runnable_k.clone(),
+                        store: TaskStore::Shared,
+                        resume_outcome: None,
+                        priority: PRIORITY_NORMAL,
+                        pending_log_merge_items: None,
+                    },
+                );
+                guard.enqueue_ready_task(runnable_task, PRIORITY_NORMAL);
+                guard.current_task = Some(waiting_task);
+
+                (promise_id, waiting_task, runnable_task)
+            };
+
+            program.phase = SchedulerPhase::Driving {
+                owner: WaitOwner::Root {
+                    cont_id: outer_owner_k.cont_id,
+                },
+                running_task: waiting_task,
+            };
+
+            let step = IRStreamProgram::start(
+                &mut program,
+                py,
+                make_wait_effect(py, make_waitable_external_promise_object(py, promise_id)),
+                driver_k.clone(),
+                &mut store,
+                &mut _scope,
+            );
+
+            assert!(
+                step_targets_cont_id(&step, runnable_k.cont_id),
+                "blocked wait should transfer into another runnable task, got {:?}",
+                step
+            );
+            assert!(matches!(
+                &program.phase,
+                SchedulerPhase::Driving {
+                    owner: WaitOwner::Task { task_id, cont_id },
+                    running_task,
+                } if *task_id == waiting_task
+                    && *cont_id == driver_k.cont_id
+                    && *running_task == runnable_task
+            ));
+        });
+    }
+
     // -----------------------------------------------------------------------
     // ISSUE-VM-003: Gather collects results from multiple tasks/promises
     // -----------------------------------------------------------------------
@@ -5649,6 +6170,79 @@ mod tests {
         let result = state.try_race(&[Waitable::Task(t0), Waitable::Task(t1)]);
         assert!(result.is_some());
         assert_eq!(result.unwrap().as_int(), Some(99));
+    }
+
+    #[test]
+    fn test_wait_on_all_counter_tracks_only_pending_items() {
+        let mut state = SchedulerState::new();
+        let done_task = state.alloc_task_id();
+        let pending_task = state.alloc_task_id();
+
+        state.tasks.insert(
+            done_task,
+            TaskState::Done {
+                result: Ok(Value::Int(10)),
+                store: TaskStore::Shared,
+            },
+        );
+        state.tasks.insert(
+            pending_task,
+            TaskState::Pending {
+                cont: make_test_continuation(),
+                store: TaskStore::Shared,
+                resume_outcome: None,
+                priority: PRIORITY_NORMAL,
+                pending_log_merge_items: None,
+            },
+        );
+
+        let waiter = make_test_continuation();
+        state.wait_on_all(
+            &[Waitable::Task(done_task), Waitable::Task(pending_task)],
+            waiter,
+            &RustStore::new(),
+        );
+
+        let waiters = state
+            .waiters
+            .get(&Waitable::Task(pending_task))
+            .expect("pending task should have a registered waiter");
+        assert_eq!(waiters.len(), 1);
+        assert_eq!(waiters[0].remaining.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_wait_on_any_counter_only_needs_first_completion() {
+        let mut state = SchedulerState::new();
+        let t0 = state.alloc_task_id();
+        let t1 = state.alloc_task_id();
+
+        for task_id in [t0, t1] {
+            state.tasks.insert(
+                task_id,
+                TaskState::Pending {
+                    cont: make_test_continuation(),
+                    store: TaskStore::Shared,
+                    resume_outcome: None,
+                    priority: PRIORITY_NORMAL,
+                    pending_log_merge_items: None,
+                },
+            );
+        }
+
+        let waiter = make_test_continuation();
+        state.wait_on_any(
+            &[Waitable::Task(t0), Waitable::Task(t1)],
+            waiter,
+            &RustStore::new(),
+        );
+
+        let waiters = state
+            .waiters
+            .get(&Waitable::Task(t0))
+            .expect("pending task should have a registered waiter");
+        assert_eq!(waiters.len(), 1);
+        assert_eq!(waiters[0].remaining.load(Ordering::Relaxed), 1);
     }
 
     #[test]

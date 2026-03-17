@@ -144,6 +144,26 @@ class TestHandlerImmutabilityContract:
             vm_handler_stack=_result_value(result),
         )
 
+    def test_spawned_child_preserves_full_default_handler_stack(self) -> None:
+        handlers = default_handlers()
+
+        @do
+        def child():
+            return (yield doeff_vm.GetHandlers())
+
+        @do
+        def program():
+            task = yield Spawn(child(), daemon=False)
+            values = yield Gather(task)
+            return values[0]
+
+        result = run(program(), handlers=handlers)
+        assert _result_is_ok(result), getattr(result, "display", lambda: repr(result))()
+        _assert_vm_handler_stack_matches_passed_handlers(
+            passed_handlers=handlers,
+            vm_handler_stack=_result_value(result),
+        )
+
 
 class TestNoHandlerSwapContract:
     def test_no_normalize_async_handlers_function(self) -> None:

@@ -10,10 +10,12 @@ import doeff_vm
 
 from doeff.do import do
 from doeff.effects.base import Effect
+from doeff.effects.external_promise import ExternalPromise
 from doeff.effects.external_promise import CreateExternalPromise
-from doeff.effects.wait import Wait
+from doeff.effects.wait import wait
 
 PythonAsyncioAwaitEffect = doeff_vm.PythonAsyncioAwaitEffect
+sync_await_handler = doeff_vm.sync_await_handler
 
 _loop_lock = threading.Lock()
 _loop_thread: threading.Thread | None = None
@@ -125,16 +127,33 @@ def _submit_awaitable(awaitable: Awaitable[Any], promise: Any) -> None:
     future.add_done_callback(_on_done)
 
 
-@do
-def sync_await_handler(effect: Effect, k: Any):
-    """Handle Await effects via background-loop bridge for sync execution."""
-    if isinstance(effect, PythonAsyncioAwaitEffect):
-        promise = yield CreateExternalPromise()
-        _submit_awaitable(effect.awaitable, promise)
-        value = yield Wait(promise.future)
-        return (yield doeff_vm.Resume(k, value))
+def _external_promise_from_handle(handle: Any) -> ExternalPromise[Any]:
+    if isinstance(handle, ExternalPromise):
+        return handle
 
-    yield doeff_vm.Pass()
+    if not isinstance(handle, dict) or handle.get("type") != "ExternalPromise":
+        raise TypeError(
+            "Expected ExternalPromise handle dict or ExternalPromise instance, "
+            f"got {type(handle).__name__}"
+        )
+
+    promise_id = handle.get("promise_id")
+    if not isinstance(promise_id, int):
+        raise TypeError("ExternalPromise handle missing integer promise_id")
+
+    completion_queue = handle.get("completion_queue")
+    if completion_queue is None:
+        raise TypeError("ExternalPromise handle missing completion_queue")
+
+    return ExternalPromise(
+        _handle=handle,
+        _completion_queue=completion_queue,
+        _id=promise_id,
+    )
+
+
+def _submit_awaitable_handle(awaitable: Awaitable[Any], handle: Any) -> None:
+    _submit_awaitable(awaitable, _external_promise_from_handle(handle))
 
 
 @do
@@ -154,7 +173,7 @@ def async_await_handler(effect: Effect, k: Any):
             asyncio.get_running_loop().create_task(_run_and_complete())
 
         _ = yield doeff_vm.PythonAsyncSyntaxEscape(action=_kickoff)
-        value = yield Wait(promise.future)
+        value = yield wait(promise.future)
         return (yield doeff_vm.Resume(k, value))
 
     yield doeff_vm.Pass()

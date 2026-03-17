@@ -493,11 +493,11 @@ def default_handlers() -> list[Any]:
     """
     vm = _vm()
     from doeff.handlers.await_handlers import sync_await_handler
-    from doeff.handlers.spawn_handler import spawn_intercept_handler
+    from doeff.handlers.spawn_handler import sync_spawn_intercept_handler
 
     return [
         *_core_handler_sentinels(vm),
-        spawn_intercept_handler,
+        sync_spawn_intercept_handler,
         sync_await_handler,
     ]
 
@@ -646,6 +646,7 @@ _VM_LAZY_EXPORT_NAMES = {
     "result_safe",
     "lazy_ask",
     "await_handler",
+    "sync_await_handler",
 }
 
 
@@ -693,6 +694,7 @@ __all__ = [
     "WithIntercept",
     "async_run",
     "await_handler",
+    "sync_await_handler",
     "default_async_handlers",
     "default_handlers",
     "lazy_ask",
