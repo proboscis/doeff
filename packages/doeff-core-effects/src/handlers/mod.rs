@@ -5,7 +5,7 @@
 //! stepping semantics.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -299,15 +299,27 @@ fn parse_result_safe_python_effect(effect: &PyShared) -> Result<Option<PyShared>
     })
 }
 
+static SYNC_AWAIT_SUBMITTER: OnceLock<Mutex<Option<Py<PyAny>>>> = OnceLock::new();
+
 fn get_sync_await_submitter() -> Result<PyShared, String> {
     Python::attach(|py| {
-        let module = py
-            .import("doeff.handlers.await_handlers")
-            .map_err(|e| e.to_string())?;
-        let runner = module
-            .getattr("_submit_awaitable_handle")
-            .map_err(|e| e.to_string())?;
-        Ok(PyShared::new(runner.unbind()))
+        let cache = SYNC_AWAIT_SUBMITTER.get_or_init(|| Mutex::new(None));
+        let mut guard = cache.lock().expect("sync await submitter cache lock poisoned");
+        if guard.is_none() {
+            let module = py
+                .import("doeff.handlers.await_handlers")
+                .map_err(|e| e.to_string())?;
+            let runner = module
+                .getattr("_submit_awaitable_handle")
+                .map_err(|e| e.to_string())?;
+            *guard = Some(runner.unbind());
+        }
+        Ok(PyShared::new(
+            guard
+                .as_ref()
+                .expect("sync await submitter must be cached")
+                .clone_ref(py),
+        ))
     })
 }
 

@@ -20,6 +20,13 @@ use crate::segment::ScopeStore;
 use crate::value::Value;
 use crate::vm::RustStore;
 
+fn await_shim_attr_name(py: Python<'_>) -> String {
+    py.import("doeff.handlers.await_handlers")
+        .and_then(|module| module.getattr("AWAIT_SHIM_ATTR"))
+        .and_then(|value| value.extract::<String>())
+        .unwrap_or_else(|_| "__doeff_await_shim__".to_string())
+}
+
 /// Debug metadata for a Kleisli arrow.
 #[derive(Debug, Clone)]
 pub struct KleisliDebugInfo {
@@ -278,6 +285,7 @@ impl PyKleisli {
 
         if func.bind(py).is_instance_of::<DoeffGeneratorFn>() {
             let dgfn: PyRef<'_, DoeffGeneratorFn> = func.bind(py).extract()?;
+            let shim_attr = await_shim_attr_name(py);
             return Ok(Self {
                 func: PyShared::new(func),
                 name: dgfn.function_name.clone(),
@@ -286,7 +294,7 @@ impl PyKleisli {
                 is_await_shim: dgfn
                     .callable
                     .bind(py)
-                    .getattr("__doeff_await_shim__")
+                    .getattr(shim_attr.as_str())
                     .ok()
                     .and_then(|value| value.extract::<bool>().ok())
                     .unwrap_or(false),
@@ -306,8 +314,9 @@ impl PyKleisli {
             })
             .unwrap_or_else(|| "<python_handler>".to_string());
         let (file, line) = Self::source_info(callable);
+        let shim_attr = await_shim_attr_name(py);
         let is_await_shim = callable
-            .getattr("__doeff_await_shim__")
+            .getattr(shim_attr.as_str())
             .ok()
             .and_then(|value| value.extract::<bool>().ok())
             .unwrap_or(false);
@@ -547,8 +556,9 @@ impl PyCallableKleisli {
             })
             .unwrap_or_else(|| "<python_callable>".to_string());
         let (file, line) = PyKleisli::source_info(callable);
+        let shim_attr = await_shim_attr_name(py);
         let is_await_shim = callable
-            .getattr("__doeff_await_shim__")
+            .getattr(shim_attr.as_str())
             .ok()
             .and_then(|value| value.extract::<bool>().ok())
             .unwrap_or(false);
