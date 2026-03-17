@@ -99,6 +99,13 @@ pub fn register_sentinels(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "AwaitHandler".to_string(),
         ))),
     )?;
+    m.add(
+        "sync_await_handler",
+        PyRustHandlerSentinel::new(Arc::new(RustKleisli::new(
+            Arc::new(AwaitHandlerFactory),
+            "sync_await_handler".to_string(),
+        ))),
+    )?;
     m.add_function(wrap_pyfunction!(_notify_semaphore_handle_dropped, m)?)?;
     m.add_function(wrap_pyfunction!(_debug_scheduler_semaphore_count, m)?)?;
     m.add_function(wrap_pyfunction!(_debug_semaphore_exists, m)?)?;

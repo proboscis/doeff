@@ -15,7 +15,10 @@ from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 import doeff_vm
 
-from doeff.handlers.spawn_handler import spawn_intercept_handler
+from doeff.handlers.spawn_handler import (
+    spawn_intercept_handler,
+    sync_spawn_intercept_handler,
+)
 
 from ._program_types import ProgramLike
 from ._validators import ensure_dict_str_any, ensure_program_like
@@ -267,5 +270,6 @@ __all__ = [
     "promise_id_of",
     "spawn",
     "spawn_intercept_handler",
+    "sync_spawn_intercept_handler",
     "task_id_of",
 ]

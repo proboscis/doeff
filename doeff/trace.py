@@ -1,7 +1,7 @@
 """Unified VM trace entry and active-chain types."""
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, TypeAlias
 
 TraceHandlerKind: TypeAlias = Literal["python", "rust_builtin"]
@@ -325,6 +325,66 @@ def _coerce_effect_result(result: Any) -> EffectResult:
     raise ValueError(f"Unknown effect result kind: {kind!r}")
 
 
+def _normalize_effect_yield(entry: EffectYield) -> EffectYield:
+    # TODO(scheduler-gather-quadratic-v2): remove this compatibility shim once Rust
+    # emits the correct throwing handler metadata for sync_await_handler dispatches.
+    if not isinstance(entry.result, EffectResultThrew):
+        return entry
+    if entry.result.handler_name != "sync_await_handler":
+        return entry
+
+    active_index = next(
+        (
+            index
+            for index in range(len(entry.handler_stack) - 1, -1, -1)
+            if entry.handler_stack[index].status == "active"
+        ),
+        None,
+    )
+    if active_index is None:
+        return entry
+
+    active_handler = entry.handler_stack[active_index]
+    if active_handler.handler_name == entry.result.handler_name:
+        return entry
+
+    normalized_stack = []
+    for index, stack_entry in enumerate(entry.handler_stack):
+        if index == active_index:
+            normalized_stack.append(replace(stack_entry, status="threw"))
+            continue
+        if (
+            stack_entry.status == "threw"
+            and stack_entry.handler_name == entry.result.handler_name
+        ):
+            normalized_stack.append(replace(stack_entry, status="pending"))
+            continue
+        normalized_stack.append(stack_entry)
+
+    return replace(
+        entry,
+        handler_stack=tuple(normalized_stack),
+        result=replace(entry.result, handler_name=active_handler.handler_name),
+    )
+
+
+def extract_handler_effect_repr_from_args(args_repr: str | None) -> str | None:
+    # TODO(scheduler-gather-quadratic-v2): replace this args_repr string parsing by
+    # emitting an explicit hidden-handler effect repr from Rust trace metadata.
+    if args_repr is None:
+        return None
+    prefix = "args=("
+    separator = ", K("
+    if not args_repr.startswith(prefix) or separator not in args_repr:
+        return None
+    effect_repr = args_repr[len(prefix) : args_repr.index(separator)]
+    if effect_repr == "GetExecutionContext()":
+        return None
+    if not effect_repr.startswith("Gather("):
+        return None
+    return effect_repr
+
+
 def _coerce_spawn_boundary_entry(entry: dict[str, Any]) -> SpawnBoundary:
     spawn_site_raw = entry.get("spawn_site")
     spawn_site: SpawnSite | None = None
@@ -365,13 +425,15 @@ def coerce_active_chain_entry(entry: Any) -> ActiveChainEntry:
         )
     elif kind == "effect_yield":
         stack_raw = entry.get("handler_stack", ())
-        result = EffectYield(
-            function_name=str(entry.get("function_name", "<unknown>")),
-            source_file=str(entry.get("source_file", "<unknown>")),
-            source_line=int(entry.get("source_line", 0)),
-            effect_repr=str(entry.get("effect_repr", "<effect>")),
-            handler_stack=tuple(_coerce_handler_stack_entry(item) for item in stack_raw),
-            result=_coerce_effect_result(entry.get("result")),
+        result = _normalize_effect_yield(
+            EffectYield(
+                function_name=str(entry.get("function_name", "<unknown>")),
+                source_file=str(entry.get("source_file", "<unknown>")),
+                source_line=int(entry.get("source_line", 0)),
+                effect_repr=str(entry.get("effect_repr", "<effect>")),
+                handler_stack=tuple(_coerce_handler_stack_entry(item) for item in stack_raw),
+                result=_coerce_effect_result(entry.get("result")),
+            )
         )
     elif kind == "spawn_boundary":
         result = _coerce_spawn_boundary_entry(entry)
@@ -438,6 +500,27 @@ def coerce_active_chain_entries(entries: list[Any] | tuple[Any, ...]) -> list[Ac
                     insert_idx = index + 1
                     break
         active_chain.insert(insert_idx, boundary)
+
+    for index, entry in enumerate(active_chain):
+        if not isinstance(entry, ProgramYield) or entry.is_handler:
+            continue
+        if entry.sub_program_repr != "[MISSING] <sub_program>":
+            continue
+        expected_owner = f"{entry.function_name}()"
+        for previous in reversed(active_chain[:index]):
+            if isinstance(previous, SpawnBoundary):
+                break
+            if isinstance(previous, ProgramYield) and not previous.is_handler:
+                break
+            if not isinstance(previous, ProgramYield) or not previous.is_handler:
+                continue
+            if previous.sub_program_repr != expected_owner:
+                continue
+            effect_repr = extract_handler_effect_repr_from_args(previous.args_repr)
+            if effect_repr is None:
+                continue
+            active_chain[index] = replace(entry, sub_program_repr=effect_repr)
+            break
 
     return active_chain
 

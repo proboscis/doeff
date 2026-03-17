@@ -1,25 +1,19 @@
-
-from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from .base import Effect, EffectBase
-from .gather import gather
+import doeff_vm
+
+from .base import EffectBase
 from .spawn import Waitable, normalize_waitable
 
 T = TypeVar("T")
 
-
-@dataclass(frozen=True)
-class WaitEffect(EffectBase):
-    future: Waitable[Any]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.future, Waitable):
-            raise TypeError(f"Wait requires Waitable, got {type(self.future).__name__}")
+WaitEffect = doeff_vm.WaitEffect
 
 
 def wait(future: Waitable[T]) -> WaitEffect:
     normalized = normalize_waitable(future)
+    if not isinstance(normalized, Waitable):
+        raise TypeError(f"Wait requires Waitable, got {type(normalized).__name__}")
     return WaitEffect(future=normalized)
 
 
@@ -30,8 +24,7 @@ def Wait(future: Waitable[T]):
 
     @do
     def _program():
-        values = yield gather(normalized)
-        return values[0]
+        return (yield wait(normalized))
 
     return _program()
 

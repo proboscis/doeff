@@ -20,6 +20,12 @@ use crate::segment::ScopeStore;
 use crate::value::Value;
 use crate::vm::RustStore;
 
+fn await_shim_attr_name(py: Python<'_>) -> PyResult<String> {
+    py.import("doeff.handlers.await_handlers")
+        .and_then(|module| module.getattr("AWAIT_SHIM_ATTR"))
+        .and_then(|value| value.extract::<String>())
+}
+
 /// Debug metadata for a Kleisli arrow.
 #[derive(Debug, Clone)]
 pub struct KleisliDebugInfo {
@@ -82,6 +88,10 @@ pub trait Kleisli: std::fmt::Debug + Send + Sync {
 
     /// Lifecycle hook called when a top-level VM run ends.
     fn on_run_end(&self, _run_token: u64) {}
+
+    fn is_sync_await_shim(&self) -> bool {
+        false
+    }
 }
 
 /// Shared reference to a Kleisli arrow.
@@ -137,6 +147,10 @@ impl Kleisli for IdentityKleisli {
     fn on_run_end(&self, run_token: u64) {
         self.inner.on_run_end(run_token);
     }
+
+    fn is_sync_await_shim(&self) -> bool {
+        self.inner.is_sync_await_shim()
+    }
 }
 
 /// Python-backed Kleisli arrow.
@@ -150,6 +164,7 @@ pub struct PyKleisli {
     name: String,
     file: Option<String>,
     line: Option<u32>,
+    is_await_shim: bool,
 }
 
 #[pymethods]
@@ -171,6 +186,7 @@ impl PyKleisli {
             name,
             file,
             line,
+            is_await_shim: false,
         })
     }
 
@@ -268,11 +284,19 @@ impl PyKleisli {
 
         if func.bind(py).is_instance_of::<DoeffGeneratorFn>() {
             let dgfn: PyRef<'_, DoeffGeneratorFn> = func.bind(py).extract()?;
+            let shim_attr = await_shim_attr_name(py)?;
             return Ok(Self {
                 func: PyShared::new(func),
                 name: dgfn.function_name.clone(),
                 file: Some(dgfn.source_file.clone()),
                 line: Some(dgfn.source_line),
+                is_await_shim: dgfn
+                    .callable
+                    .bind(py)
+                    .getattr(shim_attr.as_str())
+                    .ok()
+                    .and_then(|value| value.extract::<bool>().ok())
+                    .unwrap_or(false),
             });
         }
 
@@ -289,12 +313,19 @@ impl PyKleisli {
             })
             .unwrap_or_else(|| "<python_handler>".to_string());
         let (file, line) = Self::source_info(callable);
+        let shim_attr = await_shim_attr_name(py)?;
+        let is_await_shim = callable
+            .getattr(shim_attr.as_str())
+            .ok()
+            .and_then(|value| value.extract::<bool>().ok())
+            .unwrap_or(false);
 
         Ok(Self {
             func: PyShared::new(func),
             name,
             file,
             line,
+            is_await_shim,
         })
     }
 
@@ -449,6 +480,10 @@ impl Kleisli for PyKleisli {
             Some(self.func.clone())
         })
     }
+
+    fn is_sync_await_shim(&self) -> bool {
+        self.is_await_shim
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -483,6 +518,10 @@ impl Kleisli for DgfnKleisli {
     fn py_identity(&self) -> Option<PyShared> {
         Some(self.callable_identity.clone())
     }
+
+    fn is_sync_await_shim(&self) -> bool {
+        self.inner.is_sync_await_shim()
+    }
 }
 
 /// Python-callable Kleisli that returns the callable's raw value.
@@ -495,6 +534,7 @@ pub struct PyCallableKleisli {
     name: String,
     file: Option<String>,
     line: Option<u32>,
+    is_await_shim: bool,
 }
 
 impl PyCallableKleisli {
@@ -515,11 +555,18 @@ impl PyCallableKleisli {
             })
             .unwrap_or_else(|| "<python_callable>".to_string());
         let (file, line) = PyKleisli::source_info(callable);
+        let shim_attr = await_shim_attr_name(py)?;
+        let is_await_shim = callable
+            .getattr(shim_attr.as_str())
+            .ok()
+            .and_then(|value| value.extract::<bool>().ok())
+            .unwrap_or(false);
         Ok(Self {
             func: PyShared::new(func),
             name,
             file,
             line,
+            is_await_shim,
         })
     }
 }
@@ -551,6 +598,10 @@ impl Kleisli for PyCallableKleisli {
 
     fn py_identity(&self) -> Option<PyShared> {
         Some(self.func.clone())
+    }
+
+    fn is_sync_await_shim(&self) -> bool {
+        self.is_await_shim
     }
 }
 
@@ -703,5 +754,9 @@ impl Kleisli for RustKleisli {
 
     fn on_run_end(&self, run_token: u64) {
         self.factory.on_run_end(run_token);
+    }
+
+    fn is_sync_await_shim(&self) -> bool {
+        self.factory.is_sync_await_shim()
     }
 }

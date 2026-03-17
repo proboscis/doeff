@@ -470,6 +470,36 @@ impl VM {
         Some(start_seg_id)
     }
 
+    fn root_delegate_parent_segment_id(
+        &self,
+        continuation: &Continuation,
+        assert_message: &str,
+    ) -> Option<SegmentId> {
+        let mut start_seg_id = self
+            .continuation_chain_segment_id(continuation)
+            .or_else(|| continuation.captured_caller())?;
+
+        let mut cursor = continuation.parent();
+        while let Some(parent) = cursor {
+            debug_assert!(parent.dispatch_id().is_some(), "{}", assert_message);
+            if let Some(parent_seg_id) = self
+                .continuation_chain_segment_id(parent)
+                .or_else(|| parent.captured_caller())
+            {
+                start_seg_id = parent_seg_id;
+            }
+            cursor = parent.parent();
+        }
+        Some(start_seg_id)
+    }
+
+    fn continuation_chain_segment_id(&self, continuation: &Continuation) -> Option<SegmentId> {
+        continuation
+            .segment_id()
+            .filter(|seg_id| self.segments.get(*seg_id).is_some())
+            .or_else(|| continuation.captured_caller().filter(|seg_id| self.segments.get(*seg_id).is_some()))
+    }
+
     pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
         let installed = self.installed_handlers.clone();
         let mut outside_seg_id: Option<SegmentId> = None;
@@ -980,9 +1010,9 @@ impl VM {
                                     .segment_id()
                                     .expect("dispatch origin continuations must be captured"),
                             )
-                            .into_iter()
-                            .map(|entry| entry.prompt_seg_id)
-                            .collect()
+                                .into_iter()
+                                .map(|entry| entry.prompt_seg_id)
+                                .collect()
                         })
                 })
                 .unwrap_or_default()
@@ -1836,13 +1866,26 @@ impl VM {
         // This is part of the public contract used by tests and user-space
         // handlers. Continuation installation handles deduplication when these
         // handlers are reapplied from within active dispatch contexts.
+        let chain_start = self
+            .current_handler_dispatch()
+            .map(|(_, _, continuation, _, _)| continuation)
+            .and_then(|continuation| {
+                self.root_delegate_parent_segment_id(
+                    &continuation,
+                    "GetHandlers parent chain must be Delegate-created continuations",
+                )
+                .or_else(|| continuation.segment_id())
+            })
+            .or_else(|| {
+                self.root_delegate_parent_segment_id(
+                    &origin.k_origin,
+                    "GetHandlers parent chain must be Delegate-created continuations",
+                )
+                .or_else(|| origin.k_origin.segment_id())
+            })
+            .expect("dispatch origin continuations must be captured");
         let handlers = self
-            .handlers_in_caller_chain(
-                origin
-                    .k_origin
-                    .segment_id()
-                    .expect("dispatch origin continuations must be captured"),
-            )
+            .handlers_in_caller_chain(chain_start)
             .into_iter()
             .map(|entry| entry.handler)
             .collect::<Vec<_>>();
