@@ -329,41 +329,29 @@ impl PartialOrd for ReadyEntry {
 }
 
 #[derive(Debug)]
-enum ReadySet {
-    Priority(BinaryHeap<ReadyEntry>),
-}
+struct ReadySet(BinaryHeap<ReadyEntry>);
 
 impl ReadySet {
     fn push(&mut self, entry: ReadyEntry) {
-        match self {
-            ReadySet::Priority(heap) => heap.push(entry),
-        }
+        self.0.push(entry);
     }
 
     fn pop_next(&mut self) -> Option<ReadyEntry> {
-        match self {
-            ReadySet::Priority(heap) => heap.pop(),
-        }
+        self.0.pop()
     }
 
     fn is_empty(&self) -> bool {
-        match self {
-            ReadySet::Priority(heap) => heap.is_empty(),
-        }
+        self.0.is_empty()
     }
 
     fn retain(&mut self, mut f: impl FnMut(&ReadyEntry) -> bool) {
-        match self {
-            ReadySet::Priority(heap) => {
-                let mut retained = BinaryHeap::with_capacity(heap.len());
-                while let Some(entry) = heap.pop() {
-                    if f(&entry) {
-                        retained.push(entry);
-                    }
-                }
-                *heap = retained;
+        let mut retained = BinaryHeap::with_capacity(self.0.len());
+        while let Some(entry) = self.0.pop() {
+            if f(&entry) {
+                retained.push(entry);
             }
         }
+        self.0 = retained;
     }
 }
 
