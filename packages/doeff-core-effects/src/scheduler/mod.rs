@@ -204,6 +204,9 @@ struct WaitRequest {
     continuation: Continuation,
     items: Vec<Waitable>,
     mode: WaitMode,
+    // Cloned WaitRequests live in multiple waiter buckets, so completion bookkeeping
+    // needs shared mutable state across those clones even though SchedulerState itself
+    // is mutex-protected.
     remaining: Arc<AtomicUsize>,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
@@ -1729,6 +1732,10 @@ impl SchedulerState {
             return highest_ready;
         };
         if matches!(waitable, Waitable::ExternalPromise(_)) {
+            debug_assert!(
+                self.external_waiter_count >= waiters_for_item.len(),
+                "external_waiter_count underflow while waking external waiters"
+            );
             self.external_waiter_count = self
                 .external_waiter_count
                 .saturating_sub(waiters_for_item.len());
@@ -1807,7 +1814,12 @@ impl SchedulerState {
             None => WaitOwner::Root { cont_id },
         };
         self.pending_gather_fail_fast.remove(&owner);
-        self.active_wait_owners.remove(&owner);
+        let owner_was_active = self.active_wait_owners.remove(&owner);
+        debug_assert!(
+            !owner_was_active || self.waitables_by_owner.contains_key(&owner),
+            "waitables_by_owner desynced from active_wait_owners for owner {:?}",
+            owner
+        );
         let waitables = self.waitables_by_owner.remove(&owner).unwrap_or_default();
         if let Some(ready_resume) = self.ready_root_resumes.get(&cont_id) {
             if ready_resume.waiting_task == waiting_task {
@@ -1868,6 +1880,10 @@ impl SchedulerState {
                 });
                 let removed = original_len.saturating_sub(pending.len());
                 if matches!(waitable, Waitable::ExternalPromise(_)) {
+                    debug_assert!(
+                        self.external_waiter_count >= removed,
+                        "external_waiter_count underflow while clearing owner waiters"
+                    );
                     self.external_waiter_count = self.external_waiter_count.saturating_sub(removed);
                 }
                 should_remove_key = pending.is_empty();
@@ -3681,6 +3697,7 @@ mod tests {
     use crate::effect::Effect;
     use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::pyvm::{DoExprTag, PyEffectBase};
+    use doeff_vm_core::RustKleisli;
     use pyo3::types::PyDict;
     use pyo3::{IntoPyObject, PyClassInitializer, Python};
 
@@ -3698,8 +3715,28 @@ mod tests {
         Python::attach(|py| Continuation::create_unstarted(PyShared::new(py.None()), Vec::new()))
     }
 
+    fn named_rust_handler(name: &str) -> KleisliRef {
+        Arc::new(RustKleisli::new(
+            Arc::new(AwaitHandlerFactory),
+            name.to_string(),
+        ))
+    }
+
     fn dispatch(effect: Effect) -> DispatchEffect {
         effect.into_dispatch()
+    }
+
+    #[test]
+    fn test_maybe_prepend_sync_await_handler_dedups_known_name_variants() {
+        let state = Arc::new(Mutex::new(SchedulerState::new()));
+        let program = SchedulerProgram::new(state);
+
+        for name in ["sync_await_handler", "async_await_handler", "AwaitHandler"] {
+            let mut handlers = vec![named_rust_handler(name)];
+            program.maybe_prepend_sync_await_handler(&mut handlers);
+            assert_eq!(handlers.len(), 1, "must not duplicate handler named {name}");
+            assert_eq!(handlers[0].debug_info().name, name);
+        }
     }
 
     fn make_promise_object(py: Python<'_>, promise_id: PromiseId) -> Py<PyAny> {

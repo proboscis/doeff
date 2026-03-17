@@ -322,7 +322,7 @@ fn create_external_promise_effect() -> Result<DispatchEffect, PyException> {
 }
 
 fn external_promise_future(value: &Value) -> Result<Py<PyAny>, PyException> {
-    let Value::ExternalPromise(handle) = value else {
+    let Value::ExternalPromise(external_promise) = value else {
         return Err(PyException::type_error(format!(
             "CreateExternalPromise returned non-external-promise value: {:?}",
             value
@@ -341,7 +341,7 @@ fn external_promise_future(value: &Value) -> Result<Py<PyAny>, PyException> {
         kwargs
             .set_item("_handle", handle_obj)
             .map_err(|e| pyerr_to_exception(py, e))?;
-        if let Some(queue) = &handle.completion_queue {
+        if let Some(queue) = &external_promise.completion_queue {
             kwargs
                 .set_item("_completion_queue", queue.bind(py))
                 .map_err(|e| pyerr_to_exception(py, e))?;
@@ -465,7 +465,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
                     };
                     Self::yield_perform(create_external_promise_effect())
                 }
-                Ok(None) => IRStreamStep::Yield(DoCtrl::Delegate {
+                Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
                 Err(msg) => IRStreamStep::Throw(PyException::type_error(format!(
@@ -1468,7 +1468,7 @@ impl IRStreamProgram for WriterHandlerProgram {
             return match parse_writer_python_effect(&obj) {
                 Ok(Some(message)) => {
                     store.tell(message);
-                    IRStreamStep::Yield(DoCtrl::Transfer {
+                    IRStreamStep::Yield(DoCtrl::Resume {
                         continuation: k,
                         value: Value::Unit,
                     })

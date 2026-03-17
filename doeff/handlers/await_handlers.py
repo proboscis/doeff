@@ -15,7 +15,6 @@ from doeff.effects.external_promise import CreateExternalPromise
 from doeff.effects.wait import wait
 
 PythonAsyncioAwaitEffect = doeff_vm.PythonAsyncioAwaitEffect
-_rust_sync_await_handler = doeff_vm.sync_await_handler
 
 _loop_lock = threading.Lock()
 _loop_thread: threading.Thread | None = None
@@ -131,6 +130,8 @@ def _external_promise_from_handle(handle: Any) -> ExternalPromise[Any]:
     if isinstance(handle, ExternalPromise):
         return handle
 
+    # TODO(scheduler-gather-quadratic-v2): stop reconstructing ExternalPromise from
+    # a raw handle dict once Rust returns a strongly typed bridge object directly.
     if not isinstance(handle, dict) or handle.get("type") != "ExternalPromise":
         raise TypeError(
             "Expected ExternalPromise handle dict or ExternalPromise instance, "
