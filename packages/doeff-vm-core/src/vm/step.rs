@@ -499,7 +499,7 @@ impl VM {
     ) -> StepEvent {
         match mode {
             Mode::Deliver(value) => {
-                if let Some(original) = k_origin.pending_error_context {
+                if let Some(original) = k_origin.pending_error_context().cloned() {
                     let active_chain = self
                         .assemble_active_chain(Some(&original))
                         .into_iter()
@@ -990,33 +990,64 @@ impl VM {
         Mode::HandleYield(yielded)
     }
 
-    fn current_interceptor_chain(&self) -> Vec<Marker> {
-        let dispatch_origin_callers = self.dispatch_origin_callers();
-        self.interceptor_state.current_chain(
-            self.current_segment,
-            &self.segments,
-            &dispatch_origin_callers,
-        )
-    }
+    fn current_interceptor_chain(&self) -> Vec<InterceptorChainLink> {
+        fn extend_chain(
+            vm: &VM,
+            start: Option<SegmentId>,
+            chain: &mut Vec<InterceptorChainLink>,
+            seen: &mut HashSet<Marker>,
+        ) {
+            let mut cursor = start;
+            while let Some(seg_id) = cursor {
+                let Some(seg) = vm.segments.get(seg_id) else {
+                    break;
+                };
+                if let Some(link) = InterceptorChainLink::from_boundary(seg.marker, &seg.kind) {
+                    if seen.insert(seg.marker) {
+                        chain.push(link);
+                    }
+                }
+                cursor = seg.caller;
+            }
+        }
 
-    fn interceptor_visible_to_active_handler(&self, interceptor_marker: Marker) -> bool {
-        self.interceptor_state
-            .visible_to_active_handler(interceptor_marker)
+        let mut chain = Vec::new();
+        let mut seen = HashSet::new();
+        extend_chain(self, self.current_segment, &mut chain, &mut seen);
+        for origin_seg_id in self.dispatch_origin_callers() {
+            extend_chain(self, Some(origin_seg_id), &mut chain, &mut seen);
+        }
+        chain
     }
 
     fn is_interceptor_skipped(&self, marker: Marker) -> bool {
-        InterceptorState::is_skipped(self.current_seg(), marker)
+        self.current_seg().interceptor_skip_stack.contains(&marker)
     }
 
     fn pop_interceptor_skip(&mut self, marker: Marker) {
         let seg = self.current_seg_mut();
-        if InterceptorState::is_skipped(seg, marker) {
-            InterceptorState::pop_skip(seg, marker);
+        if let Some(pos) = seg
+            .interceptor_skip_stack
+            .iter()
+            .rposition(|active| *active == marker)
+        {
+            seg.interceptor_skip_stack.remove(pos);
         }
     }
 
     fn push_interceptor_skip(&mut self, marker: Marker) {
-        InterceptorState::push_skip(self.current_seg_mut(), marker);
+        self.current_seg_mut().interceptor_skip_stack.push(marker);
+    }
+
+    fn classify_interceptor_result_shape(result_obj: &PyShared) -> (bool, bool) {
+        Python::attach(|py| {
+            let bound = result_obj.bind(py);
+            let is_effect_base = bound.is_instance_of::<PyEffectBase>();
+            let is_py_doexpr = bound.is_instance_of::<PyDoExprBase>();
+            let is_doexpr = is_py_doexpr || bound.is_instance_of::<DoeffGenerator>();
+            let is_direct_expr = is_effect_base || is_py_doexpr;
+            (is_direct_expr, is_doexpr)
+        })
     }
 
     fn classify_interceptor_result_object(
@@ -1049,10 +1080,10 @@ impl VM {
 
     fn should_invoke_interceptor(
         &self,
-        entry: &InterceptorEntry,
+        entry: &InterceptorChainLink,
         yielded_obj: &PyShared,
     ) -> Result<bool, PyException> {
-        let Some(types) = entry.types.as_ref() else {
+        let Some(types) = entry.types.as_deref() else {
             return Ok(true);
         };
         if types.is_empty() {
@@ -1078,25 +1109,19 @@ impl VM {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
-        chain: Arc<Vec<Marker>>,
+        chain: Arc<Vec<InterceptorChainLink>>,
         start_idx: usize,
     ) -> Mode {
         let current = yielded;
         let mut idx = start_idx;
 
         while idx < chain.len() {
-            let marker = chain[idx];
+            let link = &chain[idx];
+            let marker = link.marker;
             idx += 1;
             if self.is_interceptor_skipped(marker) {
                 continue;
             }
-            if !self.interceptor_visible_to_active_handler(marker) {
-                continue;
-            }
-
-            let Some(entry) = self.interceptor_state.get_entry(marker) else {
-                continue;
-            };
 
             let yielded_obj = match doctrl_to_pyexpr_for_vm(&current) {
                 Ok(Some(obj)) => PyShared::new(obj),
@@ -1104,7 +1129,7 @@ impl VM {
                 Err(exc) => return self.contextual_throw_mode(exc),
             };
 
-            match self.should_invoke_interceptor(&entry, &yielded_obj) {
+            match self.should_invoke_interceptor(link, &yielded_obj) {
                 Ok(true) => {}
                 Ok(false) => continue,
                 Err(exc) => return self.contextual_throw_mode(exc),
@@ -1112,7 +1137,7 @@ impl VM {
 
             return self.start_interceptor_invocation_mode(
                 marker,
-                entry,
+                link.clone(),
                 current,
                 yielded_obj,
                 stream,
@@ -1140,13 +1165,13 @@ impl VM {
     fn start_interceptor_invocation_mode(
         &mut self,
         marker: Marker,
-        entry: InterceptorEntry,
+        entry: InterceptorChainLink,
         yielded: DoCtrl,
         yielded_obj: PyShared,
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
-        chain: Arc<Vec<Marker>>,
+        chain: Arc<Vec<InterceptorChainLink>>,
         next_idx: usize,
     ) -> Mode {
         let interceptor_kleisli = entry.interceptor.clone();
@@ -1225,7 +1250,7 @@ impl VM {
             ));
         };
 
-        let (is_direct_expr, is_doexpr) = InterceptorState::classify_result_shape(&result_obj);
+        let (is_direct_expr, is_doexpr) = Self::classify_interceptor_result_shape(&result_obj);
 
         if is_direct_expr {
             let transformed = match self.classify_interceptor_result_object(
@@ -1848,23 +1873,11 @@ impl VM {
                     } else {
                         let fresh_marker = Marker::fresh();
                         interceptor_marker_remap.insert(entry.marker, fresh_marker);
-                        self.interceptor_state.insert(
-                            fresh_marker,
-                            entry.interceptor.clone(),
-                            entry.types.clone(),
-                            entry.mode,
-                            entry.metadata.clone(),
-                        );
                         fresh_marker
                     };
 
                     let mut body_seg = Segment::new(interceptor_marker, outside_seg_id);
-                    body_seg.kind = SegmentKind::InterceptorBoundary {
-                        interceptor: entry.interceptor,
-                        types: entry.types,
-                        mode: entry.mode,
-                        metadata: entry.metadata,
-                    };
+                    body_seg.kind = entry.into_boundary();
                     self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
                     self.copy_scope_store_from(outside_seg_id, &mut body_seg);
                     let body_seg_id = self.alloc_segment(body_seg);
@@ -1891,9 +1904,6 @@ impl VM {
                 continuation: return_to,
             },
         )));
-        for old_marker in interceptor_marker_remap.keys() {
-            self.interceptor_state.remove(*old_marker);
-        }
 
         self.current_segment = outside_seg_id;
         self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr { metadata });

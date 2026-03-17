@@ -39,7 +39,7 @@ pub struct ScopeStore {
     pub scope_bindings: Vec<Arc<HashMap<HashedPyKey, Value>>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Segment {
     pub marker: Marker,
     pub frames: Vec<Frame>,
