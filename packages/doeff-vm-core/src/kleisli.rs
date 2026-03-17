@@ -82,6 +82,10 @@ pub trait Kleisli: std::fmt::Debug + Send + Sync {
 
     /// Lifecycle hook called when a top-level VM run ends.
     fn on_run_end(&self, _run_token: u64) {}
+
+    fn is_sync_await_shim(&self) -> bool {
+        false
+    }
 }
 
 /// Shared reference to a Kleisli arrow.
@@ -136,6 +140,10 @@ impl Kleisli for IdentityKleisli {
 
     fn on_run_end(&self, run_token: u64) {
         self.inner.on_run_end(run_token);
+    }
+
+    fn is_sync_await_shim(&self) -> bool {
+        self.inner.is_sync_await_shim()
     }
 }
 
@@ -552,6 +560,17 @@ impl Kleisli for PyCallableKleisli {
     fn py_identity(&self) -> Option<PyShared> {
         Some(self.func.clone())
     }
+
+    fn is_sync_await_shim(&self) -> bool {
+        Python::attach(|py| {
+            self.func
+                .bind(py)
+                .getattr("__doeff_sync_await_shim__")
+                .ok()
+                .and_then(|value| value.extract::<bool>().ok())
+                .unwrap_or(false)
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -703,5 +722,9 @@ impl Kleisli for RustKleisli {
 
     fn on_run_end(&self, run_token: u64) {
         self.factory.on_run_end(run_token);
+    }
+
+    fn is_sync_await_shim(&self) -> bool {
+        self.factory.is_sync_await_shim()
     }
 }

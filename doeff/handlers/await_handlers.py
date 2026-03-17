@@ -168,6 +168,9 @@ def sync_await_handler(effect: Effect, k: Any):
 
     yield doeff_vm.Pass()
 
+
+sync_await_handler.__doeff_sync_await_shim__ = True
+
 @do
 def async_await_handler(effect: Effect, k: Any):
     """Handle Await effects in async execution on the caller event loop."""
@@ -189,6 +192,9 @@ def async_await_handler(effect: Effect, k: Any):
         return (yield doeff_vm.Resume(k, value))
 
     yield doeff_vm.Pass()
+
+
+async_await_handler.__doeff_sync_await_shim__ = True
 
 
 # Backward-compat alias. New code should use async_await_handler.

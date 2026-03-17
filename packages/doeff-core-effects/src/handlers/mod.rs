@@ -393,6 +393,10 @@ impl IRStreamFactory for AwaitHandlerFactory {
     fn handler_name(&self) -> &'static str {
         "AwaitHandler"
     }
+
+    fn is_sync_await_shim(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug)]
