@@ -5,12 +5,18 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Set
 from pathlib import Path
-from typing import TypeAlias
+from typing import Any, TypeAlias, cast
 
 import doeff_vm
 
 from doeff.do import do
-from doeff.effects.cache import CacheGet, CacheGetEffect, CachePut, CachePutEffect
+from doeff.effects.cache import (
+    CacheExistsEffect,
+    CacheGet,
+    CacheGetEffect,
+    CachePut,
+    CachePutEffect,
+)
 from doeff.effects.result import Try
 from doeff.storage import DurableStorage, InMemoryStorage, SQLiteStorage
 from doeff.types import Effect
@@ -100,21 +106,25 @@ def cache_handler(storage: DurableStorage) -> CacheProtocolHandler:
     """Interpret CacheGet/CachePut against a pluggable storage backend."""
 
     @do
-    def handler(effect: CacheGetEffect | CachePutEffect, k: object):
-        if not isinstance(effect, (CacheGetEffect, CachePutEffect)):
+    def handler(effect: CacheGetEffect | CacheExistsEffect | CachePutEffect, k: object):
+        if not isinstance(effect, (CacheGetEffect, CacheExistsEffect, CachePutEffect)):
             yield doeff_vm.Pass()
             return None
 
+        continuation = cast(Any, k)
         key = _storage_key(effect.key)
+
+        if isinstance(effect, CacheExistsEffect):
+            return (yield doeff_vm.Resume(continuation, storage.exists(key)))
 
         if isinstance(effect, CacheGetEffect):
             value = storage.get(key)
             if value is None and not storage.exists(key):
                 raise KeyError(effect.key)
-            return (yield doeff_vm.Resume(k, value))
+            return (yield doeff_vm.Resume(continuation, value))
 
         _persist_value(storage, key, original_key=effect.key, value=effect.value)
-        return (yield doeff_vm.Resume(k, None))
+        return (yield doeff_vm.Resume(continuation, None))
 
     return handler
 
@@ -143,6 +153,7 @@ def make_memo_rewriter(
             yield doeff_vm.Pass()
             return None
 
+        continuation = cast(Any, k)
         key = key_fn(effect)
 
         @do
@@ -151,14 +162,14 @@ def make_memo_rewriter(
 
         cached = yield Try(cache_lookup())
         if cached.is_ok():
-            return (yield doeff_vm.Resume(k, cached.value))
+            return (yield doeff_vm.Resume(continuation, cached.value))
 
         if not isinstance(cached.error, KeyError):
             raise cached.error
 
         delegated = yield doeff_vm.Delegate()
         _ = yield CachePut(key, delegated)
-        return (yield doeff_vm.Resume(k, delegated))
+        return (yield doeff_vm.Resume(continuation, delegated))
 
     return handler
 

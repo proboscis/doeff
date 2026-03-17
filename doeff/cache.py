@@ -7,17 +7,15 @@ import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import doeff_vm
 
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
 from doeff.do import do
-from doeff.effects.cache import CacheGet, CachePut
+from doeff.effects.cache import CacheExists, CacheGet, CachePut
 from doeff.effects.execution_context import GetExecutionContext
-from doeff.effects.result import Try
-from doeff.effects.writer import slog
 from doeff.kleisli import KleisliProgram
 from doeff.types import EffectGenerator, Err, FrozenDict, Ok, Result
 
@@ -49,7 +47,13 @@ def _normalize_cache_result(result: object) -> Result[Any]:
     if isinstance(result, doeff_vm.Ok):
         return Ok(result.value)
     if isinstance(result, doeff_vm.Err):
-        return Err(result.error)
+        error = result.error
+        if not isinstance(error, Exception):
+            raise TypeError(
+                "cache() expected Err.error to be Exception, "
+                f"got {type(error).__name__}"
+            )
+        return Err(error)
     raise TypeError(f"cache() expected a Result value, got {type(result).__name__}")
 
 
@@ -138,20 +142,6 @@ def _call_site_from_program_frames(call_stack: list[Any] | tuple[Any, ...]) -> C
     return fallback
 
 
-def _truncate_for_log(obj: Any, max_len: int = 200) -> str:
-    """Truncate object representation for logging to avoid massive log output."""
-    try:
-        repr_str = repr(obj)
-    except Exception:
-        repr_str = f"<{type(obj).__name__} (repr failed)>"
-
-    if len(repr_str) <= max_len:
-        return repr_str
-
-    half = (max_len - 5) // 2  # Reserve 5 chars for "..."
-    return f"{repr_str[:half]}...{repr_str[-half:]}"
-
-
 def _cache_error_note(
     func_name: str,
     call_args: tuple[Any, ...],
@@ -171,7 +161,7 @@ def _attach_exception_note(error: BaseException, note: str) -> None:
 
 
 @do_wrapper
-def cache(
+def cache(  # noqa: PLR0915
     ttl: float | None = None,
     key_func: Callable | None = None,
     key_hashers: Mapping[str, Callable[[Any], Any] | KleisliProgram[Any, Any]] | None = None,
@@ -223,7 +213,9 @@ def cache(
         the cached value, and the policy hints remain available to custom cache handlers.
     """
 
-    def decorator(func: Callable[..., EffectGenerator[T]]) -> Callable[..., EffectGenerator[T]]:
+    def decorator(  # noqa: PLR0915
+        func: Callable[..., EffectGenerator[T]],
+    ) -> Callable[..., EffectGenerator[T]]:
         from doeff.kleisli import KleisliProgram
 
         if isinstance(func, KleisliProgram):
@@ -246,35 +238,7 @@ def cache(
             return hasher(value)
 
         @do
-        def ensure_serializable(
-            key_obj: Any,
-            *,
-            log_success: bool = True,
-            level: str | None = None,
-        ) -> EffectGenerator[None]:
-            try:
-                try:
-                    import cloudpickle as serializer
-                except ModuleNotFoundError:
-                    import pickle as serializer
-
-                serializer.dumps(key_obj)
-            except Exception as exc:  # pragma: no cover - defensive logging path
-                truncated_key = _truncate_for_log(key_obj)
-                yield slog(msg=f"serializing cache key failed:{truncated_key}", level="ERROR")
-                raise exc
-
-            if log_success:
-                truncated_key = _truncate_for_log(key_obj)
-                log_kwargs: dict[str, Any] = {
-                    "msg": f"cache key serialization check passed for key:{truncated_key}"
-                }
-                if level is not None:
-                    log_kwargs["level"] = level
-                yield slog(**log_kwargs)
-
-        @do
-        def build_key_inputs(
+        def build_key_inputs(  # noqa: PLR0912
             call_args: tuple[Any, ...],
             call_kwargs: Mapping[str, Any],
         ) -> EffectGenerator[tuple[tuple[Any, ...], dict[str, Any]]]:
@@ -340,12 +304,15 @@ def cache(
             return tuple(args_list), kwargs_for_key
 
         @do
-        def wrapper(*args, **kwargs) -> EffectGenerator[T]:
+        def resolve_call_site() -> EffectGenerator[CacheCallSite | None]:
             context = yield GetExecutionContext()
-            call_stack = getattr(context, "active_chain", ())
-            stack_frames = list(call_stack) if isinstance(call_stack, (list, tuple)) else []
-            call_site = _call_site_from_program_frames(stack_frames)
+            active_chain = context.active_chain
+            if not isinstance(active_chain, (list, tuple)):
+                return None
+            return _call_site_from_program_frames(list(active_chain))
 
+        @do
+        def wrapper(*args, **kwargs) -> EffectGenerator[T]:
             args_for_key, kwargs_for_key = yield build_key_inputs(tuple(args), dict(kwargs))
 
             frozen_kwargs = FrozenDict(kwargs_for_key) if kwargs_for_key else FrozenDict()
@@ -355,52 +322,40 @@ def cache(
                 else (func_name, args_for_key, frozen_kwargs)
             )
 
-            yield ensure_serializable(cache_key_obj, level="DEBUG")
-
-            @do
-            def compute_and_cache() -> EffectGenerator[T]:
-                yield slog(msg=f"Cache miss for {func_name}, computing...", level="DEBUG")
-                program_call = wrapped_func(*args, **kwargs)
-                result = _normalize_cache_result((yield Try(program_call)))
-
-                if result.is_ok():
-                    yield ensure_serializable(cache_key_obj)
-                    yield CachePut(
-                        cache_key_obj,
-                        result,
-                        ttl,
-                        lifecycle=lifecycle,
-                        storage=storage,
-                        metadata=metadata,
-                        policy=policy,
-                    )
-                    yield slog(msg=f"Cache: stored result for {func_name}", level="DEBUG")
-                    return result.value
-
-                yield slog(msg=f"Computation for {func_name} failed, not caching.", level="error")
-                error = result.error
-                _attach_exception_note(
-                    error,
-                    _cache_error_note(func_name, args, dict(kwargs), call_site),
-                )
-                raise error
-
-            @do
-            def try_cache_get() -> EffectGenerator[T]:
-                yield ensure_serializable(cache_key_obj, log_success=False)
-                return (yield CacheGet(cache_key_obj))
-
-            cache_result = yield Try(try_cache_get())
-            if cache_result.is_ok():
-                result = cache_result.value
+            cache_miss = object()
+            if (yield CacheExists(cache_key_obj)):
+                try:
+                    result = yield CacheGet(cache_key_obj)
+                except KeyError:
+                    result = cache_miss
             else:
-                result = yield compute_and_cache()
+                result = cache_miss
+
+            if result is cache_miss:
+                try:
+                    computed_value = yield wrapped_func(*args, **kwargs)
+                except BaseException as error:
+                    call_site = yield resolve_call_site()
+                    _attach_exception_note(
+                        error,
+                        _cache_error_note(func_name, args, dict(kwargs), call_site),
+                    )
+                    raise error
+                computed_result = Ok(computed_value)
+                yield CachePut(
+                    cache_key_obj,
+                    computed_result,
+                    ttl,
+                    lifecycle=lifecycle,
+                    storage=storage,
+                    metadata=metadata,
+                    policy=policy,
+                )
+                result = computed_value
 
             if isinstance(result, Result):
-                if result.is_err():
-                    raise result.error
-                return result.value
-            return result
+                return result.unwrap()
+            return cast(T, result)
 
         try:
             wrapper.__name__ = getattr(func, "__name__", wrapper.__name__)
@@ -474,7 +429,7 @@ def cache_key(*key_args: str) -> Callable:
 
         # Create a simpler key using only specified arguments
         key_values = []
-        for i, arg_name in enumerate(key_args):
+        for i, _arg_name in enumerate(key_args):
             if i < len(args):
                 key_values.append(args[i])
 
