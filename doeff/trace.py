@@ -353,7 +353,10 @@ def _normalize_effect_yield(entry: EffectYield) -> EffectYield:
         if index == active_index:
             normalized_stack.append(replace(stack_entry, status="threw"))
             continue
-        if stack_entry.status == "threw":
+        if (
+            stack_entry.status == "threw"
+            and stack_entry.handler_name == entry.result.handler_name
+        ):
             normalized_stack.append(replace(stack_entry, status="pending"))
             continue
         normalized_stack.append(stack_entry)

@@ -62,6 +62,10 @@ pub trait IRStreamFactory: std::fmt::Debug + Send + Sync {
     fn supports_error_context_conversion(&self) -> bool {
         false
     }
+
+    fn is_sync_await_shim(&self) -> bool {
+        false
+    }
 }
 
 /// Shared reference to a Rust program handler factory.
@@ -97,6 +101,10 @@ where
             file: None,
             line: None,
         }
+    }
+
+    fn is_sync_await_shim(&self) -> bool {
+        <Self as IRStreamFactory>::is_sync_await_shim(self)
     }
 
     fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
