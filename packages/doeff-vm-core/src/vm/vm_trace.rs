@@ -208,10 +208,8 @@ impl VM {
                     .map(|origin| origin.k_origin)
             });
         continuation.is_some_and(|continuation| {
-            continuation
-                .frames_snapshot
-                .iter()
-                .any(|frame| match frame {
+            continuation.frames().is_some_and(|frames| {
+                frames.iter().any(|frame| match frame {
                     Frame::Program {
                         stream: snapshot_stream,
                         ..
@@ -226,6 +224,7 @@ impl VM {
                     | Frame::FlatMapBindSource { .. }
                     | Frame::InterceptBodyReturn { .. } => false,
                 })
+            })
         })
     }
 

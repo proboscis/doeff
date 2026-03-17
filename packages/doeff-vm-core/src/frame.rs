@@ -5,11 +5,13 @@ use std::sync::Arc;
 
 use crate::capture::HandlerKind;
 use crate::continuation::Continuation;
-use crate::do_ctrl::DoCtrl;
+use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::effect::DispatchEffect;
 use crate::ids::{DispatchId, Marker, SegmentId};
 use crate::ir_stream::IRStreamRef;
+use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
+use crate::segment::SegmentKind;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -68,6 +70,46 @@ impl CallMetadata {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct InterceptorChainLink {
+    pub marker: Marker,
+    pub interceptor: KleisliRef,
+    pub types: Option<Vec<PyShared>>,
+    pub mode: InterceptMode,
+    pub metadata: Option<CallMetadata>,
+}
+
+impl InterceptorChainLink {
+    pub fn from_boundary(marker: Marker, boundary: &SegmentKind) -> Option<Self> {
+        match boundary {
+            SegmentKind::InterceptorBoundary {
+                interceptor,
+                types,
+                mode,
+                metadata,
+            } => Some(Self {
+                marker,
+                interceptor: interceptor.clone(),
+                types: types.clone(),
+                mode: *mode,
+                metadata: metadata.clone(),
+            }),
+            SegmentKind::Normal
+            | SegmentKind::PromptBoundary { .. }
+            | SegmentKind::MaskBoundary { .. } => None,
+        }
+    }
+
+    pub fn into_boundary(self) -> SegmentKind {
+        SegmentKind::InterceptorBoundary {
+            interceptor: self.interceptor,
+            types: self.types,
+            mode: self.mode,
+            metadata: self.metadata,
+        }
+    }
+}
+
 /// A frame in the continuation stack.
 ///
 /// Frames must be Clone to allow continuation capture (Arc snapshots).
@@ -79,7 +121,13 @@ pub struct InterceptorContinuation {
     pub emitter_stream: IRStreamRef,
     pub emitter_metadata: Option<CallMetadata>,
     pub emitter_handler_kind: Option<HandlerKind>,
-    pub chain: Arc<Vec<Marker>>,
+    /// Snapshot of the remaining interceptor chain for the current yielded effect.
+    ///
+    /// Effectful interceptor execution can suspend and later resume through this frame.
+    /// Resuming must continue with the exact tail that was visible when the yield was first
+    /// classified, not a freshly rebuilt live chain that may have diverged while the interceptor
+    /// itself was running. Marker remaps are applied to this snapshot when continuations move.
+    pub chain: Arc<Vec<InterceptorChainLink>>,
     pub next_idx: usize,
     pub interceptor_metadata: Option<CallMetadata>,
     pub guard_eval_depth: bool,
