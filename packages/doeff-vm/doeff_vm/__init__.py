@@ -201,6 +201,7 @@ PyTell = _ext.PyTell
 SpawnEffect = _ext.SpawnEffect
 GatherEffect = _ext.GatherEffect
 RaceEffect = _ext.RaceEffect
+WaitEffect = _ext.WaitEffect
 CreatePromiseEffect = _ext.CreatePromiseEffect
 CompletePromiseEffect = _ext.CompletePromiseEffect
 FailPromiseEffect = _ext.FailPromiseEffect
@@ -247,6 +248,7 @@ TAG_UNKNOWN = _ext.TAG_UNKNOWN
 PySpawn = SpawnEffect
 PyGather = GatherEffect
 PyRace = RaceEffect
+PyWait = WaitEffect
 PyCreatePromise = CreatePromiseEffect
 PyCompletePromise = CompletePromiseEffect
 PyFailPromise = FailPromiseEffect
@@ -334,6 +336,7 @@ __all__ = [
     "PySpawn",
     "PyTaskCompleted",
     "PyTell",
+    "PyWait",
     "PyVM",
     "PythonAsyncSyntaxEscape",
     "PythonAsyncioAwaitEffect",
@@ -352,6 +355,7 @@ __all__ = [
     "TraceHop",
     "Transfer",
     "UnhandledEffectError",
+    "WaitEffect",
     "WithHandler",
     "WithIntercept",
     "_SchedulerTaskCompleted",
