@@ -265,6 +265,30 @@ def test_cache_decorator_uses_single_cache_get_path() -> None:
     assert seen == ["get", "put", "get"]
 
 
+def test_cache_decorator_rejects_unwrapped_cache_payloads() -> None:
+    @do
+    def handler(effect: Effect, k: object):
+        if isinstance(effect, CacheGetEffect):
+            return (yield Resume(k, 21))
+        if isinstance(effect, CachePutEffect):
+            raise AssertionError("unexpected cache put on forced hit")
+        yield Pass()
+
+    @cache()
+    @do
+    def expensive(value: int) -> EffectGenerator[int]:
+        if False:
+            yield CacheGet("__typecheck__")
+        return value * 3
+
+    result = _run_with_handlers(expensive(7), handler)
+
+    assert result.is_err()
+    assert isinstance(result.error, TypeError)
+    assert "_CachedSuccess" in str(result.error)
+    assert "int" in str(result.error)
+
+
 def test_cache_call_site_formats_rust_and_unknown_sentinel_locations() -> None:
     rust_site = CacheCallSite("<rust>", 0, "SchedulerHandler")
     unknown_site = CacheCallSite("<unknown>", 0, "mystery_handler")

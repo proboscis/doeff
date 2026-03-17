@@ -9,14 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, TypeVar, cast
 
-import doeff_vm
-
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
 from doeff.kleisli import KleisliProgram
-from doeff.types import EffectGenerator, FrozenDict, Result
+from doeff.types import EffectGenerator, FrozenDict
 
 
 @dataclass(frozen=True)
@@ -149,6 +147,8 @@ def _attach_exception_note(error: BaseException, note: str) -> None:
 
 
 def _call_site_from_error(error: BaseException) -> CacheCallSite | None:
+    # The VM annotates surfaced exceptions with doeff_execution_context, so the cache
+    # error path can recover call-site details without yielding inside except.
     error_obj = cast(Any, error)
     try:
         context = error_obj.doeff_execution_context
@@ -169,19 +169,10 @@ def _call_site_from_error(error: BaseException) -> CacheCallSite | None:
 def _unwrap_cached_payload(value: Any) -> Any:
     if isinstance(value, _CachedSuccess):
         return value.value
-    if isinstance(value, Result):
-        return value.unwrap()
-    if isinstance(value, doeff_vm.Ok):
-        return value.value
-    if isinstance(value, doeff_vm.Err):
-        error = value.error
-        if not isinstance(error, BaseException):
-            raise TypeError(
-                "cache() expected cached Err.error to be BaseException, "
-                f"got {type(error).__name__}"
-            )
-        raise error.with_traceback(error.__traceback__)
-    return value
+    raise TypeError(
+        "cache() expected cached payload to be _CachedSuccess, "
+        f"got {type(value).__name__}"
+    )
 
 
 @do_wrapper
@@ -438,7 +429,7 @@ def cache_key(*key_args: str) -> Callable:
 
         # Create a simpler key using only specified arguments
         key_values = []
-        for i, _ in enumerate(key_args):
+        for i in range(len(key_args)):
             if i < len(args):
                 key_values.append(args[i])
 

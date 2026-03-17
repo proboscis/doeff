@@ -111,20 +111,19 @@ def cache_handler(storage: DurableStorage) -> CacheProtocolHandler:
             yield doeff_vm.Pass()
             return None
 
-        continuation = cast(Any, k)
         key = _storage_key(effect.key)
 
         if isinstance(effect, CacheExistsEffect):
-            return (yield doeff_vm.Resume(continuation, storage.exists(key)))
+            return (yield doeff_vm.Resume(cast(Any, k), storage.exists(key)))
 
         if isinstance(effect, CacheGetEffect):
             value = storage.get(key)
             if value is None and not storage.exists(key):
                 raise KeyError(effect.key)
-            return (yield doeff_vm.Resume(continuation, value))
+            return (yield doeff_vm.Resume(cast(Any, k), value))
 
         _persist_value(storage, key, original_key=effect.key, value=effect.value)
-        return (yield doeff_vm.Resume(continuation, None))
+        return (yield doeff_vm.Resume(cast(Any, k), None))
 
     return handler
 
@@ -153,7 +152,6 @@ def make_memo_rewriter(
             yield doeff_vm.Pass()
             return None
 
-        continuation = cast(Any, k)
         key = key_fn(effect)
 
         @do
@@ -162,14 +160,14 @@ def make_memo_rewriter(
 
         cached = yield Try(cache_lookup())
         if cached.is_ok():
-            return (yield doeff_vm.Resume(continuation, cached.value))
+            return (yield doeff_vm.Resume(cast(Any, k), cached.value))
 
         if not isinstance(cached.error, KeyError):
             raise cached.error
 
         delegated = yield doeff_vm.Delegate()
         _ = yield CachePut(key, delegated)
-        return (yield doeff_vm.Resume(continuation, delegated))
+        return (yield doeff_vm.Resume(cast(Any, k), delegated))
 
     return handler
 
