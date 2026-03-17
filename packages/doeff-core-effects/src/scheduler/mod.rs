@@ -1842,7 +1842,9 @@ impl SchedulerState {
                 pending.retain(|waiter| {
                     !(waiter.waiting_task == waiting_task && waiter.continuation.cont_id == cont_id)
                 });
-                let removed = original_len.saturating_sub(pending.len());
+                let removed = original_len
+                    .checked_sub(pending.len())
+                    .expect("pending waiter list grew while clearing owner waiters");
                 if matches!(waitable, Waitable::ExternalPromise(_)) {
                     self.external_waiter_count = self
                         .external_waiter_count
