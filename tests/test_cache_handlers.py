@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import doeff_vm
 
@@ -176,6 +177,38 @@ def test_sqlite_storage_uses_write_optimized_pragmas(tmp_path: Path) -> None:
     assert journal_mode == ("wal",)
     assert synchronous == (1,)
     assert temp_store == (2,)
+
+
+def test_sqlite_storage_falls_back_to_full_sync_when_wal_is_unavailable(monkeypatch) -> None:
+    class _FakeCursor:
+        def __init__(self, row: tuple[object, ...] | None = None) -> None:
+            self._row = row
+
+        def fetchone(self) -> tuple[object, ...] | None:
+            return self._row
+
+    class _FakeConn:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+
+        def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
+            self.statements.append(sql)
+            if sql == "PRAGMA journal_mode=WAL":
+                return _FakeCursor(("delete",))
+            return _FakeCursor()
+
+        def commit(self) -> None:
+            return None
+
+    fake_conn = _FakeConn()
+    monkeypatch.setattr("doeff.storage.sqlite.sqlite3.connect", lambda _: fake_conn)
+
+    storage = SQLiteStorage("cache.sqlite3")
+    conn = storage._get_conn()
+
+    assert conn is fake_conn
+    assert "PRAGMA synchronous=FULL" in fake_conn.statements
+    assert "PRAGMA synchronous=NORMAL" not in fake_conn.statements
 
 
 def test_cache_decorator_with_handler(tmp_path: Path) -> None:
