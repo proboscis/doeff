@@ -593,10 +593,31 @@ Input:  Spawn { program, handlers: opt_handlers }
    Store TaskState::Pending { cont: k_task, store: child_store }
    Push task_id to ready queue
    task = PyTask { id: task_id.0 }
-   Yield Transfer(k_user, task)
+
+   Case A: spawned task has higher priority than caller
+     → Park caller with task handle (caller becomes Blocked)
+     → Preemptive transfer to highest-priority ready task (the spawned task)
+
+   Case B: spawned task has same or lower priority than caller
+     → Yield Transfer(k_user, task)   ← caller resumes immediately
 ```
 
 `Transfer(k_user)` is valid: k_user was captured by start_dispatch (started=true).
+
+**Spawn is non-blocking**: By default (same priority), the caller resumes
+immediately with the `Task` handle. The spawned task is enqueued but does
+**not** execute until the caller yields a blocking effect (Wait, Gather,
+Race) or is preempted by SchedulerYield. If the spawned task has strictly
+higher priority than the caller, it preempts: the caller is parked and the
+spawned task runs first.
+
+```python
+@do
+def example():
+    task = yield Spawn(hello)       # caller resumes immediately (same priority)
+    yield slog(f"spawned {task}")   # runs before hello gets its first turn
+    result = yield Wait(task)       # hello runs here (caller blocks)
+```
 
 **Handler inheritance**: By default (`handlers=None`), the child inherits
 the parent's handler chain via `GetHandlers` DoCtrl. This includes the state,
