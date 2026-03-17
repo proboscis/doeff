@@ -1001,6 +1001,7 @@ impl VM {
             let mut cursor = start;
             while let Some(seg_id) = cursor {
                 if !visited_segments.insert(seg_id) {
+                    debug_assert!(false, "segment graph cycle detected at {:?}", seg_id);
                     break;
                 }
                 let Some(seg) = vm.segments.get(seg_id) else {

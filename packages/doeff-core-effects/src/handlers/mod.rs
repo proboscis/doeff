@@ -299,27 +299,20 @@ fn parse_result_safe_python_effect(effect: &PyShared) -> Result<Option<PyShared>
     })
 }
 
-static SYNC_AWAIT_SUBMITTER: OnceLock<Mutex<Option<Py<PyAny>>>> = OnceLock::new();
+static SYNC_AWAIT_SUBMITTER: OnceLock<Result<Py<PyAny>, String>> = OnceLock::new();
 
 fn get_sync_await_submitter() -> Result<PyShared, String> {
     Python::attach(|py| {
-        let cache = SYNC_AWAIT_SUBMITTER.get_or_init(|| Mutex::new(None));
-        let mut guard = cache.lock().expect("sync await submitter cache lock poisoned");
-        if guard.is_none() {
+        let runner = SYNC_AWAIT_SUBMITTER.get_or_init(|| {
             let module = py
                 .import("doeff.handlers.await_handlers")
                 .map_err(|e| e.to_string())?;
-            let runner = module
+            module
                 .getattr("_submit_awaitable_handle")
-                .map_err(|e| e.to_string())?;
-            *guard = Some(runner.unbind());
-        }
-        Ok(PyShared::new(
-            guard
-                .as_ref()
-                .expect("sync await submitter must be cached")
-                .clone_ref(py),
-        ))
+                .map(|runner| runner.unbind())
+                .map_err(|e| e.to_string())
+        });
+        Ok(PyShared::new(runner.as_ref().map_err(Clone::clone)?.clone_ref(py)))
     })
 }
 
