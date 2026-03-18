@@ -408,7 +408,10 @@ def cache(  # noqa: PLR0915
             if not (yield CacheExists(cache_key_obj)):
                 return (yield compute_and_cache())
 
-            cached_value = yield try_cache_get()
+            try:
+                cached_value = yield try_cache_get()
+            except KeyError:
+                return (yield compute_and_cache())
             return _unwrap_cached_payload(cached_value)
 
         try:
