@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::continuation::Continuation;
 use crate::do_ctrl::InterceptMode;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
@@ -55,6 +56,7 @@ pub struct Segment {
     pub mode: Mode,
     pub pending_python: Option<PendingPython>,
     pub pending_error_context: Option<PyException>,
+    pub throw_parent: Option<Continuation>,
     pub interceptor_eval_depth: usize,
     pub interceptor_skip_stack: Vec<Marker>,
 }
@@ -76,6 +78,7 @@ impl Segment {
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
+            throw_parent: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
         }
@@ -106,6 +109,7 @@ impl Segment {
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
+            throw_parent: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
         }
@@ -137,6 +141,7 @@ impl Segment {
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
+            throw_parent: None,
             interceptor_eval_depth: 0,
             interceptor_skip_stack: Vec::new(),
         }

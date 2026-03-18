@@ -1,5 +1,6 @@
 //! Continuation types for capturing and resuming.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
@@ -9,9 +10,11 @@ use crate::frame::CallMetadata;
 use crate::frame::Frame;
 use crate::ids::{ContId, DispatchId, ScopeId, SegmentId};
 use crate::kleisli::KleisliRef;
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::segment::Segment;
 use crate::step::PyException;
+use crate::value::Value;
 
 #[pyclass(name = "K")]
 pub struct PyK {
@@ -100,7 +103,7 @@ impl Continuation {
             frames: Self::captured_frames(segment),
             caller: segment.caller,
             scope_parent: segment.scope_parent,
-            variables: segment.variables.clone(),
+            variables: Default::default(),
             named_bindings: segment.named_bindings.clone(),
             state_store: segment.state_store.clone(),
             writer_log: segment.writer_log.clone(),
@@ -109,6 +112,7 @@ impl Continuation {
             mode: segment.mode.clone(),
             pending_python: segment.pending_python.clone(),
             pending_error_context: segment.pending_error_context.clone(),
+            throw_parent: segment.throw_parent.clone(),
             interceptor_eval_depth: segment.interceptor_eval_depth,
             interceptor_skip_stack: segment.interceptor_skip_stack.clone(),
         })
@@ -283,31 +287,49 @@ impl Continuation {
     pub(crate) fn sync_persistent_segment_state(
         &mut self,
         scope_id: ScopeId,
-        segment: &Segment,
+        named_bindings: &HashMap<HashedPyKey, Value>,
+        state_store: &HashMap<String, Value>,
+        writer_log: &[Value],
     ) {
-        let matches_top_segment = self.segment().is_some_and(|snapshot| snapshot.scope_id == scope_id);
+        let matches_top_segment = self
+            .segment()
+            .is_some_and(|snapshot| snapshot.scope_id == scope_id);
         if let Some(snapshot) = self.segment_mut() {
             if matches_top_segment {
-                snapshot.variables = segment.variables.clone();
-                snapshot.named_bindings = segment.named_bindings.clone();
-                snapshot.state_store = segment.state_store.clone();
-                snapshot.writer_log = segment.writer_log.clone();
+                snapshot.named_bindings = named_bindings.clone();
+                snapshot.state_store = state_store.clone();
+                snapshot.writer_log = writer_log.to_vec();
             }
 
             for frame in &mut snapshot.frames {
                 match frame {
                     Frame::HandlerDispatch { continuation, .. } => {
-                        continuation.sync_persistent_segment_state(scope_id, segment);
+                        continuation.sync_persistent_segment_state(
+                            scope_id,
+                            named_bindings,
+                            state_store,
+                            writer_log,
+                        );
                     }
                     Frame::DispatchOrigin { k_origin, .. } => {
-                        k_origin.sync_persistent_segment_state(scope_id, segment);
+                        k_origin.sync_persistent_segment_state(
+                            scope_id,
+                            named_bindings,
+                            state_store,
+                            writer_log,
+                        );
                     }
                     Frame::EvalReturn(eval_return) => {
                         if let crate::frame::EvalReturnContinuation::EvalInScopeReturn {
                             continuation,
                         } = eval_return.as_mut()
                         {
-                            continuation.sync_persistent_segment_state(scope_id, segment);
+                            continuation.sync_persistent_segment_state(
+                                scope_id,
+                                named_bindings,
+                                state_store,
+                                writer_log,
+                            );
                         }
                     }
                     Frame::Program { .. }
@@ -322,7 +344,12 @@ impl Continuation {
         }
 
         if let Some(parent) = self.parent.as_mut() {
-            Arc::make_mut(parent).sync_persistent_segment_state(scope_id, segment);
+            Arc::make_mut(parent).sync_persistent_segment_state(
+                scope_id,
+                named_bindings,
+                state_store,
+                writer_log,
+            );
         }
     }
 

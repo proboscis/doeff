@@ -363,19 +363,40 @@ impl VM {
         self.current_segment.and_then(|id| self.segments.get(id))
     }
 
-    fn sync_frame_segment_state(frame: &mut Frame, live_segment: &Segment) {
+    fn sync_frame_segment_state(
+        frame: &mut Frame,
+        scope_id: ScopeId,
+        named_bindings: &HashMap<HashedPyKey, Value>,
+        state_store: &HashMap<String, Value>,
+        writer_log: &[Value],
+    ) {
         match frame {
             Frame::HandlerDispatch { continuation, .. } => {
-                continuation.sync_persistent_segment_state(live_segment.scope_id, live_segment);
+                continuation.sync_persistent_segment_state(
+                    scope_id,
+                    named_bindings,
+                    state_store,
+                    writer_log,
+                );
             }
             Frame::DispatchOrigin { k_origin, .. } => {
-                k_origin.sync_persistent_segment_state(live_segment.scope_id, live_segment);
+                k_origin.sync_persistent_segment_state(
+                    scope_id,
+                    named_bindings,
+                    state_store,
+                    writer_log,
+                );
             }
             Frame::EvalReturn(eval_return) => {
                 if let EvalReturnContinuation::EvalInScopeReturn { continuation } =
                     eval_return.as_mut()
                 {
-                    continuation.sync_persistent_segment_state(live_segment.scope_id, live_segment);
+                    continuation.sync_persistent_segment_state(
+                        scope_id,
+                        named_bindings,
+                        state_store,
+                        writer_log,
+                    );
                 }
             }
             Frame::Program { .. }
@@ -389,9 +410,13 @@ impl VM {
     }
 
     fn sync_segment_state_into_live_continuations(&mut self, seg_id: SegmentId) {
-        let Some(live_segment) = self.segments.get(seg_id).cloned() else {
+        let Some(live_segment) = self.segments.get(seg_id) else {
             return;
         };
+        let scope_id = live_segment.scope_id;
+        let named_bindings = live_segment.named_bindings.clone();
+        let state_store = live_segment.state_store.clone();
+        let writer_log = live_segment.writer_log.clone();
 
         for idx in 0..self.segments.capacity() {
             let seg_id_cursor = SegmentId::from_index(idx);
@@ -399,12 +424,23 @@ impl VM {
                 continue;
             };
             for frame in &mut segment.frames {
-                Self::sync_frame_segment_state(frame, &live_segment);
+                Self::sync_frame_segment_state(
+                    frame,
+                    scope_id,
+                    &named_bindings,
+                    &state_store,
+                    &writer_log,
+                );
             }
         }
 
         for continuation in self.continuation_registry.values_mut() {
-            continuation.sync_persistent_segment_state(live_segment.scope_id, &live_segment);
+            continuation.sync_persistent_segment_state(
+                scope_id,
+                &named_bindings,
+                &state_store,
+                &writer_log,
+            );
         }
     }
 
@@ -526,10 +562,19 @@ impl VM {
         key: String,
         value: Value,
     ) -> bool {
+        let sync_rust_store = self.segments.get(prompt_seg_id).is_some_and(|seg| {
+            matches!(
+                &seg.kind,
+                SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "StateHandler"
+            )
+        });
         let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
             return false;
         };
-        seg.state_store.insert(key, value);
+        seg.state_store.insert(key.clone(), value.clone());
+        if sync_rust_store {
+            self.rust_store.entries.insert(key, value);
+        }
         self.sync_segment_state_into_live_continuations(prompt_seg_id);
         true
     }

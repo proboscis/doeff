@@ -355,8 +355,14 @@ impl VM {
             .record_frame_entered(metadata, handler_kind);
     }
 
-    pub(super) fn emit_frame_exited(&mut self, _metadata: &CallMetadata) {
-        self.trace_state.record_frame_exited();
+    pub(super) fn emit_frame_exited(&mut self, metadata: &CallMetadata) {
+        self.trace_state
+            .record_frame_exited(metadata.frame_id as crate::capture::FrameId);
+    }
+
+    pub(super) fn emit_frame_exited_due_to_error(&mut self, metadata: &CallMetadata) {
+        self.trace_state
+            .record_frame_exited_due_to_error(metadata.frame_id as crate::capture::FrameId);
     }
 
     pub(super) fn emit_handler_threw_for_dispatch(

@@ -1,6 +1,10 @@
 use super::*;
 
 impl VM {
+    fn handler_dispatch_is_live(&self, continuation: &Continuation) -> bool {
+        !self.is_one_shot_consumed(continuation.cont_id)
+    }
+
     fn dispatch_origins_from_segment(
         &self,
         start_segment: Option<SegmentId>,
@@ -202,8 +206,10 @@ impl VM {
                     frame,
                     Frame::HandlerDispatch {
                         dispatch_id: frame_dispatch_id,
+                        continuation,
                         ..
                     } if *frame_dispatch_id == dispatch_id
+                        && self.handler_dispatch_is_live(continuation)
                 )
             }) {
                 return Some(seg.marker);
@@ -223,7 +229,7 @@ impl VM {
                 dispatch_id,
                 continuation,
                 prompt_seg_id,
-            } => Some((
+            } if self.handler_dispatch_is_live(continuation) => Some((
                 seg_id,
                 *dispatch_id,
                 continuation.clone(),
@@ -234,6 +240,7 @@ impl VM {
             | Frame::InterceptorApply(_)
             | Frame::InterceptorEval(_)
             | Frame::DispatchOrigin { .. }
+            | Frame::HandlerDispatch { .. }
             | Frame::EvalReturn(_)
             | Frame::MapReturn { .. }
             | Frame::FlatMapBindResult
@@ -253,7 +260,7 @@ impl VM {
                     dispatch_id,
                     continuation,
                     prompt_seg_id,
-                } => Some((
+                } if self.handler_dispatch_is_live(continuation) => Some((
                     seg_id,
                     *dispatch_id,
                     continuation.clone(),
@@ -264,6 +271,7 @@ impl VM {
                 | Frame::InterceptorApply(_)
                 | Frame::InterceptorEval(_)
                 | Frame::DispatchOrigin { .. }
+                | Frame::HandlerDispatch { .. }
                 | Frame::EvalReturn(_)
                 | Frame::MapReturn { .. }
                 | Frame::FlatMapBindResult
@@ -289,7 +297,9 @@ impl VM {
                     dispatch_id: frame_dispatch_id,
                     continuation,
                     ..
-                } if *frame_dispatch_id == dispatch_id => {
+                } if *frame_dispatch_id == dispatch_id
+                    && self.handler_dispatch_is_live(continuation) =>
+                {
                     Some((seg_id, continuation.clone(), seg.marker))
                 }
                 Frame::Program { .. }
@@ -524,9 +534,7 @@ impl VM {
                 entry.marker,
                 entry.handler.clone(),
             );
-            if entry.handler.handler_name() == "StateHandler" {
-                prompt_seg.state_store = self.rust_store.entries.clone();
-            }
+            self.initialize_builtin_prompt_segment(&entry.handler, &mut prompt_seg);
             self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             self.track_run_handler(&entry.handler);
@@ -537,6 +545,16 @@ impl VM {
             outside_seg_id = Some(body_seg_id);
         }
         outside_seg_id
+    }
+
+    fn initialize_builtin_prompt_segment(
+        &self,
+        handler: &KleisliRef,
+        prompt_seg: &mut Segment,
+    ) {
+        if handler.handler_name() == "StateHandler" {
+            prompt_seg.state_store = self.rust_store.entries.clone();
+        }
     }
 
     /// Copy interceptor guard state from a source segment to a child segment.
@@ -1349,6 +1367,9 @@ impl VM {
             .clone();
         exec_seg.caller = caller;
         exec_seg.dispatch_id = dispatch_id;
+        if let Some(parent) = k.parent().cloned() {
+            exec_seg.throw_parent = Some(parent);
+        }
         // The original exception lives on the active DispatchOrigin.k_origin.
         // Reinstalling it onto resumed continuation segments makes unrelated
         // nested Perform() calls look like fresh GetExecutionContext dispatches.
@@ -1387,7 +1408,7 @@ impl VM {
             return StepEvent::Error(err);
         }
 
-        if let Some((_dispatch_id, original_exception, terminal)) = error_dispatch {
+        if let Some((dispatch_id, original_exception, terminal)) = error_dispatch {
             if terminal {
                 let active_chain = self
                     .assemble_active_chain(Some(&original_exception))
@@ -1449,26 +1470,28 @@ impl VM {
                 k.cont_id.raw()
             ));
         }
+        let handler_identity = k
+            .dispatch_id()
+            .and_then(|dispatch_id| self.current_handler_identity_for_dispatch(dispatch_id));
         self.mark_one_shot_consumed(k.cont_id);
         let mut thrown_by_context_conversion_handler = self
             .current_active_handler_dispatch_id()
             .is_some_and(|dispatch_id| {
                 self.dispatch_supports_error_context_conversion(dispatch_id)
             });
+        let mut throws_into_dispatch_origin = false;
         if let Some(dispatch_id) = k.dispatch_id() {
-            let throws_into_dispatch_origin = self
+            throws_into_dispatch_origin = self
                 .dispatch_origin_for_dispatch_id(dispatch_id)
                 .is_some_and(|origin| origin.k_origin.cont_id == k.cont_id);
             thrown_by_context_conversion_handler =
                 self.dispatch_supports_error_context_conversion(dispatch_id);
             if !throws_into_dispatch_origin {
-                if let Some((handler_index, handler_name)) =
-                    self.current_handler_identity_for_dispatch(dispatch_id)
-                {
+                if let Some((handler_index, handler_name)) = handler_identity.as_ref() {
                     self.trace_state.record_handler_completed(
                         dispatch_id,
-                        &handler_name,
-                        handler_index,
+                        handler_name,
+                        *handler_index,
                         &HandlerAction::Threw {
                             exception_repr: Self::exception_repr(&exception),
                         },
@@ -1476,20 +1499,33 @@ impl VM {
                 }
             }
         }
-
         let caller = k.captured_caller();
         let dispatch_id = self.continuation_segment_dispatch_id(&k);
+        let throws_during_execution_context_dispatch = dispatch_id.is_some_and(|dispatch_id| {
+            self.effect_for_dispatch(dispatch_id)
+                .is_some_and(|effect| Self::is_execution_context_effect(&effect))
+        });
+        let original_exception =
+            dispatch_id.and_then(|dispatch_id| self.original_exception_for_dispatch(dispatch_id));
         self.enter_continuation_segment_with_dispatch(&k, caller, dispatch_id);
-        self.current_seg_mut().mode =
-            if terminal_dispatch_completion && thrown_by_context_conversion_handler {
+        self.current_seg_mut().mode = if terminal_dispatch_completion {
+            if throws_into_dispatch_origin {
+                Mode::Throw(exception)
+            } else if throws_during_execution_context_dispatch {
+                if let Some(original) = original_exception {
+                    TraceState::set_exception_cause(&exception, &original);
+                }
+                Mode::Throw(exception)
+            } else {
                 self.mode_after_generror(
                     GenErrorSite::RustProgramContinuation,
                     exception,
                     thrown_by_context_conversion_handler,
                 )
-            } else {
-                Mode::Throw(exception)
-            };
+            }
+        } else {
+            Mode::Throw(exception)
+        };
         StepEvent::Continue
     }
 
@@ -1528,6 +1564,7 @@ impl VM {
             prompt_handler.clone(),
             types,
         );
+        self.initialize_builtin_prompt_segment(&prompt_handler, &mut prompt_seg);
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
         let prompt_seg_id = self.alloc_segment(prompt_seg);
         self.track_run_handler(&prompt_handler);
@@ -1948,6 +1985,11 @@ impl VM {
         let mut outer_clone = caller_anchor;
         for source_seg_id in source_ids.into_iter().rev() {
             let source_seg = self.segments.get(source_seg_id)?.clone();
+            let source_vars = self
+                .scope_variables
+                .get(&source_seg.scope_id)
+                .cloned()
+                .unwrap_or_else(|| source_seg.variables.clone());
             let scope_id = ScopeId::fresh();
             let cloned = Segment {
                 scope_id,
@@ -1955,7 +1997,7 @@ impl VM {
                 frames: Vec::new(),
                 caller: outer_clone,
                 scope_parent: outer_clone,
-                variables: source_seg.variables.clone(),
+                variables: source_vars,
                 named_bindings: source_seg.named_bindings.clone(),
                 state_store: source_seg.state_store.clone(),
                 writer_log: source_seg.writer_log.clone(),
@@ -1964,6 +2006,7 @@ impl VM {
                 mode: Mode::Deliver(Value::Unit),
                 pending_python: None,
                 pending_error_context: None,
+                throw_parent: None,
                 interceptor_eval_depth: source_seg.interceptor_eval_depth,
                 interceptor_skip_stack: source_seg.interceptor_skip_stack.clone(),
             };

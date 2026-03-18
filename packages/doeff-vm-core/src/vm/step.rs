@@ -1,6 +1,10 @@
 use super::*;
 
 impl VM {
+    fn missing_state_key_exception(key: &str) -> PyException {
+        PyException::from(pyo3::exceptions::PyKeyError::new_err(key.to_string()))
+    }
+
     /// Set mode to Throw with a RuntimeError and return Continue.
     pub(super) fn throw_runtime_error(&mut self, message: &str) -> StepEvent {
         if self.current_segment.is_none() {
@@ -169,6 +173,8 @@ impl VM {
 
             if !segment.has_frames() {
                 let caller = segment.caller;
+                let scope_parent = segment.scope_parent;
+                let throw_parent = segment.throw_parent.clone();
                 let mode =
                     std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit));
                 match mode {
@@ -178,8 +184,17 @@ impl VM {
                         return StepEvent::Continue;
                     }
                     Mode::Throw(exc) => {
-                        if let Some(caller_id) = caller {
-                            self.segments.reparent_children(seg_id, Some(caller_id));
+                        if let Some(parent) =
+                            throw_parent.filter(|parent| !self.is_one_shot_consumed(parent.cont_id))
+                        {
+                            self.segments
+                                .reparent_children(seg_id, caller, scope_parent);
+                            self.segments.free(seg_id);
+                            self.current_segment = caller;
+                            return self.handle_transfer_throw_non_terminal(parent, exc);
+                        } else if let Some(caller_id) = caller {
+                            self.segments
+                                .reparent_children(seg_id, Some(caller_id), scope_parent);
                             self.current_segment = Some(caller_id);
                             self.current_seg_mut().mode = Mode::Throw(exc);
                             self.segments.free(seg_id);
@@ -188,7 +203,8 @@ impl VM {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_traceback_entries(&exc);
                             let active_chain = self.assemble_active_chain(Some(&exc));
-                            self.segments.reparent_children(seg_id, None);
+                            self.segments
+                                .reparent_children(seg_id, None, scope_parent);
                             self.segments.free(seg_id);
                             self.current_segment = None;
                             return StepEvent::Error(VMError::uncaught_exception(
@@ -471,11 +487,19 @@ impl VM {
                     self.emit_resume_event(dispatch_id, &continuation, false);
                 }
 
+                if self.is_one_shot_consumed(continuation.cont_id) {
+                    if let Some(seg) = self.current_segment_mut() {
+                        seg.caller = continuation.captured_caller();
+                    }
+                }
                 self.current_seg_mut().mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
                 if self.is_one_shot_consumed(continuation.cont_id) {
+                    if let Some(seg) = self.current_segment_mut() {
+                        seg.caller = continuation.captured_caller();
+                    }
                     self.current_seg_mut().mode = Mode::Throw(exc);
                 } else {
                     self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::TransferThrow {
@@ -809,16 +833,25 @@ impl VM {
     ) -> StepEvent {
         match step {
             IRStreamStep::Yield(yielded) => {
+                if incoming_throw.is_some() {
+                    self.trace_state.clear_preserved_error_frames();
+                }
                 self.propagate_auto_unwrap_program_context_to_yielded(metadata.as_ref(), &yielded);
                 self.handle_stream_yield(yielded, stream, metadata, handler_kind)
             }
             IRStreamStep::Return(value) => {
+                if incoming_throw.is_some() {
+                    self.trace_state.clear_preserved_error_frames();
+                }
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
                 self.handle_handler_return(value)
             }
             IRStreamStep::Throw(exc) => {
+                if let Some(ref m) = metadata {
+                    self.emit_frame_exited_due_to_error(m);
+                }
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
@@ -989,6 +1022,8 @@ impl VM {
                     ))
                 }
             }
+        } else if let Some(ref m) = metadata {
+            self.emit_frame_exited(m);
         }
         Mode::HandleYield(yielded)
     }
@@ -1015,7 +1050,7 @@ impl VM {
                         chain.push(link);
                     }
                 }
-                cursor = seg.caller;
+                cursor = seg.scope_parent;
             }
         }
 
@@ -1942,9 +1977,8 @@ impl VM {
             ));
         };
         let Some(value) = self.read_handler_state_at(prompt_seg_id, &key, missing_is_none) else {
-            return StepEvent::Error(VMError::internal(format!(
-                "state key not found: {key}"
-            )));
+            self.set_contextual_throw(Self::missing_state_key_exception(&key));
+            return StepEvent::Continue;
         };
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
@@ -2152,6 +2186,7 @@ impl VM {
         };
 
         let caller = self.segments.get(seg_id).and_then(|s| s.caller);
+        let scope_parent = self.segments.get(seg_id).and_then(|s| s.scope_parent);
 
         match caller {
             Some(caller_id) => {
@@ -2160,14 +2195,15 @@ impl VM {
                         "caller segment not found in step_return",
                     ));
                 }
-                self.segments.reparent_children(seg_id, Some(caller_id));
+                self.segments
+                    .reparent_children(seg_id, Some(caller_id), scope_parent);
                 self.current_segment = Some(caller_id);
                 self.segments.free(seg_id);
                 self.current_seg_mut().mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             None => {
-                self.segments.reparent_children(seg_id, None);
+                self.segments.reparent_children(seg_id, None, scope_parent);
                 self.completed_segment = Some(seg_id);
                 self.segments.free(seg_id);
                 self.current_segment = None;
@@ -2314,6 +2350,9 @@ impl VM {
                 }
             }
             PyCallOutcome::GenError(exception) => {
+                if let Some(ref m) = metadata {
+                    self.emit_frame_exited(m);
+                }
                 self.receive_expand_gen_error(handler_return, exception);
             }
             PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
@@ -2528,6 +2567,9 @@ impl VM {
     ) {
         match outcome {
             PyCallOutcome::GenYield(yielded) => {
+                if incoming_throw.is_some() {
+                    self.trace_state.clear_preserved_error_frames();
+                }
                 if self.current_segment.is_none() {
                     return;
                 }
@@ -2535,6 +2577,9 @@ impl VM {
                 let _ = self.handle_stream_yield(yielded, stream, metadata, handler_kind);
             }
             PyCallOutcome::GenReturn(value) => {
+                if incoming_throw.is_some() {
+                    self.trace_state.clear_preserved_error_frames();
+                }
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
@@ -2547,6 +2592,9 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Deliver(value);
             }
             PyCallOutcome::GenError(exception) => {
+                if let Some(ref m) = metadata {
+                    self.emit_frame_exited_due_to_error(m);
+                }
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
@@ -2579,6 +2627,15 @@ impl VM {
                     {
                         site = GenErrorSite::StepUserGeneratorConverted;
                     } else if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
+                        if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
+                            TraceState::set_exception_cause(&exception, &original);
+                        }
+                        self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                    } else if handler_kind.is_some()
+                        && self
+                            .current_segment_dispatch_id_any()
+                            .is_some_and(|current_dispatch_id| current_dispatch_id == dispatch_id)
+                    {
                         if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
                             TraceState::set_exception_cause(&exception, &original);
                         }
