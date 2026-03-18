@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-import sys
+from typing import Any
 
 import doeff_vm
 
 from doeff import (
     Ask,
+    CacheExists,
     CacheGet,
     CachePut,
     Effect,
@@ -22,9 +24,10 @@ from doeff import (
     run,
 )
 from doeff.cache import CacheCallSite
+from doeff.effects.cache import CacheExistsEffect, CacheGetEffect, CachePutEffect
 from doeff.handlers import cache_handler, in_memory_cache_handler, sqlite_cache_handler
 from doeff.handlers.cache_handlers import content_address, make_memo_rewriter, memo_rewriters
-from doeff.storage import InMemoryStorage
+from doeff.storage import InMemoryStorage, SQLiteStorage
 from doeff.traceback import attach_doeff_traceback
 
 
@@ -77,6 +80,11 @@ def _cache_get_program(key: object) -> EffectGenerator[object]:
 
 
 @do
+def _cache_exists_program(key: object) -> EffectGenerator[bool]:
+    return (yield CacheExists(key))
+
+
+@do
 def _cache_put_program(key: object, value: object) -> EffectGenerator[object | None]:
     result = yield CachePut(key, value)
     return result
@@ -98,6 +106,19 @@ def test_cache_handler_get_miss() -> None:
     assert result.is_err()
     assert isinstance(result.error, KeyError)
     assert result.error.args == ("missing",)
+
+
+def test_cache_handler_exists() -> None:
+    storage = InMemoryStorage()
+    storage.put("answer", 42)
+
+    hit = _run_with_handlers(_cache_exists_program("answer"), cache_handler(storage))
+    miss = _run_with_handlers(_cache_exists_program("missing"), cache_handler(storage))
+
+    assert hit.is_ok(), hit.error
+    assert miss.is_ok(), miss.error
+    assert hit.value is True
+    assert miss.value is False
 
 
 def test_cache_handler_put() -> None:
@@ -128,6 +149,7 @@ def test_cache_handler_put_preserves_vm_result_values_without_vendor_coercion() 
 
     assert result.is_ok(), result.error
     stored = storage.get("vm-ok")
+    assert stored is not None
     assert type(stored) is type(value)
     assert stored.value == "payload"
 
@@ -142,6 +164,51 @@ def test_cache_handler_put_raises_cache_boundary_error_when_storage_rejects_valu
     assert isinstance(result.error, RuntimeError)
     assert "bad-key" in str(result.error)
     assert "persist" in str(result.error)
+
+
+def test_sqlite_storage_uses_write_optimized_pragmas(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "cache.sqlite3")
+    conn = storage._get_conn()
+
+    journal_mode = conn.execute("PRAGMA journal_mode").fetchone()
+    synchronous = conn.execute("PRAGMA synchronous").fetchone()
+    temp_store = conn.execute("PRAGMA temp_store").fetchone()
+
+    assert journal_mode == ("wal",)
+    assert synchronous == (1,)
+    assert temp_store == (2,)
+
+
+def test_sqlite_storage_falls_back_to_full_sync_when_wal_is_unavailable(monkeypatch) -> None:
+    class _FakeCursor:
+        def __init__(self, row: tuple[object, ...] | None = None) -> None:
+            self._row = row
+
+        def fetchone(self) -> tuple[object, ...] | None:
+            return self._row
+
+    class _FakeConn:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+
+        def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
+            self.statements.append(sql)
+            if sql == "PRAGMA journal_mode=WAL":
+                return _FakeCursor(("delete",))
+            return _FakeCursor()
+
+        def commit(self) -> None:
+            return None
+
+    fake_conn = _FakeConn()
+    monkeypatch.setattr("doeff.storage.sqlite.sqlite3.connect", lambda _: fake_conn)
+
+    storage = SQLiteStorage("cache.sqlite3")
+    conn = storage._get_conn()
+
+    assert conn is fake_conn
+    assert "PRAGMA synchronous=FULL" in fake_conn.statements
+    assert "PRAGMA synchronous=NORMAL" not in fake_conn.statements
 
 
 def test_cache_decorator_with_handler(tmp_path: Path) -> None:
@@ -189,6 +256,115 @@ def test_cache_decorator_miss_then_hit() -> None:
     assert result.is_ok(), result.error
     assert result.value == (21, 21)
     assert calls["count"] == 1
+
+
+def test_cache_decorator_uses_exists_fast_path_on_miss() -> None:
+    calls = {"count": 0}
+    storage: dict[object, object] = {}
+    seen: list[str] = []
+
+    @do
+    def handler(effect: Effect, k: object):
+        if isinstance(effect, CacheExistsEffect):
+            seen.append("exists")
+            return (yield Resume(k, effect.key in storage))
+        if isinstance(effect, CacheGetEffect):
+            seen.append("get")
+            if effect.key not in storage:
+                raise KeyError(effect.key)
+            return (yield Resume(k, storage[effect.key]))
+        if isinstance(effect, CachePutEffect):
+            seen.append("put")
+            storage[effect.key] = effect.value
+            return (yield Resume(k, None))
+        yield Pass()
+
+    @cache()
+    @do
+    def expensive(value: int) -> EffectGenerator[int]:
+        if False:
+            yield CacheGet("__typecheck__")
+        calls["count"] += 1
+        return value * 3
+
+    @do
+    def workflow() -> EffectGenerator[tuple[int, int]]:
+        first = yield expensive(7)
+        second = yield expensive(7)
+        return first, second
+
+    result = _run_with_handlers(workflow(), handler)
+
+    assert result.is_ok(), result.error
+    assert result.value == (21, 21)
+    assert calls["count"] == 1
+    assert seen == ["exists", "put", "exists", "get"]
+
+
+def test_cache_decorator_recomputes_when_cache_exists_races_with_cache_get() -> None:
+    calls = {"count": 0}
+    seen: list[str] = []
+    storage: dict[object, object] = {}
+    race_triggered = {"done": False}
+
+    @do
+    def handler(effect: Effect, k: object):
+        if isinstance(effect, CacheExistsEffect):
+            seen.append("exists")
+            return (yield Resume(k, True))
+        if isinstance(effect, CacheGetEffect):
+            seen.append("get")
+            if not race_triggered["done"]:
+                race_triggered["done"] = True
+                raise KeyError(effect.key)
+            return (yield Resume(k, storage[effect.key]))
+        if isinstance(effect, CachePutEffect):
+            seen.append("put")
+            storage[effect.key] = effect.value
+            return (yield Resume(k, None))
+        yield Pass()
+
+    @cache()
+    @do
+    def expensive(value: int) -> EffectGenerator[int]:
+        if False:
+            yield CacheGet("__typecheck__")
+        calls["count"] += 1
+        return value * 3
+
+    result = _run_with_handlers(expensive(7), handler)
+
+    assert result.is_ok(), result.error
+    assert result.value == 21
+    assert calls["count"] == 1
+    assert seen == ["exists", "get", "put"]
+    assert len(storage) == 1
+
+
+def test_cache_decorator_rejects_unwrapped_cache_payloads() -> None:
+    @do
+    def handler(effect: Effect, k: object):
+        if isinstance(effect, CacheExistsEffect):
+            return (yield Resume(k, True))
+        if isinstance(effect, CacheGetEffect):
+            return (yield Resume(k, 21))
+        if isinstance(effect, CachePutEffect):
+            raise AssertionError("unexpected cache put on forced hit")
+        yield Pass()
+
+    @cache()
+    @do
+    def expensive(value: int) -> EffectGenerator[int]:
+        if False:
+            yield CacheGet("__typecheck__")
+        return value * 3
+
+    result = _run_with_handlers(expensive(7), handler)
+
+    assert result.is_err()
+    assert isinstance(result.error, TypeError)
+    assert "_CachedSuccess" in str(result.error)
+    assert "int" in str(result.error)
 
 
 def test_cache_call_site_formats_rust_and_unknown_sentinel_locations() -> None:
