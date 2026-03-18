@@ -176,6 +176,12 @@ def _call_site_from_error(error: BaseException) -> CacheCallSite | None:
 
 
 def _unwrap_cached_payload(value: Any) -> Any:
+    import doeff_vm
+
+    if isinstance(value, (doeff_vm.Ok, doeff_vm.Err)):
+        if isinstance(value, doeff_vm.Err):
+            raise value.error
+        return value.value
     return value
 
 
