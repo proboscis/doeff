@@ -1580,30 +1580,26 @@ impl VM {
         mode: InterceptMode,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        let interceptor_for_scope = interceptor.clone();
-        let body_seg = match Self::prepare_with_intercept(
-            interceptor,
-            types.clone(),
-            mode,
-            metadata.clone(),
-            self.current_segment,
-            &self.segments,
-        ) {
-            Ok(segment) => segment,
-            Err(err) => return StepEvent::Error(err),
-        };
-        let mut body_seg = body_seg;
         let Some(parent_scope_id) = self.current_scope_id() else {
             return StepEvent::Error(VMError::internal("no current scope for WithIntercept"));
         };
-        body_seg.scope_id = self.alloc_interceptor_scope(
+        let interceptor_scope_id = self.alloc_interceptor_scope(
             parent_scope_id,
-            body_seg.marker,
-            interceptor_for_scope,
+            Marker::fresh(),
+            interceptor,
             types,
             mode,
             metadata,
         );
+        let body_seg = match Self::prepare_with_intercept(
+            interceptor_scope_id,
+            self.current_segment,
+            &self.segments,
+            &self.scopes,
+        ) {
+            Ok(segment) => segment,
+            Err(err) => return StepEvent::Error(err),
+        };
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
@@ -1611,22 +1607,38 @@ impl VM {
     }
 
     fn prepare_with_intercept(
-        interceptor: KleisliRef,
-        types: Option<Vec<PyShared>>,
-        mode: InterceptMode,
-        metadata: Option<CallMetadata>,
+        scope_id: ScopeId,
         current_segment: Option<SegmentId>,
         segments: &SegmentArena,
+        scopes: &Arc<Mutex<ScopeRuntime>>,
     ) -> Result<Segment, VMError> {
-        let interceptor_marker = Marker::fresh();
         let Some(outside_seg_id) = current_segment else {
             return Err(VMError::internal("no current segment for WithIntercept"));
         };
         let outside_seg = segments.get(outside_seg_id).ok_or_else(|| {
             VMError::invalid_segment("current segment not found for WithIntercept")
         })?;
+        let boundary = scopes
+            .lock()
+            .expect("scope lock poisoned")
+            .get(scope_id)
+            .and_then(|scope| scope.boundary.clone())
+            .ok_or_else(|| VMError::internal("interceptor scope missing boundary"))?;
+        let ScopeBoundary::Interceptor {
+            marker,
+            interceptor,
+            types,
+            mode,
+            metadata,
+        } = boundary
+        else {
+            return Err(VMError::internal(
+                "interceptor scope boundary had unexpected kind",
+            ));
+        };
 
-        let mut body_seg = Segment::new(interceptor_marker, Some(outside_seg_id));
+        let mut body_seg = Segment::new(marker, Some(outside_seg_id));
+        body_seg.scope_id = scope_id;
         body_seg.kind = SegmentKind::InterceptorBoundary {
             interceptor,
             types,
@@ -2153,6 +2165,10 @@ impl VM {
                     continuation: return_to,
                 },
             )));
+            // Scope-based continuations start a fresh program in the captured lexical scope
+            // rather than resuming a suspended yield site. There is no leaf frame that can
+            // receive the resume payload yet, so ResumeContinuation's value is intentionally
+            // ignored for this continuation shape.
             let _ = value;
             self.current_segment = Some(leaf_seg_id);
             self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr {

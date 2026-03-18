@@ -100,9 +100,11 @@ impl ScopeRuntime {
     }
 
     pub fn insert_binding(&mut self, scope_id: ScopeId, key: HashedPyKey, value: Value) {
-        if let Some(scope) = self.scopes.get_mut(scope_id.index()) {
-            scope.bindings.insert(key, value);
-        }
+        let scope = self
+            .scopes
+            .get_mut(scope_id.index())
+            .expect("insert_binding: invalid scope_id");
+        scope.bindings.insert(key, value);
     }
 
     pub fn lookup_binding(&self, scope_id: ScopeId, key: &HashedPyKey) -> Option<Value> {
@@ -118,11 +120,13 @@ impl ScopeRuntime {
     }
 
     pub fn alloc_var(&mut self, scope_id: ScopeId, initial_value: Value) -> VarId {
+        let scope = self
+            .scopes
+            .get_mut(scope_id.index())
+            .expect("alloc_var: invalid scope_id");
         let var_id = VarId::fresh();
         self.var_origins.insert(var_id, scope_id);
-        if let Some(scope) = self.scopes.get_mut(scope_id.index()) {
-            scope.vars.insert(var_id, initial_value);
-        }
+        scope.vars.insert(var_id, initial_value);
         var_id
     }
 
@@ -191,8 +195,9 @@ impl ScopeRuntime {
 
     pub fn collect_root_bindings(&self) -> HashMap<HashedPyKey, Value> {
         self.get(ScopeId::root())
-            .map(|scope| scope.bindings.clone())
-            .unwrap_or_default()
+            .expect("root scope must always exist")
+            .bindings
+            .clone()
     }
 }
 

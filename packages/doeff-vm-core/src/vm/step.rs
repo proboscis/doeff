@@ -237,9 +237,9 @@ impl VM {
                     Mode::Deliver(_) | Mode::HandleYield(_) | Mode::Return(_) => None,
                 };
                 let step = {
-                    let Some(_seg) = self.segments.get_mut(seg_id) else {
+                    if self.segments.get(seg_id).is_none() {
                         return StepEvent::Error(VMError::invalid_segment("segment not found"));
-                    };
+                    }
                     let Some(mut scope) = self.scope_store_for_segment(seg_id) else {
                         return StepEvent::Error(VMError::invalid_segment(
                             "scope segment not found",
