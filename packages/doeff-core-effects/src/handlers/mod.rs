@@ -147,15 +147,6 @@ fn missing_env_key_error(key: &HashedPyKey) -> PyException {
     })
 }
 
-fn missing_state_key_error(key: &str) -> PyException {
-    Python::attach(|py| {
-        let err = pyo3::exceptions::PyKeyError::new_err(key.to_string());
-        let exc_value = err.value(py).clone().into_any().unbind();
-        let exc_type = exc_value.bind(py).get_type().into_any().unbind();
-        PyException::new(exc_type, exc_value, None)
-    })
-}
-
 fn pyerr_to_exception(py: Python<'_>, err: PyErr) -> PyException {
     let exc_type = err.get_type(py).into_any().unbind();
     let exc_value = err.value(py).clone().into_any().unbind();
@@ -614,55 +605,19 @@ impl IRStreamFactory for StateHandlerFactory {
 
 struct StateHandlerProgram {
     phase: StatePhase,
-}
-
-// Regression anchor for source-level invariant tests after the phase-machine refactor.
-#[cfg(test)]
-struct StateHandlerModifyInvariantAnchors {
     pending_key: Option<String>,
     pending_k: Option<Continuation>,
     pending_old_value: Option<Value>,
 }
 
-#[cfg(test)]
-impl StateHandlerModifyInvariantAnchors {
-    fn take_all(&mut self) {
-        let _ = self
-            .pending_key
-            .take()
-            .expect("StateHandler Modify invariant violated: pending key missing during resume");
-        let _ = self.pending_k.take().expect(
-            "StateHandler Modify invariant violated: pending continuation missing during resume",
-        );
-        let _ = self.pending_old_value.take().expect(
-            "StateHandler Modify invariant violated: pending old_value missing during resume",
-        );
-    }
-}
-
 #[derive(Debug)]
 enum StatePhase {
     Idle,
-    AwaitGet {
-        continuation: Continuation,
-    },
-    AwaitPut {
-        continuation: Continuation,
-    },
-    AwaitModifyCall {
-        key: String,
-        modifier: PyShared,
-        continuation: Continuation,
-    },
-    AwaitModifyWrite {
-        key: String,
-        continuation: Continuation,
-        old_value: Value,
-    },
-    AwaitModifyReturn {
-        continuation: Continuation,
-        old_value: Value,
-    },
+    AwaitGet { continuation: Continuation },
+    AwaitPut { continuation: Continuation },
+    AwaitModifyCall { modifier: PyShared },
+    AwaitModifyWrite,
+    AwaitModifyReturn,
 }
 
 impl std::fmt::Debug for StateHandlerProgram {
@@ -675,7 +630,34 @@ impl StateHandlerProgram {
     fn new() -> Self {
         StateHandlerProgram {
             phase: StatePhase::Idle,
+            pending_key: None,
+            pending_k: None,
+            pending_old_value: None,
         }
+    }
+
+    fn take_pending_key(&mut self) -> String {
+        self.pending_key
+            .take()
+            .expect("StateHandler Modify invariant violated: pending key missing during resume")
+    }
+
+    fn take_pending_k(&mut self) -> Continuation {
+        self.pending_k.take().expect(
+            "StateHandler Modify invariant violated: pending continuation missing during resume",
+        )
+    }
+
+    fn take_pending_old_value(&mut self) -> Value {
+        self.pending_old_value.take().expect(
+            "StateHandler Modify invariant violated: pending old_value missing during resume",
+        )
+    }
+
+    fn clear_pending_modify_state(&mut self) {
+        self.pending_key = None;
+        self.pending_k = None;
+        self.pending_old_value = None;
     }
 
     fn current_phase_name(&self) -> &'static str {
@@ -714,11 +696,9 @@ impl IRStreamProgram for StateHandlerProgram {
                         IRStreamStep::Yield(DoCtrl::WriteHandlerState { key, value })
                     }
                     ParsedStateEffect::Modify { key, modifier } => {
-                        self.phase = StatePhase::AwaitModifyCall {
-                            key: key.clone(),
-                            modifier,
-                            continuation: k,
-                        };
+                        self.pending_key = Some(key.clone());
+                        self.pending_k = Some(k);
+                        self.phase = StatePhase::AwaitModifyCall { modifier };
                         IRStreamStep::Yield(DoCtrl::ReadHandlerState {
                             key,
                             missing_is_none: true,
@@ -752,40 +732,36 @@ impl IRStreamProgram for StateHandlerProgram {
                 continuation,
                 value: Value::Unit,
             }),
-            StatePhase::AwaitModifyCall {
-                key,
-                modifier,
-                continuation,
-            } => {
-                self.phase = StatePhase::AwaitModifyWrite {
-                    key,
-                    continuation,
-                    old_value: value.clone(),
-                };
+            StatePhase::AwaitModifyCall { modifier } => {
+                let key = self.take_pending_key();
+                let continuation = self.take_pending_k();
+                self.pending_key = Some(key);
+                self.pending_k = Some(continuation);
+                self.pending_old_value = Some(value.clone());
+                self.phase = StatePhase::AwaitModifyWrite;
                 IRStreamStep::NeedsPython(PythonCall::CallFunc {
                     func: modifier,
                     args: vec![value],
                     kwargs: vec![],
                 })
             }
-            StatePhase::AwaitModifyWrite {
-                key,
-                continuation,
-                old_value,
-            } => {
-                self.phase = StatePhase::AwaitModifyReturn {
-                    continuation,
-                    old_value,
-                };
+            StatePhase::AwaitModifyWrite => {
+                let key = self.take_pending_key();
+                let continuation = self.take_pending_k();
+                let old_value = self.take_pending_old_value();
+                self.pending_k = Some(continuation);
+                self.pending_old_value = Some(old_value);
+                self.phase = StatePhase::AwaitModifyReturn;
                 IRStreamStep::Yield(DoCtrl::WriteHandlerState { key, value })
             }
-            StatePhase::AwaitModifyReturn {
-                continuation,
-                old_value,
-            } => IRStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value: old_value,
-            }),
+            StatePhase::AwaitModifyReturn => {
+                let continuation = self.take_pending_k();
+                let old_value = self.take_pending_old_value();
+                IRStreamStep::Yield(DoCtrl::Resume {
+                    continuation,
+                    value: old_value,
+                })
+            }
         }
     }
 
@@ -795,6 +771,7 @@ impl IRStreamProgram for StateHandlerProgram {
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
+        self.clear_pending_modify_state();
         IRStreamStep::Throw(exc)
     }
 }
@@ -1369,7 +1346,7 @@ impl IRStreamFactory for ReaderHandlerFactory {
     }
 
     fn create_program(&self) -> IRStreamProgramRef {
-        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram)))
+        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram::new())))
     }
 
     fn handler_name(&self) -> &'static str {
@@ -1378,10 +1355,19 @@ impl IRStreamFactory for ReaderHandlerFactory {
 }
 
 #[derive(Debug)]
-struct ReaderHandlerProgram;
+struct ReaderHandlerProgram {
+    pending_return: bool,
+}
 
 impl ReaderHandlerProgram {
+    fn new() -> Self {
+        Self {
+            pending_return: false,
+        }
+    }
+
     fn handle_ask(
+        &mut self,
         key: HashedPyKey,
         continuation: Continuation,
         scope: &mut ScopeStore,
@@ -1390,6 +1376,7 @@ impl ReaderHandlerProgram {
             return IRStreamStep::Throw(missing_env_key_error(&key));
         };
 
+        self.pending_return = true;
         IRStreamStep::Yield(DoCtrl::Resume {
             continuation,
             value,
@@ -1397,7 +1384,11 @@ impl ReaderHandlerProgram {
     }
 
     fn current_phase_name(&self) -> &'static str {
-        "AskApply"
+        if self.pending_return {
+            "AskApply"
+        } else {
+            "Idle"
+        }
     }
 }
 
@@ -1412,7 +1403,7 @@ impl IRStreamProgram for ReaderHandlerProgram {
     ) -> IRStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
-                Ok(Some(key)) => ReaderHandlerProgram::handle_ask(key, k, scope),
+                Ok(Some(key)) => self.handle_ask(key, k, scope),
                 Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
@@ -1424,13 +1415,13 @@ impl IRStreamProgram for ReaderHandlerProgram {
         IRStreamStep::Yield(DoCtrl::Pass { effect })
     }
 
-    fn resume(
-        &mut self,
-        value: Value,
-        _store: &mut RustStore,
-        _scope: &mut ScopeStore,
-    ) -> IRStreamStep {
-        IRStreamStep::Return(value)
+    fn resume(&mut self, value: Value, _: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+        if self.pending_return {
+            self.pending_return = false;
+            return IRStreamStep::Return(value);
+        }
+
+        unreachable!("ReaderHandler never yields mid-handling")
     }
 
     fn throw(
@@ -1506,15 +1497,19 @@ impl IRStreamFactory for WriterHandlerFactory {
 #[derive(Debug)]
 struct WriterHandlerProgram {
     pending_k: Option<Continuation>,
+    pending_return: bool,
 }
 
 impl WriterHandlerProgram {
     fn new() -> Self {
-        Self { pending_k: None }
+        Self {
+            pending_k: None,
+            pending_return: false,
+        }
     }
 
     fn current_phase_name(&self) -> &'static str {
-        if self.pending_k.is_some() {
+        if self.pending_k.is_some() || self.pending_return {
             "TellApply"
         } else {
             "Idle"
@@ -1535,6 +1530,7 @@ impl IRStreamProgram for WriterHandlerProgram {
             return match parse_writer_python_effect(&obj) {
                 Ok(Some(message)) => {
                     self.pending_k = Some(k);
+                    self.pending_return = false;
                     IRStreamStep::Yield(DoCtrl::AppendHandlerLog { message })
                 }
                 Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
@@ -1549,13 +1545,23 @@ impl IRStreamProgram for WriterHandlerProgram {
     }
 
     fn resume(&mut self, value: Value, _: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
-        if let Some(continuation) = self.pending_k.take() {
-            return IRStreamStep::Yield(DoCtrl::Resume {
-                continuation,
-                value: Value::Unit,
-            });
+        match self.pending_k.take() {
+            Some(continuation) => {
+                if !matches!(value, Value::Unit) {
+                    unreachable!("WriterHandler AppendHandlerLog must resume with Unit");
+                }
+                self.pending_return = true;
+                IRStreamStep::Yield(DoCtrl::Resume {
+                    continuation,
+                    value: Value::Unit,
+                })
+            }
+            None if self.pending_return => {
+                self.pending_return = false;
+                IRStreamStep::Return(value)
+            }
+            None => unreachable!("WriterHandler never yields mid-handling outside TellApply"),
         }
-        IRStreamStep::Return(value)
     }
 
     fn throw(
@@ -2034,7 +2040,8 @@ mod tests {
     fn test_reader_ast_stream_throw_sequence() {
         let mut store = RustStore::new();
         let mut scope = ScopeStore::default();
-        let mut program = ReaderHandlerProgram;
+        let mut program = ReaderHandlerProgram::new();
+        program.pending_return = true;
 
         let location = IRStream::debug_location(&program).expect("reader debug location");
         assert_eq!(location.function_name, "ReaderHandler");
@@ -2053,7 +2060,8 @@ mod tests {
     fn test_writer_ast_stream_throw_sequence() {
         let mut store = RustStore::new();
         let mut scope = ScopeStore::default();
-        let mut program = WriterHandlerProgram;
+        let mut program = WriterHandlerProgram::new();
+        program.pending_k = Some(make_test_continuation());
 
         let location = IRStream::debug_location(&program).expect("writer debug location");
         assert_eq!(location.function_name, "WriterHandler");
