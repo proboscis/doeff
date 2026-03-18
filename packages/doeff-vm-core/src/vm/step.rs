@@ -1424,7 +1424,13 @@ impl VM {
                 expr,
                 handlers,
                 handler_identities,
-            } => self.handle_yield_create_continuation(expr, handlers, handler_identities),
+                handler_base,
+            } => self.handle_yield_create_continuation(
+                expr,
+                handlers,
+                handler_identities,
+                handler_base,
+            ),
             DoCtrl::ResumeContinuation {
                 continuation,
                 value,
@@ -1559,9 +1565,10 @@ impl VM {
         expr: PyShared,
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
+        handler_base: ContinuationHandlerBase,
     ) -> StepEvent {
         let metadata = self.nearest_auto_unwrap_programlike_metadata();
-        self.handle_create_continuation(expr, handlers, handler_identities, metadata)
+        self.handle_create_continuation(expr, handlers, handler_identities, handler_base, metadata)
     }
 
     fn handle_yield_resume_continuation(

@@ -13,17 +13,18 @@ use pyo3::types::{PyDict, PyTuple};
 
 use crate::capture::{SpawnSite, TraceHop};
 use crate::continuation::Continuation;
+use crate::do_ctrl::ContinuationHandlerBase;
 use crate::doeff_generator::DoeffGeneratorFn;
 use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn, PyWait,
-    PyTaskCompleted, TaskCancelledError,
+    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn,
+    PyTaskCompleted, PyWait, TaskCancelledError,
 };
 use crate::error::VMError;
-use crate::handlers::AwaitHandlerFactory;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
+use crate::handlers::AwaitHandlerFactory;
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
@@ -2533,15 +2534,7 @@ impl SchedulerProgram {
     }
 
     fn maybe_prepend_sync_await_handler(&self, handlers: &mut Vec<KleisliRef>) {
-        let inject_sync_await = {
-            let state = self.state.lock().expect("Scheduler lock poisoned");
-            state.external_wait_mode == ExternalWaitMode::Blocking
-        };
-        if !inject_sync_await {
-            return;
-        }
-
-        if handlers.iter().any(|handler| handler.is_sync_await_shim()) {
+        if !self.needs_sync_await_handler(handlers.as_slice()) {
             return;
         }
 
@@ -2552,6 +2545,18 @@ impl SchedulerProgram {
                 "sync_await_handler".to_string(),
             )),
         );
+    }
+
+    fn needs_sync_await_handler(&self, handlers: &[KleisliRef]) -> bool {
+        let inject_sync_await = {
+            let state = self.state.lock().expect("Scheduler lock poisoned");
+            state.external_wait_mode == ExternalWaitMode::Blocking
+        };
+        if !inject_sync_await {
+            return false;
+        }
+
+        !handlers.iter().any(|handler| handler.is_sync_await_shim())
     }
 
     fn try_transfer_ready_owner(
@@ -3013,7 +3018,8 @@ impl SchedulerProgram {
                     if let Err(store_error) = state.save_task_store(running_task, store) {
                         return IRStreamStep::Throw(store_error);
                     }
-                    if let Err(done_error) = state.mark_task_done(running_task, Err(error.clone())) {
+                    if let Err(done_error) = state.mark_task_done(running_task, Err(error.clone()))
+                    {
                         return IRStreamStep::Throw(done_error);
                     }
                     let _ = state.register_gather_fail_fast(wait_request, error, running_task);
@@ -3356,6 +3362,7 @@ impl IRStreamProgram for SchedulerProgram {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities: vec![],
+                    handler_base: ContinuationHandlerBase::CurrentSegment,
                 })
             }
 
@@ -3390,6 +3397,9 @@ impl IRStreamProgram for SchedulerProgram {
                         ));
                     }
                 };
+                // GetHandlers returns the full visible handler stack. Capture that
+                // stack as-is, but mark the currently visible prompt chain as
+                // inherited so resume only reinstalls the missing suffix.
                 self.maybe_prepend_sync_await_handler(&mut handlers);
 
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
@@ -3404,6 +3414,7 @@ impl IRStreamProgram for SchedulerProgram {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities: vec![],
+                    handler_base: ContinuationHandlerBase::OutsideVisibleHandlerChain,
                 })
             }
 
@@ -3903,6 +3914,7 @@ mod tests {
                     expr: expr.clone(),
                     handlers: vec![],
                     handler_identities: vec![],
+                    handler_base: ContinuationHandlerBase::CurrentSegment,
                 }),
                 IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                     continuation: cont.clone(),
@@ -4104,10 +4116,16 @@ mod tests {
                 &mut store,
                 &mut _scope,
             );
-            assert!(matches!(
-                step,
-                IRStreamStep::Yield(DoCtrl::CreateContinuation { .. })
-            ));
+            match step {
+                IRStreamStep::Yield(DoCtrl::CreateContinuation {
+                    handler_base: ContinuationHandlerBase::OutsideVisibleHandlerChain,
+                    ..
+                }) => {}
+                other => panic!(
+                    "expected CreateContinuation with ambient handler base, got {:?}",
+                    other
+                ),
+            }
 
             let location = IRStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.phase.as_deref(), Some("SpawnAwaitContinuation"));

@@ -80,6 +80,14 @@ impl TryFrom<u8> for DoExprTag {
 #[pyclass(subclass, frozen, name = "DoExpr")]
 pub struct PyDoExprBase;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContinuationHandlerBase {
+    /// Install handlers relative to the resume site (legacy CreateContinuation semantics).
+    CurrentSegment,
+    /// Record the currently visible handler chain as an inherited prefix.
+    OutsideVisibleHandlerChain,
+}
+
 impl PyDoExprBase {
     fn new_base() -> Self {
         PyDoExprBase
@@ -260,6 +268,7 @@ pub enum DoCtrl {
         expr: PyShared,
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
+        handler_base: ContinuationHandlerBase,
     },
     ResumeContinuation {
         continuation: Continuation,

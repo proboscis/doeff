@@ -7,7 +7,7 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{ContId, DispatchId, SegmentId};
+use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::segment::Segment;
@@ -49,6 +49,8 @@ struct UnstartedContinuation {
     handlers: Vec<KleisliRef>,
     handler_identities: Vec<Option<PyShared>>,
     metadata: Option<CallMetadata>,
+    inherited_handler_offset: usize,
+    inherited_handler_markers: Vec<Marker>,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +158,8 @@ impl Continuation {
                 handlers,
                 handler_identities: vec![None; handler_count],
                 metadata,
+                inherited_handler_offset: 0,
+                inherited_handler_markers: Vec::new(),
             }),
             parent: None,
         }
@@ -180,6 +184,24 @@ impl Continuation {
         handler_identities: Vec<Option<PyShared>>,
         metadata: Option<CallMetadata>,
     ) -> Self {
+        Self::create_unstarted_with_inherited_handler_markers_and_identities_and_metadata(
+            expr,
+            handlers,
+            handler_identities,
+            metadata,
+            0,
+            Vec::new(),
+        )
+    }
+
+    pub fn create_unstarted_with_inherited_handler_markers_and_identities_and_metadata(
+        expr: PyShared,
+        handlers: Vec<KleisliRef>,
+        handler_identities: Vec<Option<PyShared>>,
+        metadata: Option<CallMetadata>,
+        inherited_handler_offset: usize,
+        inherited_handler_markers: Vec<Marker>,
+    ) -> Self {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: None,
@@ -189,6 +211,8 @@ impl Continuation {
                 handlers,
                 handler_identities,
                 metadata,
+                inherited_handler_offset,
+                inherited_handler_markers,
             }),
             parent: None,
         }
@@ -272,6 +296,8 @@ impl Continuation {
         Vec<KleisliRef>,
         Vec<Option<PyShared>>,
         Option<CallMetadata>,
+        usize,
+        Vec<Marker>,
     )> {
         self.unstarted.map(
             |UnstartedContinuation {
@@ -279,7 +305,18 @@ impl Continuation {
                  handlers,
                  handler_identities,
                  metadata,
-             }| { (program, handlers, handler_identities, metadata) },
+                 inherited_handler_offset,
+                 inherited_handler_markers,
+             }| {
+                (
+                    program,
+                    handlers,
+                    handler_identities,
+                    metadata,
+                    inherited_handler_offset,
+                    inherited_handler_markers,
+                )
+            },
         )
     }
 
