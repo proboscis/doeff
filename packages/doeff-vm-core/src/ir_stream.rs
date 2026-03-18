@@ -9,7 +9,7 @@ use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
 use crate::py_shared::PyShared;
 use crate::python_call::PythonCall;
-use crate::segment::ScopeStore;
+use crate::scope::ScopeStore;
 use crate::value::Value;
 use crate::vm::RustStore;
 

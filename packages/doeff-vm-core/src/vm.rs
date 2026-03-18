@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::{PyBaseException, PyException as PyStdException};
 use pyo3::prelude::*;
@@ -26,11 +26,12 @@ use crate::error::VMError;
 use crate::frame::{
     CallMetadata, EvalReturnContinuation, Frame, InterceptorChainLink, InterceptorContinuation,
 };
-use crate::ids::{ContId, DispatchId, Marker, SegmentId};
+use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId, VarId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{IdentityKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
+use crate::scope::{ScopeBoundary, ScopeRuntime, ScopeStore};
 use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::{LiveDispatchSnapshot, TraceState};
 use crate::value::Value;
@@ -252,6 +253,7 @@ impl DebugConfig {
 
 pub struct VM {
     pub segments: SegmentArena,
+    pub scopes: Arc<Mutex<ScopeRuntime>>,
     pub consumed_cont_ids: HashSet<ContId>,
     installed_handlers: Vec<InstalledHandler>,
     run_handlers: Vec<KleisliRef>,
@@ -268,6 +270,7 @@ impl VM {
     pub fn new() -> Self {
         VM {
             segments: SegmentArena::new(),
+            scopes: Arc::new(Mutex::new(ScopeRuntime::new())),
             consumed_cont_ids: HashSet::new(),
             installed_handlers: Vec::new(),
             run_handlers: Vec::new(),
@@ -314,6 +317,79 @@ impl VM {
         self.run_handlers.clear();
         self.continuation_registry.clear();
         self.consumed_cont_ids.clear();
+    }
+
+    pub fn root_scope_id(&self) -> crate::ids::ScopeId {
+        crate::ids::ScopeId::root()
+    }
+
+    pub fn current_scope_id(&self) -> Option<crate::ids::ScopeId> {
+        self.current_segment
+            .and_then(|seg_id| self.segments.get(seg_id))
+            .map(|segment| segment.scope_id)
+    }
+
+    pub fn scope_store_for_segment(&self, seg_id: crate::ids::SegmentId) -> Option<ScopeStore> {
+        self.segments
+            .get(seg_id)
+            .map(|segment| ScopeStore::new(self.scopes.clone(), segment.scope_id))
+    }
+
+    pub fn alloc_plain_scope(
+        &self,
+        parent: crate::ids::ScopeId,
+        bindings: HashMap<crate::py_key::HashedPyKey, Value>,
+    ) -> crate::ids::ScopeId {
+        self.scopes
+            .lock()
+            .expect("scope lock poisoned")
+            .alloc_scope(parent, None, bindings)
+    }
+
+    pub fn alloc_handler_scope(
+        &self,
+        parent: crate::ids::ScopeId,
+        marker: Marker,
+        handler: crate::kleisli::KleisliRef,
+        types: Option<Vec<crate::py_shared::PyShared>>,
+    ) -> crate::ids::ScopeId {
+        self.scopes
+            .lock()
+            .expect("scope lock poisoned")
+            .alloc_scope(
+                parent,
+                Some(ScopeBoundary::Handler {
+                    marker,
+                    handler,
+                    types,
+                }),
+                HashMap::new(),
+            )
+    }
+
+    pub fn alloc_interceptor_scope(
+        &self,
+        parent: crate::ids::ScopeId,
+        marker: Marker,
+        interceptor: crate::kleisli::KleisliRef,
+        types: Option<Vec<crate::py_shared::PyShared>>,
+        mode: crate::do_ctrl::InterceptMode,
+        metadata: Option<crate::frame::CallMetadata>,
+    ) -> crate::ids::ScopeId {
+        self.scopes
+            .lock()
+            .expect("scope lock poisoned")
+            .alloc_scope(
+                parent,
+                Some(ScopeBoundary::Interceptor {
+                    marker,
+                    interceptor,
+                    types,
+                    mode,
+                    metadata,
+                }),
+                HashMap::new(),
+            )
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {

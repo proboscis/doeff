@@ -14,9 +14,9 @@ use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub struct RustStore {
-    pub state: HashMap<String, Value>,
-    pub env: HashMap<HashedPyKey, Value>,
-    pub log: Vec<Value>,
+    state_slots: HashMap<String, Value>,
+    bindings: HashMap<HashedPyKey, Value>,
+    log_entries: Vec<Value>,
 }
 
 impl From<&HashedPyKey> for HashedPyKey {
@@ -72,48 +72,61 @@ fn string_key_to_hashed(key: &str) -> PyResult<HashedPyKey> {
 impl RustStore {
     pub fn new() -> Self {
         RustStore {
-            state: HashMap::new(),
-            env: HashMap::new(),
-            log: Vec::new(),
+            state_slots: HashMap::new(),
+            bindings: HashMap::new(),
+            log_entries: Vec::new(),
         }
     }
 
     pub fn get(&self, key: &str) -> Option<&Value> {
-        self.state.get(key)
+        self.state_slots.get(key)
     }
 
     pub fn put(&mut self, key: String, value: Value) {
-        self.state.insert(key, value);
+        self.state_slots.insert(key, value);
+    }
+
+    pub fn state_entries(&self) -> &HashMap<String, Value> {
+        &self.state_slots
     }
 
     pub fn ask(&self, key: impl Into<HashedPyKey>) -> Option<&Value> {
         let key = key.into();
-        self.env.get(&key)
+        self.bindings.get(&key)
+    }
+
+    pub fn insert_binding(&mut self, key: HashedPyKey, value: Value) {
+        self.bindings.insert(key, value);
+    }
+
+    pub fn bindings(&self) -> &HashMap<HashedPyKey, Value> {
+        &self.bindings
     }
 
     #[cfg(test)]
     pub fn ask_str(&self, key: &str) -> Option<&Value> {
-        self.env.get(&HashedPyKey::from_test_string(key))
+        self.bindings.get(&HashedPyKey::from_test_string(key))
     }
 
     #[cfg(test)]
     pub fn set_env_str(&mut self, key: impl Into<String>, value: Value) {
-        self.env.insert(HashedPyKey::from_test_string(key), value);
+        self.bindings
+            .insert(HashedPyKey::from_test_string(key), value);
     }
 
     pub fn tell(&mut self, message: Value) {
-        self.log.push(message);
+        self.log_entries.push(message);
     }
 
     pub fn logs(&self) -> &[Value] {
-        &self.log
+        &self.log_entries
     }
 
     pub fn modify(&mut self, key: &str, f: impl FnOnce(&Value) -> Value) -> Option<Value> {
-        let old = self.state.get(key)?;
+        let old = self.state_slots.get(key)?;
         let new_val = f(old);
         let old_clone = old.clone();
-        self.state.insert(key.to_string(), new_val);
+        self.state_slots.insert(key.to_string(), new_val);
         Some(old_clone)
     }
 
@@ -128,7 +141,7 @@ impl RustStore {
 
         let old: HashMap<HashedPyKey, Value> = hashed_bindings
             .keys()
-            .filter_map(|k| self.env.get(k).map(|v| (k.clone(), v.clone())))
+            .filter_map(|k| self.bindings.get(k).map(|v| (k.clone(), v.clone())))
             .collect();
         let new_keys: Vec<HashedPyKey> = hashed_bindings
             .keys()
@@ -137,23 +150,23 @@ impl RustStore {
             .collect();
 
         for (k, v) in hashed_bindings {
-            self.env.insert(k, v);
+            self.bindings.insert(k, v);
         }
 
         let result = f(self);
 
         for (k, v) in old {
-            self.env.insert(k, v);
+            self.bindings.insert(k, v);
         }
         for k in new_keys {
-            self.env.remove(&k);
+            self.bindings.remove(&k);
         }
 
         Ok(result)
     }
 
     pub fn clear_logs(&mut self) -> Vec<Value> {
-        std::mem::take(&mut self.log)
+        std::mem::take(&mut self.log_entries)
     }
 }
 

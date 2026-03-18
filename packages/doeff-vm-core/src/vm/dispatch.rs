@@ -511,7 +511,11 @@ impl VM {
         continuation
             .segment_id()
             .filter(|seg_id| self.segments.get(*seg_id).is_some())
-            .or_else(|| continuation.captured_caller().filter(|seg_id| self.segments.get(*seg_id).is_some()))
+            .or_else(|| {
+                continuation
+                    .captured_caller()
+                    .filter(|seg_id| self.segments.get(*seg_id).is_some())
+            })
     }
 
     pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
@@ -525,13 +529,13 @@ impl VM {
                 entry.handler.clone(),
             );
             self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
-            self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
+            self.inherit_scope_from(outside_seg_id, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             self.track_run_handler(&entry.handler);
 
             let mut body_seg = Segment::new(entry.marker, Some(prompt_seg_id));
             self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
-            self.copy_scope_store_from(outside_seg_id, &mut body_seg);
+            self.inherit_scope_from(outside_seg_id, &mut body_seg);
             let body_seg_id = self.alloc_segment(body_seg);
             outside_seg_id = Some(body_seg_id);
         }
@@ -576,7 +580,7 @@ impl VM {
     }
 
     #[inline]
-    pub(super) fn copy_scope_store_from(
+    pub(super) fn inherit_scope_from(
         &self,
         source_seg_id: Option<SegmentId>,
         child_seg: &mut Segment,
@@ -587,7 +591,7 @@ impl VM {
         let Some(source_seg) = self.segments.get(source_seg_id) else {
             return;
         };
-        child_seg.scope_store = source_seg.scope_store.clone();
+        child_seg.scope_id = source_seg.scope_id;
     }
 
     fn remap_interceptor_skip_markers(seg: &mut Segment, marker_remap: &HashMap<Marker, Marker>) {
@@ -641,6 +645,9 @@ impl VM {
             DoCtrl::Pass { .. } => {}
             DoCtrl::GetContinuation => {}
             DoCtrl::GetHandlers => {}
+            DoCtrl::GetScopeOf { continuation } => {
+                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
+            }
             DoCtrl::GetTraceback { continuation } => {
                 Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
             }
@@ -648,6 +655,12 @@ impl VM {
             DoCtrl::ResumeContinuation { continuation, .. } => {
                 Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
             }
+            DoCtrl::PushScope => {}
+            DoCtrl::PopScope => {}
+            DoCtrl::AllocVar { .. } => {}
+            DoCtrl::ReadVar { .. } => {}
+            DoCtrl::WriteVar { .. } => {}
+            DoCtrl::WriteVarNonlocal { .. } => {}
             DoCtrl::PythonAsyncSyntaxEscape { .. } => {}
             DoCtrl::EvalInScope { scope, .. } => {
                 Self::remap_interceptor_markers_in_continuation(scope, marker_remap);
@@ -1024,9 +1037,9 @@ impl VM {
                                     .segment_id()
                                     .expect("dispatch origin continuations must be captured"),
                             )
-                                .into_iter()
-                                .map(|entry| entry.prompt_seg_id)
-                                .collect()
+                            .into_iter()
+                            .map(|entry| entry.prompt_seg_id)
+                            .collect()
                         })
                 })
                 .unwrap_or_default()
@@ -1055,7 +1068,7 @@ impl VM {
             .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
         let dispatch_id = DispatchId::fresh();
         let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
-        let current_scope_store = current_seg.scope_store.clone();
+        let current_scope_id = current_seg.scope_id;
         if let Some(seg) = self.current_segment_mut() {
             seg.pending_error_context = None;
         }
@@ -1174,7 +1187,7 @@ impl VM {
         }
 
         let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-        handler_seg.scope_store = current_scope_store;
+        handler_seg.scope_id = current_scope_id;
         handler_seg.dispatch_id = Some(dispatch_id);
         self.copy_interceptor_guard_state(Some(seg_id), &mut handler_seg);
         handler_seg.push_frame(Frame::DispatchOrigin {
@@ -1528,6 +1541,15 @@ impl VM {
             Err(err) => return StepEvent::Error(err),
         };
         let prompt_handler = plan.handler.clone();
+        let Some(parent_scope_id) = self.current_scope_id() else {
+            return StepEvent::Error(VMError::internal("no current scope for WithHandler"));
+        };
+        let handler_scope_id = self.alloc_handler_scope(
+            parent_scope_id,
+            plan.handler_marker,
+            prompt_handler.clone(),
+            types.clone(),
+        );
 
         let mut prompt_seg = Segment::new_prompt_with_types(
             plan.handler_marker,
@@ -1537,13 +1559,13 @@ impl VM {
             types,
         );
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
-        self.copy_scope_store_from(Some(plan.outside_seg_id), &mut prompt_seg);
+        prompt_seg.scope_id = handler_scope_id;
         let prompt_seg_id = self.alloc_segment(prompt_seg);
         self.track_run_handler(&prompt_handler);
 
         let mut body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut body_seg);
-        self.copy_scope_store_from(Some(plan.outside_seg_id), &mut body_seg);
+        body_seg.scope_id = handler_scope_id;
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
@@ -1558,11 +1580,12 @@ impl VM {
         mode: InterceptMode,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
+        let interceptor_for_scope = interceptor.clone();
         let body_seg = match Self::prepare_with_intercept(
             interceptor,
-            types,
+            types.clone(),
             mode,
-            metadata,
+            metadata.clone(),
             self.current_segment,
             &self.segments,
         ) {
@@ -1570,7 +1593,17 @@ impl VM {
             Err(err) => return StepEvent::Error(err),
         };
         let mut body_seg = body_seg;
-        self.copy_scope_store_from(self.current_segment, &mut body_seg);
+        let Some(parent_scope_id) = self.current_scope_id() else {
+            return StepEvent::Error(VMError::internal("no current scope for WithIntercept"));
+        };
+        body_seg.scope_id = self.alloc_interceptor_scope(
+            parent_scope_id,
+            body_seg.marker,
+            interceptor_for_scope,
+            types,
+            mode,
+            metadata,
+        );
         let body_seg_id = self.alloc_segment(body_seg);
 
         self.current_segment = Some(body_seg_id);
@@ -1750,7 +1783,7 @@ impl VM {
                     inner_seg_id
                 } else {
                     let mut handler_seg = Segment::new(entry.marker, Some(inner_seg_id));
-                    self.copy_scope_store_from(Some(inner_seg_id), &mut handler_seg);
+                    self.inherit_scope_from(Some(inner_seg_id), &mut handler_seg);
                     handler_seg.dispatch_id = Some(dispatch_id);
                     self.copy_interceptor_guard_state(Some(inner_seg_id), &mut handler_seg);
                     handler_seg.push_frame(Frame::DispatchOrigin {
@@ -1858,16 +1891,28 @@ impl VM {
     }
 
     pub(super) fn handle_get_continuation(&mut self) -> StepEvent {
-        let Some(dispatch_id) = self.current_active_handler_dispatch_id() else {
-            return StepEvent::Error(VMError::internal("GetContinuation outside dispatch"));
+        let continuation = if let Some(dispatch_id) = self.current_active_handler_dispatch_id() {
+            let Some((_, k, _)) = self.active_handler_dispatch_for(dispatch_id) else {
+                return StepEvent::Error(VMError::internal(
+                    "GetContinuation: active handler continuation not found",
+                ));
+            };
+            k
+        } else {
+            let Some(seg_id) = self.current_segment else {
+                return StepEvent::Error(VMError::internal(
+                    "GetContinuation called without current segment",
+                ));
+            };
+            let Some(segment) = self.segments.get(seg_id) else {
+                return StepEvent::Error(VMError::internal(
+                    "GetContinuation current segment not found",
+                ));
+            };
+            Continuation::capture(segment, seg_id, segment.dispatch_id)
         };
-        let Some((_, k, _)) = self.active_handler_dispatch_for(dispatch_id) else {
-            return StepEvent::Error(VMError::internal(
-                "GetContinuation: active handler continuation not found",
-            ));
-        };
-        self.register_continuation(k.clone());
-        self.current_seg_mut().mode = Mode::Deliver(Value::Continuation(k));
+        self.register_continuation(continuation.clone());
+        self.current_seg_mut().mode = Mode::Deliver(Value::Continuation(continuation));
         StepEvent::Continue
     }
 
@@ -1907,6 +1952,16 @@ impl VM {
         StepEvent::Continue
     }
 
+    pub(super) fn handle_get_scope_of(&mut self, continuation: Continuation) -> StepEvent {
+        let Some(scope_id) = continuation.scope_id() else {
+            return StepEvent::Error(VMError::internal(
+                "GetScopeOf continuation does not carry lexical scope",
+            ));
+        };
+        self.current_seg_mut().mode = Mode::Deliver(Value::Scope(scope_id));
+        StepEvent::Continue
+    }
+
     pub(super) fn handle_get_traceback(&mut self, continuation: Continuation) -> StepEvent {
         if self.current_dispatch_id().is_none() {
             return StepEvent::Error(VMError::internal(
@@ -1923,17 +1978,123 @@ impl VM {
         program: PyShared,
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
+        scope: Option<ScopeId>,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        let k = Continuation::create_unstarted_with_identities_and_metadata(
-            program,
-            handlers,
-            handler_identities,
-            metadata,
-        );
+        let k = if let Some(scope_id) = scope {
+            Continuation::create_unstarted_with_scope(program, scope_id, metadata)
+        } else {
+            Continuation::create_unstarted_with_identities_and_metadata(
+                program,
+                handlers,
+                handler_identities,
+                metadata,
+            )
+        };
         self.register_continuation(k.clone());
         self.current_seg_mut().mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue
+    }
+
+    fn materialize_scope_chain(
+        &mut self,
+        scope_id: ScopeId,
+        inherit_interceptor_state_from: Option<SegmentId>,
+        base_caller: Option<SegmentId>,
+    ) -> Result<(SegmentId, SegmentId), VMError> {
+        let boundaries = self
+            .scopes
+            .lock()
+            .expect("scope lock poisoned")
+            .chain_boundaries(scope_id);
+
+        let mut base_seg_id = None;
+        let mut outside_seg_id = base_caller;
+        for (boundary_scope_id, boundary) in boundaries {
+            match boundary {
+                ScopeBoundary::Handler {
+                    marker,
+                    handler,
+                    types,
+                } => {
+                    let mut prompt_seg = Segment::new_prompt_with_types(
+                        marker,
+                        outside_seg_id,
+                        marker,
+                        handler.clone(),
+                        types,
+                    );
+                    prompt_seg.scope_id = boundary_scope_id;
+                    self.copy_interceptor_guard_state(
+                        inherit_interceptor_state_from,
+                        &mut prompt_seg,
+                    );
+                    let prompt_seg_id = self.alloc_segment(prompt_seg);
+                    if base_seg_id.is_none() {
+                        base_seg_id = Some(prompt_seg_id);
+                    }
+                    self.track_run_handler(&handler);
+
+                    let mut body_seg = Segment::new(marker, Some(prompt_seg_id));
+                    body_seg.scope_id = boundary_scope_id;
+                    self.copy_interceptor_guard_state(
+                        inherit_interceptor_state_from,
+                        &mut body_seg,
+                    );
+                    outside_seg_id = Some(self.alloc_segment(body_seg));
+                }
+                ScopeBoundary::Interceptor {
+                    marker,
+                    interceptor,
+                    types,
+                    mode,
+                    metadata,
+                } => {
+                    let mut body_seg = Segment::new(marker, outside_seg_id);
+                    body_seg.scope_id = boundary_scope_id;
+                    body_seg.kind = SegmentKind::InterceptorBoundary {
+                        interceptor,
+                        types,
+                        mode,
+                        metadata,
+                    };
+                    self.copy_interceptor_guard_state(
+                        inherit_interceptor_state_from,
+                        &mut body_seg,
+                    );
+                    let body_seg_id = self.alloc_segment(body_seg);
+                    if base_seg_id.is_none() {
+                        base_seg_id = Some(body_seg_id);
+                    }
+                    outside_seg_id = Some(body_seg_id);
+                }
+            }
+        }
+
+        let needs_leaf = outside_seg_id
+            .and_then(|seg_id| self.segments.get(seg_id))
+            .map(|seg| seg.scope_id != scope_id)
+            .unwrap_or(true);
+        if needs_leaf {
+            let mut leaf_seg = Segment::new(Marker::fresh(), outside_seg_id);
+            leaf_seg.scope_id = scope_id;
+            self.copy_interceptor_guard_state(inherit_interceptor_state_from, &mut leaf_seg);
+            let leaf_seg_id = self.alloc_segment(leaf_seg);
+            if base_seg_id.is_none() {
+                base_seg_id = Some(leaf_seg_id);
+            }
+            outside_seg_id = Some(leaf_seg_id);
+        }
+
+        let Some(leaf_seg_id) = outside_seg_id else {
+            return Err(VMError::internal("failed to materialize lexical scope"));
+        };
+        let Some(base_seg_id) = base_seg_id else {
+            return Err(VMError::internal(
+                "failed to materialize lexical scope base",
+            ));
+        };
+        Ok((base_seg_id, leaf_seg_id))
     }
 
     pub(super) fn handle_resume_continuation(
@@ -1956,13 +2117,49 @@ impl VM {
         }
         self.mark_one_shot_consumed(k.cont_id);
 
-        let Some((program, handlers, handler_identities, start_metadata)) =
+        let Some((program, handlers, handler_identities, scope_id, start_metadata)) =
             k.into_unstarted_parts()
         else {
             return StepEvent::Error(VMError::internal(
                 "unstarted continuation has no program payload",
             ));
         };
+
+        if let Some(scope_id) = scope_id {
+            let Some(current_seg_id) = self.current_segment else {
+                return StepEvent::Error(VMError::internal(
+                    "ResumeContinuation of lexical-scope continuation requires current segment",
+                ));
+            };
+            let Some(current_seg) = self.segments.get(current_seg_id) else {
+                return StepEvent::Error(VMError::internal(
+                    "ResumeContinuation current segment not found",
+                ));
+            };
+            let return_to =
+                Continuation::capture(current_seg, current_seg_id, current_seg.dispatch_id);
+            let (base_seg_id, leaf_seg_id) =
+                match self.materialize_scope_chain(scope_id, None, None) {
+                    Ok(seg_ids) => seg_ids,
+                    Err(err) => return StepEvent::Error(err),
+                };
+            let Some(base_seg) = self.segments.get_mut(base_seg_id) else {
+                return StepEvent::Error(VMError::invalid_segment(
+                    "lexical-scope continuation base segment not found",
+                ));
+            };
+            base_seg.push_frame(Frame::EvalReturn(Box::new(
+                EvalReturnContinuation::EvalInScopeReturn {
+                    continuation: return_to,
+                },
+            )));
+            let _ = value;
+            self.current_segment = Some(leaf_seg_id);
+            self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr {
+                metadata: start_metadata,
+            });
+            return StepEvent::NeedsPython(PythonCall::EvalExpr { expr: program });
+        }
 
         // G7: Install handlers with prompt+body segments per handler (matches spec topology).
         // Each handler gets: prompt_seg → body_seg (handler in scope).
@@ -1973,7 +2170,7 @@ impl VM {
         for idx in (0..k_handler_count).rev() {
             let base_handler = handlers[idx].clone();
             let handler = if let Some(Some(identity)) = handler_identities.get(idx) {
-                Arc::new(IdentityKleisli::new(base_handler, identity.clone())) as KleisliRef
+                Arc::new(IdentityKleisli::new(base_handler, (*identity).clone())) as KleisliRef
             } else {
                 base_handler
             };
@@ -1985,12 +2182,12 @@ impl VM {
                 handler.clone(),
             );
             self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
-            self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
+            self.inherit_scope_from(outside_seg_id, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             self.track_run_handler(&handler);
             let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
             self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
-            self.copy_scope_store_from(outside_seg_id, &mut body_seg);
+            self.inherit_scope_from(outside_seg_id, &mut body_seg);
             let body_seg_id = self.alloc_segment(body_seg);
 
             outside_seg_id = Some(body_seg_id);

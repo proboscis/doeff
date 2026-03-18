@@ -39,6 +39,9 @@ pub mod py_shared {
 pub mod segment {
     pub use doeff_vm_core::segment::*;
 }
+pub mod scope {
+    pub use doeff_vm_core::scope::*;
+}
 pub mod step {
     pub use doeff_vm_core::{DoCtrl, Mode, PendingPython, PyCallOutcome, PyException, PythonCall};
 }

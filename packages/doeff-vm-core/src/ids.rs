@@ -17,11 +17,19 @@ pub struct Marker(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct SegmentId(pub u32);
 
+/// Unique identifier for lexical scopes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ScopeId(pub u32);
+
 /// Unique identifier for continuations (one-shot tracking).
 ///
 /// Each captured continuation gets a unique ContId to enforce one-shot semantics.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ContId(pub u64);
+
+/// Unique identifier for scoped variables.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct VarId(pub u64);
 
 /// Unique identifier for dispatches.
 ///
@@ -50,6 +58,7 @@ static MARKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CONT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DISPATCH_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static RUNNABLE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+static VAR_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl Marker {
     /// Create a fresh unique Marker.
@@ -120,6 +129,38 @@ impl SegmentId {
 
     pub fn index(&self) -> usize {
         self.0 as usize
+    }
+}
+
+impl ScopeId {
+    pub fn root() -> Self {
+        ScopeId(0)
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        ScopeId(index as u32)
+    }
+
+    pub fn index(&self) -> usize {
+        self.0 as usize
+    }
+
+    pub fn raw(&self) -> u32 {
+        self.0
+    }
+}
+
+impl VarId {
+    pub fn fresh() -> Self {
+        VarId(VAR_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    pub fn raw(&self) -> u64 {
+        self.0
+    }
+
+    pub fn from_raw(value: u64) -> Self {
+        VarId(value)
     }
 }
 

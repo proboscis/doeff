@@ -269,7 +269,18 @@ class ResumeContinuation(DoCtrlBase):
 class CreateContinuation(DoCtrlBase):
     program: DoExpr[Any] | EffectBase
     handlers: Sequence[Any]
-    def __init__(self, program: DoExpr[Any] | EffectBase, handlers: Sequence[Any]) -> None: ...
+    scope: Any
+    def __init__(
+        self,
+        program: DoExpr[Any] | EffectBase,
+        handlers: Sequence[Any] | None = None,
+        *,
+        scope: Any | None = None,
+    ) -> None: ...
+
+class GetScopeOf(DoCtrlBase):
+    continuation: K
+    def __init__(self, continuation: K) -> None: ...
 
 class GetTraceback(DoCtrlBase):
     continuation: K
@@ -280,6 +291,30 @@ class GetContinuation(DoCtrlBase):
 
 class GetHandlers(DoCtrlBase):
     def __init__(self) -> None: ...
+
+class PushScope(DoCtrlBase):
+    def __init__(self) -> None: ...
+
+class PopScope(DoCtrlBase):
+    def __init__(self) -> None: ...
+
+class AllocVar(DoCtrlBase):
+    initial_value: Any
+    def __init__(self, initial_value: Any) -> None: ...
+
+class ReadVar(DoCtrlBase):
+    var: Any
+    def __init__(self, var: Any) -> None: ...
+
+class WriteVar(DoCtrlBase):
+    var: Any
+    value: Any
+    def __init__(self, var: Any, value: Any) -> None: ...
+
+class WriteVarNonlocal(DoCtrlBase):
+    var: Any
+    value: Any
+    def __init__(self, var: Any, value: Any) -> None: ...
 
 class GetCallStack(DoCtrlBase):
     def __init__(self) -> None: ...
@@ -465,12 +500,19 @@ TAG_DELEGATE: int
 TAG_PASS: int
 TAG_GET_CONTINUATION: int
 TAG_GET_HANDLERS: int
+TAG_GET_SCOPE_OF: int
 TAG_GET_TRACEBACK: int
 TAG_WITH_INTERCEPT: int
 TAG_DISCONTINUE: int
 TAG_GET_CALL_STACK: int
 TAG_EVAL: int
 TAG_EVAL_IN_SCOPE: int
+TAG_PUSH_SCOPE: int
+TAG_POP_SCOPE: int
+TAG_ALLOC_VAR: int
+TAG_READ_VAR: int
+TAG_WRITE_VAR: int
+TAG_WRITE_VAR_NONLOCAL: int
 TAG_APPLY: int
 TAG_EXPAND: int
 TAG_CREATE_CONTINUATION: int

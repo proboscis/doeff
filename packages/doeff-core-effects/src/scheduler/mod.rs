@@ -18,18 +18,18 @@ use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn, PyWait,
-    PyTaskCompleted, TaskCancelledError,
+    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn,
+    PyTaskCompleted, PyWait, TaskCancelledError,
 };
 use crate::error::VMError;
-use crate::handlers::AwaitHandlerFactory;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
+use crate::handlers::AwaitHandlerFactory;
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
-use crate::segment::ScopeStore;
+use crate::scope::ScopeStore;
 use crate::step::{DoCtrl, PyException, PythonCall};
 use crate::value::{ExternalPromise, PromiseHandle, TaskHandle, Value};
 use crate::vm::RustStore;
@@ -429,8 +429,15 @@ fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
             | DoCtrl::Pass { .. }
             | DoCtrl::GetContinuation
             | DoCtrl::GetHandlers
+            | DoCtrl::GetScopeOf { .. }
             | DoCtrl::GetTraceback { .. }
             | DoCtrl::CreateContinuation { .. }
+            | DoCtrl::PushScope
+            | DoCtrl::PopScope
+            | DoCtrl::AllocVar { .. }
+            | DoCtrl::ReadVar { .. }
+            | DoCtrl::WriteVar { .. }
+            | DoCtrl::WriteVarNonlocal { .. }
             | DoCtrl::PythonAsyncSyntaxEscape { .. }
             | DoCtrl::Apply { .. }
             | DoCtrl::Expand { .. }
@@ -2167,7 +2174,9 @@ impl SchedulerState {
                 merge: StoreMergePolicy::LogsOnly,
             } = task_store
             {
-                store.log.extend(task_store.log.iter().cloned());
+                for entry in task_store.logs() {
+                    store.tell(entry.clone());
+                }
             }
         }
     }
@@ -2431,7 +2440,7 @@ enum SchedulerPhase {
         k_user: Continuation,
         effect: DispatchEffect,
     },
-    SpawnAwaitHandlers {
+    SpawnAwaitScope {
         k_user: Continuation,
         program: Py<PyAny>,
         store_mode: StoreMode,
@@ -2500,7 +2509,7 @@ impl SchedulerProgram {
         match self.phase {
             SchedulerPhase::Idle => "Idle",
             SchedulerPhase::SpawnAwaitTraceback { .. } => "SpawnAwaitTraceback",
-            SchedulerPhase::SpawnAwaitHandlers { .. } => "SpawnAwaitHandlers",
+            SchedulerPhase::SpawnAwaitScope { .. } => "SpawnAwaitScope",
             SchedulerPhase::SpawnAwaitContinuation { .. } => "SpawnAwaitContinuation",
             SchedulerPhase::PreemptiveTransfer { .. } => "PreemptiveTransfer",
             SchedulerPhase::AwaitSimpleTransfer { .. } => "AwaitSimpleTransfer",
@@ -3013,7 +3022,8 @@ impl SchedulerProgram {
                     if let Err(store_error) = state.save_task_store(running_task, store) {
                         return IRStreamStep::Throw(store_error);
                     }
-                    if let Err(done_error) = state.mark_task_done(running_task, Err(error.clone())) {
+                    if let Err(done_error) = state.mark_task_done(running_task, Err(error.clone()))
+                    {
                         return IRStreamStep::Throw(done_error);
                     }
                     let _ = state.register_gather_fail_fast(wait_request, error, running_task);
@@ -3278,7 +3288,9 @@ impl IRStreamProgram for SchedulerProgram {
                     | Value::CallStack(_)
                     | Value::Trace(_)
                     | Value::ActiveChain(_)
-                    | Value::List(_) => {
+                    | Value::List(_)
+                    | Value::Scope(_)
+                    | Value::Var(_) => {
                         return IRStreamStep::Throw(PyException::type_error(
                             "scheduler Spawn expected GetTraceback result".to_string(),
                         ));
@@ -3333,7 +3345,8 @@ impl IRStreamProgram for SchedulerProgram {
                 };
 
                 if handlers.is_empty() {
-                    self.phase = SchedulerPhase::SpawnAwaitHandlers {
+                    let scope_source = k_user.clone();
+                    self.phase = SchedulerPhase::SpawnAwaitScope {
                         k_user,
                         program,
                         store_mode,
@@ -3341,9 +3354,13 @@ impl IRStreamProgram for SchedulerProgram {
                         priority,
                         spawn_site: creation_site,
                     };
-                    return IRStreamStep::Yield(DoCtrl::GetHandlers);
+                    return IRStreamStep::Yield(DoCtrl::GetScopeOf {
+                        continuation: scope_source,
+                    });
                 }
 
+                let mut handlers = handlers;
+                self.maybe_prepend_sync_await_handler(&mut handlers);
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
                     k_user,
                     store_mode,
@@ -3356,10 +3373,11 @@ impl IRStreamProgram for SchedulerProgram {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities: vec![],
+                    scope: None,
                 })
             }
 
-            SchedulerPhase::SpawnAwaitHandlers {
+            SchedulerPhase::SpawnAwaitScope {
                 k_user,
                 program,
                 store_mode,
@@ -3367,8 +3385,8 @@ impl IRStreamProgram for SchedulerProgram {
                 priority,
                 spawn_site,
             } => {
-                let mut handlers = match value {
-                    Value::Handlers(hs) => hs,
+                let scope_id = match value {
+                    Value::Scope(scope_id) => scope_id,
                     Value::Python(_)
                     | Value::Unit
                     | Value::Int(_)
@@ -3376,6 +3394,7 @@ impl IRStreamProgram for SchedulerProgram {
                     | Value::Bool(_)
                     | Value::None
                     | Value::Continuation(_)
+                    | Value::Handlers(_)
                     | Value::Kleisli(_)
                     | Value::Task(_)
                     | Value::Promise(_)
@@ -3384,13 +3403,13 @@ impl IRStreamProgram for SchedulerProgram {
                     | Value::Trace(_)
                     | Value::Traceback(_)
                     | Value::ActiveChain(_)
-                    | Value::List(_) => {
+                    | Value::List(_)
+                    | Value::Var(_) => {
                         return IRStreamStep::Throw(PyException::type_error(
-                            "scheduler Spawn expected GetHandlers result".to_string(),
+                            "scheduler Spawn expected GetScopeOf result".to_string(),
                         ));
                     }
                 };
-                self.maybe_prepend_sync_await_handler(&mut handlers);
 
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
                     k_user,
@@ -3402,8 +3421,9 @@ impl IRStreamProgram for SchedulerProgram {
 
                 IRStreamStep::Yield(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
-                    handlers,
+                    handlers: vec![],
                     handler_identities: vec![],
+                    scope: Some(scope_id),
                 })
             }
 
@@ -3432,7 +3452,9 @@ impl IRStreamProgram for SchedulerProgram {
                     | Value::Trace(_)
                     | Value::Traceback(_)
                     | Value::ActiveChain(_)
-                    | Value::List(_) => {
+                    | Value::List(_)
+                    | Value::Scope(_)
+                    | Value::Var(_) => {
                         return IRStreamStep::Throw(PyException::type_error(
                             "expected continuation from CreateContinuation, got unexpected type"
                                 .to_string(),
@@ -3541,7 +3563,7 @@ impl IRStreamProgram for SchedulerProgram {
             | SchedulerPhase::AwaitDrivingTransfer { .. }
             | SchedulerPhase::Idle
             | SchedulerPhase::SpawnAwaitTraceback { .. }
-            | SchedulerPhase::SpawnAwaitHandlers { .. }
+            | SchedulerPhase::SpawnAwaitScope { .. }
             | SchedulerPhase::SpawnAwaitContinuation { .. } => IRStreamStep::Throw(exc),
         }
     }
@@ -3899,10 +3921,14 @@ mod tests {
                     continuation: cont.clone(),
                 }),
                 IRStreamStep::Yield(DoCtrl::GetHandlers),
+                IRStreamStep::Yield(DoCtrl::GetScopeOf {
+                    continuation: cont.clone(),
+                }),
                 IRStreamStep::Yield(DoCtrl::CreateContinuation {
                     expr: expr.clone(),
                     handlers: vec![],
                     handler_identities: vec![],
+                    scope: None,
                 }),
                 IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                     continuation: cont.clone(),
@@ -4093,14 +4119,17 @@ mod tests {
                 &mut store,
                 &mut _scope,
             );
-            assert!(matches!(step, IRStreamStep::Yield(DoCtrl::GetHandlers)));
+            assert!(matches!(
+                step,
+                IRStreamStep::Yield(DoCtrl::GetScopeOf { .. })
+            ));
 
             let location = IRStream::debug_location(&program).expect("scheduler debug location");
-            assert_eq!(location.phase.as_deref(), Some("SpawnAwaitHandlers"));
+            assert_eq!(location.phase.as_deref(), Some("SpawnAwaitScope"));
 
             let step = IRStream::resume(
                 &mut program,
-                Value::Handlers(vec![]),
+                Value::Scope(ScopeId::from_index(7)),
                 &mut store,
                 &mut _scope,
             );

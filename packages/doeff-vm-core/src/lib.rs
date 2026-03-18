@@ -44,6 +44,8 @@ pub mod result;
 #[cfg(feature = "python_bridge")]
 pub mod rust_store;
 #[cfg(feature = "python_bridge")]
+pub mod scope;
+#[cfg(feature = "python_bridge")]
 pub mod segment;
 #[cfg(feature = "python_bridge")]
 mod step;
@@ -90,7 +92,9 @@ pub use frame::Frame;
 #[cfg(feature = "python_bridge")]
 pub use handler::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
 #[cfg(feature = "python_bridge")]
-pub use ids::{ContId, DispatchId, Marker, PromiseId, RunnableId, SegmentId, TaskId};
+pub use ids::{
+    ContId, DispatchId, Marker, PromiseId, RunnableId, ScopeId, SegmentId, TaskId, VarId,
+};
 #[cfg(feature = "python_bridge")]
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 #[cfg(feature = "python_bridge")]
@@ -103,6 +107,8 @@ pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 pub use result::{PyResultErr, PyResultOk};
 #[cfg(feature = "python_bridge")]
 pub use rust_store::RustStore;
+#[cfg(feature = "python_bridge")]
+pub use scope::{Scope, ScopeBoundary, ScopeRuntime, ScopeStore};
 #[cfg(feature = "python_bridge")]
 pub use segment::{Segment, SegmentKind};
 #[cfg(feature = "python_bridge")]

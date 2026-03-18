@@ -16,6 +16,8 @@ Example:
     ...     return count + 1
 """
 
+from typing import Any, cast
+
 from doeff.analysis import EffectCallTree
 from doeff.cache import (
     CACHE_PATH_ENV_KEY,
@@ -172,6 +174,13 @@ _VM_LAZY_EXPORTS = {
     "Delegate",
     "Transfer",
     "ResumeContinuation",
+    "GetScopeOf",
+    "PushScope",
+    "PopScope",
+    "AllocVar",
+    "ReadVar",
+    "WriteVar",
+    "WriteVarNonlocal",
     "K",
 }
 
@@ -184,32 +193,35 @@ def _build_unified_types():
     """Build unified Ok/Err that recognize both Rust and Python instances."""
     from doeff import types as _t
 
-    py_types = {
+    py_types: dict[str, type[Any] | None] = {
         "Ok": getattr(_t, "Ok", None),
         "Err": getattr(_t, "Err", None),
     }
     from doeff_vm import doeff_vm as _ext
 
-    rust_types: dict = {
+    rust_types: dict[str, type[Any] | None] = {
         "Ok": getattr(_ext, "Ok", None),
         "Err": getattr(_ext, "Err", None),
     }
 
-    unified = {}
+    unified: dict[str, type[Any] | None] = {}
     for name in ("Ok", "Err"):
-        candidates = tuple(t for t in (rust_types.get(name), py_types.get(name)) if t is not None)
+        candidates = cast(
+            tuple[type[Any], ...],
+            tuple(t for t in (rust_types.get(name), py_types.get(name)) if isinstance(t, type)),
+        )
         if len(candidates) <= 1:
             unified[name] = candidates[0] if candidates else None
         else:
 
             class _UnifiedMeta(type):
-                _types = candidates
+                _types: tuple[type[Any], ...] = candidates
 
                 def __instancecheck__(cls, instance):
-                    return isinstance(instance, cls._types)
+                    return isinstance(instance, cast(tuple[type[Any], ...], cls._types))
 
                 def __subclasscheck__(cls, subclass):
-                    return issubclass(subclass, cls._types)
+                    return issubclass(subclass, cast(tuple[type[Any], ...], cls._types))
 
             unified[name] = _UnifiedMeta(name, (), {"_types": candidates})
     return unified
@@ -302,6 +314,13 @@ __all__ = [
     "Result",
     "Resume",
     "ResumeContinuation",
+    "GetScopeOf",
+    "PushScope",
+    "PopScope",
+    "AllocVar",
+    "ReadVar",
+    "WriteVar",
+    "WriteVarNonlocal",
     "RunResult",
     "Semaphore",
     "Snapshot",

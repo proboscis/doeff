@@ -10,7 +10,7 @@ use crate::capture::{
     HandlerStatus, TraceEntry, TraceHop,
 };
 use crate::frame::CallMetadata;
-use crate::ids::{PromiseId, TaskId};
+use crate::ids::{PromiseId, ScopeId, TaskId, VarId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 
@@ -87,6 +87,8 @@ pub enum Value {
     Task(TaskHandle),
     Promise(PromiseHandle),
     ExternalPromise(ExternalPromise),
+    Scope(ScopeId),
+    Var(VarId),
     CallStack(Vec<CallMetadata>),
     Trace(Vec<TraceEntry>),
     Traceback(Vec<TraceHop>),
@@ -435,6 +437,18 @@ impl Value {
                 }
                 Ok(dict.into_any())
             }
+            Value::Scope(scope_id) => {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("type", "Scope")?;
+                dict.set_item("scope_id", scope_id.raw())?;
+                Ok(dict.into_any())
+            }
+            Value::Var(var_id) => {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("type", "Var")?;
+                dict.set_item("var_id", var_id.raw())?;
+                Ok(dict.into_any())
+            }
             Value::List(items) => {
                 let list = PyList::empty(py);
                 for item in items {
@@ -551,6 +565,8 @@ impl Value {
             | Value::Task(_)
             | Value::Promise(_)
             | Value::ExternalPromise(_)
+            | Value::Scope(_)
+            | Value::Var(_)
             | Value::CallStack(_)
             | Value::Trace(_)
             | Value::Traceback(_)
@@ -574,6 +590,8 @@ impl Value {
             | Value::Task(_)
             | Value::Promise(_)
             | Value::ExternalPromise(_)
+            | Value::Scope(_)
+            | Value::Var(_)
             | Value::CallStack(_)
             | Value::Trace(_)
             | Value::Traceback(_)
@@ -597,6 +615,8 @@ impl Value {
             | Value::Task(_)
             | Value::Promise(_)
             | Value::ExternalPromise(_)
+            | Value::Scope(_)
+            | Value::Var(_)
             | Value::CallStack(_)
             | Value::Trace(_)
             | Value::Traceback(_)
@@ -620,6 +640,8 @@ impl Value {
             | Value::Task(_)
             | Value::Promise(_)
             | Value::ExternalPromise(_)
+            | Value::Scope(_)
+            | Value::Var(_)
             | Value::CallStack(_)
             | Value::Trace(_)
             | Value::Traceback(_)
@@ -651,6 +673,8 @@ impl Value {
             Value::Task(h) => Value::Task(*h),
             Value::Promise(h) => Value::Promise(*h),
             Value::ExternalPromise(h) => Value::ExternalPromise(h.clone()),
+            Value::Scope(scope_id) => Value::Scope(*scope_id),
+            Value::Var(var_id) => Value::Var(*var_id),
             Value::CallStack(stack) => Value::CallStack(stack.clone()),
             Value::Trace(entries) => Value::Trace(entries.clone()),
             Value::Traceback(hops) => Value::Traceback(hops.clone()),

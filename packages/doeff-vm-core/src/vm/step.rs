@@ -237,14 +237,20 @@ impl VM {
                     Mode::Deliver(_) | Mode::HandleYield(_) | Mode::Return(_) => None,
                 };
                 let step = {
-                    let Some(seg) = self.segments.get_mut(seg_id) else {
+                    let Some(_seg) = self.segments.get_mut(seg_id) else {
                         return StepEvent::Error(VMError::invalid_segment("segment not found"));
                     };
-                    let scope = &mut seg.scope_store;
+                    let Some(mut scope) = self.scope_store_for_segment(seg_id) else {
+                        return StepEvent::Error(VMError::invalid_segment(
+                            "scope segment not found",
+                        ));
+                    };
                     let mut guard = stream.lock().expect("IRStream lock poisoned");
                     match mode {
-                        Mode::Deliver(value) => guard.resume(value, &mut self.rust_store, scope),
-                        Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store, scope),
+                        Mode::Deliver(value) => {
+                            guard.resume(value, &mut self.rust_store, &mut scope)
+                        }
+                        Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store, &mut scope),
                         Mode::HandleYield(yielded) => {
                             unreachable!("Program frame resumed with HandleYield mode: {yielded:?}")
                         }
@@ -1419,16 +1425,26 @@ impl VM {
             DoCtrl::Pass { effect } => self.handle_yield_pass(effect),
             DoCtrl::GetContinuation => self.handle_yield_get_continuation(),
             DoCtrl::GetHandlers => self.handle_yield_get_handlers(),
+            DoCtrl::GetScopeOf { continuation } => self.handle_yield_get_scope_of(continuation),
             DoCtrl::GetTraceback { continuation } => self.handle_yield_get_traceback(continuation),
             DoCtrl::CreateContinuation {
                 expr,
                 handlers,
                 handler_identities,
-            } => self.handle_yield_create_continuation(expr, handlers, handler_identities),
+                scope,
+            } => self.handle_yield_create_continuation(expr, handlers, handler_identities, scope),
             DoCtrl::ResumeContinuation {
                 continuation,
                 value,
             } => self.handle_yield_resume_continuation(continuation, value),
+            DoCtrl::PushScope => self.handle_yield_push_scope(),
+            DoCtrl::PopScope => self.handle_yield_pop_scope(),
+            DoCtrl::AllocVar { initial_value } => self.handle_yield_alloc_var(initial_value),
+            DoCtrl::ReadVar { var_id } => self.handle_yield_read_var(var_id),
+            DoCtrl::WriteVar { var_id, value } => self.handle_yield_write_var(var_id, value),
+            DoCtrl::WriteVarNonlocal { var_id, value } => {
+                self.handle_yield_write_var_nonlocal(var_id, value)
+            }
             DoCtrl::PythonAsyncSyntaxEscape { action } => {
                 self.handle_yield_python_async_syntax_escape(action)
             }
@@ -1550,6 +1566,10 @@ impl VM {
         self.handle_get_handlers()
     }
 
+    fn handle_yield_get_scope_of(&mut self, continuation: Continuation) -> StepEvent {
+        self.handle_get_scope_of(continuation)
+    }
+
     fn handle_yield_get_traceback(&mut self, continuation: Continuation) -> StepEvent {
         self.handle_get_traceback(continuation)
     }
@@ -1559,9 +1579,10 @@ impl VM {
         expr: PyShared,
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
+        scope: Option<ScopeId>,
     ) -> StepEvent {
         let metadata = self.nearest_auto_unwrap_programlike_metadata();
-        self.handle_create_continuation(expr, handlers, handler_identities, metadata)
+        self.handle_create_continuation(expr, handlers, handler_identities, scope, metadata)
     }
 
     fn handle_yield_resume_continuation(
@@ -1570,6 +1591,98 @@ impl VM {
         value: Value,
     ) -> StepEvent {
         self.handle_resume_continuation(continuation, value)
+    }
+
+    fn handle_yield_push_scope(&mut self) -> StepEvent {
+        let Some(current_scope_id) = self.current_scope_id() else {
+            return StepEvent::Error(VMError::internal("PushScope called without current scope"));
+        };
+        let child_scope_id = self.alloc_plain_scope(current_scope_id, HashMap::new());
+        self.current_seg_mut().scope_id = child_scope_id;
+        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        StepEvent::Continue
+    }
+
+    fn handle_yield_pop_scope(&mut self) -> StepEvent {
+        let Some(current_scope_id) = self.current_scope_id() else {
+            return StepEvent::Error(VMError::internal("PopScope called without current scope"));
+        };
+        let parent_scope_id = self
+            .scopes
+            .lock()
+            .expect("scope lock poisoned")
+            .parent_of(current_scope_id);
+        let Some(parent_scope_id) = parent_scope_id else {
+            return StepEvent::Error(VMError::internal("PopScope at root scope"));
+        };
+        self.current_seg_mut().scope_id = parent_scope_id;
+        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        StepEvent::Continue
+    }
+
+    fn handle_yield_alloc_var(&mut self, initial_value: Value) -> StepEvent {
+        let Some(current_scope_id) = self.current_scope_id() else {
+            return StepEvent::Error(VMError::internal("AllocVar called without current scope"));
+        };
+        let var_id = self
+            .scopes
+            .lock()
+            .expect("scope lock poisoned")
+            .alloc_var(current_scope_id, initial_value);
+        self.current_seg_mut().mode = Mode::Deliver(Value::Var(var_id));
+        StepEvent::Continue
+    }
+
+    fn handle_yield_read_var(&mut self, var_id: VarId) -> StepEvent {
+        let Some(current_scope_id) = self.current_scope_id() else {
+            return StepEvent::Error(VMError::internal("ReadVar called without current scope"));
+        };
+        let value = self
+            .scopes
+            .lock()
+            .expect("scope lock poisoned")
+            .read_var(current_scope_id, var_id);
+        let Some(value) = value else {
+            return StepEvent::Error(VMError::internal(format!(
+                "ReadVar failed: variable {} not found in lexical scope",
+                var_id.raw()
+            )));
+        };
+        self.current_seg_mut().mode = Mode::Deliver(value);
+        StepEvent::Continue
+    }
+
+    fn handle_yield_write_var(&mut self, var_id: VarId, value: Value) -> StepEvent {
+        let Some(current_scope_id) = self.current_scope_id() else {
+            return StepEvent::Error(VMError::internal("WriteVar called without current scope"));
+        };
+        if let Err(err) = self.scopes.lock().expect("scope lock poisoned").write_var(
+            current_scope_id,
+            var_id,
+            value,
+        ) {
+            return StepEvent::Error(VMError::internal(format!("WriteVar failed: {err}")));
+        }
+        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        StepEvent::Continue
+    }
+
+    fn handle_yield_write_var_nonlocal(&mut self, var_id: VarId, value: Value) -> StepEvent {
+        let Some(current_scope_id) = self.current_scope_id() else {
+            return StepEvent::Error(VMError::internal(
+                "WriteVarNonlocal called without current scope",
+            ));
+        };
+        if let Err(err) = self
+            .scopes
+            .lock()
+            .expect("scope lock poisoned")
+            .write_var_nonlocal(current_scope_id, var_id, value)
+        {
+            return StepEvent::Error(VMError::internal(format!("WriteVarNonlocal failed: {err}")));
+        }
+        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        StepEvent::Continue
     }
 
     fn handle_yield_python_async_syntax_escape(&mut self, action: PyShared) -> StepEvent {
@@ -1854,7 +1967,7 @@ impl VM {
         // while inheriting dynamic scope/interceptor state from the call site.
         let mut base_seg = Segment::new(Marker::fresh(), None);
         self.copy_interceptor_guard_state(Some(current_seg_id), &mut base_seg);
-        self.copy_scope_store_from(Some(current_seg_id), &mut base_seg);
+        base_seg.scope_id = scope.scope_id().unwrap_or(current_seg.scope_id);
         let base_seg_id = self.alloc_segment(base_seg);
         let mut replay_seg_ids = vec![base_seg_id];
 
@@ -1873,14 +1986,14 @@ impl VM {
                         entry.types.clone(),
                     );
                     self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
-                    self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
+                    self.inherit_scope_from(outside_seg_id, &mut prompt_seg);
                     let prompt_seg_id = self.alloc_segment(prompt_seg);
                     replay_seg_ids.push(prompt_seg_id);
                     self.track_run_handler(&handler);
 
                     let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
                     self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
-                    self.copy_scope_store_from(outside_seg_id, &mut body_seg);
+                    self.inherit_scope_from(outside_seg_id, &mut body_seg);
                     let body_seg_id = self.alloc_segment(body_seg);
                     replay_seg_ids.push(body_seg_id);
                     outside_seg_id = Some(body_seg_id);
@@ -1897,7 +2010,7 @@ impl VM {
                     let mut body_seg = Segment::new(interceptor_marker, outside_seg_id);
                     body_seg.kind = entry.into_boundary();
                     self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
-                    self.copy_scope_store_from(outside_seg_id, &mut body_seg);
+                    self.inherit_scope_from(outside_seg_id, &mut body_seg);
                     let body_seg_id = self.alloc_segment(body_seg);
                     replay_seg_ids.push(body_seg_id);
                     outside_seg_id = Some(body_seg_id);
@@ -2017,9 +2130,16 @@ impl VM {
                 | non_pure @ DoCtrl::Pass { .. }
                 | non_pure @ DoCtrl::GetContinuation
                 | non_pure @ DoCtrl::GetHandlers
+                | non_pure @ DoCtrl::GetScopeOf { .. }
                 | non_pure @ DoCtrl::GetTraceback { .. }
                 | non_pure @ DoCtrl::CreateContinuation { .. }
                 | non_pure @ DoCtrl::ResumeContinuation { .. }
+                | non_pure @ DoCtrl::PushScope
+                | non_pure @ DoCtrl::PopScope
+                | non_pure @ DoCtrl::AllocVar { .. }
+                | non_pure @ DoCtrl::ReadVar { .. }
+                | non_pure @ DoCtrl::WriteVar { .. }
+                | non_pure @ DoCtrl::WriteVarNonlocal { .. }
                 | non_pure @ DoCtrl::PythonAsyncSyntaxEscape { .. }
                 | non_pure @ DoCtrl::Apply { .. }
                 | non_pure @ DoCtrl::Expand { .. }
@@ -2055,9 +2175,16 @@ impl VM {
                 | non_pure @ DoCtrl::Pass { .. }
                 | non_pure @ DoCtrl::GetContinuation
                 | non_pure @ DoCtrl::GetHandlers
+                | non_pure @ DoCtrl::GetScopeOf { .. }
                 | non_pure @ DoCtrl::GetTraceback { .. }
                 | non_pure @ DoCtrl::CreateContinuation { .. }
                 | non_pure @ DoCtrl::ResumeContinuation { .. }
+                | non_pure @ DoCtrl::PushScope
+                | non_pure @ DoCtrl::PopScope
+                | non_pure @ DoCtrl::AllocVar { .. }
+                | non_pure @ DoCtrl::ReadVar { .. }
+                | non_pure @ DoCtrl::WriteVar { .. }
+                | non_pure @ DoCtrl::WriteVarNonlocal { .. }
                 | non_pure @ DoCtrl::PythonAsyncSyntaxEscape { .. }
                 | non_pure @ DoCtrl::Apply { .. }
                 | non_pure @ DoCtrl::Expand { .. }

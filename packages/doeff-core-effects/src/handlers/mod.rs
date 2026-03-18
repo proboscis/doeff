@@ -22,7 +22,7 @@ use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
-use crate::segment::ScopeStore;
+use crate::scope::ScopeStore;
 use crate::step::{PyException, PythonCall};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -120,12 +120,9 @@ fn ask_from_scope_or_env(
     scope: &ScopeStore,
     key: &HashedPyKey,
 ) -> Option<Value> {
-    for layer in scope.scope_bindings.iter().rev() {
-        if let Some(value) = layer.get(key) {
-            return Some(value.clone());
-        }
-    }
-    store.ask(key).cloned()
+    scope
+        .lookup_binding(key)
+        .or_else(|| store.ask(key).cloned())
 }
 
 fn missing_env_key_error(key: &HashedPyKey) -> PyException {
@@ -312,7 +309,9 @@ fn get_sync_await_submitter() -> Result<PyShared, String> {
                 .map(|runner| runner.unbind())
                 .map_err(|e| e.to_string())
         });
-        Ok(PyShared::new(runner.as_ref().map_err(Clone::clone)?.clone_ref(py)))
+        Ok(PyShared::new(
+            runner.as_ref().map_err(Clone::clone)?.clone_ref(py),
+        ))
     })
 }
 
@@ -548,9 +547,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
         match std::mem::replace(&mut self.phase, AwaitPhase::Idle) {
             AwaitPhase::AwaitExternalPromise { continuation, .. }
             | AwaitPhase::AwaitSubmission { continuation, .. }
-            | AwaitPhase::AwaitResult { continuation } => {
-                Self::transfer_throw(continuation, exc)
-            }
+            | AwaitPhase::AwaitResult { continuation } => Self::transfer_throw(continuation, exc),
             AwaitPhase::Idle => IRStreamStep::Throw(exc),
         }
     }
@@ -955,15 +952,9 @@ impl LazyAskHandlerProgram {
 
     fn exit_local_scope(
         &self,
-        scope: &mut ScopeStore,
         cache_snapshot: HashMap<HashedPyKey, LazyCacheEntry>,
         semaphore_snapshot: HashMap<HashedPyKey, LazySemaphoreEntry>,
     ) -> Result<(), PyException> {
-        if scope.scope_bindings.pop().is_none() {
-            return Err(PyException::runtime_error(
-                "Local scope stack underflow in LazyAskHandler".to_string(),
-            ));
-        }
         self.restore_lazy_state(cache_snapshot, semaphore_snapshot);
         Ok(())
     }
@@ -1094,8 +1085,16 @@ impl IRStreamProgram for LazyAskHandlerProgram {
             match parse_local_python_effect(&obj) {
                 Ok(Some(local_effect)) => {
                     let (cache_snapshot, semaphore_snapshot) = self.snapshot_lazy_state();
-                    scope.scope_bindings.push(Arc::new(local_effect.overrides));
-                    let eval_scope = k.clone();
+                    let child_scope_id =
+                        scope.alloc_child_scope_with_bindings(local_effect.overrides);
+                    let mut eval_scope = k.clone();
+                    let Some(scope_segment) = eval_scope.segment_mut() else {
+                        return IRStreamStep::Throw(PyException::runtime_error(
+                            "Local expected captured continuation with segment snapshot"
+                                .to_string(),
+                        ));
+                    };
+                    scope_segment.scope_id = child_scope_id;
                     self.phase = LazyAskPhase::AwaitLocalEval {
                         continuation: k,
                         cache_snapshot,
@@ -1139,7 +1138,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         &mut self,
         value: Value,
         _store: &mut RustStore,
-        scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
             LazyAskPhase::AwaitLocalEval {
@@ -1147,7 +1146,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 cache_snapshot,
                 semaphore_snapshot,
             } => {
-                if let Err(exc) = self.exit_local_scope(scope, cache_snapshot, semaphore_snapshot) {
+                if let Err(exc) = self.exit_local_scope(cache_snapshot, semaphore_snapshot) {
                     return IRStreamStep::Throw(exc);
                 }
                 IRStreamStep::Yield(DoCtrl::Resume {
@@ -1180,7 +1179,9 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                         | Value::Trace(_)
                         | Value::Traceback(_)
                         | Value::ActiveChain(_)
-                        | Value::List(_) => {
+                        | Value::List(_)
+                        | Value::Scope(_)
+                        | Value::Var(_) => {
                             return IRStreamStep::Throw(PyException::type_error(
                                 "CreateSemaphore must return a semaphore handle".to_string(),
                             ));
@@ -1234,7 +1235,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         &mut self,
         exc: PyException,
         _store: &mut RustStore,
-        scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
             LazyAskPhase::AwaitLocalEval {
@@ -1242,9 +1243,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 cache_snapshot,
                 semaphore_snapshot,
             } => {
-                if let Err(scope_exc) =
-                    self.exit_local_scope(scope, cache_snapshot, semaphore_snapshot)
-                {
+                if let Err(scope_exc) = self.exit_local_scope(cache_snapshot, semaphore_snapshot) {
                     return IRStreamStep::Throw(scope_exc);
                 }
                 Self::transfer_throw(continuation, exc)
@@ -1332,10 +1331,10 @@ impl ReaderHandlerProgram {
     fn handle_ask(
         key: HashedPyKey,
         continuation: Continuation,
-        store: &mut RustStore,
+        _store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        let Some(value) = ask_from_scope_or_env(store, scope, &key) else {
+        let Some(value) = ask_from_scope_or_env(_store, scope, &key) else {
             return IRStreamStep::Throw(missing_env_key_error(&key));
         };
 
@@ -1881,7 +1880,7 @@ mod tests {
     }
 
     fn set_env_str(store: &mut RustStore, py: Python<'_>, key: &str, value: Value) {
-        store.env.insert(hashed_string_key(py, key), value);
+        store.insert_binding(hashed_string_key(py, key), value);
     }
 
     #[test]
