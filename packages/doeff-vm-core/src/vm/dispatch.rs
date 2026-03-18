@@ -2165,11 +2165,11 @@ impl VM {
                     continuation: return_to,
                 },
             )));
-            // Scope-based continuations start a fresh program in the captured lexical scope
-            // rather than resuming a suspended yield site. There is no leaf frame that can
-            // receive the resume payload yet, so ResumeContinuation's value is intentionally
-            // ignored for this continuation shape.
-            let _ = value;
+            if !matches!(value, Value::Unit) {
+                return StepEvent::Error(VMError::internal(
+                    "ResumeContinuation of scope-based continuation does not accept a resume value",
+                ));
+            }
             self.current_segment = Some(leaf_seg_id);
             self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr {
                 metadata: start_metadata,

@@ -60,10 +60,6 @@ impl ScopeRuntime {
         }
     }
 
-    pub fn root_scope_id(&self) -> ScopeId {
-        ScopeId::root()
-    }
-
     pub fn get(&self, scope_id: ScopeId) -> Option<&Scope> {
         self.scopes.get(scope_id.index())
     }
@@ -75,6 +71,10 @@ impl ScopeRuntime {
         bindings: HashMap<HashedPyKey, Value>,
     ) -> ScopeId {
         let id = ScopeId::from_index(self.scopes.len());
+        debug_assert!(
+            parent.index() < id.index(),
+            "scope parent must precede child in arena"
+        );
         self.scopes.push(Scope {
             parent: Some(parent),
             boundary,
@@ -191,13 +191,6 @@ impl ScopeRuntime {
         }
         entries.reverse();
         entries
-    }
-
-    pub fn collect_root_bindings(&self) -> HashMap<HashedPyKey, Value> {
-        self.get(ScopeId::root())
-            .expect("root scope must always exist")
-            .bindings
-            .clone()
     }
 }
 
