@@ -3345,6 +3345,10 @@ impl IRStreamProgram for SchedulerProgram {
                 };
 
                 if handlers.is_empty() {
+                    // Empty Spawn handlers means "inherit the yield site's lexical scope".
+                    // That scope already includes whichever await shim the outer run mode
+                    // installed (sync in blocking mode, async in async_run), so injecting
+                    // sync_await_handler here would be both redundant and wrong for async_run.
                     let scope_source = k_user.clone();
                     self.phase = SchedulerPhase::SpawnAwaitScope {
                         k_user,
@@ -3690,7 +3694,7 @@ mod tests {
     use crate::effect::Effect;
     use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::pyvm::{DoExprTag, PyEffectBase};
-    use doeff_vm_core::RustKleisli;
+    use doeff_vm_core::{RustKleisli, ScopeId};
     use pyo3::types::PyDict;
     use pyo3::{IntoPyObject, PyClassInitializer, Python};
 
@@ -4135,7 +4139,8 @@ mod tests {
             );
             assert!(matches!(
                 step,
-                IRStreamStep::Yield(DoCtrl::CreateContinuation { .. })
+                IRStreamStep::Yield(DoCtrl::CreateContinuation { handlers, scope, .. })
+                    if handlers.is_empty() && scope == Some(ScopeId::from_index(7))
             ));
 
             let location = IRStream::debug_location(&program).expect("scheduler debug location");

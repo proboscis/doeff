@@ -448,3 +448,21 @@ def test_t24_writer_as_scoped_var() -> None:
     result = _run(program())
     assert _assert_ok(result) == "done"
     assert list(result.log) == ["a", "b", "c"]
+
+
+def test_t25_scope_based_resume_continuation_rejects_non_unit_value() -> None:
+    @do
+    def child():
+        return "child"
+
+    @do
+    def program():
+        k = yield doeff_vm.GetContinuation()
+        scope = yield doeff_vm.GetScopeOf(k)
+        child_k = yield doeff_vm.CreateContinuation(child(), scope=scope)
+        yield doeff_vm.ResumeContinuation(child_k, 123)
+        return "unreachable"
+
+    result = _run(program())
+    assert not result.is_ok()
+    assert "does not accept a resume value" in str(result.error)
