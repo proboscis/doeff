@@ -80,7 +80,53 @@ def _is_internal_cache_filename(filename: str | None) -> bool:
     if not filename:
         return False
     normalized = filename.replace("\\", "/")
-    return "doeff/cache.py" in normalized
+    return (
+        "doeff/cache.py" in normalized
+        or "doeff/handlers/cache_handlers.py" in normalized
+    )
+
+
+def _is_hidden_cache_call_site(site: CacheCallSite) -> bool:
+    if _is_internal_cache_filename(site.source_file):
+        return True
+    if site.function_name == "sync_spawn_intercept_handler":
+        return True
+    if site.source_file == "<rust>" and site.function_name != "SchedulerHandler":
+        return True
+    return False
+
+
+def _cache_call_site_from_handler_stack_entry(entry: Any) -> CacheCallSite | None:
+    if isinstance(entry, dict):
+        handler_name = entry.get("handler_name")
+        handler_kind = entry.get("handler_kind")
+        source_file = entry.get("source_file")
+        source_line = entry.get("source_line")
+    else:
+        try:
+            handler_name = entry.handler_name
+            handler_kind = entry.handler_kind
+            source_file = entry.source_file
+            source_line = entry.source_line
+        except AttributeError:
+            return None
+
+    if not isinstance(handler_name, str):
+        return None
+
+    if source_file is None and str(handler_kind) == "rust_builtin":
+        source_file = "<rust>"
+    if source_line is None:
+        source_line = 0
+
+    if not isinstance(source_file, str) or not isinstance(source_line, int):
+        return None
+
+    return CacheCallSite(
+        source_file=source_file,
+        source_line=source_line,
+        function_name=handler_name,
+    )
 
 
 def _call_site_from_program_frames(call_stack: list[Any] | tuple[Any, ...]) -> CacheCallSite | None:
@@ -120,6 +166,35 @@ def _call_site_from_program_frames(call_stack: list[Any] | tuple[Any, ...]) -> C
             fallback = site
         if not _is_internal_cache_filename(source_file):
             return site
+
+    return fallback
+
+
+def _call_site_from_effect_entries(call_stack: list[Any] | tuple[Any, ...]) -> CacheCallSite | None:
+    fallback: CacheCallSite | None = None
+
+    for frame in reversed(call_stack):
+        if isinstance(frame, dict):
+            if frame.get("kind") != "effect_yield":
+                continue
+            handler_stack = frame.get("handler_stack", ())
+        else:
+            try:
+                handler_stack = frame.handler_stack
+            except AttributeError:
+                continue
+
+        if not isinstance(handler_stack, (list, tuple)):
+            continue
+
+        for entry in handler_stack:
+            site = _cache_call_site_from_handler_stack_entry(entry)
+            if site is None:
+                continue
+            if site.function_name == "SchedulerHandler" and site.source_file == "<rust>":
+                return site
+            if fallback is None and not _is_hidden_cache_call_site(site):
+                fallback = site
 
     return fallback
 
@@ -172,7 +247,16 @@ def _call_site_from_error(error: BaseException) -> CacheCallSite | None:
 
     if not isinstance(active_chain, (list, tuple)):
         return None
-    return _call_site_from_program_frames(list(active_chain))
+
+    program_site = _call_site_from_program_frames(list(active_chain))
+    if program_site is not None and not _is_hidden_cache_call_site(program_site):
+        return program_site
+
+    effect_site = _call_site_from_effect_entries(list(active_chain))
+    if effect_site is not None:
+        return effect_site
+
+    return program_site
 
 
 def _unwrap_cached_payload(value: Any) -> Any:

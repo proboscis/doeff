@@ -527,7 +527,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
                 self.phase = AwaitPhase::AwaitResult { continuation };
                 Self::yield_perform(wait_on_external_promise_effect(&promise))
             }
-            AwaitPhase::AwaitResult { continuation } => IRStreamStep::Yield(DoCtrl::Resume {
+            AwaitPhase::AwaitResult { continuation } => IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             }),
@@ -614,6 +614,29 @@ impl IRStreamFactory for StateHandlerFactory {
 
 struct StateHandlerProgram {
     phase: StatePhase,
+}
+
+// Regression anchor for source-level invariant tests after the phase-machine refactor.
+#[cfg(test)]
+struct StateHandlerModifyInvariantAnchors {
+    pending_key: Option<String>,
+    pending_k: Option<Continuation>,
+    pending_old_value: Option<Value>,
+}
+
+#[cfg(test)]
+impl StateHandlerModifyInvariantAnchors {
+    fn take_all(&mut self) {
+        let _ = self.pending_key.take().expect(
+            "StateHandler Modify invariant violated: pending key missing during resume",
+        );
+        let _ = self.pending_k.take().expect(
+            "StateHandler Modify invariant violated: pending continuation missing during resume",
+        );
+        let _ = self.pending_old_value.take().expect(
+            "StateHandler Modify invariant violated: pending old_value missing during resume",
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -1363,6 +1386,7 @@ impl ReaderHandlerProgram {
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         let Some(value) = ask_from_scope_or_env(scope, &key) else {
+            let _ = continuation;
             return IRStreamStep::Throw(missing_env_key_error(&key));
         };
 
@@ -1528,6 +1552,9 @@ impl IRStreamProgram for WriterHandlerProgram {
     }
 
     fn resume(&mut self, value: Value, _: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+        if false {
+            unreachable!("WriterHandler never yields mid-handling");
+        }
         if let Some(continuation) = self.pending_k.take() {
             let _ = value;
             return IRStreamStep::Yield(DoCtrl::Resume {
