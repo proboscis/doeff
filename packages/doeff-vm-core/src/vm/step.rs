@@ -1,6 +1,10 @@
 use super::*;
 
 impl VM {
+    fn missing_state_key_exception(key: &str) -> PyException {
+        PyException::from(pyo3::exceptions::PyKeyError::new_err(key.to_string()))
+    }
+
     /// Set mode to Throw with a RuntimeError and return Continue.
     pub(super) fn throw_runtime_error(&mut self, message: &str) -> StepEvent {
         if self.current_segment.is_none() {
@@ -169,6 +173,8 @@ impl VM {
 
             if !segment.has_frames() {
                 let caller = segment.caller;
+                let scope_parent = segment.scope_parent;
+                let throw_parent = segment.throw_parent.clone();
                 let mode =
                     std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit));
                 match mode {
@@ -178,8 +184,17 @@ impl VM {
                         return StepEvent::Continue;
                     }
                     Mode::Throw(exc) => {
-                        if let Some(caller_id) = caller {
-                            self.segments.reparent_children(seg_id, Some(caller_id));
+                        if let Some(parent) =
+                            throw_parent.filter(|parent| !self.is_one_shot_consumed(parent.cont_id))
+                        {
+                            self.segments
+                                .reparent_children(seg_id, caller, scope_parent);
+                            self.segments.free(seg_id);
+                            self.current_segment = caller;
+                            return self.handle_transfer_throw_non_terminal(parent, exc);
+                        } else if let Some(caller_id) = caller {
+                            self.segments
+                                .reparent_children(seg_id, Some(caller_id), scope_parent);
                             self.current_segment = Some(caller_id);
                             self.current_seg_mut().mode = Mode::Throw(exc);
                             self.segments.free(seg_id);
@@ -188,7 +203,9 @@ impl VM {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_traceback_entries(&exc);
                             let active_chain = self.assemble_active_chain(Some(&exc));
-                            self.segments.reparent_children(seg_id, None);
+                            self.completed_segment = Some(seg_id);
+                            self.store_completed_outputs_from(seg_id);
+                            self.segments.reparent_children(seg_id, None, scope_parent);
                             self.segments.free(seg_id);
                             self.current_segment = None;
                             return StepEvent::Error(VMError::uncaught_exception(
@@ -237,14 +254,16 @@ impl VM {
                     Mode::Deliver(_) | Mode::HandleYield(_) | Mode::Return(_) => None,
                 };
                 let step = {
-                    let Some(seg) = self.segments.get_mut(seg_id) else {
+                    let Some(_segment) = self.segments.get_mut(seg_id) else {
                         return StepEvent::Error(VMError::invalid_segment("segment not found"));
                     };
-                    let scope = &mut seg.scope_store;
+                    let mut scope = self.visible_scope_store(seg_id);
                     let mut guard = stream.lock().expect("IRStream lock poisoned");
                     match mode {
-                        Mode::Deliver(value) => guard.resume(value, &mut self.rust_store, scope),
-                        Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store, scope),
+                        Mode::Deliver(value) => {
+                            guard.resume(value, &mut self.rust_store, &mut scope)
+                        }
+                        Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store, &mut scope),
                         Mode::HandleYield(yielded) => {
                             unreachable!("Program frame resumed with HandleYield mode: {yielded:?}")
                         }
@@ -468,11 +487,19 @@ impl VM {
                     self.emit_resume_event(dispatch_id, &continuation, false);
                 }
 
+                if self.is_one_shot_consumed(continuation.cont_id) {
+                    if let Some(seg) = self.current_segment_mut() {
+                        seg.caller = continuation.captured_caller();
+                    }
+                }
                 self.current_seg_mut().mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
                 if self.is_one_shot_consumed(continuation.cont_id) {
+                    if let Some(seg) = self.current_segment_mut() {
+                        seg.caller = continuation.captured_caller();
+                    }
                     self.current_seg_mut().mode = Mode::Throw(exc);
                 } else {
                     self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::TransferThrow {
@@ -806,16 +833,25 @@ impl VM {
     ) -> StepEvent {
         match step {
             IRStreamStep::Yield(yielded) => {
+                if incoming_throw.is_some() {
+                    self.trace_state.clear_preserved_error_frames();
+                }
                 self.propagate_auto_unwrap_program_context_to_yielded(metadata.as_ref(), &yielded);
                 self.handle_stream_yield(yielded, stream, metadata, handler_kind)
             }
             IRStreamStep::Return(value) => {
+                if incoming_throw.is_some() {
+                    self.trace_state.clear_preserved_error_frames();
+                }
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
                 self.handle_handler_return(value)
             }
             IRStreamStep::Throw(exc) => {
+                if let Some(ref m) = metadata {
+                    self.emit_frame_exited_due_to_error(m);
+                }
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
@@ -986,6 +1022,8 @@ impl VM {
                     ))
                 }
             }
+        } else if let Some(ref m) = metadata {
+            self.emit_frame_exited(m);
         }
         Mode::HandleYield(yielded)
     }
@@ -1012,7 +1050,7 @@ impl VM {
                         chain.push(link);
                     }
                 }
-                cursor = seg.caller;
+                cursor = seg.scope_parent;
             }
         }
 
@@ -1424,7 +1462,13 @@ impl VM {
                 expr,
                 handlers,
                 handler_identities,
-            } => self.handle_yield_create_continuation(expr, handlers, handler_identities),
+                outside_scope,
+            } => self.handle_yield_create_continuation(
+                expr,
+                handlers,
+                handler_identities,
+                outside_scope,
+            ),
             DoCtrl::ResumeContinuation {
                 continuation,
                 value,
@@ -1455,8 +1499,23 @@ impl VM {
             DoCtrl::EvalInScope {
                 expr,
                 scope,
+                bindings,
                 metadata,
-            } => self.handle_yield_eval_in_scope(expr, scope, metadata),
+            } => self.handle_yield_eval_in_scope(expr, scope, bindings, metadata),
+            DoCtrl::AllocVar { initial } => self.handle_yield_alloc_var(initial),
+            DoCtrl::ReadVar { var } => self.handle_yield_read_var(var),
+            DoCtrl::WriteVar { var, value } => self.handle_yield_write_var(var, value),
+            DoCtrl::WriteVarNonlocal { var, value } => {
+                self.handle_yield_write_var_nonlocal(var, value)
+            }
+            DoCtrl::ReadHandlerState {
+                key,
+                missing_is_none,
+            } => self.handle_yield_read_handler_state(key, missing_is_none),
+            DoCtrl::WriteHandlerState { key, value } => {
+                self.handle_yield_write_handler_state(key, value)
+            }
+            DoCtrl::AppendHandlerLog { message } => self.handle_yield_append_handler_log(message),
             DoCtrl::GetCallStack => self.handle_yield_get_call_stack(),
         }
     }
@@ -1559,9 +1618,10 @@ impl VM {
         expr: PyShared,
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
+        outside_scope: Option<SegmentId>,
     ) -> StepEvent {
         let metadata = self.nearest_auto_unwrap_programlike_metadata();
-        self.handle_create_continuation(expr, handlers, handler_identities, metadata)
+        self.handle_create_continuation(expr, handlers, handler_identities, metadata, outside_scope)
     }
 
     fn handle_yield_resume_continuation(
@@ -1812,8 +1872,12 @@ impl VM {
     }
 
     fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
-        let handlers = self.current_visible_handlers();
-        let cont = Continuation::create_unstarted_with_metadata(expr, handlers, metadata);
+        let cont = Continuation::create_unstarted_with_metadata(
+            expr,
+            Vec::new(),
+            metadata,
+            self.current_segment,
+        );
         self.handle_resume_continuation(cont, Value::None)
     }
 
@@ -1821,6 +1885,7 @@ impl VM {
         &mut self,
         expr: PyShared,
         scope: Continuation,
+        bindings: HashMap<HashedPyKey, Value>,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         let Some(current_seg_id) = self.current_segment else {
@@ -1833,99 +1898,120 @@ impl VM {
         };
         let mut return_to =
             Continuation::capture(current_seg, current_seg_id, current_seg.dispatch_id);
-        // Correctness constraint: active interceptor markers are still referenced by
-        // live frames in the current dispatch. We must preserve them as-is for the
-        // replay chain; remapping them would require remapping those live frames,
-        // which are outside the EvalInScope replay scope.
-        let mut active_interceptor_markers: HashSet<Marker> =
-            current_seg.interceptor_skip_stack.iter().copied().collect();
-        active_interceptor_markers.insert(current_seg.marker);
-
-        let Some(replay_chain_start_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
+        let Some(scope_parent_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
             return StepEvent::Error(VMError::internal(
                 "EvalInScope received scope from unknown segment",
             ));
         };
 
-        let chain_entries = self.chain_entries_in_caller_chain(replay_chain_start_seg_id);
-
-        // Evaluate in an isolated base segment so active handlers are exactly
-        // the scope-site handlers (no duplication with current caller chain),
-        // while inheriting dynamic scope/interceptor state from the call site.
-        let mut base_seg = Segment::new(Marker::fresh(), None);
-        self.copy_interceptor_guard_state(Some(current_seg_id), &mut base_seg);
-        self.copy_scope_store_from(Some(current_seg_id), &mut base_seg);
-        let base_seg_id = self.alloc_segment(base_seg);
-        let mut replay_seg_ids = vec![base_seg_id];
-
-        let mut outside_seg_id = Some(base_seg_id);
-        let mut interceptor_marker_remap: HashMap<Marker, Marker> = HashMap::new();
-        for entry in chain_entries.into_iter().rev() {
-            match entry {
-                CallerChainEntry::Handler(entry) => {
-                    let handler = entry.handler.clone();
-                    let handler_marker = Marker::fresh();
-                    let mut prompt_seg = Segment::new_prompt_with_types(
-                        handler_marker,
-                        outside_seg_id,
-                        handler_marker,
-                        handler.clone(),
-                        entry.types.clone(),
-                    );
-                    self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
-                    self.copy_scope_store_from(outside_seg_id, &mut prompt_seg);
-                    let prompt_seg_id = self.alloc_segment(prompt_seg);
-                    replay_seg_ids.push(prompt_seg_id);
-                    self.track_run_handler(&handler);
-
-                    let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-                    self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
-                    self.copy_scope_store_from(outside_seg_id, &mut body_seg);
-                    let body_seg_id = self.alloc_segment(body_seg);
-                    replay_seg_ids.push(body_seg_id);
-                    outside_seg_id = Some(body_seg_id);
-                }
-                CallerChainEntry::Interceptor(entry) => {
-                    let interceptor_marker = if active_interceptor_markers.contains(&entry.marker) {
-                        entry.marker
-                    } else {
-                        let fresh_marker = Marker::fresh();
-                        interceptor_marker_remap.insert(entry.marker, fresh_marker);
-                        fresh_marker
-                    };
-
-                    let mut body_seg = Segment::new(interceptor_marker, outside_seg_id);
-                    body_seg.kind = entry.into_boundary();
-                    self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
-                    self.copy_scope_store_from(outside_seg_id, &mut body_seg);
-                    let body_seg_id = self.alloc_segment(body_seg);
-                    replay_seg_ids.push(body_seg_id);
-                    outside_seg_id = Some(body_seg_id);
-                }
-            }
-        }
-
-        if !interceptor_marker_remap.is_empty() {
-            Self::remap_interceptor_markers_in_continuation(
-                &mut return_to,
-                &interceptor_marker_remap,
-            );
-            self.remap_interceptor_markers_in_runtime_state(&interceptor_marker_remap);
-        }
-        let Some(base_seg) = self.segments.get_mut(base_seg_id) else {
-            return StepEvent::Error(VMError::invalid_segment(
-                "EvalInScope replay base segment not found",
-            ));
-        };
-        base_seg.push_frame(Frame::EvalReturn(Box::new(
+        // EvalInScope is a lexical child scope. It must point at the live scope
+        // chain so reads/nonlocal writes reach the original segments instead of
+        // a replay copy.
+        let mut child_seg = Segment::new(Marker::fresh(), Some(current_seg_id));
+        child_seg.scope_parent = Some(scope_parent_seg_id);
+        child_seg.named_bindings = bindings;
+        self.copy_interceptor_guard_state(Some(current_seg_id), &mut child_seg);
+        child_seg.push_frame(Frame::EvalReturn(Box::new(
             EvalReturnContinuation::EvalInScopeReturn {
                 continuation: return_to,
             },
         )));
+        let child_seg_id = self.alloc_segment(child_seg);
 
-        self.current_segment = outside_seg_id;
+        self.current_segment = Some(child_seg_id);
         self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr { metadata });
         StepEvent::NeedsPython(PythonCall::EvalExpr { expr })
+    }
+
+    fn handle_yield_alloc_var(&mut self, initial: Value) -> StepEvent {
+        let Some(seg_id) = self.current_segment else {
+            return StepEvent::Error(VMError::internal("AllocVar called without current segment"));
+        };
+        let var = self.alloc_scoped_var_in_segment(seg_id, initial);
+        self.current_seg_mut().mode = Mode::Deliver(Value::Var(var));
+        StepEvent::Continue
+    }
+
+    fn handle_yield_read_var(&mut self, var: VarId) -> StepEvent {
+        let Some(seg_id) = self.current_segment else {
+            return StepEvent::Error(VMError::internal("ReadVar called without current segment"));
+        };
+        let Some(value) = self.read_scoped_var_from(seg_id, var) else {
+            return StepEvent::Error(VMError::internal(format!(
+                "ReadVar could not find variable {} in lexical scope",
+                var.raw()
+            )));
+        };
+        self.current_seg_mut().mode = Mode::Deliver(value);
+        StepEvent::Continue
+    }
+
+    fn handle_yield_write_var(&mut self, var: VarId, value: Value) -> StepEvent {
+        let Some(seg_id) = self.current_segment else {
+            return StepEvent::Error(VMError::internal("WriteVar called without current segment"));
+        };
+        if !self.write_scoped_var_in_current_segment(seg_id, var, value) {
+            return StepEvent::Error(VMError::internal("WriteVar target segment not found"));
+        }
+        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        StepEvent::Continue
+    }
+
+    fn handle_yield_write_var_nonlocal(&mut self, var: VarId, value: Value) -> StepEvent {
+        let Some(seg_id) = self.current_segment else {
+            return StepEvent::Error(VMError::internal(
+                "WriteVarNonlocal called without current segment",
+            ));
+        };
+        if !self.write_scoped_var_nonlocal(seg_id, var, value) {
+            return StepEvent::Error(VMError::internal(format!(
+                "WriteVarNonlocal could not find owner scope {} for variable {}",
+                var.owner_scope().raw(),
+                var.raw()
+            )));
+        }
+        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        StepEvent::Continue
+    }
+
+    fn handle_yield_read_handler_state(&mut self, key: String, missing_is_none: bool) -> StepEvent {
+        let Some((_, _, _, _, prompt_seg_id)) = self.nearest_handler_dispatch() else {
+            return StepEvent::Error(VMError::internal(
+                "ReadHandlerState called outside handler dispatch",
+            ));
+        };
+        let Some(value) = self.read_handler_state_at(prompt_seg_id, &key, missing_is_none) else {
+            self.set_contextual_throw(Self::missing_state_key_exception(&key));
+            return StepEvent::Continue;
+        };
+        self.current_seg_mut().mode = Mode::Deliver(value);
+        StepEvent::Continue
+    }
+
+    fn handle_yield_write_handler_state(&mut self, key: String, value: Value) -> StepEvent {
+        let Some((_, _, _, _, prompt_seg_id)) = self.nearest_handler_dispatch() else {
+            return StepEvent::Error(VMError::internal(
+                "WriteHandlerState called outside handler dispatch",
+            ));
+        };
+        if !self.write_handler_state_at(prompt_seg_id, key, value) {
+            return StepEvent::Error(VMError::internal("handler state prompt segment not found"));
+        }
+        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        StepEvent::Continue
+    }
+
+    fn handle_yield_append_handler_log(&mut self, message: Value) -> StepEvent {
+        let Some((_, _, _, _, prompt_seg_id)) = self.nearest_handler_dispatch() else {
+            return StepEvent::Error(VMError::internal(
+                "AppendHandlerLog called outside handler dispatch",
+            ));
+        };
+        if !self.append_handler_log_at(prompt_seg_id, message) {
+            return StepEvent::Error(VMError::internal("handler log prompt segment not found"));
+        }
+        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        StepEvent::Continue
     }
 
     fn handle_yield_get_call_stack(&mut self) -> StepEvent {
@@ -2026,6 +2112,13 @@ impl VM {
                 | non_pure @ DoCtrl::IRStream { .. }
                 | non_pure @ DoCtrl::Eval { .. }
                 | non_pure @ DoCtrl::EvalInScope { .. }
+                | non_pure @ DoCtrl::AllocVar { .. }
+                | non_pure @ DoCtrl::ReadVar { .. }
+                | non_pure @ DoCtrl::WriteVar { .. }
+                | non_pure @ DoCtrl::WriteVarNonlocal { .. }
+                | non_pure @ DoCtrl::ReadHandlerState { .. }
+                | non_pure @ DoCtrl::WriteHandlerState { .. }
+                | non_pure @ DoCtrl::AppendHandlerLog { .. }
                 | non_pure @ DoCtrl::GetCallStack => {
                     unreachable!(
                         "collect_value_args requires DoCtrl::Pure values, got {non_pure:?}"
@@ -2064,6 +2157,13 @@ impl VM {
                 | non_pure @ DoCtrl::IRStream { .. }
                 | non_pure @ DoCtrl::Eval { .. }
                 | non_pure @ DoCtrl::EvalInScope { .. }
+                | non_pure @ DoCtrl::AllocVar { .. }
+                | non_pure @ DoCtrl::ReadVar { .. }
+                | non_pure @ DoCtrl::WriteVar { .. }
+                | non_pure @ DoCtrl::WriteVarNonlocal { .. }
+                | non_pure @ DoCtrl::ReadHandlerState { .. }
+                | non_pure @ DoCtrl::WriteHandlerState { .. }
+                | non_pure @ DoCtrl::AppendHandlerLog { .. }
                 | non_pure @ DoCtrl::GetCallStack => {
                     unreachable!(
                         "collect_value_kwargs requires DoCtrl::Pure values, got {non_pure:?}"
@@ -2090,6 +2190,7 @@ impl VM {
         };
 
         let caller = self.segments.get(seg_id).and_then(|s| s.caller);
+        let scope_parent = self.segments.get(seg_id).and_then(|s| s.scope_parent);
 
         match caller {
             Some(caller_id) => {
@@ -2098,14 +2199,17 @@ impl VM {
                         "caller segment not found in step_return",
                     ));
                 }
-                self.segments.reparent_children(seg_id, Some(caller_id));
+                self.segments
+                    .reparent_children(seg_id, Some(caller_id), scope_parent);
                 self.current_segment = Some(caller_id);
                 self.segments.free(seg_id);
                 self.current_seg_mut().mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             None => {
-                self.segments.reparent_children(seg_id, None);
+                self.segments.reparent_children(seg_id, None, scope_parent);
+                self.completed_segment = Some(seg_id);
+                self.store_completed_outputs_from(seg_id);
                 self.segments.free(seg_id);
                 self.current_segment = None;
                 StepEvent::Done(value)
@@ -2251,6 +2355,9 @@ impl VM {
                 }
             }
             PyCallOutcome::GenError(exception) => {
+                if let Some(ref m) = metadata {
+                    self.emit_frame_exited(m);
+                }
                 self.receive_expand_gen_error(handler_return, exception);
             }
             PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
@@ -2465,6 +2572,9 @@ impl VM {
     ) {
         match outcome {
             PyCallOutcome::GenYield(yielded) => {
+                if incoming_throw.is_some() {
+                    self.trace_state.clear_preserved_error_frames();
+                }
                 if self.current_segment.is_none() {
                     return;
                 }
@@ -2472,6 +2582,9 @@ impl VM {
                 let _ = self.handle_stream_yield(yielded, stream, metadata, handler_kind);
             }
             PyCallOutcome::GenReturn(value) => {
+                if incoming_throw.is_some() {
+                    self.trace_state.clear_preserved_error_frames();
+                }
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
@@ -2484,6 +2597,9 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Deliver(value);
             }
             PyCallOutcome::GenError(exception) => {
+                if let Some(ref m) = metadata {
+                    self.emit_frame_exited_due_to_error(m);
+                }
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
@@ -2516,6 +2632,15 @@ impl VM {
                     {
                         site = GenErrorSite::StepUserGeneratorConverted;
                     } else if self.current_segment_is_active_handler_for_dispatch(dispatch_id) {
+                        if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
+                            TraceState::set_exception_cause(&exception, &original);
+                        }
+                        self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                    } else if handler_kind.is_some()
+                        && self
+                            .current_segment_dispatch_id_any()
+                            .is_some_and(|current_dispatch_id| current_dispatch_id == dispatch_id)
+                    {
                         if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
                             TraceState::set_exception_cause(&exception, &original);
                         }
