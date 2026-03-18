@@ -723,9 +723,9 @@ impl TraceState {
                 .handler_stack
                 .iter()
                 .map(|entry| DelegationEntry {
-                    handler_name: entry.handler_name.clone(),
+                    handler_name: entry.handler_name.to_string(),
                     handler_kind: entry.handler_kind,
-                    handler_source_file: entry.source_file.clone(),
+                    handler_source_file: entry.source_file.as_ref().map(ToString::to_string),
                     handler_source_line: entry.source_line,
                 })
                 .collect();
@@ -816,12 +816,12 @@ impl TraceState {
                 .find(|entry| entry.status == HandlerStatus::Active)
             {
                 active_entry.status = HandlerStatus::Threw;
-                active_entry.handler_name.clone()
+                active_entry.handler_name.to_string()
             } else if let Some(last_entry) = dispatch.handler_stack.last_mut() {
                 if last_entry.status == HandlerStatus::Pending {
                     last_entry.status = HandlerStatus::Threw;
                 }
-                last_entry.handler_name.clone()
+                last_entry.handler_name.to_string()
             } else {
                 MISSING_UNKNOWN.to_string()
             };
@@ -1224,9 +1224,9 @@ impl TraceState {
             );
         };
         (
-            handler.handler_name.clone(),
+            handler.handler_name.to_string(),
             handler.handler_kind,
-            handler.source_file.clone(),
+            handler.source_file.as_ref().map(ToString::to_string),
             handler.source_line,
         )
     }

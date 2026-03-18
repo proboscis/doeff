@@ -14,7 +14,12 @@ impl VM {
     pub(super) fn find_prompt_boundary_by_marker(
         &self,
         marker: Marker,
-    ) -> Option<(SegmentId, KleisliRef, Option<Vec<PyShared>>)> {
+    ) -> Option<(
+        SegmentId,
+        KleisliRef,
+        Option<Vec<PyShared>>,
+        Arc<HandlerSnapshotEntry>,
+    )> {
         self.segments
             .iter()
             .find_map(|(seg_id, seg)| match &seg.kind {
@@ -22,8 +27,10 @@ impl VM {
                     handled_marker,
                     handler,
                     types,
-                    ..
-                } if *handled_marker == marker => Some((seg_id, handler.clone(), types.clone())),
+                    trace_info,
+                } if *handled_marker == marker => {
+                    Some((seg_id, handler.clone(), types.clone(), trace_info.clone()))
+                }
                 SegmentKind::PromptBoundary { .. }
                 | SegmentKind::Normal
                 | SegmentKind::InterceptorBoundary { .. }
@@ -45,7 +52,7 @@ impl VM {
                 handled_marker,
                 handler,
                 types,
-                ..
+                trace_info,
             } = &seg.kind
             {
                 chain.push(HandlerChainEntry {
@@ -53,6 +60,7 @@ impl VM {
                     prompt_seg_id: seg_id,
                     handler: handler.clone(),
                     types: types.clone(),
+                    trace_info: trace_info.clone(),
                 });
             }
             cursor = seg.caller;
@@ -75,12 +83,13 @@ impl VM {
                     handled_marker,
                     handler,
                     types,
-                    ..
+                    trace_info,
                 } => chain.push(CallerChainEntry::Handler(HandlerChainEntry {
                     marker: *handled_marker,
                     prompt_seg_id: seg_id,
                     handler: handler.clone(),
                     types: types.clone(),
+                    trace_info: trace_info.clone(),
                 })),
                 SegmentKind::InterceptorBoundary { .. } => {
                     let link = InterceptorChainLink::from_boundary(seg.marker, &seg.kind)
@@ -206,12 +215,17 @@ impl VM {
             let seg = self.segments.get(seg_id)?;
             if let SegmentKind::PromptBoundary {
                 handled_marker,
-                handler,
+                trace_info,
                 ..
             } = &seg.kind
             {
                 if *handled_marker == marker {
-                    return Some(Self::handler_trace_info(handler));
+                    return Some((
+                        trace_info.handler_name.to_string(),
+                        trace_info.handler_kind,
+                        trace_info.source_file.as_ref().map(ToString::to_string),
+                        trace_info.source_line,
+                    ));
                 }
             }
             cursor = seg.caller;

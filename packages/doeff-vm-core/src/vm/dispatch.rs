@@ -497,7 +497,11 @@ impl VM {
         continuation
             .segment_id()
             .filter(|seg_id| self.segments.get(*seg_id).is_some())
-            .or_else(|| continuation.captured_caller().filter(|seg_id| self.segments.get(*seg_id).is_some()))
+            .or_else(|| {
+                continuation
+                    .captured_caller()
+                    .filter(|seg_id| self.segments.get(*seg_id).is_some())
+            })
     }
 
     pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
@@ -940,7 +944,8 @@ impl VM {
                 },
             )?;
         for (idx, marker) in handler_chain.iter().copied().enumerate() {
-            let Some((prompt_seg_id, handler, types)) = self.find_prompt_boundary_by_marker(marker)
+            let Some((prompt_seg_id, handler, types, trace_info)) =
+                self.find_prompt_boundary_by_marker(marker)
             else {
                 return Err(VMError::internal(format!(
                     "find_matching_handler: missing handler marker {} at index {}",
@@ -956,6 +961,7 @@ impl VM {
                             prompt_seg_id,
                             handler: handler.clone(),
                             types,
+                            trace_info,
                         },
                         &effect_obj,
                     )
@@ -1010,9 +1016,9 @@ impl VM {
                                     .segment_id()
                                     .expect("dispatch origin continuations must be captured"),
                             )
-                                .into_iter()
-                                .map(|entry| entry.prompt_seg_id)
-                                .collect()
+                            .into_iter()
+                            .map(|entry| entry.prompt_seg_id)
+                            .collect()
                         })
                 })
                 .unwrap_or_default()
@@ -1053,8 +1059,15 @@ impl VM {
                     ))
                 })?;
 
-        let mut selected: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
-        let mut first_type_filtered_skip: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
+        let mut selected: Option<(usize, Marker, SegmentId, KleisliRef, HandlerSnapshotEntry)> =
+            None;
+        let mut first_type_filtered_skip: Option<(
+            usize,
+            Marker,
+            SegmentId,
+            KleisliRef,
+            HandlerSnapshotEntry,
+        )> = None;
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
         let mut handler_count = 0usize;
         let mut cursor = Some(seg_id);
@@ -1067,7 +1080,7 @@ impl VM {
                 handled_marker,
                 handler,
                 types,
-                ..
+                trace_info,
             } = &seg.kind
             {
                 let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
@@ -1077,13 +1090,7 @@ impl VM {
                     && !restricted_excluded
                     && !restricted_handler_blocked
                 {
-                    let (name, kind, file, line) = Self::handler_trace_info(handler);
-                    handler_chain_snapshot.push(HandlerSnapshotEntry {
-                        handler_name: name,
-                        handler_kind: kind,
-                        source_file: file,
-                        source_line: line,
-                    });
+                    handler_chain_snapshot.push(trace_info.as_ref().clone());
 
                     if handler.can_handle(&effect)? {
                         let should_invoke = self
@@ -1100,11 +1107,17 @@ impl VM {
                                     *handled_marker,
                                     cursor_id,
                                     handler.clone(),
+                                    trace_info.as_ref().clone(),
                                 ));
                             }
                         } else if first_type_filtered_skip.is_none() {
-                            first_type_filtered_skip =
-                                Some((handler_count, *handled_marker, cursor_id, handler.clone()));
+                            first_type_filtered_skip = Some((
+                                handler_count,
+                                *handled_marker,
+                                cursor_id,
+                                handler.clone(),
+                                trace_info.as_ref().clone(),
+                            ));
                         }
                     }
 
@@ -1153,6 +1166,7 @@ impl VM {
         let handler_marker = selected.1;
         let prompt_seg_id = selected.2;
         let handler = selected.3;
+        let handler_trace_info = selected.4;
         let is_execution_context_effect = Self::is_execution_context_effect(&effect);
 
         if self.segments.get(prompt_seg_id).is_none() {
@@ -1203,7 +1217,8 @@ impl VM {
         if handler.py_identity().is_some() {
             self.register_continuation(k_user.clone());
         }
-        let ir_node = Self::invoke_kleisli_handler_expr(handler, effect, k_user)?;
+        let ir_node =
+            Self::invoke_kleisli_handler_expr(handler, effect, k_user, &handler_trace_info)?;
         Ok(self.evaluate(ir_node))
     }
 
@@ -1290,6 +1305,7 @@ impl VM {
             handled_marker: marker,
             handler: handler.clone(),
             types: None,
+            trace_info: Segment::prompt_trace_info(&handler),
         };
         self.track_run_handler(&handler);
         true
@@ -1760,6 +1776,7 @@ impl VM {
                     handler,
                     effect.clone(),
                     next_k.clone(),
+                    entry.trace_info.as_ref(),
                 ) {
                     Ok(node) => node,
                     Err(err) => return StepEvent::Error(err),
@@ -1861,11 +1878,11 @@ impl VM {
         let Some(origin) = self.current_dispatch_origin() else {
             return StepEvent::Error(VMError::internal("GetHandlers outside dispatch"));
         };
-        // Preserve full caller-visible handler stack (top-most first).
+        // Preserve the full caller-visible handler stack (top-most first).
         //
         // This is part of the public contract used by tests and user-space
-        // handlers. Continuation installation handles deduplication when these
-        // handlers are reapplied from within active dispatch contexts.
+        // handlers. Callers that snapshot these handlers for later continuation
+        // resumption must also record the inherited caller-chain prefix.
         let chain_start = self
             .current_handler_dispatch()
             .map(|(_, _, continuation, _, _)| continuation)
@@ -1909,13 +1926,40 @@ impl VM {
         program: PyShared,
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
+        handler_base: ContinuationHandlerBase,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        let k = Continuation::create_unstarted_with_identities_and_metadata(
+        let inherited_handler_markers = match handler_base {
+            // Preserve legacy CreateContinuation semantics: explicit handler
+            // lists do not assume anything about the resume site's caller chain.
+            ContinuationHandlerBase::CurrentSegment => Vec::new(),
+            // Ambient handler snapshots (for example scheduler Spawn after
+            // GetHandlers) already include the currently visible handler chain.
+            // Record that inherited prefix structurally so resume can skip only
+            // the handlers that are already visible at the same positions.
+            ContinuationHandlerBase::OutsideVisibleHandlerChain => self
+                .current_segment
+                .map(|seg_id| {
+                    self.handlers_in_caller_chain(seg_id)
+                        .into_iter()
+                        .map(|entry| entry.marker)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        let inherited_handler_offset = match handler_base {
+            ContinuationHandlerBase::CurrentSegment => 0,
+            ContinuationHandlerBase::OutsideVisibleHandlerChain => handlers
+                .len()
+                .saturating_sub(inherited_handler_markers.len()),
+        };
+        let k = Continuation::create_unstarted_with_inherited_handler_markers_and_identities_and_metadata(
             program,
             handlers,
             handler_identities,
             metadata,
+            inherited_handler_offset,
+            inherited_handler_markers,
         );
         self.register_continuation(k.clone());
         self.current_seg_mut().mode = Mode::Deliver(Value::Continuation(k));
@@ -1942,8 +1986,14 @@ impl VM {
         }
         self.mark_one_shot_consumed(k.cont_id);
 
-        let Some((program, handlers, handler_identities, start_metadata)) =
-            k.into_unstarted_parts()
+        let Some((
+            program,
+            mut handlers,
+            mut handler_identities,
+            start_metadata,
+            inherited_handler_offset,
+            inherited_handler_markers,
+        )) = k.into_unstarted_parts()
         else {
             return StepEvent::Error(VMError::internal(
                 "unstarted continuation has no program payload",
@@ -1954,6 +2004,41 @@ impl VM {
         // Each handler gets: prompt_seg → body_seg (handler in scope).
         // Body_seg becomes the outside for the next handler.
         let mut outside_seg_id = self.current_segment;
+        if !inherited_handler_markers.is_empty() {
+            if let Some(current_seg_id) = outside_seg_id {
+                let visible_markers = self
+                    .handlers_in_caller_chain(current_seg_id)
+                    .into_iter()
+                    .map(|entry| entry.marker)
+                    .collect::<Vec<_>>();
+                let shared_prefix = inherited_handler_markers
+                    .iter()
+                    .zip(visible_markers.iter())
+                    .take_while(|(captured, visible)| captured == visible)
+                    .count();
+                if shared_prefix > 0 {
+                    let inherited_start = inherited_handler_offset.min(handlers.len());
+                    let mut kept_local = handlers[..inherited_start].to_vec();
+                    kept_local.extend(
+                        handlers
+                            .into_iter()
+                            .skip(inherited_start.saturating_add(shared_prefix)),
+                    );
+                    handlers = kept_local;
+
+                    let inherited_identity_start =
+                        inherited_handler_offset.min(handler_identities.len());
+                    let mut kept_identities =
+                        handler_identities[..inherited_identity_start].to_vec();
+                    kept_identities.extend(
+                        handler_identities
+                            .into_iter()
+                            .skip(inherited_identity_start.saturating_add(shared_prefix)),
+                    );
+                    handler_identities = kept_identities;
+                }
+            }
+        }
 
         let k_handler_count = handlers.len();
         for idx in (0..k_handler_count).rev() {

@@ -15,7 +15,7 @@ use crate::capture::{
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
-use crate::do_ctrl::{DoCtrl, DoExprTag, InterceptMode, PyDoExprBase};
+use crate::do_ctrl::{ContinuationHandlerBase, DoCtrl, DoExprTag, InterceptMode, PyDoExprBase};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{
@@ -194,6 +194,7 @@ struct HandlerChainEntry {
     prompt_seg_id: SegmentId,
     handler: KleisliRef,
     types: Option<Vec<PyShared>>,
+    trace_info: Arc<HandlerSnapshotEntry>,
 }
 
 #[derive(Clone)]

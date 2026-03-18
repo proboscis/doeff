@@ -59,7 +59,7 @@ impl VM {
             return false;
         };
         self.find_prompt_boundary_by_marker(marker)
-            .is_some_and(|(_, handler, _)| handler.supports_error_context_conversion())
+            .is_some_and(|(_, handler, _, _)| handler.supports_error_context_conversion())
     }
 
     fn is_execution_context_effect_for_dispatch(&self, dispatch_id: DispatchId) -> bool {
@@ -95,6 +95,7 @@ impl VM {
         kleisli: KleisliRef,
         effect: DispatchEffect,
         continuation: Continuation,
+        handler_trace_info: &HandlerSnapshotEntry,
     ) -> Result<DoCtrl, VMError> {
         let effect_obj = Python::attach(|py| dispatch_to_pyobject(py, &effect).map(|v| v.unbind()))
             .map_err(|err| {
@@ -102,11 +103,14 @@ impl VM {
                     "failed to convert dispatch effect to Python object: {err}"
                 ))
             })?;
-        let debug = kleisli.debug_info();
         let metadata = CallMetadata::new(
-            debug.name,
-            debug.file.unwrap_or_else(|| "<unknown>".to_string()),
-            debug.line.unwrap_or(0),
+            handler_trace_info.handler_name.to_string(),
+            handler_trace_info
+                .source_file
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "<unknown>".to_string()),
+            handler_trace_info.source_line.unwrap_or(0),
             None,
             None,
             false,
@@ -138,8 +142,16 @@ impl VM {
                 return Some(info);
             }
         }
-        self.find_prompt_boundary_by_marker(marker)
-            .map(|(_seg_id, handler, _types)| Self::handler_trace_info(&handler))
+        self.find_prompt_boundary_by_marker(marker).map(
+            |(_seg_id, _handler, _types, trace_info)| {
+                (
+                    trace_info.handler_name.to_string(),
+                    trace_info.handler_kind,
+                    trace_info.source_file.as_ref().map(ToString::to_string),
+                    trace_info.source_line,
+                )
+            },
+        )
     }
 
     pub(super) fn current_handler_identity_for_dispatch(

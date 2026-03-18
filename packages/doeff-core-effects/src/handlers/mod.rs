@@ -197,6 +197,19 @@ fn wrap_exception_as_result_err(error: PyException) -> Result<Value, PyException
     })
 }
 
+fn tail_resume_continuation(continuation: Continuation, value: Value) -> IRStreamStep {
+    if continuation.is_started() {
+        return IRStreamStep::Yield(DoCtrl::Transfer {
+            continuation,
+            value,
+        });
+    }
+    IRStreamStep::Yield(DoCtrl::ResumeContinuation {
+        continuation,
+        value,
+    })
+}
+
 fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
     let Value::Python(obj) = value else {
         return None;
@@ -312,7 +325,9 @@ fn get_sync_await_submitter() -> Result<PyShared, String> {
                 .map(|runner| runner.unbind())
                 .map_err(|e| e.to_string())
         });
-        Ok(PyShared::new(runner.as_ref().map_err(Clone::clone)?.clone_ref(py)))
+        Ok(PyShared::new(
+            runner.as_ref().map_err(Clone::clone)?.clone_ref(py),
+        ))
     })
 }
 
@@ -548,9 +563,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
         match std::mem::replace(&mut self.phase, AwaitPhase::Idle) {
             AwaitPhase::AwaitExternalPromise { continuation, .. }
             | AwaitPhase::AwaitSubmission { continuation, .. }
-            | AwaitPhase::AwaitResult { continuation } => {
-                Self::transfer_throw(continuation, exc)
-            }
+            | AwaitPhase::AwaitResult { continuation } => Self::transfer_throw(continuation, exc),
             AwaitPhase::Idle => IRStreamStep::Throw(exc),
         }
     }
@@ -1477,10 +1490,7 @@ impl IRStreamProgram for WriterHandlerProgram {
             return match parse_writer_python_effect(&obj) {
                 Ok(Some(message)) => {
                     store.tell(message);
-                    IRStreamStep::Yield(DoCtrl::Resume {
-                        continuation: k,
-                        value: Value::Unit,
-                    })
+                    tail_resume_continuation(k, Value::Unit)
                 }
                 Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
@@ -2274,7 +2284,7 @@ mod tests {
             };
             assert!(matches!(
                 step,
-                IRStreamStep::Yield(DoCtrl::Resume {
+                IRStreamStep::Yield(DoCtrl::Transfer {
                     value: Value::Unit,
                     ..
                 })
