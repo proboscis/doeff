@@ -1,11 +1,11 @@
-//! Segment arena with free list for efficient allocation.
+//! Segment arena for stable segment IDs within a run.
 
 use crate::ids::SegmentId;
 use crate::segment::Segment;
 
 pub struct SegmentArena {
     segments: Vec<Option<Segment>>,
-    free_list: Vec<SegmentId>,
+    free_list: Vec<usize>,
 }
 
 impl SegmentArena {
@@ -17,20 +17,21 @@ impl SegmentArena {
     }
 
     pub fn alloc(&mut self, segment: Segment) -> SegmentId {
-        if let Some(id) = self.free_list.pop() {
-            self.segments[id.index()] = Some(segment);
-            id
-        } else {
-            let id = SegmentId::from_index(self.segments.len());
-            self.segments.push(Some(segment));
-            id
+        if let Some(index) = self.free_list.pop() {
+            debug_assert!(self.segments.get(index).is_some_and(|slot| slot.is_none()));
+            self.segments[index] = Some(segment);
+            return SegmentId::from_index(index);
         }
+        let id = SegmentId::from_index(self.segments.len());
+        self.segments.push(Some(segment));
+        id
     }
 
     pub fn free(&mut self, id: SegmentId) {
         if let Some(slot) = self.segments.get_mut(id.index()) {
-            *slot = None;
-            self.free_list.push(id);
+            if slot.take().is_some() {
+                self.free_list.push(id.index());
+            }
         }
     }
 
@@ -56,15 +57,24 @@ impl SegmentArena {
     pub fn reparent_children(
         &mut self,
         old_parent: SegmentId,
-        new_parent: Option<SegmentId>,
+        new_caller: Option<SegmentId>,
+        new_scope_parent: Option<SegmentId>,
     ) -> usize {
         let mut rewired = 0usize;
         for slot in &mut self.segments {
             let Some(segment) = slot.as_mut() else {
                 continue;
             };
+            let mut touched = false;
             if segment.caller == Some(old_parent) {
-                segment.caller = new_parent;
+                segment.caller = new_caller;
+                touched = true;
+            }
+            if segment.scope_parent == Some(old_parent) {
+                segment.scope_parent = new_scope_parent;
+                touched = true;
+            }
+            if touched {
                 rewired += 1;
             }
         }
@@ -81,6 +91,11 @@ impl SegmentArena {
 
     pub fn capacity(&self) -> usize {
         self.segments.len()
+    }
+
+    pub fn clear(&mut self) {
+        self.segments.clear();
+        self.free_list.clear();
     }
 }
 
@@ -115,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn test_arena_free_and_reuse() {
+    fn test_arena_free_releases_slot_and_reuses_id() {
         let mut arena = SegmentArena::new();
 
         let marker1 = Marker::fresh();
@@ -168,13 +183,39 @@ mod tests {
         let child_b = arena.alloc(Segment::new(marker, Some(parent)));
         let unrelated = arena.alloc(Segment::new(marker, Some(caller)));
 
-        let rewired = arena.reparent_children(parent, Some(caller));
+        let rewired = arena.reparent_children(parent, Some(caller), None);
         assert_eq!(rewired, 2);
         assert_eq!(arena.get(child_a).and_then(|seg| seg.caller), Some(caller));
         assert_eq!(arena.get(child_b).and_then(|seg| seg.caller), Some(caller));
+        assert_eq!(arena.get(child_a).and_then(|seg| seg.scope_parent), None);
+        assert_eq!(arena.get(child_b).and_then(|seg| seg.scope_parent), None);
         assert_eq!(
             arena.get(unrelated).and_then(|seg| seg.caller),
             Some(caller)
+        );
+    }
+
+    #[test]
+    fn test_reparent_children_rewires_scope_parent_independently() {
+        let mut arena = SegmentArena::new();
+        let marker = Marker::fresh();
+
+        let scope_parent = arena.alloc(Segment::new(marker, None));
+        let outer_scope = arena.alloc(Segment::new(marker, None));
+        let caller = arena.alloc(Segment::new(marker, None));
+        let mut lexical_child = Segment::new(marker, Some(caller));
+        lexical_child.scope_parent = Some(scope_parent);
+        let lexical_child_id = arena.alloc(lexical_child);
+
+        let rewired = arena.reparent_children(scope_parent, Some(caller), Some(outer_scope));
+        assert_eq!(rewired, 1);
+        assert_eq!(
+            arena.get(lexical_child_id).and_then(|seg| seg.caller),
+            Some(caller)
+        );
+        assert_eq!(
+            arena.get(lexical_child_id).and_then(|seg| seg.scope_parent),
+            Some(outer_scope)
         );
     }
 }
