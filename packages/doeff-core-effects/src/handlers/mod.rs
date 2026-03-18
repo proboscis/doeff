@@ -115,17 +115,13 @@ fn parse_local_python_effect(effect: &PyShared) -> Result<Option<ParsedLocalEffe
     })
 }
 
-fn ask_from_scope_or_env(
-    store: &RustStore,
-    scope: &ScopeStore,
-    key: &HashedPyKey,
-) -> Option<Value> {
+fn ask_from_scope_or_env(scope: &ScopeStore, key: &HashedPyKey) -> Option<Value> {
     for layer in scope.scope_bindings.iter().rev() {
         if let Some(value) = layer.get(key) {
             return Some(value.clone());
         }
     }
-    store.ask(key).cloned()
+    None
 }
 
 fn missing_env_key_error(key: &HashedPyKey) -> PyException {
@@ -148,15 +144,6 @@ fn missing_env_key_error(key: &HashedPyKey) -> PyException {
                 PyException::new(exc_type, exc_value, None)
             }
         }
-    })
-}
-
-fn missing_state_key_error(key: &str) -> PyException {
-    Python::attach(|py| {
-        let err = pyo3::exceptions::PyKeyError::new_err(key.to_string());
-        let exc_value = err.value(py).clone().into_any().unbind();
-        let exc_type = exc_value.bind(py).get_type().into_any().unbind();
-        PyException::new(exc_type, exc_value, None)
     })
 }
 
@@ -312,7 +299,9 @@ fn get_sync_await_submitter() -> Result<PyShared, String> {
                 .map(|runner| runner.unbind())
                 .map_err(|e| e.to_string())
         });
-        Ok(PyShared::new(runner.as_ref().map_err(Clone::clone)?.clone_ref(py)))
+        Ok(PyShared::new(
+            runner.as_ref().map_err(Clone::clone)?.clone_ref(py),
+        ))
     })
 }
 
@@ -531,7 +520,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
                 self.phase = AwaitPhase::AwaitResult { continuation };
                 Self::yield_perform(wait_on_external_promise_effect(&promise))
             }
-            AwaitPhase::AwaitResult { continuation } => IRStreamStep::Yield(DoCtrl::Resume {
+            AwaitPhase::AwaitResult { continuation } => IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value,
             }),
@@ -548,9 +537,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
         match std::mem::replace(&mut self.phase, AwaitPhase::Idle) {
             AwaitPhase::AwaitExternalPromise { continuation, .. }
             | AwaitPhase::AwaitSubmission { continuation, .. }
-            | AwaitPhase::AwaitResult { continuation } => {
-                Self::transfer_throw(continuation, exc)
-            }
+            | AwaitPhase::AwaitResult { continuation } => Self::transfer_throw(continuation, exc),
             AwaitPhase::Idle => IRStreamStep::Throw(exc),
         }
     }
@@ -617,9 +604,20 @@ impl IRStreamFactory for StateHandlerFactory {
 }
 
 struct StateHandlerProgram {
+    phase: StatePhase,
     pending_key: Option<String>,
     pending_k: Option<Continuation>,
     pending_old_value: Option<Value>,
+}
+
+#[derive(Debug)]
+enum StatePhase {
+    Idle,
+    AwaitGet { continuation: Continuation },
+    AwaitPut { continuation: Continuation },
+    AwaitModifyCall { modifier: PyShared },
+    AwaitModifyWrite,
+    AwaitModifyReturn,
 }
 
 impl std::fmt::Debug for StateHandlerProgram {
@@ -631,17 +629,45 @@ impl std::fmt::Debug for StateHandlerProgram {
 impl StateHandlerProgram {
     fn new() -> Self {
         StateHandlerProgram {
+            phase: StatePhase::Idle,
             pending_key: None,
             pending_k: None,
             pending_old_value: None,
         }
     }
 
+    fn take_pending_key(&mut self) -> String {
+        self.pending_key
+            .take()
+            .expect("StateHandler Modify invariant violated: pending key missing during resume")
+    }
+
+    fn take_pending_k(&mut self) -> Continuation {
+        self.pending_k.take().expect(
+            "StateHandler Modify invariant violated: pending continuation missing during resume",
+        )
+    }
+
+    fn take_pending_old_value(&mut self) -> Value {
+        self.pending_old_value.take().expect(
+            "StateHandler Modify invariant violated: pending old_value missing during resume",
+        )
+    }
+
+    fn clear_pending_modify_state(&mut self) {
+        self.pending_key = None;
+        self.pending_k = None;
+        self.pending_old_value = None;
+    }
+
     fn current_phase_name(&self) -> &'static str {
-        if self.pending_key.is_some() {
-            "ModifyApply"
-        } else {
-            "Idle"
+        match self.phase {
+            StatePhase::Idle => "Idle",
+            StatePhase::AwaitGet { .. } => "GetRead",
+            StatePhase::AwaitPut { .. } => "PutWrite",
+            StatePhase::AwaitModifyCall { .. } => "ModifyRead",
+            StatePhase::AwaitModifyWrite { .. } => "ModifyApply",
+            StatePhase::AwaitModifyReturn { .. } => "ModifyWrite",
         }
     }
 }
@@ -652,37 +678,30 @@ impl IRStreamProgram for StateHandlerProgram {
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
-        store: &mut RustStore,
+        _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_state_python_effect(&obj) {
                 Ok(Some(parsed)) => match parsed {
                     ParsedStateEffect::Get { key } => {
-                        let Some(value) = store.get(&key).cloned() else {
-                            return IRStreamStep::Throw(missing_state_key_error(&key));
-                        };
-                        IRStreamStep::Yield(DoCtrl::Resume {
-                            continuation: k,
-                            value,
+                        self.phase = StatePhase::AwaitGet { continuation: k };
+                        IRStreamStep::Yield(DoCtrl::ReadHandlerState {
+                            key,
+                            missing_is_none: false,
                         })
                     }
                     ParsedStateEffect::Put { key, value } => {
-                        store.put(key, value);
-                        IRStreamStep::Yield(DoCtrl::Resume {
-                            continuation: k,
-                            value: Value::Unit,
-                        })
+                        self.phase = StatePhase::AwaitPut { continuation: k };
+                        IRStreamStep::Yield(DoCtrl::WriteHandlerState { key, value })
                     }
                     ParsedStateEffect::Modify { key, modifier } => {
-                        let old_value = store.get(&key).cloned().unwrap_or(Value::None);
-                        self.pending_key = Some(key);
+                        self.pending_key = Some(key.clone());
                         self.pending_k = Some(k);
-                        self.pending_old_value = Some(old_value.clone());
-                        IRStreamStep::NeedsPython(PythonCall::CallFunc {
-                            func: modifier,
-                            args: vec![old_value],
-                            kwargs: vec![],
+                        self.phase = StatePhase::AwaitModifyCall { modifier };
+                        IRStreamStep::Yield(DoCtrl::ReadHandlerState {
+                            key,
+                            missing_is_none: true,
                         })
                     }
                 },
@@ -700,30 +719,50 @@ impl IRStreamProgram for StateHandlerProgram {
     fn resume(
         &mut self,
         value: Value,
-        store: &mut RustStore,
+        _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        if self.pending_key.is_none() {
-            // Terminal case (Get/Put): handler is done, pass through return value
-            return IRStreamStep::Return(value);
+        match std::mem::replace(&mut self.phase, StatePhase::Idle) {
+            StatePhase::Idle => IRStreamStep::Return(value),
+            StatePhase::AwaitGet { continuation } => IRStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            }),
+            StatePhase::AwaitPut { continuation } => IRStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value: Value::Unit,
+            }),
+            StatePhase::AwaitModifyCall { modifier } => {
+                let key = self.take_pending_key();
+                let continuation = self.take_pending_k();
+                self.pending_key = Some(key);
+                self.pending_k = Some(continuation);
+                self.pending_old_value = Some(value.clone());
+                self.phase = StatePhase::AwaitModifyWrite;
+                IRStreamStep::NeedsPython(PythonCall::CallFunc {
+                    func: modifier,
+                    args: vec![value],
+                    kwargs: vec![],
+                })
+            }
+            StatePhase::AwaitModifyWrite => {
+                let key = self.take_pending_key();
+                let continuation = self.take_pending_k();
+                let old_value = self.take_pending_old_value();
+                self.pending_k = Some(continuation);
+                self.pending_old_value = Some(old_value);
+                self.phase = StatePhase::AwaitModifyReturn;
+                IRStreamStep::Yield(DoCtrl::WriteHandlerState { key, value })
+            }
+            StatePhase::AwaitModifyReturn => {
+                let continuation = self.take_pending_k();
+                let old_value = self.take_pending_old_value();
+                IRStreamStep::Yield(DoCtrl::Resume {
+                    continuation,
+                    value: old_value,
+                })
+            }
         }
-        // Modify case: store modifier result but resume caller with OLD value.
-        // SPEC-008 L1271: Modify is read-then-modify, returns the old value.
-        let key = self
-            .pending_key
-            .take()
-            .expect("StateHandler Modify invariant violated: pending key missing during resume");
-        let continuation = self.pending_k.take().expect(
-            "StateHandler Modify invariant violated: pending continuation missing during resume",
-        );
-        let old_value = self.pending_old_value.take().expect(
-            "StateHandler Modify invariant violated: pending old_value missing during resume",
-        );
-        store.put(key, value);
-        IRStreamStep::Yield(DoCtrl::Resume {
-            continuation,
-            value: old_value,
-        })
     }
 
     fn throw(
@@ -732,6 +771,7 @@ impl IRStreamProgram for StateHandlerProgram {
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
+        self.clear_pending_modify_state();
         IRStreamStep::Throw(exc)
     }
 }
@@ -955,17 +995,10 @@ impl LazyAskHandlerProgram {
 
     fn exit_local_scope(
         &self,
-        scope: &mut ScopeStore,
         cache_snapshot: HashMap<HashedPyKey, LazyCacheEntry>,
         semaphore_snapshot: HashMap<HashedPyKey, LazySemaphoreEntry>,
-    ) -> Result<(), PyException> {
-        if scope.scope_bindings.pop().is_none() {
-            return Err(PyException::runtime_error(
-                "Local scope stack underflow in LazyAskHandler".to_string(),
-            ));
-        }
+    ) {
         self.restore_lazy_state(cache_snapshot, semaphore_snapshot);
-        Ok(())
     }
 
     fn lazy_cache_get(&self, key: &HashedPyKey, source_id: usize) -> Option<Value> {
@@ -1087,14 +1120,13 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
-        store: &mut RustStore,
+        _store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             match parse_local_python_effect(&obj) {
                 Ok(Some(local_effect)) => {
                     let (cache_snapshot, semaphore_snapshot) = self.snapshot_lazy_state();
-                    scope.scope_bindings.push(Arc::new(local_effect.overrides));
                     let eval_scope = k.clone();
                     self.phase = LazyAskPhase::AwaitLocalEval {
                         continuation: k,
@@ -1104,6 +1136,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                     return IRStreamStep::Yield(DoCtrl::EvalInScope {
                         expr: local_effect.sub_program,
                         scope: eval_scope,
+                        bindings: local_effect.overrides,
                         metadata: None,
                     });
                 }
@@ -1117,7 +1150,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
 
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => {
-                    if let Some(value) = ask_from_scope_or_env(store, scope, &key) {
+                    if let Some(value) = ask_from_scope_or_env(scope, &key) {
                         return self.handle_ask_value(key, k, value);
                     }
                     IRStreamStep::Yield(DoCtrl::Delegate {
@@ -1139,7 +1172,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         &mut self,
         value: Value,
         _store: &mut RustStore,
-        scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
             LazyAskPhase::AwaitLocalEval {
@@ -1147,9 +1180,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 cache_snapshot,
                 semaphore_snapshot,
             } => {
-                if let Err(exc) = self.exit_local_scope(scope, cache_snapshot, semaphore_snapshot) {
-                    return IRStreamStep::Throw(exc);
-                }
+                self.exit_local_scope(cache_snapshot, semaphore_snapshot);
                 IRStreamStep::Yield(DoCtrl::Resume {
                     continuation,
                     value,
@@ -1173,6 +1204,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                         | Value::Continuation(_)
                         | Value::Handlers(_)
                         | Value::Kleisli(_)
+                        | Value::Var(_)
                         | Value::Task(_)
                         | Value::Promise(_)
                         | Value::ExternalPromise(_)
@@ -1204,6 +1236,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 IRStreamStep::Yield(DoCtrl::EvalInScope {
                     expr,
                     scope: eval_scope,
+                    bindings: HashMap::new(),
                     metadata: None,
                 })
             }
@@ -1234,7 +1267,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
         &mut self,
         exc: PyException,
         _store: &mut RustStore,
-        scope: &mut ScopeStore,
+        _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         match std::mem::replace(&mut self.phase, LazyAskPhase::Idle) {
             LazyAskPhase::AwaitLocalEval {
@@ -1242,11 +1275,7 @@ impl IRStreamProgram for LazyAskHandlerProgram {
                 cache_snapshot,
                 semaphore_snapshot,
             } => {
-                if let Err(scope_exc) =
-                    self.exit_local_scope(scope, cache_snapshot, semaphore_snapshot)
-                {
-                    return IRStreamStep::Throw(scope_exc);
-                }
+                self.exit_local_scope(cache_snapshot, semaphore_snapshot);
                 Self::transfer_throw(continuation, exc)
             }
             LazyAskPhase::AwaitAcquire { continuation, .. } => {
@@ -1317,7 +1346,7 @@ impl IRStreamFactory for ReaderHandlerFactory {
     }
 
     fn create_program(&self) -> IRStreamProgramRef {
-        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram)))
+        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram::new())))
     }
 
     fn handler_name(&self) -> &'static str {
@@ -1326,19 +1355,28 @@ impl IRStreamFactory for ReaderHandlerFactory {
 }
 
 #[derive(Debug)]
-struct ReaderHandlerProgram;
+struct ReaderHandlerProgram {
+    pending_return: bool,
+}
 
 impl ReaderHandlerProgram {
+    fn new() -> Self {
+        Self {
+            pending_return: false,
+        }
+    }
+
     fn handle_ask(
+        &mut self,
         key: HashedPyKey,
         continuation: Continuation,
-        store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        let Some(value) = ask_from_scope_or_env(store, scope, &key) else {
+        let Some(value) = ask_from_scope_or_env(scope, &key) else {
             return IRStreamStep::Throw(missing_env_key_error(&key));
         };
 
+        self.pending_return = true;
         IRStreamStep::Yield(DoCtrl::Resume {
             continuation,
             value,
@@ -1346,7 +1384,11 @@ impl ReaderHandlerProgram {
     }
 
     fn current_phase_name(&self) -> &'static str {
-        "AskApply"
+        if self.pending_return {
+            "AskApply"
+        } else {
+            "Idle"
+        }
     }
 }
 
@@ -1356,12 +1398,12 @@ impl IRStreamProgram for ReaderHandlerProgram {
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
-        store: &mut RustStore,
+        _store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
-                Ok(Some(key)) => ReaderHandlerProgram::handle_ask(key, k, store, scope),
+                Ok(Some(key)) => self.handle_ask(key, k, scope),
                 Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
                 }),
@@ -1373,16 +1415,13 @@ impl IRStreamProgram for ReaderHandlerProgram {
         IRStreamStep::Yield(DoCtrl::Pass { effect })
     }
 
-    fn resume(
-        &mut self,
-        value: Value,
-        _store: &mut RustStore,
-        _scope: &mut ScopeStore,
-    ) -> IRStreamStep {
-        if false {
-            unreachable!("ReaderHandler never yields mid-handling");
+    fn resume(&mut self, value: Value, _: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
+        if self.pending_return {
+            self.pending_return = false;
+            return IRStreamStep::Return(value);
         }
-        IRStreamStep::Return(value)
+
+        unreachable!("ReaderHandler never yields mid-handling")
     }
 
     fn throw(
@@ -1447,7 +1486,7 @@ impl IRStreamFactory for WriterHandlerFactory {
     }
 
     fn create_program(&self) -> IRStreamProgramRef {
-        Arc::new(Mutex::new(Box::new(WriterHandlerProgram)))
+        Arc::new(Mutex::new(Box::new(WriterHandlerProgram::new())))
     }
 
     fn handler_name(&self) -> &'static str {
@@ -1456,11 +1495,25 @@ impl IRStreamFactory for WriterHandlerFactory {
 }
 
 #[derive(Debug)]
-struct WriterHandlerProgram;
+struct WriterHandlerProgram {
+    pending_k: Option<Continuation>,
+    pending_return: bool,
+}
 
 impl WriterHandlerProgram {
+    fn new() -> Self {
+        Self {
+            pending_k: None,
+            pending_return: false,
+        }
+    }
+
     fn current_phase_name(&self) -> &'static str {
-        "TellApply"
+        if self.pending_k.is_some() || self.pending_return {
+            "TellApply"
+        } else {
+            "Idle"
+        }
     }
 }
 
@@ -1470,17 +1523,15 @@ impl IRStreamProgram for WriterHandlerProgram {
         _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
-        store: &mut RustStore,
+        _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_writer_python_effect(&obj) {
                 Ok(Some(message)) => {
-                    store.tell(message);
-                    IRStreamStep::Yield(DoCtrl::Resume {
-                        continuation: k,
-                        value: Value::Unit,
-                    })
+                    self.pending_k = Some(k);
+                    self.pending_return = false;
+                    IRStreamStep::Yield(DoCtrl::AppendHandlerLog { message })
                 }
                 Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
@@ -1494,10 +1545,23 @@ impl IRStreamProgram for WriterHandlerProgram {
     }
 
     fn resume(&mut self, value: Value, _: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
-        if false {
-            unreachable!("WriterHandler never yields mid-handling");
+        match self.pending_k.take() {
+            Some(continuation) => {
+                if !matches!(value, Value::Unit) {
+                    unreachable!("WriterHandler AppendHandlerLog must resume with Unit");
+                }
+                self.pending_return = true;
+                IRStreamStep::Yield(DoCtrl::Resume {
+                    continuation,
+                    value: Value::Unit,
+                })
+            }
+            None if self.pending_return => {
+                self.pending_return = false;
+                IRStreamStep::Return(value)
+            }
+            None => unreachable!("WriterHandler never yields mid-handling outside TellApply"),
         }
-        IRStreamStep::Return(value)
     }
 
     fn throw(
@@ -1633,6 +1697,7 @@ impl IRStreamProgram for ResultSafeHandlerProgram {
                     IRStreamStep::Yield(DoCtrl::EvalInScope {
                         expr: sub_program,
                         scope: eval_scope,
+                        bindings: HashMap::new(),
                         metadata: None,
                     })
                 }
@@ -1880,8 +1945,10 @@ mod tests {
         HashedPyKey::from_bound(&key_obj).expect("string keys must be hashable")
     }
 
-    fn set_env_str(store: &mut RustStore, py: Python<'_>, key: &str, value: Value) {
-        store.env.insert(hashed_string_key(py, key), value);
+    fn set_env_str(scope: &mut ScopeStore, py: Python<'_>, key: &str, value: Value) {
+        let mut layer = HashMap::new();
+        layer.insert(hashed_string_key(py, key), value);
+        scope.scope_bindings.push(Arc::new(layer));
     }
 
     #[test]
@@ -1973,7 +2040,8 @@ mod tests {
     fn test_reader_ast_stream_throw_sequence() {
         let mut store = RustStore::new();
         let mut scope = ScopeStore::default();
-        let mut program = ReaderHandlerProgram;
+        let mut program = ReaderHandlerProgram::new();
+        program.pending_return = true;
 
         let location = IRStream::debug_location(&program).expect("reader debug location");
         assert_eq!(location.function_name, "ReaderHandler");
@@ -1992,7 +2060,8 @@ mod tests {
     fn test_writer_ast_stream_throw_sequence() {
         let mut store = RustStore::new();
         let mut scope = ScopeStore::default();
-        let mut program = WriterHandlerProgram;
+        let mut program = WriterHandlerProgram::new();
+        program.pending_k = Some(make_test_continuation());
 
         let location = IRStream::debug_location(&program).expect("writer debug location");
         assert_eq!(location.function_name, "WriterHandler");
@@ -2225,7 +2294,7 @@ mod tests {
         Python::attach(|py| {
             let mut store = RustStore::new();
             let mut scope = ScopeStore::default();
-            set_env_str(&mut store, py, "config", Value::String("value".to_string()));
+            set_env_str(&mut scope, py, "config", Value::String("value".to_string()));
             let k = make_test_continuation();
             let program_ref = ReaderHandlerFactory.create_program();
             let step = {
@@ -2274,12 +2343,21 @@ mod tests {
             };
             assert!(matches!(
                 step,
+                IRStreamStep::Yield(DoCtrl::AppendHandlerLog {
+                    message: Value::String(ref message),
+                }) if message == "log"
+            ));
+            let step = {
+                let mut guard = program_ref.lock().unwrap();
+                guard.resume(Value::Unit, &mut store, &mut scope)
+            };
+            assert!(matches!(
+                step,
                 IRStreamStep::Yield(DoCtrl::Resume {
                     value: Value::Unit,
                     ..
                 })
             ));
-            assert_eq!(store.logs().len(), 1);
         });
     }
 
