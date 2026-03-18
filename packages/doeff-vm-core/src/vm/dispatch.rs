@@ -1994,6 +1994,10 @@ impl VM {
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
         let k = if let Some(scope_id) = scope {
+            debug_assert!(
+                handlers.is_empty() && handler_identities.is_empty(),
+                "scope-based continuation should not also receive explicit handlers"
+            );
             Continuation::create_unstarted_with_scope(program, scope_id, metadata)
         } else {
             Continuation::create_unstarted_with_identities_and_metadata(
@@ -2138,6 +2142,11 @@ impl VM {
         };
 
         if let Some(scope_id) = scope_id {
+            if !matches!(value, Value::Unit) {
+                return StepEvent::Error(VMError::internal(
+                    "ResumeContinuation of scope-based continuation does not accept a resume value",
+                ));
+            }
             let Some(current_seg_id) = self.current_segment else {
                 return StepEvent::Error(VMError::internal(
                     "ResumeContinuation of lexical-scope continuation requires current segment",
@@ -2165,11 +2174,6 @@ impl VM {
                     continuation: return_to,
                 },
             )));
-            if !matches!(value, Value::Unit) {
-                return StepEvent::Error(VMError::internal(
-                    "ResumeContinuation of scope-based continuation does not accept a resume value",
-                ));
-            }
             self.current_segment = Some(leaf_seg_id);
             self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr {
                 metadata: start_metadata,
