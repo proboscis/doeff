@@ -1,5 +1,7 @@
 //! Unified traceback capture and assembly types.
 
+use std::sync::Arc;
+
 use pyo3::prelude::*;
 
 use crate::ids::DispatchId;
@@ -30,18 +32,18 @@ pub enum HandlerStatus {
 /// Snapshot row for a handler in the chain at dispatch start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandlerSnapshotEntry {
-    pub handler_name: String,
+    pub handler_name: Arc<str>,
     pub handler_kind: HandlerKind,
-    pub source_file: Option<String>,
+    pub source_file: Option<Arc<str>>,
     pub source_line: Option<u32>,
 }
 
 /// Handler row emitted in active-chain effect entries with status markers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandlerDispatchEntry {
-    pub handler_name: String,
+    pub handler_name: Arc<str>,
     pub handler_kind: HandlerKind,
-    pub source_file: Option<String>,
+    pub source_file: Option<Arc<str>>,
     pub source_line: Option<u32>,
     pub status: HandlerStatus,
 }

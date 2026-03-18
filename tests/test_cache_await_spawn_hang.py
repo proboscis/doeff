@@ -11,12 +11,18 @@ from __future__ import annotations
 
 import asyncio
 import signal
+from dataclasses import dataclass
 from typing import Any
 
+import doeff_vm
 import pytest
 
 from doeff import (
+    Effect,
+    EffectBase,
     Gather,
+    Pass,
+    Resume,
     Spawn,
     WithHandler,
     cache,
@@ -77,6 +83,36 @@ def _spawn_gather_n(factory, n: int):
     return list((yield Gather(*tasks)))
 
 
+@dataclass(frozen=True)
+class _ProbeHandlerStack(EffectBase):
+    label: str
+
+
+@do
+def _probe_handler(effect: Effect, k):
+    if not isinstance(effect, _ProbeHandlerStack):
+        yield Pass()
+        return
+    handlers = yield doeff_vm.GetHandlers()
+    stack = [
+        None
+        if handler is None
+        else (
+            getattr(handler, "__qualname__", None)
+            or getattr(handler, "__name__", None)
+            or type(handler).__name__
+        )
+        for handler in handlers
+    ]
+    return (yield Resume(k, stack))
+
+
+@cache(lifecycle="persistent")
+@do
+def _cached_stack_probe(label: str):
+    return (yield _ProbeHandlerStack(label))
+
+
 class TestCacheAwaitSpawnHang:
 
     def test_no_cache_100(self):
@@ -110,3 +146,19 @@ class TestCacheAwaitSpawnHang:
         r = _run_cached_with_timeout(_spawn_gather_n(_cached_task, 500))
         assert r.is_ok(), f"Failed: {r.error}"
         assert len(r.value) == 500
+
+    def test_cached_spawn_preserves_handler_stack(self, tmp_path):
+        @do
+        def program():
+            direct = yield _cached_stack_probe("direct")
+            task = yield Spawn(_cached_stack_probe("spawned"), daemon=False)
+            spawned = (yield Gather(task))[0]
+            return direct, spawned
+
+        wrapped = WithHandler(sqlite_cache_handler(tmp_path / "cache.sqlite3"), program())
+        result = run(wrapped, handlers=[*default_handlers(), _probe_handler])
+
+        assert result.is_ok(), f"Failed: {result.error}"
+        direct, spawned = result.value
+        assert direct
+        assert direct == spawned
