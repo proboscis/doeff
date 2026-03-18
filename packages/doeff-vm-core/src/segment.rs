@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::do_ctrl::InterceptMode;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{DispatchId, Marker, SegmentId};
+use crate::ids::{DispatchId, Marker, ScopeId, SegmentId, VarId};
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
@@ -41,10 +41,15 @@ pub struct ScopeStore {
 
 #[derive(Debug, Clone)]
 pub struct Segment {
+    pub scope_id: ScopeId,
     pub marker: Marker,
     pub frames: Vec<Frame>,
     pub caller: Option<SegmentId>,
-    pub scope_store: ScopeStore,
+    pub scope_parent: Option<SegmentId>,
+    pub variables: HashMap<VarId, Value>,
+    pub named_bindings: HashMap<HashedPyKey, Value>,
+    pub state_store: HashMap<String, Value>,
+    pub writer_log: Vec<Value>,
     pub kind: SegmentKind,
     pub dispatch_id: Option<DispatchId>,
     pub mode: Mode,
@@ -57,10 +62,15 @@ pub struct Segment {
 impl Segment {
     pub fn new(marker: Marker, caller: Option<SegmentId>) -> Self {
         Segment {
+            scope_id: ScopeId::fresh(),
             marker,
             frames: Vec::new(),
             caller,
-            scope_store: ScopeStore::default(),
+            scope_parent: caller,
+            variables: HashMap::new(),
+            named_bindings: HashMap::new(),
+            state_store: HashMap::new(),
+            writer_log: Vec::new(),
             kind: SegmentKind::Normal,
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
@@ -78,10 +88,15 @@ impl Segment {
         handler: KleisliRef,
     ) -> Self {
         Segment {
+            scope_id: ScopeId::fresh(),
             marker,
             frames: Vec::new(),
             caller,
-            scope_store: ScopeStore::default(),
+            scope_parent: caller,
+            variables: HashMap::new(),
+            named_bindings: HashMap::new(),
+            state_store: HashMap::new(),
+            writer_log: Vec::new(),
             kind: SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,
@@ -104,10 +119,15 @@ impl Segment {
         types: Option<Vec<PyShared>>,
     ) -> Self {
         Segment {
+            scope_id: ScopeId::fresh(),
             marker,
             frames: Vec::new(),
             caller,
-            scope_store: ScopeStore::default(),
+            scope_parent: caller,
+            variables: HashMap::new(),
+            named_bindings: HashMap::new(),
+            state_store: HashMap::new(),
+            writer_log: Vec::new(),
             kind: SegmentKind::PromptBoundary {
                 handled_marker,
                 handler,
@@ -184,6 +204,7 @@ mod tests {
         let seg = Segment::new(marker, None);
         assert_eq!(seg.marker, marker);
         assert!(seg.caller.is_none());
+        assert!(seg.scope_parent.is_none());
         assert!(!seg.is_prompt_boundary());
         assert!(seg.handled_marker().is_none());
     }

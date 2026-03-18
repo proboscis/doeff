@@ -1,5 +1,7 @@
 //! DoCtrl primitives.
 
+use std::collections::HashMap;
+
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -8,8 +10,10 @@ use crate::continuation::Continuation;
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
+use crate::ids::{SegmentId, VarId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::value::Value;
 
@@ -39,6 +43,10 @@ pub enum DoExprTag {
     WithIntercept = 21,
     Discontinue = 22,
     EvalInScope = 23,
+    AllocVar = 24,
+    ReadVar = 25,
+    WriteVar = 26,
+    WriteVarNonlocal = 27,
     Effect = 128,
     Unknown = 255,
 }
@@ -70,6 +78,10 @@ impl TryFrom<u8> for DoExprTag {
             21 => Ok(DoExprTag::WithIntercept),
             22 => Ok(DoExprTag::Discontinue),
             23 => Ok(DoExprTag::EvalInScope),
+            24 => Ok(DoExprTag::AllocVar),
+            25 => Ok(DoExprTag::ReadVar),
+            26 => Ok(DoExprTag::WriteVar),
+            27 => Ok(DoExprTag::WriteVarNonlocal),
             128 => Ok(DoExprTag::Effect),
             255 => Ok(DoExprTag::Unknown),
             other => Err(other),
@@ -260,6 +272,7 @@ pub enum DoCtrl {
         expr: PyShared,
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
+        outside_scope: Option<SegmentId>,
     },
     ResumeContinuation {
         continuation: Continuation,
@@ -291,7 +304,33 @@ pub enum DoCtrl {
     EvalInScope {
         expr: PyShared,
         scope: Continuation,
+        bindings: HashMap<HashedPyKey, Value>,
         metadata: Option<CallMetadata>,
+    },
+    AllocVar {
+        initial: Value,
+    },
+    ReadVar {
+        var: VarId,
+    },
+    WriteVar {
+        var: VarId,
+        value: Value,
+    },
+    WriteVarNonlocal {
+        var: VarId,
+        value: Value,
+    },
+    ReadHandlerState {
+        key: String,
+        missing_is_none: bool,
+    },
+    WriteHandlerState {
+        key: String,
+        value: Value,
+    },
+    AppendHandlerLog {
+        message: Value,
     },
     // DEPRECATED (INTROSPECT-UNIFY-001): use GetExecutionContext for handler-aware introspection.
     GetCallStack,
