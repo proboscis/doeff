@@ -24,7 +24,7 @@ from doeff import (
     run,
 )
 from doeff.cache import CacheCallSite
-from doeff.effects.cache import CacheGetEffect, CachePutEffect
+from doeff.effects.cache import CacheExistsEffect, CacheGetEffect, CachePutEffect
 from doeff.handlers import cache_handler, in_memory_cache_handler, sqlite_cache_handler
 from doeff.handlers.cache_handlers import content_address, make_memo_rewriter, memo_rewriters
 from doeff.storage import InMemoryStorage, SQLiteStorage
@@ -258,13 +258,16 @@ def test_cache_decorator_miss_then_hit() -> None:
     assert calls["count"] == 1
 
 
-def test_cache_decorator_uses_single_cache_get_path() -> None:
+def test_cache_decorator_uses_exists_fast_path_on_miss() -> None:
     calls = {"count": 0}
     storage: dict[object, object] = {}
     seen: list[str] = []
 
     @do
     def handler(effect: Effect, k: object):
+        if isinstance(effect, CacheExistsEffect):
+            seen.append("exists")
+            return (yield Resume(k, effect.key in storage))
         if isinstance(effect, CacheGetEffect):
             seen.append("get")
             if effect.key not in storage:
@@ -295,12 +298,14 @@ def test_cache_decorator_uses_single_cache_get_path() -> None:
     assert result.is_ok(), result.error
     assert result.value == (21, 21)
     assert calls["count"] == 1
-    assert seen == ["get", "put", "get"]
+    assert seen == ["exists", "put", "exists", "get"]
 
 
 def test_cache_decorator_rejects_unwrapped_cache_payloads() -> None:
     @do
     def handler(effect: Effect, k: object):
+        if isinstance(effect, CacheExistsEffect):
+            return (yield Resume(k, True))
         if isinstance(effect, CacheGetEffect):
             return (yield Resume(k, 21))
         if isinstance(effect, CachePutEffect):
