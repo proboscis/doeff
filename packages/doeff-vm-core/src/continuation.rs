@@ -7,7 +7,7 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{ContId, DispatchId, SegmentId};
+use crate::ids::{ContId, DispatchId, ScopeId, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::segment::Segment;
@@ -49,6 +49,7 @@ struct UnstartedContinuation {
     handlers: Vec<KleisliRef>,
     handler_identities: Vec<Option<PyShared>>,
     metadata: Option<CallMetadata>,
+    outside_scope: Option<SegmentId>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,10 +95,15 @@ impl Continuation {
         dispatch_id: Option<DispatchId>,
     ) -> Arc<Segment> {
         Arc::new(Segment {
+            scope_id: segment.scope_id,
             marker: segment.marker,
             frames: Self::captured_frames(segment),
             caller: segment.caller,
-            scope_store: segment.scope_store.clone(),
+            scope_parent: segment.scope_parent,
+            variables: segment.variables.clone(),
+            named_bindings: segment.named_bindings.clone(),
+            state_store: segment.state_store.clone(),
+            writer_log: segment.writer_log.clone(),
             kind: segment.kind.clone(),
             dispatch_id,
             mode: segment.mode.clone(),
@@ -138,13 +144,14 @@ impl Continuation {
     }
 
     pub fn create_unstarted(expr: PyShared, handlers: Vec<KleisliRef>) -> Self {
-        Self::create_unstarted_with_metadata(expr, handlers, None)
+        Self::create_unstarted_with_metadata(expr, handlers, None, None)
     }
 
     pub fn create_unstarted_with_metadata(
         expr: PyShared,
         handlers: Vec<KleisliRef>,
         metadata: Option<CallMetadata>,
+        outside_scope: Option<SegmentId>,
     ) -> Self {
         let handler_count = handlers.len();
         Continuation {
@@ -156,6 +163,7 @@ impl Continuation {
                 handlers,
                 handler_identities: vec![None; handler_count],
                 metadata,
+                outside_scope,
             }),
             parent: None,
         }
@@ -171,6 +179,7 @@ impl Continuation {
             handlers,
             handler_identities,
             None,
+            None,
         )
     }
 
@@ -179,6 +188,7 @@ impl Continuation {
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
         metadata: Option<CallMetadata>,
+        outside_scope: Option<SegmentId>,
     ) -> Self {
         Continuation {
             cont_id: ContId::fresh(),
@@ -189,6 +199,7 @@ impl Continuation {
                 handlers,
                 handler_identities,
                 metadata,
+                outside_scope,
             }),
             parent: None,
         }
@@ -257,12 +268,62 @@ impl Continuation {
             .and_then(|unstarted| unstarted.metadata.as_ref())
     }
 
+    pub fn outside_scope(&self) -> Option<SegmentId> {
+        self.unstarted.as_ref().and_then(|unstarted| unstarted.outside_scope)
+    }
+
     pub fn parent(&self) -> Option<&Continuation> {
         self.parent.as_deref()
     }
 
     pub(crate) fn set_parent(&mut self, parent: Option<Arc<Continuation>>) {
         self.parent = parent;
+    }
+
+    pub(crate) fn sync_persistent_segment_state(
+        &mut self,
+        scope_id: ScopeId,
+        segment: &Segment,
+    ) {
+        let matches_top_segment = self.segment().is_some_and(|snapshot| snapshot.scope_id == scope_id);
+        if let Some(snapshot) = self.segment_mut() {
+            if matches_top_segment {
+                snapshot.variables = segment.variables.clone();
+                snapshot.named_bindings = segment.named_bindings.clone();
+                snapshot.state_store = segment.state_store.clone();
+                snapshot.writer_log = segment.writer_log.clone();
+            }
+
+            for frame in &mut snapshot.frames {
+                match frame {
+                    Frame::HandlerDispatch { continuation, .. } => {
+                        continuation.sync_persistent_segment_state(scope_id, segment);
+                    }
+                    Frame::DispatchOrigin { k_origin, .. } => {
+                        k_origin.sync_persistent_segment_state(scope_id, segment);
+                    }
+                    Frame::EvalReturn(eval_return) => {
+                        if let crate::frame::EvalReturnContinuation::EvalInScopeReturn {
+                            continuation,
+                        } = eval_return.as_mut()
+                        {
+                            continuation.sync_persistent_segment_state(scope_id, segment);
+                        }
+                    }
+                    Frame::Program { .. }
+                    | Frame::InterceptorApply(_)
+                    | Frame::InterceptorEval(_)
+                    | Frame::MapReturn { .. }
+                    | Frame::FlatMapBindResult
+                    | Frame::FlatMapBindSource { .. }
+                    | Frame::InterceptBodyReturn { .. } => {}
+                }
+            }
+        }
+
+        if let Some(parent) = self.parent.as_mut() {
+            Arc::make_mut(parent).sync_persistent_segment_state(scope_id, segment);
+        }
     }
 
     pub(crate) fn into_unstarted_parts(
@@ -272,6 +333,7 @@ impl Continuation {
         Vec<KleisliRef>,
         Vec<Option<PyShared>>,
         Option<CallMetadata>,
+        Option<SegmentId>,
     )> {
         self.unstarted.map(
             |UnstartedContinuation {
@@ -279,7 +341,8 @@ impl Continuation {
                  handlers,
                  handler_identities,
                  metadata,
-             }| { (program, handlers, handler_identities, metadata) },
+                 outside_scope,
+             }| { (program, handlers, handler_identities, metadata, outside_scope) },
         )
     }
 

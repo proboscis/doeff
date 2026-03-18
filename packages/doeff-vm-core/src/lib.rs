@@ -90,7 +90,7 @@ pub use frame::Frame;
 #[cfg(feature = "python_bridge")]
 pub use handler::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
 #[cfg(feature = "python_bridge")]
-pub use ids::{ContId, DispatchId, Marker, PromiseId, RunnableId, SegmentId, TaskId};
+pub use ids::{ContId, DispatchId, Marker, PromiseId, RunnableId, ScopeId, SegmentId, TaskId, VarId};
 #[cfg(feature = "python_bridge")]
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 #[cfg(feature = "python_bridge")]
@@ -108,6 +108,6 @@ pub use segment::{Segment, SegmentKind};
 #[cfg(feature = "python_bridge")]
 pub use step::PyException;
 #[cfg(feature = "python_bridge")]
-pub use value::{PyTraceFrame, PyTraceHop, Value};
+pub use value::{PyTraceFrame, PyTraceHop, PyVar, Value};
 #[cfg(feature = "python_bridge")]
 pub use vm::{DebugConfig, DebugLevel, TraceEvent, VM};

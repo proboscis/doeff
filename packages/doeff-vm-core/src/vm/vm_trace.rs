@@ -25,6 +25,7 @@ impl VM {
             Value::Continuation(_) => "Continuation",
             Value::Handlers(_) => "Handlers",
             Value::Kleisli(_) => "Kleisli",
+            Value::Var(_) => "Var",
             Value::Task(_) => "Task",
             Value::Promise(_) => "Promise",
             Value::ExternalPromise(_) => "ExternalPromise",

@@ -26,9 +26,10 @@ use crate::error::VMError;
 use crate::frame::{
     CallMetadata, EvalReturnContinuation, Frame, InterceptorChainLink, InterceptorContinuation,
 };
-use crate::ids::{ContId, DispatchId, Marker, SegmentId};
+use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId, VarId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{IdentityKleisli, KleisliRef};
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::segment::{Segment, SegmentKind};
@@ -256,11 +257,14 @@ pub struct VM {
     installed_handlers: Vec<InstalledHandler>,
     run_handlers: Vec<KleisliRef>,
     pub rust_store: RustStore,
+    pub env_store: HashMap<HashedPyKey, Value>,
     pub py_store: Option<PyStore>,
     pub current_segment: Option<SegmentId>,
+    pub completed_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
     pub continuation_registry: HashMap<ContId, Continuation>,
+    pub scope_variables: HashMap<ScopeId, HashMap<VarId, Value>>,
     pub active_run_token: Option<u64>,
 }
 
@@ -272,11 +276,14 @@ impl VM {
             installed_handlers: Vec::new(),
             run_handlers: Vec::new(),
             rust_store: RustStore::new(),
+            env_store: HashMap::new(),
             py_store: None,
             current_segment: None,
+            completed_segment: None,
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
             continuation_registry: HashMap::new(),
+            scope_variables: HashMap::new(),
             active_run_token: None,
         }
     }
@@ -294,8 +301,12 @@ impl VM {
     pub fn begin_run_session(&mut self) -> u64 {
         let token = NEXT_RUN_TOKEN.fetch_add(1, Ordering::Relaxed);
         self.active_run_token = Some(token);
+        self.segments.clear();
+        self.current_segment = None;
+        self.completed_segment = None;
         self.trace_state.clear();
         self.run_handlers.clear();
+        self.scope_variables.clear();
         token
     }
 
@@ -314,6 +325,7 @@ impl VM {
         self.run_handlers.clear();
         self.continuation_registry.clear();
         self.consumed_cont_ids.clear();
+        self.scope_variables.clear();
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -349,6 +361,238 @@ impl VM {
 
     pub fn current_segment_ref(&self) -> Option<&Segment> {
         self.current_segment.and_then(|id| self.segments.get(id))
+    }
+
+    fn sync_frame_segment_state(frame: &mut Frame, live_segment: &Segment) {
+        match frame {
+            Frame::HandlerDispatch { continuation, .. } => {
+                continuation.sync_persistent_segment_state(live_segment.scope_id, live_segment);
+            }
+            Frame::DispatchOrigin { k_origin, .. } => {
+                k_origin.sync_persistent_segment_state(live_segment.scope_id, live_segment);
+            }
+            Frame::EvalReturn(eval_return) => {
+                if let EvalReturnContinuation::EvalInScopeReturn { continuation } =
+                    eval_return.as_mut()
+                {
+                    continuation.sync_persistent_segment_state(live_segment.scope_id, live_segment);
+                }
+            }
+            Frame::Program { .. }
+            | Frame::InterceptorApply(_)
+            | Frame::InterceptorEval(_)
+            | Frame::MapReturn { .. }
+            | Frame::FlatMapBindResult
+            | Frame::FlatMapBindSource { .. }
+            | Frame::InterceptBodyReturn { .. } => {}
+        }
+    }
+
+    fn sync_segment_state_into_live_continuations(&mut self, seg_id: SegmentId) {
+        let Some(live_segment) = self.segments.get(seg_id).cloned() else {
+            return;
+        };
+
+        for idx in 0..self.segments.capacity() {
+            let seg_id_cursor = SegmentId::from_index(idx);
+            let Some(segment) = self.segments.get_mut(seg_id_cursor) else {
+                continue;
+            };
+            for frame in &mut segment.frames {
+                Self::sync_frame_segment_state(frame, &live_segment);
+            }
+        }
+
+        for continuation in self.continuation_registry.values_mut() {
+            continuation.sync_persistent_segment_state(live_segment.scope_id, &live_segment);
+        }
+    }
+
+    pub fn alloc_scoped_var_in_segment(&mut self, seg_id: SegmentId, initial: Value) -> VarId {
+        let scope_id = self
+            .segments
+            .get(seg_id)
+            .expect("alloc_scoped_var_in_segment requires a live segment")
+            .scope_id;
+        let var = VarId::fresh(scope_id);
+        self.scope_variables
+            .entry(scope_id)
+            .or_default()
+            .insert(var, initial.clone());
+        self.segments
+            .get_mut(seg_id)
+            .expect("alloc_scoped_var_in_segment requires a mutable segment")
+            .variables
+            .insert(var, initial);
+        self.sync_segment_state_into_live_continuations(seg_id);
+        var
+    }
+
+    pub fn read_scoped_var_from(&self, start_seg_id: SegmentId, var: VarId) -> Option<Value> {
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let seg = self.segments.get(seg_id)?;
+            if let Some(value) = self
+                .scope_variables
+                .get(&seg.scope_id)
+                .and_then(|vars| vars.get(&var))
+            {
+                return Some(value.clone());
+            }
+            cursor = seg.scope_parent;
+        }
+        None
+    }
+
+    pub fn write_scoped_var_in_current_segment(
+        &mut self,
+        seg_id: SegmentId,
+        var: VarId,
+        value: Value,
+    ) -> bool {
+        let Some(seg) = self.segments.get_mut(seg_id) else {
+            return false;
+        };
+        self.scope_variables
+            .entry(seg.scope_id)
+            .or_default()
+            .insert(var, value.clone());
+        seg.variables.insert(var, value);
+        self.sync_segment_state_into_live_continuations(seg_id);
+        true
+    }
+
+    pub fn write_scoped_var_nonlocal(
+        &mut self,
+        start_seg_id: SegmentId,
+        var: VarId,
+        value: Value,
+    ) -> bool {
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                return false;
+            };
+            if seg.scope_id == var.owner_scope() {
+                self.scope_variables
+                    .entry(seg.scope_id)
+                    .or_default()
+                    .insert(var, value.clone());
+                if let Some(target) = self.segments.get_mut(seg_id) {
+                    target.variables.insert(var, value);
+                    self.sync_segment_state_into_live_continuations(seg_id);
+                    return true;
+                }
+                return false;
+            }
+            cursor = seg.scope_parent;
+        }
+        false
+    }
+
+    pub fn read_scope_binding_from(
+        &self,
+        start_seg_id: SegmentId,
+        key: &HashedPyKey,
+    ) -> Option<Value> {
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let seg = self.segments.get(seg_id)?;
+            if let Some(value) = seg.named_bindings.get(key) {
+                return Some(value.clone());
+            }
+            cursor = seg.scope_parent;
+        }
+        self.env_store.get(key).cloned()
+    }
+
+    pub fn read_handler_state_at(
+        &self,
+        prompt_seg_id: SegmentId,
+        key: &str,
+        missing_is_none: bool,
+    ) -> Option<Value> {
+        self.segments.get(prompt_seg_id).and_then(|seg| {
+            seg.state_store
+                .get(key)
+                .cloned()
+                .or_else(|| missing_is_none.then_some(Value::None))
+        })
+    }
+
+    pub fn write_handler_state_at(
+        &mut self,
+        prompt_seg_id: SegmentId,
+        key: String,
+        value: Value,
+    ) -> bool {
+        let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
+            return false;
+        };
+        seg.state_store.insert(key, value);
+        self.sync_segment_state_into_live_continuations(prompt_seg_id);
+        true
+    }
+
+    pub fn append_handler_log_at(&mut self, prompt_seg_id: SegmentId, message: Value) -> bool {
+        let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
+            return false;
+        };
+        seg.writer_log.push(message);
+        self.sync_segment_state_into_live_continuations(prompt_seg_id);
+        true
+    }
+
+    pub fn final_state_entries(&self) -> HashMap<String, Value> {
+        let mut chain = Vec::new();
+        let mut cursor = self.completed_segment.or(self.current_segment);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            chain.push(seg_id);
+            cursor = seg.caller;
+        }
+        chain.reverse();
+
+        let mut state = HashMap::new();
+        for seg_id in chain {
+            let Some(seg) = self.segments.get(seg_id) else {
+                continue;
+            };
+            if !seg.state_store.is_empty() {
+                state.extend(seg.state_store.clone());
+            }
+        }
+
+        if state.is_empty() {
+            return self.rust_store.entries.clone();
+        }
+        state
+    }
+
+    pub fn final_log_entries(&self) -> Vec<Value> {
+        let mut chain = Vec::new();
+        let mut cursor = self.completed_segment.or(self.current_segment);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            chain.push(seg_id);
+            cursor = seg.caller;
+        }
+        chain.reverse();
+
+        let mut logs = Vec::new();
+        for seg_id in chain {
+            let Some(seg) = self.segments.get(seg_id) else {
+                continue;
+            };
+            if !seg.writer_log.is_empty() {
+                logs.extend(seg.writer_log.clone());
+            }
+        }
+        logs
     }
 
     fn nearest_auto_unwrap_programlike_metadata(&self) -> Option<CallMetadata> {

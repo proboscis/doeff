@@ -158,6 +158,10 @@ Map = _ext.Map
 FlatMap = _ext.FlatMap
 Eval = _ext.Eval
 EvalInScope = _ext.EvalInScope
+AllocVar = _ext.AllocVar
+ReadVar = _ext.ReadVar
+WriteVar = _ext.WriteVar
+WriteVarNonlocal = _ext.WriteVarNonlocal
 Perform = _ext.Perform
 Discontinue = _ext.Discontinue
 Resume = _ext.Resume
@@ -191,6 +195,7 @@ ExecutionContext = _ext.ExecutionContext
 GetCallStack = _ext.GetCallStack
 TraceFrame = _ext.TraceFrame
 TraceHop = _ext.TraceHop
+Var = _ext.Var
 PythonAsyncSyntaxEscape = _ext.AsyncEscape
 PyGet = _ext.PyGet
 PyPut = _ext.PyPut
@@ -236,6 +241,10 @@ TAG_DISCONTINUE = _ext.TAG_DISCONTINUE
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
 TAG_EVAL = _ext.TAG_EVAL
 TAG_EVAL_IN_SCOPE = _ext.TAG_EVAL_IN_SCOPE
+TAG_ALLOC_VAR = _ext.TAG_ALLOC_VAR
+TAG_READ_VAR = _ext.TAG_READ_VAR
+TAG_WRITE_VAR = _ext.TAG_WRITE_VAR
+TAG_WRITE_VAR_NONLOCAL = _ext.TAG_WRITE_VAR_NONLOCAL
 TAG_APPLY = _ext.TAG_APPLY
 TAG_EXPAND = _ext.TAG_EXPAND
 TAG_CREATE_CONTINUATION = _ext.TAG_CREATE_CONTINUATION
@@ -258,6 +267,7 @@ PyTaskCompleted = _SchedulerTaskCompleted
 TaskCancelledError = _ext.TaskCancelledError
 
 __all__ = [
+    "TAG_ALLOC_VAR",
     "TAG_APPLY",
     "TAG_ASYNC_ESCAPE",
     "TAG_CREATE_CONTINUATION",
@@ -276,13 +286,17 @@ __all__ = [
     "TAG_PASS",
     "TAG_PERFORM",
     "TAG_PURE",
+    "TAG_READ_VAR",
     "TAG_RESUME",
     "TAG_RESUME_CONTINUATION",
     "TAG_TRANSFER",
     "TAG_UNKNOWN",
+    "TAG_WRITE_VAR",
+    "TAG_WRITE_VAR_NONLOCAL",
     "TAG_WITH_HANDLER",
     "TAG_WITH_INTERCEPT",
     "AcquireSemaphoreEffect",
+    "AllocVar",
     "Apply",
     "CompletePromiseEffect",
     "CreateContinuation",
@@ -300,7 +314,6 @@ __all__ = [
     "DoeffTracebackData",
     "EffectBase",
     "Eval",
-    "EvalInScope",
     "EvalInScope",
     "ExecutionContext",
     "Expand",
@@ -340,6 +353,7 @@ __all__ = [
     "PyVM",
     "PythonAsyncSyntaxEscape",
     "PythonAsyncioAwaitEffect",
+    "ReadVar",
     "RaceEffect",
     "ReleaseSemaphoreEffect",
     "ResultSafeEffect",
@@ -355,9 +369,12 @@ __all__ = [
     "TraceHop",
     "Transfer",
     "UnhandledEffectError",
+    "Var",
     "WaitEffect",
     "WithHandler",
     "WithIntercept",
+    "WriteVar",
+    "WriteVarNonlocal",
     "_SchedulerTaskCompleted",
     "async_run",
     "await_handler",

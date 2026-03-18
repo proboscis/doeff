@@ -1,6 +1,28 @@
 use super::*;
+use std::sync::Arc;
 
 impl VM {
+    pub(super) fn visible_scope_store(&self, start_seg_id: SegmentId) -> crate::segment::ScopeStore {
+        let mut layers = Vec::new();
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            if !seg.named_bindings.is_empty() {
+                layers.push(Arc::new(seg.named_bindings.clone()));
+            }
+            cursor = seg.scope_parent;
+        }
+        if !self.env_store.is_empty() {
+            layers.push(Arc::new(self.env_store.clone()));
+        }
+        layers.reverse();
+        crate::segment::ScopeStore {
+            scope_bindings: layers,
+        }
+    }
+
     pub(super) fn track_run_handler(&mut self, handler: &KleisliRef) {
         if !self
             .run_handlers
@@ -55,7 +77,7 @@ impl VM {
                     types: types.clone(),
                 });
             }
-            cursor = seg.caller;
+            cursor = seg.scope_parent;
         }
         chain
     }
@@ -89,7 +111,7 @@ impl VM {
                 }
                 SegmentKind::Normal | SegmentKind::MaskBoundary { .. } => {}
             }
-            cursor = seg.caller;
+            cursor = seg.scope_parent;
         }
         chain
     }
@@ -107,7 +129,7 @@ impl VM {
                     return Some(seg_id);
                 }
             }
-            cursor = seg.caller;
+            cursor = seg.scope_parent;
         }
         None
     }
@@ -191,7 +213,7 @@ impl VM {
                 }
                 handler_index += 1;
             }
-            cursor = seg.caller;
+            cursor = seg.scope_parent;
         }
         None
     }
@@ -214,7 +236,7 @@ impl VM {
                     return Some(Self::handler_trace_info(handler));
                 }
             }
-            cursor = seg.caller;
+            cursor = seg.scope_parent;
         }
         None
     }
