@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::capture::{HandlerKind, HandlerSnapshotEntry};
 use crate::do_ctrl::InterceptMode;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
@@ -20,6 +21,7 @@ pub enum SegmentKind {
         handled_marker: Marker,
         handler: KleisliRef,
         types: Option<Vec<PyShared>>,
+        trace_info: Arc<HandlerSnapshotEntry>,
     },
     InterceptorBoundary {
         interceptor: KleisliRef,
@@ -55,6 +57,20 @@ pub struct Segment {
 }
 
 impl Segment {
+    pub(crate) fn prompt_trace_info(handler: &KleisliRef) -> Arc<HandlerSnapshotEntry> {
+        let info = handler.debug_info();
+        Arc::new(HandlerSnapshotEntry {
+            handler_name: Arc::<str>::from(info.name),
+            handler_kind: if handler.is_rust_builtin() {
+                HandlerKind::RustBuiltin
+            } else {
+                HandlerKind::Python
+            },
+            source_file: info.file.map(Arc::<str>::from),
+            source_line: info.line,
+        })
+    }
+
     pub fn new(marker: Marker, caller: Option<SegmentId>) -> Self {
         Segment {
             marker,
@@ -77,6 +93,7 @@ impl Segment {
         handled_marker: Marker,
         handler: KleisliRef,
     ) -> Self {
+        let trace_info = Self::prompt_trace_info(&handler);
         Segment {
             marker,
             frames: Vec::new(),
@@ -86,6 +103,7 @@ impl Segment {
                 handled_marker,
                 handler,
                 types: None,
+                trace_info,
             },
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
@@ -103,6 +121,7 @@ impl Segment {
         handler: KleisliRef,
         types: Option<Vec<PyShared>>,
     ) -> Self {
+        let trace_info = Self::prompt_trace_info(&handler);
         Segment {
             marker,
             frames: Vec::new(),
@@ -112,6 +131,7 @@ impl Segment {
                 handled_marker,
                 handler,
                 types,
+                trace_info,
             },
             dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),

@@ -194,6 +194,7 @@ struct HandlerChainEntry {
     prompt_seg_id: SegmentId,
     handler: KleisliRef,
     types: Option<Vec<PyShared>>,
+    trace_info: Arc<HandlerSnapshotEntry>,
 }
 
 #[derive(Clone)]

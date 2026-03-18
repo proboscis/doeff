@@ -926,6 +926,99 @@ impl VM {
             .map(|origin| origin.effect)
     }
 
+    fn extract_fast_path_writer_message(
+        effect: &DispatchEffect,
+    ) -> Result<Option<Value>, VMError> {
+        let Some(obj) = dispatch_ref_as_python(effect) else {
+            return Ok(None);
+        };
+        Python::attach(|py| -> PyResult<Option<Value>> {
+            let bound = obj.bind(py);
+            if bound.get_type().name()? != "PyTell" {
+                return Ok(None);
+            }
+            let message = bound.getattr("message")?;
+            Ok(Some(Value::from_pyobject(&message)))
+        })
+        .map_err(|err| {
+            VMError::python_error(format!(
+                "failed to parse writer effect for fast-path dispatch: {err}"
+            ))
+        })
+    }
+
+    fn try_fast_path_writer_tell(
+        &mut self,
+        seg_id: SegmentId,
+        effect: &DispatchEffect,
+        message: Value,
+        exclude_prompt: Option<SegmentId>,
+        restricted_excluded_prompts: &HashSet<SegmentId>,
+        restricted_error_context_dispatch: bool,
+    ) -> Result<Option<StepEvent>, VMError> {
+        let effect_obj =
+            Python::attach(|py| dispatch_to_pyobject(py, effect).map(|obj| obj.unbind()))
+                .map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to convert writer fast-path effect to Python object: {err}"
+                    ))
+                })?;
+
+        let mut cursor = Some(seg_id);
+        while let Some(cursor_id) = cursor {
+            let Some(seg) = self.segments.get(cursor_id) else {
+                break;
+            };
+            let next = seg.caller;
+            if let SegmentKind::PromptBoundary {
+                handler,
+                types,
+                trace_info,
+                ..
+            } = &seg.kind
+            {
+                let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
+                let restricted_handler_blocked = restricted_error_context_dispatch
+                    && !(handler.is_rust_builtin() || handler.supports_error_context_conversion());
+                if Some(cursor_id) == exclude_prompt
+                    || restricted_excluded
+                    || restricted_handler_blocked
+                {
+                    cursor = next;
+                    continue;
+                }
+
+                if !handler.can_handle(effect)? {
+                    cursor = next;
+                    continue;
+                }
+
+                let should_invoke = self
+                    .should_invoke_handler_types(types.as_ref(), &effect_obj)
+                    .map_err(|err| {
+                        VMError::python_error(format!(
+                            "failed to evaluate WithHandler type filter: {err:?}"
+                        ))
+                    })?;
+                if !should_invoke {
+                    return Ok(None);
+                }
+
+                if handler.is_rust_builtin() && trace_info.handler_name.as_ref() == "WriterHandler"
+                {
+                    self.rust_store.tell(message);
+                    self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+                    return Ok(Some(StepEvent::Continue));
+                }
+
+                return Ok(None);
+            }
+            cursor = next;
+        }
+
+        Ok(None)
+    }
+
     pub fn find_matching_handler(
         &self,
         handler_chain: &[Marker],
@@ -940,7 +1033,8 @@ impl VM {
                 },
             )?;
         for (idx, marker) in handler_chain.iter().copied().enumerate() {
-            let Some((prompt_seg_id, handler, types)) = self.find_prompt_boundary_by_marker(marker)
+            let Some((prompt_seg_id, handler, types, trace_info)) =
+                self.find_prompt_boundary_by_marker(marker)
             else {
                 return Err(VMError::internal(format!(
                     "find_matching_handler: missing handler marker {} at index {}",
@@ -956,6 +1050,7 @@ impl VM {
                             prompt_seg_id,
                             handler: handler.clone(),
                             types,
+                            trace_info,
                         },
                         &effect_obj,
                     )
@@ -1035,6 +1130,18 @@ impl VM {
                 Some(active_prompt_seg_id)
             },
         );
+        if let Some(message) = Self::extract_fast_path_writer_message(&effect)? {
+            if let Some(event) = self.try_fast_path_writer_tell(
+                seg_id,
+                &effect,
+                message,
+                exclude_prompt,
+                &restricted_excluded_prompts,
+                restricted_error_context_dispatch,
+            )? {
+                return Ok(event);
+            }
+        }
         let current_seg = self
             .segments
             .get(seg_id)
@@ -1053,8 +1160,15 @@ impl VM {
                     ))
                 })?;
 
-        let mut selected: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
-        let mut first_type_filtered_skip: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
+        let mut selected: Option<(usize, Marker, SegmentId, KleisliRef, HandlerSnapshotEntry)> =
+            None;
+        let mut first_type_filtered_skip: Option<(
+            usize,
+            Marker,
+            SegmentId,
+            KleisliRef,
+            HandlerSnapshotEntry,
+        )> = None;
         let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
         let mut handler_count = 0usize;
         let mut cursor = Some(seg_id);
@@ -1067,7 +1181,7 @@ impl VM {
                 handled_marker,
                 handler,
                 types,
-                ..
+                trace_info,
             } = &seg.kind
             {
                 let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
@@ -1077,13 +1191,7 @@ impl VM {
                     && !restricted_excluded
                     && !restricted_handler_blocked
                 {
-                    let (name, kind, file, line) = Self::handler_trace_info(handler);
-                    handler_chain_snapshot.push(HandlerSnapshotEntry {
-                        handler_name: name,
-                        handler_kind: kind,
-                        source_file: file,
-                        source_line: line,
-                    });
+                    handler_chain_snapshot.push(trace_info.as_ref().clone());
 
                     if handler.can_handle(&effect)? {
                         let should_invoke = self
@@ -1100,11 +1208,17 @@ impl VM {
                                     *handled_marker,
                                     cursor_id,
                                     handler.clone(),
+                                    trace_info.as_ref().clone(),
                                 ));
                             }
                         } else if first_type_filtered_skip.is_none() {
-                            first_type_filtered_skip =
-                                Some((handler_count, *handled_marker, cursor_id, handler.clone()));
+                            first_type_filtered_skip = Some((
+                                handler_count,
+                                *handled_marker,
+                                cursor_id,
+                                handler.clone(),
+                                trace_info.as_ref().clone(),
+                            ));
                         }
                     }
 
@@ -1153,6 +1267,7 @@ impl VM {
         let handler_marker = selected.1;
         let prompt_seg_id = selected.2;
         let handler = selected.3;
+        let handler_trace_info = selected.4;
         let is_execution_context_effect = Self::is_execution_context_effect(&effect);
 
         if self.segments.get(prompt_seg_id).is_none() {
@@ -1203,7 +1318,7 @@ impl VM {
         if handler.py_identity().is_some() {
             self.register_continuation(k_user.clone());
         }
-        let ir_node = Self::invoke_kleisli_handler_expr(handler, effect, k_user)?;
+        let ir_node = Self::invoke_kleisli_handler_expr(handler, effect, k_user, &handler_trace_info)?;
         Ok(self.evaluate(ir_node))
     }
 
@@ -1290,6 +1405,7 @@ impl VM {
             handled_marker: marker,
             handler: handler.clone(),
             types: None,
+            trace_info: Segment::prompt_trace_info(&handler),
         };
         self.track_run_handler(&handler);
         true
@@ -1753,6 +1869,18 @@ impl VM {
                 };
                 self.current_segment = Some(handler_seg_id);
 
+                if handler.is_rust_builtin() && entry.trace_info.handler_name.as_ref() == "WriterHandler"
+                {
+                    match Self::extract_fast_path_writer_message(&effect) {
+                        Ok(Some(message)) => {
+                            self.rust_store.tell(message);
+                            return self.handle_dispatch_transfer(next_k, Value::Unit);
+                        }
+                        Ok(None) => {}
+                        Err(err) => return StepEvent::Error(err),
+                    }
+                }
+
                 if handler.py_identity().is_some() {
                     self.register_continuation(next_k.clone());
                 }
@@ -1760,6 +1888,7 @@ impl VM {
                     handler,
                     effect.clone(),
                     next_k.clone(),
+                    entry.trace_info.as_ref(),
                 ) {
                     Ok(node) => node,
                     Err(err) => return StepEvent::Error(err),
@@ -1953,7 +2082,23 @@ impl VM {
         // G7: Install handlers with prompt+body segments per handler (matches spec topology).
         // Each handler gets: prompt_seg → body_seg (handler in scope).
         // Body_seg becomes the outside for the next handler.
+        let mut handlers = handlers;
+        let mut handler_identities = handler_identities;
         let mut outside_seg_id = self.current_segment;
+        if let Some(current_seg_id) = outside_seg_id {
+            let visible_handlers = self.handlers_in_caller_chain(current_seg_id);
+            let mut shared_prefix = 0usize;
+            while shared_prefix < handlers.len() && shared_prefix < visible_handlers.len() {
+                if !Arc::ptr_eq(&handlers[shared_prefix], &visible_handlers[shared_prefix].handler) {
+                    break;
+                }
+                shared_prefix += 1;
+            }
+            if shared_prefix > 0 {
+                handlers = handlers.into_iter().skip(shared_prefix).collect();
+                handler_identities = handler_identities.into_iter().skip(shared_prefix).collect();
+            }
+        }
 
         let k_handler_count = handlers.len();
         for idx in (0..k_handler_count).rev() {

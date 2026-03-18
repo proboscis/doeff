@@ -197,6 +197,19 @@ fn wrap_exception_as_result_err(error: PyException) -> Result<Value, PyException
     })
 }
 
+fn tail_resume_continuation(continuation: Continuation, value: Value) -> IRStreamStep {
+    if continuation.is_started() {
+        return IRStreamStep::Yield(DoCtrl::Transfer {
+            continuation,
+            value,
+        });
+    }
+    IRStreamStep::Yield(DoCtrl::ResumeContinuation {
+        continuation,
+        value,
+    })
+}
+
 fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
     let Value::Python(obj) = value else {
         return None;
@@ -1477,10 +1490,7 @@ impl IRStreamProgram for WriterHandlerProgram {
             return match parse_writer_python_effect(&obj) {
                 Ok(Some(message)) => {
                     store.tell(message);
-                    IRStreamStep::Yield(DoCtrl::Resume {
-                        continuation: k,
-                        value: Value::Unit,
-                    })
+                    tail_resume_continuation(k, Value::Unit)
                 }
                 Ok(None) => IRStreamStep::Yield(DoCtrl::Pass {
                     effect: dispatch_from_shared(obj),
@@ -2274,7 +2284,7 @@ mod tests {
             };
             assert!(matches!(
                 step,
-                IRStreamStep::Yield(DoCtrl::Resume {
+                IRStreamStep::Yield(DoCtrl::Transfer {
                     value: Value::Unit,
                     ..
                 })
