@@ -542,14 +542,7 @@ impl PyVM {
     pub fn put_env(&mut self, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let env_key = HashedPyKey::from_bound(key)?;
         let env_value = Value::from_python_opaque(value);
-        self.vm
-            .rust_store
-            .insert_binding(env_key.clone(), env_value.clone());
-        self.vm
-            .scopes
-            .lock()
-            .expect("scope lock poisoned")
-            .insert_binding(self.vm.root_scope_id(), env_key, env_value);
+        self.insert_env_binding(env_key, env_value);
         Ok(())
     }
 
@@ -802,6 +795,17 @@ impl PyVM {
             metadata: None,
         });
         Ok(())
+    }
+
+    fn insert_env_binding(&mut self, key: HashedPyKey, value: Value) {
+        self.vm
+            .rust_store
+            .insert_binding(key.clone(), value.clone());
+        self.vm
+            .scopes
+            .lock()
+            .expect("scope lock poisoned")
+            .insert_binding(self.vm.root_scope_id(), key, value);
     }
 
     fn run_rust_steps(&mut self) -> StepEvent {
@@ -4444,14 +4448,7 @@ fn run(
         for (key, value) in env_dict.iter() {
             let k = HashedPyKey::from_bound(&key)?;
             let env_value = Value::from_python_opaque(&value);
-            vm.vm
-                .rust_store
-                .insert_binding(k.clone(), env_value.clone());
-            vm.vm
-                .scopes
-                .lock()
-                .expect("scope lock poisoned")
-                .insert_binding(vm.vm.root_scope_id(), k, env_value);
+            vm.insert_env_binding(k, env_value);
         }
     }
 
@@ -4487,14 +4484,7 @@ fn async_run<'py>(
         for (key, value) in env_dict.iter() {
             let k = HashedPyKey::from_bound(&key)?;
             let env_value = Value::from_python_opaque(&value);
-            vm.vm
-                .rust_store
-                .insert_binding(k.clone(), env_value.clone());
-            vm.vm
-                .scopes
-                .lock()
-                .expect("scope lock poisoned")
-                .insert_binding(vm.vm.root_scope_id(), k, env_value);
+            vm.insert_env_binding(k, env_value);
         }
     }
 

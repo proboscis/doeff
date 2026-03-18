@@ -1331,10 +1331,10 @@ impl ReaderHandlerProgram {
     fn handle_ask(
         key: HashedPyKey,
         continuation: Continuation,
-        _store: &mut RustStore,
+        store: &mut RustStore,
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        let Some(value) = ask_from_scope_or_env(_store, scope, &key) else {
+        let Some(value) = ask_from_scope_or_env(store, scope, &key) else {
             return IRStreamStep::Throw(missing_env_key_error(&key));
         };
 
