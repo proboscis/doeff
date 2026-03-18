@@ -1,14 +1,6 @@
 use super::*;
 
-static FAST_PATH_WRITER_EFFECT_TYPE: std::sync::OnceLock<Result<Py<PyAny>, String>> =
-    std::sync::OnceLock::new();
-
 impl VM {
-    fn is_fast_path_writer_handler(handler: &KleisliRef) -> bool {
-        handler.is_rust_builtin()
-            && handler.builtin_handler_kind() == Some(crate::kleisli::BuiltinHandlerKind::Writer)
-    }
-
     fn dispatch_origin_in_segment_by<T>(
         &self,
         seg_id: SegmentId,
@@ -938,104 +930,6 @@ impl VM {
             .map(|origin| origin.effect)
     }
 
-    fn extract_fast_path_writer_message(effect: &DispatchEffect) -> Result<Option<Value>, VMError> {
-        let Some(obj) = dispatch_ref_as_python(effect) else {
-            return Ok(None);
-        };
-        Python::attach(|py| -> PyResult<Option<Value>> {
-            let bound = obj.bind(py);
-            let tell_type = FAST_PATH_WRITER_EFFECT_TYPE.get_or_init(|| {
-                py.import("doeff_vm")
-                    .and_then(|module| module.getattr("PyTell"))
-                    .map(|tell_type| tell_type.unbind())
-                    .map_err(|err| err.to_string())
-            });
-            let tell_type = tell_type
-                .as_ref()
-                .map_err(|err| pyo3::exceptions::PyRuntimeError::new_err(err.clone()))?;
-            if !bound.is_instance(&tell_type.bind(py))? {
-                return Ok(None);
-            }
-            let message = bound.getattr("message")?;
-            Ok(Some(Value::from_pyobject(&message)))
-        })
-        .map_err(|err| {
-            VMError::python_error(format!(
-                "failed to parse writer effect for fast-path dispatch: {err}"
-            ))
-        })
-    }
-
-    fn try_fast_path_writer_tell(
-        &mut self,
-        seg_id: SegmentId,
-        effect: &DispatchEffect,
-        message: Value,
-        exclude_prompt: Option<SegmentId>,
-        restricted_excluded_prompts: &HashSet<SegmentId>,
-        restricted_error_context_dispatch: bool,
-    ) -> Result<Option<StepEvent>, VMError> {
-        let mut cursor = Some(seg_id);
-        while let Some(cursor_id) = cursor {
-            let Some(seg) = self.segments.get(cursor_id) else {
-                break;
-            };
-            let next = seg.caller;
-            if let SegmentKind::PromptBoundary { handler, types, .. } = &seg.kind {
-                let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
-                let restricted_handler_blocked = restricted_error_context_dispatch
-                    && !(handler.is_rust_builtin() || handler.supports_error_context_conversion());
-                if Some(cursor_id) == exclude_prompt
-                    || restricted_excluded
-                    || restricted_handler_blocked
-                {
-                    cursor = next;
-                    continue;
-                }
-
-                if !handler.can_handle(effect)? {
-                    cursor = next;
-                    continue;
-                }
-
-                let should_invoke = if let Some(handler_types) = types.as_ref() {
-                    let effect_obj = Python::attach(|py| {
-                        dispatch_to_pyobject(py, effect).map(|obj| obj.unbind())
-                    })
-                    .map_err(|err| {
-                        VMError::python_error(format!(
-                            "failed to convert writer fast-path effect to Python object: {err}"
-                        ))
-                    })?;
-                    self.should_invoke_handler_types(Some(handler_types), &effect_obj)
-                        .map_err(|err| {
-                            VMError::python_error(format!(
-                                "failed to evaluate WithHandler type filter: {err:?}"
-                            ))
-                        })?
-                } else {
-                    true
-                };
-                if !should_invoke {
-                    // Type-filtered prompts may still need Pass()/Delegate semantics from the
-                    // full dispatcher, so the fast-path must bail out here rather than skip ahead.
-                    return Ok(None);
-                }
-
-                if Self::is_fast_path_writer_handler(handler) {
-                    self.rust_store.tell(message);
-                    self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
-                    return Ok(Some(StepEvent::Continue));
-                }
-
-                return Ok(None);
-            }
-            cursor = next;
-        }
-
-        Ok(None)
-    }
-
     pub fn find_matching_handler(
         &self,
         handler_chain: &[Marker],
@@ -1147,18 +1041,6 @@ impl VM {
                 Some(active_prompt_seg_id)
             },
         );
-        if let Some(message) = Self::extract_fast_path_writer_message(&effect)? {
-            if let Some(event) = self.try_fast_path_writer_tell(
-                seg_id,
-                &effect,
-                message,
-                exclude_prompt,
-                &restricted_excluded_prompts,
-                restricted_error_context_dispatch,
-            )? {
-                return Ok(event);
-            }
-        }
         let current_seg = self
             .segments
             .get(seg_id)
@@ -1887,17 +1769,6 @@ impl VM {
                 };
                 self.current_segment = Some(handler_seg_id);
 
-                if Self::is_fast_path_writer_handler(&handler) {
-                    match Self::extract_fast_path_writer_message(&effect) {
-                        Ok(Some(message)) => {
-                            self.rust_store.tell(message);
-                            return self.handle_dispatch_transfer(next_k, Value::Unit);
-                        }
-                        Ok(None) => {}
-                        Err(err) => return StepEvent::Error(err),
-                    }
-                }
-
                 if handler.py_identity().is_some() {
                     self.register_continuation(next_k.clone());
                 }
@@ -2007,11 +1878,11 @@ impl VM {
         let Some(origin) = self.current_dispatch_origin() else {
             return StepEvent::Error(VMError::internal("GetHandlers outside dispatch"));
         };
-        // Preserve full caller-visible handler stack (top-most first).
+        // Preserve the full caller-visible handler stack (top-most first).
         //
         // This is part of the public contract used by tests and user-space
-        // handlers. Continuation installation handles deduplication when these
-        // handlers are reapplied from within active dispatch contexts.
+        // handlers. Callers that snapshot these handlers for later continuation
+        // resumption must also record the inherited caller-chain prefix.
         let chain_start = self
             .current_handler_dispatch()
             .map(|(_, _, continuation, _, _)| continuation)
@@ -2055,13 +1926,40 @@ impl VM {
         program: PyShared,
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
+        handler_base: ContinuationHandlerBase,
         metadata: Option<CallMetadata>,
     ) -> StepEvent {
-        let k = Continuation::create_unstarted_with_identities_and_metadata(
+        let inherited_handler_markers = match handler_base {
+            // Preserve legacy CreateContinuation semantics: explicit handler
+            // lists do not assume anything about the resume site's caller chain.
+            ContinuationHandlerBase::CurrentSegment => Vec::new(),
+            // Ambient handler snapshots (for example scheduler Spawn after
+            // GetHandlers) already include the currently visible handler chain.
+            // Record that inherited prefix structurally so resume can skip only
+            // the handlers that are already visible at the same positions.
+            ContinuationHandlerBase::OutsideVisibleHandlerChain => self
+                .current_segment
+                .map(|seg_id| {
+                    self.handlers_in_caller_chain(seg_id)
+                        .into_iter()
+                        .map(|entry| entry.marker)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        let inherited_handler_offset = match handler_base {
+            ContinuationHandlerBase::CurrentSegment => 0,
+            ContinuationHandlerBase::OutsideVisibleHandlerChain => handlers
+                .len()
+                .saturating_sub(inherited_handler_markers.len()),
+        };
+        let k = Continuation::create_unstarted_with_inherited_handler_markers_and_identities_and_metadata(
             program,
             handlers,
             handler_identities,
             metadata,
+            inherited_handler_offset,
+            inherited_handler_markers,
         );
         self.register_continuation(k.clone());
         self.current_seg_mut().mode = Mode::Deliver(Value::Continuation(k));
@@ -2088,8 +1986,14 @@ impl VM {
         }
         self.mark_one_shot_consumed(k.cont_id);
 
-        let Some((program, handlers, handler_identities, start_metadata)) =
-            k.into_unstarted_parts()
+        let Some((
+            program,
+            mut handlers,
+            mut handler_identities,
+            start_metadata,
+            inherited_handler_offset,
+            inherited_handler_markers,
+        )) = k.into_unstarted_parts()
         else {
             return StepEvent::Error(VMError::internal(
                 "unstarted continuation has no program payload",
@@ -2099,30 +2003,39 @@ impl VM {
         // G7: Install handlers with prompt+body segments per handler (matches spec topology).
         // Each handler gets: prompt_seg → body_seg (handler in scope).
         // Body_seg becomes the outside for the next handler.
-        let mut handlers = handlers;
-        let mut handler_identities = handler_identities;
         let mut outside_seg_id = self.current_segment;
-        if !handlers.is_empty() {
+        if !inherited_handler_markers.is_empty() {
             if let Some(current_seg_id) = outside_seg_id {
-                let visible_handlers = self.handlers_in_caller_chain(current_seg_id);
-                let mut shared_prefix = 0usize;
-                while shared_prefix < handlers.len() && shared_prefix < visible_handlers.len() {
-                    // Prefix dedupe is strictly position-sensitive: we only trim handlers that
-                    // are already visible at the same depth in the current caller chain.
-                    // Reusing the same KleisliRef later in the stack is still safe because we
-                    // never scan ahead.
-                    if !Arc::ptr_eq(
-                        &handlers[shared_prefix],
-                        &visible_handlers[shared_prefix].handler,
-                    ) {
-                        break;
-                    }
-                    shared_prefix += 1;
-                }
+                let visible_markers = self
+                    .handlers_in_caller_chain(current_seg_id)
+                    .into_iter()
+                    .map(|entry| entry.marker)
+                    .collect::<Vec<_>>();
+                let shared_prefix = inherited_handler_markers
+                    .iter()
+                    .zip(visible_markers.iter())
+                    .take_while(|(captured, visible)| captured == visible)
+                    .count();
                 if shared_prefix > 0 {
-                    handlers = handlers.into_iter().skip(shared_prefix).collect();
-                    handler_identities =
-                        handler_identities.into_iter().skip(shared_prefix).collect();
+                    let inherited_start = inherited_handler_offset.min(handlers.len());
+                    let mut kept_local = handlers[..inherited_start].to_vec();
+                    kept_local.extend(
+                        handlers
+                            .into_iter()
+                            .skip(inherited_start.saturating_add(shared_prefix)),
+                    );
+                    handlers = kept_local;
+
+                    let inherited_identity_start =
+                        inherited_handler_offset.min(handler_identities.len());
+                    let mut kept_identities =
+                        handler_identities[..inherited_identity_start].to_vec();
+                    kept_identities.extend(
+                        handler_identities
+                            .into_iter()
+                            .skip(inherited_identity_start.saturating_add(shared_prefix)),
+                    );
+                    handler_identities = kept_identities;
                 }
             }
         }

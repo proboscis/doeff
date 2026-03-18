@@ -34,11 +34,6 @@ pub struct KleisliDebugInfo {
     pub line: Option<u32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BuiltinHandlerKind {
-    Writer,
-}
-
 /// IR-level callable: T -> DoExpr[U]
 ///
 /// A Kleisli arrow takes arguments and produces a DoExpr (computation)
@@ -79,11 +74,6 @@ pub trait Kleisli: std::fmt::Debug + Send + Sync {
     /// Whether this handler is a Rust builtin handler.
     fn is_rust_builtin(&self) -> bool {
         false
-    }
-
-    /// Typed discriminant for builtin handlers that need VM fast-paths.
-    fn builtin_handler_kind(&self) -> Option<BuiltinHandlerKind> {
-        None
     }
 
     /// Effect matching predicate for dispatch.
@@ -144,10 +134,6 @@ impl Kleisli for IdentityKleisli {
 
     fn is_rust_builtin(&self) -> bool {
         self.inner.is_rust_builtin()
-    }
-
-    fn builtin_handler_kind(&self) -> Option<BuiltinHandlerKind> {
-        self.inner.builtin_handler_kind()
     }
 
     fn can_handle(&self, effect: &DispatchEffect) -> Result<bool, VMError> {
@@ -760,10 +746,6 @@ impl Kleisli for RustKleisli {
 
     fn is_rust_builtin(&self) -> bool {
         true
-    }
-
-    fn builtin_handler_kind(&self) -> Option<BuiltinHandlerKind> {
-        self.factory.builtin_handler_kind()
     }
 
     fn supports_error_context_conversion(&self) -> bool {

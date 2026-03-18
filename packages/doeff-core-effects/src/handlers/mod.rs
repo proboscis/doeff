@@ -28,7 +28,7 @@ use crate::value::Value;
 use crate::vm::RustStore;
 #[cfg(test)]
 use doeff_vm_core::IRStreamFactoryRef;
-use doeff_vm_core::{BuiltinHandlerKind, IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
+use doeff_vm_core::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
 
 enum ParsedStateEffect {
     Get { key: String },
@@ -1461,10 +1461,6 @@ impl IRStreamFactory for WriterHandlerFactory {
 
     fn create_program(&self) -> IRStreamProgramRef {
         Arc::new(Mutex::new(Box::new(WriterHandlerProgram)))
-    }
-
-    fn builtin_handler_kind(&self) -> Option<BuiltinHandlerKind> {
-        Some(BuiltinHandlerKind::Writer)
     }
 
     fn handler_name(&self) -> &'static str {

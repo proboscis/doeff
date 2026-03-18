@@ -10,7 +10,7 @@ pyo3::create_exception!(doeff_vm, UnhandledEffectError, PyTypeError);
 pyo3::create_exception!(doeff_vm, NoMatchingHandlerError, UnhandledEffectError);
 pyo3::create_exception!(doeff_vm, Discontinued, pyo3::exceptions::PyException);
 
-use crate::do_ctrl::{DoCtrl, InterceptMode};
+use crate::do_ctrl::{ContinuationHandlerBase, DoCtrl, InterceptMode};
 use crate::doeff_generator::{DoeffGenerator, DoeffGeneratorFn};
 use crate::effect::{
     dispatch_from_shared, dispatch_ref_as_python, PyExecutionContext, PyGetExecutionContext,
@@ -1277,6 +1277,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 expr,
                 handlers,
                 handler_identities,
+                ..
             } => {
                 let list = PyList::empty(py);
                 for (idx, handler) in handlers.iter().enumerate() {
@@ -1758,6 +1759,7 @@ pub(crate) fn classify_yielded_bound(
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities,
+                    handler_base: ContinuationHandlerBase::CurrentSegment,
                 })
             }
             DoExprTag::GetContinuation => Ok(DoCtrl::GetContinuation),
