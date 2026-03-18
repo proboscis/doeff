@@ -265,6 +265,11 @@ pub struct VM {
     pub(crate) trace_state: TraceState,
     pub continuation_registry: HashMap<ContId, Continuation>,
     pub scope_variables: HashMap<ScopeId, HashMap<VarId, Value>>,
+    scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
+    scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
+    scope_persistent_epochs: HashMap<ScopeId, u64>,
+    completed_state_entries_snapshot: Option<HashMap<String, Value>>,
+    completed_log_entries_snapshot: Option<Vec<Value>>,
     pub active_run_token: Option<u64>,
 }
 
@@ -284,6 +289,11 @@ impl VM {
             trace_state: TraceState::default(),
             continuation_registry: HashMap::new(),
             scope_variables: HashMap::new(),
+            scope_state_store: HashMap::new(),
+            scope_writer_logs: HashMap::new(),
+            scope_persistent_epochs: HashMap::new(),
+            completed_state_entries_snapshot: None,
+            completed_log_entries_snapshot: None,
             active_run_token: None,
         }
     }
@@ -307,6 +317,11 @@ impl VM {
         self.trace_state.clear();
         self.run_handlers.clear();
         self.scope_variables.clear();
+        self.scope_state_store.clear();
+        self.scope_writer_logs.clear();
+        self.scope_persistent_epochs.clear();
+        self.completed_state_entries_snapshot = None;
+        self.completed_log_entries_snapshot = None;
         token
     }
 
@@ -326,6 +341,11 @@ impl VM {
         self.continuation_registry.clear();
         self.consumed_cont_ids.clear();
         self.scope_variables.clear();
+        self.scope_state_store.clear();
+        self.scope_writer_logs.clear();
+        self.scope_persistent_epochs.clear();
+        self.completed_state_entries_snapshot = None;
+        self.completed_log_entries_snapshot = None;
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -351,6 +371,7 @@ impl VM {
     }
 
     pub fn alloc_segment(&mut self, segment: Segment) -> SegmentId {
+        self.register_segment_persistent_state(&segment);
         self.segments.alloc(segment)
     }
 
@@ -363,85 +384,60 @@ impl VM {
         self.current_segment.and_then(|id| self.segments.get(id))
     }
 
-    fn sync_frame_segment_state(
-        frame: &mut Frame,
-        scope_id: ScopeId,
-        named_bindings: &HashMap<HashedPyKey, Value>,
-        state_store: &HashMap<String, Value>,
-        writer_log: &[Value],
-    ) {
-        match frame {
-            Frame::HandlerDispatch { continuation, .. } => {
-                continuation.sync_persistent_segment_state(
-                    scope_id,
-                    named_bindings,
-                    state_store,
-                    writer_log,
-                );
-            }
-            Frame::DispatchOrigin { k_origin, .. } => {
-                k_origin.sync_persistent_segment_state(
-                    scope_id,
-                    named_bindings,
-                    state_store,
-                    writer_log,
-                );
-            }
-            Frame::EvalReturn(eval_return) => {
-                if let EvalReturnContinuation::EvalInScopeReturn { continuation } =
-                    eval_return.as_mut()
-                {
-                    continuation.sync_persistent_segment_state(
-                        scope_id,
-                        named_bindings,
-                        state_store,
-                        writer_log,
-                    );
-                }
-            }
-            Frame::Program { .. }
-            | Frame::InterceptorApply(_)
-            | Frame::InterceptorEval(_)
-            | Frame::MapReturn { .. }
-            | Frame::FlatMapBindResult
-            | Frame::FlatMapBindSource { .. }
-            | Frame::InterceptBodyReturn { .. } => {}
-        }
+    fn register_segment_persistent_state(&mut self, segment: &Segment) {
+        self.scope_state_store
+            .entry(segment.scope_id)
+            .or_insert_with(|| segment.state_store.clone());
+        self.scope_writer_logs
+            .entry(segment.scope_id)
+            .or_insert_with(|| segment.writer_log.clone());
+        self.scope_persistent_epochs
+            .entry(segment.scope_id)
+            .or_insert(segment.persistent_epoch);
     }
 
-    fn sync_segment_state_into_live_continuations(&mut self, seg_id: SegmentId) {
-        let Some(live_segment) = self.segments.get(seg_id) else {
-            return;
-        };
-        let scope_id = live_segment.scope_id;
-        let named_bindings = live_segment.named_bindings.clone();
-        let state_store = live_segment.state_store.clone();
-        let writer_log = live_segment.writer_log.clone();
+    fn bump_scope_persistent_epoch(&mut self, scope_id: ScopeId) -> u64 {
+        let epoch = self.scope_persistent_epochs.entry(scope_id).or_insert(0);
+        *epoch += 1;
+        *epoch
+    }
 
-        for idx in 0..self.segments.capacity() {
-            let seg_id_cursor = SegmentId::from_index(idx);
-            let Some(segment) = self.segments.get_mut(seg_id_cursor) else {
+    fn collect_outputs_from_chain(
+        &self,
+        start_seg_id: SegmentId,
+    ) -> (HashMap<String, Value>, Vec<Value>) {
+        let mut chain = Vec::new();
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            chain.push(seg_id);
+            cursor = seg.caller;
+        }
+        chain.reverse();
+
+        let mut state = HashMap::new();
+        let mut logs = Vec::new();
+        for seg_id in chain {
+            let Some(seg) = self.segments.get(seg_id) else {
                 continue;
             };
-            for frame in &mut segment.frames {
-                Self::sync_frame_segment_state(
-                    frame,
-                    scope_id,
-                    &named_bindings,
-                    &state_store,
-                    &writer_log,
-                );
+            if !seg.state_store.is_empty() {
+                state.extend(seg.state_store.clone());
+            }
+            if !seg.writer_log.is_empty() {
+                logs.extend(seg.writer_log.clone());
             }
         }
 
-        for continuation in self.continuation_registry.values_mut() {
-            continuation.sync_persistent_segment_state(
-                scope_id,
-                &named_bindings,
-                &state_store,
-                &writer_log,
-            );
-        }
+        (state, logs)
+    }
+
+    pub(crate) fn store_completed_outputs_from(&mut self, start_seg_id: SegmentId) {
+        let (state, logs) = self.collect_outputs_from_chain(start_seg_id);
+        self.completed_state_entries_snapshot = Some(state);
+        self.completed_log_entries_snapshot = Some(logs);
     }
 
     pub fn alloc_scoped_var_in_segment(&mut self, seg_id: SegmentId, initial: Value) -> VarId {
@@ -460,7 +456,6 @@ impl VM {
             .expect("alloc_scoped_var_in_segment requires a mutable segment")
             .variables
             .insert(var, initial);
-        self.sync_segment_state_into_live_continuations(seg_id);
         var
     }
 
@@ -494,7 +489,6 @@ impl VM {
             .or_default()
             .insert(var, value.clone());
         seg.variables.insert(var, value);
-        self.sync_segment_state_into_live_continuations(seg_id);
         true
     }
 
@@ -516,7 +510,6 @@ impl VM {
                     .insert(var, value.clone());
                 if let Some(target) = self.segments.get_mut(seg_id) {
                     target.variables.insert(var, value);
-                    self.sync_segment_state_into_live_continuations(seg_id);
                     return true;
                 }
                 return false;
@@ -562,33 +555,61 @@ impl VM {
         key: String,
         value: Value,
     ) -> bool {
-        let sync_rust_store = self.segments.get(prompt_seg_id).is_some_and(|seg| {
-            matches!(
-                &seg.kind,
-                SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "StateHandler"
+        let Some((scope_id, sync_rust_store)) = self.segments.get(prompt_seg_id).map(|seg| {
+            (
+                seg.scope_id,
+                matches!(
+                    &seg.kind,
+                    SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "StateHandler"
+                ),
             )
-        });
+        }) else {
+            return false;
+        };
+
+        let epoch = self.bump_scope_persistent_epoch(scope_id);
+        self.scope_state_store
+            .entry(scope_id)
+            .or_default()
+            .insert(key.clone(), value.clone());
         let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
             return false;
         };
+        seg.persistent_epoch = epoch;
         seg.state_store.insert(key.clone(), value.clone());
         if sync_rust_store {
             self.rust_store.entries.insert(key, value);
         }
-        self.sync_segment_state_into_live_continuations(prompt_seg_id);
         true
     }
 
     pub fn append_handler_log_at(&mut self, prompt_seg_id: SegmentId, message: Value) -> bool {
+        let Some(scope_id) = self.segments.get(prompt_seg_id).map(|seg| seg.scope_id) else {
+            return false;
+        };
+        let epoch = self.bump_scope_persistent_epoch(scope_id);
+        self.scope_writer_logs
+            .entry(scope_id)
+            .or_default()
+            .push(message.clone());
         let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
             return false;
         };
+        seg.persistent_epoch = epoch;
         seg.writer_log.push(message);
-        self.sync_segment_state_into_live_continuations(prompt_seg_id);
         true
     }
 
     pub fn final_state_entries(&self) -> HashMap<String, Value> {
+        if self.current_segment.is_none() {
+            if let Some(state) = &self.completed_state_entries_snapshot {
+                if state.is_empty() {
+                    return self.rust_store.entries.clone();
+                }
+                return state.clone();
+            }
+        }
+
         let mut chain = Vec::new();
         let mut cursor = self.completed_segment.or(self.current_segment);
         while let Some(seg_id) = cursor {
@@ -617,6 +638,12 @@ impl VM {
     }
 
     pub fn final_log_entries(&self) -> Vec<Value> {
+        if self.current_segment.is_none() {
+            if let Some(logs) = &self.completed_log_entries_snapshot {
+                return logs.clone();
+            }
+        }
+
         let mut chain = Vec::new();
         let mut cursor = self.completed_segment.or(self.current_segment);
         while let Some(seg_id) = cursor {

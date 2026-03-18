@@ -5,14 +5,23 @@ use crate::segment::Segment;
 
 pub struct SegmentArena {
     segments: Vec<Option<Segment>>,
+    free_list: Vec<usize>,
 }
 
 impl SegmentArena {
     pub fn new() -> Self {
-        SegmentArena { segments: Vec::new() }
+        SegmentArena {
+            segments: Vec::new(),
+            free_list: Vec::new(),
+        }
     }
 
     pub fn alloc(&mut self, segment: Segment) -> SegmentId {
+        if let Some(index) = self.free_list.pop() {
+            debug_assert!(self.segments.get(index).is_some_and(|slot| slot.is_none()));
+            self.segments[index] = Some(segment);
+            return SegmentId::from_index(index);
+        }
         let id = SegmentId::from_index(self.segments.len());
         self.segments.push(Some(segment));
         id
@@ -20,12 +29,8 @@ impl SegmentArena {
 
     pub fn free(&mut self, id: SegmentId) {
         if let Some(slot) = self.segments.get_mut(id.index()) {
-            if let Some(segment) = slot.as_mut() {
-                segment.frames.clear();
-                segment.dispatch_id = None;
-                segment.pending_python = None;
-                segment.pending_error_context = None;
-                segment.mode = crate::step::Mode::Deliver(crate::value::Value::Unit);
+            if slot.take().is_some() {
+                self.free_list.push(id.index());
             }
         }
     }
@@ -90,6 +95,7 @@ impl SegmentArena {
 
     pub fn clear(&mut self) {
         self.segments.clear();
+        self.free_list.clear();
     }
 }
 
@@ -124,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn test_arena_free_sanitizes_but_does_not_reuse_id() {
+    fn test_arena_free_releases_slot_and_reuses_id() {
         let mut arena = SegmentArena::new();
 
         let marker1 = Marker::fresh();
@@ -134,18 +140,15 @@ mod tests {
         assert_eq!(arena.len(), 1);
 
         arena.free(id1);
-        assert_eq!(arena.len(), 1);
-        let freed = arena.get(id1).expect("freed segment slot must remain addressable");
-        assert_eq!(freed.marker, marker1);
-        assert_eq!(freed.frame_count(), 0);
-        assert!(freed.dispatch_id.is_none());
+        assert_eq!(arena.len(), 0);
+        assert!(arena.get(id1).is_none());
 
         let marker2 = Marker::fresh();
         let seg2 = Segment::new(marker2, None);
         let id2 = arena.alloc(seg2);
 
-        assert_ne!(id1, id2);
-        assert_eq!(arena.len(), 2);
+        assert_eq!(id1, id2);
+        assert_eq!(arena.len(), 1);
 
         let retrieved = arena.get(id2).unwrap();
         assert_eq!(retrieved.marker, marker2);

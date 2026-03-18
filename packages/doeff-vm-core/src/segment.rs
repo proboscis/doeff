@@ -43,6 +43,7 @@ pub struct ScopeStore {
 #[derive(Debug, Clone)]
 pub struct Segment {
     pub scope_id: ScopeId,
+    pub persistent_epoch: u64,
     pub marker: Marker,
     pub frames: Vec<Frame>,
     pub caller: Option<SegmentId>,
@@ -65,6 +66,7 @@ impl Segment {
     pub fn new(marker: Marker, caller: Option<SegmentId>) -> Self {
         Segment {
             scope_id: ScopeId::fresh(),
+            persistent_epoch: 0,
             marker,
             frames: Vec::new(),
             caller,
@@ -92,6 +94,7 @@ impl Segment {
     ) -> Self {
         Segment {
             scope_id: ScopeId::fresh(),
+            persistent_epoch: 0,
             marker,
             frames: Vec::new(),
             caller,
@@ -124,6 +127,7 @@ impl Segment {
     ) -> Self {
         Segment {
             scope_id: ScopeId::fresh(),
+            persistent_epoch: 0,
             marker,
             frames: Vec::new(),
             caller,

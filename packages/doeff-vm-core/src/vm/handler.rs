@@ -2,7 +2,10 @@ use super::*;
 use std::sync::Arc;
 
 impl VM {
-    pub(super) fn visible_scope_store(&self, start_seg_id: SegmentId) -> crate::segment::ScopeStore {
+    pub(super) fn visible_scope_store(
+        &self,
+        start_seg_id: SegmentId,
+    ) -> crate::segment::ScopeStore {
         let mut layers = Vec::new();
         let mut cursor = Some(start_seg_id);
         while let Some(seg_id) = cursor {

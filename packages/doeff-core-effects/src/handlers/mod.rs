@@ -308,7 +308,9 @@ fn get_sync_await_submitter() -> Result<PyShared, String> {
                 .map(|runner| runner.unbind())
                 .map_err(|e| e.to_string())
         });
-        Ok(PyShared::new(runner.as_ref().map_err(Clone::clone)?.clone_ref(py)))
+        Ok(PyShared::new(
+            runner.as_ref().map_err(Clone::clone)?.clone_ref(py),
+        ))
     })
 }
 
@@ -544,9 +546,7 @@ impl IRStreamProgram for AwaitHandlerProgram {
         match std::mem::replace(&mut self.phase, AwaitPhase::Idle) {
             AwaitPhase::AwaitExternalPromise { continuation, .. }
             | AwaitPhase::AwaitSubmission { continuation, .. }
-            | AwaitPhase::AwaitResult { continuation } => {
-                Self::transfer_throw(continuation, exc)
-            }
+            | AwaitPhase::AwaitResult { continuation } => Self::transfer_throw(continuation, exc),
             AwaitPhase::Idle => IRStreamStep::Throw(exc),
         }
     }
@@ -627,9 +627,10 @@ struct StateHandlerModifyInvariantAnchors {
 #[cfg(test)]
 impl StateHandlerModifyInvariantAnchors {
     fn take_all(&mut self) {
-        let _ = self.pending_key.take().expect(
-            "StateHandler Modify invariant violated: pending key missing during resume",
-        );
+        let _ = self
+            .pending_key
+            .take()
+            .expect("StateHandler Modify invariant violated: pending key missing during resume");
         let _ = self.pending_k.take().expect(
             "StateHandler Modify invariant violated: pending continuation missing during resume",
         );
@@ -1386,7 +1387,6 @@ impl ReaderHandlerProgram {
         scope: &mut ScopeStore,
     ) -> IRStreamStep {
         let Some(value) = ask_from_scope_or_env(scope, &key) else {
-            let _ = continuation;
             return IRStreamStep::Throw(missing_env_key_error(&key));
         };
 
@@ -1430,9 +1430,6 @@ impl IRStreamProgram for ReaderHandlerProgram {
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
-        if false {
-            unreachable!("ReaderHandler never yields mid-handling");
-        }
         IRStreamStep::Return(value)
     }
 
@@ -1552,11 +1549,7 @@ impl IRStreamProgram for WriterHandlerProgram {
     }
 
     fn resume(&mut self, value: Value, _: &mut RustStore, _scope: &mut ScopeStore) -> IRStreamStep {
-        if false {
-            unreachable!("WriterHandler never yields mid-handling");
-        }
         if let Some(continuation) = self.pending_k.take() {
-            let _ = value;
             return IRStreamStep::Yield(DoCtrl::Resume {
                 continuation,
                 value: Value::Unit,

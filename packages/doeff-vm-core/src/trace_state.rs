@@ -72,9 +72,8 @@ impl Default for TraceState {
 
 impl TraceState {
     pub(crate) fn dispatch_has_terminal_result(&self, dispatch_id: DispatchId) -> bool {
-        self.dispatch_display(dispatch_id).is_some_and(|dispatch| {
-            Self::dispatch_result_is_terminal(&dispatch.result)
-        })
+        self.dispatch_display(dispatch_id)
+            .is_some_and(|dispatch| Self::dispatch_result_is_terminal(&dispatch.result))
     }
 
     pub(crate) fn clear(&mut self) {
@@ -128,6 +127,10 @@ impl TraceState {
             .iter()
             .rposition(|frame| frame.frame_id == frame_id)
         else {
+            debug_assert!(
+                false,
+                "record_frame_exited called for unknown frame_id {frame_id}"
+            );
             return;
         };
 
@@ -1453,15 +1456,13 @@ impl TraceState {
                         && lhs_sub_program_repr == rhs_sub_program_repr
                         && lhs_handler_kind == rhs_handler_kind;
                     identical
-                        || (
-                            lhs_function_name == rhs_function_name
-                                && lhs_source_file == rhs_source_file
-                                && lhs_source_line == rhs_source_line
-                                && lhs_handler_kind == rhs_handler_kind
-                                && lhs_handler_kind.is_some()
-                                && Self::is_hidden_execution_context_handler_args(lhs_args_repr)
-                                && Self::is_hidden_execution_context_handler_args(rhs_args_repr)
-                        )
+                        || (lhs_function_name == rhs_function_name
+                            && lhs_source_file == rhs_source_file
+                            && lhs_source_line == rhs_source_line
+                            && lhs_handler_kind == rhs_handler_kind
+                            && lhs_handler_kind.is_some()
+                            && Self::is_hidden_execution_context_handler_args(lhs_args_repr)
+                            && Self::is_hidden_execution_context_handler_args(rhs_args_repr))
                 }
                 ActiveChainEntry::EffectYield { .. }
                 | ActiveChainEntry::ContextEntry { .. }
@@ -1595,9 +1596,10 @@ impl TraceState {
     }
 
     fn should_preserve_exited_frame(frame: &ActiveChainFrameState) -> bool {
-        frame.dispatch_display.as_ref().is_some_and(|dispatch| {
-            Self::is_visible_dispatch(dispatch) && !dispatch.cleanup_ready
-        })
+        frame
+            .dispatch_display
+            .as_ref()
+            .is_some_and(|dispatch| Self::is_visible_dispatch(dispatch) && !dispatch.cleanup_ready)
     }
 
     fn is_visible_dispatch(dispatch: &DispatchDisplayState) -> bool {

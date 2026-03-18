@@ -521,7 +521,11 @@ impl VM {
         continuation
             .segment_id()
             .filter(|seg_id| self.segments.get(*seg_id).is_some())
-            .or_else(|| continuation.captured_caller().filter(|seg_id| self.segments.get(*seg_id).is_some()))
+            .or_else(|| {
+                continuation
+                    .captured_caller()
+                    .filter(|seg_id| self.segments.get(*seg_id).is_some())
+            })
     }
 
     pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
@@ -547,11 +551,7 @@ impl VM {
         outside_seg_id
     }
 
-    fn initialize_builtin_prompt_segment(
-        &self,
-        handler: &KleisliRef,
-        prompt_seg: &mut Segment,
-    ) {
+    fn initialize_builtin_prompt_segment(&self, handler: &KleisliRef, prompt_seg: &mut Segment) {
         if handler.handler_name() == "StateHandler" {
             prompt_seg.state_store = self.rust_store.entries.clone();
         }
@@ -1035,9 +1035,9 @@ impl VM {
                                     .segment_id()
                                     .expect("dispatch origin continuations must be captured"),
                             )
-                                .into_iter()
-                                .map(|entry| entry.prompt_seg_id)
-                                .collect()
+                            .into_iter()
+                            .map(|entry| entry.prompt_seg_id)
+                            .collect()
                         })
                 })
                 .unwrap_or_default()
@@ -1342,17 +1342,8 @@ impl VM {
     }
 
     fn continuation_segment_dispatch_id(&mut self, k: &Continuation) -> Option<DispatchId> {
-        if let Some(dispatch_id) = k.dispatch_id() {
-            if self.dispatch_origin_for_dispatch_id(dispatch_id).is_some() {
-                return Some(dispatch_id);
-            }
-        }
-
-        self.segments.get(k.segment_id()?).and_then(|source_seg| {
-            let dispatch_id = source_seg.dispatch_id?;
-            self.dispatch_origin_for_dispatch_id(dispatch_id)
-                .map(|_| dispatch_id)
-        })
+        k.dispatch_id()
+            .filter(|dispatch_id| self.dispatch_origin_for_dispatch_id(*dispatch_id).is_some())
     }
 
     fn enter_continuation_segment_with_dispatch(
@@ -1386,7 +1377,7 @@ impl VM {
     fn activate_continuation(
         &mut self,
         kind: ContinuationActivationKind,
-        k: Continuation,
+        mut k: Continuation,
         mut value: Value,
         caller: Option<SegmentId>,
     ) -> StepEvent {
@@ -1400,6 +1391,11 @@ impl VM {
             ));
         }
         self.mark_one_shot_consumed(k.cont_id);
+        k.refresh_persistent_segment_state(
+            &self.scope_state_store,
+            &self.scope_writer_logs,
+            &self.scope_persistent_epochs,
+        );
         let error_dispatch = self.error_dispatch_for_continuation(&k);
         self.record_continuation_activation(kind, &k, &value);
         if let Err(err) =
@@ -1993,6 +1989,7 @@ impl VM {
             let scope_id = ScopeId::fresh();
             let cloned = Segment {
                 scope_id,
+                persistent_epoch: 0,
                 marker: source_seg.marker,
                 frames: Vec::new(),
                 caller: outer_clone,

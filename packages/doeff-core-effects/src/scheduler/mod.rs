@@ -18,12 +18,12 @@ use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn, PyWait,
-    PyTaskCompleted, TaskCancelledError,
+    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn,
+    PyTaskCompleted, PyWait, TaskCancelledError,
 };
 use crate::error::VMError;
-use crate::handlers::AwaitHandlerFactory;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
+use crate::handlers::AwaitHandlerFactory;
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
@@ -2163,8 +2163,7 @@ impl SchedulerState {
         None
     }
 
-    pub fn merge_task_logs(&self, task_id: TaskId, store: &mut RustStore) {
-        let _ = store;
+    pub fn merge_task_logs(&self, task_id: TaskId) {
         if let Some(state) = self.tasks.get(&task_id) {
             let task_store = match state {
                 TaskState::Pending { store, .. } => store,
@@ -2181,10 +2180,10 @@ impl SchedulerState {
         }
     }
 
-    pub fn merge_gather_logs(&self, items: &[Waitable], store: &mut RustStore) {
+    pub fn merge_gather_logs(&self, items: &[Waitable]) {
         for item in items {
             if let Waitable::Task(task_id) = item {
-                self.merge_task_logs(*task_id, store);
+                self.merge_task_logs(*task_id);
             }
         }
     }
@@ -2272,7 +2271,7 @@ impl SchedulerState {
                         }
                         self.current_task = Some(task_id);
                         if let Some(items) = merge_items.as_ref() {
-                            self.merge_gather_logs(items, store);
+                            self.merge_gather_logs(items);
                         }
                         match resume_outcome {
                             Some(Err(error)) => {
@@ -2310,7 +2309,7 @@ impl SchedulerState {
                             self.current_task = None;
                         }
                         if let Some(items) = &ready_root.merge_items {
-                            self.merge_gather_logs(items, store);
+                            self.merge_gather_logs(items);
                         }
                         return TransferNextOutcome::Step(match ready_root.outcome {
                             Ok(value) => resume_to_continuation(ready_root.continuation, value),
@@ -2380,7 +2379,7 @@ impl SchedulerState {
                 self.load_task_store(task_id, store)?;
                 self.current_task = Some(task_id);
                 if let Some(items) = merge_items.as_ref() {
-                    self.merge_gather_logs(items, store);
+                    self.merge_gather_logs(items);
                 }
                 let step = match resume_outcome {
                     Some(Err(error)) => throw_to_continuation(task_k, error),
@@ -2405,7 +2404,7 @@ impl SchedulerState {
                     self.current_task = None;
                 }
                 if let Some(items) = &ready_root.merge_items {
-                    self.merge_gather_logs(items, store);
+                    self.merge_gather_logs(items);
                 }
 
                 let step = match ready_root.outcome {
@@ -2793,7 +2792,7 @@ impl SchedulerProgram {
             return match aggregate {
                 Ok(results) => {
                     if items.len() > 1 {
-                        state.merge_gather_logs(&items, store);
+                        state.merge_gather_logs(&items);
                     }
                     resume_to_continuation(k_user, results)
                 }
@@ -3013,7 +3012,8 @@ impl SchedulerProgram {
                     if let Err(store_error) = state.save_task_store(running_task, store) {
                         return IRStreamStep::Throw(store_error);
                     }
-                    if let Err(done_error) = state.mark_task_done(running_task, Err(error.clone())) {
+                    if let Err(done_error) = state.mark_task_done(running_task, Err(error.clone()))
+                    {
                         return IRStreamStep::Throw(done_error);
                     }
                     let _ = state.register_gather_fail_fast(wait_request, error, running_task);
