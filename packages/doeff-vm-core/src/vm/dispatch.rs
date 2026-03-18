@@ -1,6 +1,26 @@
 use super::*;
 
 impl VM {
+    fn dispatch_origins_from_segment(
+        &self,
+        start_segment: Option<SegmentId>,
+    ) -> Vec<DispatchOriginView> {
+        let mut seen = HashSet::new();
+        let mut origins = Vec::new();
+        let mut cursor = start_segment;
+        while let Some(seg_id) = cursor {
+            if let Some(origin) = self.dispatch_origin_in_segment(seg_id) {
+                if seen.insert(origin.dispatch_id) {
+                    origins.push(origin);
+                }
+            }
+            cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
+        }
+
+        origins.sort_by_key(|origin| origin.dispatch_id.raw());
+        origins
+    }
+
     fn dispatch_origin_in_segment_by<T>(
         &self,
         seg_id: SegmentId,
@@ -109,20 +129,7 @@ impl VM {
     }
 
     pub(super) fn dispatch_origins(&self) -> Vec<DispatchOriginView> {
-        let mut seen = HashSet::new();
-        let mut origins = Vec::new();
-        let mut cursor = self.current_segment;
-        while let Some(seg_id) = cursor {
-            if let Some(origin) = self.dispatch_origin_in_segment(seg_id) {
-                if seen.insert(origin.dispatch_id) {
-                    origins.push(origin);
-                }
-            }
-            cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
-        }
-
-        origins.sort_by_key(|origin| origin.dispatch_id.raw());
-        origins
+        self.dispatch_origins_from_segment(self.current_segment)
     }
 
     pub(super) fn dispatch_depth(&self) -> usize {
@@ -130,7 +137,14 @@ impl VM {
     }
 
     pub(super) fn live_dispatch_snapshots(&self) -> Vec<LiveDispatchSnapshot> {
-        self.dispatch_origins()
+        self.live_dispatch_snapshots_from_segment(self.current_segment)
+    }
+
+    pub(super) fn live_dispatch_snapshots_from_segment(
+        &self,
+        start_segment: Option<SegmentId>,
+    ) -> Vec<LiveDispatchSnapshot> {
+        self.dispatch_origins_from_segment(start_segment)
             .into_iter()
             .map(|origin| LiveDispatchSnapshot {
                 dispatch_id: origin.dispatch_id,

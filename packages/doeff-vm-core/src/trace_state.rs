@@ -688,6 +688,56 @@ impl TraceState {
         Self::inject_context(entries, exception)
     }
 
+    pub(crate) fn assemble_scoped_active_chain(
+        &self,
+        exception: Option<&PyException>,
+        segments: &SegmentArena,
+        current_segment: Option<SegmentId>,
+        dispatch_stack: &[LiveDispatchSnapshot],
+    ) -> Vec<ActiveChainEntry> {
+        let mut frame_stack = self.scoped_active_chain_frame_stack(segments, current_segment);
+        self.merge_live_frame_state(&mut frame_stack, segments, current_segment, dispatch_stack);
+
+        if let Some(exception) = exception {
+            Self::finalize_unresolved_dispatches_as_threw(&mut frame_stack, exception);
+        }
+
+        let entries = self.entries_from_active_chain_parts(&frame_stack, dispatch_stack);
+        let entries = Self::dedup_adjacent(entries);
+        Self::inject_context(entries, exception)
+    }
+
+    fn scoped_active_chain_frame_stack(
+        &self,
+        segments: &SegmentArena,
+        current_segment: Option<SegmentId>,
+    ) -> Vec<ActiveChainFrameState> {
+        let mut frame_stack = Vec::new();
+        self.merge_frame_lines_from_segments(&mut frame_stack, segments, current_segment);
+
+        for frame in &mut frame_stack {
+            let Some(tracked) = self
+                .frame_stack
+                .iter()
+                .find(|tracked| tracked.frame_id == frame.frame_id)
+            else {
+                continue;
+            };
+            if frame.args_repr.is_none() {
+                frame.args_repr = tracked.args_repr.clone();
+            }
+            if frame.sub_program_repr == MISSING_SUB_PROGRAM {
+                frame.sub_program_repr = tracked.sub_program_repr.clone();
+            }
+            if frame.handler_kind.is_none() {
+                frame.handler_kind = tracked.handler_kind;
+            }
+            frame.dispatch_display = tracked.dispatch_display.clone();
+        }
+
+        frame_stack
+    }
+
     pub(crate) fn assemble_traceback_entries(
         &self,
         exception: &PyException,
