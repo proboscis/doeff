@@ -12,7 +12,8 @@ from typing import Any, Generic, TypeVar, cast
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
 from doeff.do import do
-from doeff.effects.cache import CacheGet, CachePut
+from doeff.effects.cache import CacheExists, CacheGet, CachePut
+from doeff.effects.writer import slog
 from doeff.kleisli import KleisliProgram
 from doeff.types import EffectGenerator, FrozenDict
 
@@ -126,6 +127,20 @@ def _call_site_from_program_frames(call_stack: list[Any] | tuple[Any, ...]) -> C
             return site
 
     return fallback
+
+
+def _truncate_for_log(obj: Any, max_len: int = 200) -> str:
+    """Truncate object representation for logging to avoid massive log output."""
+    try:
+        repr_str = repr(obj)
+    except Exception:
+        repr_str = f"<{type(obj).__name__} (repr failed)>"
+
+    if len(repr_str) <= max_len:
+        return repr_str
+
+    half = (max_len - 5) // 2  # Reserve 5 chars for "..."
+    return f"{repr_str[:half]}...{repr_str[-half:]}"
 
 
 def _cache_error_note(
@@ -252,6 +267,34 @@ def cache(  # noqa: PLR0915
             return hasher(value)
 
         @do
+        def ensure_serializable(
+            key_obj: Any,
+            *,
+            log_success: bool = True,
+            level: str | None = None,
+        ) -> EffectGenerator[None]:
+            try:
+                try:
+                    import cloudpickle as serializer
+                except ModuleNotFoundError:
+                    import pickle as serializer
+
+                serializer.dumps(key_obj)
+            except Exception as exc:  # pragma: no cover - defensive logging path
+                truncated_key = _truncate_for_log(key_obj)
+                yield slog(msg=f"serializing cache key failed:{truncated_key}", level="ERROR")
+                raise exc
+
+            if log_success:
+                truncated_key = _truncate_for_log(key_obj)
+                log_kwargs: dict[str, Any] = {
+                    "msg": f"cache key serialization check passed for key:{truncated_key}"
+                }
+                if level is not None:
+                    log_kwargs["level"] = level
+                yield slog(**log_kwargs)
+
+        @do
         def build_key_inputs(  # noqa: PLR0912
             call_args: tuple[Any, ...],
             call_kwargs: Mapping[str, Any],
@@ -328,33 +371,45 @@ def cache(  # noqa: PLR0915
                 else (func_name, args_for_key, frozen_kwargs)
             )
 
-            try:
-                cached_value: Any = yield CacheGet(cache_key_obj)
-            except KeyError:
-                pass
-            else:
-                return _unwrap_cached_payload(cached_value)
+            yield ensure_serializable(cache_key_obj, level="DEBUG")
 
-            try:
-                computed_value = yield wrapped_func(*args, **kwargs)
-            except Exception as error:
-                call_site = _call_site_from_error(error)
-                _attach_exception_note(
-                    error,
-                    _cache_error_note(func_name, args, dict(kwargs), call_site),
+            @do
+            def compute_and_cache() -> EffectGenerator[T]:
+                yield slog(msg=f"Cache miss for {func_name}, computing...", level="DEBUG")
+                try:
+                    computed_value = yield wrapped_func(*args, **kwargs)
+                except Exception as error:
+                    yield slog(msg=f"Computation for {func_name} failed, not caching.", level="error")
+                    call_site = _call_site_from_error(error)
+                    _attach_exception_note(
+                        error,
+                        _cache_error_note(func_name, args, dict(kwargs), call_site),
+                    )
+                    raise
+
+                yield ensure_serializable(cache_key_obj)
+                yield CachePut(
+                    cache_key_obj,
+                    _CachedSuccess(computed_value),
+                    ttl,
+                    lifecycle=lifecycle,
+                    storage=storage,
+                    metadata=metadata,
+                    policy=policy,
                 )
-                raise
+                yield slog(msg=f"Cache: stored result for {func_name}", level="DEBUG")
+                return computed_value
 
-            yield CachePut(
-                cache_key_obj,
-                _CachedSuccess(computed_value),
-                ttl,
-                lifecycle=lifecycle,
-                storage=storage,
-                metadata=metadata,
-                policy=policy,
-            )
-            return computed_value
+            @do
+            def try_cache_get() -> EffectGenerator[Any]:
+                yield ensure_serializable(cache_key_obj, log_success=False)
+                return (yield CacheGet(cache_key_obj))
+
+            if not (yield CacheExists(cache_key_obj)):
+                return (yield compute_and_cache())
+
+            cached_value = yield try_cache_get()
+            return _unwrap_cached_payload(cached_value)
 
         try:
             wrapper.__name__ = getattr(func, "__name__", wrapper.__name__)
