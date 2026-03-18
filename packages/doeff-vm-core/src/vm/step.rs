@@ -203,8 +203,9 @@ impl VM {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_traceback_entries(&exc);
                             let active_chain = self.assemble_active_chain(Some(&exc));
-                            self.segments
-                                .reparent_children(seg_id, None, scope_parent);
+                            self.completed_segment = Some(seg_id);
+                            self.store_completed_outputs_from(seg_id);
+                            self.segments.reparent_children(seg_id, None, scope_parent);
                             self.segments.free(seg_id);
                             self.current_segment = None;
                             return StepEvent::Error(VMError::uncaught_exception(
@@ -253,10 +254,9 @@ impl VM {
                     Mode::Deliver(_) | Mode::HandleYield(_) | Mode::Return(_) => None,
                 };
                 let step = {
-                    let Some(seg) = self.segments.get_mut(seg_id) else {
+                    let Some(_segment) = self.segments.get_mut(seg_id) else {
                         return StepEvent::Error(VMError::invalid_segment("segment not found"));
                     };
-                    let _ = seg;
                     let mut scope = self.visible_scope_store(seg_id);
                     let mut guard = stream.lock().expect("IRStream lock poisoned");
                     match mode {
@@ -1872,8 +1872,12 @@ impl VM {
     }
 
     fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
-        let cont =
-            Continuation::create_unstarted_with_metadata(expr, Vec::new(), metadata, self.current_segment);
+        let cont = Continuation::create_unstarted_with_metadata(
+            expr,
+            Vec::new(),
+            metadata,
+            self.current_segment,
+        );
         self.handle_resume_continuation(cont, Value::None)
     }
 
@@ -2205,6 +2209,7 @@ impl VM {
             None => {
                 self.segments.reparent_children(seg_id, None, scope_parent);
                 self.completed_segment = Some(seg_id);
+                self.store_completed_outputs_from(seg_id);
                 self.segments.free(seg_id);
                 self.current_segment = None;
                 StepEvent::Done(value)

@@ -1,6 +1,5 @@
 //! Continuation types for capturing and resuming.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
@@ -10,7 +9,6 @@ use crate::frame::CallMetadata;
 use crate::frame::Frame;
 use crate::ids::{ContId, DispatchId, ScopeId, SegmentId};
 use crate::kleisli::KleisliRef;
-use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::segment::Segment;
 use crate::step::PyException;
@@ -99,6 +97,7 @@ impl Continuation {
     ) -> Arc<Segment> {
         Arc::new(Segment {
             scope_id: segment.scope_id,
+            persistent_epoch: segment.persistent_epoch,
             marker: segment.marker,
             frames: Self::captured_frames(segment),
             caller: segment.caller,
@@ -273,7 +272,9 @@ impl Continuation {
     }
 
     pub fn outside_scope(&self) -> Option<SegmentId> {
-        self.unstarted.as_ref().and_then(|unstarted| unstarted.outside_scope)
+        self.unstarted
+            .as_ref()
+            .and_then(|unstarted| unstarted.outside_scope)
     }
 
     pub fn parent(&self) -> Option<&Continuation> {
@@ -284,39 +285,46 @@ impl Continuation {
         self.parent = parent;
     }
 
-    pub(crate) fn sync_persistent_segment_state(
+    pub(crate) fn refresh_persistent_segment_state(
         &mut self,
-        scope_id: ScopeId,
-        named_bindings: &HashMap<HashedPyKey, Value>,
-        state_store: &HashMap<String, Value>,
-        writer_log: &[Value],
+        scope_state_store: &std::collections::HashMap<
+            ScopeId,
+            std::collections::HashMap<String, Value>,
+        >,
+        scope_writer_logs: &std::collections::HashMap<ScopeId, Vec<Value>>,
+        scope_persistent_epochs: &std::collections::HashMap<ScopeId, u64>,
     ) {
-        let matches_top_segment = self
-            .segment()
-            .is_some_and(|snapshot| snapshot.scope_id == scope_id);
         if let Some(snapshot) = self.segment_mut() {
-            if matches_top_segment {
-                snapshot.named_bindings = named_bindings.clone();
-                snapshot.state_store = state_store.clone();
-                snapshot.writer_log = writer_log.to_vec();
+            let current_epoch = scope_persistent_epochs
+                .get(&snapshot.scope_id)
+                .copied()
+                .unwrap_or(snapshot.persistent_epoch);
+            if snapshot.persistent_epoch < current_epoch {
+                snapshot.state_store = scope_state_store
+                    .get(&snapshot.scope_id)
+                    .cloned()
+                    .unwrap_or_default();
+                snapshot.writer_log = scope_writer_logs
+                    .get(&snapshot.scope_id)
+                    .cloned()
+                    .unwrap_or_default();
+                snapshot.persistent_epoch = current_epoch;
             }
 
             for frame in &mut snapshot.frames {
                 match frame {
                     Frame::HandlerDispatch { continuation, .. } => {
-                        continuation.sync_persistent_segment_state(
-                            scope_id,
-                            named_bindings,
-                            state_store,
-                            writer_log,
+                        continuation.refresh_persistent_segment_state(
+                            scope_state_store,
+                            scope_writer_logs,
+                            scope_persistent_epochs,
                         );
                     }
                     Frame::DispatchOrigin { k_origin, .. } => {
-                        k_origin.sync_persistent_segment_state(
-                            scope_id,
-                            named_bindings,
-                            state_store,
-                            writer_log,
+                        k_origin.refresh_persistent_segment_state(
+                            scope_state_store,
+                            scope_writer_logs,
+                            scope_persistent_epochs,
                         );
                     }
                     Frame::EvalReturn(eval_return) => {
@@ -324,11 +332,10 @@ impl Continuation {
                             continuation,
                         } = eval_return.as_mut()
                         {
-                            continuation.sync_persistent_segment_state(
-                                scope_id,
-                                named_bindings,
-                                state_store,
-                                writer_log,
+                            continuation.refresh_persistent_segment_state(
+                                scope_state_store,
+                                scope_writer_logs,
+                                scope_persistent_epochs,
                             );
                         }
                     }
@@ -344,11 +351,10 @@ impl Continuation {
         }
 
         if let Some(parent) = self.parent.as_mut() {
-            Arc::make_mut(parent).sync_persistent_segment_state(
-                scope_id,
-                named_bindings,
-                state_store,
-                writer_log,
+            Arc::make_mut(parent).refresh_persistent_segment_state(
+                scope_state_store,
+                scope_writer_logs,
+                scope_persistent_epochs,
             );
         }
     }
@@ -369,7 +375,15 @@ impl Continuation {
                  handler_identities,
                  metadata,
                  outside_scope,
-             }| { (program, handlers, handler_identities, metadata, outside_scope) },
+             }| {
+                (
+                    program,
+                    handlers,
+                    handler_identities,
+                    metadata,
+                    outside_scope,
+                )
+            },
         )
     }
 
@@ -573,5 +587,33 @@ mod tests {
             cont.frames().expect("captured continuation should have frames")[1],
             Frame::DispatchOrigin { dispatch_id: kept_id, .. } if kept_id == dispatch_id
         ));
+    }
+
+    #[test]
+    fn test_refresh_persistent_segment_state_updates_stale_snapshot() {
+        let (mut seg, seg_id) = make_test_segment();
+        seg.state_store.insert("count".to_string(), Value::Int(1));
+        seg.writer_log.push(Value::Int(10));
+        seg.persistent_epoch = 1;
+
+        let mut cont = Continuation::capture(&seg, seg_id, None);
+        let scope_id = seg.scope_id;
+        let scope_state_store = std::collections::HashMap::from([(
+            scope_id,
+            std::collections::HashMap::from([("count".to_string(), Value::Int(2))]),
+        )]);
+        let scope_writer_logs = std::collections::HashMap::from([(scope_id, vec![Value::Int(20)])]);
+        let scope_persistent_epochs = std::collections::HashMap::from([(scope_id, 2)]);
+
+        cont.refresh_persistent_segment_state(
+            &scope_state_store,
+            &scope_writer_logs,
+            &scope_persistent_epochs,
+        );
+
+        let snapshot = cont.segment().expect("continuation snapshot must exist");
+        assert_eq!(snapshot.state_store.get("count"), Some(&Value::Int(2)));
+        assert_eq!(snapshot.writer_log, vec![Value::Int(20)]);
+        assert_eq!(snapshot.persistent_epoch, 2);
     }
 }
