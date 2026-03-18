@@ -301,6 +301,46 @@ def test_cache_decorator_uses_exists_fast_path_on_miss() -> None:
     assert seen == ["exists", "put", "exists", "get"]
 
 
+def test_cache_decorator_recomputes_when_cache_exists_races_with_cache_get() -> None:
+    calls = {"count": 0}
+    seen: list[str] = []
+    storage: dict[object, object] = {}
+    race_triggered = {"done": False}
+
+    @do
+    def handler(effect: Effect, k: object):
+        if isinstance(effect, CacheExistsEffect):
+            seen.append("exists")
+            return (yield Resume(k, True))
+        if isinstance(effect, CacheGetEffect):
+            seen.append("get")
+            if not race_triggered["done"]:
+                race_triggered["done"] = True
+                raise KeyError(effect.key)
+            return (yield Resume(k, storage[effect.key]))
+        if isinstance(effect, CachePutEffect):
+            seen.append("put")
+            storage[effect.key] = effect.value
+            return (yield Resume(k, None))
+        yield Pass()
+
+    @cache()
+    @do
+    def expensive(value: int) -> EffectGenerator[int]:
+        if False:
+            yield CacheGet("__typecheck__")
+        calls["count"] += 1
+        return value * 3
+
+    result = _run_with_handlers(expensive(7), handler)
+
+    assert result.is_ok(), result.error
+    assert result.value == 21
+    assert calls["count"] == 1
+    assert seen == ["exists", "get", "put"]
+    assert len(storage) == 1
+
+
 def test_cache_decorator_rejects_unwrapped_cache_payloads() -> None:
     @do
     def handler(effect: Effect, k: object):
