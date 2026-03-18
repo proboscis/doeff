@@ -429,7 +429,7 @@ impl VM {
         )
     }
 
-    pub fn assemble_active_chain_for_dispatch(
+    pub(crate) fn assemble_active_chain_for_dispatch(
         &mut self,
         dispatch_id: DispatchId,
         exception: Option<&PyException>,
@@ -534,17 +534,6 @@ impl VM {
 
         Python::attach(|py| {
             let context_bound = context_obj.bind(py);
-            if !context_bound.is_instance_of::<PyExecutionContext>() {
-                let got_type = context_bound
-                    .get_type()
-                    .name()
-                    .map(|name| name.to_string())
-                    .unwrap_or_else(|_| MISSING_UNKNOWN.to_string());
-                return Err(VMError::python_error(format!(
-                    "GetExecutionContext handler must return ExecutionContext, got {got_type}"
-                )));
-            }
-
             let active_chain_tuple =
                 Value::active_chain_to_pytuple(py, &active_chain).map_err(|err| {
                     VMError::python_error(format!(
