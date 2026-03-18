@@ -9,7 +9,7 @@ use crate::do_ctrl::DoCtrl;
 use crate::effect::DispatchEffect;
 use crate::error::VMError;
 use crate::ir_stream::IRStreamStep;
-use crate::kleisli::{Kleisli, KleisliDebugInfo, RustKleisli};
+use crate::kleisli::{BuiltinHandlerKind, Kleisli, KleisliDebugInfo, RustKleisli};
 use crate::rust_store::RustStore;
 use crate::segment::ScopeStore;
 use crate::step::PyException;
@@ -63,6 +63,10 @@ pub trait IRStreamFactory: std::fmt::Debug + Send + Sync {
         false
     }
 
+    fn builtin_handler_kind(&self) -> Option<BuiltinHandlerKind> {
+        None
+    }
+
     fn is_sync_await_shim(&self) -> bool {
         false
     }
@@ -113,6 +117,10 @@ where
 
     fn is_rust_builtin(&self) -> bool {
         true
+    }
+
+    fn builtin_handler_kind(&self) -> Option<BuiltinHandlerKind> {
+        <Self as IRStreamFactory>::builtin_handler_kind(self)
     }
 
     fn supports_error_context_conversion(&self) -> bool {

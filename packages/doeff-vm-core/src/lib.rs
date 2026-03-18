@@ -94,7 +94,9 @@ pub use ids::{ContId, DispatchId, Marker, PromiseId, RunnableId, SegmentId, Task
 #[cfg(feature = "python_bridge")]
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 #[cfg(feature = "python_bridge")]
-pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
+pub use kleisli::{
+    BuiltinHandlerKind, Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli,
+};
 #[cfg(feature = "python_bridge")]
 pub use py_key::HashedPyKey;
 #[cfg(feature = "python_bridge")]

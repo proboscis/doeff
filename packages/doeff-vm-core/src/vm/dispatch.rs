@@ -1,6 +1,14 @@
 use super::*;
 
+static FAST_PATH_WRITER_EFFECT_TYPE: std::sync::OnceLock<Result<Py<PyAny>, String>> =
+    std::sync::OnceLock::new();
+
 impl VM {
+    fn is_fast_path_writer_handler(handler: &KleisliRef) -> bool {
+        handler.is_rust_builtin()
+            && handler.builtin_handler_kind() == Some(crate::kleisli::BuiltinHandlerKind::Writer)
+    }
+
     fn dispatch_origin_in_segment_by<T>(
         &self,
         seg_id: SegmentId,
@@ -497,7 +505,11 @@ impl VM {
         continuation
             .segment_id()
             .filter(|seg_id| self.segments.get(*seg_id).is_some())
-            .or_else(|| continuation.captured_caller().filter(|seg_id| self.segments.get(*seg_id).is_some()))
+            .or_else(|| {
+                continuation
+                    .captured_caller()
+                    .filter(|seg_id| self.segments.get(*seg_id).is_some())
+            })
     }
 
     pub fn instantiate_installed_handlers(&mut self) -> Option<SegmentId> {
@@ -926,15 +938,22 @@ impl VM {
             .map(|origin| origin.effect)
     }
 
-    fn extract_fast_path_writer_message(
-        effect: &DispatchEffect,
-    ) -> Result<Option<Value>, VMError> {
+    fn extract_fast_path_writer_message(effect: &DispatchEffect) -> Result<Option<Value>, VMError> {
         let Some(obj) = dispatch_ref_as_python(effect) else {
             return Ok(None);
         };
         Python::attach(|py| -> PyResult<Option<Value>> {
             let bound = obj.bind(py);
-            if bound.get_type().name()? != "PyTell" {
+            let tell_type = FAST_PATH_WRITER_EFFECT_TYPE.get_or_init(|| {
+                py.import("doeff_vm")
+                    .and_then(|module| module.getattr("PyTell"))
+                    .map(|tell_type| tell_type.unbind())
+                    .map_err(|err| err.to_string())
+            });
+            let tell_type = tell_type
+                .as_ref()
+                .map_err(|err| pyo3::exceptions::PyRuntimeError::new_err(err.clone()))?;
+            if !bound.is_instance(&tell_type.bind(py))? {
                 return Ok(None);
             }
             let message = bound.getattr("message")?;
@@ -956,27 +975,13 @@ impl VM {
         restricted_excluded_prompts: &HashSet<SegmentId>,
         restricted_error_context_dispatch: bool,
     ) -> Result<Option<StepEvent>, VMError> {
-        let effect_obj =
-            Python::attach(|py| dispatch_to_pyobject(py, effect).map(|obj| obj.unbind()))
-                .map_err(|err| {
-                    VMError::python_error(format!(
-                        "failed to convert writer fast-path effect to Python object: {err}"
-                    ))
-                })?;
-
         let mut cursor = Some(seg_id);
         while let Some(cursor_id) = cursor {
             let Some(seg) = self.segments.get(cursor_id) else {
                 break;
             };
             let next = seg.caller;
-            if let SegmentKind::PromptBoundary {
-                handler,
-                types,
-                trace_info,
-                ..
-            } = &seg.kind
-            {
+            if let SegmentKind::PromptBoundary { handler, types, .. } = &seg.kind {
                 let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
                 let restricted_handler_blocked = restricted_error_context_dispatch
                     && !(handler.is_rust_builtin() || handler.supports_error_context_conversion());
@@ -993,19 +998,31 @@ impl VM {
                     continue;
                 }
 
-                let should_invoke = self
-                    .should_invoke_handler_types(types.as_ref(), &effect_obj)
+                let should_invoke = if let Some(handler_types) = types.as_ref() {
+                    let effect_obj = Python::attach(|py| {
+                        dispatch_to_pyobject(py, effect).map(|obj| obj.unbind())
+                    })
                     .map_err(|err| {
                         VMError::python_error(format!(
-                            "failed to evaluate WithHandler type filter: {err:?}"
+                            "failed to convert writer fast-path effect to Python object: {err}"
                         ))
                     })?;
+                    self.should_invoke_handler_types(Some(handler_types), &effect_obj)
+                        .map_err(|err| {
+                            VMError::python_error(format!(
+                                "failed to evaluate WithHandler type filter: {err:?}"
+                            ))
+                        })?
+                } else {
+                    true
+                };
                 if !should_invoke {
+                    // Type-filtered prompts may still need Pass()/Delegate semantics from the
+                    // full dispatcher, so the fast-path must bail out here rather than skip ahead.
                     return Ok(None);
                 }
 
-                if handler.is_rust_builtin() && trace_info.handler_name.as_ref() == "WriterHandler"
-                {
+                if Self::is_fast_path_writer_handler(handler) {
                     self.rust_store.tell(message);
                     self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
                     return Ok(Some(StepEvent::Continue));
@@ -1105,9 +1122,9 @@ impl VM {
                                     .segment_id()
                                     .expect("dispatch origin continuations must be captured"),
                             )
-                                .into_iter()
-                                .map(|entry| entry.prompt_seg_id)
-                                .collect()
+                            .into_iter()
+                            .map(|entry| entry.prompt_seg_id)
+                            .collect()
                         })
                 })
                 .unwrap_or_default()
@@ -1318,7 +1335,8 @@ impl VM {
         if handler.py_identity().is_some() {
             self.register_continuation(k_user.clone());
         }
-        let ir_node = Self::invoke_kleisli_handler_expr(handler, effect, k_user, &handler_trace_info)?;
+        let ir_node =
+            Self::invoke_kleisli_handler_expr(handler, effect, k_user, &handler_trace_info)?;
         Ok(self.evaluate(ir_node))
     }
 
@@ -1869,8 +1887,7 @@ impl VM {
                 };
                 self.current_segment = Some(handler_seg_id);
 
-                if handler.is_rust_builtin() && entry.trace_info.handler_name.as_ref() == "WriterHandler"
-                {
+                if Self::is_fast_path_writer_handler(&handler) {
                     match Self::extract_fast_path_writer_message(&effect) {
                         Ok(Some(message)) => {
                             self.rust_store.tell(message);
@@ -2085,18 +2102,28 @@ impl VM {
         let mut handlers = handlers;
         let mut handler_identities = handler_identities;
         let mut outside_seg_id = self.current_segment;
-        if let Some(current_seg_id) = outside_seg_id {
-            let visible_handlers = self.handlers_in_caller_chain(current_seg_id);
-            let mut shared_prefix = 0usize;
-            while shared_prefix < handlers.len() && shared_prefix < visible_handlers.len() {
-                if !Arc::ptr_eq(&handlers[shared_prefix], &visible_handlers[shared_prefix].handler) {
-                    break;
+        if !handlers.is_empty() {
+            if let Some(current_seg_id) = outside_seg_id {
+                let visible_handlers = self.handlers_in_caller_chain(current_seg_id);
+                let mut shared_prefix = 0usize;
+                while shared_prefix < handlers.len() && shared_prefix < visible_handlers.len() {
+                    // Prefix dedupe is strictly position-sensitive: we only trim handlers that
+                    // are already visible at the same depth in the current caller chain.
+                    // Reusing the same KleisliRef later in the stack is still safe because we
+                    // never scan ahead.
+                    if !Arc::ptr_eq(
+                        &handlers[shared_prefix],
+                        &visible_handlers[shared_prefix].handler,
+                    ) {
+                        break;
+                    }
+                    shared_prefix += 1;
                 }
-                shared_prefix += 1;
-            }
-            if shared_prefix > 0 {
-                handlers = handlers.into_iter().skip(shared_prefix).collect();
-                handler_identities = handler_identities.into_iter().skip(shared_prefix).collect();
+                if shared_prefix > 0 {
+                    handlers = handlers.into_iter().skip(shared_prefix).collect();
+                    handler_identities =
+                        handler_identities.into_iter().skip(shared_prefix).collect();
+                }
             }
         }
 
