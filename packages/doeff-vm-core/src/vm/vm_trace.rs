@@ -142,15 +142,16 @@ impl VM {
                 return Some(info);
             }
         }
-        self.find_prompt_boundary_by_marker(marker)
-            .map(|(_seg_id, _handler, _types, trace_info)| {
+        self.find_prompt_boundary_by_marker(marker).map(
+            |(_seg_id, _handler, _types, trace_info)| {
                 (
                     trace_info.handler_name.to_string(),
                     trace_info.handler_kind,
                     trace_info.source_file.as_ref().map(ToString::to_string),
                     trace_info.source_line,
                 )
-            })
+            },
+        )
     }
 
     pub(super) fn current_handler_identity_for_dispatch(
