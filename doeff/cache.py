@@ -7,7 +7,7 @@ import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
@@ -37,11 +37,6 @@ class CacheCallSite:
 
 
 T = TypeVar("T")
-
-
-@dataclass(frozen=True)
-class _CachedSuccess(Generic[T]):
-    value: T
 
 
 def _function_identifier(target: Any) -> str:
@@ -181,12 +176,7 @@ def _call_site_from_error(error: BaseException) -> CacheCallSite | None:
 
 
 def _unwrap_cached_payload(value: Any) -> Any:
-    if isinstance(value, _CachedSuccess):
-        return value.value
-    raise TypeError(
-        "cache() expected cached payload to be _CachedSuccess, "
-        f"got {type(value).__name__}"
-    )
+    return value
 
 
 @do_wrapper
@@ -390,7 +380,7 @@ def cache(  # noqa: PLR0915
                 yield ensure_serializable(cache_key_obj)
                 yield CachePut(
                     cache_key_obj,
-                    _CachedSuccess(computed_value),
+                    computed_value,
                     ttl,
                     lifecycle=lifecycle,
                     storage=storage,

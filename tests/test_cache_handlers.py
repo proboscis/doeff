@@ -341,7 +341,9 @@ def test_cache_decorator_recomputes_when_cache_exists_races_with_cache_get() -> 
     assert len(storage) == 1
 
 
-def test_cache_decorator_rejects_unwrapped_cache_payloads() -> None:
+def test_cache_decorator_accepts_raw_cached_values() -> None:
+    """After removing _CachedSuccess, raw values from handler are accepted."""
+
     @do
     def handler(effect: Effect, k: object):
         if isinstance(effect, CacheExistsEffect):
@@ -361,10 +363,8 @@ def test_cache_decorator_rejects_unwrapped_cache_payloads() -> None:
 
     result = _run_with_handlers(expensive(7), handler)
 
-    assert result.is_err()
-    assert isinstance(result.error, TypeError)
-    assert "_CachedSuccess" in str(result.error)
-    assert "int" in str(result.error)
+    assert result.is_ok(), f"Failed: {result.error}"
+    assert result.value == 21
 
 
 def test_cache_call_site_formats_rust_and_unknown_sentinel_locations() -> None:
