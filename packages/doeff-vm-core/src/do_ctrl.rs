@@ -8,6 +8,7 @@ use crate::continuation::Continuation;
 use crate::driver::PyException;
 use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
+use crate::ids::{ScopeId, VarId};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
@@ -39,6 +40,13 @@ pub enum DoExprTag {
     WithIntercept = 21,
     Discontinue = 22,
     EvalInScope = 23,
+    GetScopeOf = 24,
+    PushScope = 25,
+    PopScope = 26,
+    AllocVar = 27,
+    ReadVar = 28,
+    WriteVar = 29,
+    WriteVarNonlocal = 30,
     Effect = 128,
     Unknown = 255,
 }
@@ -70,6 +78,13 @@ impl TryFrom<u8> for DoExprTag {
             21 => Ok(DoExprTag::WithIntercept),
             22 => Ok(DoExprTag::Discontinue),
             23 => Ok(DoExprTag::EvalInScope),
+            24 => Ok(DoExprTag::GetScopeOf),
+            25 => Ok(DoExprTag::PushScope),
+            26 => Ok(DoExprTag::PopScope),
+            27 => Ok(DoExprTag::AllocVar),
+            28 => Ok(DoExprTag::ReadVar),
+            29 => Ok(DoExprTag::WriteVar),
+            30 => Ok(DoExprTag::WriteVarNonlocal),
             128 => Ok(DoExprTag::Effect),
             255 => Ok(DoExprTag::Unknown),
             other => Err(other),
@@ -253,6 +268,9 @@ pub enum DoCtrl {
     },
     GetContinuation,
     GetHandlers,
+    GetScopeOf {
+        continuation: Continuation,
+    },
     GetTraceback {
         continuation: Continuation,
     },
@@ -260,9 +278,26 @@ pub enum DoCtrl {
         expr: PyShared,
         handlers: Vec<KleisliRef>,
         handler_identities: Vec<Option<PyShared>>,
+        scope: Option<ScopeId>,
     },
     ResumeContinuation {
         continuation: Continuation,
+        value: Value,
+    },
+    PushScope,
+    PopScope,
+    AllocVar {
+        initial_value: Value,
+    },
+    ReadVar {
+        var_id: VarId,
+    },
+    WriteVar {
+        var_id: VarId,
+        value: Value,
+    },
+    WriteVarNonlocal {
+        var_id: VarId,
         value: Value,
     },
     PythonAsyncSyntaxEscape {

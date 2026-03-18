@@ -33,6 +33,8 @@ impl VM {
             Value::Traceback(_) => "Traceback",
             Value::ActiveChain(_) => "ActiveChain",
             Value::List(_) => "List",
+            Value::Scope(_) => "Scope",
+            Value::Var(_) => "Var",
         }
     }
 
@@ -473,55 +475,56 @@ impl VM {
                 )))
             }
         };
-        let (use_scoped_active_chain, context_entries) =
-            Python::attach(|py| -> Result<(bool, Vec<Py<PyAny>>), VMError> {
-            let context_bound = context_obj.bind(py);
-            if !context_bound.is_instance_of::<PyExecutionContext>() {
-                let got_type = context_bound
-                    .get_type()
-                    .name()
-                    .map(|name| name.to_string())
-                    .unwrap_or_else(|_| MISSING_UNKNOWN.to_string());
-                return Err(VMError::python_error(format!(
-                    "GetExecutionContext handler must return ExecutionContext, got {got_type}"
-                )));
-            }
-            let entries_obj = context_bound.getattr("entries").map_err(|err| {
-                VMError::python_error(format!(
+        let (use_scoped_active_chain, context_entries) = Python::attach(
+            |py| -> Result<(bool, Vec<Py<PyAny>>), VMError> {
+                let context_bound = context_obj.bind(py);
+                if !context_bound.is_instance_of::<PyExecutionContext>() {
+                    let got_type = context_bound
+                        .get_type()
+                        .name()
+                        .map(|name| name.to_string())
+                        .unwrap_or_else(|_| MISSING_UNKNOWN.to_string());
+                    return Err(VMError::python_error(format!(
+                        "GetExecutionContext handler must return ExecutionContext, got {got_type}"
+                    )));
+                }
+                let entries_obj = context_bound.getattr("entries").map_err(|err| {
+                    VMError::python_error(format!(
                     "GetExecutionContext handler returned invalid ExecutionContext.entries: {err}"
                 ))
-            })?;
-            let iter = entries_obj.try_iter().map_err(|err| {
+                })?;
+                let iter = entries_obj.try_iter().map_err(|err| {
                 VMError::python_error(format!(
                     "GetExecutionContext handler returned non-iterable ExecutionContext.entries: {err}"
                 ))
             })?;
-            let mut use_scoped_active_chain = false;
-            let mut context_entries = Vec::new();
-            for entry_result in iter {
-                let entry = entry_result.map_err(|err| {
+                let mut use_scoped_active_chain = false;
+                let mut context_entries = Vec::new();
+                for entry_result in iter {
+                    let entry = entry_result.map_err(|err| {
                     VMError::python_error(format!(
                         "failed to iterate ExecutionContext.entries while attaching active_chain: {err}"
                     ))
                 })?;
-                // ExecutionContext.entries is user-extensible. We only inspect
-                // scheduler-owned {"kind": "spawn_boundary"} markers here and
-                // intentionally ignore malformed/non-mapping payloads.
-                let Ok(kind) = entry.get_item("kind") else {
+                    // ExecutionContext.entries is user-extensible. We only inspect
+                    // scheduler-owned {"kind": "spawn_boundary"} markers here and
+                    // intentionally ignore malformed/non-mapping payloads.
+                    let Ok(kind) = entry.get_item("kind") else {
+                        context_entries.push(entry.unbind());
+                        continue;
+                    };
+                    let Ok(kind) = kind.extract::<&str>() else {
+                        context_entries.push(entry.unbind());
+                        continue;
+                    };
+                    if kind == "spawn_boundary" {
+                        use_scoped_active_chain = true;
+                    }
                     context_entries.push(entry.unbind());
-                    continue;
-                };
-                let Ok(kind) = kind.extract::<&str>() else {
-                    context_entries.push(entry.unbind());
-                    continue;
-                };
-                if kind == "spawn_boundary" {
-                    use_scoped_active_chain = true;
                 }
-                context_entries.push(entry.unbind());
-            }
-            Ok((use_scoped_active_chain, context_entries))
-        })?;
+                Ok((use_scoped_active_chain, context_entries))
+            },
+        )?;
 
         let mut active_chain = if use_scoped_active_chain {
             self.assemble_active_chain_for_dispatch(dispatch_id, None)

@@ -16,7 +16,7 @@ use crate::frame::CallMetadata;
 use crate::handler::{IRStreamFactoryRef, IRStreamProgramRef};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::py_shared::PyShared;
-use crate::segment::ScopeStore;
+use crate::scope::ScopeStore;
 use crate::value::Value;
 use crate::vm::RustStore;
 
@@ -392,7 +392,9 @@ impl PyKleisli {
             | Value::Trace(_)
             | Value::Traceback(_)
             | Value::ActiveChain(_)
-            | Value::List(_) => value.to_pyobject(py).map_err(Self::map_pyerr),
+            | Value::List(_)
+            | Value::Scope(_)
+            | Value::Var(_) => value.to_pyobject(py).map_err(Self::map_pyerr),
         }
     }
 }

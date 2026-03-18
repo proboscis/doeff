@@ -241,7 +241,7 @@ mod tests {
     use super::*;
     use crate::ir_stream::{IRStream, IRStreamStep};
     use crate::rust_store::RustStore;
-    use crate::segment::ScopeStore;
+    use crate::scope::ScopeStore;
     use crate::value::Value;
 
     #[derive(Debug)]

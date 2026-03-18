@@ -185,7 +185,14 @@ sync_await_handler = _ext.sync_await_handler
 CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
 GetHandlers = _ext.GetHandlers
+GetScopeOf = _ext.GetScopeOf
 GetTraceback = _ext.GetTraceback
+PushScope = _ext.PushScope
+PopScope = _ext.PopScope
+AllocVar = _ext.AllocVar
+ReadVar = _ext.ReadVar
+WriteVar = _ext.WriteVar
+WriteVarNonlocal = _ext.WriteVarNonlocal
 GetExecutionContext = _ext.GetExecutionContext
 ExecutionContext = _ext.ExecutionContext
 GetCallStack = _ext.GetCallStack
@@ -230,12 +237,19 @@ TAG_DELEGATE = _ext.TAG_DELEGATE
 TAG_PASS = _ext.TAG_PASS
 TAG_GET_CONTINUATION = _ext.TAG_GET_CONTINUATION
 TAG_GET_HANDLERS = _ext.TAG_GET_HANDLERS
+TAG_GET_SCOPE_OF = _ext.TAG_GET_SCOPE_OF
 TAG_GET_TRACEBACK = _ext.TAG_GET_TRACEBACK
 TAG_WITH_INTERCEPT = _ext.TAG_WITH_INTERCEPT
 TAG_DISCONTINUE = _ext.TAG_DISCONTINUE
 TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
 TAG_EVAL = _ext.TAG_EVAL
 TAG_EVAL_IN_SCOPE = _ext.TAG_EVAL_IN_SCOPE
+TAG_PUSH_SCOPE = _ext.TAG_PUSH_SCOPE
+TAG_POP_SCOPE = _ext.TAG_POP_SCOPE
+TAG_ALLOC_VAR = _ext.TAG_ALLOC_VAR
+TAG_READ_VAR = _ext.TAG_READ_VAR
+TAG_WRITE_VAR = _ext.TAG_WRITE_VAR
+TAG_WRITE_VAR_NONLOCAL = _ext.TAG_WRITE_VAR_NONLOCAL
 TAG_APPLY = _ext.TAG_APPLY
 TAG_EXPAND = _ext.TAG_EXPAND
 TAG_CREATE_CONTINUATION = _ext.TAG_CREATE_CONTINUATION
@@ -271,11 +285,18 @@ __all__ = [
     "TAG_GET_CALL_STACK",
     "TAG_GET_CONTINUATION",
     "TAG_GET_HANDLERS",
+    "TAG_GET_SCOPE_OF",
     "TAG_GET_TRACEBACK",
     "TAG_MAP",
     "TAG_PASS",
     "TAG_PERFORM",
     "TAG_PURE",
+    "TAG_PUSH_SCOPE",
+    "TAG_POP_SCOPE",
+    "TAG_ALLOC_VAR",
+    "TAG_READ_VAR",
+    "TAG_WRITE_VAR",
+    "TAG_WRITE_VAR_NONLOCAL",
     "TAG_RESUME",
     "TAG_RESUME_CONTINUATION",
     "TAG_TRANSFER",
@@ -283,6 +304,7 @@ __all__ = [
     "TAG_WITH_HANDLER",
     "TAG_WITH_INTERCEPT",
     "AcquireSemaphoreEffect",
+    "AllocVar",
     "Apply",
     "CompletePromiseEffect",
     "CreateContinuation",
@@ -311,6 +333,7 @@ __all__ = [
     "GetContinuation",
     "GetExecutionContext",
     "GetHandlers",
+    "GetScopeOf",
     "GetTraceback",
     "K",
     "Map",
@@ -345,6 +368,9 @@ __all__ = [
     "ResultSafeEffect",
     "Resume",
     "ResumeContinuation",
+    "PopScope",
+    "PushScope",
+    "ReadVar",
     "RunResult",
     "RustHandler",
     "Semaphore",
@@ -356,6 +382,8 @@ __all__ = [
     "Transfer",
     "UnhandledEffectError",
     "WaitEffect",
+    "WriteVar",
+    "WriteVarNonlocal",
     "WithHandler",
     "WithIntercept",
     "_SchedulerTaskCompleted",

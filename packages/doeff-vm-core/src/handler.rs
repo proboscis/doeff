@@ -11,7 +11,7 @@ use crate::error::VMError;
 use crate::ir_stream::IRStreamStep;
 use crate::kleisli::{Kleisli, KleisliDebugInfo, RustKleisli};
 use crate::rust_store::RustStore;
-use crate::segment::ScopeStore;
+use crate::scope::ScopeStore;
 use crate::step::PyException;
 use crate::value::Value;
 

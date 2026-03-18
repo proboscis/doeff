@@ -7,7 +7,7 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{ContId, DispatchId, SegmentId};
+use crate::ids::{ContId, DispatchId, ScopeId, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::segment::Segment;
@@ -48,6 +48,7 @@ struct UnstartedContinuation {
     program: PyShared,
     handlers: Vec<KleisliRef>,
     handler_identities: Vec<Option<PyShared>>,
+    scope_id: Option<ScopeId>,
     metadata: Option<CallMetadata>,
 }
 
@@ -97,7 +98,7 @@ impl Continuation {
             marker: segment.marker,
             frames: Self::captured_frames(segment),
             caller: segment.caller,
-            scope_store: segment.scope_store.clone(),
+            scope_id: segment.scope_id,
             kind: segment.kind.clone(),
             dispatch_id,
             mode: segment.mode.clone(),
@@ -155,6 +156,7 @@ impl Continuation {
                 program: expr,
                 handlers,
                 handler_identities: vec![None; handler_count],
+                scope_id: None,
                 metadata,
             }),
             parent: None,
@@ -188,6 +190,27 @@ impl Continuation {
                 program: expr,
                 handlers,
                 handler_identities,
+                scope_id: None,
+                metadata,
+            }),
+            parent: None,
+        }
+    }
+
+    pub fn create_unstarted_with_scope(
+        expr: PyShared,
+        scope_id: ScopeId,
+        metadata: Option<CallMetadata>,
+    ) -> Self {
+        Continuation {
+            cont_id: ContId::fresh(),
+            segment_id: None,
+            segment_snapshot: None,
+            unstarted: Some(UnstartedContinuation {
+                program: expr,
+                handlers: Vec::new(),
+                handler_identities: Vec::new(),
+                scope_id: Some(scope_id),
                 metadata,
             }),
             parent: None,
@@ -222,6 +245,14 @@ impl Continuation {
 
     pub fn dispatch_id(&self) -> Option<DispatchId> {
         self.segment().and_then(|segment| segment.dispatch_id)
+    }
+
+    pub fn scope_id(&self) -> Option<ScopeId> {
+        self.segment().map(|segment| segment.scope_id).or_else(|| {
+            self.unstarted
+                .as_ref()
+                .and_then(|unstarted| unstarted.scope_id)
+        })
     }
 
     // Plain Resume/Transfer restore the capture-time caller from the segment snapshot.
@@ -271,6 +302,7 @@ impl Continuation {
         PyShared,
         Vec<KleisliRef>,
         Vec<Option<PyShared>>,
+        Option<ScopeId>,
         Option<CallMetadata>,
     )> {
         self.unstarted.map(
@@ -278,8 +310,9 @@ impl Continuation {
                  program,
                  handlers,
                  handler_identities,
+                 scope_id,
                  metadata,
-             }| { (program, handlers, handler_identities, metadata) },
+             }| { (program, handlers, handler_identities, scope_id, metadata) },
         )
     }
 

@@ -2811,3 +2811,41 @@ rules:
       include:
         - "/packages/doeff-core-effects/src/scheduler/mod.rs"
     pattern-regex: 'self\.waiters\.iter\(\)\.any\s*\('
+
+  - id: vm-no-spawn-await-handlers-phase
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019: Spawn must capture lexical scope directly.
+      Do not reintroduce the `SpawnAwaitHandlers` phase or any Spawn path that
+      asks the VM for `GetHandlers` before `CreateContinuation`.
+      Spawn should use `GetScopeOf(k)` and scope-capturing continuation creation.
+    paths:
+      include:
+        - "**/packages/doeff-core-effects/src/scheduler/mod.rs"
+    pattern-regex: 'SpawnAwaitHandlers'
+
+  - id: vm-no-segment-scope-store
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019: Segment must not own `scope_store`.
+      Lexical bindings live in scope objects, not on dynamic execution segments.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+      exclude:
+        - "**/packages/doeff-vm-core/src/scope.rs"
+    pattern-regex: 'scope_store'
+
+  - id: vm-no-ruststore-handler-fields
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019: RustStore must not expose handler-specific fields such as
+      `state`, `env`, or `log`. Handler state belongs in lexical scope or
+      generic runtime storage, not VM-owned special cases.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/rust_store.rs"
+    pattern-regex: 'pub\s+(state|env|log)\s*:'
