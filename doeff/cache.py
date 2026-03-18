@@ -176,12 +176,13 @@ def _call_site_from_error(error: BaseException) -> CacheCallSite | None:
 
 
 def _unwrap_cached_payload(value: Any) -> Any:
-    import doeff_vm
-
-    if isinstance(value, (doeff_vm.Ok, doeff_vm.Err)):
-        if isinstance(value, doeff_vm.Err):
+    # The VM or vendor layer may wrap values in Ok/Err from different modules
+    # (doeff_vm.Ok vs doeff._vendor.Ok). Use duck-typing to handle both.
+    if hasattr(value, "is_ok") and hasattr(value, "value"):
+        if callable(value.is_ok) and value.is_ok():
+            return value.value
+        if hasattr(value, "error"):
             raise value.error
-        return value.value
     return value
 
 
