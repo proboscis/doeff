@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import warnings
 from dataclasses import dataclass
@@ -7,8 +8,9 @@ from pathlib import Path
 from typing import Any
 
 import doeff_vm
+import pytest
 
-from doeff import Effect, Gather, Program, Spawn, do
+from doeff import Await, Effect, Gather, Program, Spawn, async_run, default_async_handlers, do
 from doeff._types_internal import EffectBase
 from doeff.effects import ProgramCallStack
 from doeff.rust_vm import (
@@ -279,6 +281,54 @@ def test_get_execution_context_returns_active_chain() -> None:
     entries = _active_chain_entries(active_chain)
     assert active_chain is not None
     assert any(entry.get("kind") == "program_yield" for entry in entries)
+
+
+@pytest.mark.asyncio
+async def test_get_execution_context_active_chain_excludes_sibling_spawn_tasks() -> None:
+    worker_names = {"alpha", "beta", "gamma"}
+
+    def captured_worker_names(context: object) -> set[str]:
+        return {
+            entry["function_name"]
+            for entry in _active_chain_entries(getattr(context, "active_chain", None))
+            if entry.get("function_name") in worker_names
+        }
+
+    @do
+    def alpha() -> Program[object]:
+        _ = yield Await(asyncio.sleep(0))
+        context = yield GetExecutionContext()
+        _ = yield Await(asyncio.sleep(0.01))
+        return context
+
+    @do
+    def beta() -> Program[object]:
+        _ = yield Await(asyncio.sleep(0))
+        context = yield GetExecutionContext()
+        _ = yield Await(asyncio.sleep(0.01))
+        return context
+
+    @do
+    def gamma() -> Program[object]:
+        _ = yield Await(asyncio.sleep(0))
+        context = yield GetExecutionContext()
+        _ = yield Await(asyncio.sleep(0.01))
+        return context
+
+    @do
+    def program() -> Program[tuple[object, object, object]]:
+        alpha_task = yield Spawn(alpha())
+        beta_task = yield Spawn(beta())
+        gamma_task = yield Spawn(gamma())
+        return (yield Gather(alpha_task, beta_task, gamma_task))
+
+    result = await async_run(program(), handlers=default_async_handlers())
+
+    assert result.is_ok(), result.error
+    alpha_context, beta_context, gamma_context = result.value
+    assert captured_worker_names(alpha_context) == {"alpha"}
+    assert captured_worker_names(beta_context) == {"beta"}
+    assert captured_worker_names(gamma_context) == {"gamma"}
 
 
 def test_get_execution_context_active_chain_has_args_repr() -> None:

@@ -429,6 +429,23 @@ impl VM {
         )
     }
 
+    pub fn assemble_active_chain_for_dispatch(
+        &mut self,
+        dispatch_id: DispatchId,
+        exception: Option<&PyException>,
+    ) -> Vec<ActiveChainEntry> {
+        let current_segment = self
+            .dispatch_origin_user_segment_id(dispatch_id)
+            .or(self.current_segment);
+        let dispatch_stack = self.live_dispatch_snapshots();
+        self.trace_state.assemble_scoped_active_chain(
+            exception,
+            &self.segments,
+            current_segment,
+            &dispatch_stack,
+        )
+    }
+
     fn should_attach_active_chain_for_dispatch(&self, dispatch_id: DispatchId) -> bool {
         let Some(origin) = self.dispatch_origin_for_dispatch_id(dispatch_id) else {
             return false;
@@ -456,8 +473,42 @@ impl VM {
                 )))
             }
         };
+        let use_scoped_active_chain = Python::attach(|py| -> Result<bool, VMError> {
+            let context_bound = context_obj.bind(py);
+            let entries_obj = context_bound.getattr("entries").map_err(|err| {
+                VMError::python_error(format!(
+                    "GetExecutionContext handler returned invalid ExecutionContext.entries: {err}"
+                ))
+            })?;
+            let iter = entries_obj.try_iter().map_err(|err| {
+                VMError::python_error(format!(
+                    "GetExecutionContext handler returned non-iterable ExecutionContext.entries: {err}"
+                ))
+            })?;
+            for entry_result in iter {
+                let entry = entry_result.map_err(|err| {
+                    VMError::python_error(format!(
+                        "failed to iterate ExecutionContext.entries while attaching active_chain: {err}"
+                    ))
+                })?;
+                let Ok(kind) = entry.get_item("kind") else {
+                    continue;
+                };
+                let Ok(kind) = kind.extract::<&str>() else {
+                    continue;
+                };
+                if kind == "spawn_boundary" {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })?;
 
-        let mut active_chain = self.assemble_active_chain(None);
+        let mut active_chain = if use_scoped_active_chain {
+            self.assemble_active_chain_for_dispatch(dispatch_id, None)
+        } else {
+            self.assemble_active_chain(None)
+        };
         Python::attach(|py| {
             let context_bound = context_obj.bind(py);
             if !context_bound.is_instance_of::<PyExecutionContext>() {
