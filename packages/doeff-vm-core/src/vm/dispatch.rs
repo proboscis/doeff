@@ -415,7 +415,8 @@ impl VM {
                     continuation: frame_continuation,
                     ..
                 } if *frame_dispatch_id == dispatch_id => {
-                    *frame_continuation = replacement.clone();
+                    *frame_continuation = replacement;
+                    break;
                 }
                 Frame::Program { .. }
                 | Frame::InterceptorApply(_)
@@ -1590,7 +1591,7 @@ impl VM {
 
         self.segments
             .reparent_children(current_seg_id, caller, scope_parent);
-        self.segments.free(current_seg_id);
+        self.free_segment(current_seg_id);
     }
 
     fn enter_or_reenter_continuation_segment_with_dispatch(

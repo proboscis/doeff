@@ -189,7 +189,7 @@ impl VM {
                         {
                             self.segments
                                 .reparent_children(seg_id, caller, scope_parent);
-                            self.segments.free(seg_id);
+                            self.free_segment(seg_id);
                             self.current_segment = caller;
                             return self.handle_transfer_throw_non_terminal(parent, exc);
                         } else if let Some(caller_id) = caller {
@@ -197,7 +197,7 @@ impl VM {
                                 .reparent_children(seg_id, Some(caller_id), scope_parent);
                             self.current_segment = Some(caller_id);
                             self.current_seg_mut().mode = Mode::Throw(exc);
-                            self.segments.free(seg_id);
+                            self.free_segment(seg_id);
                             return StepEvent::Continue;
                         } else {
                             self.finalize_active_dispatches_as_threw(&exc);
@@ -206,7 +206,7 @@ impl VM {
                             self.completed_segment = Some(seg_id);
                             self.store_completed_outputs_from(seg_id);
                             self.segments.reparent_children(seg_id, None, scope_parent);
-                            self.segments.free(seg_id);
+                            self.free_segment(seg_id);
                             self.current_segment = None;
                             return StepEvent::Error(VMError::uncaught_exception(
                                 exc,
@@ -279,8 +279,8 @@ impl VM {
             Frame::HandlerDispatch {
                 dispatch_id,
                 continuation,
-                prompt_seg_id,
-            } => self.step_handler_dispatch_frame(dispatch_id, continuation, prompt_seg_id, mode),
+                prompt_seg_id: _,
+            } => self.step_handler_dispatch_frame(dispatch_id, continuation, mode),
             Frame::DispatchOrigin {
                 dispatch_id,
                 k_origin,
@@ -445,7 +445,6 @@ impl VM {
         &mut self,
         dispatch_id: DispatchId,
         continuation: Continuation,
-        _prompt_seg_id: SegmentId,
         mode: Mode,
     ) -> StepEvent {
         match mode {
@@ -2298,7 +2297,7 @@ impl VM {
                 self.segments
                     .reparent_children(seg_id, Some(caller_id), scope_parent);
                 self.current_segment = Some(caller_id);
-                self.segments.free(seg_id);
+                self.free_segment(seg_id);
                 self.current_seg_mut().mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
@@ -2306,7 +2305,7 @@ impl VM {
                 self.segments.reparent_children(seg_id, None, scope_parent);
                 self.completed_segment = Some(seg_id);
                 self.store_completed_outputs_from(seg_id);
-                self.segments.free(seg_id);
+                self.free_segment(seg_id);
                 self.current_segment = None;
                 StepEvent::Done(value)
             }

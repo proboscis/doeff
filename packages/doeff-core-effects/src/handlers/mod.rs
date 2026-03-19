@@ -733,12 +733,6 @@ impl IRStreamProgram for StateHandlerProgram {
                 value: Value::Unit,
             }),
             StatePhase::AwaitModifyCall { modifier } => {
-                let _ = self.pending_key.as_ref().expect(
-                    "StateHandler Modify invariant violated: pending key missing during resume",
-                );
-                let _ = self.pending_k.as_ref().expect(
-                    "StateHandler Modify invariant violated: pending continuation missing during resume",
-                );
                 self.pending_old_value = Some(value.clone());
                 self.phase = StatePhase::AwaitModifyWrite;
                 IRStreamStep::NeedsPython(PythonCall::CallFunc {
