@@ -1,5 +1,6 @@
 //! Continuation types for capturing and resuming.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
@@ -294,6 +295,29 @@ impl Continuation {
         scope_writer_logs: &std::collections::HashMap<ScopeId, Vec<Value>>,
         scope_persistent_epochs: &std::collections::HashMap<ScopeId, u64>,
     ) {
+        let mut visited = HashSet::new();
+        self.refresh_persistent_segment_state_inner(
+            scope_state_store,
+            scope_writer_logs,
+            scope_persistent_epochs,
+            &mut visited,
+        );
+    }
+
+    fn refresh_persistent_segment_state_inner(
+        &mut self,
+        scope_state_store: &std::collections::HashMap<
+            ScopeId,
+            std::collections::HashMap<String, Value>,
+        >,
+        scope_writer_logs: &std::collections::HashMap<ScopeId, Vec<Value>>,
+        scope_persistent_epochs: &std::collections::HashMap<ScopeId, u64>,
+        visited: &mut HashSet<ContId>,
+    ) {
+        if !visited.insert(self.cont_id) {
+            return;
+        }
+
         if let Some(snapshot) = self.segment_mut() {
             let current_epoch = scope_persistent_epochs
                 .get(&snapshot.scope_id)
@@ -314,17 +338,19 @@ impl Continuation {
             for frame in &mut snapshot.frames {
                 match frame {
                     Frame::HandlerDispatch { continuation, .. } => {
-                        continuation.refresh_persistent_segment_state(
+                        continuation.refresh_persistent_segment_state_inner(
                             scope_state_store,
                             scope_writer_logs,
                             scope_persistent_epochs,
+                            visited,
                         );
                     }
                     Frame::DispatchOrigin { k_origin, .. } => {
-                        k_origin.refresh_persistent_segment_state(
+                        k_origin.refresh_persistent_segment_state_inner(
                             scope_state_store,
                             scope_writer_logs,
                             scope_persistent_epochs,
+                            visited,
                         );
                     }
                     Frame::EvalReturn(eval_return) => {
@@ -338,10 +364,11 @@ impl Continuation {
                             | crate::frame::EvalReturnContinuation::ReturnToContinuation {
                                 continuation,
                             } => {
-                                continuation.refresh_persistent_segment_state(
+                                continuation.refresh_persistent_segment_state_inner(
                                     scope_state_store,
                                     scope_writer_logs,
                                     scope_persistent_epochs,
+                                    visited,
                                 );
                             }
                             _ => {}
@@ -359,10 +386,11 @@ impl Continuation {
         }
 
         if let Some(parent) = self.parent.as_mut() {
-            Arc::make_mut(parent).refresh_persistent_segment_state(
+            Arc::make_mut(parent).refresh_persistent_segment_state_inner(
                 scope_state_store,
                 scope_writer_logs,
                 scope_persistent_epochs,
+                visited,
             );
         }
     }
@@ -561,6 +589,7 @@ mod tests {
             effect: make_get_execution_context_effect()
                 .expect("test dispatch effect should be constructible"),
             k_origin,
+            original_exception: None,
         }
     }
 
