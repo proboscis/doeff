@@ -487,6 +487,29 @@ impl VM {
     }
 
     fn is_inside_eval_in_scope_subtopology(&self) -> bool {
+        let contains_eval_in_scope_return = |start_seg_id: Option<SegmentId>| {
+            let mut seg_id = start_seg_id;
+            while let Some(id) = seg_id {
+                let Some(seg) = self.segments.get(id) else {
+                    break;
+                };
+                if seg.frames.iter().any(|frame| {
+                    matches!(
+                        frame,
+                        Frame::EvalReturn(continuation)
+                            if matches!(
+                                continuation.as_ref(),
+                                EvalReturnContinuation::EvalInScopeReturn { .. }
+                        )
+                    )
+                }) {
+                    return true;
+                }
+                seg_id = seg.caller;
+            }
+            false
+        };
+
         let mut seg_id = self.current_segment;
         while let Some(id) = seg_id {
             let Some(seg) = self.segments.get(id) else {
@@ -509,6 +532,9 @@ impl VM {
         let Some(dispatch_id) = self.current_segment_dispatch_id_any() else {
             return false;
         };
+        if contains_eval_in_scope_return(self.dispatch_origin_user_segment_id(dispatch_id)) {
+            return true;
+        }
         let Some(origin) = self.dispatch_origin_for_dispatch_id(dispatch_id) else {
             return false;
         };
@@ -1641,21 +1667,35 @@ impl VM {
             }
         }
 
-        let dispatch_id = self.continuation_segment_dispatch_id(&k);
+        let dispatch_id = match kind {
+            // Transfer completes the current dispatch and hands control back to
+            // the continuation outside that dispatch boundary.
+            ContinuationActivationKind::Transfer => None,
+            ContinuationActivationKind::Resume => self.continuation_segment_dispatch_id(&k),
+        };
         self.enter_or_reenter_continuation_segment_with_dispatch(&k, caller, dispatch_id);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }
 
     pub(super) fn handle_dispatch_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
-        if let Some(seg) = self.current_segment_mut() {
-            seg.caller = k.captured_caller();
+        let current_handler_kind = self.current_program_frame_handler_kind();
+        let should_relink_current_handler = current_handler_kind == Some(HandlerKind::Python);
+        if should_relink_current_handler {
+            if let Some(seg) = self.current_segment_mut() {
+                seg.caller = k.captured_caller();
+            }
         }
+        let caller = if current_handler_kind.is_some() {
+            self.current_segment
+        } else {
+            k.captured_caller()
+        };
         self.activate_continuation(
             ContinuationActivationKind::Resume,
             k,
             value,
-            self.current_segment,
+            caller,
         )
     }
 
@@ -1915,6 +1955,13 @@ impl VM {
         );
         pass_seg.scope_parent = wrapper_caller;
         self.copy_interceptor_guard_state(Some(prompt_seg_id), &mut pass_seg);
+        let pass_segment_id = self
+            .root_delegate_parent_segment_id(
+                parent_k_user,
+                "Pass parent chain must be Delegate-created dispatch continuations",
+            )
+            .or_else(|| self.continuation_chain_segment_id(parent_k_user))
+            .unwrap_or(prompt_seg_id);
         let eval_return = if Self::continuation_chain_contains_return_to_continuation(parent_k_user)
         {
             EvalReturnContinuation::ReturnToContinuation {
@@ -1929,7 +1976,7 @@ impl VM {
         Ok(Continuation::with_id(
             ContId::fresh(),
             &pass_seg,
-            prompt_seg_id,
+            pass_segment_id,
             Some(dispatch_id),
         ))
     }
@@ -1988,7 +2035,6 @@ impl VM {
                 k_new.set_parent(Some(Arc::new(parent_k_user)));
                 let replacement = k_new.clone();
                 Self::retarget_forwarded_dispatch_continuation(&mut k_new, dispatch_id, replacement);
-                self.clear_forwarded_handler_segment(inner_seg_id);
                 k_new
             }
             ForwardKind::Pass => match self.make_pass_continuation(
@@ -1997,10 +2043,7 @@ impl VM {
                 current_marker,
                 &parent_k_user,
             ) {
-                Ok(k_new) => {
-                    self.clear_forwarded_handler_segment(inner_seg_id);
-                    k_new
-                }
+                Ok(k_new) => k_new,
                 Err(err) => return StepEvent::Error(err),
             },
         };
@@ -2047,6 +2090,7 @@ impl VM {
                     )));
                 };
                 self.emit_forward_active_chain_event(kind, dispatch_id, from_idx, idx);
+                self.clear_forwarded_handler_segment(inner_seg_id);
 
                 let mut handler_seg = Segment::new(entry.marker, Some(inner_seg_id));
                 handler_seg.scope_parent = Some(inner_seg_id);

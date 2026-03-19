@@ -1217,6 +1217,7 @@ impl TraceState {
         frame_stack: &[ActiveChainFrameState],
     ) -> Vec<ActiveChainEntry> {
         let mut active_chain = Vec::new();
+        let mut pending_transferred_handler: Option<ActiveChainEntry> = None;
         for (index, frame) in frame_stack.iter().enumerate() {
             if let Some(dispatch) = frame
                 .dispatch_display
@@ -1230,6 +1231,16 @@ impl TraceState {
                         | EffectResult::Threw { .. }
                 ) {
                     Self::push_effect_yield_entry(&mut active_chain, dispatch, Some(frame));
+                    if matches!(dispatch.result, EffectResult::Transferred { .. })
+                        && !Self::has_visible_program_frame_for_handler(
+                            frame_stack,
+                            index + 1,
+                            dispatch,
+                        )
+                    {
+                        pending_transferred_handler =
+                            Self::transferred_handler_program_entry(dispatch);
+                    }
                     continue;
                 }
             }
@@ -1241,6 +1252,12 @@ impl TraceState {
                 frame,
                 Self::next_visible_program_frame(frame_stack, index + 1),
             ));
+            if let Some(entry) = pending_transferred_handler.take() {
+                active_chain.push(entry);
+            }
+        }
+        if let Some(entry) = pending_transferred_handler {
+            active_chain.push(entry);
         }
         active_chain
     }
@@ -1283,7 +1300,8 @@ impl TraceState {
         dispatch_stack.iter().rev().find_map(|ctx| {
             frame_stack.iter().rev().find_map(|frame| {
                 frame.dispatch_display.as_ref().filter(|dispatch| {
-                    dispatch.dispatch_id == ctx.dispatch_id && Self::is_visible_dispatch(dispatch)
+                    dispatch.dispatch_id == ctx.dispatch_id
+                        && Self::is_visible_dispatch(dispatch)
                 })
             })
         })
@@ -1383,6 +1401,33 @@ impl TraceState {
             sub_program_repr,
             handler_kind: frame.handler_kind,
         }
+    }
+
+    fn has_visible_program_frame_for_handler(
+        frame_stack: &[ActiveChainFrameState],
+        start_index: usize,
+        dispatch: &DispatchDisplayState,
+    ) -> bool {
+        let (handler_name, handler_kind, _, _) = Self::active_handler_trace_info(dispatch);
+        frame_stack.iter().skip(start_index).any(|frame| {
+            frame.function_name == handler_name
+                && frame.handler_kind == Some(handler_kind)
+        })
+    }
+
+    fn transferred_handler_program_entry(
+        dispatch: &DispatchDisplayState,
+    ) -> Option<ActiveChainEntry> {
+        let (handler_name, handler_kind, source_file, source_line) =
+            Self::active_handler_trace_info(dispatch);
+        Some(ActiveChainEntry::ProgramYield {
+            function_name: handler_name,
+            source_file: source_file.unwrap_or_else(|| MISSING_UNKNOWN.to_string()),
+            source_line: source_line.unwrap_or(0),
+            args_repr: None,
+            sub_program_repr: MISSING_SUB_PROGRAM.to_string(),
+            handler_kind: Some(handler_kind),
+        })
     }
 
     fn next_visible_program_frame(
