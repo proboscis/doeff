@@ -5,6 +5,8 @@
 **Revised:** 2026-03-19
 **Motivation:** Handler duplication in Spawn (#342), dispatch complexity, RustStore violation, ScopeStore leaking into VM
 
+**ADR:** [DEC-VM-012 Pure Stack Machine Dispatch](../../doeff-VAULT/Decisions/DEC-VM-012-pure-stack-machine-dispatch.md)
+
 ## Problem Statement
 
 The doeff VM has accumulated accidental complexity in its dispatch mechanism. Comparing
