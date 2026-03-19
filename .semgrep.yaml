@@ -771,6 +771,64 @@ rules:
       issue: gh-336-caller-chain
       category: correctness
 
+  - id: vm-ruststore-no-handler-specific-fields
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Lexical-scope architecture: RustStore must remain a generic key/value map.
+      Do not reintroduce handler-specific `state`, `env`, or `log` fields.
+      State/env/log storage belongs on segment chains and scoped storage.
+    paths:
+      include:
+        - "/packages/doeff-vm-core/src/rust_store.rs"
+        - "/packages/doeff-vm/src/rust_store.rs"
+    patterns:
+      - pattern-inside: |
+          pub struct RustStore {
+              ...
+          }
+      - pattern-regex: '(?m)^\s*(?:pub\s+)?(?:state|env|log)\s*:'
+
+  - id: vm-segment-no-scope-store-field
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Lexical-scope architecture: Segment must not carry a `scope_store` field
+      or `segment.scope_store` accesses. Scope ownership is structural on
+      segment-local bindings and lexical ancestry, not a ScopeStore side slot.
+    paths:
+      include:
+        - "/packages/doeff-vm-core/src/**/*.rs"
+        - "/packages/doeff-vm/src/**/*.rs"
+    pattern-either:
+      - pattern-regex: '(?m)^\s*(?:pub\s+)?scope_store\s*:'
+      - pattern: $SEG.scope_store
+
+  - id: vm-spawn-path-no-get-handlers
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Spawn inheritance must not replay handlers via DoCtrl::GetHandlers.
+      Use CreateContinuation/ResumeContinuation with outside_scope-based lexical
+      scope inheritance instead.
+    paths:
+      include:
+        - "/packages/doeff-vm-core/src/vm/dispatch.rs"
+    patterns:
+      - pattern-inside: |
+          pub(super) fn handle_resume_continuation(
+              &mut self,
+              $K: Continuation,
+              $VALUE: Value,
+          ) -> StepEvent {
+              ...
+          }
+      - pattern: DoCtrl::GetHandlers
+
+  # HandlerDispatch / DispatchOrigin and scope_parent-based spawn scope cloning are
+  # still live architecture on this branch. Add semgrep bans for those symbols only
+  # after the runtime and architecture tests stop depending on them.
+
   - id: vm-no-segment-ruststore-scope-sync
     pattern-either:
       - pattern: $RUST.scope_bindings = $SEG.scope_store
