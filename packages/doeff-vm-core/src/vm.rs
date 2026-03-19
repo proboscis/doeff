@@ -461,6 +461,9 @@ impl VM {
     pub(crate) fn store_completed_outputs_from(&mut self, start_seg_id: SegmentId) {
         let (mut state, mut logs) = self.collect_outputs_from_chain(start_seg_id);
         let (persistent_state, persistent_logs) = self.collect_outputs_from_persistent_scopes();
+        // Prefer caller-chain snapshots when they exist, because those are scoped to the
+        // just-completed run. Persistent scope stores are only a full fallback for runs
+        // that no longer have chain-visible outputs at completion time.
         if state.is_empty() && !persistent_state.is_empty() {
             state = persistent_state;
         }
