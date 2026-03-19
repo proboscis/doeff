@@ -80,7 +80,7 @@ impl VM {
                     types: types.clone(),
                 });
             }
-            cursor = seg.scope_parent;
+            cursor = seg.caller;
         }
         chain
     }
@@ -114,7 +114,7 @@ impl VM {
                 }
                 SegmentKind::Normal | SegmentKind::MaskBoundary { .. } => {}
             }
-            cursor = seg.scope_parent;
+            cursor = seg.caller;
         }
         chain
     }
@@ -132,7 +132,7 @@ impl VM {
                     return Some(seg_id);
                 }
             }
-            cursor = seg.scope_parent;
+            cursor = seg.caller;
         }
         None
     }
@@ -216,7 +216,7 @@ impl VM {
                 }
                 handler_index += 1;
             }
-            cursor = seg.scope_parent;
+            cursor = seg.caller;
         }
         None
     }
@@ -239,7 +239,7 @@ impl VM {
                     return Some(Self::handler_trace_info(handler));
                 }
             }
-            cursor = seg.scope_parent;
+            cursor = seg.caller;
         }
         None
     }

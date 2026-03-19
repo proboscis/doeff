@@ -24,7 +24,7 @@ def _spawn_intercept(effect: Effect, k: Any, handoff: Any):
 
 @do
 def spawn_intercept_handler(effect: Effect, k: Any):
-    return (yield _spawn_intercept(effect, k, doeff_vm.Resume))
+    return (yield _spawn_intercept(effect, k, doeff_vm.Transfer))
 
 
 @do

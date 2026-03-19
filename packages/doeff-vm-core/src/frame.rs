@@ -173,6 +173,12 @@ pub enum EvalReturnContinuation {
         kwarg_idx: usize,
         metadata: CallMetadata,
     },
+    ResumeToContinuation {
+        continuation: crate::continuation::Continuation,
+    },
+    ReturnToContinuation {
+        continuation: crate::continuation::Continuation,
+    },
     EvalInScopeReturn {
         continuation: crate::continuation::Continuation,
     },

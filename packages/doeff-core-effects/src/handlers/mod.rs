@@ -1676,7 +1676,7 @@ impl ResultSafeHandlerProgram {
 
     fn finish_err(&self, continuation: Continuation, error: PyException) -> IRStreamStep {
         match wrap_exception_as_result_err(error) {
-            Ok(wrapped) => IRStreamStep::Yield(DoCtrl::Resume {
+            Ok(wrapped) => IRStreamStep::Yield(DoCtrl::Transfer {
                 continuation,
                 value: wrapped,
             }),

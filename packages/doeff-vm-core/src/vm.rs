@@ -742,6 +742,8 @@ impl VM {
                         {
                             return Some(metadata.clone());
                         }
+                        EvalReturnContinuation::ResumeToContinuation { .. } => {}
+                        EvalReturnContinuation::ReturnToContinuation { .. } => {}
                         EvalReturnContinuation::EvalInScopeReturn { .. } => {}
                         _ => {}
                     },
