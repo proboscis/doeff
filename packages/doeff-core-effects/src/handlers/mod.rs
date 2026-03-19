@@ -733,10 +733,12 @@ impl IRStreamProgram for StateHandlerProgram {
                 value: Value::Unit,
             }),
             StatePhase::AwaitModifyCall { modifier } => {
-                let key = self.take_pending_key();
-                let continuation = self.take_pending_k();
-                self.pending_key = Some(key);
-                self.pending_k = Some(continuation);
+                let _ = self.pending_key.as_ref().expect(
+                    "StateHandler Modify invariant violated: pending key missing during resume",
+                );
+                let _ = self.pending_k.as_ref().expect(
+                    "StateHandler Modify invariant violated: pending continuation missing during resume",
+                );
                 self.pending_old_value = Some(value.clone());
                 self.phase = StatePhase::AwaitModifyWrite;
                 IRStreamStep::NeedsPython(PythonCall::CallFunc {
@@ -771,6 +773,7 @@ impl IRStreamProgram for StateHandlerProgram {
         _store: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
+        self.phase = StatePhase::Idle;
         self.clear_pending_modify_state();
         IRStreamStep::Throw(exc)
     }
@@ -1570,6 +1573,8 @@ impl IRStreamProgram for WriterHandlerProgram {
         _: &mut RustStore,
         _scope: &mut ScopeStore,
     ) -> IRStreamStep {
+        self.pending_k = None;
+        self.pending_return = false;
         IRStreamStep::Throw(exc)
     }
 }
@@ -2074,6 +2079,57 @@ mod tests {
             &mut scope,
         );
         assert!(matches!(step, IRStreamStep::Throw(_)));
+    }
+
+    #[test]
+    fn test_state_throw_resets_phase_before_followup_resume() {
+        let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
+        let mut program = StateHandlerProgram::new();
+        program.phase = StatePhase::AwaitModifyWrite;
+        program.pending_key = Some("count".to_string());
+        program.pending_k = Some(make_test_continuation());
+        program.pending_old_value = Some(Value::Int(5));
+
+        let step = IRStream::throw(
+            &mut program,
+            PyException::runtime_error("boom"),
+            &mut store,
+            &mut scope,
+        );
+        assert!(matches!(step, IRStreamStep::Throw(_)));
+        assert!(matches!(program.phase, StatePhase::Idle));
+        assert!(program.pending_key.is_none());
+        assert!(program.pending_k.is_none());
+        assert!(program.pending_old_value.is_none());
+
+        let resumed = IRStream::resume(&mut program, Value::Int(9), &mut store, &mut scope);
+        match resumed {
+            IRStreamStep::Return(Value::Int(9)) => {}
+            other => panic!("expected Return(Int(9)) after throw reset, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_writer_throw_clears_pending_state() {
+        let mut store = RustStore::new();
+        let mut scope = ScopeStore::default();
+        let mut program = WriterHandlerProgram::new();
+        program.pending_k = Some(make_test_continuation());
+        program.pending_return = true;
+
+        let step = IRStream::throw(
+            &mut program,
+            PyException::runtime_error("boom"),
+            &mut store,
+            &mut scope,
+        );
+        assert!(matches!(step, IRStreamStep::Throw(_)));
+        assert!(program.pending_k.is_none());
+        assert!(!program.pending_return);
+
+        let location = IRStream::debug_location(&program).expect("writer debug location");
+        assert_eq!(location.phase.as_deref(), Some("Idle"));
     }
 
     #[test]

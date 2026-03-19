@@ -127,10 +127,6 @@ impl TraceState {
             .iter()
             .rposition(|frame| frame.frame_id == frame_id)
         else {
-            debug_assert!(
-                false,
-                "record_frame_exited called for unknown frame_id {frame_id}"
-            );
             return;
         };
 
