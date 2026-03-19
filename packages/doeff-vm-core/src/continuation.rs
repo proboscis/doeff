@@ -328,15 +328,23 @@ impl Continuation {
                         );
                     }
                     Frame::EvalReturn(eval_return) => {
-                        if let crate::frame::EvalReturnContinuation::EvalInScopeReturn {
-                            continuation,
-                        } = eval_return.as_mut()
-                        {
-                            continuation.refresh_persistent_segment_state(
-                                scope_state_store,
-                                scope_writer_logs,
-                                scope_persistent_epochs,
-                            );
+                        match eval_return.as_mut() {
+                            crate::frame::EvalReturnContinuation::ResumeToContinuation {
+                                continuation,
+                            }
+                            | crate::frame::EvalReturnContinuation::EvalInScopeReturn {
+                                continuation,
+                            }
+                            | crate::frame::EvalReturnContinuation::ReturnToContinuation {
+                                continuation,
+                            } => {
+                                continuation.refresh_persistent_segment_state(
+                                    scope_state_store,
+                                    scope_writer_logs,
+                                    scope_persistent_epochs,
+                                );
+                            }
+                            _ => {}
                         }
                     }
                     Frame::Program { .. }
