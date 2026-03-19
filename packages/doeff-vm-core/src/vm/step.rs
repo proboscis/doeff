@@ -518,33 +518,6 @@ impl VM {
         }
     }
 
-    pub(super) fn handler_dispatch_returns_via_anchor(
-        &self,
-        continuation: &Continuation,
-    ) -> bool {
-        let mut cursor = continuation.captured_caller();
-        while let Some(seg_id) = cursor {
-            let Some(seg) = self.segments.get(seg_id) else {
-                break;
-            };
-            if seg.frames.iter().any(|frame| {
-                matches!(
-                    frame,
-                    Frame::EvalReturn(continuation)
-                        if matches!(
-                            continuation.as_ref(),
-                            EvalReturnContinuation::ResumeToContinuation { .. }
-                                | EvalReturnContinuation::ReturnToContinuation { .. }
-                        )
-                )
-            }) {
-                return true;
-            }
-            cursor = seg.caller;
-        }
-        false
-    }
-
     fn step_dispatch_origin_frame(
         &mut self,
         dispatch_id: DispatchId,

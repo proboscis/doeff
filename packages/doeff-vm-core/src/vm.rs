@@ -264,6 +264,8 @@ pub struct VM {
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
     pub continuation_registry: HashMap<ContId, Continuation>,
+    // TODO(vm-shared-handlers): Remove completed-dispatch entries from these maps as
+    // dispatches resolve/throw so long-running sessions do not accumulate stale state.
     pub dispatch_error_contexts: HashMap<DispatchId, (ContId, PyException)>,
     pub dispatch_effects: HashMap<DispatchId, DispatchEffect>,
     pub dispatch_origin_segments: HashMap<DispatchId, SegmentId>,
@@ -443,6 +445,9 @@ impl VM {
     }
 
     fn scope_is_still_referenced(&self, scope_id: ScopeId) -> bool {
+        // TODO(vm-shared-handlers): This scans live segments and registered
+        // continuations on every segment free. Replace it with refcount-style
+        // scope tracking if cleanup cost becomes visible in long-running VMs.
         let mut visited = HashSet::new();
         self.segments.iter().any(|(_, segment)| {
             Self::segment_references_scope(segment, scope_id, &mut visited)

@@ -288,7 +288,6 @@ struct ReadyRootResume {
     outcome: Result<Value, PyException>,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
-    merge_items: Option<Vec<Waitable>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1652,11 +1651,6 @@ impl SchedulerState {
         let Some(outcome) = outcome else {
             return None;
         };
-        let should_merge_logs = matches!(outcome, Ok(_))
-            && matches!(waiter.mode, WaitMode::All)
-            && waiter.items.len() > 1;
-        let merge_items = should_merge_logs.then(|| waiter.items.clone());
-
         self.clear_waiters_for_owner(waiter.waiting_task, waiter_id);
 
         if let Some(waiting_task) = waiter.waiting_task {
@@ -1672,7 +1666,10 @@ impl SchedulerState {
                         return None;
                     }
                     *resume_outcome = Some(outcome.clone());
-                    *pending_log_merge_items = merge_items;
+                    *pending_log_merge_items = (matches!(outcome, Ok(_))
+                        && matches!(waiter.mode, WaitMode::All)
+                        && waiter.items.len() > 1)
+                        .then(|| waiter.items.clone());
                     *priority
                 }
                 Some(TaskState::Done { .. }) | None => return None,
@@ -1689,7 +1686,6 @@ impl SchedulerState {
                 outcome,
                 waiting_task: None,
                 waiting_store: waiter.waiting_store,
-                merge_items,
             },
         );
         self.enqueue_ready_root(waiter_id);
@@ -1997,7 +1993,6 @@ impl SchedulerState {
                 outcome: Err(fail_fast.error),
                 waiting_task: None,
                 waiting_store: waiter.waiting_store,
-                merge_items: None,
             },
         );
         self.enqueue_ready_root(waiter_id);
@@ -2211,7 +2206,7 @@ impl SchedulerState {
                             self.finalize_task_cancellation(task_id);
                             continue;
                         }
-                        let (task_k, resume_outcome, _merge_items) =
+                        let (task_k, resume_outcome) =
                             match self.tasks.get_mut(&task_id) {
                                 Some(TaskState::Pending {
                                     cont,
@@ -2221,8 +2216,8 @@ impl SchedulerState {
                                 }) => {
                                     let continuation = cont.clone();
                                     let outcome = resume_outcome.take();
-                                    let pending_merge = pending_log_merge_items.take();
-                                    (continuation, outcome, pending_merge)
+                                    pending_log_merge_items.take();
+                                    (continuation, outcome)
                                 }
                                 Some(TaskState::Done { .. }) | None => {
                                     return TransferNextOutcome::Step(IRStreamStep::Throw(
@@ -2326,7 +2321,7 @@ impl SchedulerState {
                     return Ok(None);
                 }
 
-                let (task_k, resume_outcome, _merge_items) = match self.tasks.get_mut(&task_id) {
+                let (task_k, resume_outcome) = match self.tasks.get_mut(&task_id) {
                     Some(TaskState::Pending {
                         cont,
                         resume_outcome,
@@ -2335,8 +2330,8 @@ impl SchedulerState {
                     }) if cont.cont_id == cont_id => {
                         let continuation = cont.clone();
                         let outcome = resume_outcome.take();
-                        let pending_merge = pending_log_merge_items.take();
-                        (continuation, outcome, pending_merge)
+                        pending_log_merge_items.take();
+                        (continuation, outcome)
                     }
                     _ => return Ok(None),
                 };
@@ -5913,7 +5908,6 @@ mod tests {
                     outcome: Ok(Value::List(vec![Value::Int(1), Value::Int(2)])),
                     waiting_task: None,
                     waiting_store: RustStore::new(),
-                    merge_items: None,
                 },
             );
 

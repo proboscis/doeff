@@ -327,11 +327,11 @@ impl Continuation {
                 snapshot.state_store = scope_state_store
                     .get(&snapshot.scope_id)
                     .cloned()
-                    .unwrap_or_default();
+                    .expect("scope state must exist when epoch is present");
                 snapshot.writer_log = scope_writer_logs
                     .get(&snapshot.scope_id)
                     .cloned()
-                    .unwrap_or_default();
+                    .expect("scope logs must exist when epoch is present");
                 snapshot.persistent_epoch = current_epoch;
             }
 
