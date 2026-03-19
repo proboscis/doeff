@@ -795,7 +795,7 @@ rules:
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
   - id: doctrl-variants-require-approval
-    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|Discontinue\b|WithHandler\b|WithIntercept\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|EvalInScope\b|GetCallStack\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
+    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|Discontinue\b|WithHandler\b|WithIntercept\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|EvalInScope\b|AllocVar\b|ReadVar\b|WriteVar\b|WriteVarNonlocal\b|ReadHandlerState\b|WriteHandlerState\b|AppendHandlerLog\b|GetCallStack\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
       include:
         - "**/packages/doeff-vm-core/src/do_ctrl.rs"
