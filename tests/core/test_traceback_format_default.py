@@ -941,6 +941,46 @@ def test_format_default_nested_spawn() -> None:
     assert rendered.count("── in task ") == 2
 
 
+def test_format_default_keeps_hidden_sub_program_until_rendered_boundary() -> None:
+    tb = _tb(
+        [
+            {
+                "kind": "program_yield",
+                "function_name": "sync_spawn_intercept_handler",
+                "source_file": "spawn.py",
+                "source_line": 40,
+                "sub_program_repr": "<sub_program>",
+                "args_repr": "args=(Gather(task), K(parent))",
+                "handler_kind": "rust_builtin",
+            },
+            {"kind": "spawn_boundary", "task_id": 1, "parent_task": 0, "spawn_site": None},
+            {"kind": "spawn_boundary", "task_id": 2, "parent_task": 1, "spawn_site": None},
+            {
+                "kind": "spawn_boundary",
+                "task_id": 3,
+                "parent_task": 2,
+                "spawn_site": {
+                    "function_name": "parent",
+                    "source_file": "parent.py",
+                    "source_line": 22,
+                },
+            },
+            {
+                "kind": "exception_site",
+                "function_name": "child",
+                "source_file": "child.py",
+                "source_line": 5,
+                "exception_type": "ValueError",
+                "message": "boom",
+            },
+        ]
+    )
+
+    rendered = tb.format_default()
+    assert "yield Gather(task)" in rendered
+    assert "parent()  parent.py:22" in rendered
+
+
 def test_format_default_effect_repr_human_readable() -> None:
     tb = _tb(
         [

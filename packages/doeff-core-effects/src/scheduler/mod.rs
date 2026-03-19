@@ -2163,31 +2163,6 @@ impl SchedulerState {
         None
     }
 
-    pub fn merge_task_logs(&self, task_id: TaskId) {
-        if let Some(state) = self.tasks.get(&task_id) {
-            let task_store = match state {
-                TaskState::Pending { store, .. } => store,
-                TaskState::Done { store, .. } => store,
-            };
-            if let TaskStore::Isolated {
-                merge: StoreMergePolicy::LogsOnly,
-                ..
-            } = task_store
-            {
-                // Writer logs now live on the task's segment chain, not in RustStore.
-                // Isolated task logs stay task-local and are not merged into the waiter store.
-            }
-        }
-    }
-
-    pub fn merge_gather_logs(&self, items: &[Waitable]) {
-        for item in items {
-            if let Waitable::Task(task_id) = item {
-                self.merge_task_logs(*task_id);
-            }
-        }
-    }
-
     /// Transfer to the next ready task/root waiter.
     ///
     /// Per spec (SPEC-008 L1434-1447): saves the current task's store before
@@ -2234,7 +2209,7 @@ impl SchedulerState {
                             self.finalize_task_cancellation(task_id);
                             continue;
                         }
-                        let (task_k, resume_outcome, merge_items) =
+                        let (task_k, resume_outcome, _merge_items) =
                             match self.tasks.get_mut(&task_id) {
                                 Some(TaskState::Pending {
                                     cont,
@@ -2270,9 +2245,6 @@ impl SchedulerState {
                             return TransferNextOutcome::Step(IRStreamStep::Throw(error));
                         }
                         self.current_task = Some(task_id);
-                        if let Some(items) = merge_items.as_ref() {
-                            self.merge_gather_logs(items);
-                        }
                         match resume_outcome {
                             Some(Err(error)) => {
                                 return TransferNextOutcome::Step(throw_to_continuation(
@@ -2307,9 +2279,6 @@ impl SchedulerState {
                         } else {
                             *store = ready_root.waiting_store;
                             self.current_task = None;
-                        }
-                        if let Some(items) = &ready_root.merge_items {
-                            self.merge_gather_logs(items);
                         }
                         return TransferNextOutcome::Step(match ready_root.outcome {
                             Ok(value) => resume_to_continuation(ready_root.continuation, value),
@@ -2355,7 +2324,7 @@ impl SchedulerState {
                     return Ok(None);
                 }
 
-                let (task_k, resume_outcome, merge_items) = match self.tasks.get_mut(&task_id) {
+                let (task_k, resume_outcome, _merge_items) = match self.tasks.get_mut(&task_id) {
                     Some(TaskState::Pending {
                         cont,
                         resume_outcome,
@@ -2378,9 +2347,6 @@ impl SchedulerState {
                 }
                 self.load_task_store(task_id, store)?;
                 self.current_task = Some(task_id);
-                if let Some(items) = merge_items.as_ref() {
-                    self.merge_gather_logs(items);
-                }
                 let step = match resume_outcome {
                     Some(Err(error)) => throw_to_continuation(task_k, error),
                     Some(Ok(value)) => resume_to_continuation(task_k, value),
@@ -2403,10 +2369,6 @@ impl SchedulerState {
                     *store = ready_root.waiting_store;
                     self.current_task = None;
                 }
-                if let Some(items) = &ready_root.merge_items {
-                    self.merge_gather_logs(items);
-                }
-
                 let step = match ready_root.outcome {
                     Ok(value) => resume_to_continuation(ready_root.continuation, value),
                     Err(error) => throw_to_continuation(ready_root.continuation, error),
@@ -2791,9 +2753,6 @@ impl SchedulerProgram {
             state.clear_waiters_for_owner(waiting_task, k_user.cont_id);
             return match aggregate {
                 Ok(results) => {
-                    if items.len() > 1 {
-                        state.merge_gather_logs(&items);
-                    }
                     resume_to_continuation(k_user, results)
                 }
                 Err(error) => throw_to_continuation(k_user, error),
