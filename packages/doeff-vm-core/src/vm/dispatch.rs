@@ -1398,12 +1398,11 @@ impl VM {
             .filter(|dispatch_id| self.dispatch_origin_for_dispatch_id(*dispatch_id).is_some())
     }
 
-    fn enter_continuation_segment_with_dispatch(
-        &mut self,
+    fn continuation_exec_segment(
         k: &Continuation,
         caller: Option<SegmentId>,
         dispatch_id: Option<DispatchId>,
-    ) {
+    ) -> Segment {
         let mut exec_seg = k
             .segment()
             .expect("captured continuation must have a segment snapshot")
@@ -1417,12 +1416,89 @@ impl VM {
         // Reinstalling it onto resumed continuation segments makes unrelated
         // nested Perform() calls look like fresh GetExecutionContext dispatches.
         exec_seg.pending_error_context = None;
+        exec_seg
+    }
+
+    fn enter_continuation_segment_with_dispatch(
+        &mut self,
+        k: &Continuation,
+        caller: Option<SegmentId>,
+        dispatch_id: Option<DispatchId>,
+    ) {
+        let exec_seg = Self::continuation_exec_segment(k, caller, dispatch_id);
         let exec_seg_id = self.alloc_segment(exec_seg);
         self.current_segment = Some(exec_seg_id);
     }
 
     fn enter_continuation_segment(&mut self, k: &Continuation, caller: Option<SegmentId>) {
         let dispatch_id = self.continuation_segment_dispatch_id(k);
+        self.enter_continuation_segment_with_dispatch(k, caller, dispatch_id);
+    }
+
+    fn live_segment_id_for_in_place_reentry(
+        &self,
+        k: &Continuation,
+        caller: Option<SegmentId>,
+        dispatch_id: Option<DispatchId>,
+    ) -> Option<SegmentId> {
+        if caller != k.captured_caller() {
+            return None;
+        }
+
+        let seg_id = k.segment_id()?;
+        let snapshot = k.segment()?;
+        let live = self.segments.get(seg_id)?;
+        let _ = dispatch_id;
+        (live.marker == snapshot.marker).then_some(seg_id)
+    }
+
+    fn free_current_transition_anchor_for(&mut self, target_seg_id: SegmentId) {
+        let Some(current_seg_id) = self.current_segment else {
+            return;
+        };
+        if current_seg_id == target_seg_id {
+            return;
+        }
+
+        let Some((caller, scope_parent, should_free)) = self.segments.get(current_seg_id).map(|seg| {
+            (
+                seg.caller,
+                seg.scope_parent,
+                seg.caller == Some(target_seg_id)
+                    && seg.frames.is_empty()
+                    && seg.pending_python.is_none()
+                    && matches!(seg.mode, Mode::Deliver(Value::Unit)),
+            )
+        }) else {
+            return;
+        };
+
+        if !should_free {
+            return;
+        }
+
+        self.segments
+            .reparent_children(current_seg_id, caller, scope_parent);
+        self.segments.free(current_seg_id);
+    }
+
+    fn enter_or_reenter_continuation_segment_with_dispatch(
+        &mut self,
+        k: &Continuation,
+        caller: Option<SegmentId>,
+        dispatch_id: Option<DispatchId>,
+    ) {
+        if let Some(seg_id) = self.live_segment_id_for_in_place_reentry(k, caller, dispatch_id) {
+            let exec_seg = Self::continuation_exec_segment(k, caller, dispatch_id);
+            self.free_current_transition_anchor_for(seg_id);
+            *self
+                .segments
+                .get_mut(seg_id)
+                .expect("live continuation segment vanished during in-place reentry") = exec_seg;
+            self.current_segment = Some(seg_id);
+            return;
+        }
+
         self.enter_continuation_segment_with_dispatch(k, caller, dispatch_id);
     }
 
@@ -1474,13 +1550,14 @@ impl VM {
                 // Terminal error-context dispatches must detach from the active handler
                 // segment so normal completion does not re-pop the same DispatchOrigin.
                 let caller = k.segment().and_then(|segment| segment.caller);
-                self.enter_continuation_segment_with_dispatch(&k, caller, None);
+                self.enter_or_reenter_continuation_segment_with_dispatch(&k, caller, None);
                 self.current_seg_mut().mode = Mode::Throw(enriched_exception);
                 return StepEvent::Continue;
             }
         }
 
-        self.enter_continuation_segment(&k, caller);
+        let dispatch_id = self.continuation_segment_dispatch_id(&k);
+        self.enter_or_reenter_continuation_segment_with_dispatch(&k, caller, dispatch_id);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }
@@ -1561,7 +1638,7 @@ impl VM {
         });
         let original_exception =
             dispatch_id.and_then(|dispatch_id| self.original_exception_for_dispatch(dispatch_id));
-        self.enter_continuation_segment_with_dispatch(&k, caller, dispatch_id);
+        self.enter_or_reenter_continuation_segment_with_dispatch(&k, caller, dispatch_id);
         self.current_seg_mut().mode = if terminal_dispatch_completion {
             if throws_into_dispatch_origin {
                 Mode::Throw(exception)
