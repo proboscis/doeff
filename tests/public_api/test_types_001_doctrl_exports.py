@@ -4,6 +4,7 @@ import pytest
 
 import doeff as doeff_module
 from doeff import (
+    AllocVar,
     Apply,
     Ask,
     Discontinue,
@@ -12,7 +13,10 @@ from doeff import (
     Expand,
     Perform,
     Pure,
+    ReadVar,
     ResumeContinuation,
+    WriteVar,
+    WriteVarNonlocal,
     default_handlers,
     do,
     run,
@@ -25,6 +29,10 @@ def test_doctrl_exports_are_available() -> None:
     assert Expand is not None
     assert Eval is not None
     assert EvalInScope is not None
+    assert AllocVar is not None
+    assert ReadVar is not None
+    assert WriteVar is not None
+    assert WriteVarNonlocal is not None
     assert Perform is not None
     assert Discontinue is not None
     assert ResumeContinuation is not None
