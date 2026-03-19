@@ -264,6 +264,9 @@ pub struct VM {
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
     pub continuation_registry: HashMap<ContId, Continuation>,
+    pub dispatch_error_contexts: HashMap<DispatchId, (ContId, PyException)>,
+    pub dispatch_effects: HashMap<DispatchId, DispatchEffect>,
+    pub dispatch_origin_segments: HashMap<DispatchId, SegmentId>,
     pub scope_variables: HashMap<ScopeId, HashMap<VarId, Value>>,
     scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
     scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
@@ -288,6 +291,9 @@ impl VM {
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
             continuation_registry: HashMap::new(),
+            dispatch_error_contexts: HashMap::new(),
+            dispatch_effects: HashMap::new(),
+            dispatch_origin_segments: HashMap::new(),
             scope_variables: HashMap::new(),
             scope_state_store: HashMap::new(),
             scope_writer_logs: HashMap::new(),
@@ -316,6 +322,9 @@ impl VM {
         self.completed_segment = None;
         self.trace_state.clear();
         self.run_handlers.clear();
+        self.dispatch_error_contexts.clear();
+        self.dispatch_effects.clear();
+        self.dispatch_origin_segments.clear();
         self.scope_variables.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
@@ -340,6 +349,9 @@ impl VM {
         self.run_handlers.clear();
         self.continuation_registry.clear();
         self.consumed_cont_ids.clear();
+        self.dispatch_error_contexts.clear();
+        self.dispatch_effects.clear();
+        self.dispatch_origin_segments.clear();
         self.scope_variables.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();

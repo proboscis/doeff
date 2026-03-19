@@ -1094,9 +1094,13 @@ impl VM {
             visited_segments: &mut HashSet<SegmentId>,
         ) {
             let mut cursor = start;
+            let mut path_segments = HashSet::new();
             while let Some(seg_id) = cursor {
-                if !visited_segments.insert(seg_id) {
+                if !path_segments.insert(seg_id) {
                     debug_assert!(false, "segment graph cycle detected at {:?}", seg_id);
+                    break;
+                }
+                if !visited_segments.insert(seg_id) {
                     break;
                 }
                 let Some(seg) = vm.segments.get(seg_id) else {
@@ -1985,7 +1989,10 @@ impl VM {
                 "EvalInScope received scope from unknown segment",
             ));
         };
-        let child_caller_seg_id = scope.captured_caller().unwrap_or(scope_parent_seg_id);
+        let child_caller_seg_id = scope
+            .segment_id()
+            .filter(|seg_id| self.segments.get(*seg_id).is_some())
+            .unwrap_or(scope_parent_seg_id);
 
         // EvalInScope is a lexical child scope. It must point at the live scope
         // chain so reads/nonlocal writes reach the original segments instead of

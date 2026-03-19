@@ -28,7 +28,12 @@ impl VM {
     fn dispatch_origin_in_segment_by<T>(
         &self,
         seg_id: SegmentId,
-        mut map: impl FnMut(DispatchId, &DispatchEffect, &Continuation) -> Option<T>,
+        mut map: impl FnMut(
+            DispatchId,
+            &DispatchEffect,
+            &Continuation,
+            Option<&PyException>,
+        ) -> Option<T>,
     ) -> Option<T> {
         let seg = self.segments.get(seg_id)?;
         seg.frames.iter().rev().find_map(|frame| match frame {
@@ -36,7 +41,8 @@ impl VM {
                 dispatch_id,
                 effect,
                 k_origin,
-            } => map(*dispatch_id, effect, k_origin),
+                original_exception,
+            } => map(*dispatch_id, effect, k_origin, original_exception.as_ref()),
             Frame::Program { .. }
             | Frame::InterceptorApply(_)
             | Frame::InterceptorEval(_)
@@ -50,12 +56,12 @@ impl VM {
     }
 
     fn dispatch_origin_in_segment(&self, seg_id: SegmentId) -> Option<DispatchOriginView> {
-        self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, effect, k_origin| {
+        self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, effect, k_origin, original_exception| {
             Some(DispatchOriginView {
                 dispatch_id,
                 effect: effect.clone(),
                 k_origin: k_origin.clone(),
-                original_exception: k_origin.pending_error_context().cloned(),
+                original_exception: original_exception.cloned(),
             })
         })
     }
@@ -65,25 +71,34 @@ impl VM {
         seg_id: SegmentId,
         dispatch_id: DispatchId,
     ) -> Option<DispatchOriginView> {
-        self.dispatch_origin_in_segment_by(seg_id, |frame_dispatch_id, effect, k_origin| {
+        self.dispatch_origin_in_segment_by(seg_id, |frame_dispatch_id, effect, k_origin, original_exception| {
             (frame_dispatch_id == dispatch_id).then(|| DispatchOriginView {
                 dispatch_id: frame_dispatch_id,
                 effect: effect.clone(),
                 k_origin: k_origin.clone(),
-                original_exception: k_origin.pending_error_context().cloned(),
+                original_exception: original_exception.cloned(),
             })
         })
     }
 
+    fn dispatch_origin_for_dispatch_id_anywhere(
+        &self,
+        dispatch_id: DispatchId,
+    ) -> Option<DispatchOriginView> {
+        self.segments.iter().find_map(|(seg_id, _)| {
+            self.dispatch_origin_in_segment_for_dispatch(seg_id, dispatch_id)
+        })
+    }
+
     fn dispatch_origin_id_in_segment(&self, seg_id: SegmentId) -> Option<DispatchId> {
-        self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, _, _| Some(dispatch_id))
+        self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, _, _, _| Some(dispatch_id))
     }
 
     fn dispatch_origin_caller_in_segment(
         &self,
         seg_id: SegmentId,
     ) -> Option<(DispatchId, SegmentId)> {
-        self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, _, k_origin| {
+        self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, _, k_origin, _| {
             k_origin
                 .segment_id()
                 .map(|segment_id| (dispatch_id, segment_id))
@@ -116,10 +131,13 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<SegmentId> {
+        if let Some(seg_id) = self.dispatch_origin_segments.get(&dispatch_id).copied() {
+            return Some(seg_id);
+        }
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
             if let Some(user_seg_id) =
-                self.dispatch_origin_in_segment_by(seg_id, |frame_dispatch_id, _, k_origin| {
+                self.dispatch_origin_in_segment_by(seg_id, |frame_dispatch_id, _, k_origin, _| {
                     (frame_dispatch_id == dispatch_id)
                         .then(|| k_origin.segment_id())
                         .flatten()
@@ -129,7 +147,13 @@ impl VM {
             }
             cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
         }
-        None
+        self.segments.iter().find_map(|(seg_id, _)| {
+            self.dispatch_origin_in_segment_by(seg_id, |frame_dispatch_id, _, k_origin, _| {
+                (frame_dispatch_id == dispatch_id)
+                    .then(|| k_origin.segment_id())
+                    .flatten()
+            })
+        })
     }
 
     pub(super) fn dispatch_origins(&self) -> Vec<DispatchOriginView> {
@@ -183,7 +207,7 @@ impl VM {
             }
             cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
         }
-        None
+        self.dispatch_origin_for_dispatch_id_anywhere(dispatch_id)
     }
 
     fn dispatch_origin_for_continuation(
@@ -192,6 +216,29 @@ impl VM {
     ) -> Option<DispatchOriginView> {
         let dispatch_id = continuation.dispatch_id()?;
         self.dispatch_origin_for_dispatch_id(dispatch_id)
+    }
+
+    fn exact_dispatch_origin_for_continuation(
+        &self,
+        continuation: &Continuation,
+    ) -> Option<DispatchOriginView> {
+        let dispatch_id = continuation.dispatch_id()?;
+        let cont_id = continuation.cont_id;
+        self.segments.iter().find_map(|(seg_id, _)| {
+            self.dispatch_origin_in_segment_by(
+                seg_id,
+                |frame_dispatch_id, effect, k_origin, original_exception| {
+                (frame_dispatch_id == dispatch_id && k_origin.cont_id == cont_id).then(|| {
+                    DispatchOriginView {
+                        dispatch_id: frame_dispatch_id,
+                        effect: effect.clone(),
+                        k_origin: k_origin.clone(),
+                        original_exception: original_exception.cloned(),
+                    }
+                })
+            },
+            )
+        })
     }
 
     pub(super) fn active_handler_marker_for_dispatch(
@@ -415,6 +462,30 @@ impl VM {
         false
     }
 
+    fn continuation_chain_contains_return_to_continuation(
+        continuation: &Continuation,
+    ) -> bool {
+        let mut cursor = Some(continuation);
+        while let Some(current) = cursor {
+            if current.frames().is_some_and(|frames| {
+                frames.iter().any(|frame| {
+                    matches!(
+                        frame,
+                        Frame::EvalReturn(eval_return)
+                            if matches!(
+                                eval_return.as_ref(),
+                                EvalReturnContinuation::ReturnToContinuation { .. }
+                            )
+                    )
+                })
+            }) {
+                return true;
+            }
+            cursor = current.parent();
+        }
+        false
+    }
+
     fn is_inside_eval_in_scope_subtopology(&self) -> bool {
         let mut seg_id = self.current_segment;
         while let Some(id) = seg_id {
@@ -508,14 +579,7 @@ impl VM {
         &self,
         scope: &Continuation,
     ) -> Option<SegmentId> {
-        let mut start_seg_id = scope
-            .captured_caller()
-            .filter(|seg_id| self.segments.get(*seg_id).is_some())
-            .or_else(|| {
-                scope
-                    .segment_id()
-                    .filter(|seg_id| self.segments.get(*seg_id).is_some())
-            })?;
+        let mut start_seg_id = self.continuation_chain_segment_id(scope)?;
 
         // When EvalInScope is reached through Delegate chains, the continuation
         // passed to handlers may wrap the original effect-site continuation in
@@ -527,15 +591,7 @@ impl VM {
                 parent.dispatch_id().is_some(),
                 "EvalInScope parent chain must be Delegate-created dispatch continuations"
             );
-            let Some(parent_seg_id) = parent
-                .captured_caller()
-                .filter(|seg_id| self.segments.get(*seg_id).is_some())
-                .or_else(|| {
-                    parent
-                        .segment_id()
-                        .filter(|seg_id| self.segments.get(*seg_id).is_some())
-                })
-            else {
+            let Some(parent_seg_id) = self.continuation_chain_segment_id(parent) else {
                 break;
             };
             start_seg_id = parent_seg_id;
@@ -999,6 +1055,9 @@ impl VM {
     }
 
     pub fn effect_for_dispatch(&self, dispatch_id: DispatchId) -> Option<DispatchEffect> {
+        if let Some(effect) = self.dispatch_effects.get(&dispatch_id) {
+            return Some(effect.clone());
+        }
         self.dispatch_origin_for_dispatch_id(dispatch_id)
             .map(|origin| origin.effect)
     }
@@ -1118,6 +1177,12 @@ impl VM {
             .ok_or_else(|| VMError::invalid_segment("current segment not found"))?;
         let dispatch_id = DispatchId::fresh();
         let k_user = Continuation::capture(current_seg, seg_id, Some(dispatch_id));
+        self.dispatch_origin_segments.insert(dispatch_id, seg_id);
+        self.dispatch_effects.insert(dispatch_id, effect.clone());
+        if let Some(original_exception) = original_exception.clone() {
+            self.dispatch_error_contexts
+                .insert(dispatch_id, (k_user.cont_id, original_exception));
+        }
         if let Some(seg) = self.current_segment_mut() {
             seg.pending_error_context = None;
         }
@@ -1243,6 +1308,7 @@ impl VM {
             dispatch_id,
             effect: effect.clone(),
             k_origin: k_user.clone(),
+            original_exception: original_exception.clone(),
         });
         handler_seg.push_frame(Frame::HandlerDispatch {
             dispatch_id,
@@ -1287,7 +1353,19 @@ impl VM {
         &self,
         k: &Continuation,
     ) -> Option<(DispatchId, PyException, bool)> {
-        let origin = self.dispatch_origin_for_continuation(k)?;
+        let dispatch_id = k.dispatch_id()?;
+        if let Some((origin_cont_id, original_exception)) =
+            self.dispatch_error_contexts.get(&dispatch_id)
+        {
+            return Some((
+                dispatch_id,
+                original_exception.clone(),
+                k.cont_id == *origin_cont_id,
+            ));
+        }
+        let origin = self
+            .exact_dispatch_origin_for_continuation(k)
+            .or_else(|| self.dispatch_origin_for_continuation(k))?;
         let original = origin.original_exception?;
         Some((
             origin.dispatch_id,
@@ -1448,32 +1526,39 @@ impl VM {
         let seg_id = k.segment_id()?;
         let snapshot = k.segment()?;
         let live = self.segments.get(seg_id)?;
-        let _ = dispatch_id;
-        (live.marker == snapshot.marker).then_some(seg_id)
+        if !self.current_segment_is_transition_anchor_for(seg_id) {
+            return None;
+        }
+        (live.marker == snapshot.marker && live.dispatch_id == dispatch_id).then_some(seg_id)
+    }
+
+    fn current_segment_is_transition_anchor_for(&self, target_seg_id: SegmentId) -> bool {
+        let Some(current_seg_id) = self.current_segment else {
+            return false;
+        };
+        if current_seg_id == target_seg_id {
+            return false;
+        }
+
+        self.segments.get(current_seg_id).is_some_and(|seg| {
+            seg.caller == Some(target_seg_id)
+                && seg.frames.is_empty()
+                && seg.pending_python.is_none()
+                && matches!(seg.mode, Mode::Deliver(Value::Unit))
+        })
     }
 
     fn free_current_transition_anchor_for(&mut self, target_seg_id: SegmentId) {
         let Some(current_seg_id) = self.current_segment else {
             return;
         };
-        if current_seg_id == target_seg_id {
-            return;
-        }
-
-        let Some((caller, scope_parent, should_free)) = self.segments.get(current_seg_id).map(|seg| {
-            (
-                seg.caller,
-                seg.scope_parent,
-                seg.caller == Some(target_seg_id)
-                    && seg.frames.is_empty()
-                    && seg.pending_python.is_none()
-                    && matches!(seg.mode, Mode::Deliver(Value::Unit)),
-            )
+        let Some((caller, scope_parent)) = self.segments.get(current_seg_id).map(|seg| {
+            (seg.caller, seg.scope_parent)
         }) else {
             return;
         };
 
-        if !should_free {
+        if !self.current_segment_is_transition_anchor_for(target_seg_id) {
             return;
         }
 
@@ -1830,11 +1915,17 @@ impl VM {
         );
         pass_seg.scope_parent = wrapper_caller;
         self.copy_interceptor_guard_state(Some(prompt_seg_id), &mut pass_seg);
-        pass_seg.push_frame(Frame::EvalReturn(Box::new(
+        let eval_return = if Self::continuation_chain_contains_return_to_continuation(parent_k_user)
+        {
+            EvalReturnContinuation::ReturnToContinuation {
+                continuation: parent_k_user.clone(),
+            }
+        } else {
             EvalReturnContinuation::ResumeToContinuation {
                 continuation: parent_k_user.clone(),
-            },
-        )));
+            }
+        };
+        pass_seg.push_frame(Frame::EvalReturn(Box::new(eval_return)));
         Ok(Continuation::with_id(
             ContId::fresh(),
             &pass_seg,
@@ -1906,8 +1997,7 @@ impl VM {
                 current_marker,
                 &parent_k_user,
             ) {
-                Ok(mut k_new) => {
-                    k_new.set_parent(Some(Arc::new(parent_k_user.clone())));
+                Ok(k_new) => {
                     self.clear_forwarded_handler_segment(inner_seg_id);
                     k_new
                 }
@@ -1966,6 +2056,7 @@ impl VM {
                     dispatch_id,
                     effect: effect.clone(),
                     k_origin: next_k.clone(),
+                    original_exception: next_k.pending_error_context().cloned(),
                 });
                 handler_seg.push_frame(Frame::HandlerDispatch {
                     dispatch_id,
@@ -2186,7 +2277,7 @@ impl VM {
         };
 
         let mut caller_outside = Some(current_seg_id);
-        let mut scope_outside = outside_scope.or(Some(current_seg_id));
+        let scope_outside = outside_scope.or(Some(current_seg_id));
         if outside_scope.is_some() {
             let Some(current_seg) = self.segments.get(current_seg_id) else {
                 return StepEvent::Error(VMError::internal(
@@ -2223,17 +2314,18 @@ impl VM {
                 handler_marker,
                 handler.clone(),
             );
+            // Spawned tasks inherit lexical scope from the captured outside scope.
+            // Handler visibility comes from the caller chain, not scope_parent.
             prompt_seg.scope_parent = scope_outside;
             self.copy_interceptor_guard_state(caller_outside, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
             self.track_run_handler(&handler);
             let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-            body_seg.scope_parent = Some(prompt_seg_id);
+            body_seg.scope_parent = scope_outside;
             self.copy_interceptor_guard_state(caller_outside, &mut body_seg);
             let body_seg_id = self.alloc_segment(body_seg);
 
             caller_outside = Some(body_seg_id);
-            scope_outside = Some(body_seg_id);
         }
 
         let mut body_seg = Segment::new(Marker::fresh(), caller_outside);

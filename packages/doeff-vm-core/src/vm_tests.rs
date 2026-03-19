@@ -325,3 +325,69 @@ fn test_resume_unstarted_continuation_inserts_return_anchor_above_outside_scope(
             )
     ));
 }
+
+#[test]
+fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrappers() {
+    let mut vm = VM::new();
+
+    let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    vm.current_segment = Some(scheduler_seg_id);
+
+    let expr = Python::attach(|py| PyShared::new(py.None()));
+    let handler: KleisliRef = Python::attach(|py| {
+        let callable = py
+            .eval(c"lambda effect, k: None", None, None)
+            .expect("lambda should compile");
+        std::sync::Arc::new(
+            PyKleisli::from_handler(py, callable.unbind()).expect("handler should coerce"),
+        ) as KleisliRef
+    });
+    let continuation = Continuation::create_unstarted_with_metadata(
+        expr,
+        vec![handler],
+        None,
+        Some(outside_scope_id),
+    );
+
+    let event = vm.handle_resume_continuation(continuation, Value::None);
+    assert!(matches!(event, StepEvent::NeedsPython(_)));
+
+    let resumed_seg_id = vm
+        .current_segment
+        .expect("resumed unstarted continuation should install a new task body segment");
+    let resumed_seg = vm
+        .segments
+        .get(resumed_seg_id)
+        .expect("resumed unstarted continuation segment must exist");
+    let handler_body_seg_id = resumed_seg
+        .caller
+        .expect("spawned task body must attach to a handler body segment");
+    let handler_body_seg = vm
+        .segments
+        .get(handler_body_seg_id)
+        .expect("handler body segment must exist");
+    let prompt_seg_id = handler_body_seg
+        .caller
+        .expect("handler body must attach to a prompt segment");
+    let prompt_seg = vm
+        .segments
+        .get(prompt_seg_id)
+        .expect("prompt segment must exist");
+
+    assert_eq!(
+        prompt_seg.scope_parent,
+        Some(outside_scope_id),
+        "spawn prompt must retain the captured lexical scope"
+    );
+    assert_eq!(
+        handler_body_seg.scope_parent,
+        Some(outside_scope_id),
+        "spawn handler body must not become a scope_parent bridge"
+    );
+    assert_eq!(
+        resumed_seg.scope_parent,
+        Some(outside_scope_id),
+        "spawned task body must retain the captured lexical scope root"
+    );
+}

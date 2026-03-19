@@ -263,6 +263,9 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<PyException> {
+        if let Some((_, original_exception)) = self.dispatch_error_contexts.get(&dispatch_id) {
+            return Some(original_exception.clone());
+        }
         self.dispatch_origin_for_dispatch_id(dispatch_id)
             .and_then(|origin| origin.original_exception)
     }
