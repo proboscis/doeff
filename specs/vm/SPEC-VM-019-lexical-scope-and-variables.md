@@ -1,530 +1,425 @@
-# SPEC-VM-019: Lexical Scope and Scoped Variables (Rev 2)
+# SPEC-VM-019: Pure Stack Machine and Scoped Variables (Rev 3)
 
 **Status:** Draft
 **Created:** 2026-03-18
-**Revised:** 2026-03-18
-**Motivation:** Handler duplication in Spawn (#342, PR #350), RustStore violation, ScopeStore leaking into VM segments
+**Revised:** 2026-03-19
+**Motivation:** Handler duplication in Spawn (#342), dispatch complexity, RustStore violation, ScopeStore leaking into VM
 
 ## Problem Statement
 
-The doeff VM lacks a unified concept of "lexical scope." Currently:
+The doeff VM has accumulated accidental complexity in its dispatch mechanism. Comparing
+with OCaml 5's effect handler runtime reveals that doeff's core mechanics are structurally
+identical but obscured by layered concerns:
 
-1. **Handler chain** is managed via segments (prompt boundaries)
-2. **Interceptor state** is copied between segments ad-hoc
-3. **Scope bindings** (Local/Ask) live in `ScopeStore` on segments — VM knows about LazyAskHandler internals
-4. **State/Writer/Ask** have dedicated fields in `RustStore` — VM knows about handler-specific state
+1. **Dispatch state in special frames** — `HandlerDispatch` and `DispatchOrigin` frames
+   encode tracing, protocol enforcement, and error enrichment directly in the frame stack.
+   These concerns can be handled by flags on existing objects and on-demand computation.
 
-This causes:
-- Handler duplication in Spawn: `ResumeContinuation` inherits parent's handler segments because `CreateContinuation` defers segment construction to resume time
-- `RustStore` has handler-specific fields (`state`, `writer`, `ask`) violating abstraction
-- `ScopeStore` on segments is LazyAskHandler implementation detail leaking into VM
-- `CreateContinuation` stores handler data but doesn't build segments — `ResumeContinuation` must build them, inheriting from `self.current_segment` (wrong parent)
+2. **Handler duplication in Spawn** — spawned tasks get cloned handler segments instead
+   of sharing the parent's handlers via the `caller` chain. In OCaml 5, spawned fibers
+   share parent handlers naturally because effects delegate up the fiber chain.
 
-## Design Principle: Segments Are the Scope
+3. **Handler-specific fields in RustStore** — `state`, `env`, `log` are handler
+   implementation details leaking into the VM. Should be generic scoped variables.
 
-### Analogy with OCaml 5
+4. **ScopeStore on segments** — LazyAskHandler implementation detail leaking into VM.
 
-In OCaml 5, effect handlers are stack delimiters. The call stack IS the scope:
+## Design Principle: OCaml 5-like Pure Stack Machine
 
-```
-OCaml 5 fiber stack:
+### OCaml 5 Architecture (from PLDI 2021 paper)
 
-  [stack frames]         ← user code
-  ─── delimiter ───      ← match ... with effect E k ->
-  [stack frames]
-  ─── delimiter ───      ← another handler
-  [stack frames]
-  ─── delimiter ───      ← outermost handler
-
-- perform E → walk up stack to find delimiter → capture frames = continuation k
-- continue k v → splice frames back, handler is still surrounding (deep)
-- No "scope object" — the stack IS the scope
-```
-
-doeff's segment chain is the same structure, just represented as explicit data:
+OCaml 5 implements effect handlers with **fibers** — small heap-allocated stack chunks:
 
 ```
-OCaml 5                         doeff
-───────────────────             ────────────────────
-stack frame                 ≈   Frame (one @do generator's state)
-handler delimiter           ≈   Segment boundary (PromptBoundary)
-chunk between delimiters    ≈   Segment (frames + handler config)
-fiber stack                 ≈   Segment chain (caller → parent → root)
-fiber                       ≈   Task
-captured stack segment      ≈   Continuation (Arc<Segment> snapshot)
-```
+Fiber = stack chunk containing:
+  - Stack frames (function calls)
+  - Handler delimiter (handler closure + environment)
+  - Link to parent fiber
 
-**Therefore: segments form the scope. No separate Scope struct is needed.**
+Program stack = linked list of fibers
 
-The segment chain is the single source of truth for:
-- Handler visibility (walk up chain to find `PromptBoundary`)
-- Interceptor state (segments carry `InterceptorBoundary`)
-- Variable bindings (segments carry variable tables — replacing ScopeStore/RustStore)
+perform E:
+  1. Walk fiber chain to find matching handler delimiter
+  2. Detach fibers between perform site and handler → this IS continuation k
+     (just pointer manipulation, no copying — one-shot)
+  3. Run handler code on the handler's fiber
 
-### Current Segment Dual-Purpose Problem
-
-A Segment currently mixes two concerns:
-
-```
-Segment {
-    // --- Scope (handler context) ---
-    kind: PromptBoundary { handler, types },  // which handler
-    caller: Option<SegmentId>,                // parent in handler chain
-    scope_store: ScopeStore,                  // Local/Ask bindings
-    interceptor_eval_depth: usize,
-    interceptor_skip_stack: Vec<...>,
-
-    // --- Execution state ---
-    frames: Vec<Frame>,                       // call stack
-    mode: Mode,                               // Deliver/Throw/HandleYield/Return
-    dispatch_id: Option<DispatchId>,
-    pending_python: Option<PendingPython>,
-}
-```
-
-`segment.caller` serves two different purposes:
-1. **Scope chain**: finding handlers and variables in enclosing scopes
-2. **Return continuation**: where to return after this segment completes
-
-These align in simple cases but **diverge in Spawn**: the spawned task's return
-continuation is the scheduler, but its scope chain should be the yield site's handlers.
-
-This conflation is the root cause of handler duplication. `ResumeContinuation` sets
-`caller = self.current_segment` to get the scope chain, but that inherits the
-scheduler's context, duplicating handlers.
-
-### Fix: Separate `caller` (return) from `scope_parent` (scope chain)
-
-```
-Segment {
-    // --- Scope ---
-    kind: SegmentKind,
-    scope_parent: Option<SegmentId>,          // handler/variable lookup chain
-    variables: HashMap<VarId, Value>,         // scoped variables (replaces ScopeStore + RustStore fields)
-
-    // --- Execution ---
-    caller: Option<SegmentId>,                // return continuation (where to go when done)
-    frames: Vec<Frame>,
-    mode: Mode,
-    dispatch_id: Option<DispatchId>,
-    ...
-}
+continue k v:
+  1. Reattach k's fiber chain
+  2. Deliver value v
+  3. Execution resumes from where perform suspended
 ```
 
 Key properties:
-- `scope_parent` is the **lexical** parent — follows handler installation order
-- `caller` is the **dynamic** parent — follows execution/return flow
-- For `WithHandler(h, body)`: scope_parent = parent segment, caller = parent segment (same)
-- For `Spawn(task)`: scope_parent = yield site's segment, caller = scheduler's segment (different!)
-- Handler lookup walks `scope_parent` chain
-- Return/throw walks `caller` chain
-- No duplication possible — scope chain is set once at creation time
+- **No dispatch state frames** — handler's own stack frames ARE the dispatch state
+- **Shared handlers** — spawned fibers delegate effects up the fiber chain to the same
+  handler instances. All tasks share one StateHandler, one WriterHandler, etc.
+- **One-shot enforcement** — flag on continuation object, checked at `continue` time
+- **Tracing** — separate DWARF-based debugging, not inline frames
 
-### CreateContinuation Builds Segments at Creation Time
-
-The current bug: `CreateContinuation` stores handler data without building segments.
-`ResumeContinuation` builds segments using `self.current_segment` as parent — wrong.
-
-**Fix:** `CreateContinuation` builds the full segment chain immediately.
-
-For **unstarted continuations** (Spawn path):
-```
-CreateContinuation(program, outside_seg_id):
-    1. Create body segment for program
-    2. Set body_segment.scope_parent = outside_seg_id   // yield site's scope
-    3. Set body_segment.caller = <to be set at resume>  // scheduler determines return path
-    4. Store segment in continuation
-    → Continuation now owns its scope. Resume is trivial.
-```
-
-For **captured continuations** (handler dispatch path):
-```
-Continuation::capture(segment):
-    Already correct — captures Arc<Segment> snapshot including scope_parent.
-    Resume materializes snapshot. scope_parent is preserved from capture time.
-```
-
-`ResumeContinuation` becomes trivial:
-```
-ResumeContinuation(k, value):
-    1. Activate k's pre-built segments
-    2. Deliver value
-    → No handler installation. No scope inheritance from resume site.
-```
-
-### What Happens to GetHandlers?
-
-`GetHandlers` walked the caller chain to collect handlers. With `scope_parent`,
-this is no longer needed for Spawn. The scheduler can pass the yield site's
-segment ID directly to `CreateContinuation`.
-
-The yield site's segment ID is available from the continuation `k` that the
-scheduler receives when handling the Spawn effect:
+### doeff Mapping
 
 ```
-Scheduler receives Spawn(task) with continuation k:
-    outside_seg_id = k.segment_id()           // yield site's segment
-    new_k = CreateContinuation(task, outside_seg_id)  // scope_parent set here
-    Resume(k, task_handle)                     // return to spawner
-    // later:
-    ResumeContinuation(new_k, value)           // trivial resume
+OCaml 5                         doeff (target)
+───────────────────             ────────────────────
+fiber (stack chunk)         =   Segment
+stack frame                 =   Frame
+handler delimiter           =   SegmentKind::PromptBoundary
+fiber chain (linked list)   =   caller chain
+program stack               =   segment chain via caller
+captured continuation       =   Continuation (Arc<Segment> snapshot)
+perform                     =   yield Effect → VM dispatch
+continue k v                =   VM processes Resume(k, v)
 ```
 
-`GetHandlers` may be retained for introspection/debugging but is removed from
-the Spawn critical path.
+doeff generators yield DoCtrl commands where OCaml handlers call runtime primitives
+directly. This is a surface difference — the VM's internal architecture can still be
+a pure stack machine.
 
-## Scoped Variables
+## Changes
 
-### Motivation
+### 1. Remove Special Dispatch Frames
 
-Currently, handler state leaks into the VM:
-- `RustStore.state` — StateHandler's Get/Put state
-- `RustStore.env` — LazyAskHandler's Ask bindings
-- `RustStore.log` — WriterHandler's Tell log
-- `ScopeStore.scope_bindings` — LazyAskHandler's Local shadow bindings
+**Remove `HandlerDispatch` frame.** Its responsibilities move to:
+- **Return path**: Already handled by `caller` chain — when handler segment finishes,
+  execution returns to caller.
+- **One-shot enforcement**: `consumed: bool` flag on `Continuation` object. Checked
+  when VM processes `Resume(k, v)`.
+- **Tracing**: Separate trace observer records dispatch start/complete events.
 
-These are handler implementation details that the VM shouldn't know about. Instead,
-the VM provides generic **scoped variables** that handlers use to manage their state.
+**Remove `DispatchOrigin` frame.** Its responsibilities move to:
+- **Error enrichment**: Assemble active chain from segment chain on demand at throw
+  time. The segment chain already contains all handler info.
+- **Effect tracking**: The handler generator holds the effect as a parameter. No need
+  for the VM to separately track it in a frame.
 
-### Variable Semantics
+### 2. Simplify Dispatch
 
-A scoped variable is a named storage cell that lives in a segment. Variables follow
-Python-like scoping rules:
-
-- **Read**: walks the `scope_parent` chain from inner to outer
-- **Write (default)**: writes to the **current segment** (shadow — like Python local)
-- **Write (nonlocal)**: writes to the **segment where the variable was allocated** (mutate — like Python `nonlocal`)
-
-```
-Segment B (scope_parent → A): { x: 20 }     ← WriteVar(x, 20) shadows A's x
-Segment A:                     { x: 10 }     ← original allocation
-
-ReadVar(x) in B → 20 (found in B, stops)
-ReadVar(x) in A → 10
-
-WriteVar(x, 30) in B → B: { x: 30 }, A unchanged
-WriteVarNonlocal(x, 30) in B → A: { x: 30 }
-```
-
-### DoCtrl Primitives for Variables
+The dispatch path becomes:
 
 ```
-AllocVar(initial_value) → VarId
-    Allocates a new variable in the current segment's variable table.
-    Returns an opaque VarId.
-    Variable lifetime is tied to the segment.
+yield Effect:
+  1. Walk caller chain from current segment
+  2. For each PromptBoundary: check if handler matches effect
+  3. Skip the currently-active handler's prompt (self-dispatch exclusion)
+  4. When found: capture k = snapshot current segment
+  5. Set k.consumed = false
+  6. Invoke handler's kleisli with (effect, k)
+  7. Handler generator yields commands (Resume, Pass, etc.)
+  8. VM processes each command using the stack
 
-ReadVar(VarId) → Value
-    Reads the variable. Walks scope_parent chain if not in current segment.
-
-WriteVar(VarId, Value) → ()
-    Writes to the current segment (shadow semantics).
-
-WriteVarNonlocal(VarId, Value) → ()
-    Writes to the segment where VarId was originally allocated (mutate semantics).
+Resume(k, v):
+  1. Assert !k.consumed (one-shot check)
+  2. Set k.consumed = true
+  3. Restore k's segment (reattach to stack)
+  4. Set caller → handler's segment (return path)
+  5. Deliver v
 ```
 
-### How Handlers Use Scoped Variables
+This is OCaml-level simplicity. Self-dispatch exclusion (step 3) prevents a handler
+from catching its own re-performed effects — same semantics as OCaml where `perform`
+searches above the current delimiter.
 
-All handlers are **user-space effect handlers** — they use the VM's DoCtrl
-scope/variable primitives to manage their state. The VM knows nothing about
-State, Writer, Local, or Ask specifically.
+### 3. Spawn Uses Shared Handlers (OCaml Model)
 
-#### StateHandler (Get/Put effects)
+In OCaml 5, spawned fibers share parent handlers. Effects from child tasks delegate
+up to the same handler instances:
 
-State is a mutable variable — `Put` in any scope mutates the same variable
-(nonlocal semantics).
+```
+WithHandler(StateHandler,
+    WithHandler(Scheduler,
+        body → Spawn(task)
+    )
+)
 
-```python
-class StateHandlerFactory:
-    def create(self, initial_value):
-        var = yield AllocVar(initial_value)   # variable in handler's segment
-        return StateHandler(var)
-
-class StateHandler:
-    def __init__(self, var: VarId):
-        self.var = var
-
-    def handle(self, effect, k):
-        if isinstance(effect, Get):
-            value = yield ReadVar(self.var)
-            yield Resume(k, value)
-        elif isinstance(effect, Put):
-            yield WriteVarNonlocal(self.var, effect.value)  # mutates handler segment
-            yield Resume(k, None)
-        else:
-            yield Pass()
+Parent task:                    Spawned task:
+┌──────────┐                    ┌──────────┐
+│ body seg │                    │ task seg │
+│ caller ──┼──┐                 │ caller ──┼──┐
+└──────────┘  │                 └──────────┘  │
+              ▼                               │
+         ┌──────────┐                         │
+         │Scheduler │ ◄───────────────────────┘
+         │ caller ──┼──┐
+         └──────────┘  │
+                       ▼
+         ┌──────────────┐
+         │ StateHandler │  ← SAME instance serves both tasks
+         └──────────────┘
 ```
 
-#### WriterHandler (Tell/slog effects)
-
-Writer is an append-only log. Writes are nonlocal.
-
-```python
-class WriterHandlerFactory:
-    def create(self):
-        log = yield AllocVar([])
-        return WriterHandler(log)
-
-class WriterHandler:
-    def __init__(self, log: VarId):
-        self.log = log
-
-    def handle(self, effect, k):
-        if isinstance(effect, Tell):
-            current = yield ReadVar(self.log)
-            yield WriteVarNonlocal(self.log, current + [effect.message])
-            yield Resume(k, None)
-        else:
-            yield Pass()
-```
-
-#### LazyAskHandler (Local/Ask effects)
-
-Local creates a new scope with shadow bindings. Ask walks the scope chain.
-
-```python
-class LazyAskHandler:
-    def handle(self, effect, k):
-        if isinstance(effect, Local):
-            # EvalInScope runs body in a child segment with bindings
-            result = yield EvalInScope(effect.body, effect.overrides)
-            yield Resume(k, result)
-        elif isinstance(effect, Ask):
-            value = yield ReadVar(effect.key)  # walks scope_parent chain
-            yield Resume(k, value)
-        else:
-            yield Pass()
-```
-
-Note: `EvalInScope(body, bindings)` is a VM primitive that:
-1. Creates a child segment (scope_parent = current)
-2. Allocates variables from bindings in the child segment
-3. Executes body in the child segment
-4. On completion, returns to parent segment (child's variables are dropped)
-
-This replaces the separate `PushScope`/`PopScope` DoCtrl — the scope lifecycle
-is tied to the segment lifecycle, which is tied to `EvalInScope` / `WithHandler`.
-
-#### Scheduler (Spawn/Gather effects)
+**Spawn implementation:**
 
 ```python
 class SchedulerHandler:
     def handle(self, effect, k):
         if isinstance(effect, Spawn):
-            # k.segment_id is the yield site's segment — its scope_parent chain
-            # has all handlers, interceptors, and variables
-            task_k = yield CreateContinuation(
-                effect.task,
-                outside_seg=k.segment_id()  # yield site's scope chain
-            )
+            # CreateContinuation just creates a body segment
+            # with caller → scheduler's segment
+            task_k = yield CreateContinuation(effect.task)
             task_id = self.register_task(task_k)
             yield Resume(k, task_id)
-        elif isinstance(effect, Gather):
-            yield Resume(k, results)
-        else:
-            yield Pass()
 ```
 
-## Migration Plan
+`CreateContinuation(program)` creates a continuation whose body segment has
+`caller = current segment` (the scheduler's handler segment). When the task
+yields an effect:
 
-### Phase 1: Add `scope_parent` to Segment
+1. Walk up from task body segment via caller
+2. Hit scheduler's segment — doesn't handle Get → continue up
+3. Hit StateHandler's segment — handles Get → dispatch
 
-- Add `scope_parent: Option<SegmentId>` field to `Segment`
-- Initially, `scope_parent = caller` for all segments (no behavior change)
-- `WithHandler` sets both `scope_parent` and `caller` to parent segment
-- Handler lookup (`find_matching_handler`) walks `scope_parent` instead of `caller`
-- All existing tests must pass — this is a refactor, not a behavior change
+No `GetHandlers`, no `clone_spawn_scope_chain`, no `scope_parent`. Effects
+delegate up the caller chain naturally. All tasks share the same handler
+instances — same `AllocVar`'d variables, same state.
 
-### Phase 2: Fix CreateContinuation for Spawn
+### 4. Scoped Variables Replace RustStore Fields
 
-- `CreateContinuation` accepts `outside_seg_id` (yield site's segment)
-- Builds body segment with `scope_parent = outside_seg_id`
-- `ResumeContinuation` sets `caller` only (for return flow), does not touch `scope_parent`
-- This fixes handler duplication: scope chain comes from creation, not resume
-- Test: spawned task sees correct handler count (no duplication)
+Handler state moves from handler-specific RustStore fields to generic scoped
+variables that live in segments:
 
-### Phase 3: Add Scoped Variables
+```
+AllocVar(initial_value) → VarId
+    Allocates a variable in the current segment.
+    Returns opaque VarId. Lifetime tied to segment.
 
-- Add `variables: HashMap<VarId, Value>` to `Segment`
-- Add `AllocVar`, `ReadVar`, `WriteVar`, `WriteVarNonlocal` DoCtrl variants
-- `ReadVar` walks `scope_parent` chain
-- `WriteVarNonlocal` writes to the segment where `VarId` was allocated
-- Remove `ScopeStore` from `Segment`
-- Remove handler-specific fields from `RustStore` (`state`, `env`, `log`)
-- Migrate StateHandler, WriterHandler, LazyAskHandler to use scoped variables
+ReadVar(VarId) → Value
+    Reads variable. Walks caller chain if not in current segment.
 
-### Phase 4: Clean Up
+WriteVar(VarId, Value) → ()
+    Writes to current segment (shadow semantics).
 
-- Evaluate whether `GetHandlers` is still needed (likely introspection-only)
-- Remove `EvalInScope` if superseded or consolidate with new semantics
-- Remove `RustStore.with_local` (replaced by EvalInScope + AllocVar)
+WriteVarNonlocal(VarId, Value) → ()
+    Writes to the segment where VarId was allocated (nonlocal/mutate semantics).
+```
 
-## TDD Test Plan
-
-Tests should be written BEFORE implementation. They target the segment-based
-scope model and variable primitives.
-
-### Scope Chain Tests
+Handler factories allocate variables once via `AllocVar`:
 
 ```python
-# T1: scope_parent chain is correctly set by WithHandler
-def test_handler_scope_parent_chain():
-    # WithHandler(A, WithHandler(B, body))
-    # Inside body: scope_parent chain is body_seg → B_seg → A_seg → root
-    # Handler lookup finds A, B, and any root handlers
+class StateHandlerFactory:
+    def create(self, initial_value):
+        var = yield AllocVar(initial_value)  # in handler's segment
+        return StateHandler(var)
 
-# T2: scope_parent vs caller diverge in Spawn
-def test_spawn_scope_parent_differs_from_caller():
-    # Spawn(task) inside WithHandler(A, ...)
-    # task's scope_parent → yield site (has handler A)
-    # task's caller → scheduler (return path)
-    # task can find handler A via scope_parent
+class StateHandler:
+    def handle(self, effect, k):
+        if isinstance(effect, Get):
+            value = yield ReadVar(self.var)       # walks caller chain
+            yield Resume(k, value)
+        elif isinstance(effect, Put):
+            yield WriteVarNonlocal(self.var, effect.value)  # mutates handler's segment
+            yield Resume(k, None)
 ```
 
-### Variable Shadowing Tests
+Since spawned tasks share the handler via caller chain, `ReadVar` from a spawned
+task walks up to the StateHandler's segment and reads the same variable. `Put` from
+any task writes to the same variable via `WriteVarNonlocal`. This is exactly OCaml's
+model where handler state is a mutable ref shared by all tasks.
+
+**Remove from RustStore:** `state`, `env`, `log` fields.
+**Remove from Segment:** `ScopeStore`, `scope_store` field.
+
+### 5. EvalInScope for Local/Ask
+
+`Local(bindings, body)` creates a child segment with shadow variables:
 
 ```python
-# T3: AllocVar + ReadVar basic
-def test_alloc_and_read_var():
-    var = yield AllocVar(42)
-    val = yield ReadVar(var)
-    assert val == 42
-
-# T4: Shadow semantics — WriteVar in child segment does not affect parent
-def test_shadow_write():
-    var = yield AllocVar(10)
-    result = yield EvalInScope(shadow_body(var), {})
-    # Inside shadow_body: WriteVar(var, 20) → shadows in child segment
-    # After EvalInScope: ReadVar(var) → 10 (parent unchanged)
-
-# T5: Nonlocal write — WriteVarNonlocal mutates parent segment
-def test_nonlocal_write():
-    var = yield AllocVar(10)
-    yield EvalInScope(nonlocal_body(var), {})
-    # Inside nonlocal_body: WriteVarNonlocal(var, 20)
-    # After EvalInScope: ReadVar(var) → 20 (parent mutated)
-
-# T6: ReadVar walks scope_parent chain
-def test_read_walks_scope_parent():
-    var = yield AllocVar(10)
-    # EvalInScope creates child segment with scope_parent → current
-    result = yield EvalInScope(read_var_body(var), {})
-    assert result == 10  # found via scope_parent chain
-
-# T7: Three-level shadow chain
-def test_three_level_shadow():
-    var = yield AllocVar(10)
-    # level 1 → WriteVar(var, 20)
-    # level 2 → WriteVar(var, 30)
-    # ReadVar at each level returns correct shadow
-
-# T8: Multiple variables in same segment
-def test_multiple_vars():
-    x = yield AllocVar(1)
-    y = yield AllocVar(2)
-    assert (yield ReadVar(x)) == 1
-    assert (yield ReadVar(y)) == 2
+class LazyAskHandler:
+    def handle(self, effect, k):
+        if isinstance(effect, Local):
+            result = yield EvalInScope(effect.body, effect.overrides)
+            yield Resume(k, result)
+        elif isinstance(effect, Ask):
+            value = yield ReadVar(effect.key)  # walks caller chain
+            yield Resume(k, value)
 ```
 
-### Spawn + Scope Tests (Critical — tests the handler duplication fix)
+`EvalInScope(body, bindings)` is a VM primitive that:
+1. Creates a child segment with `caller = current segment`
+2. Allocates variables from bindings in the child segment
+3. Executes body in the child segment
+4. On completion, pops child segment (variables dropped)
+5. Returns result to caller
 
-```python
-# T9: Spawned task sees yield site's handler chain (not duplicated)
-def test_spawn_no_handler_duplication():
-    # GetHandlers inside spawned task returns N handlers
-    # Same N as direct call (not 2*N)
-
-# T10: Spawned task sees yield site's variables
-def test_spawn_inherits_yield_site_vars():
-    var = yield AllocVar(42)
-    task_handle = yield Spawn(read_var_task(var))
-    result = yield Gather(task_handle)
-    assert result == 42
-
-# T11: Spawned task variable shadow does not affect parent
-def test_spawn_var_shadow_isolation():
-    var = yield AllocVar(10)
-    task_handle = yield Spawn(write_and_return(var, 99))
-    yield Gather(task_handle)
-    assert (yield ReadVar(var)) == 10  # parent unchanged
-
-# T12: N=500 spawned tasks — no O(N²) from scope
-def test_spawn_500_no_quadratic():
-    # Spawn 500 tasks, each reads a variable
-    # Memory O(N), not O(N²)
-
-# T13: Multiple spawned tasks share parent's scope_parent chain
-def test_multiple_spawn_share_scope():
-    var = yield AllocVar(42)
-    t1 = yield Spawn(read_var_task(var))
-    t2 = yield Spawn(read_var_task(var))
-    r1, r2 = yield Gather(t1, t2)
-    assert r1 == 42 and r2 == 42
-```
-
-### Local/Ask on Scoped Variables Tests
-
-```python
-# T14: Local creates child segment, Ask reads from it
-def test_local_ask_basic():
-    result = yield Local({"key": "value"}, ask_program("key"))
-    assert result == "value"
-
-# T15: Nested Local shadow
-def test_local_shadow():
-    result = yield Local({"x": 10},
-        Local({"x": 20}, ask_program("x"))
-    )
-    assert result == 20
-
-# T16: Local scope ends — outer value restored
-def test_local_scope_restore():
-    @do
-    def program():
-        yield Local({"x": 20}, noop())
-        return (yield Ask("x"))
-    result = yield Local({"x": 10}, program())
-    assert result == 10
-
-# T17: Ask walks scope_parent chain to outer Local
-def test_ask_walks_to_outer():
-    result = yield Local({"x": 10},
-        Local({"y": 20}, ask_program("x"))  # x not in inner, found in outer
-    )
-    assert result == 10
-```
-
-### State/Writer on Scoped Variables Tests
-
-```python
-# T18: State Get/Put as nonlocal variable operations
-def test_state_as_scoped_var():
-    yield Put(10)
-    # Put in nested scope mutates the state variable (nonlocal)
-    assert (yield Get()) == 10
-
-# T19: Writer Tell as nonlocal append
-def test_writer_as_scoped_var():
-    yield Tell("a")
-    yield Tell("b")
-    # writer log should be ["a", "b"]
-```
+`ReadVar` from inside the body walks the caller chain: child segment → handler
+segment → parent handlers. Shadow variables in the child segment are found first.
 
 ## Open Questions
 
-1. **Variable identity across segments**: When `WriteVar` shadows a variable, is it
-   the same `VarId` with a new value in the current segment? Yes — same VarId,
-   different segment in the scope_parent chain.
+### Handler Re-entrancy
 
-2. **Performance**: `ReadVar` walks `scope_parent` chain — O(depth). For hot paths
-   (Ask inside spawned tasks), consider caching or segment-local lookup tables.
+When handler A is handling E1 and resumes k, and k yields E2 also handled by A:
 
-3. **Segment lifetime and variables**: Variables are dropped when their segment is
-   deallocated. Need to ensure segment lifetime rules are clear — Arc snapshots
-   in continuations keep segments alive.
+```
+1. body yields E1 → A handles it, yields Resume(k1, v)
+2. VM resumes k1 → body yields E2 → walks up → finds A again
+3. A needs to handle E2, but A's generator from step 1 may still be alive
+```
 
-4. **EvalInScope vs PushScope/PopScope**: Rev 1 had standalone PushScope/PopScope.
-   Rev 2 uses EvalInScope which ties scope lifecycle to segment lifecycle (cleaner).
-   Standalone Push/Pop may still be needed if handlers need mid-execution scope
-   manipulation — evaluate during implementation.
+In OCaml deep handlers, this is natural — the handler's `match` block is re-entered.
+In doeff, the handler is a generator. If step 1's generator is done (Resume was final
+yield), A's segment is clean. If not, there's a conflict.
+
+**Current approach:** Each dispatch creates a new handler program invocation. The
+previous invocation's state is captured as part of k. Need to verify this works
+cleanly with the simplified dispatch.
+
+### Variable Sharing Semantics in Spawn
+
+Shared handlers mean shared variables (OCaml model). This means:
+- `Put(42)` in task A → `Get()` in task B sees 42
+- `Tell("msg")` in task A → visible to parent's writer log
+
+This is correct for cooperative scheduling (one task at a time). For future
+parallel execution, may need explicit isolation via `WithHandler` wrapping.
+
+### Performance of Caller Chain Walking
+
+`ReadVar` walks the caller chain — O(depth). For hot paths (Ask in deeply nested
+handlers), may need caching. OCaml's fiber chain walk is also O(depth) but with
+hardware-friendly memory layout (contiguous stack chunks).
+
+## Migration Plan
+
+### Phase 1: Remove Special Dispatch Frames
+
+- Add `consumed: bool` to `Continuation`
+- Move one-shot check to Resume/Transfer processing
+- Remove `HandlerDispatch` frame type
+- Remove `DispatchOrigin` frame type
+- Move error enrichment to throw-time assembly
+- Move tracing to separate observer
+- All existing tests must pass
+
+### Phase 2: Simplify Spawn (Shared Handlers)
+
+- `CreateContinuation(program)` creates body segment with `caller = current`
+- Remove `clone_spawn_scope_chain`
+- Remove `scope_parent` (caller chain is sufficient)
+- Remove `GetHandlers` from spawn path
+- Spawned task effects delegate up caller chain to parent's handlers
+- Test: handler count in spawned task = handler count in parent (no duplication)
+- Test: State/Writer shared between parent and spawned tasks
+
+### Phase 3: Scoped Variables
+
+- Add `variables: HashMap<VarId, Value>` to Segment
+- Add `AllocVar`, `ReadVar`, `WriteVar`, `WriteVarNonlocal` DoCtrl
+- `ReadVar` walks caller chain
+- Migrate StateHandler, WriterHandler, LazyAskHandler to scoped variables
+- Remove `RustStore.state`, `RustStore.env`, `RustStore.log`
+- Remove `ScopeStore` from Segment
+
+### Phase 4: Clean Up
+
+- Remove unused dispatch infrastructure (DispatchId, dispatch modes)
+- Simplify `Mode` enum (may not need `HandleYield`)
+- Evaluate `start_dispatch` simplification
+- Remove accumulated special cases
+
+## TDD Test Plan
+
+### Dispatch Simplification Tests
+
+```python
+# T1: Basic dispatch still works without special frames
+def test_basic_effect_dispatch():
+    result = yield WithHandler(StateHandler(0), get_put_program())
+    assert result == expected
+
+# T2: One-shot enforcement via Continuation.consumed flag
+def test_one_shot_enforcement():
+    # Handler that tries to resume k twice → error
+
+# T3: Nested handlers dispatch correctly
+def test_nested_handler_dispatch():
+    # WithHandler(A, WithHandler(B, body))
+    # body yields effect for A → skips B → reaches A
+
+# T4: Self-dispatch exclusion
+def test_self_dispatch_exclusion():
+    # Handler A performs effect that A handles → should NOT catch itself
+    # Effect should propagate to outer handler
+```
+
+### Shared Handler Tests (Spawn)
+
+```python
+# T5: Spawned task sees parent's handler
+def test_spawn_delegates_to_parent_handler():
+    # Spawn(task) where task yields Get
+    # Get handled by StateHandler ABOVE scheduler
+    # Same handler instance as parent
+
+# T6: State shared between parent and spawned task
+def test_spawn_shared_state():
+    yield Put(42)
+    task = yield Spawn(get_program())
+    result = yield Gather(task)
+    assert result == 42  # child sees parent's state
+
+# T7: Spawned task Put visible to parent
+def test_spawn_put_visible_to_parent():
+    yield Put(0)
+    task = yield Spawn(put_program(42))
+    yield Gather(task)
+    assert (yield Get()) == 42  # parent sees child's Put
+
+# T8: No handler duplication in spawn
+def test_spawn_no_handler_duplication():
+    # Handler count inside spawned task = handler count in direct call
+
+# T9: N=500 spawn no quadratic
+def test_spawn_500_no_quadratic():
+    # 500 spawned tasks, each does Get
+    # All share same StateHandler — O(N) not O(N²)
+```
+
+### Scoped Variable Tests
+
+```python
+# T10: AllocVar + ReadVar basic
+def test_alloc_and_read_var():
+    var = yield AllocVar(42)
+    assert (yield ReadVar(var)) == 42
+
+# T11: ReadVar walks caller chain
+def test_read_var_walks_caller():
+    # Variable in outer handler segment
+    # Read from inner segment → found via caller chain
+
+# T12: WriteVarNonlocal mutates original segment
+def test_nonlocal_write():
+    var = yield AllocVar(10)
+    # EvalInScope body: WriteVarNonlocal(var, 20)
+    assert (yield ReadVar(var)) == 20  # mutated
+
+# T13: Shadow write in child segment
+def test_shadow_write():
+    var = yield AllocVar(10)
+    # EvalInScope body: WriteVar(var, 20) → shadows
+    assert (yield ReadVar(var)) == 10  # parent unchanged
+
+# T14: Variable dropped on segment pop
+def test_var_dropped_on_pop():
+    # AllocVar in EvalInScope → after scope ends, var gone
+```
+
+### Local/Ask on Scoped Variables
+
+```python
+# T15: Local creates scope, Ask reads
+def test_local_ask():
+    result = yield Local({"key": "value"}, ask_program("key"))
+    assert result == "value"
+
+# T16: Nested Local shadow
+def test_nested_local_shadow():
+    result = yield Local({"x": 10}, Local({"x": 20}, ask_program("x")))
+    assert result == 20
+
+# T17: Ask walks caller chain to outer Local
+def test_ask_walks_to_outer():
+    result = yield Local({"x": 10}, Local({"y": 20}, ask_program("x")))
+    assert result == 10  # x not in inner, found in outer
+```
