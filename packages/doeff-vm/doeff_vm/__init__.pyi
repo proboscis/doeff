@@ -46,6 +46,11 @@ class TraceHop:
     frames: list[TraceFrame]
     def __init__(self, frames: list[TraceFrame]) -> None: ...
 
+class Var:
+    raw: int
+    owner_scope: int
+    def __repr__(self) -> str: ...
+
 class Ok(Generic[_T]):
     value: _T
     def __init__(self, value: _T) -> None: ...
@@ -234,7 +239,31 @@ class Eval(DoCtrlBase):
 class EvalInScope(DoCtrlBase):
     expr: DoExpr[Any] | EffectBase
     scope: K
-    def __init__(self, expr: DoExpr[Any] | EffectBase, scope: K) -> None: ...
+    bindings: dict[Any, Any]
+    def __init__(
+        self,
+        expr: DoExpr[Any] | EffectBase,
+        scope: K,
+        bindings: dict[Any, Any] | None = None,
+    ) -> None: ...
+
+class AllocVar(DoCtrlBase):
+    initial: Any
+    def __init__(self, initial: Any) -> None: ...
+
+class ReadVar(DoCtrlBase):
+    var: Var
+    def __init__(self, var: Var) -> None: ...
+
+class WriteVar(DoCtrlBase):
+    var: Var
+    value: Any
+    def __init__(self, var: Var, value: Any) -> None: ...
+
+class WriteVarNonlocal(DoCtrlBase):
+    var: Var
+    value: Any
+    def __init__(self, var: Var, value: Any) -> None: ...
 
 class Perform(DoCtrlBase):
     effect: EffectBase
@@ -269,7 +298,13 @@ class ResumeContinuation(DoCtrlBase):
 class CreateContinuation(DoCtrlBase):
     program: DoExpr[Any] | EffectBase
     handlers: Sequence[Any]
-    def __init__(self, program: DoExpr[Any] | EffectBase, handlers: Sequence[Any]) -> None: ...
+    outside_scope: int | None
+    def __init__(
+        self,
+        program: DoExpr[Any] | EffectBase,
+        handlers: Sequence[Any],
+        outside_scope: int | None = None,
+    ) -> None: ...
 
 class GetTraceback(DoCtrlBase):
     continuation: K
@@ -471,6 +506,10 @@ TAG_DISCONTINUE: int
 TAG_GET_CALL_STACK: int
 TAG_EVAL: int
 TAG_EVAL_IN_SCOPE: int
+TAG_ALLOC_VAR: int
+TAG_READ_VAR: int
+TAG_WRITE_VAR: int
+TAG_WRITE_VAR_NONLOCAL: int
 TAG_APPLY: int
 TAG_EXPAND: int
 TAG_CREATE_CONTINUATION: int

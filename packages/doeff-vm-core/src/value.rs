@@ -10,7 +10,7 @@ use crate::capture::{
     HandlerStatus, TraceEntry, TraceHop,
 };
 use crate::frame::CallMetadata;
-use crate::ids::{PromiseId, TaskId};
+use crate::ids::{PromiseId, ScopeId, TaskId, VarId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 
@@ -50,6 +50,34 @@ impl PyTraceHop {
     }
 }
 
+#[pyclass(frozen, name = "Var")]
+pub struct PyVar {
+    #[pyo3(get)]
+    pub raw: u64,
+    #[pyo3(get)]
+    pub owner_scope: u64,
+}
+
+impl PyVar {
+    pub fn from_var(var: VarId) -> Self {
+        Self {
+            raw: var.raw(),
+            owner_scope: var.owner_scope().raw(),
+        }
+    }
+
+    pub fn to_var_id(&self) -> VarId {
+        VarId::from_raw(self.raw, ScopeId::from_raw(self.owner_scope))
+    }
+}
+
+#[pymethods]
+impl PyVar {
+    fn __repr__(&self) -> String {
+        format!("Var({})", self.raw)
+    }
+}
+
 /// Opaque handle to a spawned task.
 #[derive(Clone, Copy, Debug)]
 pub struct TaskHandle {
@@ -84,6 +112,7 @@ pub enum Value {
     Continuation(crate::continuation::Continuation),
     Handlers(Vec<KleisliRef>),
     Kleisli(KleisliRef),
+    Var(VarId),
     Task(TaskHandle),
     Promise(PromiseHandle),
     ExternalPromise(ExternalPromise),
@@ -414,6 +443,10 @@ impl Value {
             Value::Kleisli(_) => unreachable!(
                 "Value::Kleisli should never be converted to Python object — it is consumed internally by Apply/Expand"
             ),
+            Value::Var(var) => {
+                let py_var = Py::new(py, PyVar::from_var(*var))?;
+                Ok(py_var.into_bound(py).into_any())
+            }
             Value::Task(handle) => {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("type", "Task")?;
@@ -518,6 +551,9 @@ impl Value {
         if let Ok(s) = obj.extract::<String>() {
             return Value::String(s);
         }
+        if let Ok(var) = obj.extract::<PyRef<'_, PyVar>>() {
+            return Value::Var(var.to_var_id());
+        }
         Value::Python(PyShared::new(obj.clone().unbind()))
     }
 
@@ -548,6 +584,7 @@ impl Value {
             | Value::Continuation(_)
             | Value::Handlers(_)
             | Value::Kleisli(_)
+            | Value::Var(_)
             | Value::Task(_)
             | Value::Promise(_)
             | Value::ExternalPromise(_)
@@ -571,6 +608,7 @@ impl Value {
             | Value::Continuation(_)
             | Value::Handlers(_)
             | Value::Kleisli(_)
+            | Value::Var(_)
             | Value::Task(_)
             | Value::Promise(_)
             | Value::ExternalPromise(_)
@@ -594,6 +632,7 @@ impl Value {
             | Value::Continuation(_)
             | Value::Handlers(_)
             | Value::Kleisli(_)
+            | Value::Var(_)
             | Value::Task(_)
             | Value::Promise(_)
             | Value::ExternalPromise(_)
@@ -617,6 +656,7 @@ impl Value {
             | Value::None
             | Value::Continuation(_)
             | Value::Kleisli(_)
+            | Value::Var(_)
             | Value::Task(_)
             | Value::Promise(_)
             | Value::ExternalPromise(_)
@@ -648,6 +688,7 @@ impl Value {
             Value::Continuation(k) => Value::Continuation(k.clone()),
             Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
             Value::Kleisli(kleisli) => Value::Kleisli(kleisli.clone()),
+            Value::Var(var) => Value::Var(*var),
             Value::Task(h) => Value::Task(*h),
             Value::Promise(h) => Value::Promise(*h),
             Value::ExternalPromise(h) => Value::ExternalPromise(h.clone()),

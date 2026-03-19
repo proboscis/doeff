@@ -18,12 +18,12 @@ use crate::effect::{
     dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python,
     make_execution_context_object, DispatchEffect, PyAcquireSemaphore, PyCancelEffect,
     PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyCreateSemaphore, PyFailPromise,
-    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn, PyWait,
-    PyTaskCompleted, TaskCancelledError,
+    PyGather, PyGetExecutionContext, PyRace, PyReleaseSemaphore, PySemaphore, PySpawn,
+    PyTaskCompleted, PyWait, TaskCancelledError,
 };
 use crate::error::VMError;
-use crate::handlers::AwaitHandlerFactory;
 use crate::handler::{IRStreamFactory, IRStreamProgram, IRStreamProgramRef};
+use crate::handlers::AwaitHandlerFactory;
 use crate::ids::{ContId, DispatchId, PromiseId, TaskId};
 use crate::ir_stream::{IRStream, IRStreamStep, StreamLocation};
 use crate::kleisli::{DgfnKleisli, KleisliRef};
@@ -437,6 +437,13 @@ fn step_targets_cont_id(step: &IRStreamStep, cont_id: ContId) -> bool {
             | DoCtrl::IRStream { .. }
             | DoCtrl::Eval { .. }
             | DoCtrl::EvalInScope { .. }
+            | DoCtrl::AllocVar { .. }
+            | DoCtrl::ReadVar { .. }
+            | DoCtrl::WriteVar { .. }
+            | DoCtrl::WriteVarNonlocal { .. }
+            | DoCtrl::ReadHandlerState { .. }
+            | DoCtrl::WriteHandlerState { .. }
+            | DoCtrl::AppendHandlerLog { .. }
             | DoCtrl::GetCallStack,
         )
         | IRStreamStep::Return(_)
@@ -2156,30 +2163,6 @@ impl SchedulerState {
         None
     }
 
-    pub fn merge_task_logs(&self, task_id: TaskId, store: &mut RustStore) {
-        if let Some(state) = self.tasks.get(&task_id) {
-            let task_store = match state {
-                TaskState::Pending { store, .. } => store,
-                TaskState::Done { store, .. } => store,
-            };
-            if let TaskStore::Isolated {
-                store: task_store,
-                merge: StoreMergePolicy::LogsOnly,
-            } = task_store
-            {
-                store.log.extend(task_store.log.iter().cloned());
-            }
-        }
-    }
-
-    pub fn merge_gather_logs(&self, items: &[Waitable], store: &mut RustStore) {
-        for item in items {
-            if let Waitable::Task(task_id) = item {
-                self.merge_task_logs(*task_id, store);
-            }
-        }
-    }
-
     /// Transfer to the next ready task/root waiter.
     ///
     /// Per spec (SPEC-008 L1434-1447): saves the current task's store before
@@ -2226,7 +2209,7 @@ impl SchedulerState {
                             self.finalize_task_cancellation(task_id);
                             continue;
                         }
-                        let (task_k, resume_outcome, merge_items) =
+                        let (task_k, resume_outcome, _merge_items) =
                             match self.tasks.get_mut(&task_id) {
                                 Some(TaskState::Pending {
                                     cont,
@@ -2262,9 +2245,6 @@ impl SchedulerState {
                             return TransferNextOutcome::Step(IRStreamStep::Throw(error));
                         }
                         self.current_task = Some(task_id);
-                        if let Some(items) = merge_items.as_ref() {
-                            self.merge_gather_logs(items, store);
-                        }
                         match resume_outcome {
                             Some(Err(error)) => {
                                 return TransferNextOutcome::Step(throw_to_continuation(
@@ -2299,9 +2279,6 @@ impl SchedulerState {
                         } else {
                             *store = ready_root.waiting_store;
                             self.current_task = None;
-                        }
-                        if let Some(items) = &ready_root.merge_items {
-                            self.merge_gather_logs(items, store);
                         }
                         return TransferNextOutcome::Step(match ready_root.outcome {
                             Ok(value) => resume_to_continuation(ready_root.continuation, value),
@@ -2347,7 +2324,7 @@ impl SchedulerState {
                     return Ok(None);
                 }
 
-                let (task_k, resume_outcome, merge_items) = match self.tasks.get_mut(&task_id) {
+                let (task_k, resume_outcome, _merge_items) = match self.tasks.get_mut(&task_id) {
                     Some(TaskState::Pending {
                         cont,
                         resume_outcome,
@@ -2370,9 +2347,6 @@ impl SchedulerState {
                 }
                 self.load_task_store(task_id, store)?;
                 self.current_task = Some(task_id);
-                if let Some(items) = merge_items.as_ref() {
-                    self.merge_gather_logs(items, store);
-                }
                 let step = match resume_outcome {
                     Some(Err(error)) => throw_to_continuation(task_k, error),
                     Some(Ok(value)) => resume_to_continuation(task_k, value),
@@ -2395,10 +2369,6 @@ impl SchedulerState {
                     *store = ready_root.waiting_store;
                     self.current_task = None;
                 }
-                if let Some(items) = &ready_root.merge_items {
-                    self.merge_gather_logs(items, store);
-                }
-
                 let step = match ready_root.outcome {
                     Ok(value) => resume_to_continuation(ready_root.continuation, value),
                     Err(error) => throw_to_continuation(ready_root.continuation, error),
@@ -2430,14 +2400,6 @@ enum SchedulerPhase {
     SpawnAwaitTraceback {
         k_user: Continuation,
         effect: DispatchEffect,
-    },
-    SpawnAwaitHandlers {
-        k_user: Continuation,
-        program: Py<PyAny>,
-        store_mode: StoreMode,
-        store_snapshot: Option<RustStore>,
-        priority: u32,
-        spawn_site: Option<SpawnSite>,
     },
     SpawnAwaitContinuation {
         k_user: Continuation,
@@ -2500,7 +2462,6 @@ impl SchedulerProgram {
         match self.phase {
             SchedulerPhase::Idle => "Idle",
             SchedulerPhase::SpawnAwaitTraceback { .. } => "SpawnAwaitTraceback",
-            SchedulerPhase::SpawnAwaitHandlers { .. } => "SpawnAwaitHandlers",
             SchedulerPhase::SpawnAwaitContinuation { .. } => "SpawnAwaitContinuation",
             SchedulerPhase::PreemptiveTransfer { .. } => "PreemptiveTransfer",
             SchedulerPhase::AwaitSimpleTransfer { .. } => "AwaitSimpleTransfer",
@@ -2792,9 +2753,6 @@ impl SchedulerProgram {
             state.clear_waiters_for_owner(waiting_task, k_user.cont_id);
             return match aggregate {
                 Ok(results) => {
-                    if items.len() > 1 {
-                        state.merge_gather_logs(&items, store);
-                    }
                     resume_to_continuation(k_user, results)
                 }
                 Err(error) => throw_to_continuation(k_user, error),
@@ -3013,7 +2971,8 @@ impl SchedulerProgram {
                     if let Err(store_error) = state.save_task_store(running_task, store) {
                         return IRStreamStep::Throw(store_error);
                     }
-                    if let Err(done_error) = state.mark_task_done(running_task, Err(error.clone())) {
+                    if let Err(done_error) = state.mark_task_done(running_task, Err(error.clone()))
+                    {
                         return IRStreamStep::Throw(done_error);
                     }
                     let _ = state.register_gather_fail_fast(wait_request, error, running_task);
@@ -3272,6 +3231,7 @@ impl IRStreamProgram for SchedulerProgram {
                     | Value::Continuation(_)
                     | Value::Handlers(_)
                     | Value::Kleisli(_)
+                    | Value::Var(_)
                     | Value::Task(_)
                     | Value::Promise(_)
                     | Value::ExternalPromise(_)
@@ -3332,17 +3292,11 @@ impl IRStreamProgram for SchedulerProgram {
                     StoreMode::Isolated { .. } => Some(store.clone()),
                 };
 
-                if handlers.is_empty() {
-                    self.phase = SchedulerPhase::SpawnAwaitHandlers {
-                        k_user,
-                        program,
-                        store_mode,
-                        store_snapshot,
-                        priority,
-                        spawn_site: creation_site,
-                    };
-                    return IRStreamStep::Yield(DoCtrl::GetHandlers);
+                let mut handlers = handlers;
+                if !handlers.is_empty() {
+                    self.maybe_prepend_sync_await_handler(&mut handlers);
                 }
+                let outside_scope = k_user.segment_id();
 
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
                     k_user,
@@ -3356,54 +3310,7 @@ impl IRStreamProgram for SchedulerProgram {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities: vec![],
-                })
-            }
-
-            SchedulerPhase::SpawnAwaitHandlers {
-                k_user,
-                program,
-                store_mode,
-                store_snapshot,
-                priority,
-                spawn_site,
-            } => {
-                let mut handlers = match value {
-                    Value::Handlers(hs) => hs,
-                    Value::Python(_)
-                    | Value::Unit
-                    | Value::Int(_)
-                    | Value::String(_)
-                    | Value::Bool(_)
-                    | Value::None
-                    | Value::Continuation(_)
-                    | Value::Kleisli(_)
-                    | Value::Task(_)
-                    | Value::Promise(_)
-                    | Value::ExternalPromise(_)
-                    | Value::CallStack(_)
-                    | Value::Trace(_)
-                    | Value::Traceback(_)
-                    | Value::ActiveChain(_)
-                    | Value::List(_) => {
-                        return IRStreamStep::Throw(PyException::type_error(
-                            "scheduler Spawn expected GetHandlers result".to_string(),
-                        ));
-                    }
-                };
-                self.maybe_prepend_sync_await_handler(&mut handlers);
-
-                self.phase = SchedulerPhase::SpawnAwaitContinuation {
-                    k_user,
-                    store_mode,
-                    store_snapshot,
-                    priority,
-                    spawn_site,
-                };
-
-                IRStreamStep::Yield(DoCtrl::CreateContinuation {
-                    expr: PyShared::new(program),
-                    handlers,
-                    handler_identities: vec![],
+                    outside_scope,
                 })
             }
 
@@ -3425,6 +3332,7 @@ impl IRStreamProgram for SchedulerProgram {
                     | Value::None
                     | Value::Handlers(_)
                     | Value::Kleisli(_)
+                    | Value::Var(_)
                     | Value::Task(_)
                     | Value::Promise(_)
                     | Value::ExternalPromise(_)
@@ -3541,7 +3449,6 @@ impl IRStreamProgram for SchedulerProgram {
             | SchedulerPhase::AwaitDrivingTransfer { .. }
             | SchedulerPhase::Idle
             | SchedulerPhase::SpawnAwaitTraceback { .. }
-            | SchedulerPhase::SpawnAwaitHandlers { .. }
             | SchedulerPhase::SpawnAwaitContinuation { .. } => IRStreamStep::Throw(exc),
         }
     }
@@ -3903,6 +3810,7 @@ mod tests {
                     expr: expr.clone(),
                     handlers: vec![],
                     handler_identities: vec![],
+                    outside_scope: None,
                 }),
                 IRStreamStep::Yield(DoCtrl::ResumeContinuation {
                     continuation: cont.clone(),
@@ -4062,7 +3970,7 @@ mod tests {
             let mut store = RustStore::new();
             let mut _scope = ScopeStore::default();
             let k_user = make_test_continuation();
-            let k_user_id = k_user.cont_id;
+            let expected_scope = k_user.segment_id();
             let spawn_program = py.None().into_pyobject(py).unwrap().unbind().into_any();
             let spawn_effect = Py::new(
                 py,
@@ -4093,20 +4001,12 @@ mod tests {
                 &mut store,
                 &mut _scope,
             );
-            assert!(matches!(step, IRStreamStep::Yield(DoCtrl::GetHandlers)));
-
-            let location = IRStream::debug_location(&program).expect("scheduler debug location");
-            assert_eq!(location.phase.as_deref(), Some("SpawnAwaitHandlers"));
-
-            let step = IRStream::resume(
-                &mut program,
-                Value::Handlers(vec![]),
-                &mut store,
-                &mut _scope,
-            );
             assert!(matches!(
                 step,
-                IRStreamStep::Yield(DoCtrl::CreateContinuation { .. })
+                IRStreamStep::Yield(DoCtrl::CreateContinuation {
+                    outside_scope,
+                    ..
+                }) if outside_scope == expected_scope
             ));
 
             let location = IRStream::debug_location(&program).expect("scheduler debug location");

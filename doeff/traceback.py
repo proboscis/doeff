@@ -444,6 +444,18 @@ else:
                 site = "<unknown>"
             return f"── in task {boundary.task_id} (spawned at {site}) ──"
 
+        @staticmethod
+        def _render_hidden_sub_program(
+            lines: list[str], boundary: SpawnBoundary, sub_program_repr: str
+        ) -> bool:
+            site = boundary.spawn_site
+            if site is None:
+                return False
+            lines.append(f"  {site.function_name}()  {site.source_file}:{site.source_line}")
+            lines.append(f"    yield {sub_program_repr}")
+            lines.append("")
+            return True
+
         def format_default(self) -> str:
             lines: list[str] = ["doeff Traceback (most recent call last):", ""]
             previous_handler_stack: tuple[HandlerStackEntry, ...] | None = None
@@ -452,6 +464,7 @@ else:
             # user-visible Gather(...) repr for a spawned child. Carry it forward until
             # the next real program/effect row consumes it.
             pending_hidden_sub_program: str | None = None
+            last_user_yield_repr: str | None = None
             for entry in self.active_chain:
                 if isinstance(entry, ProgramYield):
                     if entry.is_handler:
@@ -472,6 +485,7 @@ else:
                     )
                     lines.append(f"    yield {sub_program_repr}")
                     lines.append("")
+                    last_user_yield_repr = sub_program_repr
                     pending_hidden_sub_program = None
                     continue
 
@@ -498,10 +512,21 @@ else:
                         lines.append(f"    {stack_line}")
                     lines.append(f"    {self._render_effect_result(entry.result)}")
                     lines.append("")
+                    last_user_yield_repr = entry.effect_repr
                     continue
 
                 if isinstance(entry, SpawnBoundary):
                     previous_handler_stack = None
+                    if (
+                        previous_spawn_boundary is not None
+                        and pending_hidden_sub_program is not None
+                        and pending_hidden_sub_program != last_user_yield_repr
+                    ):
+                        if self._render_hidden_sub_program(
+                            lines, entry, pending_hidden_sub_program
+                        ):
+                            last_user_yield_repr = pending_hidden_sub_program
+                            pending_hidden_sub_program = None
                     if previous_spawn_boundary == entry:
                         continue
                     previous_spawn_boundary = entry
@@ -516,6 +541,17 @@ else:
 
                 if isinstance(entry, ExceptionSite):
                     previous_handler_stack = None
+                    if (
+                        pending_hidden_sub_program is not None
+                        and last_user_yield_repr != pending_hidden_sub_program
+                    ):
+                        if previous_spawn_boundary is not None:
+                            rendered = self._render_hidden_sub_program(
+                                lines, previous_spawn_boundary, pending_hidden_sub_program
+                            )
+                            if rendered:
+                                last_user_yield_repr = pending_hidden_sub_program
+                                pending_hidden_sub_program = None
                     previous_spawn_boundary = None
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
@@ -615,6 +651,72 @@ else:
             exception=exception,
         )
 
+    def _exception_context_active_chain_and_entries(
+        exception: BaseException,
+    ) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+        try:
+            context = exception.doeff_execution_context
+        except AttributeError:
+            return (), ()
+
+        try:
+            context_active_chain = context.active_chain
+        except AttributeError:
+            context_active_chain = ()
+        if not isinstance(context_active_chain, (list, tuple)):
+            context_active_chain = ()
+
+        try:
+            context_entries = context.entries
+        except AttributeError:
+            context_entries = ()
+        if not isinstance(context_entries, (list, tuple)):
+            context_entries = ()
+
+        wrapped_context_entries = tuple(
+            {"kind": "context_entry", "data": entry} for entry in context_entries
+        )
+        return tuple(context_active_chain), wrapped_context_entries
+
+    def _active_chain_entries_from_exception_context(
+        exception: BaseException,
+    ) -> tuple[Any, ...]:
+        context_active_chain, wrapped_context_entries = _exception_context_active_chain_and_entries(
+            exception
+        )
+
+        if not context_active_chain and not wrapped_context_entries:
+            return ()
+
+        merged = list(context_active_chain)
+        merged.extend(wrapped_context_entries)
+        return tuple(merged)
+
+    def _merge_active_chain_entries(
+        active_chain_entries: list[Any] | tuple[Any, ...],
+        context_active_chain_entries: tuple[Any, ...],
+    ) -> tuple[Any, ...]:
+        if not context_active_chain_entries:
+            return tuple(active_chain_entries)
+        if not active_chain_entries:
+            return context_active_chain_entries
+
+        merged = list(active_chain_entries)
+        insert_idx = next(
+            (
+                index
+                for index, entry in enumerate(merged)
+                if isinstance(entry, ExceptionSite)
+                or (isinstance(entry, dict) and entry.get("kind") == "exception_site")
+            ),
+            len(merged),
+        )
+        for entry in context_active_chain_entries:
+            if entry not in merged:
+                merged.insert(insert_idx, entry)
+                insert_idx += 1
+        return tuple(merged)
+
     def attach_doeff_traceback(
         exception: BaseException,
         *,
@@ -646,6 +748,13 @@ else:
             active_chain_entries = ()
         else:
             return None
+
+        context_active_chain_entries = _active_chain_entries_from_exception_context(exception)
+        if context_active_chain_entries:
+            active_chain_entries = _merge_active_chain_entries(
+                active_chain_entries,
+                context_active_chain_entries,
+            )
 
         tb = build_doeff_traceback(
             exception,

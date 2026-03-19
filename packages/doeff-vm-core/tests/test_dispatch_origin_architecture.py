@@ -111,7 +111,10 @@ def test_vm_runtime_has_no_parent_chain_completion_inference() -> None:
 
 def test_current_interceptor_chain_hot_path_skips_dispatch_origin_view_materialization() -> None:
     source = _runtime_source(VM_STEP_RS)
-    block = _function_block(source, "fn current_interceptor_chain(&self) -> Vec<Marker>")
+    block = _function_block(
+        source,
+        "fn current_interceptor_chain(&self) -> Vec<InterceptorChainLink>",
+    )
 
     assert "dispatch_origins()" not in block, (
         "current_interceptor_chain is on the step-loop hot path and should collect dispatch-origin "
