@@ -344,8 +344,6 @@ impl VM {
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
         self.scope_persistent_epochs.clear();
-        self.completed_state_entries_snapshot = None;
-        self.completed_log_entries_snapshot = None;
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -434,8 +432,41 @@ impl VM {
         (state, logs)
     }
 
+    fn collect_outputs_from_persistent_scopes(&self) -> (HashMap<String, Value>, Vec<Value>) {
+        let mut scopes: Vec<(ScopeId, u64)> = self
+            .scope_persistent_epochs
+            .iter()
+            .map(|(scope_id, epoch)| (*scope_id, *epoch))
+            .collect();
+        scopes.sort_by_key(|(scope_id, epoch)| (*epoch, scope_id.raw()));
+
+        let mut state = HashMap::new();
+        let mut logs = Vec::new();
+        for (scope_id, _) in scopes {
+            if let Some(scope_state) = self.scope_state_store.get(&scope_id) {
+                if !scope_state.is_empty() {
+                    state.extend(scope_state.clone());
+                }
+            }
+            if let Some(scope_logs) = self.scope_writer_logs.get(&scope_id) {
+                if !scope_logs.is_empty() {
+                    logs.extend(scope_logs.clone());
+                }
+            }
+        }
+
+        (state, logs)
+    }
+
     pub(crate) fn store_completed_outputs_from(&mut self, start_seg_id: SegmentId) {
-        let (state, logs) = self.collect_outputs_from_chain(start_seg_id);
+        let (mut state, mut logs) = self.collect_outputs_from_chain(start_seg_id);
+        let (persistent_state, persistent_logs) = self.collect_outputs_from_persistent_scopes();
+        if state.is_empty() && !persistent_state.is_empty() {
+            state = persistent_state;
+        }
+        if logs.is_empty() && !persistent_logs.is_empty() {
+            logs = persistent_logs;
+        }
         self.completed_state_entries_snapshot = Some(state);
         self.completed_log_entries_snapshot = Some(logs);
     }
