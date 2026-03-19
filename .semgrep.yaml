@@ -828,6 +828,35 @@ rules:
   # HandlerDispatch / DispatchOrigin and scope_parent-based spawn scope cloning are
   # still live architecture on this branch. Add semgrep bans for those symbols only
   # after the runtime and architecture tests stop depending on them.
+  #
+  # TODO: uncomment after Phase 1 dispatch simplification removes these runtime
+  # carriers and lexical-scope cloning helpers.
+  #
+  # - id: vm-no-handlerdispatch-or-dispatchorigin-frames
+  #   languages: [rust]
+  #   severity: ERROR
+  #   message: |
+  #     Phase 1 dispatch simplification: do not reintroduce HandlerDispatch or
+  #     DispatchOrigin frames once dispatch state is represented structurally
+  #     without dedicated frame variants.
+  #   paths:
+  #     include:
+  #       - "/packages/doeff-vm-core/src/**/*.rs"
+  #       - "/packages/doeff-vm/src/**/*.rs"
+  #   pattern-regex: '\bHandlerDispatch\b|\bDispatchOrigin\b'
+  #
+  # - id: vm-no-clone-spawn-scope-chain-or-scope-parent
+  #   languages: [rust]
+  #   severity: ERROR
+  #   message: |
+  #     Phase 1 dispatch simplification: once spawn inheritance no longer clones
+  #     lexical ancestry, do not reintroduce clone_spawn_scope_chain or
+  #     scope_parent-based scope traversal/state.
+  #   paths:
+  #     include:
+  #       - "/packages/doeff-vm-core/src/**/*.rs"
+  #       - "/packages/doeff-vm/src/**/*.rs"
+  #   pattern-regex: '\bclone_spawn_scope_chain\b|\bscope_parent\b'
 
   - id: vm-no-segment-ruststore-scope-sync
     pattern-either:
