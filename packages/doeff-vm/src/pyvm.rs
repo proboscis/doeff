@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::{
@@ -19,7 +20,7 @@ use crate::effect::{
 
 use crate::error::VMError;
 use crate::frame::CallMetadata;
-use crate::ids::Marker;
+use crate::ids::{Marker, SegmentId};
 use crate::ir_stream::{IRStream, PythonGeneratorStream};
 use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli};
 use crate::py_key::HashedPyKey;
@@ -33,7 +34,7 @@ use doeff_core_effects::scheduler::{set_run_external_wait_mode, ExternalWaitMode
 use doeff_core_effects::sentinels::PyRustHandlerSentinel;
 use doeff_vm_core::{
     install_vm_hooks, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr,
-    PyResultOk, PyTraceFrame, PyTraceHop, VmHooks,
+    PyResultOk, PyTraceFrame, PyTraceHop, PyVar, VmHooks,
 };
 
 fn ensure_vm_core_hooks_installed() {
@@ -456,38 +457,21 @@ impl PyVM {
         };
         self.vm.end_active_run_session();
 
-        let raw_store = pyo3::types::PyDict::new(py);
-        for (k, v) in &self.vm.rust_store.state {
-            raw_store.set_item(k, v.to_pyobject(py)?)?;
-        }
-        let log_list = pyo3::types::PyList::empty(py);
-        for entry in self.vm.rust_store.logs() {
-            log_list.append(entry.to_pyobject(py)?)?;
-        }
-
         Ok(PyRunResult {
             result,
             traceback_data,
-            raw_store: raw_store.unbind(),
-            log: log_list.into_any().unbind(),
+            raw_store: self.state_items_dict(py)?.unbind(),
+            log: self.log_items_list(py)?.into_any().unbind(),
             trace: self.build_trace_list(py)?,
         })
     }
 
     pub fn state_items(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let dict = pyo3::types::PyDict::new(py);
-        for (k, v) in &self.vm.rust_store.state {
-            dict.set_item(k, v.to_pyobject(py)?)?;
-        }
-        Ok(dict.into())
+        Ok(self.state_items_dict(py)?.into())
     }
 
     pub fn logs(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let list = pyo3::types::PyList::empty(py);
-        for v in self.vm.rust_store.logs() {
-            list.append(v.to_pyobject(py)?)?;
-        }
-        Ok(list.into())
+        Ok(self.log_items_list(py)?.into())
     }
 
     pub fn put_state(&mut self, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -498,15 +482,14 @@ impl PyVM {
     pub fn put_env(&mut self, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let env_key = HashedPyKey::from_bound(key)?;
         self.vm
-            .rust_store
-            .env
+            .env_store
             .insert(env_key, Value::from_python_opaque(value));
         Ok(())
     }
 
     pub fn env_items(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = pyo3::types::PyDict::new(py);
-        for (k, v) in &self.vm.rust_store.env {
+        for (k, v) in &self.vm.env_store {
             dict.set_item(k.to_pyobject(py), v.to_pyobject(py)?)?;
         }
         Ok(dict.into())
@@ -575,24 +558,32 @@ impl PyVM {
         Ok(trace_list.into_any().unbind())
     }
 
+    fn state_items_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        let dict = pyo3::types::PyDict::new(py);
+        for (k, v) in self.vm.final_state_entries() {
+            dict.set_item(k, v.to_pyobject(py)?)?;
+        }
+        Ok(dict)
+    }
+
+    fn log_items_list<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+        let list = pyo3::types::PyList::empty(py);
+        for entry in self.vm.final_log_entries() {
+            list.append(entry.to_pyobject(py)?)?;
+        }
+        Ok(list)
+    }
+
     pub fn build_run_result(
         &self,
         py: Python<'_>,
         value: Bound<'_, PyAny>,
     ) -> PyResult<PyRunResult> {
-        let raw_store = pyo3::types::PyDict::new(py);
-        for (k, v) in &self.vm.rust_store.state {
-            raw_store.set_item(k, v.to_pyobject(py)?)?;
-        }
-        let log_list = pyo3::types::PyList::empty(py);
-        for entry in self.vm.rust_store.logs() {
-            log_list.append(entry.to_pyobject(py)?)?;
-        }
         Ok(PyRunResult {
             result: Ok(value.unbind()),
             traceback_data: None,
-            raw_store: raw_store.unbind(),
-            log: log_list.into_any().unbind(),
+            raw_store: self.state_items_dict(py)?.unbind(),
+            log: self.log_items_list(py)?.into_any().unbind(),
             trace: self.build_trace_list(py)?,
         })
     }
@@ -604,20 +595,12 @@ impl PyVM {
         error: Bound<'_, PyAny>,
         traceback_data: Option<Bound<'_, PyDoeffTracebackData>>,
     ) -> PyResult<PyRunResult> {
-        let raw_store = pyo3::types::PyDict::new(py);
-        for (k, v) in &self.vm.rust_store.state {
-            raw_store.set_item(k, v.to_pyobject(py)?)?;
-        }
-        let log_list = pyo3::types::PyList::empty(py);
-        for entry in self.vm.rust_store.logs() {
-            log_list.append(entry.to_pyobject(py)?)?;
-        }
         let exc = pyerr_to_exception(py, PyErr::from_value(error))?;
         Ok(PyRunResult {
             result: Err(exc),
             traceback_data: traceback_data.map(Bound::unbind),
-            raw_store: raw_store.unbind(),
-            log: log_list.into_any().unbind(),
+            raw_store: self.state_items_dict(py)?.unbind(),
+            log: self.log_items_list(py)?.into_any().unbind(),
             trace: self.build_trace_list(py)?,
         })
     }
@@ -953,6 +936,7 @@ impl PyVM {
             | Value::None
             | Value::Handlers(_)
             | Value::Kleisli(_)
+            | Value::Var(_)
             | Value::Task(_)
             | Value::Promise(_)
             | Value::ExternalPromise(_)
@@ -1277,6 +1261,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 expr,
                 handlers,
                 handler_identities,
+                outside_scope,
             } => {
                 let list = PyList::empty(py);
                 for (idx, handler) in handlers.iter().enumerate() {
@@ -1305,6 +1290,19 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             .add_subclass(PyCreateContinuation {
                                 program: expr.clone_ref(py),
                                 handlers: list.into_any().unbind(),
+                                outside_scope: match outside_scope {
+                                    Some(seg_id) => (seg_id.index() as u32)
+                                        .into_pyobject(py)
+                                        .expect("u32 conversion is infallible")
+                                        .into_any()
+                                        .unbind(),
+                                    None => py
+                                        .None()
+                                        .into_pyobject(py)
+                                        .expect("None conversion is infallible")
+                                        .into_any()
+                                        .unbind(),
+                                },
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1442,7 +1440,12 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                 .into_any()
                 .unbind(),
             ),
-            DoCtrl::EvalInScope { expr, scope, .. } => {
+            DoCtrl::EvalInScope {
+                expr,
+                scope,
+                bindings,
+                ..
+            } => {
                 let k = Bound::new(py, PyK::from_cont_id(scope.cont_id))
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
                     .into_any()
@@ -1457,6 +1460,7 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                             .add_subclass(PyEvalInScope {
                                 expr: expr.clone_ref(py),
                                 scope: k,
+                                bindings: scope_bindings_to_pydict(py, bindings)?,
                             }),
                     )
                     .map_err(|err| PyException::runtime_error(format!("{err}")))?
@@ -1464,6 +1468,77 @@ pub(crate) fn doctrl_to_pyexpr_for_vm(yielded: &DoCtrl) -> Result<Option<Py<PyAn
                     .unbind(),
                 )
             }
+            DoCtrl::AllocVar { initial } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::AllocVar as u8,
+                        })
+                        .add_subclass(PyAllocVar {
+                            initial: initial.to_pyobject(py)?.unbind(),
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::ReadVar { var } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::ReadVar as u8,
+                        })
+                        .add_subclass(PyReadVar {
+                            var: Py::new(py, PyVar::from_var(*var))
+                                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                                .into_any(),
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::WriteVar { var, value } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::WriteVar as u8,
+                        })
+                        .add_subclass(PyWriteVar {
+                            var: Py::new(py, PyVar::from_var(*var))
+                                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                                .into_any(),
+                            value: value.to_pyobject(py)?.unbind(),
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::WriteVarNonlocal { var, value } => Some(
+                Bound::new(
+                    py,
+                    PyClassInitializer::from(PyDoExprBase)
+                        .add_subclass(PyDoCtrlBase {
+                            tag: DoExprTag::WriteVarNonlocal as u8,
+                        })
+                        .add_subclass(PyWriteVarNonlocal {
+                            var: Py::new(py, PyVar::from_var(*var))
+                                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                                .into_any(),
+                            value: value.to_pyobject(py)?.unbind(),
+                        }),
+                )
+                .map_err(|err| PyException::runtime_error(format!("{err}")))?
+                .into_any()
+                .unbind(),
+            ),
+            DoCtrl::ReadHandlerState { .. }
+            | DoCtrl::WriteHandlerState { .. }
+            | DoCtrl::AppendHandlerLog { .. } => None,
             DoCtrl::GetCallStack => Some(
                 Bound::new(
                     py,
@@ -1500,6 +1575,31 @@ fn merged_metadata_from_doeff(
             false,
         )),
     }
+}
+
+fn scope_bindings_to_pydict(
+    py: Python<'_>,
+    bindings: &HashMap<HashedPyKey, Value>,
+) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    for (key, value) in bindings {
+        dict.set_item(key.to_pyobject(py), value.to_pyobject(py)?)?;
+    }
+    Ok(dict.into_any().unbind())
+}
+
+fn scope_bindings_from_pyany(obj: &Bound<'_, PyAny>) -> PyResult<HashMap<HashedPyKey, Value>> {
+    if obj.is_none() {
+        return Ok(HashMap::new());
+    }
+    let dict = obj
+        .cast::<PyDict>()
+        .map_err(|_| PyTypeError::new_err("EvalInScope.bindings must be a dict"))?;
+    let mut bindings = HashMap::new();
+    for (key, value) in dict.iter() {
+        bindings.insert(HashedPyKey::from_bound(&key)?, Value::from_python_opaque(&value));
+    }
+    Ok(bindings)
 }
 
 fn classify_doeff_generator_as_irstream(
@@ -1754,10 +1854,18 @@ pub(crate) fn classify_yielded_bound(
                     handlers.push(kleisli);
                     handler_identities.push(identity);
                 }
+                let outside_scope = if cc.outside_scope.bind(py).is_none() {
+                    None
+                } else {
+                    Some(SegmentId::from_index(
+                        cc.outside_scope.bind(py).extract::<u32>()? as usize,
+                    ))
+                };
                 Ok(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
                     handlers,
                     handler_identities,
+                    outside_scope,
                 })
             }
             DoExprTag::GetContinuation => Ok(DoCtrl::GetContinuation),
@@ -1803,7 +1911,41 @@ pub(crate) fn classify_yielded_bound(
                 Ok(DoCtrl::EvalInScope {
                     expr: PyShared::new(expr),
                     scope,
+                    bindings: scope_bindings_from_pyany(eval.bindings.bind(py).as_any())?,
                     metadata: None,
+                })
+            }
+            DoExprTag::AllocVar => {
+                let alloc: PyRef<'_, PyAllocVar> = obj.extract()?;
+                Ok(DoCtrl::AllocVar {
+                    initial: Value::from_pyobject(alloc.initial.bind(py)),
+                })
+            }
+            DoExprTag::ReadVar => {
+                let read: PyRef<'_, PyReadVar> = obj.extract()?;
+                let var: PyRef<'_, PyVar> = read.var.bind(py).extract().map_err(|_| {
+                    PyTypeError::new_err("ReadVar.var must be Var")
+                })?;
+                Ok(DoCtrl::ReadVar { var: var.to_var_id() })
+            }
+            DoExprTag::WriteVar => {
+                let write: PyRef<'_, PyWriteVar> = obj.extract()?;
+                let var: PyRef<'_, PyVar> = write.var.bind(py).extract().map_err(|_| {
+                    PyTypeError::new_err("WriteVar.var must be Var")
+                })?;
+                Ok(DoCtrl::WriteVar {
+                    var: var.to_var_id(),
+                    value: Value::from_pyobject(write.value.bind(py)),
+                })
+            }
+            DoExprTag::WriteVarNonlocal => {
+                let write: PyRef<'_, PyWriteVarNonlocal> = obj.extract()?;
+                let var: PyRef<'_, PyVar> = write.var.bind(py).extract().map_err(|_| {
+                    PyTypeError::new_err("WriteVarNonlocal.var must be Var")
+                })?;
+                Ok(DoCtrl::WriteVarNonlocal {
+                    var: var.to_var_id(),
+                    value: Value::from_pyobject(write.value.bind(py)),
                 })
             }
             DoExprTag::AsyncEscape => {
@@ -2549,15 +2691,19 @@ pub struct PyEvalInScope {
     pub expr: Py<PyAny>,
     #[pyo3(get)]
     pub scope: Py<PyAny>,
+    #[pyo3(get)]
+    pub bindings: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyEvalInScope {
     #[new]
+    #[pyo3(signature = (expr, scope, bindings=None))]
     fn new(
         py: Python<'_>,
         expr: Py<PyAny>,
         scope: Py<PyAny>,
+        bindings: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let expr = lift_effect_to_perform_expr(py, expr)?;
         if !scope.bind(py).is_instance_of::<PyK>() {
@@ -2565,11 +2711,107 @@ impl PyEvalInScope {
                 "EvalInScope.scope must be K (opaque continuation handle)",
             ));
         }
+        let bindings = match bindings {
+            Some(bindings) => {
+                let _ = scope_bindings_from_pyany(bindings.bind(py).as_any())?;
+                bindings
+            }
+            None => PyDict::new(py).into_any().unbind(),
+        };
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::EvalInScope as u8,
             })
-            .add_subclass(PyEvalInScope { expr, scope }))
+            .add_subclass(PyEvalInScope {
+                expr,
+                scope,
+                bindings,
+            }))
+    }
+}
+
+#[pyclass(name = "AllocVar", extends=PyDoCtrlBase)]
+pub struct PyAllocVar {
+    #[pyo3(get)]
+    pub initial: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyAllocVar {
+    #[new]
+    fn new(initial: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::AllocVar as u8,
+            })
+            .add_subclass(PyAllocVar { initial })
+    }
+}
+
+#[pyclass(name = "ReadVar", extends=PyDoCtrlBase)]
+pub struct PyReadVar {
+    #[pyo3(get)]
+    pub var: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyReadVar {
+    #[new]
+    fn new(py: Python<'_>, var: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        if !var.bind(py).is_instance_of::<PyVar>() {
+            return Err(PyTypeError::new_err("ReadVar.var must be Var"));
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::ReadVar as u8,
+            })
+            .add_subclass(PyReadVar { var }))
+    }
+}
+
+#[pyclass(name = "WriteVar", extends=PyDoCtrlBase)]
+pub struct PyWriteVar {
+    #[pyo3(get)]
+    pub var: Py<PyAny>,
+    #[pyo3(get)]
+    pub value: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyWriteVar {
+    #[new]
+    fn new(py: Python<'_>, var: Py<PyAny>, value: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        if !var.bind(py).is_instance_of::<PyVar>() {
+            return Err(PyTypeError::new_err("WriteVar.var must be Var"));
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::WriteVar as u8,
+            })
+            .add_subclass(PyWriteVar { var, value }))
+    }
+}
+
+#[pyclass(name = "WriteVarNonlocal", extends=PyDoCtrlBase)]
+pub struct PyWriteVarNonlocal {
+    #[pyo3(get)]
+    pub var: Py<PyAny>,
+    #[pyo3(get)]
+    pub value: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyWriteVarNonlocal {
+    #[new]
+    fn new(py: Python<'_>, var: Py<PyAny>, value: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        if !var.bind(py).is_instance_of::<PyVar>() {
+            return Err(PyTypeError::new_err("WriteVarNonlocal.var must be Var"));
+        }
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::WriteVarNonlocal as u8,
+            })
+            .add_subclass(PyWriteVarNonlocal { var, value }))
     }
 }
 
@@ -2808,22 +3050,39 @@ pub struct PyCreateContinuation {
     pub program: Py<PyAny>,
     #[pyo3(get)]
     pub handlers: Py<PyAny>,
+    #[pyo3(get)]
+    pub outside_scope: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyCreateContinuation {
     #[new]
+    #[pyo3(signature = (program, handlers, outside_scope=None))]
     fn new(
         py: Python<'_>,
         program: Py<PyAny>,
         handlers: Py<PyAny>,
+        outside_scope: Option<Py<PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let program = lift_effect_to_perform_expr(py, program)?;
+        let outside_scope = match outside_scope {
+            Some(outside_scope) => {
+                if !outside_scope.bind(py).is_none() {
+                    let _ = outside_scope.bind(py).extract::<u32>()?;
+                }
+                outside_scope
+            }
+            None => py.None().into_pyobject(py)?.into_any().unbind(),
+        };
         Ok(PyClassInitializer::from(PyDoExprBase)
             .add_subclass(PyDoCtrlBase {
                 tag: DoExprTag::CreateContinuation as u8,
             })
-            .add_subclass(PyCreateContinuation { program, handlers }))
+            .add_subclass(PyCreateContinuation {
+                program,
+                handlers,
+                outside_scope,
+            }))
     }
 }
 
@@ -3817,6 +4076,7 @@ mod tests {
         });
     }
 
+
     #[test]
     fn test_r13i_effect_base_tag() {
         Python::attach(|py| {
@@ -4081,10 +4341,7 @@ fn run(
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
             let k = HashedPyKey::from_bound(&key)?;
-            vm.vm
-                .rust_store
-                .env
-                .insert(k, Value::from_python_opaque(&value));
+            vm.vm.env_store.insert(k, Value::from_python_opaque(&value));
         }
     }
 
@@ -4119,10 +4376,7 @@ fn async_run<'py>(
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {
             let k = HashedPyKey::from_bound(&key)?;
-            vm.vm
-                .rust_store
-                .env
-                .insert(k, Value::from_python_opaque(&value));
+            vm.vm.env_store.insert(k, Value::from_python_opaque(&value));
         }
     }
 
@@ -4206,6 +4460,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyK>()?;
     m.add_class::<PyTraceFrame>()?;
     m.add_class::<PyTraceHop>()?;
+    m.add_class::<PyVar>()?;
     m.add_class::<PyWithHandler>()?;
     m.add_class::<PyWithIntercept>()?;
     m.add_class::<PyDiscontinue>()?;
@@ -4216,6 +4471,10 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFlatMap>()?;
     m.add_class::<PyEval>()?;
     m.add_class::<PyEvalInScope>()?;
+    m.add_class::<PyAllocVar>()?;
+    m.add_class::<PyReadVar>()?;
+    m.add_class::<PyWriteVar>()?;
+    m.add_class::<PyWriteVarNonlocal>()?;
     m.add_class::<PyPerform>()?;
     m.add_class::<PyResume>()?;
     m.add_class::<PyDelegate>()?;
@@ -4253,6 +4512,10 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;
     m.add("TAG_EVAL_IN_SCOPE", DoExprTag::EvalInScope as u8)?;
+    m.add("TAG_ALLOC_VAR", DoExprTag::AllocVar as u8)?;
+    m.add("TAG_READ_VAR", DoExprTag::ReadVar as u8)?;
+    m.add("TAG_WRITE_VAR", DoExprTag::WriteVar as u8)?;
+    m.add("TAG_WRITE_VAR_NONLOCAL", DoExprTag::WriteVarNonlocal as u8)?;
     m.add("TAG_APPLY", DoExprTag::Apply as u8)?;
     m.add("TAG_EXPAND", DoExprTag::Expand as u8)?;
     m.add(

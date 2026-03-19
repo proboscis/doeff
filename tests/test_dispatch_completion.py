@@ -388,6 +388,34 @@ def test_body_completion_after_error_context_dispatch_does_not_rethrow_original_
     assert max(row["dispatch_depth"] for row in trace) <= 2
 
 
+def test_caught_try_error_does_not_leave_stale_error_context_frames_in_active_chain() -> None:
+    @do
+    def success_program() -> EffectGenerator[int]:
+        return 1
+
+    @do
+    def failing_program() -> EffectGenerator[int]:
+        raise ValueError("active-chain should stay clean after catch")
+
+    @do
+    def observe(success: bool) -> EffectGenerator[list[str]]:
+        attempt = yield Try(success_program() if success else failing_program())
+        assert attempt.is_ok() if success else attempt.is_err()
+        context = yield GetExecutionContext()
+        return [
+            entry["function_name"]
+            for entry in context.active_chain
+            if isinstance(entry, dict) and entry.get("kind") == "program_yield"
+        ]
+
+    success = run(observe(True), handlers=default_handlers())
+    failure = run(observe(False), handlers=default_handlers())
+
+    assert _is_ok(success), success.error
+    assert _is_ok(failure), failure.error
+    assert failure.value == success.value
+
+
 def test_handler_return_without_resume_is_runtime_error_not_panic() -> None:
     @do
     def bad_handler(effect: Effect, k: object):

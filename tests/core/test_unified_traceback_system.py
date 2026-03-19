@@ -73,6 +73,60 @@ def test_exceptions_attach_doeff_traceback_and_rendering() -> None:
     assert "RunResult status: err" in result.display(verbose=True)
 
 
+def test_attach_doeff_traceback_preserves_existing_active_chain_entries() -> None:
+    error = ValueError("boom")
+    error.doeff_execution_context = type(
+        "ExecutionContextStub",
+        (),
+        {
+            "active_chain": [
+                {
+                    "kind": "program_yield",
+                    "function_name": "ctx_parent",
+                    "source_file": "ctx.py",
+                    "source_line": 12,
+                    "sub_program_repr": "Gather(task)",
+                }
+            ],
+            "entries": [
+                {
+                    "kind": "spawn_boundary",
+                    "task_id": 4,
+                    "parent_task": 0,
+                    "spawn_site": {
+                        "function_name": "parent",
+                        "source_file": "parent.py",
+                        "source_line": 22,
+                    },
+                }
+            ],
+        },
+    )()
+
+    doeff_tb = attach_doeff_traceback(
+        error,
+        traceback_data={
+            "trace": [],
+            "active_chain": [
+                {
+                    "kind": "exception_site",
+                    "function_name": "child",
+                    "source_file": "child.py",
+                    "source_line": 3,
+                    "exception_type": "ValueError",
+                    "message": "boom",
+                }
+            ],
+        },
+    )
+
+    assert doeff_tb is not None
+    active_chain_types = {type(entry).__name__ for entry in doeff_tb.active_chain}
+    assert "ProgramYield" in active_chain_types
+    assert "SpawnBoundary" in active_chain_types
+    assert "ExceptionSite" in active_chain_types
+
+
 def test_raw_vm_run_attaches_doeff_traceback_to_direct_exception() -> None:
     vm = doeff_vm.PyVM()
 

@@ -4,6 +4,8 @@ use super::*;
 fn test_step_return_clears_current_segment_after_root_completion() {
     let mut vm = VM::new();
     let mut seg = Segment::new(Marker::fresh(), None);
+    seg.state_store.insert("answer".to_string(), Value::Int(42));
+    seg.writer_log.push(Value::Int(7));
     seg.mode = Mode::Return(Value::Int(42));
 
     let seg_id = vm.alloc_segment(seg);
@@ -12,6 +14,11 @@ fn test_step_return_clears_current_segment_after_root_completion() {
     let event = vm.step();
     assert!(matches!(event, StepEvent::Done(Value::Int(42))));
     assert_eq!(vm.current_segment, None);
+    assert_eq!(
+        vm.final_state_entries().get("answer"),
+        Some(&Value::Int(42))
+    );
+    assert_eq!(vm.final_log_entries(), vec![Value::Int(7)]);
 }
 
 #[test]

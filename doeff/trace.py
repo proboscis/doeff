@@ -462,6 +462,117 @@ def _entry_site(entry: ActiveChainEntry) -> tuple[str, str] | None:
     return None
 
 
+def _trace_function_basename(function_name: str) -> str:
+    return function_name.rsplit(".", 1)[-1]
+
+
+def _trace_function_matches(left: str, right: str) -> bool:
+    return left == right or _trace_function_basename(left) == _trace_function_basename(right)
+
+
+def _exception_segment_has_program_frame(
+    active_chain: list[ActiveChainEntry],
+    *,
+    exception_index: int,
+    function_name: str,
+) -> bool:
+    for previous in reversed(active_chain[:exception_index]):
+        if isinstance(previous, SpawnBoundary):
+            break
+        if isinstance(previous, ProgramYield) and _trace_function_matches(
+            previous.function_name, function_name
+        ):
+            return True
+    return False
+
+
+def _find_enclosing_throwing_effect(
+    active_chain: list[ActiveChainEntry],
+    *,
+    exception_index: int,
+) -> EffectYield | None:
+    for previous in reversed(active_chain[:exception_index]):
+        if isinstance(previous, SpawnBoundary):
+            break
+        if not isinstance(previous, EffectYield):
+            continue
+        if not isinstance(previous.result, EffectResultThrew):
+            continue
+        return previous
+    return None
+
+
+def _enclosing_handler_kind(
+    active_chain: list[ActiveChainEntry],
+    *,
+    exception_index: int,
+) -> TraceHandlerKind | None:
+    for previous in reversed(active_chain[:exception_index]):
+        if isinstance(previous, SpawnBoundary):
+            break
+        if not isinstance(previous, ProgramYield):
+            continue
+        if not previous.is_handler:
+            continue
+        if previous.function_name == "sync_spawn_intercept_handler":
+            continue
+        return previous.handler_kind
+
+    throwing_effect = _find_enclosing_throwing_effect(
+        active_chain,
+        exception_index=exception_index,
+    )
+    if throwing_effect is None:
+        return None
+
+    return next(
+        (
+            stack_entry.handler_kind
+            for stack_entry in throwing_effect.handler_stack
+            if _trace_function_matches(
+                stack_entry.handler_name, throwing_effect.result.handler_name
+            )
+        ),
+        None,
+    )
+
+
+def _synthesize_missing_handler_program_yields(
+    active_chain: list[ActiveChainEntry],
+) -> list[ActiveChainEntry]:
+    normalized: list[ActiveChainEntry] = []
+
+    for entry in active_chain:
+        if not isinstance(entry, ExceptionSite):
+            normalized.append(entry)
+            continue
+
+        if _exception_segment_has_program_frame(
+            normalized,
+            exception_index=len(normalized),
+            function_name=entry.function_name,
+        ):
+            normalized.append(entry)
+            continue
+
+        normalized.append(
+            ProgramYield(
+                function_name=entry.function_name,
+                source_file=entry.source_file,
+                source_line=entry.source_line,
+                sub_program_repr="[MISSING] <sub_program>",
+                args_repr=None,
+                handler_kind=_enclosing_handler_kind(
+                    normalized,
+                    exception_index=len(normalized),
+                ),
+            )
+        )
+        normalized.append(entry)
+
+    return normalized
+
+
 def coerce_active_chain_entries(entries: list[Any] | tuple[Any, ...]) -> list[ActiveChainEntry]:
     coerced = [coerce_active_chain_entry(entry) for entry in entries]
     active_chain: list[ActiveChainEntry] = []
@@ -522,7 +633,7 @@ def coerce_active_chain_entries(entries: list[Any] | tuple[Any, ...]) -> list[Ac
             active_chain[index] = replace(entry, sub_program_repr=effect_repr)
             break
 
-    return active_chain
+    return _synthesize_missing_handler_program_yields(active_chain)
 
 
 __all__ = [

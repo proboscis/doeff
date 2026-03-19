@@ -385,6 +385,7 @@ impl PyKleisli {
             | Value::None
             | Value::Handlers(_)
             | Value::Kleisli(_)
+            | Value::Var(_)
             | Value::Task(_)
             | Value::Promise(_)
             | Value::ExternalPromise(_)

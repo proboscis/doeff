@@ -771,6 +771,93 @@ rules:
       issue: gh-336-caller-chain
       category: correctness
 
+  - id: vm-ruststore-no-handler-specific-fields
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Lexical-scope architecture: RustStore must remain a generic key/value map.
+      Do not reintroduce handler-specific `state`, `env`, or `log` fields.
+      State/env/log storage belongs on segment chains and scoped storage.
+    paths:
+      include:
+        - "/packages/doeff-vm-core/src/rust_store.rs"
+        - "/packages/doeff-vm/src/rust_store.rs"
+    patterns:
+      - pattern-inside: |
+          pub struct RustStore {
+              ...
+          }
+      - pattern-regex: '(?m)^\s*(?:pub\s+)?(?:state|env|log)\s*:'
+
+  - id: vm-segment-no-scope-store-field
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Lexical-scope architecture: Segment must not carry a `scope_store` field
+      or `segment.scope_store` accesses. Scope ownership is structural on
+      segment-local bindings and lexical ancestry, not a ScopeStore side slot.
+    paths:
+      include:
+        - "/packages/doeff-vm-core/src/**/*.rs"
+        - "/packages/doeff-vm/src/**/*.rs"
+    pattern-either:
+      - pattern-regex: '(?m)^\s*(?:pub\s+)?scope_store\s*:'
+      - pattern: $SEG.scope_store
+
+  - id: vm-spawn-path-no-get-handlers
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Spawn inheritance must not replay handlers via DoCtrl::GetHandlers.
+      Use CreateContinuation/ResumeContinuation with outside_scope-based lexical
+      scope inheritance instead.
+    paths:
+      include:
+        - "/packages/doeff-vm-core/src/vm/dispatch.rs"
+    patterns:
+      - pattern-inside: |
+          pub(super) fn handle_resume_continuation(
+              &mut self,
+              $K: Continuation,
+              $VALUE: Value,
+          ) -> StepEvent {
+              ...
+          }
+      - pattern: DoCtrl::GetHandlers
+
+  # HandlerDispatch / DispatchOrigin and scope_parent-based spawn scope cloning are
+  # still live architecture on this branch. Add semgrep bans for those symbols only
+  # after the runtime and architecture tests stop depending on them.
+  #
+  # TODO: uncomment after Phase 1 dispatch simplification removes these runtime
+  # carriers and lexical-scope cloning helpers.
+  #
+  # - id: vm-no-handlerdispatch-or-dispatchorigin-frames
+  #   languages: [rust]
+  #   severity: ERROR
+  #   message: |
+  #     Phase 1 dispatch simplification: do not reintroduce HandlerDispatch or
+  #     DispatchOrigin frames once dispatch state is represented structurally
+  #     without dedicated frame variants.
+  #   paths:
+  #     include:
+  #       - "/packages/doeff-vm-core/src/**/*.rs"
+  #       - "/packages/doeff-vm/src/**/*.rs"
+  #   pattern-regex: '\bHandlerDispatch\b|\bDispatchOrigin\b'
+  #
+  # - id: vm-no-clone-spawn-scope-chain-or-scope-parent
+  #   languages: [rust]
+  #   severity: ERROR
+  #   message: |
+  #     Phase 1 dispatch simplification: once spawn inheritance no longer clones
+  #     lexical ancestry, do not reintroduce clone_spawn_scope_chain or
+  #     scope_parent-based scope traversal/state.
+  #   paths:
+  #     include:
+  #       - "/packages/doeff-vm-core/src/**/*.rs"
+  #       - "/packages/doeff-vm/src/**/*.rs"
+  #   pattern-regex: '\bclone_spawn_scope_chain\b|\bscope_parent\b'
+
   - id: vm-no-segment-ruststore-scope-sync
     pattern-either:
       - pattern: $RUST.scope_bindings = $SEG.scope_store
@@ -795,7 +882,7 @@ rules:
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
   - id: doctrl-variants-require-approval
-    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|Discontinue\b|WithHandler\b|WithIntercept\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|EvalInScope\b|GetCallStack\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
+    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Map\b|FlatMap\b|Perform\b|Resume\b|Transfer\b|TransferThrow\b|ResumeThrow\b|Discontinue\b|WithHandler\b|WithIntercept\b|Delegate\b|Pass\b|GetContinuation\b|GetHandlers\b|GetTraceback\b|CreateContinuation\b|ResumeContinuation\b|PythonAsyncSyntaxEscape\b|Apply\b|Expand\b|IRStream\b|Eval\b|EvalInScope\b|AllocVar\b|ReadVar\b|WriteVar\b|WriteVarNonlocal\b|ReadHandlerState\b|WriteHandlerState\b|AppendHandlerLog\b|GetCallStack\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
       include:
         - "**/packages/doeff-vm-core/src/do_ctrl.rs"

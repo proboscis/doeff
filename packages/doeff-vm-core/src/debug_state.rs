@@ -152,6 +152,13 @@ impl DebugState {
             DoCtrl::IRStream { .. } => "HandleYield(IRStream)",
             DoCtrl::Eval { .. } => "HandleYield(Eval)",
             DoCtrl::EvalInScope { .. } => "HandleYield(EvalInScope)",
+            DoCtrl::AllocVar { .. } => "HandleYield(AllocVar)",
+            DoCtrl::ReadVar { .. } => "HandleYield(ReadVar)",
+            DoCtrl::WriteVar { .. } => "HandleYield(WriteVar)",
+            DoCtrl::WriteVarNonlocal { .. } => "HandleYield(WriteVarNonlocal)",
+            DoCtrl::ReadHandlerState { .. } => "HandleYield(ReadHandlerState)",
+            DoCtrl::WriteHandlerState { .. } => "HandleYield(WriteHandlerState)",
+            DoCtrl::AppendHandlerLog { .. } => "HandleYield(AppendHandlerLog)",
             DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
         };
         match verbosity {
