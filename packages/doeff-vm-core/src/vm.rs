@@ -271,6 +271,9 @@ pub struct VM {
     scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
     scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
     scope_persistent_epochs: HashMap<ScopeId, u64>,
+    retired_scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
+    retired_scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
+    retired_scope_persistent_epochs: HashMap<ScopeId, u64>,
     completed_state_entries_snapshot: Option<HashMap<String, Value>>,
     completed_log_entries_snapshot: Option<Vec<Value>>,
     pub active_run_token: Option<u64>,
@@ -298,6 +301,9 @@ impl VM {
             scope_state_store: HashMap::new(),
             scope_writer_logs: HashMap::new(),
             scope_persistent_epochs: HashMap::new(),
+            retired_scope_state_store: HashMap::new(),
+            retired_scope_writer_logs: HashMap::new(),
+            retired_scope_persistent_epochs: HashMap::new(),
             completed_state_entries_snapshot: None,
             completed_log_entries_snapshot: None,
             active_run_token: None,
@@ -329,6 +335,9 @@ impl VM {
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
         self.scope_persistent_epochs.clear();
+        self.retired_scope_state_store.clear();
+        self.retired_scope_writer_logs.clear();
+        self.retired_scope_persistent_epochs.clear();
         self.completed_state_entries_snapshot = None;
         self.completed_log_entries_snapshot = None;
         token
@@ -356,6 +365,9 @@ impl VM {
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
         self.scope_persistent_epochs.clear();
+        self.retired_scope_state_store.clear();
+        self.retired_scope_writer_logs.clear();
+        self.retired_scope_persistent_epochs.clear();
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -385,6 +397,14 @@ impl VM {
         self.segments.alloc(segment)
     }
 
+    pub fn free_segment(&mut self, id: SegmentId) {
+        let Some(scope_id) = self.segments.get(id).map(|segment| segment.scope_id) else {
+            return;
+        };
+        self.segments.free(id);
+        self.maybe_cleanup_scope_state(scope_id);
+    }
+
     pub fn current_segment_mut(&mut self) -> Option<&mut Segment> {
         self.current_segment
             .and_then(|id| self.segments.get_mut(id))
@@ -404,6 +424,103 @@ impl VM {
         self.scope_persistent_epochs
             .entry(segment.scope_id)
             .or_insert(segment.persistent_epoch);
+    }
+
+    fn maybe_cleanup_scope_state(&mut self, scope_id: ScopeId) {
+        if self.scope_is_still_referenced(scope_id) {
+            return;
+        }
+        self.scope_variables.remove(&scope_id);
+        if let Some(state_store) = self.scope_state_store.remove(&scope_id) {
+            self.retired_scope_state_store.insert(scope_id, state_store);
+        }
+        if let Some(writer_log) = self.scope_writer_logs.remove(&scope_id) {
+            self.retired_scope_writer_logs.insert(scope_id, writer_log);
+        }
+        if let Some(epoch) = self.scope_persistent_epochs.remove(&scope_id) {
+            self.retired_scope_persistent_epochs.insert(scope_id, epoch);
+        }
+    }
+
+    fn scope_is_still_referenced(&self, scope_id: ScopeId) -> bool {
+        let mut visited = HashSet::new();
+        self.segments.iter().any(|(_, segment)| {
+            Self::segment_references_scope(segment, scope_id, &mut visited)
+        }) || self.continuation_registry.values().any(|continuation| {
+            Self::continuation_references_scope(continuation, scope_id, &mut visited)
+        })
+    }
+
+    fn segment_references_scope(
+        segment: &Segment,
+        scope_id: ScopeId,
+        visited: &mut HashSet<ContId>,
+    ) -> bool {
+        if segment.scope_id == scope_id {
+            return true;
+        }
+        if segment.throw_parent.as_ref().is_some_and(|continuation| {
+            Self::continuation_references_scope(continuation, scope_id, visited)
+        }) {
+            return true;
+        }
+        for frame in &segment.frames {
+            let referenced = match frame {
+                Frame::HandlerDispatch { continuation, .. } => {
+                    Self::continuation_references_scope(continuation, scope_id, visited)
+                }
+                Frame::DispatchOrigin { k_origin, .. } => {
+                    Self::continuation_references_scope(k_origin, scope_id, visited)
+                }
+                Frame::EvalReturn(eval_return) => {
+                    Self::eval_return_references_scope(eval_return.as_ref(), scope_id, visited)
+                }
+                Frame::Program { .. }
+                | Frame::InterceptorApply(_)
+                | Frame::InterceptorEval(_)
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. }
+                | Frame::InterceptBodyReturn { .. } => false,
+            };
+            if referenced {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn continuation_references_scope(
+        continuation: &Continuation,
+        scope_id: ScopeId,
+        visited: &mut HashSet<ContId>,
+    ) -> bool {
+        if !visited.insert(continuation.cont_id) {
+            return false;
+        }
+        if continuation.segment().is_some_and(|segment| {
+            Self::segment_references_scope(segment, scope_id, visited)
+        }) {
+            return true;
+        }
+        continuation.parent().is_some_and(|parent| {
+            Self::continuation_references_scope(parent, scope_id, visited)
+        })
+    }
+
+    fn eval_return_references_scope(
+        eval_return: &EvalReturnContinuation,
+        scope_id: ScopeId,
+        visited: &mut HashSet<ContId>,
+    ) -> bool {
+        match eval_return {
+            EvalReturnContinuation::ResumeToContinuation { continuation }
+            | EvalReturnContinuation::EvalInScopeReturn { continuation }
+            | EvalReturnContinuation::ReturnToContinuation { continuation } => {
+                Self::continuation_references_scope(continuation, scope_id, visited)
+            }
+            _ => false,
+        }
     }
 
     fn bump_scope_persistent_epoch(&mut self, scope_id: ScopeId) -> u64 {
@@ -450,17 +567,31 @@ impl VM {
             .iter()
             .map(|(scope_id, epoch)| (*scope_id, *epoch))
             .collect();
+        scopes.extend(
+            self.retired_scope_persistent_epochs
+                .iter()
+                .filter(|(scope_id, _)| !self.scope_persistent_epochs.contains_key(scope_id))
+                .map(|(scope_id, epoch)| (*scope_id, *epoch)),
+        );
         scopes.sort_by_key(|(scope_id, epoch)| (*epoch, scope_id.raw()));
 
         let mut state = HashMap::new();
         let mut logs = Vec::new();
         for (scope_id, _) in scopes {
-            if let Some(scope_state) = self.scope_state_store.get(&scope_id) {
+            if let Some(scope_state) = self
+                .scope_state_store
+                .get(&scope_id)
+                .or_else(|| self.retired_scope_state_store.get(&scope_id))
+            {
                 if !scope_state.is_empty() {
                     state.extend(scope_state.clone());
                 }
             }
-            if let Some(scope_logs) = self.scope_writer_logs.get(&scope_id) {
+            if let Some(scope_logs) = self
+                .scope_writer_logs
+                .get(&scope_id)
+                .or_else(|| self.retired_scope_writer_logs.get(&scope_id))
+            {
                 if !scope_logs.is_empty() {
                     logs.extend(scope_logs.clone());
                 }

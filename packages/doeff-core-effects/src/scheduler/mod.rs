@@ -473,8 +473,6 @@ fn step_switches_into_task_body(step: &IRStreamStep) -> bool {
     )
 }
 
-fn sched_debug(_message: impl AsRef<str>) {}
-
 /// The scheduler's internal state.
 pub struct SchedulerState {
     ready: ReadySet,
@@ -1659,13 +1657,6 @@ impl SchedulerState {
             && waiter.items.len() > 1;
         let merge_items = should_merge_logs.then(|| waiter.items.clone());
 
-        sched_debug(format!(
-            "stage_ready_waiter waiter={} task={:?} mode={:?}",
-            waiter_id.raw(),
-            waiter.waiting_task.map(|task| task.raw()),
-            waiter.mode
-        ));
-
         self.clear_waiters_for_owner(waiter.waiting_task, waiter_id);
 
         if let Some(waiting_task) = waiter.waiting_task {
@@ -2329,7 +2320,6 @@ impl SchedulerState {
         owner: WaitOwner,
         store: &mut RustStore,
     ) -> Result<Option<IRStreamStep>, PyException> {
-        sched_debug(format!("transfer_ready_owner owner={owner:?}"));
         match owner {
             WaitOwner::Task { task_id, cont_id } => {
                 if !self.ready_task_ids.contains(&task_id) {
@@ -2370,13 +2360,6 @@ impl SchedulerState {
                 let Some(ready_root) = self.ready_root_resumes.remove(&cont_id) else {
                     return Ok(None);
                 };
-                sched_debug(format!(
-                    "transfer_ready_owner root cont_id={} caller={:?} dispatch_id={:?} outcome={:?}",
-                    cont_id.raw(),
-                    ready_root.continuation.captured_caller(),
-                    ready_root.continuation.dispatch_id(),
-                    ready_root.outcome
-                ));
                 self.clear_waiters_for_owner(
                     ready_root.waiting_task,
                     ready_root.continuation.cont_id,
@@ -2502,12 +2485,6 @@ impl SchedulerProgram {
         cont_id: ContId,
         active_driver_owner: Option<WaitOwner>,
     ) -> WaitOwner {
-        sched_debug(format!(
-            "wait_owner phase={:?} waiting_task={:?} cont_id={}",
-            self.phase,
-            waiting_task.map(|task| task.raw()),
-            cont_id.raw()
-        ));
         match (&self.phase, waiting_task) {
             (
                 SchedulerPhase::Driving {
@@ -2573,12 +2550,6 @@ impl SchedulerProgram {
                 let keep_driving = next_running_task.is_some()
                     && !resumed_waiting_owner
                     && step_switches_into_task_body(&step);
-                sched_debug(format!(
-                    "finish_owner_transfer owner={owner:?} next_running_task={:?} resumed_waiting_owner={} keep_driving={} step={step:?}",
-                    next_running_task.map(|task| task.raw()),
-                    resumed_waiting_owner,
-                    keep_driving
-                ));
                 self.state
                     .lock()
                     .expect("Scheduler lock poisoned")
@@ -2667,7 +2638,6 @@ impl SchedulerProgram {
         deadlock_message: String,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        sched_debug(format!("continue_wait_transfer owner={owner:?}"));
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         match Self::try_transfer_ready_owner(&mut state, owner, store) {
             Ok(Some(step)) => {
@@ -3010,11 +2980,6 @@ impl SchedulerProgram {
         running_task: TaskId,
         store: &mut RustStore,
     ) -> IRStreamStep {
-        sched_debug(format!(
-            "continue_driving owner={owner:?} running_task={} outcome_ok={}",
-            running_task.raw(),
-            outcome.is_ok()
-        ));
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         state.active_driver_owner = None;
         let outcome_for_fallback = outcome.clone();
@@ -3059,18 +3024,12 @@ impl SchedulerProgram {
         }
 
         if !owner_still_waiting {
-            sched_debug(format!(
-                "owner no longer waiting owner={owner:?}, trying transfer_ready_owner"
-            ));
             match Self::try_transfer_ready_owner(&mut state, owner, store) {
                 Ok(Some(step)) => {
-                    sched_debug("transfer_ready_owner returned step");
                     self.phase = SchedulerPhase::Idle;
                     return step;
                 }
-                Ok(None) => {
-                    sched_debug("transfer_ready_owner returned none");
-                }
+                Ok(None) => {}
                 Err(error) => return IRStreamStep::Throw(error),
             }
         }
@@ -3502,10 +3461,6 @@ impl IRStreamProgram for SchedulerProgram {
                     state.active_driver_owner.zip(state.current_task)
                 };
                 if let Some((owner, running_task)) = active_driver {
-                    sched_debug(format!(
-                        "resume idle -> continue_driving owner={owner:?} running_task={}",
-                        running_task.raw()
-                    ));
                     return self.continue_driving(Ok(value), owner, running_task, store);
                 }
                 IRStreamStep::Return(value)
@@ -3540,10 +3495,6 @@ impl IRStreamProgram for SchedulerProgram {
                     state.active_driver_owner.zip(state.current_task)
                 };
                 if let Some((owner, running_task)) = active_driver {
-                    sched_debug(format!(
-                        "throw idle -> continue_driving owner={owner:?} running_task={}",
-                        running_task.raw()
-                    ));
                     return self.continue_driving(Err(exc), owner, running_task, store);
                 }
                 IRStreamStep::Throw(exc)

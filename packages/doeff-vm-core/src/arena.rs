@@ -18,7 +18,10 @@ impl SegmentArena {
 
     pub fn alloc(&mut self, segment: Segment) -> SegmentId {
         if let Some(index) = self.free_list.pop() {
-            debug_assert!(self.segments.get(index).is_some_and(|slot| slot.is_none()));
+            assert!(
+                self.segments.get(index).is_some_and(|slot| slot.is_none()),
+                "reused arena slot must be vacant before allocation: index={index}"
+            );
             self.segments[index] = Some(segment);
             return SegmentId::from_index(index);
         }

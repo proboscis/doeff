@@ -51,7 +51,7 @@ fn test_resume_continuation_uses_captured_caller_instead_of_current_sibling_segm
         .expect("child segment must exist for continuation capture");
     let continuation = Continuation::capture(child_segment, child_id, None);
 
-    vm.segments.free(child_id);
+    vm.free_segment(child_id);
 
     let sibling_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(parent_id)));
     assert_eq!(
@@ -200,7 +200,7 @@ fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() 
         .expect("child segment must exist for continuation capture");
     let continuation = Continuation::capture(child_segment, child_id, None);
 
-    vm.segments.free(child_id);
+    vm.free_segment(child_id);
 
     let sibling_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(parent_id)));
     assert_eq!(
