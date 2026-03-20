@@ -99,7 +99,7 @@ def test_sa008_modify_atomic_on_transform_error() -> None:
     assert result.raw_store["value"] == 100
 
 
-def test_sa008_gather_spawned_puts_update_shared_run_store() -> None:
+def test_sa008_gather_spawned_puts_share_parent_handler_state() -> None:
     @do
     def increment():
         current = yield Get("counter")
@@ -118,10 +118,10 @@ def test_sa008_gather_spawned_puts_update_shared_run_store() -> None:
 
     result = run(prog(), handlers=default_handlers())
 
-    # Spawn now reuses the parent's installed handlers. If a branch needs isolated
-    # state, wrap it in an explicit WithHandler(...) state scope before spawning.
-    assert result.value == ([0, 0, 0], 0)
-    assert result.raw_store["counter"] == 1
+    # Spawn reuses the live parent state handler, so later branches observe the
+    # earlier Put effects through the shared scheduler-visible handler instance.
+    assert result.value == ([0, 1, 2], 3)
+    assert result.raw_store["counter"] == 3
 
 
 def test_sa008_sync_await_runs_in_default_handlers() -> None:
@@ -152,7 +152,7 @@ def test_sa008_sync_await_propagates_coroutine_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sa008_gather_branch_state_changes_not_shared() -> None:
+async def test_sa008_gather_branch_state_changes_are_shared() -> None:
     @do
     def writer():
         yield Put("message", "written by branch 1")
@@ -175,4 +175,4 @@ async def test_sa008_gather_branch_state_changes_not_shared() -> None:
 
     result = await async_run(prog(), handlers=default_async_handlers())
 
-    assert result.value == (["writer done", "initial"], "initial")
+    assert result.value == (["writer done", "written by branch 1"], "written by branch 1")

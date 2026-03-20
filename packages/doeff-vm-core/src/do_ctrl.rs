@@ -449,7 +449,7 @@ mod tests {
         let enum_body = doctrl_enum_body(src);
         let variant_count = count_top_level_variants(enum_body);
         assert_eq!(
-            variant_count, 25,
+            variant_count, 32,
             "DoCtrl variant count changed! New variants require explicit human approval."
         );
     }

@@ -798,8 +798,8 @@ rules:
       segment-local bindings and lexical ancestry, not a ScopeStore side slot.
     paths:
       include:
-        - "/packages/doeff-vm-core/src/**/*.rs"
-        - "/packages/doeff-vm/src/**/*.rs"
+        - "**/packages/doeff-vm-core/src/**/*.rs"
+        - "**/packages/doeff-vm/src/**/*.rs"
     pattern-either:
       - pattern-regex: '(?m)^\s*(?:pub\s+)?scope_store\s*:'
       - pattern: $SEG.scope_store
@@ -825,38 +825,34 @@ rules:
           }
       - pattern: DoCtrl::GetHandlers
 
-  # HandlerDispatch / DispatchOrigin and scope_parent-based spawn scope cloning are
-  # still live architecture on this branch. Add semgrep bans for those symbols only
-  # after the runtime and architecture tests stop depending on them.
-  #
-  # TODO: uncomment after Phase 1 dispatch simplification removes these runtime
-  # carriers and lexical-scope cloning helpers.
-  #
-  # - id: vm-no-handlerdispatch-or-dispatchorigin-frames
-  #   languages: [rust]
-  #   severity: ERROR
-  #   message: |
-  #     Phase 1 dispatch simplification: do not reintroduce HandlerDispatch or
-  #     DispatchOrigin frames once dispatch state is represented structurally
-  #     without dedicated frame variants.
-  #   paths:
-  #     include:
-  #       - "/packages/doeff-vm-core/src/**/*.rs"
-  #       - "/packages/doeff-vm/src/**/*.rs"
-  #   pattern-regex: '\bHandlerDispatch\b|\bDispatchOrigin\b'
-  #
-  # - id: vm-no-clone-spawn-scope-chain-or-scope-parent
-  #   languages: [rust]
-  #   severity: ERROR
-  #   message: |
-  #     Phase 1 dispatch simplification: once spawn inheritance no longer clones
-  #     lexical ancestry, do not reintroduce clone_spawn_scope_chain or
-  #     scope_parent-based scope traversal/state.
-  #   paths:
-  #     include:
-  #       - "/packages/doeff-vm-core/src/**/*.rs"
-  #       - "/packages/doeff-vm/src/**/*.rs"
-  #   pattern-regex: '\bclone_spawn_scope_chain\b|\bscope_parent\b'
+  - id: vm-no-clone-spawn-scope-chain
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Shared-handler Spawn semantics (SPEC-VM-019 Rev 3 / DEC-VM-012):
+      do not reintroduce clone_spawn_scope_chain. Spawned tasks must reuse the
+      live caller-chain handler segments instead of cloning per-task copies.
+    paths:
+      include:
+        - "/packages/doeff-vm-core/src/**/*.rs"
+        - "/packages/doeff-vm/src/**/*.rs"
+    pattern-regex: '\bclone_spawn_scope_chain\b'
+
+  - id: vm-spawn-resume-no-caller-scope-rewrite
+    languages: [rust]
+    severity: ERROR
+    message: |
+      Shared-handler Spawn semantics (SPEC-VM-019 Rev 3 / DEC-VM-012):
+      ResumeContinuation must keep the scheduler segment as `caller` for
+      spawned tasks. Do not rewrite caller flow onto lexical scope ancestry or
+      revive clone-based spawn scope copying.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm/dispatch.rs"
+        - "**/packages/doeff-vm/src/vm/dispatch.rs"
+    pattern-either:
+      - pattern: scope_outside = self.clone_spawn_scope_chain($SEG_ID, caller_outside);
+      - pattern: caller_outside = scope_outside;
 
   - id: vm-no-segment-ruststore-scope-sync
     pattern-either:

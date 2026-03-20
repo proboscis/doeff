@@ -51,7 +51,7 @@ fn test_resume_continuation_uses_captured_caller_instead_of_current_sibling_segm
         .expect("child segment must exist for continuation capture");
     let continuation = Continuation::capture(child_segment, child_id, None);
 
-    vm.segments.free(child_id);
+    vm.free_segment(child_id);
 
     let sibling_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(parent_id)));
     assert_eq!(
@@ -128,6 +128,67 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
 }
 
 #[test]
+fn test_dispatch_resume_relinks_handler_segment_to_captured_caller_chain() {
+    let mut vm = VM::new();
+
+    let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    let captured_caller_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
+    let effect_site_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(captured_caller_id)));
+    let effect_site_segment = vm
+        .segments
+        .get(effect_site_id)
+        .expect("effect-site segment must exist for continuation capture");
+    let dispatch_id = DispatchId::fresh();
+    let continuation = Continuation::capture(effect_site_segment, effect_site_id, Some(dispatch_id));
+
+    let prompt_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
+    let mut handler_seg = Segment::new(Marker::fresh(), Some(prompt_seg_id));
+    handler_seg.push_frame(Frame::HandlerDispatch {
+        dispatch_id,
+        continuation: continuation.clone(),
+        prompt_seg_id,
+    });
+    let handler_seg_id = vm.alloc_segment(handler_seg);
+    vm.current_segment = Some(handler_seg_id);
+
+    let event = vm.handle_dispatch_resume(continuation.clone(), Value::Unit);
+    assert!(matches!(event, StepEvent::Continue));
+
+    let resumed_seg_id = vm
+        .current_segment
+        .expect("resumed continuation should install a new current segment");
+    let resumed_segment = vm
+        .segments
+        .get(resumed_seg_id)
+        .expect("resumed continuation segment must exist");
+    assert_eq!(resumed_segment.caller, Some(handler_seg_id));
+
+    let handler_segment = vm
+        .segments
+        .get(handler_seg_id)
+        .expect("handler segment must remain live while continuation runs");
+    assert_eq!(
+        handler_segment.caller,
+        Some(captured_caller_id),
+        "handler segment must expose the continuation's captured caller chain during Resume"
+    );
+
+    vm.current_segment = Some(handler_seg_id);
+    vm.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+    let event = vm.step();
+    assert!(matches!(event, StepEvent::Continue));
+    let handler_segment = vm
+        .segments
+        .get(handler_seg_id)
+        .expect("handler segment must still exist after popping HandlerDispatch");
+    assert_eq!(
+        handler_segment.caller,
+        Some(prompt_seg_id),
+        "HandlerDispatch completion must restore the prompt boundary caller"
+    );
+}
+
+#[test]
 fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() {
     let mut vm = VM::new();
 
@@ -139,7 +200,7 @@ fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() 
         .expect("child segment must exist for continuation capture");
     let continuation = Continuation::capture(child_segment, child_id, None);
 
-    vm.segments.free(child_id);
+    vm.free_segment(child_id);
 
     let sibling_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(parent_id)));
     assert_eq!(
@@ -173,4 +234,160 @@ fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() 
         resumed_segment.mode,
         Mode::Throw(PyException::RuntimeError { ref message, .. }) if message == "boom"
     ));
+}
+
+#[test]
+fn test_eval_in_scope_uses_scope_chain_for_dynamic_handler_lookup() {
+    let mut vm = VM::new();
+
+    let scope_parent_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    let scope_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(scope_parent_id)));
+    let scope_seg = vm
+        .segments
+        .get(scope_seg_id)
+        .expect("scope segment must exist for continuation capture");
+    let scope = Continuation::capture(scope_seg, scope_seg_id, None);
+
+    let current_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(scope_parent_id)));
+    vm.current_segment = Some(current_seg_id);
+
+    let expr = Python::attach(|py| PyShared::new(py.None()));
+    let event =
+        vm.handle_yield_eval_in_scope(expr, scope, std::collections::HashMap::new(), None);
+    assert!(matches!(event, StepEvent::NeedsPython(_)));
+
+    let child_seg_id = vm
+        .current_segment
+        .expect("EvalInScope should switch into a child segment");
+    let child_seg = vm
+        .segments
+        .get(child_seg_id)
+        .expect("EvalInScope child segment must exist");
+
+    assert_eq!(
+        child_seg.caller,
+        Some(scope_seg_id),
+        "EvalInScope child must inherit the scope continuation's caller chain for handler lookup"
+    );
+    assert_ne!(
+        child_seg.caller,
+        Some(current_seg_id),
+        "EvalInScope child must not hide outer handlers behind the current handler segment"
+    );
+}
+
+#[test]
+fn test_resume_unstarted_continuation_inserts_return_anchor_above_outside_scope() {
+    let mut vm = VM::new();
+
+    let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    vm.current_segment = Some(scheduler_seg_id);
+
+    let expr = Python::attach(|py| PyShared::new(py.None()));
+    let continuation = Continuation::create_unstarted_with_metadata(expr, Vec::new(), None, Some(outside_scope_id));
+
+    let event = vm.handle_resume_continuation(continuation, Value::None);
+    assert!(matches!(event, StepEvent::NeedsPython(_)));
+
+    let resumed_seg_id = vm
+        .current_segment
+        .expect("resumed unstarted continuation should install a new task body segment");
+    let resumed_seg = vm
+        .segments
+        .get(resumed_seg_id)
+        .expect("resumed unstarted continuation segment must exist");
+
+    let anchor_seg_id = resumed_seg
+        .caller
+        .expect("spawned task body must attach to a return anchor");
+    let anchor_seg = vm
+        .segments
+        .get(anchor_seg_id)
+        .expect("spawned task return anchor must exist");
+
+    assert_eq!(
+        anchor_seg.caller,
+        Some(scheduler_seg_id),
+        "Spawned task return anchor must enter through the live caller chain"
+    );
+    assert_ne!(
+        anchor_seg.caller,
+        Some(outside_scope_id),
+        "Spawned task return anchor must not bypass the live caller chain"
+    );
+    assert!(matches!(
+        anchor_seg.frames.last(),
+        Some(Frame::EvalReturn(continuation))
+            if matches!(
+                continuation.as_ref(),
+                EvalReturnContinuation::ReturnToContinuation { .. }
+            )
+    ));
+}
+
+#[test]
+fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrappers() {
+    let mut vm = VM::new();
+
+    let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    vm.current_segment = Some(scheduler_seg_id);
+
+    let expr = Python::attach(|py| PyShared::new(py.None()));
+    let handler: KleisliRef = Python::attach(|py| {
+        let callable = py
+            .eval(c"lambda effect, k: None", None, None)
+            .expect("lambda should compile");
+        std::sync::Arc::new(
+            PyKleisli::from_handler(py, callable.unbind()).expect("handler should coerce"),
+        ) as KleisliRef
+    });
+    let continuation = Continuation::create_unstarted_with_metadata(
+        expr,
+        vec![handler],
+        None,
+        Some(outside_scope_id),
+    );
+
+    let event = vm.handle_resume_continuation(continuation, Value::None);
+    assert!(matches!(event, StepEvent::NeedsPython(_)));
+
+    let resumed_seg_id = vm
+        .current_segment
+        .expect("resumed unstarted continuation should install a new task body segment");
+    let resumed_seg = vm
+        .segments
+        .get(resumed_seg_id)
+        .expect("resumed unstarted continuation segment must exist");
+    let handler_body_seg_id = resumed_seg
+        .caller
+        .expect("spawned task body must attach to a handler body segment");
+    let handler_body_seg = vm
+        .segments
+        .get(handler_body_seg_id)
+        .expect("handler body segment must exist");
+    let prompt_seg_id = handler_body_seg
+        .caller
+        .expect("handler body must attach to a prompt segment");
+    let prompt_seg = vm
+        .segments
+        .get(prompt_seg_id)
+        .expect("prompt segment must exist");
+
+    assert_eq!(
+        prompt_seg.scope_parent,
+        Some(outside_scope_id),
+        "spawn prompt must retain the captured lexical scope"
+    );
+    assert_eq!(
+        handler_body_seg.scope_parent,
+        Some(outside_scope_id),
+        "spawn handler body must not become a scope_parent bridge"
+    );
+    assert_eq!(
+        resumed_seg.scope_parent,
+        Some(outside_scope_id),
+        "spawned task body must retain the captured lexical scope root"
+    );
 }

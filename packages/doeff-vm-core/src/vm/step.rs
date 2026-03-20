@@ -189,7 +189,7 @@ impl VM {
                         {
                             self.segments
                                 .reparent_children(seg_id, caller, scope_parent);
-                            self.segments.free(seg_id);
+                            self.free_segment(seg_id);
                             self.current_segment = caller;
                             return self.handle_transfer_throw_non_terminal(parent, exc);
                         } else if let Some(caller_id) = caller {
@@ -197,7 +197,7 @@ impl VM {
                                 .reparent_children(seg_id, Some(caller_id), scope_parent);
                             self.current_segment = Some(caller_id);
                             self.current_seg_mut().mode = Mode::Throw(exc);
-                            self.segments.free(seg_id);
+                            self.free_segment(seg_id);
                             return StepEvent::Continue;
                         } else {
                             self.finalize_active_dispatches_as_threw(&exc);
@@ -206,7 +206,7 @@ impl VM {
                             self.completed_segment = Some(seg_id);
                             self.store_completed_outputs_from(seg_id);
                             self.segments.reparent_children(seg_id, None, scope_parent);
-                            self.segments.free(seg_id);
+                            self.free_segment(seg_id);
                             self.current_segment = None;
                             return StepEvent::Error(VMError::uncaught_exception(
                                 exc,
@@ -279,7 +279,7 @@ impl VM {
             Frame::HandlerDispatch {
                 dispatch_id,
                 continuation,
-                ..
+                prompt_seg_id: _,
             } => self.step_handler_dispatch_frame(dispatch_id, continuation, mode),
             Frame::DispatchOrigin {
                 dispatch_id,
@@ -568,7 +568,31 @@ impl VM {
         continuation: EvalReturnContinuation,
         mode: Mode,
     ) -> StepEvent {
-        if let EvalReturnContinuation::EvalInScopeReturn { continuation } = continuation {
+        if let EvalReturnContinuation::ResumeToContinuation { continuation } = continuation {
+            self.current_seg_mut().mode = match mode {
+                Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Resume {
+                    continuation,
+                    value,
+                }),
+                Mode::Throw(exception) => Mode::HandleYield(DoCtrl::ResumeThrow {
+                    continuation,
+                    exception,
+                }),
+                Mode::HandleYield(yielded) => {
+                    unreachable!(
+                        "resume-to-continuation frame received HandleYield mode: {yielded:?}"
+                    )
+                }
+                Mode::Return(value) => {
+                    unreachable!("resume-to-continuation frame received Return mode: {value:?}")
+                }
+            };
+            return StepEvent::Continue;
+        }
+
+        if let EvalReturnContinuation::ReturnToContinuation { continuation }
+        | EvalReturnContinuation::EvalInScopeReturn { continuation } = continuation
+        {
             self.current_seg_mut().mode = match mode {
                 Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Transfer {
                     continuation,
@@ -714,8 +738,10 @@ impl VM {
                     metadata,
                 })
             }
-            EvalReturnContinuation::EvalInScopeReturn { .. } => {
-                unreachable!("EvalInScopeReturn continuation is handled before value dispatch")
+            EvalReturnContinuation::ResumeToContinuation { .. }
+            | EvalReturnContinuation::ReturnToContinuation { .. }
+            | EvalReturnContinuation::EvalInScopeReturn { .. } => {
+                unreachable!("return-to-continuation frames are handled before value dispatch")
             }
         }
     }
@@ -850,7 +876,7 @@ impl VM {
             }
             IRStreamStep::Throw(exc) => {
                 if let Some(ref m) = metadata {
-                    self.emit_frame_exited_due_to_error(m);
+                    self.emit_frame_exited_due_to_error(Some(&stream), m, handler_kind, &exc);
                 }
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
@@ -921,7 +947,10 @@ impl VM {
                         "RustProgramContinuation outside dispatch",
                     ));
                 };
-                let Some((_, k, marker)) = self.active_handler_dispatch_for(dispatch_id) else {
+                let Some((_, k, marker)) = self
+                    .active_handler_dispatch_for(dispatch_id)
+                    .or_else(|| self.handler_dispatch_for_any(dispatch_id))
+                else {
                     return StepEvent::Error(VMError::internal(
                         "RustProgramContinuation: active handler dispatch not found",
                     ));
@@ -1037,9 +1066,13 @@ impl VM {
             visited_segments: &mut HashSet<SegmentId>,
         ) {
             let mut cursor = start;
+            let mut path_segments = HashSet::new();
             while let Some(seg_id) = cursor {
-                if !visited_segments.insert(seg_id) {
+                if !path_segments.insert(seg_id) {
                     debug_assert!(false, "segment graph cycle detected at {:?}", seg_id);
+                    break;
+                }
+                if !visited_segments.insert(seg_id) {
                     break;
                 }
                 let Some(seg) = vm.segments.get(seg_id) else {
@@ -1620,7 +1653,11 @@ impl VM {
         handler_identities: Vec<Option<PyShared>>,
         outside_scope: Option<SegmentId>,
     ) -> StepEvent {
-        let metadata = self.nearest_auto_unwrap_programlike_metadata();
+        let metadata = if outside_scope.is_some() {
+            None
+        } else {
+            self.nearest_auto_unwrap_programlike_metadata()
+        };
         self.handle_create_continuation(expr, handlers, handler_identities, metadata, outside_scope)
     }
 
@@ -1872,6 +1909,27 @@ impl VM {
     }
 
     fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
+        if let Some((stream, metadata, handler_kind)) = self.current_seg().frames.iter().rev().find_map(
+            |frame| match frame {
+                Frame::Program {
+                    stream,
+                    metadata: Some(metadata),
+                    handler_kind,
+                } => Some((stream.clone(), metadata.clone(), *handler_kind)),
+                Frame::Program { .. }
+                | Frame::InterceptorApply(_)
+                | Frame::InterceptorEval(_)
+                | Frame::HandlerDispatch { .. }
+                | Frame::DispatchOrigin { .. }
+                | Frame::EvalReturn(_)
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. }
+                | Frame::InterceptBodyReturn { .. } => None,
+            },
+        ) {
+            self.emit_frame_location(&stream, &metadata, handler_kind);
+        }
         let cont = Continuation::create_unstarted_with_metadata(
             expr,
             Vec::new(),
@@ -1903,11 +1961,15 @@ impl VM {
                 "EvalInScope received scope from unknown segment",
             ));
         };
+        let child_caller_seg_id = scope
+            .segment_id()
+            .filter(|seg_id| self.segments.get(*seg_id).is_some())
+            .unwrap_or(scope_parent_seg_id);
 
         // EvalInScope is a lexical child scope. It must point at the live scope
         // chain so reads/nonlocal writes reach the original segments instead of
         // a replay copy.
-        let mut child_seg = Segment::new(Marker::fresh(), Some(current_seg_id));
+        let mut child_seg = Segment::new(Marker::fresh(), Some(child_caller_seg_id));
         child_seg.scope_parent = Some(scope_parent_seg_id);
         child_seg.named_bindings = bindings;
         self.copy_interceptor_guard_state(Some(current_seg_id), &mut child_seg);
@@ -2044,6 +2106,12 @@ impl VM {
                             | EvalReturnContinuation::ExpandResolveArg { metadata, .. }
                             | EvalReturnContinuation::ExpandResolveKwarg { metadata, .. } => {
                                 stack.push(metadata.clone());
+                            }
+                            EvalReturnContinuation::ResumeToContinuation { .. } => {
+                                // no metadata
+                            }
+                            EvalReturnContinuation::ReturnToContinuation { .. } => {
+                                // no metadata
                             }
                             EvalReturnContinuation::EvalInScopeReturn { .. } => {
                                 // no metadata
@@ -2202,7 +2270,7 @@ impl VM {
                 self.segments
                     .reparent_children(seg_id, Some(caller_id), scope_parent);
                 self.current_segment = Some(caller_id);
-                self.segments.free(seg_id);
+                self.free_segment(seg_id);
                 self.current_seg_mut().mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
@@ -2210,7 +2278,7 @@ impl VM {
                 self.segments.reparent_children(seg_id, None, scope_parent);
                 self.completed_segment = Some(seg_id);
                 self.store_completed_outputs_from(seg_id);
-                self.segments.free(seg_id);
+                self.free_segment(seg_id);
                 self.current_segment = None;
                 StepEvent::Done(value)
             }
@@ -2283,6 +2351,9 @@ impl VM {
                 self.current_seg_mut().mode = Mode::HandleYield(yielded);
             }
             PyCallOutcome::GenError(exception) => {
+                if let Some(ref m) = metadata {
+                    self.emit_frame_exited_due_to_error(None, m, None, &exception);
+                }
                 self.current_seg_mut().mode =
                     self.mode_after_generror(GenErrorSite::EvalExpr, exception, false);
             }
@@ -2598,7 +2669,12 @@ impl VM {
             }
             PyCallOutcome::GenError(exception) => {
                 if let Some(ref m) = metadata {
-                    self.emit_frame_exited_due_to_error(m);
+                    self.emit_frame_exited_due_to_error(
+                        Some(&stream),
+                        m,
+                        handler_kind,
+                        &exception,
+                    );
                 }
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)

@@ -4,16 +4,22 @@ import doeff_vm
 
 from doeff import (
     AllocVar,
+    Effect,
     Gather,
     Local,
+    Pass,
     ReadVar,
     Spawn,
+    Tell,
+    WithHandler,
+    WithIntercept,
     WriteVar,
     WriteVarNonlocal,
     default_handlers,
     do,
     run,
 )
+from doeff.types import EffectGenerator
 
 
 @do
@@ -114,3 +120,38 @@ def test_spawn_does_not_duplicate_handler_chain() -> None:
 
     result = run(program(), handlers=default_handlers())
     assert result.value[1] == result.value[0]
+
+
+def test_spawn_many_tasks_do_not_accumulate_handler_chain() -> None:
+    @do
+    def _cache_handler(effect: Effect, k) -> EffectGenerator:
+        yield Pass()
+
+    @do
+    def _interceptor(expr):
+        return expr
+
+    @do
+    def _worker(i: int):
+        before = yield _count_visible_handlers()
+        yield Tell(f"worker {i}")
+        after = yield _count_visible_handlers()
+        return before, after
+
+    @do
+    def program():
+        tasks = []
+        for i in range(40):
+            tasks.append((yield Spawn(_worker(i))))
+        return list((yield Gather(*tasks)))
+
+    result = run(
+        WithIntercept(_interceptor, WithHandler(_cache_handler, program())),
+        handlers=default_handlers(),
+    )
+
+    starts = {before for before, _ in result.value}
+    ends = {after for _, after in result.value}
+    assert len(starts) == 1
+    assert len(ends) == 1
+    assert starts == ends
