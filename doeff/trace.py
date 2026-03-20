@@ -1,6 +1,5 @@
 """Unified VM trace entry and active-chain types."""
 
-
 from dataclasses import dataclass, replace
 from typing import Any, Literal, TypeAlias
 
@@ -154,7 +153,9 @@ class ExceptionSite:
     message: str
 
 
-ActiveChainEntry: TypeAlias = ProgramYield | EffectYield | SpawnBoundary | ContextEntry | ExceptionSite
+ActiveChainEntry: TypeAlias = (
+    ProgramYield | EffectYield | SpawnBoundary | ContextEntry | ExceptionSite
+)
 
 
 def _coerce_handler_kind(value: Any) -> TraceHandlerKind:
@@ -353,10 +354,7 @@ def _normalize_effect_yield(entry: EffectYield) -> EffectYield:
         if index == active_index:
             normalized_stack.append(replace(stack_entry, status="threw"))
             continue
-        if (
-            stack_entry.status == "threw"
-            and stack_entry.handler_name == entry.result.handler_name
-        ):
+        if stack_entry.status == "threw" and stack_entry.handler_name == entry.result.handler_name:
             normalized_stack.append(replace(stack_entry, status="pending"))
             continue
         normalized_stack.append(stack_entry)
@@ -506,6 +504,7 @@ def _enclosing_handler_kind(
     active_chain: list[ActiveChainEntry],
     *,
     exception_index: int,
+    function_name: str | None = None,
 ) -> TraceHandlerKind | None:
     for previous in reversed(active_chain[:exception_index]):
         if isinstance(previous, SpawnBoundary):
@@ -515,6 +514,8 @@ def _enclosing_handler_kind(
         if not previous.is_handler:
             continue
         if previous.function_name == "sync_spawn_intercept_handler":
+            continue
+        if function_name is not None and previous.function_name != function_name:
             continue
         return previous.handler_kind
 
@@ -526,6 +527,16 @@ def _enclosing_handler_kind(
         return None
 
     return next(
+        (
+            stack_entry.handler_kind
+            for stack_entry in throwing_effect.handler_stack
+            if _trace_function_matches(
+                stack_entry.handler_name,
+                function_name or throwing_effect.result.handler_name,
+            )
+        ),
+        None,
+    ) or next(
         (
             stack_entry.handler_kind
             for stack_entry in throwing_effect.handler_stack
@@ -565,6 +576,7 @@ def _synthesize_missing_handler_program_yields(
                 handler_kind=_enclosing_handler_kind(
                     normalized,
                     exception_index=len(normalized),
+                    function_name=entry.function_name,
                 ),
             )
         )

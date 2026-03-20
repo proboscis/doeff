@@ -3,6 +3,7 @@ from pathlib import Path
 
 CORE_ROOT = Path(__file__).resolve().parents[1]
 FRAME_RS = CORE_ROOT / "src/frame.rs"
+SEGMENT_RS = CORE_ROOT / "src/segment.rs"
 VM_RS = CORE_ROOT / "src/vm.rs"
 VM_DISPATCH_RS = CORE_ROOT / "src/vm/dispatch.rs"
 VM_STEP_RS = CORE_ROOT / "src/vm/step.rs"
@@ -46,29 +47,66 @@ def _function_block(source: str, signature: str) -> str:
     raise AssertionError(f"unterminated function block: {signature}")
 
 
-def test_frame_dispatch_origin_is_runtime_dispatch_anchor() -> None:
+def test_frame_runtime_has_no_dispatch_special_frames() -> None:
     source = _runtime_source(FRAME_RS)
-    assert "DispatchOrigin {" in source, (
-        "Dispatch must be anchored in Frame::DispatchOrigin on the active handler segment."
+    assert "HandlerDispatch {" not in source, (
+        "Dispatch ownership must no longer live in Frame::HandlerDispatch."
     )
-    assert "dispatch_id: DispatchId" in source
-    assert "effect: DispatchEffect" in source
-    assert "k_origin: crate::continuation::Continuation" in source or "k_origin: Continuation" in source
+    assert "DispatchOrigin {" not in source, (
+        "Dispatch ownership must no longer live in Frame::DispatchOrigin."
+    )
 
 
-def test_dispatch_origin_is_installed_on_handler_segment_not_prompt_boundary() -> None:
+def test_segment_structurally_owns_dispatch_state() -> None:
+    source = _runtime_source(SEGMENT_RS)
+
+    assert "pub struct HandlerDispatchState" in source, (
+        "Handler dispatch metadata must move onto Segment-owned state."
+    )
+    assert "pub struct DispatchOriginState" in source, (
+        "Dispatch origin metadata must move onto Segment-owned state."
+    )
+    assert "pub handler_dispatch: Option<HandlerDispatchState>" in source, (
+        "Segments must own the active handler-dispatch state structurally."
+    )
+    assert "pub dispatch_origin: Option<DispatchOriginState>" in source, (
+        "Segments must own the dispatch-origin state structurally."
+    )
+
+
+def test_handler_segment_stores_dispatch_state_without_special_frames() -> None:
     source = _vm_runtime_source()
 
-    assert "handler_seg.push_frame(Frame::DispatchOrigin" in source, (
-        "DispatchOrigin must be installed on the handler segment so only handler-return paths "
-        "interact with dispatch cleanup/enrichment."
+    assert "handler_seg.handler_dispatch = Some(" in source, (
+        "Handler segment setup must install handler dispatch state directly on the segment."
     )
+    assert "handler_seg.dispatch_origin = Some(" in source, (
+        "Handler segment setup must install dispatch origin state directly on the segment."
+    )
+    assert "handler_seg.push_frame(Frame::HandlerDispatch" not in source
+    assert "handler_seg.push_frame(Frame::DispatchOrigin" not in source
     assert "prompt_seg.push_frame(Frame::DispatchOrigin" not in source, (
-        "Prompt-boundary DispatchOrigin conflates body completion with handler return."
+        "Prompt-boundary dispatch ownership must remain forbidden."
     )
 
 
-def test_dispatch_origin_cleanup_does_not_linearly_scan_all_segments() -> None:
+def test_runtime_has_no_dispatch_special_frame_matches_left() -> None:
+    source = "\n".join(
+        _runtime_source(path)
+        for path in (
+            VM_RS,
+            VM_DISPATCH_RS,
+            VM_STEP_RS,
+            VM_TRACE_RS,
+            CORE_ROOT / "src/continuation.rs",
+        )
+        if path.exists()
+    )
+    assert "Frame::HandlerDispatch" not in source
+    assert "Frame::DispatchOrigin" not in source
+
+
+def test_dispatch_cleanup_does_not_linearly_scan_all_segments() -> None:
     source = _vm_runtime_source()
     assert "fn remove_dispatch_origin" not in source, (
         "DispatchOrigin cleanup must not linearly scan the segment arena; it should be owned by "
@@ -87,7 +125,8 @@ def test_vm_runtime_has_no_dispatch_side_table_left() -> None:
     dispatch_source = _runtime_source(DISPATCH_RS)
 
     assert "dispatch_state:" not in vm_source, "VM must not own a dispatch_state side table."
-    assert "DispatchState" not in vm_source
+    assert "struct DispatchState" not in vm_source
+    assert "enum DispatchState" not in vm_source
     assert "DispatchContext" not in vm_source
     assert "DispatchContext" not in core_lib_source
     assert "DispatchContext" not in bindings_lib_source

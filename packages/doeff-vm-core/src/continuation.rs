@@ -11,7 +11,7 @@ use crate::frame::Frame;
 use crate::ids::{ContId, DispatchId, ScopeId, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
-use crate::segment::Segment;
+use crate::segment::{DispatchOriginState, HandlerDispatchState, Segment};
 use crate::step::PyException;
 use crate::value::Value;
 
@@ -65,42 +65,25 @@ pub struct Continuation {
 }
 
 impl Continuation {
-    fn captured_frames(segment: &Segment) -> Vec<Frame> {
-        let keep_dispatch_origin = segment
-            .frames
-            .iter()
-            .any(|frame| matches!(frame, Frame::HandlerDispatch { .. }));
-        // DispatchOrigin frames are only meaningful when the snapshot is resuming the
-        // handler segment that owns them. Plain continuation snapshots keep the older
-        // behavior and drop orphan origins.
-        segment
-            .frames
-            .iter()
-            .filter(|frame| match frame {
-                Frame::DispatchOrigin { .. } => keep_dispatch_origin,
-                Frame::Program { .. }
-                | Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
-                | Frame::HandlerDispatch { .. }
-                | Frame::EvalReturn(_)
-                | Frame::MapReturn { .. }
-                | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => true,
-            })
-            .cloned()
-            .collect()
-    }
-
     fn captured_segment_snapshot(
         segment: &Segment,
         dispatch_id: Option<DispatchId>,
     ) -> Arc<Segment> {
+        let handler_dispatch = segment.handler_dispatch.clone();
+        // Dispatch-origin state is only meaningful when the snapshot owns the matching
+        // handler-dispatch state. Plain continuation snapshots drop orphan origins.
+        let dispatch_origin = if handler_dispatch.is_some() {
+            segment.dispatch_origin.clone()
+        } else {
+            None
+        };
         Arc::new(Segment {
             scope_id: segment.scope_id,
             persistent_epoch: segment.persistent_epoch,
             marker: segment.marker,
-            frames: Self::captured_frames(segment),
+            frames: segment.frames.clone(),
+            handler_dispatch,
+            dispatch_origin,
             caller: segment.caller,
             scope_parent: segment.scope_parent,
             variables: Default::default(),
@@ -335,45 +318,48 @@ impl Continuation {
                 snapshot.persistent_epoch = current_epoch;
             }
 
+            if let Some(handler_dispatch) = snapshot.handler_dispatch.as_mut() {
+                handler_dispatch
+                    .continuation
+                    .refresh_persistent_segment_state_inner(
+                        scope_state_store,
+                        scope_writer_logs,
+                        scope_persistent_epochs,
+                        visited,
+                    );
+            }
+            if let Some(dispatch_origin) = snapshot.dispatch_origin.as_mut() {
+                dispatch_origin
+                    .k_origin
+                    .refresh_persistent_segment_state_inner(
+                        scope_state_store,
+                        scope_writer_logs,
+                        scope_persistent_epochs,
+                        visited,
+                    );
+            }
+
             for frame in &mut snapshot.frames {
                 match frame {
-                    Frame::HandlerDispatch { continuation, .. } => {
-                        continuation.refresh_persistent_segment_state_inner(
-                            scope_state_store,
-                            scope_writer_logs,
-                            scope_persistent_epochs,
-                            visited,
-                        );
-                    }
-                    Frame::DispatchOrigin { k_origin, .. } => {
-                        k_origin.refresh_persistent_segment_state_inner(
-                            scope_state_store,
-                            scope_writer_logs,
-                            scope_persistent_epochs,
-                            visited,
-                        );
-                    }
-                    Frame::EvalReturn(eval_return) => {
-                        match eval_return.as_mut() {
-                            crate::frame::EvalReturnContinuation::ResumeToContinuation {
-                                continuation,
-                            }
-                            | crate::frame::EvalReturnContinuation::EvalInScopeReturn {
-                                continuation,
-                            }
-                            | crate::frame::EvalReturnContinuation::ReturnToContinuation {
-                                continuation,
-                            } => {
-                                continuation.refresh_persistent_segment_state_inner(
-                                    scope_state_store,
-                                    scope_writer_logs,
-                                    scope_persistent_epochs,
-                                    visited,
-                                );
-                            }
-                            _ => {}
+                    Frame::EvalReturn(eval_return) => match eval_return.as_mut() {
+                        crate::frame::EvalReturnContinuation::ResumeToContinuation {
+                            continuation,
                         }
-                    }
+                        | crate::frame::EvalReturnContinuation::EvalInScopeReturn {
+                            continuation,
+                        }
+                        | crate::frame::EvalReturnContinuation::ReturnToContinuation {
+                            continuation,
+                        } => {
+                            continuation.refresh_persistent_segment_state_inner(
+                                scope_state_store,
+                                scope_writer_logs,
+                                scope_persistent_epochs,
+                                visited,
+                            );
+                        }
+                        _ => {}
+                    },
                     Frame::Program { .. }
                     | Frame::InterceptorApply(_)
                     | Frame::InterceptorEval(_)
@@ -580,11 +566,11 @@ mod tests {
         ));
     }
 
-    fn make_dispatch_origin_frame(dispatch_id: DispatchId) -> Frame {
+    fn make_dispatch_origin_state(dispatch_id: DispatchId) -> DispatchOriginState {
         let origin_seg = Segment::new(Marker::fresh(), None);
         let k_origin =
             Continuation::capture(&origin_seg, SegmentId::from_index(99), Some(dispatch_id));
-        Frame::DispatchOrigin {
+        DispatchOriginState {
             dispatch_id,
             effect: make_get_execution_context_effect()
                 .expect("test dispatch effect should be constructible"),
@@ -596,11 +582,14 @@ mod tests {
     #[test]
     fn test_continuation_capture_filters_orphan_dispatch_origin_frames() {
         let (mut seg, seg_id) = make_test_segment();
-        seg.push_frame(make_dispatch_origin_frame(DispatchId::fresh()));
+        seg.dispatch_origin = Some(make_dispatch_origin_state(DispatchId::fresh()));
 
         let cont = Continuation::capture(&seg, seg_id, None);
 
         assert!(cont.frames().is_some_and(|frames| frames.is_empty()));
+        assert!(cont
+            .segment()
+            .is_some_and(|snapshot| snapshot.dispatch_origin.is_none()));
     }
 
     #[test]
@@ -610,20 +599,23 @@ mod tests {
         let handler_seg = Segment::new(Marker::fresh(), None);
         let handler_cont =
             Continuation::capture(&handler_seg, SegmentId::from_index(7), Some(dispatch_id));
-        seg.push_frame(Frame::HandlerDispatch {
+        seg.handler_dispatch = Some(HandlerDispatchState {
             dispatch_id,
             continuation: handler_cont,
             prompt_seg_id: SegmentId::from_index(8),
         });
-        seg.push_frame(make_dispatch_origin_frame(dispatch_id));
+        seg.dispatch_origin = Some(make_dispatch_origin_state(dispatch_id));
 
         let cont = Continuation::capture(&seg, seg_id, None);
 
-        assert_eq!(cont.frames().map(|frames| frames.len()), Some(2));
-        assert!(matches!(
-            cont.frames().expect("captured continuation should have frames")[1],
-            Frame::DispatchOrigin { dispatch_id: kept_id, .. } if kept_id == dispatch_id
-        ));
+        let snapshot = cont
+            .segment()
+            .expect("captured continuation should have a segment snapshot");
+        assert!(snapshot.handler_dispatch.is_some());
+        assert!(snapshot
+            .dispatch_origin
+            .as_ref()
+            .is_some_and(|origin| origin.dispatch_id == dispatch_id));
     }
 
     #[test]
