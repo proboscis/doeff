@@ -282,6 +282,7 @@ impl VM {
                             self.segments.reparent_children(seg_id, None, scope_parent);
                             self.free_segment(seg_id);
                             self.current_segment = None;
+                            self.trace_state.cleanup_orphaned_threw_dispatch_displays();
                             return StepEvent::Error(VMError::uncaught_exception(
                                 exc,
                                 trace,

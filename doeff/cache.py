@@ -193,6 +193,8 @@ def _call_site_from_effect_entries(call_stack: list[Any] | tuple[Any, ...]) -> C
             site = _cache_call_site_from_handler_stack_entry(entry)
             if site is None:
                 continue
+            # Spawn/Try failures can bubble out after the child task has shed its original Python
+            # frames. In that path the scheduler boundary is the only stable user-visible site.
             if site.function_name == "SchedulerHandler" and site.source_file == "<rust>":
                 return site
             if fallback is None and not _is_hidden_cache_call_site(site):
@@ -462,6 +464,8 @@ def cache(  # noqa: PLR0915
             @do
             def compute_and_cache() -> EffectGenerator[T]:
                 yield slog(msg=f"Cache miss for {func_name}, computing...", level="DEBUG")
+                # Try keeps the exception in-band long enough to ask the VM for execution context
+                # before re-raising, which preserves cache notes after the dispatch-state cleanup.
                 attempt = yield Try(wrapped_func(*args, **kwargs))
                 if attempt.is_err():
                     error = attempt.error

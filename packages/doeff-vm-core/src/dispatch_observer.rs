@@ -61,24 +61,26 @@ impl DispatchObserver {
         k_origin: Option<Continuation>,
         active_handler: ActiveHandlerContext,
     ) {
-        if let Some(previous_seg_id) = self
-            .dispatches
-            .get(&dispatch_id)
-            .map(|dispatch| dispatch.active_handler.segment_id)
-        {
+        let dispatch = self.dispatches.get_mut(&dispatch_id).unwrap_or_else(|| {
+            panic!(
+                "dispatch observer invariant violated: update_forwarded_dispatch({}) missing \
+                 dispatch context",
+                dispatch_id.raw()
+            )
+        });
+        let previous_seg_id = dispatch.active_handler.segment_id;
+        if previous_seg_id != active_handler.segment_id {
             self.segment_dispatch_ids.remove(&previous_seg_id);
+            self.segment_dispatch_ids
+                .insert(active_handler.segment_id, dispatch_id);
         }
-        self.segment_dispatch_ids
-            .insert(active_handler.segment_id, dispatch_id);
-        if let Some(dispatch) = self.dispatches.get_mut(&dispatch_id) {
-            if original_exception.is_some() {
-                dispatch.original_exception = original_exception;
-            }
-            if let Some(k_origin) = k_origin {
-                dispatch.k_origin = k_origin;
-            }
-            dispatch.active_handler = active_handler;
+        if original_exception.is_some() {
+            dispatch.original_exception = original_exception;
         }
+        if let Some(k_origin) = k_origin {
+            dispatch.k_origin = k_origin;
+        }
+        dispatch.active_handler = active_handler;
     }
 
     pub(crate) fn bind_segment(&mut self, seg_id: SegmentId, dispatch_id: DispatchId) {
@@ -109,5 +111,43 @@ impl DispatchObserver {
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (DispatchId, &DispatchContext)> {
         self.dispatches.iter().map(|(dispatch_id, ctx)| (*dispatch_id, ctx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    use super::*;
+    use crate::ids::Marker;
+    use crate::segment::Segment;
+
+    fn captured_continuation(seg_id: SegmentId) -> Continuation {
+        let segment = Segment::new(Marker::fresh(), None);
+        Continuation::capture(&segment, seg_id, None)
+    }
+
+    #[test]
+    fn update_forwarded_dispatch_panics_before_creating_orphan_segment_index() {
+        let mut observer = DispatchObserver::default();
+        let dispatch_id = DispatchId::fresh();
+        let seg_id = SegmentId::from_index(7);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            observer.update_forwarded_dispatch(
+                dispatch_id,
+                None,
+                None,
+                ActiveHandlerContext {
+                    segment_id: seg_id,
+                    continuation: captured_continuation(seg_id),
+                    marker: Marker::fresh(),
+                    prompt_seg_id: SegmentId::from_index(3),
+                },
+            );
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(observer.segment_dispatch_id(seg_id), None);
     }
 }
