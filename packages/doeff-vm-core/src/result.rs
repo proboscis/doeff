@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-#[pyclass(frozen, name = "Ok")]
+#[pyclass(frozen, name = "Ok", module = "doeff_vm.doeff_vm")]
 pub struct PyResultOk {
     pub value: Py<PyAny>,
 }
@@ -38,9 +38,14 @@ impl PyResultOk {
     fn __bool__(&self) -> bool {
         true
     }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.value.clone_ref(py),)))
+    }
 }
 
-#[pyclass(frozen, name = "Err")]
+#[pyclass(frozen, name = "Err", module = "doeff_vm.doeff_vm")]
 pub struct PyResultErr {
     pub error: Py<PyAny>,
     pub captured_traceback: Py<PyAny>,
@@ -87,5 +92,10 @@ impl PyResultErr {
 
     fn __bool__(&self) -> bool {
         false
+    }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>, Py<PyAny>))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.error.clone_ref(py), self.captured_traceback.clone_ref(py))))
     }
 }
