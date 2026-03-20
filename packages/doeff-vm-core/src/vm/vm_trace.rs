@@ -2,6 +2,24 @@ use super::*;
 use crate::capture::EffectCreationSite;
 
 impl VM {
+    fn continuation_uses_stream(continuation: &Continuation, stream: &IRStreamRef) -> bool {
+        continuation.frames().is_some_and(|frames| {
+            frames.iter().any(|frame| match frame {
+                Frame::Program {
+                    stream: snapshot_stream,
+                    ..
+                } => Arc::ptr_eq(&snapshot_stream, stream),
+                Frame::InterceptorApply(_)
+                | Frame::InterceptorEval(_)
+                | Frame::EvalReturn(_)
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. }
+                | Frame::InterceptBodyReturn { .. } => false,
+            })
+        })
+    }
+
     pub(super) fn value_repr(value: &Value) -> Option<String> {
         DebugState::value_repr(value)
     }
@@ -199,30 +217,9 @@ impl VM {
         dispatch_id: DispatchId,
         stream: &IRStreamRef,
     ) -> bool {
-        let continuation = self
-            .active_handler_dispatch_for(dispatch_id)
-            .map(|(_, continuation, _)| continuation)
-            .or_else(|| {
-                self.dispatch_origin_for_dispatch_id(dispatch_id)
-                    .map(|origin| origin.k_origin)
-            });
-        continuation.is_some_and(|continuation| {
-            continuation.frames().is_some_and(|frames| {
-                frames.iter().any(|frame| match frame {
-                    Frame::Program {
-                        stream: snapshot_stream,
-                        ..
-                    } => Arc::ptr_eq(&snapshot_stream, stream),
-                    Frame::InterceptorApply(_)
-                    | Frame::InterceptorEval(_)
-                    | Frame::EvalReturn(_)
-                    | Frame::MapReturn { .. }
-                    | Frame::FlatMapBindResult
-                    | Frame::FlatMapBindSource { .. }
-                    | Frame::InterceptBodyReturn { .. } => false,
-                })
-            })
-        })
+        self.dispatch_origin_for_dispatch_id(dispatch_id)
+            .map(|origin| origin.k_origin)
+            .is_some_and(|continuation| Self::continuation_uses_stream(&continuation, stream))
     }
 
     pub(super) fn handler_stream_throw_continuation(
@@ -238,13 +235,23 @@ impl VM {
         if self.is_execution_context_effect_for_dispatch(dispatch_id) {
             return None;
         }
+        let origin = self.dispatch_origin_for_dispatch_id(dispatch_id)?;
         let continuation = if self.dispatch_uses_user_continuation_stream(dispatch_id, stream) {
-            self.dispatch_origin_for_dispatch_id(dispatch_id)
-                .map(|origin| origin.k_origin)
-        } else {
+            origin.k_origin
+        } else if let Some((_, active_handler_continuation, _)) =
             self.active_handler_dispatch_for(dispatch_id)
-                .map(|(_, continuation, _)| continuation)
-        }?;
+        {
+            if Self::continuation_uses_stream(&active_handler_continuation, stream) {
+                active_handler_continuation
+                    .parent()
+                    .cloned()
+                    .unwrap_or(origin.k_origin)
+            } else {
+                active_handler_continuation
+            }
+        } else {
+            origin.k_origin
+        };
         (!self.is_one_shot_consumed(continuation.cont_id)).then_some(continuation)
     }
 

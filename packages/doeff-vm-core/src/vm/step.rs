@@ -1,6 +1,32 @@
 use super::*;
 
 impl VM {
+    fn has_live_handler_program_frame(&self) -> bool {
+        self.current_seg().frames.iter().any(|frame| {
+            matches!(
+                frame,
+                Frame::Program {
+                    handler_kind: Some(_),
+                    ..
+                }
+            )
+        })
+    }
+
+    fn should_throw_into_live_handler_frame(&self, handler_kind: Option<HandlerKind>) -> bool {
+        handler_kind.is_some() && self.has_live_handler_program_frame()
+    }
+
+    fn should_enrich_uncaught_exception_with_active_chain(
+        active_chain: &[ActiveChainEntry],
+    ) -> bool {
+        active_chain.iter().any(|entry| match entry {
+            ActiveChainEntry::ProgramYield { handler_kind, .. } => handler_kind.is_some(),
+            ActiveChainEntry::EffectYield { .. } | ActiveChainEntry::ContextEntry { .. } => true,
+            ActiveChainEntry::ExceptionSite { .. } => false,
+        })
+    }
+
     fn missing_state_key_exception(key: &str) -> PyException {
         PyException::from(pyo3::exceptions::PyKeyError::new_err(key.to_string()))
     }
@@ -240,10 +266,17 @@ impl VM {
                                 .into_iter()
                                 .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
                                 .collect::<Vec<ActiveChainEntry>>();
-                            let exc = self.enrich_uncaught_exception_with_active_chain(
-                                exc,
-                                active_chain.clone(),
-                            );
+                            let exc =
+                                if Self::should_enrich_uncaught_exception_with_active_chain(
+                                    &active_chain,
+                                ) {
+                                    self.enrich_uncaught_exception_with_active_chain(
+                                        exc,
+                                        active_chain.clone(),
+                                    )
+                                } else {
+                                    exc
+                                };
                             self.completed_segment = Some(seg_id);
                             self.store_completed_outputs_from(seg_id);
                             self.segments.reparent_children(seg_id, None, scope_parent);
@@ -794,6 +827,10 @@ impl VM {
             IRStreamStep::Throw(exc) => {
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited_due_to_error(Some(&stream), m, handler_kind, &exc);
+                }
+                if self.should_throw_into_live_handler_frame(handler_kind) {
+                    self.current_seg_mut().mode = Mode::Throw(exc);
+                    return StepEvent::Continue;
                 }
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
@@ -2323,6 +2360,10 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Deliver(value);
             }
             PyCallOutcome::GenError(exception) => {
+                if self.has_live_handler_program_frame() {
+                    self.current_seg_mut().mode = Mode::Throw(exception);
+                    return;
+                }
                 self.current_seg_mut().mode =
                     self.mode_after_generror(GenErrorSite::CallFuncReturn, exception, false);
             }
@@ -2552,6 +2593,10 @@ impl VM {
     }
 
     fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
+        if self.has_live_handler_program_frame() {
+            self.current_seg_mut().mode = Mode::Throw(exception);
+            return;
+        }
         if handler_return {
             let dispatch_id = self.current_active_handler_dispatch_id().or_else(|| {
                 let dispatch_id = self.current_segment_dispatch_id_any()?;
@@ -2617,6 +2662,10 @@ impl VM {
             PyCallOutcome::GenError(exception) => {
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited_due_to_error(Some(&stream), m, handler_kind, &exception);
+                }
+                if self.should_throw_into_live_handler_frame(handler_kind) {
+                    self.current_seg_mut().mode = Mode::Throw(exception);
+                    return;
                 }
                 if let Some(dispatch_id) = self
                     .current_active_handler_dispatch_id()

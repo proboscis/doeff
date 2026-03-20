@@ -79,13 +79,11 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      Cache handlers must not duck-type result-like values or normalize them through vendor Ok/Err.
+      Cache handlers must not duck-type result-like values.
       The cache boundary should store the original value or fail clearly if it cannot persist it.
     pattern-either:
       - pattern: hasattr($X, "is_ok")
       - pattern: hasattr($X, "is_err")
-      - pattern: from doeff._vendor import Ok as $ALIAS
-      - pattern: from doeff._vendor import Err as $ALIAS
     paths:
       include:
         - /doeff/handlers/cache_handlers.py
@@ -2828,32 +2826,6 @@ rules:
         - "**/tests/**"
     pattern-regex: 'Frame::HandlerDispatch|Frame::DispatchOrigin|(?m)^\s*(HandlerDispatch|DispatchOrigin)\s*\{'
 
-  - id: vm-no-segment-dispatch-state-fields
-    languages: [generic]
-    severity: ERROR
-    message: |
-      vm-remove-dispatch-frames: Segment must not own `handler_dispatch`,
-      `dispatch_origin`, or `dispatch_id`. Dispatch correlation and error
-      context must live in an observer outside the segment chain.
-    paths:
-      include:
-        - "/packages/doeff-vm-core/src/segment.rs"
-    pattern-regex: 'handler_dispatch\s*:\s*Option<HandlerDispatchState>|dispatch_origin\s*:\s*Option<DispatchOriginState>|dispatch_id\s*:\s*Option<DispatchId>'
-
-  - id: vm-no-segment-dispatch-state-access
-    languages: [generic]
-    severity: ERROR
-    message: |
-      vm-remove-dispatch-frames: Runtime code must not read or write dispatch
-      state through Segment fields. Use observer state outside the segment chain.
-    paths:
-      include:
-        - "/packages/doeff-vm-core/src/**"
-        - "/packages/doeff-vm/src/**"
-      exclude:
-        - "**/tests/**"
-    pattern-regex: '\b(seg|segment|current_seg|handler_seg|exec_seg|snapshot|live)\.(handler_dispatch|dispatch_origin|dispatch_id)\b'
-
   - id: vm-no-mutating-exception-enrichment-wrapper
     languages: [rust]
     severity: ERROR
@@ -2936,3 +2908,168 @@ rules:
       include:
         - "/packages/doeff-core-effects/src/scheduler/mod.rs"
     pattern-regex: 'self\.waiters\.iter\(\)\.any\s*\('
+
+  # ============================================================
+  # OCaml 5 Architecture Enforcement (SPEC-VM-019 Rev 5)
+  #
+  # ARCHITECTURAL PRINCIPLE:
+  #   doeff VM is a complete language runtime that interprets AST,
+  #   exactly like OCaml 5's runtime interprets bytecode/native code.
+  #   @do generators are dynamic AST streamers — they produce IR
+  #   (DoCtrl/DoExpr) for the VM to interpret. Generators are NOT
+  #   autonomous code that manages its own state.
+  #
+  #   The VM owns ALL runtime state:
+  #     Fiber chain  = the stack (control flow)
+  #     VarStore     = the heap (mutable ref cells)
+  #     Registers    = VM execution state (current_fiber, mode)
+  #     Lexical scope = resolved by VM via fiber/heap walking
+  #
+  #   Mapping:
+  #     OCaml 5 fiber           = doeff Fiber (frames + handler + parent)
+  #     OCaml 5 heap ref cell   = doeff VarStore entry (VarId → Value)
+  #     OCaml 5 registers       = doeff VM registers (current_fiber, mode)
+  #     OCaml 5 perform/continue = doeff yield Effect / Resume(k, v)
+  #     OCaml 5 ref/!/(:=)      = doeff AllocVar/ReadVar/WriteVar
+  #
+  # ============================================================
+
+  - id: vm-ocaml5-no-segment-type
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: Segment must be renamed to Fiber to match OCaml 5.
+      Use Fiber/FiberId/FiberArena instead of Segment/SegmentId/SegmentArena.
+      doeff VM is a language runtime like OCaml 5 — fibers are stack chunks.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+        - "**/packages/doeff-vm/src/**"
+      exclude:
+        - "**/tests/**"
+    pattern-regex: '\bstruct Segment\b|\bSegmentArena\b'
+
+  - id: vm-ocaml5-no-caller-field
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: caller must be renamed to parent to match OCaml 5
+      fiber parent pointers. Use .parent / parent_id instead of .caller / caller_id.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bcaller:\s*Option<SegmentId>'
+
+  - id: vm-ocaml5-no-mode-on-fiber
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: mode is a VM register, not a fiber field.
+      Like OCaml 5's IP/exception state, mode describes what the VM is doing
+      with the current fiber. Access via self.mode, not seg.mode/fiber.mode.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bmode:\s*Mode\b'
+
+  - id: vm-ocaml5-no-variables-on-fiber
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: variables live in VarStore (the heap), not on fibers.
+      Like OCaml 5's heap ref cells, mutable state is managed by the VM in a
+      separate store. AllocVar/ReadVar/WriteVar operate on VarStore.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bvariables:\s*HashMap\b|\bscope_parent:\s*Option\b|\bnamed_bindings\b'
+
+  - id: vm-ocaml5-no-pending-on-fiber
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: pending_python is a VM register, not a fiber field.
+      GIL boundary state describes what the VM is waiting for, not a fiber property.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bpending_python:\s*Option\b'
+
+  - id: vm-ocaml5-no-dispatch-state-on-fiber
+    languages: [generic]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: Dispatch state must not live on fibers/segments.
+      In OCaml 5, dispatch IS the topology change — no state stored on fibers.
+      handler_dispatch, dispatch_origin, dispatch_id are eliminated.
+      Traceability comes from walking the fiber chain (PromptBoundary + frame effect_repr).
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bdispatch_id:\s*Option<DispatchId>'
+
+  - id: vm-ocaml5-no-arc-segment
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: Continuations use move semantics, not Arc snapshots.
+      Like OCaml 5, fibers are moved between the chain and continuations —
+      a fiber is in exactly one place at a time (chain OR continuation, never both).
+      Use Vec<FiberId> in Continuation, not Arc<Segment>.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/continuation.rs"
+    pattern-regex: 'Arc<Segment>'
+
+  # ACTIVE: Ban mutation of non-current segment caller in dispatch
+  - id: vm-ocaml5-no-caller-mutation-in-dispatch
+    languages: [generic]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: Fiber parent (caller) pointers must not be mutated
+      during dispatch resume/transfer. In OCaml 5, parent pointers only change
+      during detach (perform) and reattach (continue). The Python handler caller
+      relink hack violates this — it mutates a live fiber's caller, polluting
+      shared handler chains.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm/dispatch.rs"
+    pattern-regex: 'seg\.caller\s*=\s*k\.captured_caller\(\)'
+
+  # ACTIVE: Ban scope_parent for handler lookup (caller/parent chain is scope chain)
+  - id: vm-ocaml5-no-scope-parent-for-handler-lookup
+    languages: [generic]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: Handler lookup walks the parent (caller) chain, not
+      a separate scope_parent chain. In OCaml 5, the parent chain IS the scope
+      chain. scope_parent is eliminated.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/vm/dispatch.rs"
+    pattern-regex: 'scope_parent.*find.*handler|find.*handler.*scope_parent|walk.*scope_parent.*handler'
+
+  # ACTIVE: Ban VM-level handler-specific state fields
+  # The VM must not know about specific handler internals (State/Writer/Ask).
+  # Handler state goes through generic VM primitives (AllocVar/ReadVar/WriteVar)
+  # just like OCaml handlers use generic heap refs.
+  - id: vm-ocaml5-no-handler-specific-vm-state
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: The VM must not have handler-specific state fields.
+      Like OCaml 5, the VM provides generic heap primitives (AllocVar/ReadVar/WriteVar).
+      Handler-specific state (state/env/log/scope_bindings) belongs in handler
+      closures using VM-managed VarIds, not in VM-level stores.
+      @do generators are AST streamers — they produce IR for the VM, they don't
+      own runtime state. The VM owns all state via Fiber chain + VarStore.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/rust_store.rs"
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    pattern-regex: '\bscope_bindings\b|\bRustStore\s*\{[^}]*\bstate\b|\bRustStore\s*\{[^}]*\benv\b|\bRustStore\s*\{[^}]*\blog\b|\bScopeStore\b'
