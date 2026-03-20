@@ -2912,11 +2912,25 @@ rules:
   # ============================================================
   # OCaml 5 Architecture Enforcement (SPEC-VM-019 Rev 5)
   #
-  # The doeff VM must match OCaml 5's runtime architecture:
-  #   Fiber = frames + handler + parent (nothing else)
-  #   VarStore = the heap (ref cells, separate from fibers)
-  #   Registers = current_fiber, mode, pending (VM-level, not fiber)
-  #   Continuations = moved FiberIds (not Arc snapshots)
+  # ARCHITECTURAL PRINCIPLE:
+  #   doeff VM is a complete language runtime that interprets AST,
+  #   exactly like OCaml 5's runtime interprets bytecode/native code.
+  #   @do generators are dynamic AST streamers — they produce IR
+  #   (DoCtrl/DoExpr) for the VM to interpret. Generators are NOT
+  #   autonomous code that manages its own state.
+  #
+  #   The VM owns ALL runtime state:
+  #     Fiber chain  = the stack (control flow)
+  #     VarStore     = the heap (mutable ref cells)
+  #     Registers    = VM execution state (current_fiber, mode)
+  #     Lexical scope = resolved by VM via fiber/heap walking
+  #
+  #   Mapping:
+  #     OCaml 5 fiber           = doeff Fiber (frames + handler + parent)
+  #     OCaml 5 heap ref cell   = doeff VarStore entry (VarId → Value)
+  #     OCaml 5 registers       = doeff VM registers (current_fiber, mode)
+  #     OCaml 5 perform/continue = doeff yield Effect / Resume(k, v)
+  #     OCaml 5 ref/!/(:=)      = doeff AllocVar/ReadVar/WriteVar
   #
   # Rules below are TODO until Phase 4 migration completes.
   # Uncomment each rule as the corresponding migration step lands.
@@ -3048,3 +3062,23 @@ rules:
       include:
         - "**/packages/doeff-vm-core/src/vm/dispatch.rs"
     pattern-regex: 'scope_parent.*find.*handler|find.*handler.*scope_parent|walk.*scope_parent.*handler'
+
+  # ACTIVE: Ban VM-level handler-specific state fields
+  # The VM must not know about specific handler internals (State/Writer/Ask).
+  # Handler state goes through generic VM primitives (AllocVar/ReadVar/WriteVar)
+  # just like OCaml handlers use generic heap refs.
+  - id: vm-ocaml5-no-handler-specific-vm-state
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: The VM must not have handler-specific state fields.
+      Like OCaml 5, the VM provides generic heap primitives (AllocVar/ReadVar/WriteVar).
+      Handler-specific state (state/env/log/scope_bindings) belongs in handler
+      closures using VM-managed VarIds, not in VM-level stores.
+      @do generators are AST streamers — they produce IR for the VM, they don't
+      own runtime state. The VM owns all state via Fiber chain + VarStore.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/rust_store.rs"
+        - "**/packages/doeff-vm-core/src/vm.rs"
+    pattern-regex: '\bscope_bindings\b|\bRustStore\s*\{[^}]*\bstate\b|\bRustStore\s*\{[^}]*\benv\b|\bRustStore\s*\{[^}]*\blog\b|\bScopeStore\b'
