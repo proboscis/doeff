@@ -28,10 +28,6 @@ pub(crate) struct DispatchObserver {
 }
 
 impl DispatchObserver {
-    fn debug_enabled() -> bool {
-        std::env::var_os("DOEFF_DEBUG_DISPATCH").is_some()
-    }
-
     pub(crate) fn clear(&mut self) {
         self.dispatches.clear();
         self.segment_dispatch_ids.clear();
@@ -45,16 +41,6 @@ impl DispatchObserver {
         original_exception: Option<PyException>,
         active_handler: ActiveHandlerContext,
     ) {
-        if Self::debug_enabled() {
-            eprintln!(
-                "[dispatch-debug] start id={} seg={} orig_cont={} active_cont={} original_exc={}",
-                dispatch_id.raw(),
-                active_handler.segment_id.0,
-                k_origin.cont_id.raw(),
-                active_handler.continuation.cont_id.raw(),
-                original_exception.is_some(),
-            );
-        }
         self.segment_dispatch_ids
             .insert(active_handler.segment_id, dispatch_id);
         self.dispatches.insert(
@@ -75,16 +61,6 @@ impl DispatchObserver {
         k_origin: Option<Continuation>,
         active_handler: ActiveHandlerContext,
     ) {
-        if Self::debug_enabled() {
-            eprintln!(
-                "[dispatch-debug] forward id={} seg={} active_cont={} original_exc={} replace_origin={}",
-                dispatch_id.raw(),
-                active_handler.segment_id.0,
-                active_handler.continuation.cont_id.raw(),
-                original_exception.is_some(),
-                k_origin.is_some(),
-            );
-        }
         if let Some(previous_seg_id) = self
             .dispatches
             .get(&dispatch_id)
@@ -114,9 +90,6 @@ impl DispatchObserver {
     }
 
     pub(crate) fn finish_dispatch(&mut self, dispatch_id: DispatchId) {
-        if Self::debug_enabled() {
-            eprintln!("[dispatch-debug] finish id={}", dispatch_id.raw());
-        }
         self.dispatches.remove(&dispatch_id);
         self.segment_dispatch_ids
             .retain(|_, current_dispatch_id| *current_dispatch_id != dispatch_id);
