@@ -186,8 +186,6 @@ impl VM {
                 Frame::Program { handler_kind, .. } => *handler_kind,
                 Frame::InterceptorApply(_)
                 | Frame::InterceptorEval(_)
-                | Frame::HandlerDispatch { .. }
-                | Frame::DispatchOrigin { .. }
                 | Frame::EvalReturn(_)
                 | Frame::MapReturn { .. }
                 | Frame::FlatMapBindResult
@@ -217,8 +215,6 @@ impl VM {
                     } => Arc::ptr_eq(&snapshot_stream, stream),
                     Frame::InterceptorApply(_)
                     | Frame::InterceptorEval(_)
-                    | Frame::HandlerDispatch { .. }
-                    | Frame::DispatchOrigin { .. }
                     | Frame::EvalReturn(_)
                     | Frame::MapReturn { .. }
                     | Frame::FlatMapBindResult
@@ -380,8 +376,12 @@ impl VM {
         handler_kind: Option<HandlerKind>,
         exception: &PyException,
     ) {
-        self.trace_state
-            .record_frame_exited_due_to_error(stream, metadata, handler_kind, exception);
+        self.trace_state.record_frame_exited_due_to_error(
+            stream,
+            metadata,
+            handler_kind,
+            exception,
+        );
     }
 
     pub(super) fn emit_handler_threw_for_dispatch(
