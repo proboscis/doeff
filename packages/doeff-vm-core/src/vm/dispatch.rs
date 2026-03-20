@@ -1737,10 +1737,12 @@ impl VM {
         );
         let error_dispatch = self.error_dispatch_for_continuation(&k);
         self.record_continuation_activation(kind, &k, &value);
-        if let Err(err) =
-            self.maybe_attach_active_chain_to_execution_context(k.dispatch_id(), &mut value)
-        {
-            return StepEvent::Error(err);
+        if self.exact_dispatch_origin_for_continuation(&k).is_some() {
+            if let Err(err) =
+                self.maybe_attach_active_chain_to_execution_context(k.dispatch_id(), &mut value)
+            {
+                return StepEvent::Error(err);
+            }
         }
 
         if let Some((dispatch_id, original_exception, terminal)) = error_dispatch {
@@ -1797,28 +1799,9 @@ impl VM {
                     .and_then(|(handler_seg_id, _, _continuation, marker, _prompt_seg_id)| {
                         if exact_origin_target && self.is_user_defined_python_handler_marker(marker)
                         {
-                            let mut handler_return = self
+                            let handler_return = self
                                 .capture_continuation(Some(dispatch_id))
                                 .expect("dispatch resume requires a live handler segment");
-                            if let Some(origin_seg_id) = k
-                                .captured_caller()
-                                .filter(|seg_id| self.segments.get(*seg_id).is_some())
-                            {
-                                let mut origin_parent = Continuation::capture(
-                                    self.segments
-                                        .get(origin_seg_id)
-                                        .expect("origin caller segment must exist"),
-                                    origin_seg_id,
-                                    self.dispatch_observer.segment_dispatch_id(origin_seg_id),
-                                );
-                                if let Some(existing_parent) = handler_return.parent() {
-                                    origin_parent.set_parent(Some(std::sync::Arc::new(
-                                        existing_parent.clone(),
-                                    )));
-                                }
-                                handler_return
-                                    .set_parent(Some(std::sync::Arc::new(origin_parent)));
-                            }
                             return Some(self.alloc_resume_return_anchor(
                                 k.captured_caller(),
                                 handler_return,
@@ -1871,15 +1854,17 @@ impl VM {
                 .is_some_and(|origin| origin.k_origin.cont_id == k.cont_id);
             thrown_by_context_conversion_handler =
                 self.dispatch_supports_error_context_conversion(dispatch_id);
-            if let Some((handler_index, handler_name)) = handler_identity.as_ref() {
-                self.trace_state.record_handler_completed(
-                    dispatch_id,
-                    handler_name,
-                    *handler_index,
-                    &HandlerAction::Threw {
-                        exception_repr: Self::exception_repr(&exception),
-                    },
-                );
+            if !self.dispatch_has_terminal_handler_action(dispatch_id) {
+                if let Some((handler_index, handler_name)) = handler_identity.as_ref() {
+                    self.trace_state.record_handler_completed(
+                        dispatch_id,
+                        handler_name,
+                        *handler_index,
+                        &HandlerAction::Threw {
+                            exception_repr: Self::exception_repr(&exception),
+                        },
+                    );
+                }
             }
         }
         let current_dispatch_id = self.current_dispatch_id();
@@ -2342,10 +2327,15 @@ impl VM {
             return self.handle_dispatch_resume(continuation, value);
         }
         if original_exception.is_none() && is_user_defined_python_handler && !continuation_is_live {
-            let target = continuation
-                .as_ref()
-                .filter(|continuation| continuation.parent().is_none())
-                .and_then(|continuation| self.delegate_return_continuation(continuation));
+            let target = self
+                .dispatch_origin_for_dispatch_id(dispatch_id)
+                .and_then(|origin| self.delegate_return_continuation(&origin.k_origin))
+                .or_else(|| {
+                    continuation
+                        .as_ref()
+                        .filter(|continuation| continuation.parent().is_none())
+                        .and_then(|continuation| self.delegate_return_continuation(continuation))
+                });
             if let Some(target) = target {
                 let value_repr = Self::value_repr(&value);
                 if let Some((handler_index, handler_name)) =
@@ -2364,10 +2354,12 @@ impl VM {
                 return self.handle_dispatch_transfer(target, value);
             }
         }
-        if let Err(err) =
-            self.maybe_attach_active_chain_to_execution_context(Some(dispatch_id), &mut value)
-        {
-            return StepEvent::Error(err);
+        if continuation_is_live {
+            if let Err(err) =
+                self.maybe_attach_active_chain_to_execution_context(Some(dispatch_id), &mut value)
+            {
+                return StepEvent::Error(err);
+            }
         }
         if let (Some((handler_index, handler_name)), Some(continuation)) = (
             self.current_handler_identity_for_dispatch(dispatch_id),
