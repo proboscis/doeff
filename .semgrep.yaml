@@ -2828,6 +2828,32 @@ rules:
         - "**/tests/**"
     pattern-regex: 'Frame::HandlerDispatch|Frame::DispatchOrigin|(?m)^\s*(HandlerDispatch|DispatchOrigin)\s*\{'
 
+  - id: vm-no-segment-dispatch-state-fields
+    languages: [generic]
+    severity: ERROR
+    message: |
+      vm-remove-dispatch-frames: Segment must not own `handler_dispatch`,
+      `dispatch_origin`, or `dispatch_id`. Dispatch correlation and error
+      context must live in an observer outside the segment chain.
+    paths:
+      include:
+        - "packages/doeff-vm-core/src/segment.rs"
+    pattern-regex: 'handler_dispatch\s*:\s*Option<HandlerDispatchState>|dispatch_origin\s*:\s*Option<DispatchOriginState>|dispatch_id\s*:\s*Option<DispatchId>'
+
+  - id: vm-no-segment-dispatch-state-access
+    languages: [generic]
+    severity: ERROR
+    message: |
+      vm-remove-dispatch-frames: Runtime code must not read or write dispatch
+      state through Segment fields. Use observer state outside the segment chain.
+    paths:
+      include:
+        - "packages/doeff-vm-core/src/**"
+        - "packages/doeff-vm/src/**"
+      exclude:
+        - "**/tests/**"
+    pattern-regex: '\b(seg|segment|current_seg|handler_seg|exec_seg|snapshot|live)\.(handler_dispatch|dispatch_origin|dispatch_id)\b'
+
   - id: vm-no-mutating-exception-enrichment-wrapper
     languages: [rust]
     severity: ERROR

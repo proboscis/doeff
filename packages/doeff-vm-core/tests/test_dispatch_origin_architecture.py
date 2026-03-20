@@ -57,31 +57,37 @@ def test_frame_runtime_has_no_dispatch_special_frames() -> None:
     )
 
 
-def test_segment_structurally_owns_dispatch_state() -> None:
+def test_segment_has_no_dispatch_state_fields() -> None:
     source = _runtime_source(SEGMENT_RS)
 
-    assert "pub struct HandlerDispatchState" in source, (
-        "Handler dispatch metadata must move onto Segment-owned state."
+    assert "pub struct HandlerDispatchState" not in source, (
+        "Pure stack-machine dispatch must not keep HandlerDispatchState on Segment."
     )
-    assert "pub struct DispatchOriginState" in source, (
-        "Dispatch origin metadata must move onto Segment-owned state."
+    assert "pub struct DispatchOriginState" not in source, (
+        "Pure stack-machine dispatch must not keep DispatchOriginState on Segment."
     )
-    assert "pub handler_dispatch: Option<HandlerDispatchState>" in source, (
-        "Segments must own the active handler-dispatch state structurally."
+    assert "pub handler_dispatch: Option<HandlerDispatchState>" not in source, (
+        "Segments must not own active handler-dispatch state."
     )
-    assert "pub dispatch_origin: Option<DispatchOriginState>" in source, (
-        "Segments must own the dispatch-origin state structurally."
+    assert "pub dispatch_origin: Option<DispatchOriginState>" not in source, (
+        "Segments must not own dispatch-origin state."
+    )
+    assert "pub dispatch_id: Option<DispatchId>" not in source, (
+        "Dispatch correlation must move to an observer, not Segment."
     )
 
 
-def test_handler_segment_stores_dispatch_state_without_special_frames() -> None:
+def test_handler_segment_setup_has_no_dispatch_state_writes() -> None:
     source = _vm_runtime_source()
 
-    assert "handler_seg.handler_dispatch = Some(" in source, (
-        "Handler segment setup must install handler dispatch state directly on the segment."
+    assert "handler_seg.handler_dispatch = Some(" not in source, (
+        "Handler segment setup must not install handler dispatch state directly on Segment."
     )
-    assert "handler_seg.dispatch_origin = Some(" in source, (
-        "Handler segment setup must install dispatch origin state directly on the segment."
+    assert "handler_seg.dispatch_origin = Some(" not in source, (
+        "Handler segment setup must not install dispatch origin state directly on Segment."
+    )
+    assert "handler_seg.dispatch_id = Some(" not in source, (
+        "Handler segment setup must not stamp dispatch ids onto Segment."
     )
     assert "handler_seg.push_frame(Frame::HandlerDispatch" not in source
     assert "handler_seg.push_frame(Frame::DispatchOrigin" not in source
@@ -104,6 +110,18 @@ def test_runtime_has_no_dispatch_special_frame_matches_left() -> None:
     )
     assert "Frame::HandlerDispatch" not in source
     assert "Frame::DispatchOrigin" not in source
+    banned_segment_accesses = (
+        ".handler_dispatch",
+        ".dispatch_origin",
+        "seg.dispatch_id",
+        "segment.dispatch_id",
+        "current_seg.dispatch_id",
+        "handler_seg.dispatch_id",
+    )
+    for needle in banned_segment_accesses:
+        assert needle not in source, (
+            f"Pure stack-machine dispatch must not read or write Segment dispatch state via `{needle}`."
+        )
 
 
 def test_dispatch_cleanup_does_not_linearly_scan_all_segments() -> None:
@@ -181,4 +199,16 @@ def test_start_dispatch_hot_path_skips_full_handler_chain_materialization() -> N
     assert "handlers_in_caller_chain(seg_id)" not in block, (
         "start_dispatch is on the effect-dispatch hot path and should not pre-materialize full "
         "HandlerChainEntry vectors before selection/snapshot derivation."
+    )
+
+
+def test_dispatch_resume_does_not_mutate_current_handler_caller_chain() -> None:
+    source = _runtime_source(VM_DISPATCH_RS)
+    block = _function_block(
+        source,
+        "pub(super) fn handle_dispatch_resume(&mut self, k: Continuation, value: Value) -> StepEvent",
+    )
+
+    assert "seg.caller =" not in block, (
+        "Pure stack-machine Resume must not rewrite the current handler segment's caller chain."
     )
