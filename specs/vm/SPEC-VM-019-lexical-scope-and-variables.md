@@ -111,21 +111,40 @@ Resume(k, v):
   Done. No state read from segments except caller pointers.
 ```
 
-### What About Tracing / Error Enrichment?
+### Immutable Stack Items
 
-These are **observability concerns** that must be separated from the dispatch path:
+**Core invariant: segments and frames in the caller chain are immutable.**
 
-- **Tracing**: A separate trace observer records dispatch events (start, complete,
-  error). The observer can maintain its own data structures keyed by dispatch ID.
-  The dispatch path itself does not need to know about tracing.
+Only the **current executing segment** (`current_segment`) may have mutable execution
+state (mode, frames, pending_python). Every other segment in the caller chain — handler
+segments, parent segments, captured segments — is immutable once created.
 
-- **Error enrichment**: When a throw occurs, the active handler chain can be
-  assembled on-demand by walking the segment chain. The segment chain already
-  contains all handler info (PromptBoundary). No need to store DispatchOrigin.
+This is enforced by:
+1. **Semgrep rules** that ban mutation of non-current segments
+2. **No dispatch state on segments** — `handler_dispatch`, `dispatch_origin`,
+   `dispatch_id` are eliminated. These were mutable fields set/cleared during dispatch
+   on segments that may be shared across tasks.
+3. **No caller mutation during dispatch** — `handle_dispatch_resume` must not relink
+   `seg.caller` on any segment. The caller chain is set at segment creation time.
 
-- **One-shot enforcement**: A `consumed: bool` flag on the `Continuation` object.
-  Checked when the VM processes Resume(k, v). Not a dispatch concern — it's a
-  continuation validity check.
+Immutability of stack items is what makes shared handlers safe: multiple tasks can
+walk the same caller chain without data races or pollution.
+
+### Traceability from Stack Structure
+
+The stack IS the trace. There is no separate "trace observer" or accumulated event log.
+When the VM needs dispatch context (e.g., for error enrichment at throw time), it
+**walks the stack and derives it**:
+
+- **Which handler is active**: walk caller chain, find PromptBoundary segments with
+  active Program frames → those handlers are mid-dispatch.
+- **Which effect triggered dispatch**: stored on the handler's Program frame as an
+  immutable field set at frame creation time (e.g., `effect_repr: Option<String>`).
+  This is a stack item, not accumulated state.
+- **Error enrichment**: assembled on-demand from segment chain at throw time.
+  PromptBoundary already has handler info. Program frame has effect info.
+- **One-shot enforcement**: `consumed: bool` flag on the `Continuation` object.
+  Checked when the VM processes Resume(k, v). Not a stack concern.
 
 ## Current State vs Target
 
@@ -167,7 +186,7 @@ Segment {
 ```
 
 The dispatch mechanism should be pure pointer manipulation on the segment chain.
-Tracing/error enrichment should live in a separate observer, not on segments.
+Traceability is derived from the stack structure, not from mutable state on segments.
 
 ## Spawn and Shared Handlers (OCaml Model)
 
@@ -254,27 +273,32 @@ as `handler_dispatch`, `dispatch_origin`, `dispatch_id` fields.
 
 ### Phase 4: Pure Stack Machine Dispatch (TODO)
 
-Eliminate all dispatch state from segments. Make dispatch pure pointer manipulation.
+Eliminate all dispatch state from segments. Enforce immutable stack items.
 
-1. **Remove `handler_dispatch` from Segment** — the handler generator holds the
-   effect and k as parameters. The return path is the caller chain. One-shot
-   enforcement is a flag on Continuation. Nothing needs to be stored on the segment.
+1. **Remove `handler_dispatch` from Segment** — return path is the caller chain.
+   One-shot enforcement is `Continuation.consumed`. Nothing stored on segment.
 
-2. **Remove `dispatch_origin` from Segment** — error enrichment assembled on-demand
-   from segment chain at throw time. The segment chain already contains all handler
-   info via PromptBoundary.
+2. **Remove `dispatch_origin` from Segment** — effect info stored on the handler's
+   Program frame as immutable `effect_repr` field, set at frame creation. Error
+   enrichment derived by walking the stack at throw time.
 
-3. **Remove `dispatch_id` from Segment** — tracing moves to a separate observer
-   that maintains its own dispatch correlation state.
+3. **Remove `dispatch_id` from Segment** — dispatch correlation derived from stack
+   topology (which handler segment has active frames = active dispatch).
 
-4. **Eliminate Python handler caller mutation** — with no dispatch state on segments,
-   `handle_dispatch_resume` no longer needs to relink `seg.caller`. The return path
-   is implicit in the stack topology. This fixes the Python handler hack from PR #354.
+4. **Eliminate caller mutation during dispatch** — `handle_dispatch_resume` must not
+   mutate `seg.caller`. Caller chain is set at segment creation time and never
+   changes. This eliminates the Python handler hack from PR #354.
 
-5. **Simplify dispatch path** — the dispatch becomes:
+5. **Add semgrep rules enforcing immutability**:
+   - Ban mutation of `seg.caller` outside segment creation
+   - Ban mutation of `seg.handler_dispatch` / `seg.dispatch_origin` (fields removed)
+   - Ban mutation of any segment field via `segments.get_mut()` in dispatch path
+   - Allowlist: only `current_seg_mut()` for execution state (mode, frames, pending)
+
+6. **Simplify dispatch path** — the dispatch becomes:
    - Walk caller chain → find handler → detach k → set current → invoke handler
    - Resume: assert one-shot → reattach k → deliver value
-   - No state reads or writes on segments during dispatch
+   - No reads or writes to segment fields during dispatch
 
 ### Phase 5: Clean Up
 
@@ -297,11 +321,10 @@ stack machine dispatch.
 ReadVar walks the scope_parent chain — O(depth). For hot paths, may need caching.
 OCaml's fiber chain walk is also O(depth) but with hardware-friendly memory layout.
 
-### Trace Observer Architecture
+### Stack-Derived Traceability
 
-Moving tracing out of dispatch requires designing the observer interface:
-- How does the observer correlate dispatch start/complete events?
-- How does it provide error context on demand?
-- How does it handle concurrent dispatches (scheduler)?
-
-This is a design question for Phase 4.
+Error enrichment and dispatch tracing must be derivable from the stack at any point.
+The key question: when walking the segment chain at throw time, is there enough
+information on immutable stack items (PromptBoundary kind, Program frame effect_repr)
+to reconstruct the full dispatch context? Need to verify this produces equivalent
+tracebacks to the current `dispatch_origin`-based approach.
