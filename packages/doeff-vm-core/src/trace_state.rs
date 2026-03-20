@@ -127,7 +127,12 @@ impl TraceState {
         metadata: &CallMetadata,
         handler_kind: Option<HandlerKind>,
     ) {
-        Self::upsert_frame_state_from_metadata(&mut self.frame_stack, stream, metadata, &handler_kind);
+        Self::upsert_frame_state_from_metadata(
+            &mut self.frame_stack,
+            stream,
+            metadata,
+            &handler_kind,
+        );
     }
 
     pub(crate) fn record_frame_exited(&mut self, frame_id: FrameId) {
@@ -740,11 +745,7 @@ impl TraceState {
 
                 let (function_name, source_file, source_line) =
                     Self::resolved_exception_location(exception).unwrap_or_else(|| {
-                        (
-                            MISSING_UNKNOWN.to_string(),
-                            MISSING_UNKNOWN.to_string(),
-                            0,
-                        )
+                        (MISSING_UNKNOWN.to_string(), MISSING_UNKNOWN.to_string(), 0)
                     });
 
                 ActiveChainEntry::ExceptionSite {
@@ -773,7 +774,10 @@ impl TraceState {
     }
 
     fn resolved_exception_location(exception: &PyException) -> Option<(String, String, u32)> {
-        let PyException::Materialized { exc_value, exc_tb, .. } = exception else {
+        let PyException::Materialized {
+            exc_value, exc_tb, ..
+        } = exception
+        else {
             return None;
         };
 
@@ -1300,8 +1304,7 @@ impl TraceState {
         dispatch_stack.iter().rev().find_map(|ctx| {
             frame_stack.iter().rev().find_map(|frame| {
                 frame.dispatch_display.as_ref().filter(|dispatch| {
-                    dispatch.dispatch_id == ctx.dispatch_id
-                        && Self::is_visible_dispatch(dispatch)
+                    dispatch.dispatch_id == ctx.dispatch_id && Self::is_visible_dispatch(dispatch)
                 })
             })
         })
@@ -1410,8 +1413,7 @@ impl TraceState {
     ) -> bool {
         let (handler_name, handler_kind, _, _) = Self::active_handler_trace_info(dispatch);
         frame_stack.iter().skip(start_index).any(|frame| {
-            frame.function_name == handler_name
-                && frame.handler_kind == Some(handler_kind)
+            frame.function_name == handler_name && frame.handler_kind == Some(handler_kind)
         })
     }
 

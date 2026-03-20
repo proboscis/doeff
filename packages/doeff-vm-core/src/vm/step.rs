@@ -172,6 +172,21 @@ impl VM {
             };
 
             if !segment.has_frames() {
+                let has_handler_dispatch = segment.handler_dispatch.is_some();
+                let has_dispatch_origin = segment.dispatch_origin.is_some();
+                if has_handler_dispatch || has_dispatch_origin {
+                    let mode = std::mem::replace(
+                        &mut self.current_seg_mut().mode,
+                        Mode::Deliver(Value::Unit),
+                    );
+                    if let Some(handler_dispatch) = self.current_seg_mut().handler_dispatch.take() {
+                        return self.step_handler_dispatch_state(handler_dispatch, mode);
+                    }
+                    if let Some(dispatch_origin) = self.current_seg_mut().dispatch_origin.take() {
+                        return self.step_dispatch_origin_state(dispatch_origin, mode);
+                    }
+                    unreachable!("segment dispatch state vanished while stepping");
+                }
                 let caller = segment.caller;
                 let scope_parent = segment.scope_parent;
                 let throw_parent = segment.throw_parent.clone();
@@ -276,16 +291,6 @@ impl VM {
             }
             Frame::InterceptorApply(cont) => self.step_interceptor_apply_frame(*cont, mode),
             Frame::InterceptorEval(cont) => self.step_interceptor_eval_frame(*cont, mode),
-            Frame::HandlerDispatch {
-                dispatch_id,
-                continuation,
-                prompt_seg_id: _,
-            } => self.step_handler_dispatch_frame(dispatch_id, continuation, mode),
-            Frame::DispatchOrigin {
-                dispatch_id,
-                k_origin,
-                ..
-            } => self.step_dispatch_origin_frame(dispatch_id, k_origin, mode),
             Frame::EvalReturn(continuation) => self.step_eval_return_frame(*continuation, mode),
             Frame::MapReturn {
                 mapper,
@@ -561,6 +566,26 @@ impl VM {
                 ))
             }
         }
+    }
+
+    fn step_handler_dispatch_state(
+        &mut self,
+        handler_dispatch: crate::segment::HandlerDispatchState,
+        mode: Mode,
+    ) -> StepEvent {
+        self.step_handler_dispatch_frame(
+            handler_dispatch.dispatch_id,
+            handler_dispatch.continuation,
+            mode,
+        )
+    }
+
+    fn step_dispatch_origin_state(
+        &mut self,
+        dispatch_origin: crate::segment::DispatchOriginState,
+        mode: Mode,
+    ) -> StepEvent {
+        self.step_dispatch_origin_frame(dispatch_origin.dispatch_id, dispatch_origin.k_origin, mode)
     }
 
     fn step_eval_return_frame(
@@ -942,18 +967,31 @@ impl VM {
                     metadata,
                     handler_kind,
                 });
-                let Some(dispatch_id) = self.current_dispatch_id() else {
-                    return StepEvent::Error(VMError::internal(
-                        "RustProgramContinuation outside dispatch",
-                    ));
-                };
-                let Some((_, k, marker)) = self
-                    .active_handler_dispatch_for(dispatch_id)
-                    .or_else(|| self.handler_dispatch_for_any(dispatch_id))
-                else {
-                    return StepEvent::Error(VMError::internal(
-                        "RustProgramContinuation: active handler dispatch not found",
-                    ));
+                let (marker, k) = if let Some(dispatch_id) = self.current_dispatch_id() {
+                    let Some((_, k, marker)) = self
+                        .active_handler_dispatch_for(dispatch_id)
+                        .or_else(|| self.handler_dispatch_for_any(dispatch_id))
+                    else {
+                        return StepEvent::Error(VMError::internal(
+                            "RustProgramContinuation: active handler dispatch not found",
+                        ));
+                    };
+                    (marker, k)
+                } else {
+                    let Some(seg_id) = self.current_segment else {
+                        return StepEvent::Error(VMError::internal(
+                            "RustProgramContinuation without current segment",
+                        ));
+                    };
+                    let Some(seg) = self.segments.get(seg_id) else {
+                        return StepEvent::Error(VMError::invalid_segment(
+                            "RustProgramContinuation segment not found",
+                        ));
+                    };
+                    (
+                        seg.marker,
+                        Continuation::capture(seg, seg_id, seg.dispatch_id),
+                    )
                 };
                 self.current_seg_mut().pending_python =
                     Some(PendingPython::RustProgramContinuation { marker, k });
@@ -1909,8 +1947,12 @@ impl VM {
     }
 
     fn handle_yield_eval(&mut self, expr: PyShared, metadata: Option<CallMetadata>) -> StepEvent {
-        if let Some((stream, metadata, handler_kind)) = self.current_seg().frames.iter().rev().find_map(
-            |frame| match frame {
+        if let Some((stream, metadata, handler_kind)) = self
+            .current_seg()
+            .frames
+            .iter()
+            .rev()
+            .find_map(|frame| match frame {
                 Frame::Program {
                     stream,
                     metadata: Some(metadata),
@@ -1919,15 +1961,13 @@ impl VM {
                 Frame::Program { .. }
                 | Frame::InterceptorApply(_)
                 | Frame::InterceptorEval(_)
-                | Frame::HandlerDispatch { .. }
-                | Frame::DispatchOrigin { .. }
                 | Frame::EvalReturn(_)
                 | Frame::MapReturn { .. }
                 | Frame::FlatMapBindResult
                 | Frame::FlatMapBindSource { .. }
                 | Frame::InterceptBodyReturn { .. } => None,
-            },
-        ) {
+            })
+        {
             self.emit_frame_location(&stream, &metadata, handler_kind);
         }
         let cont = Continuation::create_unstarted_with_metadata(
@@ -2094,9 +2134,6 @@ impl VM {
                             if let Some(metadata) = continuation.emitter_metadata.as_ref() {
                                 stack.push(metadata.clone());
                             }
-                        }
-                        Frame::HandlerDispatch { .. } | Frame::DispatchOrigin { .. } => {
-                            // no metadata
                         }
                         Frame::EvalReturn(continuation) => match continuation.as_ref() {
                             EvalReturnContinuation::ApplyResolveFunction { metadata, .. }
@@ -2669,12 +2706,7 @@ impl VM {
             }
             PyCallOutcome::GenError(exception) => {
                 if let Some(ref m) = metadata {
-                    self.emit_frame_exited_due_to_error(
-                        Some(&stream),
-                        m,
-                        handler_kind,
-                        &exception,
-                    );
+                    self.emit_frame_exited_due_to_error(Some(&stream), m, handler_kind, &exception);
                 }
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)

@@ -261,7 +261,15 @@ impl DebugState {
 
         let seg_info = current_segment
             .and_then(|id| segments.get(id))
-            .map(|s| format!("seg={:?} frames={}", current_segment, s.frames.len()))
+            .map(|s| {
+                format!(
+                    "seg={:?} frames={} handler_dispatch={} dispatch_origin={}",
+                    current_segment,
+                    s.frames.len(),
+                    s.handler_dispatch.is_some(),
+                    s.dispatch_origin.is_some()
+                )
+            })
             .unwrap_or_else(|| "seg=None".to_string());
 
         let pending = self.pending_kind(pending_python);
@@ -283,8 +291,6 @@ impl DebugState {
                         Frame::Program { .. } => "Program",
                         Frame::InterceptorApply(_) => "InterceptorApply",
                         Frame::InterceptorEval(_) => "InterceptorEval",
-                        Frame::HandlerDispatch { .. } => "HandlerDispatch",
-                        Frame::DispatchOrigin { .. } => "DispatchOrigin",
                         Frame::EvalReturn(_) => "EvalReturn",
                         Frame::MapReturn { .. } => "MapReturn",
                         Frame::FlatMapBindResult => "FlatMapBindResult",

@@ -2812,6 +2812,22 @@ rules:
         - "**/packages/doeff-vm-core/src/vm/*.rs"
     pattern-regex: 'prompt_seg\.push_frame\(Frame::DispatchOrigin|fn remove_dispatch_origin\b|dispatch_origin_segments\b'
 
+  - id: vm-no-dispatch-special-frames
+    languages: [rust]
+    severity: ERROR
+    message: |
+      vm-remove-dispatch-frames: HandlerDispatch/DispatchOrigin must not remain
+      as Frame variants or runtime frame matches. Dispatch ownership now lives
+      on Segment-owned state so handler completion and error enrichment stay
+      structural instead of encoded as special stack frames.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+        - "**/packages/doeff-vm/src/**"
+      exclude:
+        - "**/tests/**"
+    pattern-regex: 'Frame::HandlerDispatch|Frame::DispatchOrigin|(?m)^\s*(HandlerDispatch|DispatchOrigin)\s*\{'
+
   - id: vm-no-mutating-exception-enrichment-wrapper
     languages: [rust]
     severity: ERROR
