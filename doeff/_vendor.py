@@ -287,11 +287,46 @@ class WGraph:
 # =========================================================
 FrozenDict = frozendict
 
+
+@dataclass(frozen=True)
+class Ok(Generic[T_co]):
+    """Legacy Result shim kept for persisted pickles created before the Rust move."""
+
+    value: T_co
+
+    def is_ok(self) -> bool:
+        return True
+
+    def is_err(self) -> bool:
+        return False
+
+    def __bool__(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True)
+class Err:
+    """Legacy error shim kept for persisted pickles created before the Rust move."""
+
+    error: Any
+    captured_traceback: Any = None
+
+    def is_ok(self) -> bool:
+        return False
+
+    def is_err(self) -> bool:
+        return True
+
+    def __bool__(self) -> bool:
+        return False
+
 __all__ = [
+    "Err",
     "NOTHING",
     "FrozenDict",
     "Maybe",
     "Nothing",
+    "Ok",
     "Some",
     "TraceError",
     "WGraph",

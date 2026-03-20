@@ -734,12 +734,12 @@ impl PyVM {
         let seg = Segment::new(marker, outside_seg_id);
         let seg_id = self.vm.alloc_segment(seg);
         self.vm.current_segment = Some(seg_id);
-        let Some(seg) = self.vm.current_segment_mut() else {
+        if self.vm.current_segment_mut().is_none() {
             return Err(PyRuntimeError::new_err(
                 "start_with_expr: current segment missing after allocation",
             ));
-        };
-        seg.mode = Mode::HandleYield(DoCtrl::Eval {
+        }
+        self.vm.mode = Mode::HandleYield(DoCtrl::Eval {
             expr: PyShared::new(expr),
             metadata: None,
         });
@@ -858,12 +858,12 @@ impl PyVM {
     }
 
     fn pending_generator(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let Some(seg) = self.vm.current_segment_ref() else {
+        if self.vm.current_segment_ref().is_none() {
             return Err(PyRuntimeError::new_err(
                 "GenNext/GenSend/GenThrow: no current segment",
             ));
-        };
-        match &seg.pending_python {
+        }
+        match &self.vm.pending_python {
             Some(PendingPython::StepUserGenerator { stream, .. }) => {
                 let guard = stream
                     .lock()
@@ -3380,7 +3380,7 @@ mod tests {
 
             let body_seg_id = pyvm.vm.current_segment.expect("body segment missing");
             let body_seg = pyvm.vm.segments.get(body_seg_id).expect("segment missing");
-            let prompt_seg_id = body_seg.caller.expect("handler prompt missing");
+            let prompt_seg_id = body_seg.parent.expect("handler prompt missing");
             let prompt_seg = pyvm
                 .vm
                 .segments
