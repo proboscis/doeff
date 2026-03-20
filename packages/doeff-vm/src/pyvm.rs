@@ -495,6 +495,14 @@ impl PyVM {
         Ok(dict.into())
     }
 
+    pub fn _segment_count(&self) -> usize {
+        self.vm.segments.len()
+    }
+
+    pub fn _continuation_count(&self) -> usize {
+        self.vm.continuation_registry.len()
+    }
+
     pub fn enable_debug(&mut self, level: String) {
         use crate::vm::DebugConfig;
         let config = match level.as_str() {
@@ -3452,7 +3460,12 @@ mod tests {
             let handlers_list = pyo3::types::PyList::new(py, [sentinel.bind(py)]).unwrap();
             let obj = Bound::new(
                 py,
-                PyCreateContinuation::new(py, py.None().into(), handlers_list.unbind().into())
+                PyCreateContinuation::new(
+                    py,
+                    py.None().into(),
+                    handlers_list.unbind().into(),
+                    None,
+                )
                     .unwrap(),
             )
             .unwrap()

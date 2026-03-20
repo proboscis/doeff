@@ -121,6 +121,15 @@ impl TraceState {
         });
     }
 
+    pub(crate) fn record_frame_location(
+        &mut self,
+        stream: &IRStreamRef,
+        metadata: &CallMetadata,
+        handler_kind: Option<HandlerKind>,
+    ) {
+        Self::upsert_frame_state_from_metadata(&mut self.frame_stack, stream, metadata, &handler_kind);
+    }
+
     pub(crate) fn record_frame_exited(&mut self, frame_id: FrameId) {
         let Some(index) = self
             .frame_stack
@@ -144,7 +153,54 @@ impl TraceState {
         self.frame_stack.remove(index);
     }
 
-    pub(crate) fn record_frame_exited_due_to_error(&mut self, frame_id: FrameId) {
+    pub(crate) fn record_frame_exited_due_to_error(
+        &mut self,
+        stream: Option<&IRStreamRef>,
+        metadata: &CallMetadata,
+        handler_kind: Option<HandlerKind>,
+        exception: &PyException,
+    ) {
+        let frame_id = metadata.frame_id as FrameId;
+        if let Some(stream) = stream {
+            Self::upsert_frame_state_from_metadata(
+                &mut self.frame_stack,
+                stream,
+                metadata,
+                &handler_kind,
+            );
+        } else if !self
+            .frame_stack
+            .iter()
+            .any(|frame| frame.frame_id == frame_id)
+        {
+            self.frame_stack.push(ActiveChainFrameState {
+                frame_id,
+                function_name: metadata.function_name.clone(),
+                source_file: metadata.source_file.clone(),
+                source_line: metadata.source_line,
+                args_repr: metadata.args_repr.clone(),
+                sub_program_repr: Self::program_call_repr(metadata)
+                    .unwrap_or_else(|| MISSING_SUB_PROGRAM.to_string()),
+                handler_kind,
+                dispatch_display: None,
+                exited: false,
+                preserve_on_error: false,
+            });
+        }
+        if let Some((function_name, source_file, source_line)) =
+            Self::resolved_exception_location(exception)
+        {
+            if let Some(frame) = self
+                .frame_stack
+                .iter_mut()
+                .rposition(|frame| frame.frame_id == frame_id)
+                .and_then(|index| self.frame_stack.get_mut(index))
+            {
+                if frame.function_name == function_name && frame.source_file == source_file {
+                    frame.source_line = source_line;
+                }
+            }
+        }
         let Some(index) = self
             .frame_stack
             .iter()
@@ -682,61 +738,14 @@ impl TraceState {
                     .map(|v| v.to_string())
                     .unwrap_or_default();
 
-                let mut function_name = MISSING_UNKNOWN.to_string();
-                let mut source_file = MISSING_UNKNOWN.to_string();
-                let mut source_line = 0u32;
-
-                if let Ok(do_module) = PyModule::import(py, "doeff.do") {
-                    if let Ok(resolve_location) = do_module.getattr("resolve_exception_location") {
-                        if let Ok(Some((resolved_function, resolved_file, resolved_line))) =
-                            resolve_location
-                                .call1((exc_value_bound.clone(),))
-                                .and_then(|value| value.extract::<Option<(String, String, u32)>>())
-                        {
-                            function_name = resolved_function;
-                            source_file = resolved_file;
-                            source_line = resolved_line;
-                        }
-                    }
-                }
-
-                if source_line == 0 {
-                    let mut tb = exc_tb
-                        .as_ref()
-                        .map(|tb| tb.bind(py).clone().into_any())
-                        .or_else(|| exc_value_bound.getattr("__traceback__").ok());
-
-                    while let Some(tb_obj) = tb {
-                        let next = tb_obj.getattr("tb_next").ok();
-                        let has_next = next.as_ref().is_some_and(|n| !n.is_none());
-                        if has_next {
-                            tb = next;
-                            continue;
-                        }
-
-                        source_line = tb_obj
-                            .getattr("tb_lineno")
-                            .ok()
-                            .and_then(|v| v.extract::<u32>().ok())
-                            .unwrap_or(0);
-
-                        if let Ok(frame) = tb_obj.getattr("tb_frame") {
-                            if let Ok(code) = frame.getattr("f_code") {
-                                function_name = code
-                                    .getattr("co_name")
-                                    .ok()
-                                    .and_then(|v| v.extract::<String>().ok())
-                                    .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
-                                source_file = code
-                                    .getattr("co_filename")
-                                    .ok()
-                                    .and_then(|v| v.extract::<String>().ok())
-                                    .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
-                            }
-                        }
-                        break;
-                    }
-                }
+                let (function_name, source_file, source_line) =
+                    Self::resolved_exception_location(exception).unwrap_or_else(|| {
+                        (
+                            MISSING_UNKNOWN.to_string(),
+                            MISSING_UNKNOWN.to_string(),
+                            0,
+                        )
+                    });
 
                 ActiveChainEntry::ExceptionSite {
                     function_name,
@@ -761,6 +770,65 @@ impl TraceState {
                 message: message.clone(),
             },
         }
+    }
+
+    fn resolved_exception_location(exception: &PyException) -> Option<(String, String, u32)> {
+        let PyException::Materialized { exc_value, exc_tb, .. } = exception else {
+            return None;
+        };
+
+        Python::attach(|py| {
+            let exc_value_bound = exc_value.bind(py);
+
+            if let Ok(do_module) = PyModule::import(py, "doeff.do") {
+                if let Ok(resolve_location) = do_module.getattr("resolve_exception_location") {
+                    if let Ok(Some(location)) = resolve_location
+                        .call1((exc_value_bound.clone(),))
+                        .and_then(|value| value.extract::<Option<(String, String, u32)>>())
+                    {
+                        return Some(location);
+                    }
+                }
+            }
+
+            let mut tb = exc_tb
+                .as_ref()
+                .map(|tb| tb.bind(py).clone().into_any())
+                .or_else(|| exc_value_bound.getattr("__traceback__").ok());
+
+            while let Some(tb_obj) = tb {
+                let next = tb_obj.getattr("tb_next").ok();
+                let has_next = next.as_ref().is_some_and(|n| !n.is_none());
+                if has_next {
+                    tb = next;
+                    continue;
+                }
+
+                let source_line = tb_obj
+                    .getattr("tb_lineno")
+                    .ok()
+                    .and_then(|v| v.extract::<u32>().ok())
+                    .unwrap_or(0);
+
+                if let Ok(frame) = tb_obj.getattr("tb_frame") {
+                    if let Ok(code) = frame.getattr("f_code") {
+                        let function_name = code
+                            .getattr("co_name")
+                            .ok()
+                            .and_then(|v| v.extract::<String>().ok())
+                            .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
+                        let source_file = code
+                            .getattr("co_filename")
+                            .ok()
+                            .and_then(|v| v.extract::<String>().ok())
+                            .unwrap_or_else(|| MISSING_UNKNOWN.to_string());
+                        return Some((function_name, source_file, source_line));
+                    }
+                }
+                break;
+            }
+            None
+        })
     }
 
     pub(crate) fn assemble_active_chain(
@@ -827,21 +895,6 @@ impl TraceState {
                 frame.handler_kind = tracked.handler_kind;
             }
             frame.dispatch_display = tracked.dispatch_display.clone();
-        }
-
-        for tracked in &self.frame_stack {
-            if !tracked.exited
-                || !tracked
-                    .dispatch_display
-                    .as_ref()
-                    .is_some_and(Self::is_visible_dispatch)
-                || frame_stack
-                    .iter()
-                    .any(|frame| frame.frame_id == tracked.frame_id)
-            {
-                continue;
-            }
-            frame_stack.push(tracked.clone());
         }
         frame_stack.sort_by_key(|frame| {
             self.frame_stack
@@ -1164,6 +1217,7 @@ impl TraceState {
         frame_stack: &[ActiveChainFrameState],
     ) -> Vec<ActiveChainEntry> {
         let mut active_chain = Vec::new();
+        let mut pending_transferred_handler: Option<ActiveChainEntry> = None;
         for (index, frame) in frame_stack.iter().enumerate() {
             if let Some(dispatch) = frame
                 .dispatch_display
@@ -1177,6 +1231,16 @@ impl TraceState {
                         | EffectResult::Threw { .. }
                 ) {
                     Self::push_effect_yield_entry(&mut active_chain, dispatch, Some(frame));
+                    if matches!(dispatch.result, EffectResult::Transferred { .. })
+                        && !Self::has_visible_program_frame_for_handler(
+                            frame_stack,
+                            index + 1,
+                            dispatch,
+                        )
+                    {
+                        pending_transferred_handler =
+                            Self::transferred_handler_program_entry(dispatch);
+                    }
                     continue;
                 }
             }
@@ -1188,6 +1252,12 @@ impl TraceState {
                 frame,
                 Self::next_visible_program_frame(frame_stack, index + 1),
             ));
+            if let Some(entry) = pending_transferred_handler.take() {
+                active_chain.push(entry);
+            }
+        }
+        if let Some(entry) = pending_transferred_handler {
+            active_chain.push(entry);
         }
         active_chain
     }
@@ -1230,7 +1300,8 @@ impl TraceState {
         dispatch_stack.iter().rev().find_map(|ctx| {
             frame_stack.iter().rev().find_map(|frame| {
                 frame.dispatch_display.as_ref().filter(|dispatch| {
-                    dispatch.dispatch_id == ctx.dispatch_id && Self::is_visible_dispatch(dispatch)
+                    dispatch.dispatch_id == ctx.dispatch_id
+                        && Self::is_visible_dispatch(dispatch)
                 })
             })
         })
@@ -1330,6 +1401,33 @@ impl TraceState {
             sub_program_repr,
             handler_kind: frame.handler_kind,
         }
+    }
+
+    fn has_visible_program_frame_for_handler(
+        frame_stack: &[ActiveChainFrameState],
+        start_index: usize,
+        dispatch: &DispatchDisplayState,
+    ) -> bool {
+        let (handler_name, handler_kind, _, _) = Self::active_handler_trace_info(dispatch);
+        frame_stack.iter().skip(start_index).any(|frame| {
+            frame.function_name == handler_name
+                && frame.handler_kind == Some(handler_kind)
+        })
+    }
+
+    fn transferred_handler_program_entry(
+        dispatch: &DispatchDisplayState,
+    ) -> Option<ActiveChainEntry> {
+        let (handler_name, handler_kind, source_file, source_line) =
+            Self::active_handler_trace_info(dispatch);
+        Some(ActiveChainEntry::ProgramYield {
+            function_name: handler_name,
+            source_file: source_file.unwrap_or_else(|| MISSING_UNKNOWN.to_string()),
+            source_line: source_line.unwrap_or(0),
+            args_repr: None,
+            sub_program_repr: MISSING_SUB_PROGRAM.to_string(),
+            handler_kind: Some(handler_kind),
+        })
     }
 
     fn next_visible_program_frame(
