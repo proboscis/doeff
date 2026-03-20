@@ -1,330 +1,340 @@
-# SPEC-VM-019: Pure Stack Machine and Scoped Variables (Rev 4)
+# SPEC-VM-019: Pure Stack Machine (Rev 5)
 
 **Status:** Draft
 **Created:** 2026-03-18
 **Revised:** 2026-03-20
-**Motivation:** Handler duplication in Spawn (#342), dispatch complexity, RustStore violation, ScopeStore leaking into VM
+**Motivation:** Align doeff VM architecture with OCaml 5 effect handler runtime
 
 **ADR:** [DEC-VM-012 Pure Stack Machine Dispatch](../../doeff-VAULT/Decisions/DEC-VM-012-pure-stack-machine-dispatch.md)
 
-## Problem Statement
+## Design Principle: Match OCaml 5
 
-The doeff VM has accumulated accidental complexity in its dispatch mechanism. Comparing
-with OCaml 5's effect handler runtime reveals that doeff's core mechanics are structurally
-identical but obscured by layered concerns:
-
-1. **Dispatch state on segments** — `handler_dispatch` and `dispatch_origin` fields on
-   segments encode tracing, protocol enforcement, and error enrichment directly in the
-   segment chain. These are observability concerns, not dispatch mechanics.
-
-2. **Handler duplication in Spawn** — spawned tasks previously got cloned handler segments
-   instead of sharing the parent's handlers via the caller chain. (Fixed in PR #354.)
-
-3. **Handler-specific fields in RustStore** — `state`, `env`, `log` were handler
-   implementation details leaking into the VM. (Fixed in PR #353 via scoped variables.)
-
-4. **Caller chain mutation during dispatch** — `handle_dispatch_resume` mutates
-   `seg.caller` for Python handlers, polluting shared handler chains. This is because
-   dispatch state (return path) is tracked on segments instead of being implicit in the
-   stack topology.
-
-## Design Principle: Pure Stack Machine
-
-### OCaml 5 Architecture (from PLDI 2021 paper)
-
-OCaml 5 implements effect handlers with **fibers** — small heap-allocated stack chunks:
+The doeff VM is the equivalent of the OCaml 5 runtime. The architecture must match
+OCaml 5 as closely as possible — same data structures, same operations, same invariants.
 
 ```
-Fiber = stack chunk containing:
-  - Stack frames (function calls)
-  - Handler delimiter (handler closure + environment)
-  - Link to parent fiber
+OCaml 5 runtime                      doeff VM
+──────────────────                   ──────────────────
+Fiber chain (the stack)          =   Fiber chain (the stack)
+Heap (ref cells, closures)       =   VarStore (the heap)
+Registers (IP, exception state)  =   Registers (current_fiber, mode, pending)
+perform / continue               =   yield Effect / Resume(k, v)
+```
 
-Program stack = linked list of fibers
+## OCaml 5 Architecture (from PLDI 2021 paper)
 
-perform E:
-  1. Walk fiber chain to find matching handler delimiter
-  2. Detach fibers between perform site and handler → this IS continuation k
-     (just pointer manipulation, no copying — one-shot)
-  3. Run handler code on the handler's fiber
+### Fiber
+
+A fiber is a minimal stack chunk:
+
+```
+Fiber {
+    frames: [stack frames]           // function calls
+    handler: Option<HandlerDelimiter> // handler closure + effect types
+    parent: Option<FiberId>          // link to parent fiber
+}
+```
+
+That's it. No mode, no variables, no dispatch state, no scope pointer.
+
+### Fiber Chain (the Stack)
+
+The program stack is a linked list of fibers via `parent` pointers:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│ Fiber C     │     │ Fiber B     │     │ Fiber A     │
+│ frames: [.] │     │ frames: [.] │     │ frames: [.] │
+│ handler: -  │     │ handler: H2 │     │ handler: H1 │
+│ parent ─────┼────►│ parent ─────┼────►│ parent: nil │
+└─────────────┘     └─────────────┘     └─────────────┘
+      ↑
+  current_fiber
+```
+
+### Heap (Ref Cells)
+
+Mutable state lives on the heap, not on fibers:
+
+```ocaml
+let handler body =
+  let state = ref 0 in              (* allocate ref cell on heap *)
+  match body () with
+  | result -> result
+  | effect Get, k -> continue k !state        (* read from heap *)
+  | effect (Put v), k -> state := v; continue k ()  (* write to heap *)
+```
+
+The handler closure captures a pointer to the heap ref. Multiple fibers that
+share the handler (via parent chain) access the same heap ref. The heap is
+managed by the VM (garbage collected).
+
+### Registers
+
+The VM has a small number of mutable registers — not on fibers:
+
+- **current_fiber** — which fiber is executing
+- **exception state** — whether propagating an exception (deliver value vs throw)
+
+### perform / continue (Dispatch)
+
+Dispatch is pointer manipulation on the fiber chain:
+
+```
+perform E (handled by H2 on Fiber B):
+
+  BEFORE:  C ──► B ──► A           AFTER:  B ──► A       k = [C]
+                 ↑H2                        ↑H2 (current)    (moved)
+
+  1. Walk parent chain: C → B, find H2 on B
+  2. Detach C → C IS k (moved out of chain, not copied)
+  3. current_fiber = B
+  4. Invoke H2 with (effect, k)
 
 continue k v:
-  1. Reattach k's fiber chain
-  2. Deliver value v
-  3. Execution resumes from where perform suspended
+
+  BEFORE:  B ──► A    k = [C]      AFTER:  C ──► B ──► A
+           ↑ (current)                      ↑ (current)
+
+  1. Reattach: C.parent = B (moved back into chain)
+  2. current_fiber = C
+  3. Deliver v
+  4. k is consumed (one-shot — C was moved out)
 ```
 
 Key properties:
-- **No dispatch state anywhere** — dispatch IS the stack topology change
-- **Immutable stack items** — fibers are not mutated during dispatch; only the
-  linked list structure changes (detach/reattach)
-- **Shared handlers** — spawned fibers delegate effects up the fiber chain to the same
-  handler instances. No cloning.
-- **One-shot enforcement** — flag on continuation object, checked at `continue` time
-- **Tracing** — separate DWARF-based debugging, not inline in dispatch
+- **Fibers are moved, not copied** — a fiber is in the chain OR in a continuation, never both
+- **No mutation of non-current fibers** — only topology changes (parent pointers on detach/reattach)
+- **No dispatch state** — dispatch IS the topology change
+- **Traceability from stack** — walk the chain to derive context; no accumulated state
 
-### doeff Mapping
+## doeff VM Architecture (Target)
 
-```
-OCaml 5                         doeff (target)
-───────────────────             ────────────────────
-fiber (stack chunk)         =   Segment
-stack frame                 =   Frame
-handler delimiter           =   SegmentKind::PromptBoundary
-fiber chain (linked list)   =   caller chain
-program stack               =   segment chain via caller
-captured continuation       =   Continuation (Arc<Segment> snapshot)
-perform                     =   yield Effect → VM dispatch
-continue k v                =   VM processes Resume(k, v)
+### Fiber
+
+Renamed from `Segment`. Minimal — matches OCaml 5 fiber:
+
+```rust
+struct Fiber {
+    frames: Vec<Frame>,                       // stack frames
+    handler: Option<HandlerDelimiter>,        // handler closure + effect types
+    parent: Option<FiberId>,                  // link to parent fiber
+}
 ```
 
-### The Core Insight: Dispatch IS Pointer Manipulation
+Nothing else. No `mode`, no `variables`, no `scope_parent`, no `dispatch_id`,
+no `handler_dispatch`, no `dispatch_origin`, no `pending_python`, no `kind`.
 
-In a pure stack machine, dispatch state is not stored anywhere — it IS the topology
-of the linked list of segments. The only mutable thing during dispatch is:
+Renamed fields:
+- `Segment` → `Fiber`
+- `SegmentId` → `FiberId`
+- `caller` → `parent`
+- `SegmentKind::PromptBoundary` → `HandlerDelimiter`
+- `current_segment` → `current_fiber`
 
-1. **Which segment is current** (`current_segment`)
-2. **How segments are linked** (caller pointers)
+### VarStore (the Heap)
 
-Everything else — which dispatch is active, the return path, error context — is
-derivable from the stack topology at any point. Storing dispatch state on segments
-(as `handler_dispatch`, `dispatch_origin`, `dispatch_id`) is the VM "managing" dispatch
-instead of just being a stack machine.
+Renamed from scoped variables on segments. Matches OCaml 5's heap for ref cells:
+
+```rust
+struct VarStore {
+    cells: HashMap<VarId, Value>,     // heap-allocated ref cells
+}
+```
+
+Variables live here, not on fibers. Handler closures (Python generators / Rust
+IRStream programs) hold VarIds that point into this store.
 
 ```
-Pure stack machine dispatch:
+AllocVar(initial)     → VarId       // like OCaml: ref initial
+ReadVar(VarId)        → Value       // like OCaml: !ref
+WriteVar(VarId, v)    → ()          // like OCaml: ref := v
+```
 
-yield Effect:
-  1. Walk caller chain from current segment
-  2. For each PromptBoundary: check if handler matches effect
-  3. When found: detach segments between here and handler → this IS k
-  4. current_segment = handler's segment
-  5. Invoke handler with (effect, k)
-  Done. No state written to any segment.
+VarStore is managed by the VM. Variables are garbage collected when no handler
+holds a reference to their VarId (or when the run session ends).
+
+### Registers
+
+VM-level mutable state — not on fibers:
+
+```rust
+struct VMRegisters {
+    current_fiber: Option<FiberId>,   // which fiber is executing
+    mode: Mode,                       // Deliver / Throw / Return
+    pending_python: Option<...>,      // GIL boundary state
+}
+```
+
+These are the doeff equivalent of OCaml's instruction pointer and exception state.
+They describe what the VM is doing with the current fiber, not a property of any fiber.
+
+### Continuation
+
+Owns moved fiber IDs — not Arc snapshots:
+
+```rust
+struct Continuation {
+    fibers: Vec<FiberId>,            // moved out of the chain
+    consumed: bool,                   // one-shot enforcement
+}
+```
+
+Capture = detach fibers from chain, give ownership to Continuation.
+Resume = reattach fibers to chain, mark Continuation as consumed.
+Drop = free owned fibers from arena (if not resumed).
+
+No `Arc<Segment>` cloning. A fiber is in the chain or in a Continuation, never both.
+
+### Full VM Structure
+
+```rust
+struct VM {
+    // The stack (fiber chain)
+    arena: FiberArena,                // all fibers live here
+    current_fiber: Option<FiberId>,   // top of stack
+
+    // The heap (ref cells)
+    var_store: VarStore,              // mutable variable storage
+
+    // Registers
+    mode: Mode,                       // Deliver / Throw / Return
+    pending_python: Option<...>,      // GIL boundary
+}
+```
+
+This maps 1:1 to OCaml 5:
+
+```
+OCaml 5 runtime          doeff VM
+─────────────────         ─────────────────
+fiber pool / GC       =   FiberArena
+current fiber         =   current_fiber
+heap                  =   VarStore
+IP / exception state  =   mode / pending_python
+```
+
+## Dispatch (perform / continue)
+
+Exactly OCaml 5's mechanics:
+
+```
+yield Effect (handled by H on Fiber B):
+
+  1. Walk parent chain from current_fiber
+  2. Find HandlerDelimiter on B that matches effect
+  3. Detach fibers between current and B → Continuation k (moved)
+  4. current_fiber = B
+  5. Push handler Program frame onto B (with immutable effect_repr)
+  6. Invoke handler with (effect, k)
+
+  Only topology changes. No fiber fields mutated.
 
 Resume(k, v):
-  1. Assert !k.consumed (one-shot check on Continuation object)
-  2. Set k.consumed = true
-  3. Reattach k's segment chain (set caller pointers)
-  4. current_segment = k's innermost segment
-  5. Deliver v
-  Done. No state read from segments except caller pointers.
+
+  1. Assert !k.consumed
+  2. k.consumed = true
+  3. Reattach k's fibers: innermost.parent = current_fiber
+  4. current_fiber = k's innermost fiber
+  5. mode = Deliver(v)
+
+  Only topology changes + register update. No fiber fields mutated.
 ```
 
-### Immutable Stack Items
+## Shared Handlers (Spawn)
 
-**Core invariant: segments and frames in the caller chain are immutable.**
+Same as OCaml 5 — spawned tasks share parent handlers via parent chain:
 
-Only the **current executing segment** (`current_segment`) may have mutable execution
-state (mode, frames, pending_python). Every other segment in the caller chain — handler
-segments, parent segments, captured segments — is immutable once created.
+```
+Task 1:   C1 ──► Scheduler ──► StateHandler
+Task 2:   C2 ──► Scheduler ──┘
+                                ↑
+                  Always in the chain, never detached
+                  Both tasks walk through the same handler instances
+                  StateHandler's state is a VarId pointing into VarStore
+```
 
-This is enforced by:
-1. **Semgrep rules** that ban mutation of non-current segments
-2. **No dispatch state on segments** — `handler_dispatch`, `dispatch_origin`,
-   `dispatch_id` are eliminated. These were mutable fields set/cleared during dispatch
-   on segments that may be shared across tasks.
-3. **No caller mutation during dispatch** — `handle_dispatch_resume` must not relink
-   `seg.caller` on any segment. The caller chain is set at segment creation time.
+When Task 1 performs: C1 is detached (moved to k). Scheduler and StateHandler
+stay in the chain. Task 2's C2 still has parent → Scheduler. No mutation of
+shared fibers.
 
-Immutability of stack items is what makes shared handlers safe: multiple tasks can
-walk the same caller chain without data races or pollution.
+## Traceability
 
-### Traceability from Stack Structure
+The stack IS the trace:
 
-The stack IS the trace. There is no separate "trace observer" or accumulated event log.
-When the VM needs dispatch context (e.g., for error enrichment at throw time), it
-**walks the stack and derives it**:
+1. Walk fiber chain
+2. Fibers with `handler: Some(...)` and active Program frames → active dispatches
+3. Program frame `effect_repr` (immutable) → which effect triggered it
+4. Assemble traceback on demand
 
-- **Which handler is active**: walk caller chain, find PromptBoundary segments with
-  active Program frames → those handlers are mid-dispatch.
-- **Which effect triggered dispatch**: stored on the handler's Program frame as an
-  immutable field set at frame creation time (e.g., `effect_repr: Option<String>`).
-  This is a stack item, not accumulated state.
-- **Error enrichment**: assembled on-demand from segment chain at throw time.
-  PromptBoundary already has handler info. Program frame has effect info.
-- **One-shot enforcement**: `consumed: bool` flag on the `Continuation` object.
-  Checked when the VM processes Resume(k, v). Not a stack concern.
+No `dispatch_origin`, no `dispatch_id`, no accumulated maps.
+
+## Semgrep Enforcement
+
+```yaml
+# Fiber immutability
+- ban: mutation of fiber.parent outside creation and detach/reattach
+- ban: mutation of any fiber field via arena.get_mut(id) where id != current_fiber
+  (except var_store operations which go through VarStore, not fibers)
+- ban: Arc<Segment> / Arc<Fiber> — move semantics only
+- ban: handler_dispatch / dispatch_origin / dispatch_id on Fiber
+- ban: variables / scope_parent / mode / pending_python on Fiber
+
+# Allowlist
+- allow: current_fiber_mut() for pushing/popping frames during execution
+- allow: VarStore mutations (AllocVar/ReadVar/WriteVar)
+- allow: parent pointer changes during detach/reattach only
+```
 
 ## Current State vs Target
 
-### What's been done
+### Done
 
-| Phase | Status | PR |
-|-------|--------|----|
-| Scoped variables (AllocVar/ReadVar/WriteVar/WriteVarNonlocal) | Done | #353 |
-| Shared handlers via caller chain | Done | #354 |
-| Move dispatch frames to segment fields | Done | #356 |
+| Phase | PR | What |
+|-------|----|------|
+| 1 | #356 | Moved dispatch frames to segment fields (intermediate) |
+| 2 | #354 | Shared handlers via caller chain |
+| 3 | #353 | Scoped variables API (AllocVar/ReadVar/WriteVar) |
 
-### What remains: eliminate dispatch state from segments
+### Remaining
 
-PR #356 moved `HandlerDispatch` and `DispatchOrigin` from Frame enum variants to
-segment fields. This was an intermediate step — the frames are gone, but the segment
-still carries dispatch state:
-
-```
-Current (after PR #356):
-Segment {
-    handler_dispatch: Option<HandlerDispatchState>,  // ← should not exist
-    dispatch_origin: Option<DispatchOriginState>,    // ← should not exist
-    dispatch_id: Option<DispatchId>,                 // ← should not exist
-    ...
-}
-```
-
-Target:
-```
-Segment {
-    kind: SegmentKind,
-    caller: Option<SegmentId>,
-    scope_parent: Option<SegmentId>,
-    frames: Vec<Frame>,
-    mode: Mode,
-    variables: HashMap<VarId, Value>,
-    // NO dispatch state. Segments are immutable stack items.
-}
-```
-
-The dispatch mechanism should be pure pointer manipulation on the segment chain.
-Traceability is derived from the stack structure, not from mutable state on segments.
-
-## Spawn and Shared Handlers (OCaml Model)
-
-In OCaml 5, spawned fibers share parent handlers. Effects from child tasks delegate
-up to the same handler instances:
-
-```
-Parent task:                    Spawned task:
-┌──────────┐                    ┌──────────┐
-│ body seg │                    │ task seg │
-│ caller ──┼──┐                 │ caller ──┼──┐
-└──────────┘  │                 └──────────┘  │
-              ▼                               │
-         ┌──────────┐                         │
-         │Scheduler │ ◄───────────────────────┘
-         │ caller ──┼──┐
-         └──────────┘  │
-                       ▼
-         ┌──────────────┐
-         │ StateHandler │  ← SAME instance serves both tasks
-         └──────────────┘
-```
-
-`CreateContinuation(program)` creates a continuation whose body segment has
-`caller = current segment` (the scheduler's handler segment). When the task
-yields an effect, it walks up from task body segment via caller, hits the
-scheduler, continues up to StateHandler — sharing the same handler instances.
-
-No `GetHandlers`, no `clone_spawn_scope_chain`, no `scope_parent` needed for
-handler lookup. Effects delegate up the caller chain naturally.
-
-`scope_parent` is retained only for variable lookup (ReadVar walks scope_parent)
-where lexical and dynamic scope diverge (e.g., spawned task needs yield site's
-variables but scheduler's return path).
-
-## Scoped Variables
-
-Handler state lives in generic scoped variables on segments, not in handler-specific
-VM fields:
-
-```
-AllocVar(initial_value) → VarId
-    Allocates a variable in the current segment.
-    Returns opaque VarId. Lifetime tied to segment.
-
-ReadVar(VarId) → Value
-    Reads variable. Walks scope_parent chain if not in current segment.
-
-WriteVar(VarId, Value) → ()
-    Writes to current segment (shadow semantics).
-
-WriteVarNonlocal(VarId, Value) → ()
-    Writes to the segment where VarId was allocated (nonlocal/mutate semantics).
-```
-
-Handler factories allocate variables once via `AllocVar`. Since spawned tasks share
-the handler via caller chain, `ReadVar` from a spawned task walks up to the
-handler's segment and reads the same variable. `Put` from any task writes to the
-same variable via `WriteVarNonlocal`.
-
-## Migration Plan
-
-### Phase 1: Remove Special Dispatch Frames ✅ (PR #356)
-
-- Moved HandlerDispatch and DispatchOrigin from Frame enum to segment fields
-- Added semgrep rules to prevent reintroduction of frame variants
-- All tests pass
-
-**Note:** This was an intermediate step. Dispatch state still lives on segments
-as `handler_dispatch`, `dispatch_origin`, `dispatch_id` fields.
-
-### Phase 2: Shared Handlers via Caller Chain ✅ (PR #354)
-
-- Spawned tasks share parent handlers via caller chain
-- Fixed caller chain pollution in `handle_dispatch_resume`
-- Removed `clone_spawn_scope_chain`
-- All tasks share same handler instances
-
-### Phase 3: Scoped Variables ✅ (PR #353)
-
-- Added AllocVar/ReadVar/WriteVar/WriteVarNonlocal DoCtrl
-- Removed RustStore.state/env/log
-- Removed ScopeStore from Segment
-
-### Phase 4: Pure Stack Machine Dispatch (TODO)
-
-Eliminate all dispatch state from segments. Enforce immutable stack items.
-
-1. **Remove `handler_dispatch` from Segment** — return path is the caller chain.
-   One-shot enforcement is `Continuation.consumed`. Nothing stored on segment.
-
-2. **Remove `dispatch_origin` from Segment** — effect info stored on the handler's
-   Program frame as immutable `effect_repr` field, set at frame creation. Error
-   enrichment derived by walking the stack at throw time.
-
-3. **Remove `dispatch_id` from Segment** — dispatch correlation derived from stack
-   topology (which handler segment has active frames = active dispatch).
-
-4. **Eliminate caller mutation during dispatch** — `handle_dispatch_resume` must not
-   mutate `seg.caller`. Caller chain is set at segment creation time and never
-   changes. This eliminates the Python handler hack from PR #354.
-
-5. **Add semgrep rules enforcing immutability**:
-   - Ban mutation of `seg.caller` outside segment creation
-   - Ban mutation of `seg.handler_dispatch` / `seg.dispatch_origin` (fields removed)
-   - Ban mutation of any segment field via `segments.get_mut()` in dispatch path
-   - Allowlist: only `current_seg_mut()` for execution state (mode, frames, pending)
-
-6. **Simplify dispatch path** — the dispatch becomes:
-   - Walk caller chain → find handler → detach k → set current → invoke handler
-   - Resume: assert one-shot → reattach k → deliver value
-   - No reads or writes to segment fields during dispatch
-
-### Phase 5: Clean Up
-
-- Remove accumulated dispatch infrastructure (DispatchId type, dispatch modes)
-- Simplify Mode enum
-- Address TODO items from PR #354 (scope cleanup perf, dispatch map growth)
-- Evaluate whether `scope_parent` can be unified with `caller` for simpler cases
+| Phase | What |
+|-------|------|
+| 4 | Rename Segment→Fiber, caller→parent, eliminate non-OCaml fields |
+| 4 | Move variables from fibers to VarStore (separate heap) |
+| 4 | Move mode/pending_python from fibers to VM registers |
+| 4 | Replace Arc<Segment> snapshots with move semantics (Continuation owns FiberIds) |
+| 4 | Remove handler_dispatch/dispatch_origin/dispatch_id from fibers |
+| 4 | Semgrep enforcement of fiber immutability |
+| 5 | Clean up: remove DispatchId, simplify Mode, remove dead infrastructure |
 
 ## Open Questions
 
+### Fiber Arena Lifecycle with Move Semantics
+
+When a Continuation is dropped without being resumed, its owned fibers must be freed.
+Implement `Drop` for Continuation. This replaces Arc refcount-based cleanup.
+
+### Multi-Fiber Continuations
+
+When multiple fibers are detached (e.g., body C and intermediate B between current
+and handler A), the Continuation owns [C, B]. On resume, the whole chain reattaches.
+
+### VarStore Garbage Collection
+
+Variables in VarStore need cleanup when handlers are done. Options:
+- Reference counting (handler holds VarId, decrement on handler drop)
+- Scope-based (tied to handler fiber lifetime — free vars when handler fiber freed)
+- Run-session-based (clear all on session end, like current approach)
+
+### InterceptorBoundary
+
+OCaml 5 doesn't have interceptors. This is a doeff concept for middleware-like
+effect transformation. Need to decide: does it become a variant of HandlerDelimiter,
+or a separate mechanism? It should not add fields to Fiber.
+
 ### Handler Re-entrancy
 
-When handler A is handling E1 and resumes k, and k yields E2 also handled by A:
-each dispatch creates a new handler program invocation. The previous invocation's
-state is captured as part of k. Need to verify this works cleanly with pure
-stack machine dispatch.
-
-### Performance of Caller Chain Walking
-
-ReadVar walks the scope_parent chain — O(depth). For hot paths, may need caching.
-OCaml's fiber chain walk is also O(depth) but with hardware-friendly memory layout.
-
-### Stack-Derived Traceability
-
-Error enrichment and dispatch tracing must be derivable from the stack at any point.
-The key question: when walking the segment chain at throw time, is there enough
-information on immutable stack items (PromptBoundary kind, Program frame effect_repr)
-to reconstruct the full dispatch context? Need to verify this produces equivalent
-tracebacks to the current `dispatch_origin`-based approach.
+When handler A handles E1, resumes k, and k yields E2 also reaching A: A's fiber
+stays in the chain (never detached). A new Program frame is pushed. The old frame's
+state is in k's detached chain. Verify this with move semantics.
