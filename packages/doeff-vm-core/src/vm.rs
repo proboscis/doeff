@@ -32,7 +32,7 @@ use crate::kleisli::{IdentityKleisli, KleisliRef};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::segment::{Segment, SegmentKind};
+use crate::segment::{DispatchOriginState, HandlerDispatchState, Segment, SegmentKind};
 use crate::trace_state::{LiveDispatchSnapshot, TraceState};
 use crate::value::Value;
 
@@ -268,7 +268,6 @@ pub struct VM {
     // dispatches resolve/throw so long-running sessions do not accumulate stale state.
     pub dispatch_error_contexts: HashMap<DispatchId, (ContId, PyException)>,
     pub dispatch_effects: HashMap<DispatchId, DispatchEffect>,
-    pub dispatch_origin_segments: HashMap<DispatchId, SegmentId>,
     pub scope_variables: HashMap<ScopeId, HashMap<VarId, Value>>,
     scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
     scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
@@ -298,7 +297,6 @@ impl VM {
             continuation_registry: HashMap::new(),
             dispatch_error_contexts: HashMap::new(),
             dispatch_effects: HashMap::new(),
-            dispatch_origin_segments: HashMap::new(),
             scope_variables: HashMap::new(),
             scope_state_store: HashMap::new(),
             scope_writer_logs: HashMap::new(),
@@ -332,7 +330,6 @@ impl VM {
         self.run_handlers.clear();
         self.dispatch_error_contexts.clear();
         self.dispatch_effects.clear();
-        self.dispatch_origin_segments.clear();
         self.scope_variables.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
@@ -362,7 +359,6 @@ impl VM {
         self.consumed_cont_ids.clear();
         self.dispatch_error_contexts.clear();
         self.dispatch_effects.clear();
-        self.dispatch_origin_segments.clear();
         self.scope_variables.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
@@ -449,11 +445,12 @@ impl VM {
         // continuations on every segment free. Replace it with refcount-style
         // scope tracking if cleanup cost becomes visible in long-running VMs.
         let mut visited = HashSet::new();
-        self.segments.iter().any(|(_, segment)| {
-            Self::segment_references_scope(segment, scope_id, &mut visited)
-        }) || self.continuation_registry.values().any(|continuation| {
-            Self::continuation_references_scope(continuation, scope_id, &mut visited)
-        })
+        self.segments
+            .iter()
+            .any(|(_, segment)| Self::segment_references_scope(segment, scope_id, &mut visited))
+            || self.continuation_registry.values().any(|continuation| {
+                Self::continuation_references_scope(continuation, scope_id, &mut visited)
+            })
     }
 
     fn segment_references_scope(
@@ -469,14 +466,30 @@ impl VM {
         }) {
             return true;
         }
+        if segment
+            .handler_dispatch
+            .as_ref()
+            .is_some_and(|handler_dispatch| {
+                Self::continuation_references_scope(
+                    &handler_dispatch.continuation,
+                    scope_id,
+                    visited,
+                )
+            })
+        {
+            return true;
+        }
+        if segment
+            .dispatch_origin
+            .as_ref()
+            .is_some_and(|dispatch_origin| {
+                Self::continuation_references_scope(&dispatch_origin.k_origin, scope_id, visited)
+            })
+        {
+            return true;
+        }
         for frame in &segment.frames {
             let referenced = match frame {
-                Frame::HandlerDispatch { continuation, .. } => {
-                    Self::continuation_references_scope(continuation, scope_id, visited)
-                }
-                Frame::DispatchOrigin { k_origin, .. } => {
-                    Self::continuation_references_scope(k_origin, scope_id, visited)
-                }
                 Frame::EvalReturn(eval_return) => {
                     Self::eval_return_references_scope(eval_return.as_ref(), scope_id, visited)
                 }
@@ -503,14 +516,15 @@ impl VM {
         if !visited.insert(continuation.cont_id) {
             return false;
         }
-        if continuation.segment().is_some_and(|segment| {
-            Self::segment_references_scope(segment, scope_id, visited)
-        }) {
+        if continuation
+            .segment()
+            .is_some_and(|segment| Self::segment_references_scope(segment, scope_id, visited))
+        {
             return true;
         }
-        continuation.parent().is_some_and(|parent| {
-            Self::continuation_references_scope(parent, scope_id, visited)
-        })
+        continuation
+            .parent()
+            .is_some_and(|parent| Self::continuation_references_scope(parent, scope_id, visited))
     }
 
     fn eval_return_references_scope(
@@ -895,9 +909,7 @@ impl VM {
                         EvalReturnContinuation::EvalInScopeReturn { .. } => {}
                         _ => {}
                     },
-                    Frame::HandlerDispatch { .. }
-                    | Frame::DispatchOrigin { .. }
-                    | Frame::MapReturn { .. }
+                    Frame::MapReturn { .. }
                     | Frame::FlatMapBindResult
                     | Frame::FlatMapBindSource { .. }
                     | Frame::InterceptBodyReturn { .. } => {}

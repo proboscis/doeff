@@ -96,7 +96,7 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
     let continuation = Continuation::capture(child_segment, child_id, None);
 
     let mut handler_seg = Segment::new(Marker::fresh(), Some(parent_id));
-    handler_seg.push_frame(Frame::HandlerDispatch {
+    handler_seg.handler_dispatch = Some(HandlerDispatchState {
         dispatch_id: DispatchId::fresh(),
         continuation: continuation.clone(),
         prompt_seg_id: parent_id,
@@ -139,11 +139,12 @@ fn test_dispatch_resume_relinks_handler_segment_to_captured_caller_chain() {
         .get(effect_site_id)
         .expect("effect-site segment must exist for continuation capture");
     let dispatch_id = DispatchId::fresh();
-    let continuation = Continuation::capture(effect_site_segment, effect_site_id, Some(dispatch_id));
+    let continuation =
+        Continuation::capture(effect_site_segment, effect_site_id, Some(dispatch_id));
 
     let prompt_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
     let mut handler_seg = Segment::new(Marker::fresh(), Some(prompt_seg_id));
-    handler_seg.push_frame(Frame::HandlerDispatch {
+    handler_seg.handler_dispatch = Some(HandlerDispatchState {
         dispatch_id,
         continuation: continuation.clone(),
         prompt_seg_id,
@@ -252,8 +253,7 @@ fn test_eval_in_scope_uses_scope_chain_for_dynamic_handler_lookup() {
     vm.current_segment = Some(current_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
-    let event =
-        vm.handle_yield_eval_in_scope(expr, scope, std::collections::HashMap::new(), None);
+    let event = vm.handle_yield_eval_in_scope(expr, scope, std::collections::HashMap::new(), None);
     assert!(matches!(event, StepEvent::NeedsPython(_)));
 
     let child_seg_id = vm
@@ -285,7 +285,12 @@ fn test_resume_unstarted_continuation_inserts_return_anchor_above_outside_scope(
     vm.current_segment = Some(scheduler_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
-    let continuation = Continuation::create_unstarted_with_metadata(expr, Vec::new(), None, Some(outside_scope_id));
+    let continuation = Continuation::create_unstarted_with_metadata(
+        expr,
+        Vec::new(),
+        None,
+        Some(outside_scope_id),
+    );
 
     let event = vm.handle_resume_continuation(continuation, Value::None);
     assert!(matches!(event, StepEvent::NeedsPython(_)));
