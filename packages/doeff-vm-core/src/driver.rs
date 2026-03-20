@@ -29,7 +29,7 @@ impl PyExceptionMetadata {
         }
     }
 
-    const fn synthetic_vm_error() -> Self {
+    pub(crate) const fn synthetic_vm_error() -> Self {
         Self {
             synthetic_vm_error: true,
             tag: None,

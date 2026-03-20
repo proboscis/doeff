@@ -2,6 +2,24 @@ use super::*;
 use std::sync::Arc;
 
 impl VM {
+    pub(super) fn first_handler_hint_in_caller_chain(
+        &self,
+        start_seg_id: SegmentId,
+    ) -> Option<crate::continuation::DispatchHandlerHint> {
+        let mut cursor = Some(start_seg_id);
+        while let Some(seg_id) = cursor {
+            let seg = self.segments.get(seg_id)?;
+            if let SegmentKind::PromptBoundary { handled_marker, .. } = &seg.kind {
+                return Some(crate::continuation::DispatchHandlerHint {
+                    marker: *handled_marker,
+                    prompt_seg_id: seg_id,
+                });
+            }
+            cursor = seg.caller;
+        }
+        None
+    }
+
     pub(super) fn visible_scope_store(
         &self,
         start_seg_id: SegmentId,

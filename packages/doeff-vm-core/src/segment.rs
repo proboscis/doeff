@@ -5,30 +5,14 @@ use std::sync::Arc;
 
 use crate::continuation::Continuation;
 use crate::do_ctrl::InterceptMode;
-use crate::effect::DispatchEffect;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{DispatchId, Marker, ScopeId, SegmentId, VarId};
+use crate::ids::{Marker, ScopeId, SegmentId, VarId};
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::step::{Mode, PendingPython, PyException};
 use crate::value::Value;
-
-#[derive(Debug, Clone)]
-pub struct HandlerDispatchState {
-    pub dispatch_id: DispatchId,
-    pub continuation: Continuation,
-    pub prompt_seg_id: SegmentId,
-}
-
-#[derive(Debug, Clone)]
-pub struct DispatchOriginState {
-    pub dispatch_id: DispatchId,
-    pub effect: DispatchEffect,
-    pub k_origin: Continuation,
-    pub original_exception: Option<PyException>,
-}
 
 #[derive(Debug, Clone)]
 pub enum SegmentKind {
@@ -62,8 +46,6 @@ pub struct Segment {
     pub persistent_epoch: u64,
     pub marker: Marker,
     pub frames: Vec<Frame>,
-    pub handler_dispatch: Option<HandlerDispatchState>,
-    pub dispatch_origin: Option<DispatchOriginState>,
     pub caller: Option<SegmentId>,
     pub scope_parent: Option<SegmentId>,
     pub variables: HashMap<VarId, Value>,
@@ -71,7 +53,6 @@ pub struct Segment {
     pub state_store: HashMap<String, Value>,
     pub writer_log: Vec<Value>,
     pub kind: SegmentKind,
-    pub dispatch_id: Option<DispatchId>,
     pub mode: Mode,
     pub pending_python: Option<PendingPython>,
     pub pending_error_context: Option<PyException>,
@@ -87,8 +68,6 @@ impl Segment {
             persistent_epoch: 0,
             marker,
             frames: Vec::new(),
-            handler_dispatch: None,
-            dispatch_origin: None,
             caller,
             scope_parent: caller,
             variables: HashMap::new(),
@@ -96,7 +75,6 @@ impl Segment {
             state_store: HashMap::new(),
             writer_log: Vec::new(),
             kind: SegmentKind::Normal,
-            dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
@@ -117,8 +95,6 @@ impl Segment {
             persistent_epoch: 0,
             marker,
             frames: Vec::new(),
-            handler_dispatch: None,
-            dispatch_origin: None,
             caller,
             scope_parent: caller,
             variables: HashMap::new(),
@@ -130,7 +106,6 @@ impl Segment {
                 handler,
                 types: None,
             },
-            dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
@@ -152,8 +127,6 @@ impl Segment {
             persistent_epoch: 0,
             marker,
             frames: Vec::new(),
-            handler_dispatch: None,
-            dispatch_origin: None,
             caller,
             scope_parent: caller,
             variables: HashMap::new(),
@@ -165,7 +138,6 @@ impl Segment {
                 handler,
                 types,
             },
-            dispatch_id: None,
             mode: Mode::Deliver(crate::value::Value::Unit),
             pending_python: None,
             pending_error_context: None,
@@ -211,7 +183,6 @@ mod tests {
     use pyo3::Python;
 
     use crate::do_ctrl::DoCtrl;
-    use crate::effect::make_get_execution_context_effect;
     use crate::error::VMError;
     use crate::kleisli::{Kleisli, KleisliDebugInfo};
 
@@ -256,30 +227,10 @@ mod tests {
     fn test_segment_frame_push_pop_o1() {
         let marker = Marker::fresh();
         let mut seg = Segment::new(marker, None);
-        let continuation = crate::continuation::Continuation::capture(
-            &Segment::new(marker, None),
-            SegmentId::from_index(0),
-            None,
-        );
-
-        seg.handler_dispatch = Some(HandlerDispatchState {
-            dispatch_id: DispatchId::fresh(),
-            continuation: continuation.clone(),
-            prompt_seg_id: SegmentId::from_index(0),
-        });
-        seg.dispatch_origin = Some(DispatchOriginState {
-            dispatch_id: DispatchId::fresh(),
-            effect: make_get_execution_context_effect()
-                .expect("test dispatch effect should be constructible"),
-            k_origin: continuation,
-            original_exception: None,
-        });
         seg.push_frame(Frame::FlatMapBindResult);
         seg.push_frame(Frame::InterceptBodyReturn { marker });
 
         assert_eq!(seg.frame_count(), 2);
-        assert!(seg.handler_dispatch.is_some());
-        assert!(seg.dispatch_origin.is_some());
 
         // Pop should return frames in LIFO order.
         let f2 = seg.pop_frame().unwrap();

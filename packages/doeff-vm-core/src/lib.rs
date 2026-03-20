@@ -16,6 +16,8 @@ mod debug_state;
 #[cfg(feature = "python_bridge")]
 pub mod dispatch;
 #[cfg(feature = "python_bridge")]
+mod dispatch_observer;
+#[cfg(feature = "python_bridge")]
 pub mod do_ctrl;
 #[cfg(feature = "python_bridge")]
 pub mod doeff_generator;

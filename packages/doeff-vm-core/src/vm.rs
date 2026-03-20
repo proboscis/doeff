@@ -15,6 +15,7 @@ use crate::capture::{
 };
 use crate::continuation::Continuation;
 use crate::debug_state::DebugState;
+use crate::dispatch_observer::DispatchObserver;
 use crate::do_ctrl::{DoCtrl, DoExprTag, InterceptMode, PyDoExprBase};
 use crate::doeff_generator::DoeffGenerator;
 use crate::driver::{Mode, PyException, StepEvent};
@@ -32,7 +33,7 @@ use crate::kleisli::{IdentityKleisli, KleisliRef};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
-use crate::segment::{DispatchOriginState, HandlerDispatchState, Segment, SegmentKind};
+use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::{LiveDispatchSnapshot, TraceState};
 use crate::value::Value;
 
@@ -263,11 +264,8 @@ pub struct VM {
     pub completed_segment: Option<SegmentId>,
     pub(crate) debug: DebugState,
     pub(crate) trace_state: TraceState,
+    pub(crate) dispatch_observer: DispatchObserver,
     pub continuation_registry: HashMap<ContId, Continuation>,
-    // TODO(vm-shared-handlers): Remove completed-dispatch entries from these maps as
-    // dispatches resolve/throw so long-running sessions do not accumulate stale state.
-    pub dispatch_error_contexts: HashMap<DispatchId, (ContId, PyException)>,
-    pub dispatch_effects: HashMap<DispatchId, DispatchEffect>,
     pub scope_variables: HashMap<ScopeId, HashMap<VarId, Value>>,
     scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
     scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
@@ -294,9 +292,8 @@ impl VM {
             completed_segment: None,
             debug: DebugState::new(DebugConfig::default()),
             trace_state: TraceState::default(),
+            dispatch_observer: DispatchObserver::default(),
             continuation_registry: HashMap::new(),
-            dispatch_error_contexts: HashMap::new(),
-            dispatch_effects: HashMap::new(),
             scope_variables: HashMap::new(),
             scope_state_store: HashMap::new(),
             scope_writer_logs: HashMap::new(),
@@ -327,9 +324,8 @@ impl VM {
         self.current_segment = None;
         self.completed_segment = None;
         self.trace_state.clear();
+        self.dispatch_observer.clear();
         self.run_handlers.clear();
-        self.dispatch_error_contexts.clear();
-        self.dispatch_effects.clear();
         self.scope_variables.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
@@ -357,8 +353,7 @@ impl VM {
         self.run_handlers.clear();
         self.continuation_registry.clear();
         self.consumed_cont_ids.clear();
-        self.dispatch_error_contexts.clear();
-        self.dispatch_effects.clear();
+        self.dispatch_observer.clear();
         self.scope_variables.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
@@ -399,6 +394,7 @@ impl VM {
         let Some(scope_id) = self.segments.get(id).map(|segment| segment.scope_id) else {
             return;
         };
+        self.dispatch_observer.unbind_segment(id);
         self.segments.free(id);
         self.maybe_cleanup_scope_state(scope_id);
     }
@@ -451,6 +447,14 @@ impl VM {
             || self.continuation_registry.values().any(|continuation| {
                 Self::continuation_references_scope(continuation, scope_id, &mut visited)
             })
+            || self.dispatch_observer.iter().any(|(_, dispatch)| {
+                Self::continuation_references_scope(&dispatch.k_origin, scope_id, &mut visited)
+                    || Self::continuation_references_scope(
+                        &dispatch.active_handler.continuation,
+                        scope_id,
+                        &mut visited,
+                    )
+            })
     }
 
     fn segment_references_scope(
@@ -464,28 +468,6 @@ impl VM {
         if segment.throw_parent.as_ref().is_some_and(|continuation| {
             Self::continuation_references_scope(continuation, scope_id, visited)
         }) {
-            return true;
-        }
-        if segment
-            .handler_dispatch
-            .as_ref()
-            .is_some_and(|handler_dispatch| {
-                Self::continuation_references_scope(
-                    &handler_dispatch.continuation,
-                    scope_id,
-                    visited,
-                )
-            })
-        {
-            return true;
-        }
-        if segment
-            .dispatch_origin
-            .as_ref()
-            .is_some_and(|dispatch_origin| {
-                Self::continuation_references_scope(&dispatch_origin.k_origin, scope_id, visited)
-            })
-        {
             return true;
         }
         for frame in &segment.frames {

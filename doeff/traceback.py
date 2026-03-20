@@ -503,7 +503,6 @@ else:
                         )
                     previous_handler_stack = entry.handler_stack
                     previous_spawn_boundary = None
-                    pending_hidden_sub_program = None
                     lines.append(
                         f"  {entry.function_name}()  {entry.source_file}:{entry.source_line}"
                     )
@@ -513,6 +512,8 @@ else:
                     lines.append(f"    {self._render_effect_result(entry.result)}")
                     lines.append("")
                     last_user_yield_repr = entry.effect_repr
+                    if pending_hidden_sub_program == entry.effect_repr:
+                        pending_hidden_sub_program = None
                     continue
 
                 if isinstance(entry, SpawnBoundary):
@@ -692,6 +693,20 @@ else:
         merged.extend(wrapped_context_entries)
         return tuple(merged)
 
+    def _has_structural_active_chain_entries(
+        active_chain_entries: list[Any] | tuple[Any, ...],
+    ) -> bool:
+        for entry in active_chain_entries:
+            if isinstance(entry, (ProgramYield, EffectYield, SpawnBoundary)):
+                return True
+            if isinstance(entry, dict) and entry.get("kind") in {
+                "program_yield",
+                "effect_yield",
+                "spawn_boundary",
+            }:
+                return True
+        return False
+
     def _merge_active_chain_entries(
         active_chain_entries: list[Any] | tuple[Any, ...],
         context_active_chain_entries: tuple[Any, ...],
@@ -749,7 +764,14 @@ else:
         else:
             return None
 
-        context_active_chain_entries = _active_chain_entries_from_exception_context(exception)
+        context_active_chain, wrapped_context_entries = _exception_context_active_chain_and_entries(
+            exception
+        )
+        context_active_chain_entries = (
+            wrapped_context_entries
+            if _has_structural_active_chain_entries(active_chain_entries)
+            else tuple(context_active_chain) + wrapped_context_entries
+        )
         if context_active_chain_entries:
             active_chain_entries = _merge_active_chain_entries(
                 active_chain_entries,
