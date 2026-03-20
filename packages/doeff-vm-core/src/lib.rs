@@ -59,7 +59,7 @@ mod vm;
 mod vm_logging;
 
 #[cfg(feature = "python_bridge")]
-pub use arena::SegmentArena;
+pub use arena::FiberArena;
 #[cfg(feature = "python_bridge")]
 pub use bridge::{
     classify_yielded_for_vm, doctrl_tag, doctrl_to_pyexpr_for_vm, install_vm_hooks, is_doexpr_like,
@@ -93,7 +93,7 @@ pub use frame::Frame;
 pub use handler::{IRStreamFactory, IRStreamFactoryRef, IRStreamProgram, IRStreamProgramRef};
 #[cfg(feature = "python_bridge")]
 pub use ids::{
-    ContId, DispatchId, Marker, PromiseId, RunnableId, ScopeId, SegmentId, TaskId, VarId,
+    ContId, DispatchId, FiberId, Marker, PromiseId, RunnableId, ScopeId, SegmentId, TaskId, VarId,
 };
 #[cfg(feature = "python_bridge")]
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
@@ -108,7 +108,7 @@ pub use result::{PyResultErr, PyResultOk};
 #[cfg(feature = "python_bridge")]
 pub use rust_store::RustStore;
 #[cfg(feature = "python_bridge")]
-pub use segment::{Segment, SegmentKind};
+pub use segment::{Fiber, FiberKind, Segment, SegmentKind};
 #[cfg(feature = "python_bridge")]
 pub use step::PyException;
 #[cfg(feature = "python_bridge")]

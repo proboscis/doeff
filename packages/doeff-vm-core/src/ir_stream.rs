@@ -32,6 +32,9 @@ pub trait IRStream: fmt::Debug + Send {
     fn python_generator(&self) -> Option<PyShared> {
         None
     }
+    fn is_tail_resume_return(&self) -> bool {
+        false
+    }
 }
 
 pub type IRStreamRef = Arc<Mutex<Box<dyn IRStream>>>;
@@ -97,6 +100,34 @@ impl PythonGeneratorStream {
             phase: None,
         })
     }
+
+    fn is_tail_resume_return_inner(&self, py: Python<'_>) -> Option<bool> {
+        let frame = self
+            .get_frame
+            .bind(py)
+            .call1((self.generator.bind(py),))
+            .ok()?;
+        if frame.is_none() {
+            return None;
+        }
+        let lasti = frame.getattr("f_lasti").ok()?.extract::<usize>().ok()?;
+        let code = frame.getattr("f_code").ok()?;
+        let dis = py.import("dis").ok()?;
+        let instructions = dis.call_method1("get_instructions", (code,)).ok()?;
+        let mut saw_resume = false;
+        for instruction in instructions.try_iter().ok()? {
+            let instruction = instruction.ok()?;
+            let offset = instruction.getattr("offset").ok()?.extract::<usize>().ok()?;
+            if saw_resume {
+                let opname = instruction.getattr("opname").ok()?.extract::<String>().ok()?;
+                return Some(opname == "RETURN_VALUE");
+            }
+            if offset == lasti {
+                saw_resume = true;
+            }
+        }
+        None
+    }
 }
 
 impl IRStream for PythonGeneratorStream {
@@ -130,6 +161,10 @@ impl IRStream for PythonGeneratorStream {
 
     fn python_generator(&self) -> Option<PyShared> {
         Some(self.generator.clone())
+    }
+
+    fn is_tail_resume_return(&self) -> bool {
+        Python::attach(|py| self.is_tail_resume_return_inner(py).unwrap_or(false))
     }
 }
 

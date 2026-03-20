@@ -1,21 +1,21 @@
 //! Segment types for delimited continuations.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::continuation::Continuation;
 use crate::do_ctrl::InterceptMode;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{Marker, ScopeId, SegmentId, VarId};
+use crate::ids::{FiberId, Marker, ScopeId};
 use crate::kleisli::KleisliRef;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::step::{Mode, PendingPython, PyException};
+use crate::step::PyException;
 use crate::value::Value;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
-pub enum SegmentKind {
+pub enum FiberKind {
     Normal,
     PromptBoundary {
         handled_marker: Marker,
@@ -41,42 +41,32 @@ pub struct ScopeStore {
 }
 
 #[derive(Debug, Clone)]
-pub struct Segment {
+pub struct Fiber {
     pub scope_id: ScopeId,
     pub persistent_epoch: u64,
     pub marker: Marker,
     pub frames: Vec<Frame>,
-    pub caller: Option<SegmentId>,
-    pub scope_parent: Option<SegmentId>,
-    pub variables: HashMap<VarId, Value>,
-    pub named_bindings: HashMap<HashedPyKey, Value>,
+    pub parent: Option<FiberId>,
     pub state_store: HashMap<String, Value>,
     pub writer_log: Vec<Value>,
-    pub kind: SegmentKind,
-    pub mode: Mode,
-    pub pending_python: Option<PendingPython>,
+    pub kind: FiberKind,
     pub pending_error_context: Option<PyException>,
     pub throw_parent: Option<Continuation>,
     pub interceptor_eval_depth: usize,
     pub interceptor_skip_stack: Vec<Marker>,
 }
 
-impl Segment {
-    pub fn new(marker: Marker, caller: Option<SegmentId>) -> Self {
-        Segment {
+impl Fiber {
+    pub fn new(marker: Marker, parent: Option<FiberId>) -> Self {
+        Fiber {
             scope_id: ScopeId::fresh(),
             persistent_epoch: 0,
             marker,
             frames: Vec::new(),
-            caller,
-            scope_parent: caller,
-            variables: HashMap::new(),
-            named_bindings: HashMap::new(),
+            parent,
             state_store: HashMap::new(),
             writer_log: Vec::new(),
-            kind: SegmentKind::Normal,
-            mode: Mode::Deliver(crate::value::Value::Unit),
-            pending_python: None,
+            kind: FiberKind::Normal,
             pending_error_context: None,
             throw_parent: None,
             interceptor_eval_depth: 0,
@@ -86,28 +76,23 @@ impl Segment {
 
     pub fn new_prompt(
         marker: Marker,
-        caller: Option<SegmentId>,
+        parent: Option<FiberId>,
         handled_marker: Marker,
         handler: KleisliRef,
     ) -> Self {
-        Segment {
+        Fiber {
             scope_id: ScopeId::fresh(),
             persistent_epoch: 0,
             marker,
             frames: Vec::new(),
-            caller,
-            scope_parent: caller,
-            variables: HashMap::new(),
-            named_bindings: HashMap::new(),
+            parent,
             state_store: HashMap::new(),
             writer_log: Vec::new(),
-            kind: SegmentKind::PromptBoundary {
+            kind: FiberKind::PromptBoundary {
                 handled_marker,
                 handler,
                 types: None,
             },
-            mode: Mode::Deliver(crate::value::Value::Unit),
-            pending_python: None,
             pending_error_context: None,
             throw_parent: None,
             interceptor_eval_depth: 0,
@@ -117,29 +102,24 @@ impl Segment {
 
     pub fn new_prompt_with_types(
         marker: Marker,
-        caller: Option<SegmentId>,
+        parent: Option<FiberId>,
         handled_marker: Marker,
         handler: KleisliRef,
         types: Option<Vec<PyShared>>,
     ) -> Self {
-        Segment {
+        Fiber {
             scope_id: ScopeId::fresh(),
             persistent_epoch: 0,
             marker,
             frames: Vec::new(),
-            caller,
-            scope_parent: caller,
-            variables: HashMap::new(),
-            named_bindings: HashMap::new(),
+            parent,
             state_store: HashMap::new(),
             writer_log: Vec::new(),
-            kind: SegmentKind::PromptBoundary {
+            kind: FiberKind::PromptBoundary {
                 handled_marker,
                 handler,
                 types,
             },
-            mode: Mode::Deliver(crate::value::Value::Unit),
-            pending_python: None,
             pending_error_context: None,
             throw_parent: None,
             interceptor_eval_depth: 0,
@@ -164,18 +144,21 @@ impl Segment {
     }
 
     pub fn is_prompt_boundary(&self) -> bool {
-        matches!(self.kind, SegmentKind::PromptBoundary { .. })
+        matches!(self.kind, FiberKind::PromptBoundary { .. })
     }
 
     pub fn handled_marker(&self) -> Option<Marker> {
         match &self.kind {
-            SegmentKind::PromptBoundary { handled_marker, .. } => Some(*handled_marker),
-            SegmentKind::Normal
-            | SegmentKind::InterceptorBoundary { .. }
-            | SegmentKind::MaskBoundary { .. } => None,
+            FiberKind::PromptBoundary { handled_marker, .. } => Some(*handled_marker),
+            FiberKind::Normal
+            | FiberKind::InterceptorBoundary { .. }
+            | FiberKind::MaskBoundary { .. } => None,
         }
     }
 }
+
+pub type Segment = Fiber;
+pub type SegmentKind = FiberKind;
 
 #[cfg(test)]
 mod tests {
@@ -206,10 +189,9 @@ mod tests {
     #[test]
     fn test_segment_creation() {
         let marker = Marker::fresh();
-        let seg = Segment::new(marker, None);
+        let seg = Fiber::new(marker, None);
         assert_eq!(seg.marker, marker);
-        assert!(seg.caller.is_none());
-        assert!(seg.scope_parent.is_none());
+        assert!(seg.parent.is_none());
         assert!(!seg.is_prompt_boundary());
         assert!(seg.handled_marker().is_none());
     }
@@ -218,7 +200,7 @@ mod tests {
     fn test_prompt_segment_creation() {
         let marker = Marker::fresh();
         let handled = Marker::fresh();
-        let seg = Segment::new_prompt(marker, None, handled, std::sync::Arc::new(DummyKleisli));
+        let seg = Fiber::new_prompt(marker, None, handled, std::sync::Arc::new(DummyKleisli));
         assert!(seg.is_prompt_boundary());
         assert_eq!(seg.handled_marker(), Some(handled));
     }
@@ -226,7 +208,7 @@ mod tests {
     #[test]
     fn test_segment_frame_push_pop_o1() {
         let marker = Marker::fresh();
-        let mut seg = Segment::new(marker, None);
+        let mut seg = Fiber::new(marker, None);
         seg.push_frame(Frame::FlatMapBindResult);
         seg.push_frame(Frame::InterceptBodyReturn { marker });
 

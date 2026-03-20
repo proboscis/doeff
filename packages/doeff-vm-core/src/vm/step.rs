@@ -95,12 +95,12 @@ impl VM {
 
     pub(super) fn set_contextual_throw(&mut self, exception: PyException) {
         let mode = self.contextual_throw_mode(exception);
-        self.current_seg_mut().mode = mode;
+        self.mode = mode;
     }
 
     pub(super) fn set_contextual_internal_throw(&mut self, exception: PyException) {
         let mode = self.contextual_internal_throw_mode(exception);
-        self.current_seg_mut().mode = mode;
+        self.mode = mode;
     }
 
     fn eval_then_reenter_call(
@@ -112,12 +112,12 @@ impl VM {
             return StepEvent::Error(VMError::internal("Call evaluation outside current segment"));
         };
         seg.push_frame(Frame::EvalReturn(Box::new(continuation)));
-        seg.mode = Mode::HandleYield(expr);
+        self.mode = Mode::HandleYield(expr);
         StepEvent::Continue
     }
 
     pub(super) fn evaluate(&mut self, ir_node: DoCtrl) -> StepEvent {
-        self.current_seg_mut().mode = Mode::HandleYield(ir_node);
+        self.mode = Mode::HandleYield(ir_node);
         self.step_handle_yield()
     }
 
@@ -180,10 +180,10 @@ impl VM {
 
     pub fn step(&mut self) -> StepEvent {
         let mode_kind = {
-            let Some(seg) = self.current_segment_ref() else {
+            if self.current_segment_ref().is_none() {
                 return StepEvent::Error(VMError::internal("no current segment"));
-            };
-            match &seg.mode {
+            }
+            match &self.mode {
                 Mode::Deliver(_) | Mode::Throw(_) => 0_u8,
                 Mode::HandleYield(_) => 1_u8,
                 Mode::Return(_) => 2_u8,
@@ -231,31 +231,29 @@ impl VM {
             };
 
             if !segment.has_frames() {
-                let caller = segment.caller;
-                let scope_parent = segment.scope_parent;
+                let caller = segment.parent;
+                let scope_parent = self.scope_parent(seg_id);
                 let throw_parent = segment.throw_parent.clone();
                 let mode =
-                    std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit));
+                    std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
                 match mode {
                     Mode::Deliver(value) => {
                         // Don't free here — step_return reads the segment's caller.
-                        self.current_seg_mut().mode = Mode::Return(value);
+                        self.mode = Mode::Return(value);
                         return StepEvent::Continue;
                     }
                     Mode::Throw(exc) => {
                         if let Some(parent) =
                             throw_parent.filter(|parent| !self.is_one_shot_consumed(parent.cont_id))
                         {
-                            self.segments
-                                .reparent_children(seg_id, caller, scope_parent);
+                            self.reparent_children(seg_id, caller, scope_parent);
                             self.free_segment(seg_id);
                             self.current_segment = caller;
                             return self.handle_transfer_throw_non_terminal(parent, exc);
                         } else if let Some(caller_id) = caller {
-                            self.segments
-                                .reparent_children(seg_id, Some(caller_id), scope_parent);
+                            self.reparent_children(seg_id, Some(caller_id), scope_parent);
                             self.current_segment = Some(caller_id);
-                            self.current_seg_mut().mode = Mode::Throw(exc);
+                            self.mode = Mode::Throw(exc);
                             self.free_segment(seg_id);
                             return StepEvent::Continue;
                         } else {
@@ -279,7 +277,7 @@ impl VM {
                                 };
                             self.completed_segment = Some(seg_id);
                             self.store_completed_outputs_from(seg_id);
-                            self.segments.reparent_children(seg_id, None, scope_parent);
+                            self.reparent_children(seg_id, None, scope_parent);
                             self.free_segment(seg_id);
                             self.current_segment = None;
                             self.trace_state.cleanup_orphaned_threw_dispatch_displays();
@@ -313,8 +311,8 @@ impl VM {
                 ));
             };
 
-            // Take mode by move — each branch sets segment.mode before returning.
-            let mode = std::mem::replace(&mut segment.mode, Mode::Deliver(Value::Unit));
+            // Take mode by move — each branch sets VM.mode before returning.
+            let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
             (frame, mode)
         };
 
@@ -461,13 +459,13 @@ impl VM {
         }
         match mode {
             Mode::Deliver(value) => {
-                self.current_seg_mut().mode =
+                self.mode =
                     self.handle_interceptor_apply_result(continuation, value);
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
                 self.pop_interceptor_skip(continuation.marker);
-                self.current_seg_mut().mode = Mode::Throw(exc);
+                self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
             Mode::HandleYield(yielded) => {
@@ -488,13 +486,13 @@ impl VM {
         seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_sub(1);
         match mode {
             Mode::Deliver(value) => {
-                self.current_seg_mut().mode =
+                self.mode =
                     self.handle_interceptor_eval_result(continuation, value);
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
                 self.pop_interceptor_skip(continuation.marker);
-                self.current_seg_mut().mode = Mode::Throw(exc);
+                self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
             Mode::HandleYield(yielded) => {
@@ -511,8 +509,29 @@ impl VM {
         continuation: EvalReturnContinuation,
         mode: Mode,
     ) -> StepEvent {
+        if matches!(continuation, EvalReturnContinuation::TailResumeReturn) {
+            return match mode {
+                Mode::Deliver(value) => self.handle_tail_resume_return(value),
+                Mode::Throw(exception) => {
+                    if let Some(dispatch_id) = self.current_dispatch_id() {
+                        self.finish_dispatch_tracking(dispatch_id);
+                    }
+                    self.mode = Mode::Throw(exception);
+                    StepEvent::Continue
+                }
+                Mode::HandleYield(yielded) => {
+                    unreachable!(
+                        "tail-resume return frame received HandleYield mode: {yielded:?}"
+                    )
+                }
+                Mode::Return(value) => {
+                    unreachable!("tail-resume return frame received Return mode: {value:?}")
+                }
+            };
+        }
+
         if let EvalReturnContinuation::ResumeToContinuation { continuation } = continuation {
-            self.current_seg_mut().mode = match mode {
+            self.mode = match mode {
                 Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Resume {
                     continuation,
                     value,
@@ -536,7 +555,7 @@ impl VM {
         if let EvalReturnContinuation::ReturnToContinuation { continuation }
         | EvalReturnContinuation::EvalInScopeReturn { continuation } = continuation
         {
-            self.current_seg_mut().mode = match mode {
+            self.mode = match mode {
                 Mode::Deliver(value) => Mode::HandleYield(DoCtrl::Transfer {
                     continuation,
                     value,
@@ -558,12 +577,12 @@ impl VM {
         }
         match mode {
             Mode::Deliver(value) => {
-                self.current_seg_mut().mode =
+                self.mode =
                     self.mode_from_eval_return_continuation(continuation, value);
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
-                self.current_seg_mut().mode = Mode::Throw(exc);
+                self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
             Mode::HandleYield(yielded) => {
@@ -683,7 +702,8 @@ impl VM {
             }
             EvalReturnContinuation::ResumeToContinuation { .. }
             | EvalReturnContinuation::ReturnToContinuation { .. }
-            | EvalReturnContinuation::EvalInScopeReturn { .. } => {
+            | EvalReturnContinuation::EvalInScopeReturn { .. }
+            | EvalReturnContinuation::TailResumeReturn => {
                 unreachable!("return-to-continuation frames are handled before value dispatch")
             }
         }
@@ -697,7 +717,7 @@ impl VM {
     ) -> StepEvent {
         match mode {
             Mode::Deliver(value) => {
-                self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::Apply {
+                self.mode = Mode::HandleYield(DoCtrl::Apply {
                     f: Box::new(DoCtrl::Pure {
                         value: Value::Python(mapper),
                     }),
@@ -708,7 +728,7 @@ impl VM {
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
-                self.current_seg_mut().mode = Mode::Throw(exc);
+                self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
             Mode::HandleYield(yielded) => {
@@ -723,11 +743,11 @@ impl VM {
     fn step_flat_map_bind_result_frame(&mut self, mode: Mode) -> StepEvent {
         match mode {
             Mode::Deliver(value) => {
-                self.current_seg_mut().mode = Mode::Deliver(value);
+                self.mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
-                self.current_seg_mut().mode = Mode::Throw(exc);
+                self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
             Mode::HandleYield(yielded) => {
@@ -753,7 +773,7 @@ impl VM {
                     ));
                 };
                 seg.push_frame(Frame::FlatMapBindResult);
-                seg.mode = Mode::HandleYield(DoCtrl::Expand {
+                self.mode = Mode::HandleYield(DoCtrl::Expand {
                     factory: Box::new(DoCtrl::Pure {
                         value: Value::Python(binder),
                     }),
@@ -764,7 +784,7 @@ impl VM {
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
-                self.current_seg_mut().mode = Mode::Throw(exc);
+                self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
             Mode::HandleYield(yielded) => {
@@ -779,11 +799,11 @@ impl VM {
     fn step_intercept_body_return_frame(&mut self, _marker: Marker, mode: Mode) -> StepEvent {
         match mode {
             Mode::Deliver(value) => {
-                self.current_seg_mut().mode = Mode::Deliver(value);
+                self.mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
-                self.current_seg_mut().mode = Mode::Throw(exc);
+                self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
             Mode::HandleYield(yielded) => {
@@ -821,7 +841,7 @@ impl VM {
                 if handler_kind.is_some() {
                     self.handle_handler_return(value)
                 } else {
-                    self.current_seg_mut().mode = Mode::Deliver(value);
+                    self.mode = Mode::Deliver(value);
                     StepEvent::Continue
                 }
             }
@@ -830,13 +850,13 @@ impl VM {
                     self.emit_frame_exited_due_to_error(Some(&stream), m, handler_kind, &exc);
                 }
                 if self.should_throw_into_live_handler_frame(handler_kind) {
-                    self.current_seg_mut().mode = Mode::Throw(exc);
+                    self.mode = Mode::Throw(exc);
                     return StepEvent::Continue;
                 }
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
-                    self.current_seg_mut().mode = Mode::HandleYield(
+                    self.mode = Mode::HandleYield(
                         if self.exact_dispatch_origin_for_continuation(&continuation).is_some() {
                             DoCtrl::TransferThrow {
                                 continuation,
@@ -885,7 +905,7 @@ impl VM {
                         | PythonCall::EvalExpr { .. }
                         | PythonCall::CallAsync { .. } => None,
                     };
-                    self.current_seg_mut().pending_python =
+                    self.pending_python =
                         Some(PendingPython::StepUserGenerator {
                             stream,
                             metadata,
@@ -936,7 +956,7 @@ impl VM {
                         ),
                     )
                 };
-                self.current_seg_mut().pending_python =
+                self.pending_python =
                     Some(PendingPython::RustProgramContinuation { marker, k });
                 StepEvent::NeedsPython(call)
             }
@@ -999,7 +1019,7 @@ impl VM {
         handler_kind: Option<HandlerKind>,
     ) -> StepEvent {
         let chain = Arc::new(self.current_interceptor_chain());
-        self.current_seg_mut().mode =
+        self.mode =
             self.continue_interceptor_chain_mode(yielded, stream, metadata, handler_kind, chain, 0);
         StepEvent::Continue
     }
@@ -1064,7 +1084,7 @@ impl VM {
                         chain.push(link);
                     }
                 }
-                cursor = seg.scope_parent;
+                cursor = vm.scope_parent(seg_id);
             }
         }
 
@@ -1415,10 +1435,10 @@ impl VM {
 
     fn step_handle_yield(&mut self) -> StepEvent {
         let yielded =
-            match std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit)) {
+            match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
                 Mode::HandleYield(y) => y,
                 other => {
-                    self.current_seg_mut().mode = other;
+                    self.mode = other;
                     return StepEvent::Error(VMError::internal("invalid mode for handle_yield"));
                 }
             };
@@ -1535,7 +1555,7 @@ impl VM {
     }
 
     fn handle_yield_pure(&mut self, value: Value) -> StepEvent {
-        self.current_seg_mut().mode = Mode::Deliver(value);
+        self.mode = Mode::Deliver(value);
         StepEvent::Continue
     }
 
@@ -1651,7 +1671,7 @@ impl VM {
     }
 
     fn handle_yield_python_async_syntax_escape(&mut self, action: PyShared) -> StepEvent {
-        self.current_seg_mut().pending_python = Some(PendingPython::AsyncEscape);
+        self.pending_python = Some(PendingPython::AsyncEscape);
         StepEvent::NeedsPython(PythonCall::CallAsync {
             func: action,
             args: vec![],
@@ -1742,7 +1762,7 @@ impl VM {
             }
         };
 
-        self.current_seg_mut().pending_python = Some(PendingPython::CallFuncReturn);
+        self.pending_python = Some(PendingPython::CallFuncReturn);
         StepEvent::NeedsPython(PythonCall::CallFunc {
             func,
             args: Self::collect_value_args(args),
@@ -1855,7 +1875,7 @@ impl VM {
             }
         };
 
-        self.current_seg_mut().pending_python = Some(PendingPython::ExpandReturn {
+        self.pending_python = Some(PendingPython::ExpandReturn {
             metadata: Some(metadata),
             handler_return,
         });
@@ -1885,7 +1905,7 @@ impl VM {
             metadata,
             handler_kind,
         });
-        seg.mode = Mode::Deliver(Value::Unit);
+        self.mode = Mode::Deliver(Value::Unit);
         StepEvent::Continue
     }
 
@@ -1954,8 +1974,6 @@ impl VM {
         // chain so reads/nonlocal writes reach the original segments instead of
         // a replay copy.
         let mut child_seg = Segment::new(Marker::fresh(), Some(child_caller_seg_id));
-        child_seg.scope_parent = Some(scope_parent_seg_id);
-        child_seg.named_bindings = bindings;
         self.copy_interceptor_guard_state(Some(current_seg_id), &mut child_seg);
         child_seg.push_frame(Frame::EvalReturn(Box::new(
             EvalReturnContinuation::EvalInScopeReturn {
@@ -1963,9 +1981,11 @@ impl VM {
             },
         )));
         let child_seg_id = self.alloc_segment(child_seg);
+        self.set_scope_parent(child_seg_id, Some(scope_parent_seg_id));
+        self.replace_scope_bindings(child_seg_id, bindings);
 
         self.current_segment = Some(child_seg_id);
-        self.current_seg_mut().pending_python = Some(PendingPython::EvalExpr { metadata });
+        self.pending_python = Some(PendingPython::EvalExpr { metadata });
         StepEvent::NeedsPython(PythonCall::EvalExpr { expr })
     }
 
@@ -1974,7 +1994,7 @@ impl VM {
             return StepEvent::Error(VMError::internal("AllocVar called without current segment"));
         };
         let var = self.alloc_scoped_var_in_segment(seg_id, initial);
-        self.current_seg_mut().mode = Mode::Deliver(Value::Var(var));
+        self.mode = Mode::Deliver(Value::Var(var));
         StepEvent::Continue
     }
 
@@ -1988,7 +2008,7 @@ impl VM {
                 var.raw()
             )));
         };
-        self.current_seg_mut().mode = Mode::Deliver(value);
+        self.mode = Mode::Deliver(value);
         StepEvent::Continue
     }
 
@@ -1999,7 +2019,7 @@ impl VM {
         if !self.write_scoped_var_in_current_segment(seg_id, var, value) {
             return StepEvent::Error(VMError::internal("WriteVar target segment not found"));
         }
-        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        self.mode = Mode::Deliver(Value::Unit);
         StepEvent::Continue
     }
 
@@ -2016,7 +2036,7 @@ impl VM {
                 var.raw()
             )));
         }
-        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        self.mode = Mode::Deliver(Value::Unit);
         StepEvent::Continue
     }
 
@@ -2030,7 +2050,7 @@ impl VM {
             self.set_contextual_throw(Self::missing_state_key_exception(&key));
             return StepEvent::Continue;
         };
-        self.current_seg_mut().mode = Mode::Deliver(value);
+        self.mode = Mode::Deliver(value);
         StepEvent::Continue
     }
 
@@ -2043,7 +2063,7 @@ impl VM {
         if !self.write_handler_state_at(prompt_seg_id, key, value) {
             return StepEvent::Error(VMError::internal("handler state prompt segment not found"));
         }
-        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        self.mode = Mode::Deliver(Value::Unit);
         StepEvent::Continue
     }
 
@@ -2056,7 +2076,7 @@ impl VM {
         if !self.append_handler_log_at(prompt_seg_id, message) {
             return StepEvent::Error(VMError::internal("handler log prompt segment not found"));
         }
-        self.current_seg_mut().mode = Mode::Deliver(Value::Unit);
+        self.mode = Mode::Deliver(Value::Unit);
         StepEvent::Continue
     }
 
@@ -2097,6 +2117,9 @@ impl VM {
                             EvalReturnContinuation::EvalInScopeReturn { .. } => {
                                 // no metadata
                             }
+                            EvalReturnContinuation::TailResumeReturn => {
+                                // no metadata
+                            }
                         },
                         Frame::MapReturn { mapper_meta, .. } => stack.push(mapper_meta.clone()),
                         Frame::FlatMapBindResult => {
@@ -2110,12 +2133,12 @@ impl VM {
                         }
                     }
                 }
-                seg_id = seg.caller;
+                seg_id = seg.parent;
             } else {
                 break;
             }
         }
-        self.current_seg_mut().mode = Mode::Deliver(Value::CallStack(stack));
+        self.mode = Mode::Deliver(Value::CallStack(stack));
         StepEvent::Continue
     }
 
@@ -2225,10 +2248,10 @@ impl VM {
 
     fn step_return(&mut self) -> StepEvent {
         let value =
-            match std::mem::replace(&mut self.current_seg_mut().mode, Mode::Deliver(Value::Unit)) {
+            match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
                 Mode::Return(v) => v,
                 other => {
-                    self.current_seg_mut().mode = other;
+                    self.mode = other;
                     return StepEvent::Error(VMError::internal("invalid mode for return"));
                 }
             };
@@ -2238,8 +2261,8 @@ impl VM {
             None => return StepEvent::Done(value),
         };
 
-        let caller = self.segments.get(seg_id).and_then(|s| s.caller);
-        let scope_parent = self.segments.get(seg_id).and_then(|s| s.scope_parent);
+        let caller = self.segments.get(seg_id).and_then(|s| s.parent);
+        let scope_parent = self.scope_parent(seg_id);
 
         match caller {
             Some(caller_id) => {
@@ -2248,15 +2271,14 @@ impl VM {
                         "caller segment not found in step_return",
                     ));
                 }
-                self.segments
-                    .reparent_children(seg_id, Some(caller_id), scope_parent);
+                self.reparent_children(seg_id, Some(caller_id), scope_parent);
                 self.current_segment = Some(caller_id);
                 self.free_segment(seg_id);
-                self.current_seg_mut().mode = Mode::Deliver(value);
+                self.mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             None => {
-                self.segments.reparent_children(seg_id, None, scope_parent);
+                self.reparent_children(seg_id, None, scope_parent);
                 self.completed_segment = Some(seg_id);
                 self.store_completed_outputs_from(seg_id);
                 self.free_segment(seg_id);
@@ -2273,25 +2295,21 @@ impl VM {
             ));
         };
 
-        let pending = match self
-            .segments
-            .get_mut(seg_id)
-            .and_then(|seg| seg.pending_python.take())
-        {
+        let pending = match self.pending_python.take() {
             Some(p) => p,
             None => {
                 let mode = self.contextual_internal_throw_mode(PyException::runtime_error(
                     "receive_python_result called with no pending_python",
                 ));
-                let Some(seg) = self.segments.get_mut(seg_id) else {
+                if self.segments.get(seg_id).is_none() {
                     self.current_segment = None;
                     return Err(VMError::internal(
                         "receive_python_result called without current segment",
                     ));
-                };
+                }
                 // We record the internal throw on the live segment here; the driver observes it
                 // on the next step() rather than via receive_python_result's return value.
-                seg.mode = mode;
+                self.mode = mode;
                 return Ok(());
             }
         };
@@ -2329,27 +2347,27 @@ impl VM {
     fn receive_eval_expr_result(&mut self, metadata: Option<CallMetadata>, outcome: PyCallOutcome) {
         match outcome {
             PyCallOutcome::GenYield(yielded) => {
-                self.current_seg_mut().mode = Mode::HandleYield(yielded);
+                self.mode = Mode::HandleYield(yielded);
             }
             PyCallOutcome::GenError(exception) => {
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited_due_to_error(None, m, None, &exception);
                 }
-                self.current_seg_mut().mode =
+                self.mode =
                     self.mode_after_generror(GenErrorSite::EvalExpr, exception, false);
             }
             PyCallOutcome::GenReturn(value) | PyCallOutcome::Value(value) => {
                 if metadata.is_some() && matches!(value, Value::Python(_)) {
                     match self.classify_expand_result_as_doctrl(metadata, value, "EvalExpr") {
                         Ok(doctrl) => {
-                            self.current_seg_mut().mode = Mode::HandleYield(doctrl);
+                            self.mode = Mode::HandleYield(doctrl);
                         }
                         Err(exception) => {
-                            self.current_seg_mut().mode = Mode::Throw(exception);
+                            self.mode = Mode::Throw(exception);
                         }
                     }
                 } else {
-                    self.current_seg_mut().mode = Mode::Deliver(value);
+                    self.mode = Mode::Deliver(value);
                 }
             }
         }
@@ -2358,14 +2376,14 @@ impl VM {
     fn receive_call_func_result(&mut self, outcome: PyCallOutcome) {
         match outcome {
             PyCallOutcome::Value(value) => {
-                self.current_seg_mut().mode = Mode::Deliver(value);
+                self.mode = Mode::Deliver(value);
             }
             PyCallOutcome::GenError(exception) => {
                 if self.has_live_handler_program_frame() {
-                    self.current_seg_mut().mode = Mode::Throw(exception);
+                    self.mode = Mode::Throw(exception);
                     return;
                 }
-                self.current_seg_mut().mode =
+                self.mode =
                     self.mode_after_generror(GenErrorSite::CallFuncReturn, exception, false);
             }
             PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
@@ -2469,7 +2487,7 @@ impl VM {
     fn receive_expand_program_value(&mut self, metadata: Option<CallMetadata>, value: Value) {
         match self.classify_expand_result_as_doctrl(metadata, value, "ExpandReturn") {
             Ok(doctrl) => {
-                self.current_seg_mut().mode = Mode::HandleYield(doctrl);
+                self.mode = Mode::HandleYield(doctrl);
             }
             Err(exception) => {
                 self.set_contextual_throw(exception);
@@ -2595,7 +2613,7 @@ impl VM {
 
     fn receive_expand_gen_error(&mut self, handler_return: bool, exception: PyException) {
         if self.has_live_handler_program_frame() {
-            self.current_seg_mut().mode = Mode::Throw(exception);
+            self.mode = Mode::Throw(exception);
             return;
         }
         if handler_return {
@@ -2613,12 +2631,12 @@ impl VM {
                 }
                 self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
             }
-            self.current_seg_mut().mode =
+            self.mode =
                 self.mode_after_generror(GenErrorSite::ExpandReturnHandler, exception, false);
             return;
         }
 
-        self.current_seg_mut().mode =
+        self.mode =
             self.mode_after_generror(GenErrorSite::ExpandReturnProgram, exception, false);
     }
 
@@ -2657,7 +2675,7 @@ impl VM {
                     }
                     let _ = self.handle_handler_return(value);
                 } else {
-                    self.current_seg_mut().mode = Mode::Deliver(value);
+                    self.mode = Mode::Deliver(value);
                 }
             }
             PyCallOutcome::GenError(exception) => {
@@ -2665,7 +2683,7 @@ impl VM {
                     self.emit_frame_exited_due_to_error(Some(&stream), m, handler_kind, &exception);
                 }
                 if self.should_throw_into_live_handler_frame(handler_kind) {
-                    self.current_seg_mut().mode = Mode::Throw(exception);
+                    self.mode = Mode::Throw(exception);
                     return;
                 }
                 if let Some(dispatch_id) = self
@@ -2688,7 +2706,7 @@ impl VM {
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
-                    self.current_seg_mut().mode = Mode::HandleYield(
+                    self.mode = Mode::HandleYield(
                         if self.exact_dispatch_origin_for_continuation(&continuation).is_some() {
                             DoCtrl::TransferThrow {
                                 continuation,
@@ -2742,10 +2760,10 @@ impl VM {
                     }
                 }
                 if handler_kind.is_none() {
-                    self.current_seg_mut().mode = Mode::Throw(exception);
+                    self.mode = Mode::Throw(exception);
                     return;
                 }
-                self.current_seg_mut().mode = self.mode_after_generror(site, exception, false);
+                self.mode = self.mode_after_generror(site, exception, false);
             }
             PyCallOutcome::Value(_) => {
                 self.receive_unexpected_outcome();
@@ -2761,10 +2779,10 @@ impl VM {
     ) {
         match outcome {
             PyCallOutcome::Value(result) => {
-                self.current_seg_mut().mode = Mode::Deliver(result);
+                self.mode = Mode::Deliver(result);
             }
             PyCallOutcome::GenError(exception) => {
-                self.current_seg_mut().mode = Mode::Throw(exception);
+                self.mode = Mode::Throw(exception);
             }
             PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
                 self.receive_unexpected_outcome();
@@ -2775,10 +2793,10 @@ impl VM {
     fn receive_async_escape_result(&mut self, outcome: PyCallOutcome) {
         match outcome {
             PyCallOutcome::Value(result) => {
-                self.current_seg_mut().mode = Mode::Deliver(result);
+                self.mode = Mode::Deliver(result);
             }
             PyCallOutcome::GenError(exception) => {
-                self.current_seg_mut().mode =
+                self.mode =
                     self.mode_after_generror(GenErrorSite::AsyncEscape, exception, false);
             }
             PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {

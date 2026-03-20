@@ -2,7 +2,7 @@
 
 use pyo3::prelude::*;
 
-use crate::arena::SegmentArena;
+use crate::arena::FiberArena;
 use crate::do_ctrl::DoCtrl;
 use crate::driver::{Mode, PyException, StepEvent};
 use crate::effect::{dispatch_ref_as_python, DispatchEffect};
@@ -253,7 +253,7 @@ impl DebugState {
         &self,
         mode: &Mode,
         current_segment: Option<SegmentId>,
-        segments: &SegmentArena,
+        segments: &FiberArena,
         dispatch_depth: usize,
         pending_python: &Option<PendingPython>,
     ) {
