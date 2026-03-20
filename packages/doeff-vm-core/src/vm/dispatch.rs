@@ -1178,6 +1178,30 @@ impl VM {
             .and_then(|current_seg_id| self.dispatch_observer.segment_dispatch_id(current_seg_id));
         let mut k_user = if Self::is_execution_context_effect(&effect) && original_exception.is_some() {
             let reusable_origin = self.current_dispatch_origin().filter(|origin| {
+                let Some(current_original) = original_exception.as_ref() else {
+                    return false;
+                };
+                let Some(origin_original) = origin.original_exception.as_ref() else {
+                    return false;
+                };
+                let same_original_exception = match (origin_original, current_original) {
+                    (
+                        PyException::Materialized {
+                            exc_value: origin_value,
+                            ..
+                        },
+                        PyException::Materialized {
+                            exc_value: current_value,
+                            ..
+                        },
+                    ) => Python::attach(|py| {
+                        origin_value.bind(py).as_ptr() == current_value.bind(py).as_ptr()
+                    }),
+                    _ => false,
+                };
+                if !same_original_exception {
+                    return false;
+                }
                 let Some(origin_seg_id) = origin.k_origin.segment_id() else {
                     return false;
                 };
@@ -1725,7 +1749,7 @@ impl VM {
             return StepEvent::Error(err);
         }
 
-        if let Some((_dispatch_id, original_exception, terminal)) = error_dispatch {
+        if let Some((dispatch_id, original_exception, terminal)) = error_dispatch {
             if terminal {
                 let active_chain = self
                     .assemble_active_chain(Some(&original_exception))
@@ -1740,6 +1764,7 @@ impl VM {
                     Ok(exception) => exception,
                     Err(effect_err) => effect_err,
                 };
+                self.dispatch_observer.finish_dispatch(dispatch_id);
                 // Terminal error-context dispatches must detach from the active handler
                 // segment so normal completion does not re-pop the same DispatchOrigin.
                 let caller = k.segment().and_then(|segment| segment.caller);
@@ -1771,9 +1796,14 @@ impl VM {
             .and_then(|dispatch_id| {
                 self.current_handler_dispatch()
                     .filter(|(_, current_dispatch_id, ..)| *current_dispatch_id == dispatch_id)
-                    .is_some_and(|(_, _, continuation, marker, _)| {
-                        self.exact_dispatch_origin_for_continuation(&continuation).is_none()
-                            || self.is_user_defined_python_handler_marker(marker)
+                    // Python handlers can suspend through helper code and then resume the
+                    // user continuation from inside the live handler segment. Keep that
+                    // segment as the caller so their return path stays intact. Rust
+                    // built-in handlers must resume through the captured caller chain; if
+                    // they keep the current handler segment attached, completed dispatches
+                    // accumulate on the active stack across ResultSafe/Try boundaries.
+                    .is_some_and(|(_, _, _, marker, _)| {
+                        self.is_user_defined_python_handler_marker(marker)
                     })
                     .then_some(self.current_segment)
                     .flatten()
@@ -2189,7 +2219,7 @@ impl VM {
                 self.dispatch_observer.update_forwarded_dispatch(
                     dispatch_id,
                     next_k.pending_error_context().cloned(),
-                    Some(next_k.clone()),
+                    None,
                     crate::dispatch_observer::ActiveHandlerContext {
                         segment_id: handler_seg_id,
                         continuation: next_k.clone(),
@@ -2198,7 +2228,6 @@ impl VM {
                     },
                 );
                 self.current_segment = Some(handler_seg_id);
-
                 if handler.py_identity().is_some() {
                     self.register_continuation(next_k.clone());
                 }
@@ -2250,7 +2279,6 @@ impl VM {
         let is_user_defined_python_handler = handler_dispatch
             .as_ref()
             .is_some_and(|(_, _, marker)| self.is_user_defined_python_handler_marker(*marker));
-        let is_error_context_dispatch = self.original_exception_for_dispatch(dispatch_id).is_some();
         if is_python_handler && continuation_is_live {
             let continuation = continuation.clone().expect("checked above");
             self.mark_one_shot_consumed(continuation.cont_id);
@@ -2277,7 +2305,7 @@ impl VM {
             }
             return self.handle_dispatch_resume(continuation, value);
         }
-        if is_user_defined_python_handler && !continuation_is_live && !is_error_context_dispatch {
+        if is_user_defined_python_handler && !continuation_is_live {
             if let Some(target) = continuation
                 .as_ref()
                 .and_then(|continuation| self.delegate_return_continuation(continuation))
@@ -2325,6 +2353,7 @@ impl VM {
                 .into_iter()
                 .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
                 .collect();
+            self.dispatch_observer.finish_dispatch(dispatch_id);
             self.current_seg_mut().mode =
                 match TraceState::enrich_original_exception_with_context(
                     original,
@@ -2336,6 +2365,7 @@ impl VM {
                 };
             return StepEvent::Continue;
         }
+        self.dispatch_observer.finish_dispatch(dispatch_id);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }

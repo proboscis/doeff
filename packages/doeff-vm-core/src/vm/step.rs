@@ -5,6 +5,32 @@ impl VM {
         PyException::from(pyo3::exceptions::PyKeyError::new_err(key.to_string()))
     }
 
+    fn enrich_uncaught_exception_with_active_chain(
+        &self,
+        exception: PyException,
+        active_chain: Vec<ActiveChainEntry>,
+    ) -> PyException {
+        let empty_context = Python::attach(|py| crate::effect::make_execution_context_object(py));
+        let context_value = match empty_context {
+            Ok(context) => Value::Python(PyShared::new(context)),
+            Err(err) => {
+                crate::vm_warn_log!(
+                    "failed to create ExecutionContext while finalizing uncaught exception: {err}"
+                );
+                return exception;
+            }
+        };
+
+        match TraceState::enrich_original_exception_with_context(
+            exception,
+            context_value,
+            active_chain,
+        ) {
+            Ok(exception) => exception,
+            Err(effect_err) => effect_err,
+        }
+    }
+
     fn should_treat_python_handler_gen_return_as_handler_completion(&self) -> bool {
         self.current_seg()
             .frames
@@ -209,7 +235,15 @@ impl VM {
                         } else {
                             self.finalize_active_dispatches_as_threw(&exc);
                             let trace = self.assemble_traceback_entries(&exc);
-                            let active_chain = self.assemble_active_chain(Some(&exc));
+                            let active_chain = self
+                                .assemble_active_chain(Some(&exc))
+                                .into_iter()
+                                .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
+                                .collect::<Vec<ActiveChainEntry>>();
+                            let exc = self.enrich_uncaught_exception_with_active_chain(
+                                exc,
+                                active_chain.clone(),
+                            );
                             self.completed_segment = Some(seg_id);
                             self.store_completed_outputs_from(seg_id);
                             self.segments.reparent_children(seg_id, None, scope_parent);
@@ -299,7 +333,7 @@ impl VM {
         }
     }
 
-    fn same_exception(lhs: &PyException, rhs: &PyException) -> bool {
+    pub(super) fn same_exception(lhs: &PyException, rhs: &PyException) -> bool {
         match (lhs, rhs) {
             (
                 PyException::Materialized {
