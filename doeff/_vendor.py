@@ -1,25 +1,20 @@
 """
-Vendored minimal result/maybe primitives used internally.
-These types are ported to avoid circular dependencies.
+Vendored minimal primitives used internally (Maybe, WGraph, TraceError, etc.).
 
 This module is INTERNAL.
-Public Result/Ok/Err imports should come from `doeff` / `doeff.types`.
-rust_vm paths use unified `doeff.Ok` / `doeff.Err` instance checks that accept
-both Rust and Python-backed result objects.
+Ok/Err are provided by doeff_vm (Rust). Import via `doeff` / `doeff.types`.
 """
 
 import traceback
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Final, Generic, NoReturn, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Final, Generic, NoReturn, TypeVar, overload
 
 from frozendict import frozendict
 
 if TYPE_CHECKING:
-    from doeff.kleisli import KleisliProgram
-    from doeff.program import Program
-    from doeff.traceback import EffectTraceback
+    from doeff_vm.doeff_vm import Err, Ok
 
 # =========================================================
 # Type Vars
@@ -27,209 +22,6 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
 U = TypeVar("U")
-
-
-class Result(Generic[T_co]):
-    """Sum type representing either a successful value or an error."""
-
-    __slots__ = ()
-
-    def is_ok(self) -> bool:
-        """Return ``True`` when the result is successful."""
-
-        return isinstance(self, Ok)
-
-    def is_err(self) -> bool:
-        """Return ``True`` when the result represents a failure."""
-
-        return isinstance(self, Err)
-
-    def ok(self) -> T_co | None:
-        """Return the contained value, or ``None`` if this is an error."""
-
-        if isinstance(self, Ok):
-            return self.value
-        return None
-
-    def err(self) -> Exception | None:
-        """Return the contained error, or ``None`` if this is a success."""
-
-        if isinstance(self, Err):
-            return self.error
-        return None
-
-    def expect(self, message: str) -> T_co:
-        """Return the value or raise the error with a custom message."""
-
-        if isinstance(self, Ok):
-            return self.value
-
-        err = cast(Err, self)
-        if message:
-            raise RuntimeError(f"{message}: {err.error}") from err.error
-        raise err.error
-
-    def unwrap(self) -> T_co:
-        """Return the value or raise the stored error."""
-
-        if isinstance(self, Ok):
-            return self.value
-        err = cast(Err, self)
-        raise err.error
-
-    def unwrap_err(self) -> Exception:
-        """Return the error or raise ``RuntimeError`` if this is a success."""
-
-        if isinstance(self, Err):
-            return self.error
-        raise RuntimeError("Called unwrap_err on Ok value")
-
-    def map(self, f: Callable[[T_co], U]) -> "Result[U]":
-        """Apply ``f`` to the contained value if this is a success."""
-
-        if isinstance(self, Ok):
-            return Ok(f(self.value))
-        return cast(Result[U], self)
-
-    def map_err(self, f: Callable[[Exception], Exception]) -> "Result[T_co]":
-        """Apply ``f`` to the contained error if this is a failure."""
-
-        if isinstance(self, Err):
-            error = f(self.error)
-            if not isinstance(error, Exception):
-                raise TypeError("map_err must return an Exception instance")
-            return Err(error)
-        return self
-
-    def unwrap_or(self, default: U) -> T_co | U:
-        """Return the contained value, or ``default`` if this is an error."""
-
-        if isinstance(self, Ok):
-            return self.value
-        return default
-
-    def unwrap_or_else(self, default_fn: Callable[[Exception], U]) -> T_co | U:
-        """Return the contained value, or compute a default from the error."""
-
-        if isinstance(self, Ok):
-            return self.value
-        err = cast(Err, self)
-        return default_fn(err.error)
-
-    def and_then(self, f: "Callable[[T_co], Result[U]]") -> "Result[U]":
-        """Chain computations that return ``Result``."""
-
-        if isinstance(self, Ok):
-            result = f(self.value)
-            if not isinstance(result, Result):
-                raise TypeError("and_then must return a Result instance")
-            return result
-        return cast(Result[U], self)
-
-    def and_then_k(self, kleisli: "KleisliProgram[[T_co], U]") -> "Program[U]":
-        """Chain a Kleisli program on success.
-
-        If this is ``Ok``, calls the Kleisli program with the value.
-        If this is ``Err``, returns a failed ``Program``.
-
-        Example::
-
-            @do
-            def process(x: int) -> EffectGenerator[str]:
-                yield Tell(f"Processing {x}")
-                return str(x * 2)
-
-            result: Result[int] = Ok(21)
-            program = result.and_then_k(process)  # Program[str] -> "42"
-        """
-        from doeff.program import GeneratorProgram
-
-        if isinstance(self, Ok):
-            return kleisli(self.value)
-
-        err = cast(Err, self)
-        error = err.error
-
-        def fail_generator() -> Any:
-            raise error
-            yield  # Make this a generator  # type: ignore[misc]
-
-        return GeneratorProgram(fail_generator)
-
-    def recover_k(self, kleisli: "KleisliProgram[[Exception], T_co]") -> "Program[T_co]":
-        """Recover from an error using a Kleisli program.
-
-        If this is ``Ok``, returns a pure ``Program`` with the value.
-        If this is ``Err``, calls the Kleisli program with the error.
-
-        Example::
-
-            @do
-            def handle_error(e: Exception) -> EffectGenerator[int]:
-                yield Tell(f"Error: {e}")
-                return 0
-
-            result: Result[int] = Err(ValueError("oops"))
-            program = result.recover_k(handle_error)  # Program[int]
-        """
-        from doeff.program import Program
-
-        if isinstance(self, Ok):
-            return Program.pure(self.value)
-        err = cast(Err, self)
-        return kleisli(err.error)
-
-    def recover(self, f: Callable[[Exception], T_co]) -> "Result[T_co]":
-        """Recover from an error by computing a new value.
-
-        If this is ``Ok``, returns self unchanged.
-        If this is ``Err``, returns ``Ok(f(error))``.
-
-        Example::
-
-            result: Result[int] = Err(ValueError("error"))
-            recovered = result.recover(lambda e: len(str(e)))  # Ok(5)
-        """
-        if isinstance(self, Ok):
-            return self
-        err = cast(Err, self)
-        return Ok(f(err.error))
-
-    def or_program(self, fallback: "Program[T_co]") -> "Program[T_co]":
-        """Use a fallback program if this is an error.
-
-        If this is ``Ok``, returns a pure ``Program`` with the value.
-        If this is ``Err``, returns the fallback program.
-
-        Example::
-
-            result: Result[int] = Err(ValueError("oops"))
-            program = result.or_program(get_default_value())  # Program[int]
-        """
-        from doeff.program import Program
-
-        if isinstance(self, Ok):
-            return Program.pure(self.value)
-        return fallback
-
-    def __or__(self, other: "Result[U]") -> "Result[T_co] | Result[U]":
-        """Return this result if it is ``Ok``, otherwise return ``other``.
-
-        Example::
-
-            Ok(1) | Ok(2)   # Ok(1)
-            Err(e) | Ok(2)  # Ok(2)
-            Err(e) | Err(f) # Err(f)
-        """
-
-        if isinstance(self, Ok):
-            return self
-        return other
-
-    def __bool__(self) -> bool:
-        """Truthiness matches :meth:`is_ok`."""
-
-        return self.is_ok()
 
 
 # =========================================================
@@ -259,21 +51,6 @@ def trace_err(e: BaseException, created_at: str | None = None) -> TraceError:
     """Create TraceError from exception."""
     tb_str = "".join(traceback.format_exception(e.__class__, e, e.__traceback__))
     return TraceError(e, tb_str, created_at)
-
-
-@dataclass(frozen=True)
-class Ok(Result[T], Generic[T]):
-    """Success result."""
-
-    value: T
-
-
-@dataclass(frozen=True)
-class Err(Result[NoReturn]):
-    """Error result with optional captured traceback."""
-
-    error: Exception
-    captured_traceback: "Maybe[EffectTraceback]" = field(default_factory=lambda: NOTHING)
 
 
 class Maybe(Generic[T_co]):
@@ -343,24 +120,26 @@ class Maybe(Generic[T_co]):
             return self
         return NOTHING
 
-    def ok_or(self, error: Exception) -> Result[T_co]:
-        """Convert to ``Result``, using ``error`` when empty."""
+    def ok_or(self, error: Exception) -> "Ok[T_co] | Err":
+        """Convert to ``Ok``/``Err``, using ``error`` when empty."""
+        from doeff_vm import doeff_vm as _ext
 
         if isinstance(self, Some):
-            return Ok(self.value)
+            return _ext.Ok(self.value)
         if not isinstance(error, Exception):
             raise TypeError("ok_or expects an Exception instance")
-        return Err(error)
+        return _ext.Err(error)
 
-    def ok_or_else(self, error_fn: Callable[[], Exception]) -> Result[T_co]:
-        """Convert to ``Result`` using a lazily created error."""
+    def ok_or_else(self, error_fn: Callable[[], Exception]) -> "Ok[T_co] | Err":
+        """Convert to ``Ok``/``Err`` using a lazily created error."""
+        from doeff_vm import doeff_vm as _ext
 
         if isinstance(self, Some):
-            return Ok(self.value)
+            return _ext.Ok(self.value)
         error = error_fn()
         if not isinstance(error, Exception):
             raise TypeError("ok_or_else must return an Exception instance")
-        return Err(error)
+        return _ext.Err(error)
 
     def to_optional(self) -> T_co | None:
         """Convert to a Python optional value."""
@@ -510,12 +289,9 @@ FrozenDict = frozendict
 
 __all__ = [
     "NOTHING",
-    "Err",
     "FrozenDict",
     "Maybe",
     "Nothing",
-    "Ok",
-    "Result",
     "Some",
     "TraceError",
     "WGraph",

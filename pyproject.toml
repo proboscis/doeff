@@ -27,6 +27,7 @@ dependencies = [
     "doeff-indexer>=0.1.2",
     "doeff-vm>=0.1.0",
     "cloudpickle>=3.0.0",
+    "openai>=1.50",
 ]
 
 [project.optional-dependencies]
