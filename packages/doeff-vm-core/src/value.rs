@@ -14,7 +14,7 @@ use crate::ids::{PromiseId, ScopeId, TaskId, VarId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 
-#[pyclass(frozen, name = "TraceFrame")]
+#[pyclass(frozen, name = "TraceFrame", module = "doeff_vm.doeff_vm")]
 pub struct PyTraceFrame {
     #[pyo3(get)]
     pub func_name: String,
@@ -27,6 +27,7 @@ pub struct PyTraceFrame {
 #[pymethods]
 impl PyTraceFrame {
     #[new]
+    #[pyo3(signature = (func_name, source_file, source_line))]
     fn new(func_name: String, source_file: String, source_line: u32) -> Self {
         Self {
             func_name,
@@ -34,9 +35,14 @@ impl PyTraceFrame {
             source_line,
         }
     }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (String, String, u32))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.func_name.clone(), self.source_file.clone(), self.source_line)))
+    }
 }
 
-#[pyclass(frozen, name = "TraceHop")]
+#[pyclass(frozen, name = "TraceHop", module = "doeff_vm.doeff_vm")]
 pub struct PyTraceHop {
     #[pyo3(get)]
     pub frames: Vec<Py<PyTraceFrame>>,
@@ -48,9 +54,15 @@ impl PyTraceHop {
     fn new(frames: Vec<Py<PyTraceFrame>>) -> Self {
         Self { frames }
     }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Vec<Py<PyTraceFrame>>,))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        let frames: Vec<Py<PyTraceFrame>> = self.frames.iter().map(|f| f.clone_ref(py)).collect();
+        Ok((cls, (frames,)))
+    }
 }
 
-#[pyclass(frozen, name = "Var")]
+#[pyclass(frozen, name = "Var", module = "doeff_vm.doeff_vm")]
 pub struct PyVar {
     #[pyo3(get)]
     pub raw: u64,
@@ -73,8 +85,19 @@ impl PyVar {
 
 #[pymethods]
 impl PyVar {
+    #[new]
+    #[pyo3(signature = (raw, owner_scope))]
+    fn new(raw: u64, owner_scope: u64) -> Self {
+        Self { raw, owner_scope }
+    }
+
     fn __repr__(&self) -> String {
         format!("Var({})", self.raw)
+    }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (u64, u64))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.raw, self.owner_scope)))
     }
 }
 

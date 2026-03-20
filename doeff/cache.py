@@ -267,8 +267,7 @@ def _call_site_from_execution_context(context: Any) -> CacheCallSite | None:
 
 
 def _unwrap_cached_payload(value: Any) -> Any:
-    # The VM or vendor layer may wrap values in Ok/Err from different modules
-    # (doeff_vm.Ok vs doeff._vendor.Ok). Use duck-typing to handle both.
+    # The VM wraps values in Ok/Err (from doeff_vm). Use duck-typing for forward compatibility.
     if hasattr(value, "is_ok") and hasattr(value, "value"):
         if callable(value.is_ok) and value.is_ok():
             return value.value
