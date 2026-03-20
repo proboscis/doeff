@@ -11,11 +11,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Marker(pub u64);
 
-/// Unique identifier for segments (arena index).
+/// Unique identifier for fibers (arena index).
 ///
-/// Segments are stored in a Vec and referenced by index for efficiency.
+/// Fibers are stored in a Vec and referenced by index for efficiency.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct SegmentId(pub u32);
+pub struct FiberId(pub u32);
 
 /// Stable lexical-scope identifier.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -161,15 +161,17 @@ impl RunnableId {
     }
 }
 
-impl SegmentId {
+impl FiberId {
     pub fn from_index(index: usize) -> Self {
-        SegmentId(index as u32)
+        FiberId(index as u32)
     }
 
     pub fn index(&self) -> usize {
         self.0 as usize
     }
 }
+
+pub type SegmentId = FiberId;
 
 impl TaskId {
     /// Get the raw value.
@@ -214,8 +216,8 @@ mod tests {
     }
 
     #[test]
-    fn test_segment_id_index_roundtrip() {
-        let id = SegmentId::from_index(42);
+    fn test_fiber_id_index_roundtrip() {
+        let id = FiberId::from_index(42);
         assert_eq!(id.index(), 42);
     }
 
