@@ -77,7 +77,7 @@ impl Default for TraceState {
 impl TraceState {
     pub(crate) fn dispatch_has_terminal_result(&self, dispatch_id: DispatchId) -> bool {
         self.dispatch_display(dispatch_id)
-            .is_some_and(|dispatch| Self::dispatch_result_is_terminal(&dispatch.result))
+            .is_some_and(Self::dispatch_result_prevents_throw_overwrite)
     }
 
     pub(crate) fn clear(&mut self) {
@@ -870,6 +870,7 @@ impl TraceState {
     ) -> Vec<ActiveChainEntry> {
         let mut frame_stack = self.frame_stack.clone();
         self.merge_live_frame_state(&mut frame_stack, segments, current_segment, dispatch_stack);
+        self.refresh_dispatch_displays_in_frames(&mut frame_stack);
 
         if let Some(exception) = exception {
             Self::finalize_unresolved_dispatches_as_threw(&mut frame_stack, exception);
@@ -890,6 +891,7 @@ impl TraceState {
     ) -> Vec<ActiveChainEntry> {
         let mut frame_stack = self.scoped_active_chain_frame_stack(segments, current_segment);
         self.merge_live_frame_state(&mut frame_stack, segments, current_segment, dispatch_stack);
+        self.refresh_dispatch_displays_in_frames(&mut frame_stack);
 
         if let Some(exception) = exception {
             Self::finalize_unresolved_dispatches_as_threw(&mut frame_stack, exception);
@@ -946,6 +948,7 @@ impl TraceState {
     ) -> Vec<TraceEntry> {
         let mut frame_stack = self.frame_stack.clone();
         self.merge_live_frame_state(&mut frame_stack, segments, current_segment, dispatch_stack);
+        self.refresh_dispatch_displays_in_frames(&mut frame_stack);
         Self::finalize_unresolved_dispatches_as_threw(&mut frame_stack, exception);
 
         let mut entries = Vec::new();
@@ -1139,6 +1142,18 @@ impl TraceState {
     ) {
         self.merge_frame_lines_from_visible_dispatch_snapshot(frame_stack, dispatch_stack);
         self.merge_frame_lines_from_segments(frame_stack, segments, current_segment);
+    }
+
+    fn refresh_dispatch_displays_in_frames(&self, frame_stack: &mut [ActiveChainFrameState]) {
+        for frame in frame_stack.iter_mut() {
+            let Some(dispatch_id) = frame.dispatch_display.as_ref().map(|display| display.dispatch_id)
+            else {
+                continue;
+            };
+            if let Some(latest) = self.dispatch_displays.get(&dispatch_id) {
+                frame.dispatch_display = Some(latest.clone());
+            }
+        }
     }
 
     fn merge_frame_lines_from_segments(
@@ -1913,13 +1928,18 @@ impl TraceState {
         active_chain
     }
 
-    fn dispatch_result_is_terminal(result: &EffectResult) -> bool {
-        matches!(
-            result,
-            EffectResult::Resumed { .. }
-                | EffectResult::Transferred { .. }
-                | EffectResult::Threw { .. }
-        )
+    fn dispatch_result_prevents_throw_overwrite(dispatch: &DispatchDisplayState) -> bool {
+        match dispatch.result {
+            EffectResult::Active => false,
+            EffectResult::Transferred { .. } | EffectResult::Threw { .. } => true,
+            // `HandlerAction::Returned` and `HandlerAction::Resumed` both normalize to
+            // `EffectResult::Resumed`. Only the true handler-return case is terminal; a
+            // `Resume(k, ...)` can still be followed by user code in the handler that throws.
+            EffectResult::Resumed { .. } => !dispatch
+                .handler_stack
+                .iter()
+                .any(|entry| entry.status == HandlerStatus::Resumed),
+        }
     }
 
     fn should_preserve_exited_frame(frame: &ActiveChainFrameState) -> bool {

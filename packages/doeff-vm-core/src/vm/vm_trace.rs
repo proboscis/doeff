@@ -391,6 +391,9 @@ impl VM {
         dispatch_id: DispatchId,
         exc: &PyException,
     ) {
+        if self.trace_state.dispatch_has_terminal_result(dispatch_id) {
+            return;
+        }
         let handler_identity = self
             .current_handler_identity_for_dispatch(dispatch_id)
             .or_else(|| {
