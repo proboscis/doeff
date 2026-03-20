@@ -122,6 +122,41 @@ class TestHP03PostProcess:
         result = run(_prog(main), handlers=default_handlers())
         assert result.value == 45  # handler gets 15, returns 15*3
 
+    def test_resume_unwinds_after_remainder_completes(self) -> None:
+        events: list[str] = []
+
+        @do
+        def handler(effect: Effect, k):
+            if isinstance(effect, _CustomEffect):
+                events.append(f"before:{effect.value}")
+                resume_value = yield Resume(k, effect.value)
+                events.append(f"after:{effect.value}:{resume_value}")
+                return resume_value
+            else:
+                yield Delegate()
+
+        def body():
+            first = yield _CustomEffect(1)
+            events.append(f"body:{first}")
+            second = yield _CustomEffect(2)
+            events.append(f"body:{second}")
+            return "done"
+
+        def main():
+            result = yield WithHandler(handler=handler, expr=_prog(body))
+            return result
+
+        result = run(_prog(main), handlers=default_handlers())
+        assert result.value == "done"
+        assert events == [
+            "before:1",
+            "body:1",
+            "before:2",
+            "body:2",
+            "after:2:done",
+            "after:1:done",
+        ]
+
 
 class TestHP03BReturnEffect:
     def test_handler_returning_effect_raises_typeerror(self) -> None:

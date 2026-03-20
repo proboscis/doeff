@@ -440,6 +440,13 @@ def process():
 p: Program = process()"#,
                 violation_line: 2,
             },
+            NoqaTestCase {
+                rule_id: "DOEFF032",
+                triggering_code: r#"@do
+def handler(effect, k):
+    return (yield Resume(k, effect.value))"#,
+                violation_line: 3,
+            },
         ]
     }
 
@@ -715,4 +722,3 @@ p: Program = process()"#,
         result.join("\n")
     }
 }
-

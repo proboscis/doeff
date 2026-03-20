@@ -540,6 +540,11 @@ fn get_rule_info(rule_id: &str) -> RuleInfo {
             description: "Avoid creating Program entrypoints by calling @do wrappers that only forward args to a single yielded call and return it.",
             fix: "Replace `p_x: Program[...] = wrapper(...)` with `p_x: Program[...] = underlying(...)` using the same arguments. If the wrapper is intentional (naming/tracing), add `# noqa: DOEFF031`.",
         },
+        "DOEFF032" => RuleInfo {
+            name: "Prefer Transfer for Tail Resume",
+            description: "Tail-position `return (yield Resume(k, value))` keeps the handler frame alive while the resumed continuation runs.",
+            fix: "Replace tail-position `return (yield Resume(k, value))` with `yield Transfer(k, value)`. Keep `Resume` only when you need post-resume processing.",
+        },
         "NOQA001" => RuleInfo {
             name: "Malformed noqa Comment",
             description: "The noqa comment format appears incorrect and may not suppress the intended rule.",
