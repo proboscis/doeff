@@ -128,7 +128,7 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
 }
 
 #[test]
-fn test_dispatch_resume_relinks_handler_segment_to_captured_caller_chain() {
+fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
     let mut vm = VM::new();
 
     let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
@@ -170,8 +170,8 @@ fn test_dispatch_resume_relinks_handler_segment_to_captured_caller_chain() {
         .expect("handler segment must remain live while continuation runs");
     assert_eq!(
         handler_segment.caller,
-        Some(captured_caller_id),
-        "handler segment must expose the continuation's captured caller chain during Resume"
+        Some(prompt_seg_id),
+        "Dispatch Resume must not rewrite the handler segment's caller chain during Resume"
     );
 
     vm.current_segment = Some(handler_seg_id);
@@ -185,7 +185,7 @@ fn test_dispatch_resume_relinks_handler_segment_to_captured_caller_chain() {
     assert_eq!(
         handler_segment.caller,
         Some(prompt_seg_id),
-        "HandlerDispatch completion must restore the prompt boundary caller"
+        "Handler completion must leave the prompt boundary caller unchanged"
     );
 }
 
