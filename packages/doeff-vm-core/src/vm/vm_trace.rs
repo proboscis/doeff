@@ -263,6 +263,9 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<PyException> {
+        if let Some((_, original_exception)) = self.dispatch_error_contexts.get(&dispatch_id) {
+            return Some(original_exception.clone());
+        }
         self.dispatch_origin_for_dispatch_id(dispatch_id)
             .and_then(|origin| origin.original_exception)
     }
@@ -355,14 +358,30 @@ impl VM {
             .record_frame_entered(metadata, handler_kind);
     }
 
+    pub(super) fn emit_frame_location(
+        &mut self,
+        stream: &IRStreamRef,
+        metadata: &CallMetadata,
+        handler_kind: Option<HandlerKind>,
+    ) {
+        self.trace_state
+            .record_frame_location(stream, metadata, handler_kind);
+    }
+
     pub(super) fn emit_frame_exited(&mut self, metadata: &CallMetadata) {
         self.trace_state
             .record_frame_exited(metadata.frame_id as crate::capture::FrameId);
     }
 
-    pub(super) fn emit_frame_exited_due_to_error(&mut self, metadata: &CallMetadata) {
+    pub(super) fn emit_frame_exited_due_to_error(
+        &mut self,
+        stream: Option<&IRStreamRef>,
+        metadata: &CallMetadata,
+        handler_kind: Option<HandlerKind>,
+        exception: &PyException,
+    ) {
         self.trace_state
-            .record_frame_exited_due_to_error(metadata.frame_id as crate::capture::FrameId);
+            .record_frame_exited_due_to_error(stream, metadata, handler_kind, exception);
     }
 
     pub(super) fn emit_handler_threw_for_dispatch(

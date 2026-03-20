@@ -185,8 +185,10 @@ class TestListenCaptureLaw:
         assert "inner_log_2" in result.value.log
 
     @pytest.mark.asyncio
-    async def test_gather_isolated_state_logs_not_captured(self, parameterized_interpreter) -> None:
-        """Gather uses Futures with isolated state - logs are NOT captured by parent Listen."""
+    async def test_gather_shared_state_logs_are_captured(
+        self, parameterized_interpreter
+    ) -> None:
+        """Gather shares branch handler state, so parent Listen observes branch logs."""
 
         @do
         def task1():
@@ -215,7 +217,7 @@ class TestListenCaptureLaw:
         assert result.is_ok
 
         assert result.value.value == [1, 2, 3]
-        assert len(result.value.log) == 0
+        assert result.value.log == ["task1_log", "task2_log", "task3_log"]
 
     @pytest.mark.asyncio
     async def test_nested_listen_separation(self, parameterized_interpreter) -> None:

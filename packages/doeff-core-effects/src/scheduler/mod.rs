@@ -288,7 +288,6 @@ struct ReadyRootResume {
     outcome: Result<Value, PyException>,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
-    merge_items: Option<Vec<Waitable>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -485,6 +484,7 @@ pub struct SchedulerState {
     waiters: HashMap<Waitable, Vec<WaitRequest>>,
     waitables_by_owner: HashMap<WaitOwner, Vec<Waitable>>,
     active_wait_owners: HashSet<WaitOwner>,
+    active_driver_owner: Option<WaitOwner>,
     external_waiter_count: usize,
     pending_gather_fail_fast: HashMap<WaitOwner, PendingGatherFailFast>,
     external_completion_queue: Option<PyShared>,
@@ -1033,6 +1033,7 @@ impl SchedulerState {
             waiters: HashMap::new(),
             waitables_by_owner: HashMap::new(),
             active_wait_owners: HashSet::new(),
+            active_driver_owner: None,
             external_waiter_count: 0,
             pending_gather_fail_fast: HashMap::new(),
             external_completion_queue: None,
@@ -1650,11 +1651,6 @@ impl SchedulerState {
         let Some(outcome) = outcome else {
             return None;
         };
-        let should_merge_logs = matches!(outcome, Ok(_))
-            && matches!(waiter.mode, WaitMode::All)
-            && waiter.items.len() > 1;
-        let merge_items = should_merge_logs.then(|| waiter.items.clone());
-
         self.clear_waiters_for_owner(waiter.waiting_task, waiter_id);
 
         if let Some(waiting_task) = waiter.waiting_task {
@@ -1670,7 +1666,10 @@ impl SchedulerState {
                         return None;
                     }
                     *resume_outcome = Some(outcome.clone());
-                    *pending_log_merge_items = merge_items;
+                    *pending_log_merge_items = (matches!(outcome, Ok(_))
+                        && matches!(waiter.mode, WaitMode::All)
+                        && waiter.items.len() > 1)
+                        .then(|| waiter.items.clone());
                     *priority
                 }
                 Some(TaskState::Done { .. }) | None => return None,
@@ -1687,7 +1686,6 @@ impl SchedulerState {
                 outcome,
                 waiting_task: None,
                 waiting_store: waiter.waiting_store,
-                merge_items,
             },
         );
         self.enqueue_ready_root(waiter_id);
@@ -1995,7 +1993,6 @@ impl SchedulerState {
                 outcome: Err(fail_fast.error),
                 waiting_task: None,
                 waiting_store: waiter.waiting_store,
-                merge_items: None,
             },
         );
         self.enqueue_ready_root(waiter_id);
@@ -2209,7 +2206,7 @@ impl SchedulerState {
                             self.finalize_task_cancellation(task_id);
                             continue;
                         }
-                        let (task_k, resume_outcome, _merge_items) =
+                        let (task_k, resume_outcome) =
                             match self.tasks.get_mut(&task_id) {
                                 Some(TaskState::Pending {
                                     cont,
@@ -2219,8 +2216,8 @@ impl SchedulerState {
                                 }) => {
                                     let continuation = cont.clone();
                                     let outcome = resume_outcome.take();
-                                    let pending_merge = pending_log_merge_items.take();
-                                    (continuation, outcome, pending_merge)
+                                    pending_log_merge_items.take();
+                                    (continuation, outcome)
                                 }
                                 Some(TaskState::Done { .. }) | None => {
                                     return TransferNextOutcome::Step(IRStreamStep::Throw(
@@ -2324,7 +2321,7 @@ impl SchedulerState {
                     return Ok(None);
                 }
 
-                let (task_k, resume_outcome, _merge_items) = match self.tasks.get_mut(&task_id) {
+                let (task_k, resume_outcome) = match self.tasks.get_mut(&task_id) {
                     Some(TaskState::Pending {
                         cont,
                         resume_outcome,
@@ -2333,8 +2330,8 @@ impl SchedulerState {
                     }) if cont.cont_id == cont_id => {
                         let continuation = cont.clone();
                         let outcome = resume_outcome.take();
-                        let pending_merge = pending_log_merge_items.take();
-                        (continuation, outcome, pending_merge)
+                        pending_log_merge_items.take();
+                        (continuation, outcome)
                     }
                     _ => return Ok(None),
                 };
@@ -2477,7 +2474,12 @@ impl SchedulerProgram {
         make_async_external_wait_step().unwrap_or_else(IRStreamStep::Throw)
     }
 
-    fn wait_owner(&self, waiting_task: Option<TaskId>, cont_id: ContId) -> WaitOwner {
+    fn wait_owner(
+        &self,
+        waiting_task: Option<TaskId>,
+        cont_id: ContId,
+        active_driver_owner: Option<WaitOwner>,
+    ) -> WaitOwner {
         match (&self.phase, waiting_task) {
             (
                 SchedulerPhase::Driving {
@@ -2486,6 +2488,9 @@ impl SchedulerProgram {
                 },
                 Some(task_id),
             ) if *running_task == task_id => *owner,
+            (_, Some(_)) if active_driver_owner.is_some() => {
+                active_driver_owner.expect("guarded by is_some")
+            }
             _ => match waiting_task {
                 Some(task_id) => WaitOwner::Task { task_id, cont_id },
                 None => WaitOwner::Root { cont_id },
@@ -2540,6 +2545,10 @@ impl SchedulerProgram {
                 let keep_driving = next_running_task.is_some()
                     && !resumed_waiting_owner
                     && step_switches_into_task_body(&step);
+                self.state
+                    .lock()
+                    .expect("Scheduler lock poisoned")
+                    .active_driver_owner = keep_driving.then_some(owner);
                 if keep_driving {
                     self.phase = SchedulerPhase::Driving {
                         owner,
@@ -2552,10 +2561,18 @@ impl SchedulerProgram {
                 step
             }
             TransferNextOutcome::AwaitExternal => {
+                self.state
+                    .lock()
+                    .expect("Scheduler lock poisoned")
+                    .active_driver_owner = None;
                 self.phase = await_phase(owner);
                 self.async_external_wait_step()
             }
             TransferNextOutcome::None => {
+                self.state
+                    .lock()
+                    .expect("Scheduler lock poisoned")
+                    .active_driver_owner = None;
                 self.phase = SchedulerPhase::Idle;
                 none_step()
             }
@@ -2568,6 +2585,7 @@ impl SchedulerProgram {
         store: &mut RustStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        state.active_driver_owner = None;
         match state.transfer_next(store) {
             TransferNextOutcome::Step(step) => {
                 self.phase = SchedulerPhase::Idle;
@@ -2591,6 +2609,7 @@ impl SchedulerProgram {
         store: &mut RustStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        state.active_driver_owner = None;
         match state.transfer_next(store) {
             TransferNextOutcome::Step(step) => {
                 self.phase = SchedulerPhase::Idle;
@@ -2617,6 +2636,7 @@ impl SchedulerProgram {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         match Self::try_transfer_ready_owner(&mut state, owner, store) {
             Ok(Some(step)) => {
+                state.active_driver_owner = None;
                 self.phase = SchedulerPhase::Idle;
                 return step;
             }
@@ -2645,6 +2665,7 @@ impl SchedulerProgram {
         store: &mut RustStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        state.active_driver_owner = None;
         match state.transfer_next(store) {
             TransferNextOutcome::Step(raw_step) => {
                 let step = match raw_step {
@@ -2691,6 +2712,7 @@ impl SchedulerProgram {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
         match Self::try_transfer_ready_owner(&mut state, owner, store) {
             Ok(Some(step)) => {
+                state.active_driver_owner = None;
                 self.phase = SchedulerPhase::Idle;
                 return step;
             }
@@ -2732,7 +2754,7 @@ impl SchedulerProgram {
         }
 
         state.wait_on_any(&items, k_user.clone(), store);
-        let owner = self.wait_owner(waiting_task, k_user.cont_id);
+        let owner = self.wait_owner(waiting_task, k_user.cont_id, state.active_driver_owner);
         drop(state);
         self.continue_wait_transfer(
             owner,
@@ -2765,7 +2787,7 @@ impl SchedulerProgram {
         }
 
         state.wait_on_all(&items, k_user.clone(), store);
-        let owner = self.wait_owner(waiting_task, k_user.cont_id);
+        let owner = self.wait_owner(waiting_task, k_user.cont_id, state.active_driver_owner);
         drop(state);
         self.continue_wait_transfer(
             owner,
@@ -2796,7 +2818,7 @@ impl SchedulerProgram {
         }
 
         state.wait_on_any(&items, k_user.clone(), store);
-        let owner = self.wait_owner(waiting_task, k_user.cont_id);
+        let owner = self.wait_owner(waiting_task, k_user.cont_id, state.active_driver_owner);
         drop(state);
         self.continue_wait_transfer(
             owner,
@@ -2897,6 +2919,7 @@ impl SchedulerProgram {
         store: &mut RustStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        state.active_driver_owner = None;
 
         let Some(task_id) = state.current_task else {
             return IRStreamStep::Throw(PyException::runtime_error(
@@ -2953,6 +2976,7 @@ impl SchedulerProgram {
         store: &mut RustStore,
     ) -> IRStreamStep {
         let mut state = self.state.lock().expect("Scheduler lock poisoned");
+        state.active_driver_owner = None;
         let outcome_for_fallback = outcome.clone();
 
         let mut owner_still_waiting = state.owner_is_waiting(owner);
@@ -3012,6 +3036,7 @@ impl SchedulerProgram {
                 let keep_driving = next_running_task.is_some()
                     && !resumed_waiting_owner
                     && step_switches_into_task_body(&step);
+                state.active_driver_owner = keep_driving.then_some(owner);
                 drop(state);
                 if keep_driving {
                     self.phase = SchedulerPhase::Driving {
@@ -3025,11 +3050,13 @@ impl SchedulerProgram {
                 step
             }
             TransferNextOutcome::AwaitExternal => {
+                state.active_driver_owner = None;
                 drop(state);
                 self.phase = SchedulerPhase::AwaitDrivingTransfer { owner };
                 self.async_external_wait_step()
             }
             TransferNextOutcome::None => {
+                state.active_driver_owner = None;
                 self.phase = SchedulerPhase::Idle;
                 if !owner_still_waiting {
                     return match outcome_for_fallback {
@@ -3188,7 +3215,8 @@ impl IRStreamProgram for SchedulerProgram {
                             }
                         }
                         state.wait_on_any(&items, k_user.clone(), store);
-                        let owner = self.wait_owner(waiting_task, k_user.cont_id);
+                        let owner =
+                            self.wait_owner(waiting_task, k_user.cont_id, state.active_driver_owner);
                         drop(state);
                         self.continue_wait_transfer(
                             owner,
@@ -3293,9 +3321,7 @@ impl IRStreamProgram for SchedulerProgram {
                 };
 
                 let mut handlers = handlers;
-                if !handlers.is_empty() {
-                    self.maybe_prepend_sync_await_handler(&mut handlers);
-                }
+                self.maybe_prepend_sync_await_handler(&mut handlers);
                 let outside_scope = k_user.segment_id();
 
                 self.phase = SchedulerPhase::SpawnAwaitContinuation {
@@ -3424,7 +3450,16 @@ impl IRStreamProgram for SchedulerProgram {
                 running_task,
             } => self.continue_driving(Ok(value), owner, running_task, store),
 
-            SchedulerPhase::Idle => IRStreamStep::Return(value),
+            SchedulerPhase::Idle => {
+                let active_driver = {
+                    let state = self.state.lock().expect("Scheduler lock poisoned");
+                    state.active_driver_owner.zip(state.current_task)
+                };
+                if let Some((owner, running_task)) = active_driver {
+                    return self.continue_driving(Ok(value), owner, running_task, store);
+                }
+                IRStreamStep::Return(value)
+            }
         }
     }
 
@@ -3447,9 +3482,18 @@ impl IRStreamProgram for SchedulerProgram {
             | SchedulerPhase::AwaitWaitTransfer { .. }
             | SchedulerPhase::AwaitPreemptiveTransfer { .. }
             | SchedulerPhase::AwaitDrivingTransfer { .. }
-            | SchedulerPhase::Idle
             | SchedulerPhase::SpawnAwaitTraceback { .. }
             | SchedulerPhase::SpawnAwaitContinuation { .. } => IRStreamStep::Throw(exc),
+            SchedulerPhase::Idle => {
+                let active_driver = {
+                    let state = self.state.lock().expect("Scheduler lock poisoned");
+                    state.active_driver_owner.zip(state.current_task)
+                };
+                if let Some((owner, running_task)) = active_driver {
+                    return self.continue_driving(Err(exc), owner, running_task, store);
+                }
+                IRStreamStep::Throw(exc)
+            }
         }
     }
 }
@@ -5864,7 +5908,6 @@ mod tests {
                     outcome: Ok(Value::List(vec![Value::Int(1), Value::Int(2)])),
                     waiting_task: None,
                     waiting_store: RustStore::new(),
-                    merge_items: None,
                 },
             );
 

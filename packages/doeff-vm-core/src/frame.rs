@@ -12,6 +12,7 @@ use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
 use crate::segment::SegmentKind;
+use crate::step::PyException;
 
 static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -173,6 +174,12 @@ pub enum EvalReturnContinuation {
         kwarg_idx: usize,
         metadata: CallMetadata,
     },
+    ResumeToContinuation {
+        continuation: crate::continuation::Continuation,
+    },
+    ReturnToContinuation {
+        continuation: crate::continuation::Continuation,
+    },
     EvalInScopeReturn {
         continuation: crate::continuation::Continuation,
     },
@@ -196,6 +203,7 @@ pub enum Frame {
         dispatch_id: DispatchId,
         effect: DispatchEffect,
         k_origin: Continuation,
+        original_exception: Option<PyException>,
     },
     EvalReturn(Box<EvalReturnContinuation>),
     MapReturn {
