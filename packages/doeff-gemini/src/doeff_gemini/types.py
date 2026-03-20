@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from doeff import Result
+from doeff import Err, Ok
 
 
 @dataclass(frozen=True)
@@ -140,7 +140,7 @@ class GeminiCallResult:
 
     model_name: str
     payload: dict[str, Any]
-    result: Result[Any]
+    result: Ok[Any] | Err
 
 
 @dataclass(frozen=True)

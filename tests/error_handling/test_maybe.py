@@ -41,18 +41,16 @@ def test_maybe_ok_or_helpers():
 
     ok_result = some.ok_or(ValueError("missing"))
     assert isinstance(ok_result, Ok)
-    assert ok_result.unwrap() == "value"
+    assert ok_result.value == "value"
 
     err_instance = ValueError("missing")
     err_result = nothing.ok_or(err_instance)
     assert isinstance(err_result, Err)
-    with pytest.raises(ValueError, match="missing"):
-        err_result.unwrap()
+    assert err_result.error is err_instance
 
     lazy_result = nothing.ok_or_else(lambda: RuntimeError("boom"))
     assert isinstance(lazy_result, Err)
-    with pytest.raises(RuntimeError, match="boom"):
-        lazy_result.unwrap()
+    assert isinstance(lazy_result.error, RuntimeError)
 
 
 def test_maybe_to_optional_conversion():
