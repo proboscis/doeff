@@ -3,6 +3,7 @@ Core types for the doeff effects system.
 
 This module contains the foundational types with zero internal dependencies.
 """
+from __future__ import annotations
 
 
 import json
@@ -34,12 +35,9 @@ if TYPE_CHECKING:
 # Core graph/result primitives
 from doeff._vendor import (
     NOTHING,
-    Err,
     FrozenDict,
     Maybe,
     Nothing,
-    Ok,
-    Result,
     Some,
     TraceError,
     WGraph,
@@ -47,6 +45,10 @@ from doeff._vendor import (
     WStep,
     trace_err,
 )
+from doeff_vm import Err, Ok
+
+# Type alias — kept for backward compatibility in annotations.
+Result = Ok | Err
 from doeff.utils import BoundedLog
 
 # Type variables
