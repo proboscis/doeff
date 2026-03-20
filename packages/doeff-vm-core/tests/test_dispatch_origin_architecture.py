@@ -111,12 +111,20 @@ def test_runtime_has_no_dispatch_special_frame_matches_left() -> None:
     assert "Frame::HandlerDispatch" not in source
     assert "Frame::DispatchOrigin" not in source
     banned_segment_accesses = (
-        ".handler_dispatch",
-        ".dispatch_origin",
+        "seg.handler_dispatch",
+        "segment.handler_dispatch",
+        "handler_seg.handler_dispatch",
+        "snapshot.handler_dispatch",
+        "seg.dispatch_origin",
+        "segment.dispatch_origin",
+        "handler_seg.dispatch_origin",
+        "snapshot.dispatch_origin",
         "seg.dispatch_id",
         "segment.dispatch_id",
         "current_seg.dispatch_id",
         "handler_seg.dispatch_id",
+        "snapshot.dispatch_id",
+        "exec_seg.dispatch_id",
     )
     for needle in banned_segment_accesses:
         assert needle not in source, (

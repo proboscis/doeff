@@ -5,6 +5,13 @@ impl VM {
         PyException::from(pyo3::exceptions::PyKeyError::new_err(key.to_string()))
     }
 
+    fn should_treat_python_handler_gen_return_as_handler_completion(&self) -> bool {
+        self.current_seg()
+            .frames
+            .iter()
+            .all(|frame| !matches!(frame, Frame::Program { handler_kind: Some(_), .. }))
+    }
+
     /// Set mode to Throw with a RuntimeError and return Continue.
     pub(super) fn throw_runtime_error(&mut self, message: &str) -> StepEvent {
         if self.current_segment.is_none() {
@@ -172,21 +179,6 @@ impl VM {
             };
 
             if !segment.has_frames() {
-                let has_handler_dispatch = segment.handler_dispatch.is_some();
-                let has_dispatch_origin = segment.dispatch_origin.is_some();
-                if has_handler_dispatch || has_dispatch_origin {
-                    let mode = std::mem::replace(
-                        &mut self.current_seg_mut().mode,
-                        Mode::Deliver(Value::Unit),
-                    );
-                    if let Some(handler_dispatch) = self.current_seg_mut().handler_dispatch.take() {
-                        return self.step_handler_dispatch_state(handler_dispatch, mode);
-                    }
-                    if let Some(dispatch_origin) = self.current_seg_mut().dispatch_origin.take() {
-                        return self.step_dispatch_origin_state(dispatch_origin, mode);
-                    }
-                    unreachable!("segment dispatch state vanished while stepping");
-                }
                 let caller = segment.caller;
                 let scope_parent = segment.scope_parent;
                 let throw_parent = segment.throw_parent.clone();
@@ -444,148 +436,6 @@ impl VM {
                 unreachable!("interceptor eval frame received Return mode: {value:?}")
             }
         }
-    }
-
-    fn step_handler_dispatch_frame(
-        &mut self,
-        dispatch_id: DispatchId,
-        continuation: Continuation,
-        mode: Mode,
-    ) -> StepEvent {
-        match mode {
-            Mode::Deliver(mut value) => {
-                let marker = self.current_seg().marker;
-                let is_python_handler = self
-                    .marker_handler_trace_info(marker)
-                    .is_some_and(|(_, kind, _, _)| kind == HandlerKind::Python);
-                if is_python_handler
-                    && self
-                        .continuation_registry
-                        .contains_key(&continuation.cont_id)
-                    && !self.is_one_shot_consumed(continuation.cont_id)
-                {
-                    self.mark_one_shot_consumed(continuation.cont_id);
-                    return self.throw_handler_protocol_error(format!(
-                        "handler returned without consuming continuation {}; use Resume(k, v), Transfer(k, v), Discontinue(k, exn), or Pass()",
-                        continuation.cont_id.raw(),
-                    ));
-                }
-
-                if let Err(err) = self
-                    .maybe_attach_active_chain_to_execution_context(Some(dispatch_id), &mut value)
-                {
-                    return StepEvent::Error(err);
-                }
-
-                if let Some((handler_index, handler_name)) =
-                    self.current_handler_identity_for_dispatch(dispatch_id)
-                {
-                    let value_repr = Self::value_repr(&value);
-                    self.trace_state.record_handler_completed(
-                        dispatch_id,
-                        &handler_name,
-                        handler_index,
-                        &HandlerAction::Returned {
-                            value_repr: value_repr.clone(),
-                        },
-                    );
-                    self.emit_resume_event(dispatch_id, &continuation, false);
-                }
-
-                if self.is_one_shot_consumed(continuation.cont_id) {
-                    if let Some(seg) = self.current_segment_mut() {
-                        seg.caller = continuation.captured_caller();
-                    }
-                }
-                self.current_seg_mut().mode = Mode::Deliver(value);
-                StepEvent::Continue
-            }
-            Mode::Throw(exc) => {
-                if self.is_one_shot_consumed(continuation.cont_id) {
-                    if let Some(seg) = self.current_segment_mut() {
-                        seg.caller = continuation.captured_caller();
-                    }
-                    self.current_seg_mut().mode = Mode::Throw(exc);
-                } else {
-                    self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::TransferThrow {
-                        continuation,
-                        exception: exc,
-                    });
-                }
-                StepEvent::Continue
-            }
-            Mode::HandleYield(yielded) => {
-                unreachable!("handler dispatch frame received HandleYield mode: {yielded:?}")
-            }
-            Mode::Return(value) => {
-                unreachable!("handler dispatch frame received Return mode: {value:?}")
-            }
-        }
-    }
-
-    fn step_dispatch_origin_frame(
-        &mut self,
-        dispatch_id: DispatchId,
-        k_origin: Continuation,
-        mode: Mode,
-    ) -> StepEvent {
-        match mode {
-            Mode::Deliver(value) => {
-                if let Some(original) = k_origin.pending_error_context().cloned() {
-                    let active_chain = self
-                        .assemble_active_chain(Some(&original))
-                        .into_iter()
-                        .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
-                        .collect();
-                    self.current_seg_mut().mode =
-                        match TraceState::enrich_original_exception_with_context(
-                            original,
-                            value,
-                            active_chain,
-                        ) {
-                            Ok(exception) => Mode::Throw(exception),
-                            Err(effect_err) => Mode::Throw(effect_err),
-                        };
-                    return StepEvent::Continue;
-                }
-                self.current_seg_mut().mode = Mode::Deliver(value);
-                StepEvent::Continue
-            }
-            Mode::Throw(exc) => {
-                self.current_seg_mut().mode = Mode::Throw(exc);
-                StepEvent::Continue
-            }
-            Mode::HandleYield(yielded) => {
-                unreachable!("dispatch origin frame received HandleYield mode: {yielded:?}")
-            }
-            Mode::Return(value) => {
-                return self.throw_handler_protocol_error(format!(
-                    "handler returned without consuming continuation before dispatch {} completed: {:?}",
-                    dispatch_id.raw(),
-                    value,
-                ))
-            }
-        }
-    }
-
-    fn step_handler_dispatch_state(
-        &mut self,
-        handler_dispatch: crate::segment::HandlerDispatchState,
-        mode: Mode,
-    ) -> StepEvent {
-        self.step_handler_dispatch_frame(
-            handler_dispatch.dispatch_id,
-            handler_dispatch.continuation,
-            mode,
-        )
-    }
-
-    fn step_dispatch_origin_state(
-        &mut self,
-        dispatch_origin: crate::segment::DispatchOriginState,
-        mode: Mode,
-    ) -> StepEvent {
-        self.step_dispatch_origin_frame(dispatch_origin.dispatch_id, dispatch_origin.k_origin, mode)
     }
 
     fn step_eval_return_frame(
@@ -860,7 +710,10 @@ impl VM {
 
     fn step_intercept_body_return_frame(&mut self, _marker: Marker, mode: Mode) -> StepEvent {
         match mode {
-            Mode::Deliver(value) => self.handle_handler_return(value),
+            Mode::Deliver(value) => {
+                self.current_seg_mut().mode = Mode::Deliver(value);
+                StepEvent::Continue
+            }
             Mode::Throw(exc) => {
                 self.current_seg_mut().mode = Mode::Throw(exc);
                 StepEvent::Continue
@@ -897,7 +750,12 @@ impl VM {
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
-                self.handle_handler_return(value)
+                if handler_kind.is_some() {
+                    self.handle_handler_return(value)
+                } else {
+                    self.current_seg_mut().mode = Mode::Deliver(value);
+                    StepEvent::Continue
+                }
             }
             IRStreamStep::Throw(exc) => {
                 if let Some(ref m) = metadata {
@@ -906,10 +764,19 @@ impl VM {
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
-                    self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::TransferThrow {
-                        continuation,
-                        exception: exc,
-                    });
+                    self.current_seg_mut().mode = Mode::HandleYield(
+                        if self.exact_dispatch_origin_for_continuation(&continuation).is_some() {
+                            DoCtrl::TransferThrow {
+                                continuation,
+                                exception: exc,
+                            }
+                        } else {
+                            DoCtrl::ResumeThrow {
+                                continuation,
+                                exception: exc,
+                            }
+                        },
+                    );
                     return StepEvent::Continue;
                 }
 
@@ -990,7 +857,11 @@ impl VM {
                     };
                     (
                         seg.marker,
-                        Continuation::capture(seg, seg_id, seg.dispatch_id),
+                        self.capture_live_continuation(
+                            seg,
+                            seg_id,
+                            self.current_segment_dispatch_id(),
+                        ),
                     )
                 };
                 self.current_seg_mut().pending_python =
@@ -1994,8 +1865,9 @@ impl VM {
         let Some(current_seg) = self.segments.get(current_seg_id) else {
             return StepEvent::Error(VMError::internal("EvalInScope current segment not found"));
         };
+        let current_dispatch_id = self.current_segment_dispatch_id();
         let mut return_to =
-            Continuation::capture(current_seg, current_seg_id, current_seg.dispatch_id);
+            self.capture_live_continuation(current_seg, current_seg_id, current_dispatch_id);
         let Some(scope_parent_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
             return StepEvent::Error(VMError::internal(
                 "EvalInScope received scope from unknown segment",
@@ -2696,25 +2568,55 @@ impl VM {
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
-                if handler_kind == Some(HandlerKind::Python) {
+                if handler_kind == Some(HandlerKind::Python)
+                    && self.should_treat_python_handler_gen_return_as_handler_completion()
+                {
                     if let Some(exception) = Self::returned_control_primitive_exception(&value) {
                         self.set_contextual_throw(exception);
                         return;
                     }
+                    let _ = self.handle_handler_return(value);
+                } else {
+                    self.current_seg_mut().mode = Mode::Deliver(value);
                 }
-                self.current_seg_mut().mode = Mode::Deliver(value);
             }
             PyCallOutcome::GenError(exception) => {
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited_due_to_error(Some(&stream), m, handler_kind, &exception);
                 }
+                if let Some(dispatch_id) = self
+                    .current_active_handler_dispatch_id()
+                    .or_else(|| self.current_segment_dispatch_id_any())
+                {
+                    let propagated_throw = incoming_throw
+                        .as_ref()
+                        .is_some_and(|original| Self::same_exception(original, &exception));
+                    if handler_kind.is_some()
+                        && !self.dispatch_uses_user_continuation_stream(dispatch_id, &stream)
+                        && !propagated_throw
+                    {
+                        if let Some(original) = self.original_exception_for_dispatch(dispatch_id) {
+                            TraceState::set_exception_cause(&exception, &original);
+                        }
+                        self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                    }
+                }
                 if let Some(continuation) =
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
-                    self.current_seg_mut().mode = Mode::HandleYield(DoCtrl::TransferThrow {
-                        continuation,
-                        exception,
-                    });
+                    self.current_seg_mut().mode = Mode::HandleYield(
+                        if self.exact_dispatch_origin_for_continuation(&continuation).is_some() {
+                            DoCtrl::TransferThrow {
+                                continuation,
+                                exception,
+                            }
+                        } else {
+                            DoCtrl::ResumeThrow {
+                                continuation,
+                                exception,
+                            }
+                        },
+                    );
                     return;
                 }
 
@@ -2755,6 +2657,10 @@ impl VM {
                         self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
                     }
                 }
+                if handler_kind.is_none() {
+                    self.current_seg_mut().mode = Mode::Throw(exception);
+                    return;
+                }
                 self.current_seg_mut().mode = self.mode_after_generror(site, exception, false);
             }
             PyCallOutcome::Value(_) => {
@@ -2774,11 +2680,7 @@ impl VM {
                 self.current_seg_mut().mode = Mode::Deliver(result);
             }
             PyCallOutcome::GenError(exception) => {
-                self.current_seg_mut().mode = self.mode_after_generror(
-                    GenErrorSite::RustProgramContinuation,
-                    exception,
-                    false,
-                );
+                self.current_seg_mut().mode = Mode::Throw(exception);
             }
             PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
                 self.receive_unexpected_outcome();
