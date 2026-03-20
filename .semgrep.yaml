@@ -2932,81 +2932,73 @@ rules:
   #     OCaml 5 perform/continue = doeff yield Effect / Resume(k, v)
   #     OCaml 5 ref/!/(:=)      = doeff AllocVar/ReadVar/WriteVar
   #
-  # Rules below are TODO until Phase 4 migration completes.
-  # Uncomment each rule as the corresponding migration step lands.
   # ============================================================
 
-  # TODO(phase4): Uncomment after Segment renamed to Fiber
-  # - id: vm-ocaml5-no-segment-type
-  #   languages: [rust]
-  #   severity: ERROR
-  #   message: |
-  #     SPEC-VM-019 Rev 5: Segment has been renamed to Fiber to match OCaml 5.
-  #     Use Fiber/FiberId/FiberArena instead of Segment/SegmentId/SegmentArena.
-  #   paths:
-  #     include:
-  #       - "**/packages/doeff-vm-core/src/**"
-  #       - "**/packages/doeff-vm/src/**"
-  #     exclude:
-  #       - "**/tests/**"
-  #   pattern-regex: '\bSegment\b|\bSegmentId\b|\bSegmentArena\b'
+  - id: vm-ocaml5-no-segment-type
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: Segment must be renamed to Fiber to match OCaml 5.
+      Use Fiber/FiberId/FiberArena instead of Segment/SegmentId/SegmentArena.
+      doeff VM is a language runtime like OCaml 5 — fibers are stack chunks.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/**"
+        - "**/packages/doeff-vm/src/**"
+      exclude:
+        - "**/tests/**"
+    pattern-regex: '\bstruct Segment\b|\bSegmentArena\b'
 
-  # TODO(phase4): Uncomment after caller renamed to parent
-  # - id: vm-ocaml5-no-caller-field
-  #   languages: [rust]
-  #   severity: ERROR
-  #   message: |
-  #     SPEC-VM-019 Rev 5: caller has been renamed to parent to match OCaml 5
-  #     fiber parent pointers. Use .parent / parent_id instead of .caller / caller_id.
-  #   paths:
-  #     include:
-  #       - "**/packages/doeff-vm-core/src/**"
-  #     exclude:
-  #       - "**/tests/**"
-  #   pattern-regex: '\bcaller\b'
+  - id: vm-ocaml5-no-caller-field
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: caller must be renamed to parent to match OCaml 5
+      fiber parent pointers. Use .parent / parent_id instead of .caller / caller_id.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bcaller:\s*Option<SegmentId>'
 
-  # TODO(phase4): Uncomment after mode moved to VM registers
-  # - id: vm-ocaml5-no-mode-on-fiber
-  #   languages: [rust]
-  #   severity: ERROR
-  #   message: |
-  #     SPEC-VM-019 Rev 5: mode is a VM register, not a fiber field.
-  #     Like OCaml 5's IP/exception state, mode describes what the VM is doing
-  #     with the current fiber. Access via self.mode, not seg.mode/fiber.mode.
-  #   paths:
-  #     include:
-  #       - "**/packages/doeff-vm-core/src/segment.rs"
-  #       - "**/packages/doeff-vm-core/src/fiber.rs"
-  #   pattern-regex: '\bmode:\s*Mode\b'
+  - id: vm-ocaml5-no-mode-on-fiber
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: mode is a VM register, not a fiber field.
+      Like OCaml 5's IP/exception state, mode describes what the VM is doing
+      with the current fiber. Access via self.mode, not seg.mode/fiber.mode.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bmode:\s*Mode\b'
 
-  # TODO(phase4): Uncomment after variables moved to VarStore
-  # - id: vm-ocaml5-no-variables-on-fiber
-  #   languages: [rust]
-  #   severity: ERROR
-  #   message: |
-  #     SPEC-VM-019 Rev 5: variables live in VarStore (the heap), not on fibers.
-  #     Like OCaml 5's heap ref cells, mutable state is managed by the VM in a
-  #     separate store. AllocVar/ReadVar/WriteVar operate on VarStore.
-  #   paths:
-  #     include:
-  #       - "**/packages/doeff-vm-core/src/segment.rs"
-  #       - "**/packages/doeff-vm-core/src/fiber.rs"
-  #   pattern-regex: '\bvariables:\s*HashMap\b|\bscope_parent\b|\bnamed_bindings\b'
+  - id: vm-ocaml5-no-variables-on-fiber
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: variables live in VarStore (the heap), not on fibers.
+      Like OCaml 5's heap ref cells, mutable state is managed by the VM in a
+      separate store. AllocVar/ReadVar/WriteVar operate on VarStore.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bvariables:\s*HashMap\b|\bscope_parent:\s*Option\b|\bnamed_bindings\b'
 
-  # TODO(phase4): Uncomment after pending_python moved to VM registers
-  # - id: vm-ocaml5-no-pending-on-fiber
-  #   languages: [rust]
-  #   severity: ERROR
-  #   message: |
-  #     SPEC-VM-019 Rev 5: pending_python is a VM register, not a fiber field.
-  #     GIL boundary state describes what the VM is waiting for, not a fiber property.
-  #   paths:
-  #     include:
-  #       - "**/packages/doeff-vm-core/src/segment.rs"
-  #       - "**/packages/doeff-vm-core/src/fiber.rs"
-  #   pattern-regex: '\bpending_python:\s*Option\b'
+  - id: vm-ocaml5-no-pending-on-fiber
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: pending_python is a VM register, not a fiber field.
+      GIL boundary state describes what the VM is waiting for, not a fiber property.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bpending_python:\s*Option\b'
 
-  # TODO(phase4): Uncomment after dispatch state removed from fibers
   - id: vm-ocaml5-no-dispatch-state-on-fiber
     languages: [generic]
     severity: ERROR
@@ -3021,19 +3013,18 @@ rules:
         - "**/packages/doeff-vm-core/src/fiber.rs"
     pattern-regex: '\bdispatch_id:\s*Option<DispatchId>'
 
-  # TODO(phase4): Uncomment after Arc<Segment> replaced with move semantics
-  # - id: vm-ocaml5-no-arc-segment
-  #   languages: [rust]
-  #   severity: ERROR
-  #   message: |
-  #     SPEC-VM-019 Rev 5: Continuations use move semantics, not Arc snapshots.
-  #     Like OCaml 5, fibers are moved between the chain and continuations —
-  #     a fiber is in exactly one place at a time (chain OR continuation, never both).
-  #     Use Vec<FiberId> in Continuation, not Arc<Segment>.
-  #   paths:
-  #     include:
-  #       - "**/packages/doeff-vm-core/src/**"
-  #   pattern-regex: 'Arc<Segment>|Arc::clone\(&.*segment\)|captured_segment_snapshot'
+  - id: vm-ocaml5-no-arc-segment
+    languages: [rust]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: Continuations use move semantics, not Arc snapshots.
+      Like OCaml 5, fibers are moved between the chain and continuations —
+      a fiber is in exactly one place at a time (chain OR continuation, never both).
+      Use Vec<FiberId> in Continuation, not Arc<Segment>.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/continuation.rs"
+    pattern-regex: 'Arc<Segment>'
 
   # ACTIVE: Ban mutation of non-current segment caller in dispatch
   - id: vm-ocaml5-no-caller-mutation-in-dispatch
