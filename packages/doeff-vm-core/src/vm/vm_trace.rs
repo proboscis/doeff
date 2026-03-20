@@ -587,37 +587,29 @@ impl VM {
 
     pub(super) fn record_trace_entry(&mut self) {
         let dispatch_depth = self.dispatch_depth();
-        let (debug, segments, current_segment) =
-            (&mut self.debug, &self.segments, self.current_segment);
-        let Some(seg_id) = current_segment else {
+        let debug = &mut self.debug;
+        if self.current_segment.is_none() {
             return;
-        };
-        let Some(seg) = segments.get(seg_id) else {
-            return;
-        };
-        debug.record_trace_entry(&seg.mode, &seg.pending_python, dispatch_depth);
+        }
+        debug.record_trace_entry(&self.mode, &self.pending_python, dispatch_depth);
     }
 
     pub(super) fn record_trace_exit(&mut self, result: &StepEvent) {
         let dispatch_depth = self.dispatch_depth();
-        let (debug, segments, current_segment) =
-            (&mut self.debug, &self.segments, self.current_segment);
-        let Some(seg_id) = current_segment else {
+        let debug = &mut self.debug;
+        if self.current_segment.is_none() {
             return;
-        };
-        let Some(seg) = segments.get(seg_id) else {
-            return;
-        };
-        debug.record_trace_exit(&seg.mode, &seg.pending_python, dispatch_depth, result);
+        }
+        debug.record_trace_exit(&self.mode, &self.pending_python, dispatch_depth, result);
     }
 
     pub(super) fn debug_step_entry(&self) {
         self.debug.debug_step_entry(
-            &self.current_seg().mode,
+            &self.mode,
             self.current_segment,
             &self.segments,
             self.dispatch_depth(),
-            &self.current_seg().pending_python,
+            &self.pending_python,
         );
     }
 

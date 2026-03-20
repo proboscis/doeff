@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::arena::SegmentArena;
+use crate::arena::FiberArena;
 use crate::capture::{
     ActiveChainEntry, DelegationEntry, DispatchAction, EffectResult, FrameId, HandlerAction,
     HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus, TraceEntry, TraceFrame,
@@ -886,7 +886,7 @@ impl TraceState {
     pub(crate) fn assemble_active_chain(
         &self,
         exception: Option<&PyException>,
-        segments: &SegmentArena,
+        segments: &FiberArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<ActiveChainEntry> {
@@ -907,7 +907,7 @@ impl TraceState {
     pub(crate) fn assemble_scoped_active_chain(
         &self,
         exception: Option<&PyException>,
-        segments: &SegmentArena,
+        segments: &FiberArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<ActiveChainEntry> {
@@ -927,7 +927,7 @@ impl TraceState {
 
     fn scoped_active_chain_frame_stack(
         &self,
-        segments: &SegmentArena,
+        segments: &FiberArena,
         current_segment: Option<SegmentId>,
     ) -> Vec<ActiveChainFrameState> {
         let mut frame_stack = Vec::new();
@@ -964,7 +964,7 @@ impl TraceState {
     pub(crate) fn assemble_traceback_entries(
         &self,
         exception: &PyException,
-        segments: &SegmentArena,
+        segments: &FiberArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[LiveDispatchSnapshot],
     ) -> Vec<TraceEntry> {
@@ -1158,7 +1158,7 @@ impl TraceState {
     fn merge_live_frame_state(
         &self,
         frame_stack: &mut Vec<ActiveChainFrameState>,
-        segments: &SegmentArena,
+        segments: &FiberArena,
         current_segment: Option<SegmentId>,
         dispatch_stack: &[LiveDispatchSnapshot],
     ) {
@@ -1181,14 +1181,14 @@ impl TraceState {
     fn merge_frame_lines_from_segments(
         &self,
         frame_stack: &mut Vec<ActiveChainFrameState>,
-        segments: &SegmentArena,
+        segments: &FiberArena,
         current_segment: Option<SegmentId>,
     ) {
         let mut seg_chain = Vec::new();
         let mut seg_id = current_segment;
         while let Some(id) = seg_id {
             seg_chain.push(id);
-            seg_id = segments.get(id).and_then(|seg| seg.caller);
+            seg_id = segments.get(id).and_then(|seg| seg.parent);
         }
         seg_chain.reverse();
 
