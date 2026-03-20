@@ -415,3 +415,16 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
         "spawned task body must retain the captured lexical scope root"
     );
 }
+
+#[test]
+#[should_panic(expected = "observer has no context")]
+fn test_dispatch_origin_scan_fails_fast_on_orphaned_segment_dispatch_index() {
+    let mut vm = VM::new();
+    let seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    vm.current_segment = Some(seg_id);
+
+    vm.dispatch_observer
+        .bind_segment(seg_id, DispatchId::fresh());
+
+    let _ = vm.dispatch_origins();
+}

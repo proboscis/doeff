@@ -1,6 +1,6 @@
 //! Trace and active-event state for VM decomposition.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::arena::SegmentArena;
 use crate::capture::{
@@ -82,6 +82,16 @@ impl TraceState {
 
     pub(crate) fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    pub(crate) fn finish_dispatch(&mut self, dispatch_id: DispatchId) {
+        let keep_for_traceback = self
+            .dispatch_displays
+            .get(&dispatch_id)
+            .is_some_and(|display| matches!(display.result, EffectResult::Threw { .. }));
+        if !keep_for_traceback {
+            self.dispatch_displays.remove(&dispatch_id);
+        }
     }
 
     fn dispatch_display(&self, dispatch_id: DispatchId) -> Option<&DispatchDisplayState> {
@@ -454,6 +464,18 @@ impl TraceState {
                 frame.preserve_on_error = true;
             }
         }
+    }
+
+    pub(crate) fn cleanup_orphaned_threw_dispatch_displays(&mut self) {
+        let referenced_dispatches: HashSet<_> = self
+            .frame_stack
+            .iter()
+            .filter_map(|frame| frame.dispatch_display.as_ref().map(|display| display.dispatch_id))
+            .collect();
+        self.dispatch_displays.retain(|dispatch_id, display| {
+            !matches!(display.result, EffectResult::Threw { .. })
+                || referenced_dispatches.contains(dispatch_id)
+        });
     }
 
     pub(crate) fn stream_debug_location(stream: &IRStreamRef) -> Option<StreamLocation> {
@@ -1951,5 +1973,80 @@ impl TraceState {
 
     fn is_visible_dispatch(dispatch: &DispatchDisplayState) -> bool {
         !dispatch.is_execution_context_effect
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finish_dispatch_removes_terminal_dispatch_display() {
+        let mut state = TraceState::default();
+        let dispatch_id = DispatchId::fresh();
+
+        state.record_dispatch_started(
+            dispatch_id,
+            "Ask('x')".to_string(),
+            false,
+            &[HandlerSnapshotEntry {
+                handler_name: "handler".to_string(),
+                handler_kind: HandlerKind::Python,
+                source_file: Some("handlers.py".to_string()),
+                source_line: Some(10),
+            }],
+            Some(1),
+            Some("body".to_string()),
+            Some("program.py".to_string()),
+            Some(20),
+        );
+        state.record_handler_completed(
+            dispatch_id,
+            "handler",
+            0,
+            &HandlerAction::Returned {
+                value_repr: Some("Int(1)".to_string()),
+            },
+        );
+
+        assert!(state.dispatch_displays.contains_key(&dispatch_id));
+        state.finish_dispatch(dispatch_id);
+        assert!(!state.dispatch_displays.contains_key(&dispatch_id));
+    }
+
+    #[test]
+    fn finish_dispatch_keeps_threw_display_until_trace_cleanup() {
+        let mut state = TraceState::default();
+        let dispatch_id = DispatchId::fresh();
+
+        state.record_dispatch_started(
+            dispatch_id,
+            "Boom()".to_string(),
+            false,
+            &[HandlerSnapshotEntry {
+                handler_name: "handler".to_string(),
+                handler_kind: HandlerKind::Python,
+                source_file: Some("handlers.py".to_string()),
+                source_line: Some(10),
+            }],
+            Some(1),
+            Some("child".to_string()),
+            Some("program.py".to_string()),
+            Some(20),
+        );
+        state.record_handler_completed(
+            dispatch_id,
+            "handler",
+            0,
+            &HandlerAction::Threw {
+                exception_repr: Some("RuntimeError('boom')".to_string()),
+            },
+        );
+
+        state.finish_dispatch(dispatch_id);
+        assert!(state.dispatch_displays.contains_key(&dispatch_id));
+
+        state.cleanup_orphaned_threw_dispatch_displays();
+        assert!(!state.dispatch_displays.contains_key(&dispatch_id));
     }
 }

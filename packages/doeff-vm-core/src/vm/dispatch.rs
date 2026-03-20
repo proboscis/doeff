@@ -5,14 +5,42 @@ impl VM {
         !self.is_one_shot_consumed(continuation.cont_id)
     }
 
-    fn dispatch_origin_view(&self, dispatch_id: DispatchId) -> Option<DispatchOriginView> {
-        let dispatch = self.dispatch_observer.dispatch(dispatch_id)?;
-        Some(DispatchOriginView {
+    fn dispatch_origin_view_from_context(
+        dispatch_id: DispatchId,
+        dispatch: &crate::dispatch_observer::DispatchContext,
+    ) -> DispatchOriginView {
+        DispatchOriginView {
             dispatch_id,
             effect: dispatch.effect.clone(),
             k_origin: dispatch.k_origin.clone(),
             original_exception: dispatch.original_exception.clone(),
-        })
+        }
+    }
+
+    fn dispatch_context_for_segment(
+        &self,
+        seg_id: SegmentId,
+    ) -> Option<(DispatchId, &crate::dispatch_observer::DispatchContext)> {
+        let dispatch_id = self.dispatch_origin_id_in_segment(seg_id)?;
+        let dispatch = self.dispatch_observer.dispatch(dispatch_id).unwrap_or_else(|| {
+            panic!(
+                "dispatch observer invariant violated: segment {} references dispatch {} but \
+                 observer has no context",
+                seg_id.index(),
+                dispatch_id.raw()
+            )
+        });
+        Some((dispatch_id, dispatch))
+    }
+
+    fn finish_dispatch_tracking(&mut self, dispatch_id: DispatchId) {
+        self.dispatch_observer.finish_dispatch(dispatch_id);
+        self.trace_state.finish_dispatch(dispatch_id);
+    }
+
+    fn dispatch_origin_view(&self, dispatch_id: DispatchId) -> Option<DispatchOriginView> {
+        let dispatch = self.dispatch_observer.dispatch(dispatch_id)?;
+        Some(Self::dispatch_origin_view_from_context(dispatch_id, dispatch))
     }
 
     fn dispatch_origins_from_segment(
@@ -23,11 +51,9 @@ impl VM {
         let mut origins = Vec::new();
         let mut cursor = start_segment;
         while let Some(seg_id) = cursor {
-            if let Some(dispatch_id) = self.dispatch_origin_id_in_segment(seg_id) {
+            if let Some((dispatch_id, dispatch)) = self.dispatch_context_for_segment(seg_id) {
                 if seen.insert(dispatch_id) {
-                    if let Some(origin) = self.dispatch_origin_view(dispatch_id) {
-                        origins.push(origin);
-                    }
+                    origins.push(Self::dispatch_origin_view_from_context(dispatch_id, dispatch));
                 }
             }
             cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
@@ -47,8 +73,7 @@ impl VM {
             Option<&PyException>,
         ) -> Option<T>,
     ) -> Option<T> {
-        let dispatch_id = self.dispatch_origin_id_in_segment(seg_id)?;
-        let dispatch_origin = self.dispatch_observer.dispatch(dispatch_id)?;
+        let (dispatch_id, dispatch_origin) = self.dispatch_context_for_segment(seg_id)?;
         map(
             dispatch_id,
             &dispatch_origin.effect,
@@ -157,12 +182,8 @@ impl VM {
     pub(super) fn current_dispatch_origin(&self) -> Option<DispatchOriginView> {
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
-            if let Some(dispatch_id) = self.dispatch_origin_id_in_segment(seg_id) {
-                let Some(origin) = self.dispatch_origin_view(dispatch_id) else {
-                    cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
-                    continue;
-                };
-                return Some(origin);
+            if let Some((dispatch_id, dispatch)) = self.dispatch_context_for_segment(seg_id) {
+                return Some(Self::dispatch_origin_view_from_context(dispatch_id, dispatch));
             }
             cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
         }
@@ -240,11 +261,7 @@ impl VM {
     ) -> Option<Marker> {
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
-            if let Some(found_dispatch_id) = self.dispatch_observer.segment_dispatch_id(seg_id) {
-                let Some(dispatch) = self.dispatch_observer.dispatch(found_dispatch_id) else {
-                    cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
-                    continue;
-                };
+            if let Some((found_dispatch_id, dispatch)) = self.dispatch_context_for_segment(seg_id) {
                 if found_dispatch_id == dispatch_id
                     && dispatch.active_handler.segment_id == seg_id
                     && self.handler_dispatch_is_live(&dispatch.active_handler.continuation)
@@ -261,8 +278,7 @@ impl VM {
         &self,
     ) -> Option<(SegmentId, DispatchId, Continuation, Marker, SegmentId)> {
         let seg_id = self.current_segment?;
-        let dispatch_id = self.dispatch_observer.segment_dispatch_id(seg_id)?;
-        let dispatch = self.dispatch_observer.dispatch(dispatch_id)?;
+        let (dispatch_id, dispatch) = self.dispatch_context_for_segment(seg_id)?;
         (dispatch.active_handler.segment_id == seg_id
             && self.handler_dispatch_is_live(&dispatch.active_handler.continuation))
         .then(|| {
@@ -281,11 +297,7 @@ impl VM {
     ) -> Option<(SegmentId, DispatchId, Continuation, Marker, SegmentId)> {
         let mut cursor = self.current_segment;
         while let Some(seg_id) = cursor {
-            let Some(dispatch_id) = self.dispatch_observer.segment_dispatch_id(seg_id) else {
-                cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
-                continue;
-            };
-            let Some(dispatch) = self.dispatch_observer.dispatch(dispatch_id) else {
+            let Some((dispatch_id, dispatch)) = self.dispatch_context_for_segment(seg_id) else {
                 cursor = self.segments.get(seg_id).and_then(|seg| seg.caller);
                 continue;
             };
@@ -1760,7 +1772,7 @@ impl VM {
                     Ok(exception) => exception,
                     Err(effect_err) => effect_err,
                 };
-                self.dispatch_observer.finish_dispatch(dispatch_id);
+                self.finish_dispatch_tracking(dispatch_id);
                 // Terminal error-context dispatches must detach from the active handler
                 // segment so normal completion does not re-pop the same DispatchOrigin.
                 let caller = k
@@ -1894,7 +1906,7 @@ impl VM {
             dispatch_id.and_then(|dispatch_id| self.original_exception_for_dispatch(dispatch_id));
         let enter_dispatch_id = if terminal_dispatch_completion && throws_into_dispatch_origin {
             if let Some(dispatch_id) = dispatch_id {
-                self.dispatch_observer.finish_dispatch(dispatch_id);
+                self.finish_dispatch_tracking(dispatch_id);
             }
             None
         } else {
@@ -2327,6 +2339,9 @@ impl VM {
             return self.handle_dispatch_resume(continuation, value);
         }
         if original_exception.is_none() && is_user_defined_python_handler && !continuation_is_live {
+            // ResultSafe/Try can consume the handler continuation before the Python handler
+            // returns here. After removing the old caller-mutation hack, the safe return path is
+            // to transfer via the original dispatch topology rather than the exhausted handler k.
             let target = self
                 .dispatch_origin_for_dispatch_id(dispatch_id)
                 .and_then(|origin| self.delegate_return_continuation(&origin.k_origin))
@@ -2382,7 +2397,7 @@ impl VM {
                 .into_iter()
                 .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
                 .collect();
-            self.dispatch_observer.finish_dispatch(dispatch_id);
+            self.finish_dispatch_tracking(dispatch_id);
             self.current_seg_mut().mode =
                 match TraceState::enrich_original_exception_with_context(
                     original,
@@ -2394,7 +2409,7 @@ impl VM {
                 };
             return StepEvent::Continue;
         }
-        self.dispatch_observer.finish_dispatch(dispatch_id);
+        self.finish_dispatch_tracking(dispatch_id);
         self.current_seg_mut().mode = Mode::Deliver(value);
         StepEvent::Continue
     }
