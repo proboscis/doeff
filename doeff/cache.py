@@ -13,6 +13,8 @@ from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheExists, CacheGet, CachePut
+from doeff.effects.execution_context import GetExecutionContext
+from doeff.effects.result import Try
 from doeff.effects.writer import slog
 from doeff.kleisli import KleisliProgram
 from doeff.types import EffectGenerator, FrozenDict
@@ -191,6 +193,8 @@ def _call_site_from_effect_entries(call_stack: list[Any] | tuple[Any, ...]) -> C
             site = _cache_call_site_from_handler_stack_entry(entry)
             if site is None:
                 continue
+            # Spawn/Try failures can bubble out after the child task has shed its original Python
+            # frames. In that path the scheduler boundary is the only stable user-visible site.
             if site.function_name == "SchedulerHandler" and site.source_file == "<rust>":
                 return site
             if fallback is None and not _is_hidden_cache_call_site(site):
@@ -232,14 +236,17 @@ def _attach_exception_note(error: BaseException, note: str) -> None:
 
 
 def _call_site_from_error(error: BaseException) -> CacheCallSite | None:
-    # The VM annotates surfaced exceptions with doeff_execution_context, so the cache
-    # error path can recover call-site details without yielding inside except.
+    # The VM annotates surfaced exceptions with doeff_execution_context when available, so the
+    # cache error path can recover call-site details without yielding inside except.
     error_obj = cast(Any, error)
     try:
         context = error_obj.doeff_execution_context
     except AttributeError:
         return None
+    return _call_site_from_execution_context(context)
 
+
+def _call_site_from_execution_context(context: Any) -> CacheCallSite | None:
     try:
         active_chain = context.active_chain
     except AttributeError:
@@ -456,16 +463,22 @@ def cache(  # noqa: PLR0915
             @do
             def compute_and_cache() -> EffectGenerator[T]:
                 yield slog(msg=f"Cache miss for {func_name}, computing...", level="DEBUG")
-                try:
-                    computed_value = yield wrapped_func(*args, **kwargs)
-                except Exception as error:
+                # Try keeps the exception in-band long enough to ask the VM for execution context
+                # before re-raising, which preserves cache notes after the dispatch-state cleanup.
+                attempt = yield Try(wrapped_func(*args, **kwargs))
+                if attempt.is_err():
+                    error = attempt.error
                     yield slog(msg=f"Computation for {func_name} failed, not caching.", level="error")
                     call_site = _call_site_from_error(error)
+                    if call_site is None:
+                        context = yield GetExecutionContext()
+                        call_site = _call_site_from_execution_context(context)
                     _attach_exception_note(
                         error,
                         _cache_error_note(func_name, args, dict(kwargs), call_site),
                     )
-                    raise
+                    raise error
+                computed_value = attempt.value
 
                 yield ensure_serializable(cache_key_obj)
                 yield CachePut(
