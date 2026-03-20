@@ -37,9 +37,9 @@ class WeakPayload:
 def big_data_handler(effect: EffectBase, k):
     if isinstance(effect, BigDataEffect):
         big_payload = list(range(100_000))
-        return (yield doeff_vm.Resume(k, big_payload))
+        yield doeff_vm.Transfer(k, big_payload)
     if isinstance(effect, TinyEffect):
-        return (yield doeff_vm.Resume(k, effect.iteration))
+        yield doeff_vm.Transfer(k, effect.iteration)
     yield Pass()
 
 
@@ -80,7 +80,9 @@ N_ITERATIONS = 200
 MAX_ALLOWED_GROWTH_MB = 50
 
 
-def test_tail_resume_releases_large_payloads_during_run() -> None:
+def test_tail_transfer_releases_large_payloads_during_run() -> None:
+    # Transfer is the explicit tail-position protocol: the handler is abandoned
+    # immediately instead of staying suspended on the remainder continuation.
     payload_refs: list[weakref.ReferenceType[WeakPayload]] = []
 
     @do
@@ -88,10 +90,10 @@ def test_tail_resume_releases_large_payloads_during_run() -> None:
         if isinstance(effect, BigDataEffect):
             payload = WeakPayload(list(range(100_000)))
             payload_refs.append(weakref.ref(payload))
-            return (yield doeff_vm.Resume(k, payload))
+            yield doeff_vm.Transfer(k, payload)
         if isinstance(effect, CountAlivePayloads):
             alive = sum(ref() is not None for ref in payload_refs)
-            return (yield doeff_vm.Resume(k, alive))
+            yield doeff_vm.Transfer(k, alive)
         yield Pass()
 
     @do

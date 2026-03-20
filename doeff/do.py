@@ -5,10 +5,10 @@ This module provides the @do decorator that converts generator functions
 into KleisliPrograms, enabling do-notation for monadic computations.
 """
 
-import dis
+
 import inspect
 from collections.abc import Callable, Generator
-from functools import cache, wraps
+from functools import wraps
 from typing import Any, ParamSpec, TypeVar, cast
 
 from doeff.kleisli import KleisliProgram
@@ -54,69 +54,6 @@ def _do_get_frame(bridge_gen: object) -> object | None:
     if user_gen is None:
         return _default_get_frame(bridge_gen)
     return getattr(user_gen, "gi_frame", None)
-
-
-@cache
-def _instructions_for_code(code: object) -> tuple[dis.Instruction, ...]:
-    return tuple(dis.get_instructions(code))
-
-
-@cache
-def _instruction_index_by_offset(code: object) -> dict[int, int]:
-    return {
-        instruction.offset: index for index, instruction in enumerate(_instructions_for_code(code))
-    }
-
-
-def _next_instruction_after_yield(
-    generator: Generator[Effect | Program, Any, T],
-) -> dis.Instruction | None:
-    frame = generator.gi_frame
-    if frame is None:
-        return None
-
-    instructions = _instructions_for_code(frame.f_code)
-    instruction_index = _instruction_index_by_offset(frame.f_code).get(frame.f_lasti)
-    if instruction_index is None:
-        return None
-
-    current_instruction = instructions[instruction_index]
-    next_index = instruction_index + 1
-
-    if current_instruction.opname == "YIELD_VALUE":
-        if next_index < len(instructions) and instructions[next_index].opname == "RESUME":
-            next_index += 1
-    elif current_instruction.opname == "RESUME":
-        if instruction_index == 0 or instructions[instruction_index - 1].opname != "YIELD_VALUE":
-            return None
-    else:
-        return None
-
-    while next_index < len(instructions) and instructions[next_index].opname == "CACHE":
-        next_index += 1
-
-    if next_index >= len(instructions):
-        return None
-    return instructions[next_index]
-
-
-def _optimize_tail_resume(
-    generator: Generator[Effect | Program, Any, T],
-    current: Effect | Program,
-) -> Effect | Program:
-    import doeff_vm as vm
-
-    if not isinstance(current, vm.Resume):
-        return current
-
-    next_instruction = _next_instruction_after_yield(generator)
-    if next_instruction is None or next_instruction.opname != "RETURN_VALUE":
-        return current
-
-    # `return (yield Resume(k, value))` is tail-position. Emitting Transfer lets
-    # the VM abandon the handler frame immediately instead of retaining locals
-    # until the resumed continuation finishes.
-    return vm.Transfer(current.continuation, current.value)
 
 
 def resolve_generator_line(generator: object) -> int | None:
@@ -251,7 +188,7 @@ class DoYieldFunction(KleisliProgram[P, T]):
             gen: Generator[Effect | Program, Any, T],
         ) -> Generator[Effect | Program, Any, T]:
             try:
-                current = _optimize_tail_resume(gen, next(gen))
+                current = next(gen)
             except StopIteration as stop_exc:
                 return stop_exc.value
 
@@ -263,12 +200,12 @@ class DoYieldFunction(KleisliProgram[P, T]):
                     raise
                 except BaseException as e:
                     try:
-                        current = _optimize_tail_resume(gen, gen.throw(e))
+                        current = gen.throw(e)
                     except StopIteration as stop_exc:
                         return stop_exc.value
                     continue
                 try:
-                    current = _optimize_tail_resume(gen, gen.send(sent_value))
+                    current = gen.send(sent_value)
                 except StopIteration as stop_exc:
                     return stop_exc.value
 
