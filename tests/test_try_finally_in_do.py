@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import doeff
-
 from doeff import (
     AcquireSemaphore,
     CreateSemaphore,
@@ -207,6 +206,31 @@ def test_try_finally_with_transfer() -> None:
     def wrapper():
         value = yield WithHandler(_transfer_handler, program())
         cleaned = yield Get("cleaned")
+        return value, cleaned
+
+    result = run(wrapper(), handlers=default_handlers(), store={})
+    assert result.value == ("handled:x", True)
+
+
+def test_handler_try_finally_with_tail_resume_runs_cleanup() -> None:
+    @do
+    def handler(effect: Effect, k: object) -> EffectGenerator:
+        if isinstance(effect, Ping):
+            try:
+                return (yield Resume(k, f"handled:{effect.label}"))
+            finally:
+                yield Put("handler_cleaned", True)
+        yield Pass()
+
+    @do
+    def program():
+        yield Put("handler_cleaned", False)
+        return (yield Ping(label="x"))
+
+    @do
+    def wrapper():
+        value = yield WithHandler(handler, program())
+        cleaned = yield Get("handler_cleaned")
         return value, cleaned
 
     result = run(wrapper(), handlers=default_handlers(), store={})
