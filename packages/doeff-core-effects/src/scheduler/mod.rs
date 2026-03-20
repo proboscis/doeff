@@ -240,6 +240,7 @@ impl WaitRequest {
 struct PendingGatherFailFast {
     waiter: WaitRequest,
     error: PyException,
+    failed_task: TaskId,
     pending_cleanup_tasks: HashSet<TaskId>,
 }
 
@@ -947,6 +948,16 @@ fn task_cancelled_error() -> PyException {
     })
 }
 
+fn is_task_cancelled_exception(error: &PyException) -> bool {
+    match error {
+        PyException::Materialized { exc_value, .. } => Python::attach(|py| {
+            exc_value.bind(py).is_instance_of::<TaskCancelledError>()
+        }),
+        PyException::RuntimeError { message, .. } => message == "Task was cancelled",
+        PyException::TypeError { .. } => false,
+    }
+}
+
 fn make_python_semaphore_value(semaphore_id: u64, state_id: u64) -> Result<Value, PyException> {
     Python::attach(|py| {
         let semaphore = Bound::new(
@@ -1361,12 +1372,9 @@ impl SchedulerState {
         }
 
         let (cont_id, priority, started) = match task_state {
-            TaskState::Pending { cont, priority, .. } => {
-                (cont.cont_id, *priority, cont.is_started())
-            }
+            TaskState::Pending { cont, priority, .. } => (cont.cont_id, *priority, cont.is_started()),
             TaskState::Done { .. } => return false,
         };
-
         if !started {
             self.finalize_task_cancellation(task_id);
             return false;
@@ -1925,6 +1933,7 @@ impl SchedulerState {
             PendingGatherFailFast {
                 waiter,
                 error,
+                failed_task,
                 pending_cleanup_tasks,
             },
         );
@@ -1963,6 +1972,7 @@ impl SchedulerState {
 
         let waiter = fail_fast.waiter;
         let waiter_id = waiter.continuation.cont_id;
+        self.execution_context_task_override = Some(fail_fast.failed_task);
 
         if let Some(waiting_task) = waiter.waiting_task {
             let priority = match self.tasks.get_mut(&waiting_task) {
@@ -2109,6 +2119,7 @@ impl SchedulerState {
     fn collect_all_result(&mut self, items: &[Waitable]) -> Option<Result<Value, PyException>> {
         self.execution_context_task_override = None;
         let mut results = Vec::with_capacity(items.len());
+        let mut first_task_error: Option<(TaskId, PyException)> = None;
         for item in items {
             match item {
                 Waitable::Task(task_id) => {
@@ -2119,8 +2130,9 @@ impl SchedulerState {
                     match task_result {
                         Ok(value) => results.push(value),
                         Err(error) => {
-                            self.execution_context_task_override = Some(*task_id);
-                            return Some(Err(error));
+                            if first_task_error.is_none() {
+                                first_task_error = Some((*task_id, error));
+                            }
                         }
                     }
                 }
@@ -2132,6 +2144,10 @@ impl SchedulerState {
                     }
                 }
             }
+        }
+        if let Some((task_id, error)) = first_task_error {
+            self.execution_context_task_override = Some(task_id);
+            return Some(Err(error));
         }
         Some(Ok(Value::List(results)))
     }
@@ -2244,6 +2260,14 @@ impl SchedulerState {
                         self.current_task = Some(task_id);
                         match resume_outcome {
                             Some(Err(error)) => {
+                                if is_task_cancelled_exception(&error) {
+                                    return TransferNextOutcome::Step(IRStreamStep::Yield(
+                                        DoCtrl::ResumeThrow {
+                                            continuation: task_k,
+                                            exception: error,
+                                        },
+                                    ));
+                                }
                                 return TransferNextOutcome::Step(throw_to_continuation(
                                     task_k, error,
                                 ))
@@ -2345,7 +2369,16 @@ impl SchedulerState {
                 self.load_task_store(task_id, store)?;
                 self.current_task = Some(task_id);
                 let step = match resume_outcome {
-                    Some(Err(error)) => throw_to_continuation(task_k, error),
+                    Some(Err(error)) => {
+                        if is_task_cancelled_exception(&error) {
+                            IRStreamStep::Yield(DoCtrl::ResumeThrow {
+                                continuation: task_k,
+                                exception: error,
+                            })
+                        } else {
+                            throw_to_continuation(task_k, error)
+                        }
+                    }
                     Some(Ok(value)) => resume_to_continuation(task_k, value),
                     None => transfer_to_continuation(task_k, Value::Unit),
                 };

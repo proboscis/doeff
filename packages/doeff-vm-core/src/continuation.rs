@@ -8,10 +8,10 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{ContId, DispatchId, ScopeId, SegmentId};
+use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
-use crate::segment::{DispatchOriginState, HandlerDispatchState, Segment};
+use crate::segment::Segment;
 use crate::step::PyException;
 use crate::value::Value;
 
@@ -54,9 +54,18 @@ struct UnstartedContinuation {
     outside_scope: Option<SegmentId>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DispatchHandlerHint {
+    pub(crate) marker: Marker,
+    pub(crate) prompt_seg_id: SegmentId,
+}
+
 #[derive(Debug, Clone)]
 pub struct Continuation {
     pub cont_id: ContId,
+    dispatch_id: Option<DispatchId>,
+    resume_dispatch_id: Option<DispatchId>,
+    dispatch_handler_hint: Option<DispatchHandlerHint>,
     segment_id: Option<SegmentId>,
     segment_snapshot: Option<Arc<Segment>>,
     unstarted: Option<UnstartedContinuation>,
@@ -65,25 +74,12 @@ pub struct Continuation {
 }
 
 impl Continuation {
-    fn captured_segment_snapshot(
-        segment: &Segment,
-        dispatch_id: Option<DispatchId>,
-    ) -> Arc<Segment> {
-        let handler_dispatch = segment.handler_dispatch.clone();
-        // Dispatch-origin state is only meaningful when the snapshot owns the matching
-        // handler-dispatch state. Plain continuation snapshots drop orphan origins.
-        let dispatch_origin = if handler_dispatch.is_some() {
-            segment.dispatch_origin.clone()
-        } else {
-            None
-        };
+    fn captured_segment_snapshot(segment: &Segment) -> Arc<Segment> {
         Arc::new(Segment {
             scope_id: segment.scope_id,
             persistent_epoch: segment.persistent_epoch,
             marker: segment.marker,
             frames: segment.frames.clone(),
-            handler_dispatch,
-            dispatch_origin,
             caller: segment.caller,
             scope_parent: segment.scope_parent,
             variables: Default::default(),
@@ -91,7 +87,6 @@ impl Continuation {
             state_store: segment.state_store.clone(),
             writer_log: segment.writer_log.clone(),
             kind: segment.kind.clone(),
-            dispatch_id,
             mode: segment.mode.clone(),
             pending_python: segment.pending_python.clone(),
             pending_error_context: segment.pending_error_context.clone(),
@@ -108,8 +103,11 @@ impl Continuation {
     ) -> Self {
         Continuation {
             cont_id: ContId::fresh(),
+            dispatch_id,
+            resume_dispatch_id: None,
+            dispatch_handler_hint: None,
             segment_id: Some(segment_id),
-            segment_snapshot: Some(Self::captured_segment_snapshot(segment, dispatch_id)),
+            segment_snapshot: Some(Self::captured_segment_snapshot(segment)),
             unstarted: None,
             parent: None,
         }
@@ -123,8 +121,11 @@ impl Continuation {
     ) -> Self {
         Continuation {
             cont_id,
+            dispatch_id,
+            resume_dispatch_id: None,
+            dispatch_handler_hint: None,
             segment_id: Some(segment_id),
-            segment_snapshot: Some(Self::captured_segment_snapshot(segment, dispatch_id)),
+            segment_snapshot: Some(Self::captured_segment_snapshot(segment)),
             unstarted: None,
             parent: None,
         }
@@ -143,6 +144,9 @@ impl Continuation {
         let handler_count = handlers.len();
         Continuation {
             cont_id: ContId::fresh(),
+            dispatch_id: None,
+            resume_dispatch_id: None,
+            dispatch_handler_hint: None,
             segment_id: None,
             segment_snapshot: None,
             unstarted: Some(UnstartedContinuation {
@@ -179,6 +183,9 @@ impl Continuation {
     ) -> Self {
         Continuation {
             cont_id: ContId::fresh(),
+            dispatch_id: None,
+            resume_dispatch_id: None,
+            dispatch_handler_hint: None,
             segment_id: None,
             segment_snapshot: None,
             unstarted: Some(UnstartedContinuation {
@@ -219,7 +226,23 @@ impl Continuation {
     }
 
     pub fn dispatch_id(&self) -> Option<DispatchId> {
-        self.segment().and_then(|segment| segment.dispatch_id)
+        self.dispatch_id
+    }
+
+    pub(crate) fn resume_dispatch_id(&self) -> Option<DispatchId> {
+        self.resume_dispatch_id
+    }
+
+    pub(crate) fn set_resume_dispatch_id(&mut self, dispatch_id: Option<DispatchId>) {
+        self.resume_dispatch_id = dispatch_id;
+    }
+
+    pub(crate) fn dispatch_handler_hint(&self) -> Option<DispatchHandlerHint> {
+        self.dispatch_handler_hint
+    }
+
+    pub(crate) fn set_dispatch_handler_hint(&mut self, hint: Option<DispatchHandlerHint>) {
+        self.dispatch_handler_hint = hint;
     }
 
     // Plain Resume/Transfer restore the capture-time caller from the segment snapshot.
@@ -269,6 +292,19 @@ impl Continuation {
         self.parent = parent;
     }
 
+    pub(crate) fn clone_for_dispatch(&self, dispatch_id: Option<DispatchId>) -> Self {
+        Continuation {
+            cont_id: ContId::fresh(),
+            dispatch_id,
+            resume_dispatch_id: self.resume_dispatch_id,
+            dispatch_handler_hint: self.dispatch_handler_hint,
+            segment_id: self.segment_id,
+            segment_snapshot: self.segment_snapshot.clone(),
+            unstarted: self.unstarted.clone(),
+            parent: self.parent.clone(),
+        }
+    }
+
     pub(crate) fn refresh_persistent_segment_state(
         &mut self,
         scope_state_store: &std::collections::HashMap<
@@ -316,27 +352,6 @@ impl Continuation {
                     .cloned()
                     .expect("scope logs must exist when epoch is present");
                 snapshot.persistent_epoch = current_epoch;
-            }
-
-            if let Some(handler_dispatch) = snapshot.handler_dispatch.as_mut() {
-                handler_dispatch
-                    .continuation
-                    .refresh_persistent_segment_state_inner(
-                        scope_state_store,
-                        scope_writer_logs,
-                        scope_persistent_epochs,
-                        visited,
-                    );
-            }
-            if let Some(dispatch_origin) = snapshot.dispatch_origin.as_mut() {
-                dispatch_origin
-                    .k_origin
-                    .refresh_persistent_segment_state_inner(
-                        scope_state_store,
-                        scope_writer_logs,
-                        scope_persistent_epochs,
-                        visited,
-                    );
             }
 
             for frame in &mut snapshot.frames {
@@ -440,7 +455,6 @@ impl Continuation {
 mod tests {
     use super::*;
     use crate::do_ctrl::{DoCtrl, InterceptMode};
-    use crate::effect::make_get_execution_context_effect;
     use crate::error::VMError;
     use crate::ids::Marker;
     use crate::kleisli::{Kleisli, KleisliDebugInfo};
@@ -564,58 +578,6 @@ mod tests {
                 ..
             }
         ));
-    }
-
-    fn make_dispatch_origin_state(dispatch_id: DispatchId) -> DispatchOriginState {
-        let origin_seg = Segment::new(Marker::fresh(), None);
-        let k_origin =
-            Continuation::capture(&origin_seg, SegmentId::from_index(99), Some(dispatch_id));
-        DispatchOriginState {
-            dispatch_id,
-            effect: make_get_execution_context_effect()
-                .expect("test dispatch effect should be constructible"),
-            k_origin,
-            original_exception: None,
-        }
-    }
-
-    #[test]
-    fn test_continuation_capture_filters_orphan_dispatch_origin_frames() {
-        let (mut seg, seg_id) = make_test_segment();
-        seg.dispatch_origin = Some(make_dispatch_origin_state(DispatchId::fresh()));
-
-        let cont = Continuation::capture(&seg, seg_id, None);
-
-        assert!(cont.frames().is_some_and(|frames| frames.is_empty()));
-        assert!(cont
-            .segment()
-            .is_some_and(|snapshot| snapshot.dispatch_origin.is_none()));
-    }
-
-    #[test]
-    fn test_continuation_capture_keeps_dispatch_origin_with_handler_dispatch() {
-        let (mut seg, seg_id) = make_test_segment();
-        let dispatch_id = DispatchId::fresh();
-        let handler_seg = Segment::new(Marker::fresh(), None);
-        let handler_cont =
-            Continuation::capture(&handler_seg, SegmentId::from_index(7), Some(dispatch_id));
-        seg.handler_dispatch = Some(HandlerDispatchState {
-            dispatch_id,
-            continuation: handler_cont,
-            prompt_seg_id: SegmentId::from_index(8),
-        });
-        seg.dispatch_origin = Some(make_dispatch_origin_state(dispatch_id));
-
-        let cont = Continuation::capture(&seg, seg_id, None);
-
-        let snapshot = cont
-            .segment()
-            .expect("captured continuation should have a segment snapshot");
-        assert!(snapshot.handler_dispatch.is_some());
-        assert!(snapshot
-            .dispatch_origin
-            .as_ref()
-            .is_some_and(|origin| origin.dispatch_id == dispatch_id));
     }
 
     #[test]

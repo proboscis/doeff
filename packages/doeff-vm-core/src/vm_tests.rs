@@ -93,15 +93,25 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
         .segments
         .get(child_id)
         .expect("child segment must exist for continuation capture");
-    let continuation = Continuation::capture(child_segment, child_id, None);
+    let dispatch_id = DispatchId::fresh();
+    let continuation = Continuation::capture(child_segment, child_id, Some(dispatch_id));
 
-    let mut handler_seg = Segment::new(Marker::fresh(), Some(parent_id));
-    handler_seg.handler_dispatch = Some(HandlerDispatchState {
-        dispatch_id: DispatchId::fresh(),
-        continuation: continuation.clone(),
-        prompt_seg_id: parent_id,
-    });
+    let handler_marker = Marker::fresh();
+    let handler_seg = Segment::new(handler_marker, Some(parent_id));
     let handler_seg_id = vm.alloc_segment(handler_seg);
+    vm.dispatch_observer.start_dispatch(
+        dispatch_id,
+        crate::effect::make_get_execution_context_effect()
+            .expect("test dispatch effect should be constructible"),
+        continuation.clone(),
+        None,
+        crate::dispatch_observer::ActiveHandlerContext {
+            segment_id: handler_seg_id,
+            continuation: continuation.clone(),
+            marker: handler_marker,
+            prompt_seg_id: parent_id,
+        },
+    );
     vm.current_segment = Some(handler_seg_id);
 
     let event = vm.handle_dispatch_resume(continuation, Value::Unit);
@@ -143,13 +153,22 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
         Continuation::capture(effect_site_segment, effect_site_id, Some(dispatch_id));
 
     let prompt_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
-    let mut handler_seg = Segment::new(Marker::fresh(), Some(prompt_seg_id));
-    handler_seg.handler_dispatch = Some(HandlerDispatchState {
-        dispatch_id,
-        continuation: continuation.clone(),
-        prompt_seg_id,
-    });
+    let handler_marker = Marker::fresh();
+    let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
     let handler_seg_id = vm.alloc_segment(handler_seg);
+    vm.dispatch_observer.start_dispatch(
+        dispatch_id,
+        crate::effect::make_get_execution_context_effect()
+            .expect("test dispatch effect should be constructible"),
+        continuation.clone(),
+        None,
+        crate::dispatch_observer::ActiveHandlerContext {
+            segment_id: handler_seg_id,
+            continuation: continuation.clone(),
+            marker: handler_marker,
+            prompt_seg_id,
+        },
+    );
     vm.current_segment = Some(handler_seg_id);
 
     let event = vm.handle_dispatch_resume(continuation.clone(), Value::Unit);

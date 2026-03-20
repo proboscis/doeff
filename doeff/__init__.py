@@ -187,11 +187,12 @@ _VM_UNIFIED_NAMES = {"Ok", "Err"}
 
 def _build_unified_types():
     """Build unified Ok/Err that recognize both Rust and Python instances."""
-    from doeff import types as _t
+    import importlib as _importlib
 
+    _vendor = _importlib.import_module("doeff._vendor")
     py_types = {
-        "Ok": getattr(_t, "Ok", None),
-        "Err": getattr(_t, "Err", None),
+        "Ok": getattr(_vendor, "Ok", None),
+        "Err": getattr(_vendor, "Err", None),
     }
     from doeff_vm import doeff_vm as _ext
 

@@ -150,9 +150,9 @@ impl VM {
         let marker = self
             .active_handler_marker_for_dispatch(dispatch_id)
             .or_else(|| {
-                self.current_segment_ref()
-                    .filter(|seg| seg.dispatch_id == Some(dispatch_id))
-                    .map(|seg| seg.marker)
+                (self.current_segment_dispatch_id() == Some(dispatch_id))
+                    .then(|| self.current_segment_ref().map(|seg| seg.marker))
+                    .flatten()
             })?;
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
         let origin_seg_id = self.dispatch_origin_user_segment_id(dispatch_id)?;
@@ -233,14 +233,12 @@ impl VM {
         let handler_kind = handler_kind?;
 
         let dispatch_id = self
-            .current_segment_dispatch_id_any()
-            .or_else(|| self.current_active_handler_dispatch_id())?;
+            .current_active_handler_dispatch_id()
+            .or_else(|| self.current_segment_dispatch_id_any())?;
         if self.is_execution_context_effect_for_dispatch(dispatch_id) {
             return None;
         }
-        let continuation = if handler_kind == HandlerKind::RustBuiltin
-            && self.dispatch_uses_user_continuation_stream(dispatch_id, stream)
-        {
+        let continuation = if self.dispatch_uses_user_continuation_stream(dispatch_id, stream) {
             self.dispatch_origin_for_dispatch_id(dispatch_id)
                 .map(|origin| origin.k_origin)
         } else {
@@ -259,9 +257,6 @@ impl VM {
         &self,
         dispatch_id: DispatchId,
     ) -> Option<PyException> {
-        if let Some((_, original_exception)) = self.dispatch_error_contexts.get(&dispatch_id) {
-            return Some(original_exception.clone());
-        }
         self.dispatch_origin_for_dispatch_id(dispatch_id)
             .and_then(|origin| origin.original_exception)
     }
@@ -395,7 +390,7 @@ impl VM {
                 let seg = self
                     .current_segment
                     .and_then(|seg_id| self.segments.get(seg_id))?;
-                if seg.dispatch_id != Some(dispatch_id) {
+                if self.current_segment_dispatch_id() != Some(dispatch_id) {
                     return None;
                 }
                 let (handler_name, _, _, _) = self.marker_handler_trace_info(seg.marker)?;

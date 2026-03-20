@@ -2837,7 +2837,7 @@ rules:
       context must live in an observer outside the segment chain.
     paths:
       include:
-        - "packages/doeff-vm-core/src/segment.rs"
+        - "/packages/doeff-vm-core/src/segment.rs"
     pattern-regex: 'handler_dispatch\s*:\s*Option<HandlerDispatchState>|dispatch_origin\s*:\s*Option<DispatchOriginState>|dispatch_id\s*:\s*Option<DispatchId>'
 
   - id: vm-no-segment-dispatch-state-access
@@ -2848,8 +2848,8 @@ rules:
       state through Segment fields. Use observer state outside the segment chain.
     paths:
       include:
-        - "packages/doeff-vm-core/src/**"
-        - "packages/doeff-vm/src/**"
+        - "/packages/doeff-vm-core/src/**"
+        - "/packages/doeff-vm/src/**"
       exclude:
         - "**/tests/**"
     pattern-regex: '\b(seg|segment|current_seg|handler_seg|exec_seg|snapshot|live)\.(handler_dispatch|dispatch_origin|dispatch_id)\b'
