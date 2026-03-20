@@ -15,7 +15,7 @@ impl VM {
                     prompt_seg_id: seg_id,
                 });
             }
-            cursor = seg.caller;
+            cursor = seg.parent;
         }
         None
     }
@@ -27,13 +27,12 @@ impl VM {
         let mut layers = Vec::new();
         let mut cursor = Some(start_seg_id);
         while let Some(seg_id) = cursor {
-            let Some(seg) = self.segments.get(seg_id) else {
-                break;
-            };
-            if !seg.named_bindings.is_empty() {
-                layers.push(Arc::new(seg.named_bindings.clone()));
+            if let Some(bindings) = self.scope_bindings(seg_id) {
+                if !bindings.is_empty() {
+                    layers.push(Arc::new(bindings.clone()));
+                }
             }
-            cursor = seg.scope_parent;
+            cursor = self.scope_parent(seg_id);
         }
         if !self.env_store.is_empty() {
             layers.push(Arc::new(self.env_store.clone()));
@@ -98,7 +97,7 @@ impl VM {
                     types: types.clone(),
                 });
             }
-            cursor = seg.caller;
+            cursor = seg.parent;
         }
         chain
     }
@@ -132,7 +131,7 @@ impl VM {
                 }
                 SegmentKind::Normal | SegmentKind::MaskBoundary { .. } => {}
             }
-            cursor = seg.caller;
+            cursor = seg.parent;
         }
         chain
     }
@@ -150,7 +149,7 @@ impl VM {
                     return Some(seg_id);
                 }
             }
-            cursor = seg.caller;
+            cursor = seg.parent;
         }
         None
     }
@@ -234,7 +233,7 @@ impl VM {
                 }
                 handler_index += 1;
             }
-            cursor = seg.caller;
+            cursor = seg.parent;
         }
         None
     }
@@ -257,7 +256,7 @@ impl VM {
                     return Some(Self::handler_trace_info(handler));
                 }
             }
-            cursor = seg.caller;
+            cursor = seg.parent;
         }
         None
     }

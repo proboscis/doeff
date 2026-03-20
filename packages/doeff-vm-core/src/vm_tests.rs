@@ -72,12 +72,12 @@ fn test_resume_continuation_uses_captured_caller_instead_of_current_sibling_segm
         .expect("resumed continuation segment must exist");
 
     assert_eq!(
-        resumed_segment.caller,
+        resumed_segment.parent,
         Some(parent_id),
         "Resume must restore the continuation's captured caller, not the current sibling segment"
     );
     assert_ne!(
-        resumed_segment.caller,
+        resumed_segment.parent,
         Some(sibling_id),
         "Resume must not chain the resumed continuation under the current sibling segment"
     );
@@ -126,12 +126,12 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
         .expect("resumed continuation segment must exist");
 
     assert_eq!(
-        resumed_segment.caller,
+        resumed_segment.parent,
         Some(handler_seg_id),
         "Dispatch Resume must return into the current handler segment"
     );
     assert_ne!(
-        resumed_segment.caller,
+        resumed_segment.parent,
         Some(parent_id),
         "Dispatch Resume must not restore the continuation's captured caller"
     );
@@ -181,14 +181,14 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
         .segments
         .get(resumed_seg_id)
         .expect("resumed continuation segment must exist");
-    assert_eq!(resumed_segment.caller, Some(handler_seg_id));
+    assert_eq!(resumed_segment.parent, Some(handler_seg_id));
 
     let handler_segment = vm
         .segments
         .get(handler_seg_id)
         .expect("handler segment must remain live while continuation runs");
     assert_eq!(
-        handler_segment.caller,
+        handler_segment.parent,
         Some(prompt_seg_id),
         "Dispatch Resume must not rewrite the handler segment's caller chain during Resume"
     );
@@ -202,7 +202,7 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
         .get(handler_seg_id)
         .expect("handler segment must still exist after popping HandlerDispatch");
     assert_eq!(
-        handler_segment.caller,
+        handler_segment.parent,
         Some(prompt_seg_id),
         "Handler completion must leave the prompt boundary caller unchanged"
     );
@@ -241,12 +241,12 @@ fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() 
         .expect("thrown continuation segment must exist");
 
     assert_eq!(
-        resumed_segment.caller,
+        resumed_segment.parent,
         Some(parent_id),
         "TransferThrow must restore the continuation's captured caller, not the reused sibling"
     );
     assert_ne!(
-        resumed_segment.caller,
+        resumed_segment.parent,
         Some(sibling_id),
         "TransferThrow must not chain the thrown continuation under the reused sibling"
     );
@@ -284,12 +284,12 @@ fn test_eval_in_scope_uses_scope_chain_for_dynamic_handler_lookup() {
         .expect("EvalInScope child segment must exist");
 
     assert_eq!(
-        child_seg.caller,
+        child_seg.parent,
         Some(scope_seg_id),
         "EvalInScope child must inherit the scope continuation's caller chain for handler lookup"
     );
     assert_ne!(
-        child_seg.caller,
+        child_seg.parent,
         Some(current_seg_id),
         "EvalInScope child must not hide outer handlers behind the current handler segment"
     );
@@ -323,7 +323,7 @@ fn test_resume_unstarted_continuation_inserts_return_anchor_above_outside_scope(
         .expect("resumed unstarted continuation segment must exist");
 
     let anchor_seg_id = resumed_seg
-        .caller
+        .parent
         .expect("spawned task body must attach to a return anchor");
     let anchor_seg = vm
         .segments
@@ -331,12 +331,12 @@ fn test_resume_unstarted_continuation_inserts_return_anchor_above_outside_scope(
         .expect("spawned task return anchor must exist");
 
     assert_eq!(
-        anchor_seg.caller,
+        anchor_seg.parent,
         Some(scheduler_seg_id),
         "Spawned task return anchor must enter through the live caller chain"
     );
     assert_ne!(
-        anchor_seg.caller,
+        anchor_seg.parent,
         Some(outside_scope_id),
         "Spawned task return anchor must not bypass the live caller chain"
     );
@@ -385,14 +385,14 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
         .get(resumed_seg_id)
         .expect("resumed unstarted continuation segment must exist");
     let handler_body_seg_id = resumed_seg
-        .caller
+        .parent
         .expect("spawned task body must attach to a handler body segment");
     let handler_body_seg = vm
         .segments
         .get(handler_body_seg_id)
         .expect("handler body segment must exist");
     let prompt_seg_id = handler_body_seg
-        .caller
+        .parent
         .expect("handler body must attach to a prompt segment");
     let prompt_seg = vm
         .segments

@@ -79,7 +79,7 @@ mod vm {
 }
 
 // Re-exports for convenience
-pub use arena::SegmentArena;
+pub use arena::FiberArena;
 pub use capture::{
     ActiveChainEntry, DelegationEntry, DispatchAction, EffectResult, FrameId, HandlerAction,
     HandlerDispatchEntry, HandlerKind, HandlerSnapshotEntry, HandlerStatus, SpawnSite, TraceEntry,
@@ -94,14 +94,17 @@ pub use effect::*;
 pub use error::VMError;
 pub use frame::Frame;
 pub use handler::*;
-pub use ids::{ContId, DispatchId, Marker, PromiseId, RunnableId, ScopeId, SegmentId, TaskId, VarId};
+pub use ids::{
+    ContId, DispatchId, FiberId, Marker, PromiseId, RunnableId, ScopeId, SegmentId, TaskId,
+    VarId,
+};
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
 pub use py_key::HashedPyKey;
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 pub use pyvm::PyVM;
 pub use rust_store::RustStore;
-pub use segment::{Segment, SegmentKind};
+pub use segment::{Fiber, FiberKind, Segment, SegmentKind};
 pub use step::PyException;
 pub use value::{PyVar, Value};
 pub use vm::VM;

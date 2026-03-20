@@ -1,6 +1,6 @@
 //! Continuation types for capturing and resuming.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use pyo3::prelude::*;
@@ -10,10 +10,12 @@ use crate::frame::CallMetadata;
 use crate::frame::Frame;
 use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
 use crate::kleisli::KleisliRef;
+use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::segment::Segment;
 use crate::step::PyException;
 use crate::value::Value;
+use crate::ids::VarId;
 
 #[pyclass(name = "K")]
 pub struct PyK {
@@ -67,28 +69,26 @@ pub struct Continuation {
     resume_dispatch_id: Option<DispatchId>,
     dispatch_handler_hint: Option<DispatchHandlerHint>,
     segment_id: Option<SegmentId>,
-    segment_snapshot: Option<Arc<Segment>>,
+    segment_snapshot: Option<Box<Segment>>,
+    scope_parent_snapshot: Option<SegmentId>,
+    scope_bindings_snapshot: HashMap<HashedPyKey, Value>,
+    var_overrides_snapshot: HashMap<VarId, Value>,
     unstarted: Option<UnstartedContinuation>,
     /// Parent continuation captured during Delegate chaining.
     parent: Option<Arc<Continuation>>,
 }
 
 impl Continuation {
-    fn captured_segment_snapshot(segment: &Segment) -> Arc<Segment> {
-        Arc::new(Segment {
+    fn captured_segment_snapshot(segment: &Segment) -> Box<Segment> {
+        Box::new(Segment {
             scope_id: segment.scope_id,
             persistent_epoch: segment.persistent_epoch,
             marker: segment.marker,
             frames: segment.frames.clone(),
-            caller: segment.caller,
-            scope_parent: segment.scope_parent,
-            variables: Default::default(),
-            named_bindings: segment.named_bindings.clone(),
+            parent: segment.parent,
             state_store: segment.state_store.clone(),
             writer_log: segment.writer_log.clone(),
             kind: segment.kind.clone(),
-            mode: segment.mode.clone(),
-            pending_python: segment.pending_python.clone(),
             pending_error_context: segment.pending_error_context.clone(),
             throw_parent: segment.throw_parent.clone(),
             interceptor_eval_depth: segment.interceptor_eval_depth,
@@ -108,6 +108,9 @@ impl Continuation {
             dispatch_handler_hint: None,
             segment_id: Some(segment_id),
             segment_snapshot: Some(Self::captured_segment_snapshot(segment)),
+            scope_parent_snapshot: None,
+            scope_bindings_snapshot: HashMap::new(),
+            var_overrides_snapshot: HashMap::new(),
             unstarted: None,
             parent: None,
         }
@@ -126,6 +129,9 @@ impl Continuation {
             dispatch_handler_hint: None,
             segment_id: Some(segment_id),
             segment_snapshot: Some(Self::captured_segment_snapshot(segment)),
+            scope_parent_snapshot: None,
+            scope_bindings_snapshot: HashMap::new(),
+            var_overrides_snapshot: HashMap::new(),
             unstarted: None,
             parent: None,
         }
@@ -149,6 +155,9 @@ impl Continuation {
             dispatch_handler_hint: None,
             segment_id: None,
             segment_snapshot: None,
+            scope_parent_snapshot: None,
+            scope_bindings_snapshot: HashMap::new(),
+            var_overrides_snapshot: HashMap::new(),
             unstarted: Some(UnstartedContinuation {
                 program: expr,
                 handlers,
@@ -188,6 +197,9 @@ impl Continuation {
             dispatch_handler_hint: None,
             segment_id: None,
             segment_snapshot: None,
+            scope_parent_snapshot: None,
+            scope_bindings_snapshot: HashMap::new(),
+            var_overrides_snapshot: HashMap::new(),
             unstarted: Some(UnstartedContinuation {
                 program: expr,
                 handlers,
@@ -214,11 +226,8 @@ impl Continuation {
     }
 
     /// Returns a mutable snapshot view.
-    ///
-    /// Uses `Arc::make_mut`, so mutating a shared snapshot triggers copy-on-write of the whole
-    /// `Segment`.
     pub fn segment_mut(&mut self) -> Option<&mut Segment> {
-        self.segment_snapshot.as_mut().map(Arc::make_mut)
+        self.segment_snapshot.as_deref_mut()
     }
 
     pub fn frames(&self) -> Option<&[Frame]> {
@@ -248,7 +257,7 @@ impl Continuation {
     // Plain Resume/Transfer restore the capture-time caller from the segment snapshot.
     // Dispatch Resume is the explicit override that re-enters the active handler segment.
     pub fn captured_caller(&self) -> Option<SegmentId> {
-        self.segment().and_then(|segment| segment.caller)
+        self.segment().and_then(|segment| segment.parent)
     }
 
     pub fn pending_error_context(&self) -> Option<&PyException> {
@@ -288,6 +297,29 @@ impl Continuation {
         self.parent.as_deref()
     }
 
+    pub(crate) fn scope_parent_snapshot(&self) -> Option<SegmentId> {
+        self.scope_parent_snapshot
+    }
+
+    pub(crate) fn scope_bindings_snapshot(&self) -> &HashMap<HashedPyKey, Value> {
+        &self.scope_bindings_snapshot
+    }
+
+    pub(crate) fn var_overrides_snapshot(&self) -> &HashMap<VarId, Value> {
+        &self.var_overrides_snapshot
+    }
+
+    pub(crate) fn set_scope_snapshot(
+        &mut self,
+        scope_parent: Option<SegmentId>,
+        scope_bindings: HashMap<HashedPyKey, Value>,
+        var_overrides: HashMap<VarId, Value>,
+    ) {
+        self.scope_parent_snapshot = scope_parent;
+        self.scope_bindings_snapshot = scope_bindings;
+        self.var_overrides_snapshot = var_overrides;
+    }
+
     pub(crate) fn set_parent(&mut self, parent: Option<Arc<Continuation>>) {
         self.parent = parent;
     }
@@ -300,6 +332,9 @@ impl Continuation {
             dispatch_handler_hint: self.dispatch_handler_hint,
             segment_id: self.segment_id,
             segment_snapshot: self.segment_snapshot.clone(),
+            scope_parent_snapshot: self.scope_parent_snapshot,
+            scope_bindings_snapshot: self.scope_bindings_snapshot.clone(),
+            var_overrides_snapshot: self.var_overrides_snapshot.clone(),
             unstarted: self.unstarted.clone(),
             parent: self.parent.clone(),
         }
@@ -491,7 +526,7 @@ mod tests {
         let cont = Continuation::capture(&seg, seg_id, None);
 
         assert_eq!(cont.segment_id(), Some(seg_id));
-        assert_eq!(cont.captured_caller(), seg.caller);
+        assert_eq!(cont.captured_caller(), seg.parent);
         assert!(cont.dispatch_id().is_none());
         assert_eq!(
             cont.segment().map(|segment| segment.marker),

@@ -174,6 +174,7 @@ pub enum EvalReturnContinuation {
     ResumeToContinuation {
         continuation: crate::continuation::Continuation,
     },
+    TailResumeReturn,
     ReturnToContinuation {
         continuation: crate::continuation::Continuation,
     },
