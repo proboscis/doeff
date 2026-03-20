@@ -967,18 +967,31 @@ impl VM {
                     metadata,
                     handler_kind,
                 });
-                let Some(dispatch_id) = self.current_dispatch_id() else {
-                    return StepEvent::Error(VMError::internal(
-                        "RustProgramContinuation outside dispatch",
-                    ));
-                };
-                let Some((_, k, marker)) = self
-                    .active_handler_dispatch_for(dispatch_id)
-                    .or_else(|| self.handler_dispatch_for_any(dispatch_id))
-                else {
-                    return StepEvent::Error(VMError::internal(
-                        "RustProgramContinuation: active handler dispatch not found",
-                    ));
+                let (marker, k) = if let Some(dispatch_id) = self.current_dispatch_id() {
+                    let Some((_, k, marker)) = self
+                        .active_handler_dispatch_for(dispatch_id)
+                        .or_else(|| self.handler_dispatch_for_any(dispatch_id))
+                    else {
+                        return StepEvent::Error(VMError::internal(
+                            "RustProgramContinuation: active handler dispatch not found",
+                        ));
+                    };
+                    (marker, k)
+                } else {
+                    let Some(seg_id) = self.current_segment else {
+                        return StepEvent::Error(VMError::internal(
+                            "RustProgramContinuation without current segment",
+                        ));
+                    };
+                    let Some(seg) = self.segments.get(seg_id) else {
+                        return StepEvent::Error(VMError::invalid_segment(
+                            "RustProgramContinuation segment not found",
+                        ));
+                    };
+                    (
+                        seg.marker,
+                        Continuation::capture(seg, seg_id, seg.dispatch_id),
+                    )
                 };
                 self.current_seg_mut().pending_python =
                     Some(PendingPython::RustProgramContinuation { marker, k });
