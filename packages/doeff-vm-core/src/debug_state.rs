@@ -262,13 +262,7 @@ impl DebugState {
         let seg_info = current_segment
             .and_then(|id| segments.get(id))
             .map(|s| {
-                format!(
-                    "seg={:?} frames={} handler_dispatch={} dispatch_origin={}",
-                    current_segment,
-                    s.frames.len(),
-                    s.handler_dispatch.is_some(),
-                    s.dispatch_origin.is_some()
-                )
+                format!("seg={:?} frames={}", current_segment, s.frames.len())
             })
             .unwrap_or_else(|| "seg=None".to_string());
 

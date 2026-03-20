@@ -93,15 +93,25 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
         .segments
         .get(child_id)
         .expect("child segment must exist for continuation capture");
-    let continuation = Continuation::capture(child_segment, child_id, None);
+    let dispatch_id = DispatchId::fresh();
+    let continuation = Continuation::capture(child_segment, child_id, Some(dispatch_id));
 
-    let mut handler_seg = Segment::new(Marker::fresh(), Some(parent_id));
-    handler_seg.handler_dispatch = Some(HandlerDispatchState {
-        dispatch_id: DispatchId::fresh(),
-        continuation: continuation.clone(),
-        prompt_seg_id: parent_id,
-    });
+    let handler_marker = Marker::fresh();
+    let handler_seg = Segment::new(handler_marker, Some(parent_id));
     let handler_seg_id = vm.alloc_segment(handler_seg);
+    vm.dispatch_observer.start_dispatch(
+        dispatch_id,
+        crate::effect::make_get_execution_context_effect()
+            .expect("test dispatch effect should be constructible"),
+        continuation.clone(),
+        None,
+        crate::dispatch_observer::ActiveHandlerContext {
+            segment_id: handler_seg_id,
+            continuation: continuation.clone(),
+            marker: handler_marker,
+            prompt_seg_id: parent_id,
+        },
+    );
     vm.current_segment = Some(handler_seg_id);
 
     let event = vm.handle_dispatch_resume(continuation, Value::Unit);
@@ -128,7 +138,7 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
 }
 
 #[test]
-fn test_dispatch_resume_relinks_handler_segment_to_captured_caller_chain() {
+fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
     let mut vm = VM::new();
 
     let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
@@ -143,13 +153,22 @@ fn test_dispatch_resume_relinks_handler_segment_to_captured_caller_chain() {
         Continuation::capture(effect_site_segment, effect_site_id, Some(dispatch_id));
 
     let prompt_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
-    let mut handler_seg = Segment::new(Marker::fresh(), Some(prompt_seg_id));
-    handler_seg.handler_dispatch = Some(HandlerDispatchState {
-        dispatch_id,
-        continuation: continuation.clone(),
-        prompt_seg_id,
-    });
+    let handler_marker = Marker::fresh();
+    let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
     let handler_seg_id = vm.alloc_segment(handler_seg);
+    vm.dispatch_observer.start_dispatch(
+        dispatch_id,
+        crate::effect::make_get_execution_context_effect()
+            .expect("test dispatch effect should be constructible"),
+        continuation.clone(),
+        None,
+        crate::dispatch_observer::ActiveHandlerContext {
+            segment_id: handler_seg_id,
+            continuation: continuation.clone(),
+            marker: handler_marker,
+            prompt_seg_id,
+        },
+    );
     vm.current_segment = Some(handler_seg_id);
 
     let event = vm.handle_dispatch_resume(continuation.clone(), Value::Unit);
@@ -170,8 +189,8 @@ fn test_dispatch_resume_relinks_handler_segment_to_captured_caller_chain() {
         .expect("handler segment must remain live while continuation runs");
     assert_eq!(
         handler_segment.caller,
-        Some(captured_caller_id),
-        "handler segment must expose the continuation's captured caller chain during Resume"
+        Some(prompt_seg_id),
+        "Dispatch Resume must not rewrite the handler segment's caller chain during Resume"
     );
 
     vm.current_segment = Some(handler_seg_id);
@@ -185,7 +204,7 @@ fn test_dispatch_resume_relinks_handler_segment_to_captured_caller_chain() {
     assert_eq!(
         handler_segment.caller,
         Some(prompt_seg_id),
-        "HandlerDispatch completion must restore the prompt boundary caller"
+        "Handler completion must leave the prompt boundary caller unchanged"
     );
 }
 
@@ -395,4 +414,17 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
         Some(outside_scope_id),
         "spawned task body must retain the captured lexical scope root"
     );
+}
+
+#[test]
+#[should_panic(expected = "observer has no context")]
+fn test_dispatch_origin_scan_fails_fast_on_orphaned_segment_dispatch_index() {
+    let mut vm = VM::new();
+    let seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    vm.current_segment = Some(seg_id);
+
+    vm.dispatch_observer
+        .bind_segment(seg_id, DispatchId::fresh());
+
+    let _ = vm.dispatch_origins();
 }
