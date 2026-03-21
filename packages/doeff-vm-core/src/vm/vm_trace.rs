@@ -2,11 +2,7 @@ use super::*;
 use crate::capture::{EffectCreationSite, TraceHop};
 
 impl VM {
-    fn continuation_uses_stream(
-        &self,
-        continuation: &Continuation,
-        stream: &IRStreamRef,
-    ) -> bool {
+    fn continuation_uses_stream(&self, continuation: &Continuation, stream: &IRStreamRef) -> bool {
         continuation.fibers().iter().any(|fiber_id| {
             self.segments.get(*fiber_id).is_some_and(|segment| {
                 segment.frames.iter().any(|frame| match frame {

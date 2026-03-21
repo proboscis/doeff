@@ -35,8 +35,8 @@ use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::{LiveDispatchSnapshot, TraceState};
-use crate::var_store::VarStore;
 use crate::value::Value;
+use crate::var_store::VarStore;
 
 pub use crate::rust_store::RustStore;
 
@@ -274,6 +274,7 @@ pub struct VM {
     pub(crate) dispatch_observer: DispatchObserver,
     pub continuation_registry: HashMap<ContId, Continuation>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
+    segment_parent_redirects: HashMap<SegmentId, Option<SegmentId>>,
     scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
     scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
     completed_state_entries_snapshot: Option<HashMap<String, Value>>,
@@ -301,6 +302,7 @@ impl VM {
             dispatch_observer: DispatchObserver::default(),
             continuation_registry: HashMap::new(),
             scope_parents: HashMap::new(),
+            segment_parent_redirects: HashMap::new(),
             scope_state_store: HashMap::new(),
             scope_writer_logs: HashMap::new(),
             completed_state_entries_snapshot: None,
@@ -332,6 +334,7 @@ impl VM {
         self.dispatch_observer.clear();
         self.run_handlers.clear();
         self.scope_parents.clear();
+        self.segment_parent_redirects.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
         self.completed_state_entries_snapshot = None;
@@ -359,6 +362,7 @@ impl VM {
         self.mode = Mode::Deliver(Value::Unit);
         self.pending_python = None;
         self.scope_parents.clear();
+        self.segment_parent_redirects.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
     }
@@ -388,6 +392,7 @@ impl VM {
     pub fn alloc_segment(&mut self, segment: Segment) -> SegmentId {
         self.register_segment_scope_state(&segment);
         let seg_id = self.segments.alloc(segment);
+        self.segment_parent_redirects.remove(&seg_id);
         self.var_store.init_segment(seg_id);
         let parent = self.segments.get(seg_id).and_then(|segment| segment.parent);
         self.scope_parents.insert(seg_id, parent);
@@ -395,10 +400,15 @@ impl VM {
     }
 
     pub fn free_segment(&mut self, id: SegmentId) {
-        let Some(scope_id) = self.segments.get(id).map(|segment| segment.scope_id) else {
+        let Some((scope_id, parent)) = self
+            .segments
+            .get(id)
+            .map(|segment| (segment.scope_id, segment.parent))
+        else {
             return;
         };
         self.dispatch_observer.unbind_segment(id);
+        self.segment_parent_redirects.insert(id, parent);
         self.segments.free(id);
         self.var_store.remove_segment(id);
         self.scope_parents.remove(&id);
@@ -414,10 +424,7 @@ impl VM {
         self.current_segment.and_then(|id| self.segments.get(id))
     }
 
-    pub(crate) fn continuation_segment_ref(
-        &self,
-        continuation: &Continuation,
-    ) -> Option<&Segment> {
+    pub(crate) fn continuation_segment_ref(&self, continuation: &Continuation) -> Option<&Segment> {
         continuation
             .segment_id()
             .and_then(|seg_id| self.segments.get(seg_id))
@@ -481,6 +488,93 @@ impl VM {
         self.scope_parents.insert(seg_id, scope_parent);
     }
 
+    fn reparent_continuation_captured_caller(
+        continuation: &mut Continuation,
+        old_parent: SegmentId,
+        new_parent: Option<SegmentId>,
+    ) -> usize {
+        if continuation.captured_caller() != Some(old_parent) {
+            return 0;
+        }
+        continuation.set_captured_caller(new_parent);
+        1
+    }
+
+    fn reparent_eval_return_captured_caller(
+        eval_return: &mut EvalReturnContinuation,
+        old_parent: SegmentId,
+        new_parent: Option<SegmentId>,
+    ) -> usize {
+        match eval_return {
+            EvalReturnContinuation::ResumeToContinuation { continuation }
+            | EvalReturnContinuation::ReturnToContinuation { continuation }
+            | EvalReturnContinuation::EvalInScopeReturn { continuation } => {
+                Self::reparent_continuation_captured_caller(continuation, old_parent, new_parent)
+            }
+            EvalReturnContinuation::ApplyResolveFunction { .. }
+            | EvalReturnContinuation::ApplyResolveArg { .. }
+            | EvalReturnContinuation::ApplyResolveKwarg { .. }
+            | EvalReturnContinuation::ExpandResolveFactory { .. }
+            | EvalReturnContinuation::ExpandResolveArg { .. }
+            | EvalReturnContinuation::ExpandResolveKwarg { .. }
+            | EvalReturnContinuation::TailResumeReturn => 0,
+        }
+    }
+
+    fn reparent_owned_continuation_callers(
+        &mut self,
+        old_parent: SegmentId,
+        new_parent: Option<SegmentId>,
+    ) -> usize {
+        let mut rewired = 0usize;
+
+        for continuation in self.continuation_registry.values_mut() {
+            rewired +=
+                Self::reparent_continuation_captured_caller(continuation, old_parent, new_parent);
+        }
+
+        for (_, segment) in self.segments.iter_mut() {
+            for frame in &mut segment.frames {
+                if let Frame::EvalReturn(eval_return) = frame {
+                    rewired += Self::reparent_eval_return_captured_caller(
+                        eval_return,
+                        old_parent,
+                        new_parent,
+                    );
+                }
+            }
+        }
+
+        if let Some(PendingPython::RustProgramContinuation { k, .. }) = self.pending_python.as_mut()
+        {
+            rewired += Self::reparent_continuation_captured_caller(k, old_parent, new_parent);
+        }
+
+        rewired
+    }
+
+    pub(crate) fn normalize_live_parent_hint(
+        &self,
+        parent: Option<SegmentId>,
+    ) -> Option<SegmentId> {
+        let mut cursor = parent;
+        let mut seen = HashSet::new();
+        while let Some(seg_id) = cursor {
+            if self.segments.get(seg_id).is_some() {
+                return Some(seg_id);
+            }
+            if !seen.insert(seg_id) {
+                return None;
+            }
+            cursor = self
+                .segment_parent_redirects
+                .get(&seg_id)
+                .copied()
+                .flatten();
+        }
+        None
+    }
+
     pub fn reparent_children(
         &mut self,
         old_parent: SegmentId,
@@ -494,6 +588,7 @@ impl VM {
                 rewired += 1;
             }
         }
+        rewired += self.reparent_owned_continuation_callers(old_parent, new_parent);
         rewired
     }
 
@@ -625,11 +720,21 @@ impl VM {
             let Some(seg) = self.segments.get(seg_id) else {
                 continue;
             };
-            if !seg.state_store.is_empty() {
-                state.extend(seg.state_store.clone());
+            let shared_state = self
+                .scope_state_store
+                .get(&seg.scope_id)
+                .cloned()
+                .unwrap_or_else(|| seg.state_store.clone());
+            if !shared_state.is_empty() {
+                state.extend(shared_state);
             }
-            if !seg.writer_log.is_empty() {
-                logs.extend(seg.writer_log.clone());
+            let shared_logs = self
+                .scope_writer_logs
+                .get(&seg.scope_id)
+                .cloned()
+                .unwrap_or_else(|| seg.writer_log.clone());
+            if !shared_logs.is_empty() {
+                logs.extend(shared_logs);
             }
         }
 
@@ -648,10 +753,17 @@ impl VM {
         key: &str,
         missing_is_none: bool,
     ) -> Option<Value> {
+        let prompt_seg_id = self.shared_builtin_handler_prompt(prompt_seg_id);
         self.segments.get(prompt_seg_id).and_then(|seg| {
-            seg.state_store
+            self.scope_state_store
+                .get(&seg.scope_id)
+                .and_then(|state| state.get(key))
+                .cloned()
+                .or_else(|| {
+                    seg.state_store
                 .get(key)
                 .cloned()
+                })
                 .or_else(|| missing_is_none.then_some(Value::None))
         })
     }
@@ -662,6 +774,7 @@ impl VM {
         key: String,
         value: Value,
     ) -> bool {
+        let prompt_seg_id = self.shared_builtin_handler_prompt(prompt_seg_id);
         let Some((scope_id, sync_rust_store)) = self.segments.get(prompt_seg_id).map(|seg| {
             (
                 seg.scope_id,
@@ -689,6 +802,7 @@ impl VM {
     }
 
     pub fn append_handler_log_at(&mut self, prompt_seg_id: SegmentId, message: Value) -> bool {
+        let prompt_seg_id = self.shared_builtin_handler_prompt(prompt_seg_id);
         let Some(scope_id) = self.segments.get(prompt_seg_id).map(|seg| seg.scope_id) else {
             return false;
         };
@@ -701,6 +815,43 @@ impl VM {
         };
         seg.writer_log.push(message);
         true
+    }
+
+    fn shared_builtin_handler_prompt(&self, prompt_seg_id: SegmentId) -> SegmentId {
+        let Some(seg) = self.segments.get(prompt_seg_id) else {
+            return prompt_seg_id;
+        };
+        let SegmentKind::PromptBoundary { handler, .. } = &seg.kind else {
+            return prompt_seg_id;
+        };
+        let handler_name = handler.handler_name();
+        if !matches!(handler_name.as_str(), "StateHandler" | "WriterHandler") {
+            return prompt_seg_id;
+        }
+        // Spawn/CreateContinuation installs synthetic handler wrappers whose
+        // lexical scope (`scope_parent`) points at the captured parent chain
+        // instead of the wrapper's structural parent. Built-in State/Writer
+        // must share the outer live handler instance across spawned tasks, so
+        // redirect reads/writes/log appends to the first matching prompt in
+        // that captured scope chain.
+        if self.scope_parent(prompt_seg_id) == seg.parent {
+            return prompt_seg_id;
+        }
+
+        let mut cursor = self.scope_parent(prompt_seg_id);
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                break;
+            };
+            if let SegmentKind::PromptBoundary { handler, .. } = &seg.kind {
+                if handler.handler_name() == handler_name {
+                    return seg_id;
+                }
+            }
+            cursor = self.scope_parent(seg_id);
+        }
+
+        prompt_seg_id
     }
 
     pub fn final_state_entries(&self) -> HashMap<String, Value> {
@@ -729,8 +880,13 @@ impl VM {
             let Some(seg) = self.segments.get(seg_id) else {
                 continue;
             };
-            if !seg.state_store.is_empty() {
-                state.extend(seg.state_store.clone());
+            let shared_state = self
+                .scope_state_store
+                .get(&seg.scope_id)
+                .cloned()
+                .unwrap_or_else(|| seg.state_store.clone());
+            if !shared_state.is_empty() {
+                state.extend(shared_state);
             }
         }
 
@@ -763,8 +919,13 @@ impl VM {
             let Some(seg) = self.segments.get(seg_id) else {
                 continue;
             };
-            if !seg.writer_log.is_empty() {
-                logs.extend(seg.writer_log.clone());
+            let shared_logs = self
+                .scope_writer_logs
+                .get(&seg.scope_id)
+                .cloned()
+                .unwrap_or_else(|| seg.writer_log.clone());
+            if !shared_logs.is_empty() {
+                logs.extend(shared_logs);
             }
         }
         logs

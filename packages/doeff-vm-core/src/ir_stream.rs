@@ -117,9 +117,17 @@ impl PythonGeneratorStream {
         let mut saw_resume = false;
         for instruction in instructions.try_iter().ok()? {
             let instruction = instruction.ok()?;
-            let offset = instruction.getattr("offset").ok()?.extract::<usize>().ok()?;
+            let offset = instruction
+                .getattr("offset")
+                .ok()?
+                .extract::<usize>()
+                .ok()?;
             if saw_resume {
-                let opname = instruction.getattr("opname").ok()?.extract::<String>().ok()?;
+                let opname = instruction
+                    .getattr("opname")
+                    .ok()?
+                    .extract::<String>()
+                    .ok()?;
                 return Some(opname == "RETURN_VALUE");
             }
             if offset == lasti {

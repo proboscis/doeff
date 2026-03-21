@@ -128,7 +128,12 @@ impl Continuation {
         captured_caller: Option<SegmentId>,
         dispatch_id: Option<DispatchId>,
     ) -> Self {
-        Self::new_captured(ContId::fresh(), vec![fiber_id], captured_caller, dispatch_id)
+        Self::new_captured(
+            ContId::fresh(),
+            vec![fiber_id],
+            captured_caller,
+            dispatch_id,
+        )
     }
 
     pub fn capture(
@@ -271,8 +276,14 @@ impl Continuation {
     }
 
     pub(crate) fn append_owned_fibers(&mut self, mut other: Continuation) {
-        debug_assert!(self.unstarted.is_none(), "cannot append fibers to unstarted continuation");
-        debug_assert!(self.owns_fibers, "cannot append fibers to non-owning continuation handle");
+        debug_assert!(
+            self.unstarted.is_none(),
+            "cannot append fibers to unstarted continuation"
+        );
+        debug_assert!(
+            self.owns_fibers,
+            "cannot append fibers to non-owning continuation handle"
+        );
         debug_assert!(
             other.unstarted.is_none(),
             "cannot append unstarted continuation fibers"
@@ -454,7 +465,11 @@ mod tests {
     struct DummyKleisli;
 
     impl Kleisli for DummyKleisli {
-        fn apply(&self, _py: Python<'_>, _args: Vec<crate::value::Value>) -> Result<DoCtrl, VMError> {
+        fn apply(
+            &self,
+            _py: Python<'_>,
+            _args: Vec<crate::value::Value>,
+        ) -> Result<DoCtrl, VMError> {
             unreachable!("test dummy should never be invoked")
         }
 
@@ -561,7 +576,8 @@ mod tests {
             let program = PyShared::new(py.None());
             let handlers = vec![Arc::new(DummyKleisli) as KleisliRef];
             let identities = vec![Some(PyShared::new(py.None()))];
-            let cont = Continuation::create_unstarted_with_identities(program, handlers, identities);
+            let cont =
+                Continuation::create_unstarted_with_identities(program, handlers, identities);
 
             assert!(cont.program().is_some());
             assert_eq!(cont.handlers().map(|handlers| handlers.len()), Some(1));

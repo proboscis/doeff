@@ -224,7 +224,10 @@ impl WaitRequest {
     }
 
     fn note_completion(&mut self) -> bool {
-        assert!(self.remaining > 0, "note_completion on already-completed waiter");
+        assert!(
+            self.remaining > 0,
+            "note_completion on already-completed waiter"
+        );
         self.remaining -= 1;
         self.remaining == 0
     }
@@ -949,9 +952,9 @@ fn task_cancelled_error() -> PyException {
 
 fn is_task_cancelled_exception(error: &PyException) -> bool {
     match error {
-        PyException::Materialized { exc_value, .. } => Python::attach(|py| {
-            exc_value.bind(py).is_instance_of::<TaskCancelledError>()
-        }),
+        PyException::Materialized { exc_value, .. } => {
+            Python::attach(|py| exc_value.bind(py).is_instance_of::<TaskCancelledError>())
+        }
         PyException::RuntimeError { message, .. } => message == "Task was cancelled",
         PyException::TypeError { .. } => false,
     }
@@ -1372,7 +1375,9 @@ impl SchedulerState {
         }
 
         let (cont_id, priority, started) = match task_state {
-            TaskState::Pending { cont, priority, .. } => (cont.cont_id, *priority, cont.is_started()),
+            TaskState::Pending { cont, priority, .. } => {
+                (cont.cont_id, *priority, cont.is_started())
+            }
             TaskState::Done { .. } => return false,
         };
         if !started {
@@ -1898,22 +1903,21 @@ impl SchedulerState {
     }
 
     fn gather_wait_request_for_failed_task(&self, running_task: TaskId) -> Option<WaitOwner> {
-        self.wait_requests
-            .iter()
-            .find_map(|(owner, waiter)| {
-                (waiter.mode == WaitMode::All
-                    && waiter
-                        .items
-                        .iter()
-                        .any(|item| matches!(item, Waitable::Task(task_id) if *task_id == running_task))
-                    && waiter
-                        .items
-                        .iter()
-                        .filter(|item| matches!(item, Waitable::Task(task_id) if *task_id != running_task))
-                        .count()
-                        > 0)
-                    .then_some(*owner)
-            })
+        self.wait_requests.iter().find_map(|(owner, waiter)| {
+            (waiter.mode == WaitMode::All
+                && waiter.items.iter().any(
+                    |item| matches!(item, Waitable::Task(task_id) if *task_id == running_task),
+                )
+                && waiter
+                    .items
+                    .iter()
+                    .filter(
+                        |item| matches!(item, Waitable::Task(task_id) if *task_id != running_task),
+                    )
+                    .count()
+                    > 0)
+            .then_some(*owner)
+        })
     }
 
     fn has_pending_gather_fail_fast(&self, owner: WaitOwner) -> bool {
@@ -2080,8 +2084,7 @@ impl SchedulerState {
                 ..
             }) => {
                 let cont_id = cont.cont_id;
-                let continuation =
-                    std::mem::replace(cont, Continuation::placeholder(cont_id));
+                let continuation = std::mem::replace(cont, Continuation::placeholder(cont_id));
                 if continuation.is_placeholder() {
                     return Err(scheduler_internal_error(format!(
                         "task {} has no parked continuation to resume",
@@ -2121,10 +2124,7 @@ impl SchedulerState {
         }
 
         let owner = match self.current_task {
-            Some(task_id) => WaitOwner::Task {
-                task_id,
-                cont_id,
-            },
+            Some(task_id) => WaitOwner::Task { task_id, cont_id },
             None => WaitOwner::Root { cont_id },
         };
         self.active_wait_owners.insert(owner);
@@ -2325,7 +2325,7 @@ impl SchedulerState {
                                 }
                                 return TransferNextOutcome::Step(throw_to_continuation(
                                     task_k, error,
-                                ))
+                                ));
                             }
                             Some(Ok(value)) => {
                                 return TransferNextOutcome::Step(resume_to_continuation(
@@ -2870,9 +2870,7 @@ impl SchedulerProgram {
         if let Some(aggregate) = state.collect_all_result(&items) {
             state.clear_waiters_for_owner(waiting_task, cont_id);
             return match aggregate {
-                Ok(results) => {
-                    resume_to_continuation(k_user, results)
-                }
+                Ok(results) => resume_to_continuation(k_user, results),
                 Err(error) => throw_to_continuation(k_user, error),
             };
         }
@@ -3310,10 +3308,9 @@ impl IRStreamProgram for SchedulerProgram {
                         let items = [Waitable::Promise(promise_id)];
                         let waiting_task = state.current_task;
                         let cont_id = k_user.cont_id;
-                        let root_wait_continuation = if let Some(waiting_task) = state.current_task {
-                            if let Err(error) =
-                                state.suspend_task_for_wait(waiting_task, k_user)
-                            {
+                        let root_wait_continuation = if let Some(waiting_task) = state.current_task
+                        {
+                            if let Err(error) = state.suspend_task_for_wait(waiting_task, k_user) {
                                 return IRStreamStep::Throw(error);
                             }
                             None
@@ -4214,10 +4211,7 @@ mod tests {
                 &mut store,
                 &mut _scope,
             );
-            assert!(matches!(
-                step,
-                IRStreamStep::Yield(DoCtrl::GetHandlers)
-            ));
+            assert!(matches!(step, IRStreamStep::Yield(DoCtrl::GetHandlers)));
 
             let location = IRStream::debug_location(&program).expect("scheduler debug location");
             assert_eq!(location.phase.as_deref(), Some("SpawnAwaitHandlers"));
