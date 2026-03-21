@@ -188,9 +188,9 @@ impl VM {
             .map(|dispatch| dispatch.active_handler.marker)
             .or_else(|| self.active_handler_marker_for_dispatch(dispatch_id))
             .or_else(|| {
-                (self.current_segment_dispatch_id() == Some(dispatch_id))
-                    .then(|| self.current_segment_ref().map(|seg| seg.marker))
-                    .flatten()
+                self.current_segment
+                    .filter(|_| self.current_segment_dispatch_id() == Some(dispatch_id))
+                    .and_then(|seg_id| self.handler_marker_in_caller_chain(seg_id))
             })?;
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
         let origin_seg_id = self
@@ -436,13 +436,12 @@ impl VM {
         let handler_identity = self
             .current_handler_identity_for_dispatch(dispatch_id)
             .or_else(|| {
-                let seg = self
-                    .current_segment
-                    .and_then(|seg_id| self.segments.get(seg_id))?;
+                let seg_id = self.current_segment?;
                 if self.current_segment_dispatch_id() != Some(dispatch_id) {
                     return None;
                 }
-                let (handler_name, _, _, _) = self.marker_handler_trace_info(seg.marker)?;
+                let marker = self.handler_marker_in_caller_chain(seg_id)?;
+                let (handler_name, _, _, _) = self.marker_handler_trace_info(marker)?;
                 Some((0, handler_name))
             });
         let Some((handler_index, handler_name)) = handler_identity else {

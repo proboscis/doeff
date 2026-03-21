@@ -947,7 +947,7 @@ impl VM {
                 Some((canonical_seg_id, shared_state))
             }
             SegmentKind::PromptBoundary { .. }
-            | SegmentKind::Normal
+            | SegmentKind::Normal { .. }
             | SegmentKind::InterceptorBoundary { .. }
             | SegmentKind::MaskBoundary { .. } => None,
         }
@@ -968,7 +968,7 @@ impl VM {
                 Some((canonical_seg_id, shared_logs))
             }
             SegmentKind::PromptBoundary { .. }
-            | SegmentKind::Normal
+            | SegmentKind::Normal { .. }
             | SegmentKind::InterceptorBoundary { .. }
             | SegmentKind::MaskBoundary { .. } => None,
         }

@@ -954,13 +954,14 @@ impl VM {
                             "RustProgramContinuation without current segment",
                         ));
                     };
-                    let Some(seg) = self.segments.get(seg_id) else {
+                    if self.segments.get(seg_id).is_none() {
                         return StepEvent::Error(VMError::invalid_segment(
                             "RustProgramContinuation segment not found",
                         ));
-                    };
+                    }
                     (
-                        seg.marker,
+                        self.handler_marker_in_caller_chain(seg_id)
+                            .unwrap_or_else(Marker::fresh),
                         self.capture_live_continuation(seg_id, self.current_segment_dispatch_id()),
                     )
                 };
@@ -1086,8 +1087,8 @@ impl VM {
                 let Some(seg) = vm.segments.get(seg_id) else {
                     break;
                 };
-                if let Some(link) = InterceptorChainLink::from_boundary(seg.marker, &seg.kind) {
-                    if seen.insert(seg.marker) {
+                if let Some(link) = InterceptorChainLink::from_boundary(&seg.kind) {
+                    if seen.insert(link.marker) {
                         chain.push(link);
                     }
                 }
