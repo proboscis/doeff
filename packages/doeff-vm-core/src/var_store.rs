@@ -42,10 +42,7 @@ impl VarStore {
         self.bindings_by_segment.insert(seg_id, bindings);
     }
 
-    pub fn scope_bindings(
-        &self,
-        seg_id: SegmentId,
-    ) -> Option<&HashMap<HashedPyKey, Value>> {
+    pub fn scope_bindings(&self, seg_id: SegmentId) -> Option<&HashMap<HashedPyKey, Value>> {
         self.bindings_by_segment.get(&seg_id)
     }
 
@@ -57,10 +54,7 @@ impl VarStore {
         self.overrides_by_segment.insert(seg_id, overrides);
     }
 
-    pub fn segment_var_overrides(
-        &self,
-        seg_id: SegmentId,
-    ) -> Option<&HashMap<VarId, Value>> {
+    pub fn segment_var_overrides(&self, seg_id: SegmentId) -> Option<&HashMap<VarId, Value>> {
         self.overrides_by_segment.get(&seg_id)
     }
 

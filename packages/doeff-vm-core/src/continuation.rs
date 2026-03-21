@@ -1,22 +1,16 @@
-//! Continuation types for capturing and resuming.
+//! Continuation types for detaching and reattaching fibers.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::OnceLock;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
-use crate::frame::Frame;
-use crate::ids::VarId;
-use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
+use crate::ids::{ContId, DispatchId, FiberId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
 use crate::memory_stats;
-use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::segment::Segment;
-use crate::step::PyException;
-use crate::value::Value;
 
 #[pyclass(name = "K")]
 pub struct PyK {
@@ -36,18 +30,6 @@ impl PyK {
     }
 }
 
-/// Capturable continuation with frozen segment snapshot.
-///
-/// Contains an Arc snapshot of the captured segment state.
-/// Resume materializes this snapshot into a new execution segment.
-///
-/// Continuations can be in two states:
-/// - **captured**: Created from a running segment via `capture()`
-/// - **unstarted**: Created via `create()` with a program and handlers
-///
-/// When resuming:
-/// - Captured continuations: materialize segment_snapshot into a new segment
-/// - Unstarted continuations: start the program with handlers installed
 #[derive(Debug, Clone)]
 struct UnstartedContinuation {
     program: PyShared,
@@ -69,46 +51,66 @@ pub struct Continuation {
     dispatch_id: Option<DispatchId>,
     resume_dispatch_id: Option<DispatchId>,
     dispatch_handler_hint: Option<DispatchHandlerHint>,
-    segment_id: Option<SegmentId>,
-    segment_snapshot: Option<Box<Segment>>,
-    scope_parent_snapshot: Option<SegmentId>,
-    scope_bindings_snapshot: HashMap<HashedPyKey, Value>,
-    var_overrides_snapshot: HashMap<VarId, Value>,
+    fibers: Vec<FiberId>,
+    owns_fibers: bool,
+    captured_caller: Option<SegmentId>,
+    consumed: bool,
     unstarted: Option<UnstartedContinuation>,
-    /// Parent continuation captured during Delegate chaining.
-    parent: Option<Arc<Continuation>>,
+}
+
+pub(crate) fn panic_on_started_continuation_clone_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+
+    *ENABLED.get_or_init(|| std::env::var_os("DOEFF_PANIC_ON_STARTED_CONT_CLONE").is_some())
+}
+
+impl Clone for Continuation {
+    #[track_caller]
+    fn clone(&self) -> Self {
+        if self.is_started() && self.owns_fibers && panic_on_started_continuation_clone_enabled() {
+            panic!(
+                "started continuation clone detected for cont_id {} at {}\n{}",
+                self.cont_id.raw(),
+                std::panic::Location::caller(),
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
+
+        memory_stats::register_continuation();
+        Continuation {
+            cont_id: self.cont_id,
+            dispatch_id: self.dispatch_id,
+            resume_dispatch_id: self.resume_dispatch_id,
+            dispatch_handler_hint: self.dispatch_handler_hint,
+            fibers: self.fibers.clone(),
+            owns_fibers: self.owns_fibers,
+            captured_caller: self.captured_caller,
+            consumed: self.consumed,
+            unstarted: self.unstarted.clone(),
+        }
+    }
 }
 
 impl Continuation {
-    fn captured_segment_snapshot(segment: &Segment) -> Box<Segment> {
-        Box::new(segment.clone())
-    }
-
-    pub fn capture(
-        segment: &Segment,
-        segment_id: SegmentId,
-        dispatch_id: Option<DispatchId>,
-    ) -> Self {
+    pub fn placeholder(cont_id: ContId) -> Self {
         memory_stats::register_continuation();
         Continuation {
-            cont_id: ContId::fresh(),
-            dispatch_id,
+            cont_id,
+            dispatch_id: None,
             resume_dispatch_id: None,
             dispatch_handler_hint: None,
-            segment_id: Some(segment_id),
-            segment_snapshot: Some(Self::captured_segment_snapshot(segment)),
-            scope_parent_snapshot: None,
-            scope_bindings_snapshot: HashMap::new(),
-            var_overrides_snapshot: HashMap::new(),
+            fibers: Vec::new(),
+            owns_fibers: false,
+            captured_caller: None,
+            consumed: false,
             unstarted: None,
-            parent: None,
         }
     }
 
-    pub fn with_id(
+    fn new_captured(
         cont_id: ContId,
-        segment: &Segment,
-        segment_id: SegmentId,
+        fibers: Vec<FiberId>,
+        captured_caller: Option<SegmentId>,
         dispatch_id: Option<DispatchId>,
     ) -> Self {
         memory_stats::register_continuation();
@@ -117,14 +119,47 @@ impl Continuation {
             dispatch_id,
             resume_dispatch_id: None,
             dispatch_handler_hint: None,
-            segment_id: Some(segment_id),
-            segment_snapshot: Some(Self::captured_segment_snapshot(segment)),
-            scope_parent_snapshot: None,
-            scope_bindings_snapshot: HashMap::new(),
-            var_overrides_snapshot: HashMap::new(),
+            fibers,
+            owns_fibers: true,
+            captured_caller,
+            consumed: false,
             unstarted: None,
-            parent: None,
         }
+    }
+
+    pub(crate) fn from_fiber(
+        fiber_id: FiberId,
+        captured_caller: Option<SegmentId>,
+        dispatch_id: Option<DispatchId>,
+    ) -> Self {
+        Self::new_captured(
+            ContId::fresh(),
+            vec![fiber_id],
+            captured_caller,
+            dispatch_id,
+        )
+    }
+
+    pub fn capture(
+        segment: &Segment,
+        segment_id: SegmentId,
+        dispatch_id: Option<DispatchId>,
+    ) -> Self {
+        Self::new_captured(
+            ContId::fresh(),
+            vec![segment_id],
+            segment.parent,
+            dispatch_id,
+        )
+    }
+
+    pub fn with_id(
+        cont_id: ContId,
+        fiber_id: FiberId,
+        captured_caller: Option<SegmentId>,
+        dispatch_id: Option<DispatchId>,
+    ) -> Self {
+        Self::new_captured(cont_id, vec![fiber_id], captured_caller, dispatch_id)
     }
 
     pub fn create_unstarted(expr: PyShared, handlers: Vec<KleisliRef>) -> Self {
@@ -144,11 +179,10 @@ impl Continuation {
             dispatch_id: None,
             resume_dispatch_id: None,
             dispatch_handler_hint: None,
-            segment_id: None,
-            segment_snapshot: None,
-            scope_parent_snapshot: None,
-            scope_bindings_snapshot: HashMap::new(),
-            var_overrides_snapshot: HashMap::new(),
+            fibers: Vec::new(),
+            owns_fibers: true,
+            captured_caller: None,
+            consumed: false,
             unstarted: Some(UnstartedContinuation {
                 program: expr,
                 handlers,
@@ -156,7 +190,6 @@ impl Continuation {
                 metadata,
                 outside_scope,
             }),
-            parent: None,
         }
     }
 
@@ -187,11 +220,10 @@ impl Continuation {
             dispatch_id: None,
             resume_dispatch_id: None,
             dispatch_handler_hint: None,
-            segment_id: None,
-            segment_snapshot: None,
-            scope_parent_snapshot: None,
-            scope_bindings_snapshot: HashMap::new(),
-            var_overrides_snapshot: HashMap::new(),
+            fibers: Vec::new(),
+            owns_fibers: true,
+            captured_caller: None,
+            consumed: false,
             unstarted: Some(UnstartedContinuation {
                 program: expr,
                 handlers,
@@ -199,31 +231,93 @@ impl Continuation {
                 metadata,
                 outside_scope,
             }),
-            parent: None,
         }
     }
 
     pub fn is_started(&self) -> bool {
-        debug_assert_eq!(self.segment_id.is_some(), self.segment_snapshot.is_some());
-        debug_assert_eq!(self.segment_snapshot.is_some(), self.unstarted.is_none());
-        self.segment_snapshot.is_some()
+        !self.fibers.is_empty()
+    }
+
+    pub fn is_placeholder(&self) -> bool {
+        self.fibers.is_empty() && self.unstarted.is_none()
+    }
+
+    pub fn owns_fibers(&self) -> bool {
+        self.owns_fibers
+    }
+
+    pub fn clone_handle(&self) -> Self {
+        memory_stats::register_continuation();
+        Continuation {
+            cont_id: self.cont_id,
+            dispatch_id: self.dispatch_id,
+            resume_dispatch_id: self.resume_dispatch_id,
+            dispatch_handler_hint: self.dispatch_handler_hint,
+            fibers: self.fibers.clone(),
+            owns_fibers: false,
+            captured_caller: self.captured_caller,
+            consumed: self.consumed,
+            unstarted: self.unstarted.clone(),
+        }
+    }
+
+    pub(crate) fn into_owned(mut self) -> Self {
+        self.owns_fibers = true;
+        self
     }
 
     pub fn segment_id(&self) -> Option<SegmentId> {
-        self.segment_id
+        self.fibers.first().copied()
     }
 
-    pub fn segment(&self) -> Option<&Segment> {
-        self.segment_snapshot.as_deref()
+    pub(crate) fn fibers(&self) -> &[FiberId] {
+        &self.fibers
     }
 
-    /// Returns a mutable snapshot view.
-    pub fn segment_mut(&mut self) -> Option<&mut Segment> {
-        self.segment_snapshot.as_deref_mut()
+    pub(crate) fn outermost_fiber_id(&self) -> Option<FiberId> {
+        self.fibers.last().copied()
     }
 
-    pub fn frames(&self) -> Option<&[Frame]> {
-        self.segment().map(|segment| segment.frames.as_slice())
+    pub(crate) fn same_owned_fibers(&self, other: &Continuation) -> bool {
+        self.fibers == other.fibers && self.captured_caller == other.captured_caller
+    }
+
+    pub(crate) fn append_owned_fibers(&mut self, mut other: Continuation) {
+        debug_assert!(
+            self.unstarted.is_none(),
+            "cannot append fibers to unstarted continuation"
+        );
+        debug_assert!(
+            self.owns_fibers,
+            "cannot append fibers to non-owning continuation handle"
+        );
+        debug_assert!(
+            other.unstarted.is_none(),
+            "cannot append unstarted continuation fibers"
+        );
+        debug_assert!(
+            other.owns_fibers,
+            "cannot append non-owning continuation handle fibers"
+        );
+        if !other.fibers.is_empty() {
+            self.fibers.append(&mut other.fibers);
+        }
+        self.captured_caller = other.captured_caller.or(self.captured_caller);
+    }
+
+    pub(crate) fn tail_owned_fibers(&self) -> Option<Self> {
+        if self.fibers.len() <= 1 {
+            return None;
+        }
+        let mut tail = Self::new_captured(
+            ContId::fresh(),
+            self.fibers[1..].to_vec(),
+            self.captured_caller,
+            self.dispatch_id,
+        );
+        tail.resume_dispatch_id = self.resume_dispatch_id;
+        tail.dispatch_handler_hint = self.dispatch_handler_hint;
+        Some(tail)
     }
 
     pub fn dispatch_id(&self) -> Option<DispatchId> {
@@ -246,15 +340,20 @@ impl Continuation {
         self.dispatch_handler_hint = hint;
     }
 
-    // Plain Resume/Transfer restore the capture-time caller from the segment snapshot.
-    // Dispatch Resume is the explicit override that re-enters the active handler segment.
     pub fn captured_caller(&self) -> Option<SegmentId> {
-        self.segment().and_then(|segment| segment.parent)
+        self.captured_caller
     }
 
-    pub fn pending_error_context(&self) -> Option<&PyException> {
-        self.segment()
-            .and_then(|segment| segment.pending_error_context.as_ref())
+    pub(crate) fn set_captured_caller(&mut self, captured_caller: Option<SegmentId>) {
+        self.captured_caller = captured_caller;
+    }
+
+    pub(crate) fn consumed(&self) -> bool {
+        self.consumed
+    }
+
+    pub(crate) fn mark_consumed(&mut self) {
+        self.consumed = true;
     }
 
     pub fn program(&self) -> Option<&PyShared> {
@@ -285,137 +384,28 @@ impl Continuation {
             .and_then(|unstarted| unstarted.outside_scope)
     }
 
-    pub fn parent(&self) -> Option<&Continuation> {
-        self.parent.as_deref()
-    }
-
-    pub(crate) fn scope_parent_snapshot(&self) -> Option<SegmentId> {
-        self.scope_parent_snapshot
-    }
-
-    pub(crate) fn scope_bindings_snapshot(&self) -> &HashMap<HashedPyKey, Value> {
-        &self.scope_bindings_snapshot
-    }
-
-    pub(crate) fn var_overrides_snapshot(&self) -> &HashMap<VarId, Value> {
-        &self.var_overrides_snapshot
-    }
-
-    pub(crate) fn set_scope_snapshot(
-        &mut self,
-        scope_parent: Option<SegmentId>,
-        scope_bindings: HashMap<HashedPyKey, Value>,
-        var_overrides: HashMap<VarId, Value>,
-    ) {
-        self.scope_parent_snapshot = scope_parent;
-        self.scope_bindings_snapshot = scope_bindings;
-        self.var_overrides_snapshot = var_overrides;
-    }
-
-    pub(crate) fn set_parent(&mut self, parent: Option<Arc<Continuation>>) {
-        self.parent = parent;
-    }
-
     pub(crate) fn clone_for_dispatch(&self, dispatch_id: Option<DispatchId>) -> Self {
-        let mut cloned = self.clone();
-        cloned.cont_id = ContId::fresh();
-        cloned.dispatch_id = dispatch_id;
-        cloned
-    }
-
-    pub(crate) fn refresh_persistent_segment_state(
-        &mut self,
-        scope_state_store: &std::collections::HashMap<
-            ScopeId,
-            std::collections::HashMap<String, Value>,
-        >,
-        scope_writer_logs: &std::collections::HashMap<ScopeId, Vec<Value>>,
-        scope_persistent_epochs: &std::collections::HashMap<ScopeId, u64>,
-    ) {
-        let mut visited = HashSet::new();
-        self.refresh_persistent_segment_state_inner(
-            scope_state_store,
-            scope_writer_logs,
-            scope_persistent_epochs,
-            &mut visited,
-        );
-    }
-
-    fn refresh_persistent_segment_state_inner(
-        &mut self,
-        scope_state_store: &std::collections::HashMap<
-            ScopeId,
-            std::collections::HashMap<String, Value>,
-        >,
-        scope_writer_logs: &std::collections::HashMap<ScopeId, Vec<Value>>,
-        scope_persistent_epochs: &std::collections::HashMap<ScopeId, u64>,
-        visited: &mut HashSet<ContId>,
-    ) {
-        if !visited.insert(self.cont_id) {
-            return;
-        }
-
-        if let Some(snapshot) = self.segment_mut() {
-            let current_epoch = scope_persistent_epochs
-                .get(&snapshot.scope_id)
-                .copied()
-                .unwrap_or(snapshot.persistent_epoch);
-            if snapshot.persistent_epoch < current_epoch {
-                snapshot.state_store = scope_state_store
-                    .get(&snapshot.scope_id)
-                    .cloned()
-                    .expect("scope state must exist when epoch is present");
-                snapshot.writer_log = scope_writer_logs
-                    .get(&snapshot.scope_id)
-                    .cloned()
-                    .expect("scope logs must exist when epoch is present");
-                snapshot.persistent_epoch = current_epoch;
-            }
-
-            for frame in &mut snapshot.frames {
-                match frame {
-                    Frame::EvalReturn(eval_return) => match eval_return.as_mut() {
-                        crate::frame::EvalReturnContinuation::ResumeToContinuation {
-                            continuation,
-                        }
-                        | crate::frame::EvalReturnContinuation::EvalInScopeReturn {
-                            continuation,
-                        }
-                        | crate::frame::EvalReturnContinuation::ReturnToContinuation {
-                            continuation,
-                        } => {
-                            continuation.refresh_persistent_segment_state_inner(
-                                scope_state_store,
-                                scope_writer_logs,
-                                scope_persistent_epochs,
-                                visited,
-                            );
-                        }
-                        _ => {}
-                    },
-                    Frame::Program { .. }
-                    | Frame::InterceptorApply(_)
-                    | Frame::InterceptorEval(_)
-                    | Frame::MapReturn { .. }
-                    | Frame::FlatMapBindResult
-                    | Frame::FlatMapBindSource { .. }
-                    | Frame::InterceptBodyReturn { .. } => {}
-                }
-            }
-        }
-
-        if let Some(parent) = self.parent.as_mut() {
-            Arc::make_mut(parent).refresh_persistent_segment_state_inner(
-                scope_state_store,
-                scope_writer_logs,
-                scope_persistent_epochs,
-                visited,
-            );
+        // Dispatch forwarding sometimes needs a fresh one-shot token for the
+        // same detached fiber chain while the original continuation survives
+        // under its existing `cont_id`. This is safe because the fork is only
+        // used for dispatch bookkeeping; user-visible one-shot consumption is
+        // still keyed by the fresh `cont_id` on the forwarded branch.
+        memory_stats::register_continuation();
+        Continuation {
+            cont_id: ContId::fresh(),
+            dispatch_id,
+            resume_dispatch_id: self.resume_dispatch_id,
+            dispatch_handler_hint: self.dispatch_handler_hint,
+            fibers: self.fibers.clone(),
+            owns_fibers: true,
+            captured_caller: self.captured_caller,
+            consumed: self.consumed,
+            unstarted: self.unstarted.clone(),
         }
     }
 
     pub(crate) fn into_unstarted_parts(
-        mut self,
+        self,
     ) -> Option<(
         PyShared,
         Vec<KleisliRef>,
@@ -423,7 +413,7 @@ impl Continuation {
         Option<CallMetadata>,
         Option<SegmentId>,
     )> {
-        self.unstarted.take().map(
+        self.unstarted.clone().map(
             |UnstartedContinuation {
                  program,
                  handlers,
@@ -469,25 +459,6 @@ impl Continuation {
     }
 }
 
-impl Clone for Continuation {
-    fn clone(&self) -> Self {
-        memory_stats::register_continuation();
-        Continuation {
-            cont_id: self.cont_id,
-            dispatch_id: self.dispatch_id,
-            resume_dispatch_id: self.resume_dispatch_id,
-            dispatch_handler_hint: self.dispatch_handler_hint,
-            segment_id: self.segment_id,
-            segment_snapshot: self.segment_snapshot.clone(),
-            scope_parent_snapshot: self.scope_parent_snapshot,
-            scope_bindings_snapshot: self.scope_bindings_snapshot.clone(),
-            var_overrides_snapshot: self.var_overrides_snapshot.clone(),
-            unstarted: self.unstarted.clone(),
-            parent: self.parent.clone(),
-        }
-    }
-}
-
 impl Drop for Continuation {
     fn drop(&mut self) {
         memory_stats::unregister_continuation();
@@ -497,19 +468,23 @@ impl Drop for Continuation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::do_ctrl::{DoCtrl, InterceptMode};
+    use std::sync::Arc;
+
+    use crate::do_ctrl::DoCtrl;
     use crate::error::VMError;
-    use crate::ids::Marker;
+    use crate::ids::{Marker, SegmentId};
     use crate::kleisli::{Kleisli, KleisliDebugInfo};
     use crate::memory_stats::live_object_counts;
-    use crate::segment::SegmentKind;
-    use crate::value::Value;
 
     #[derive(Debug)]
     struct DummyKleisli;
 
     impl Kleisli for DummyKleisli {
-        fn apply(&self, _py: Python<'_>, _args: Vec<Value>) -> Result<DoCtrl, VMError> {
+        fn apply(
+            &self,
+            _py: Python<'_>,
+            _args: Vec<crate::value::Value>,
+        ) -> Result<DoCtrl, VMError> {
             unreachable!("test dummy should never be invoked")
         }
 
@@ -530,23 +505,16 @@ mod tests {
     }
 
     #[test]
-    fn test_continuation_capture() {
+    fn test_continuation_capture_records_existing_fiber_id() {
         let (seg, seg_id) = make_test_segment();
         let cont = Continuation::capture(&seg, seg_id, None);
 
         assert_eq!(cont.segment_id(), Some(seg_id));
+        assert_eq!(cont.fibers(), &[seg_id]);
         assert_eq!(cont.captured_caller(), seg.parent);
-        assert!(cont.dispatch_id().is_none());
-        assert_eq!(
-            cont.segment().map(|segment| segment.marker),
-            Some(seg.marker)
-        );
-        assert!(cont.frames().is_some_and(|frames| frames.is_empty()));
         assert!(cont.is_started());
-        assert!(cont.program().is_none());
-        assert!(cont.handlers().is_none());
-        assert!(cont.handler_identities().is_none());
-        assert!(cont.parent().is_none());
+        assert!(cont.owns_fibers());
+        assert!(!cont.consumed());
     }
 
     #[test]
@@ -558,14 +526,14 @@ mod tests {
     }
 
     #[test]
-    fn test_unstarted_continuation_has_no_segment_snapshot() {
+    fn test_unstarted_continuation_has_no_captured_fibers() {
         Python::attach(|py| {
             let baseline = live_object_counts().live_continuations;
             let cont = Continuation::create_unstarted(PyShared::new(py.None()), Vec::new());
             assert!(!cont.is_started());
             assert!(cont.segment_id().is_none());
-            assert!(cont.segment().is_none());
-            assert!(cont.frames().is_none());
+            assert!(cont.fibers().is_empty());
+            assert!(cont.program().is_some());
             assert_eq!(live_object_counts().live_continuations, baseline + 1);
             drop(cont);
             assert_eq!(live_object_counts().live_continuations, baseline);
@@ -573,87 +541,70 @@ mod tests {
     }
 
     #[test]
-    fn test_continuation_snapshot_is_independent() {
-        let marker = Marker::fresh();
-        let mut seg = Segment::new(marker, None);
-        let seg_id = SegmentId::from_index(0);
-
-        seg.push_frame(Frame::FlatMapBindResult);
-
+    fn test_clone_for_dispatch_keeps_same_fiber_id_but_fresh_cont_id() {
+        let (seg, seg_id) = make_test_segment();
         let cont = Continuation::capture(&seg, seg_id, None);
-        assert_eq!(cont.frames().map(|frames| frames.len()), Some(1));
+        let cloned = cont.clone_for_dispatch(Some(DispatchId::fresh()));
 
-        seg.push_frame(Frame::FlatMapBindResult);
-        assert_eq!(cont.frames().map(|frames| frames.len()), Some(1));
-        assert_eq!(seg.frame_count(), 2);
+        assert_eq!(cloned.segment_id(), Some(seg_id));
+        assert_eq!(cloned.fibers(), &[seg_id]);
+        assert_ne!(cloned.cont_id, cont.cont_id);
+        assert!(cloned.dispatch_id().is_some());
+        assert!(cloned.owns_fibers());
     }
 
     #[test]
-    fn test_continuation_preserves_interceptor_boundary_snapshot_on_resume() {
-        let marker = Marker::fresh();
-        let seg_id = SegmentId::from_index(0);
-        let interceptor = Arc::new(DummyKleisli) as KleisliRef;
-        let mut seg = Segment::new(marker, None);
-        seg.kind = SegmentKind::InterceptorBoundary {
-            interceptor,
-            types: None,
-            mode: InterceptMode::Include,
-            metadata: None,
-        };
-
+    fn test_clone_handle_keeps_fiber_ids_without_ownership() {
+        let (seg, seg_id) = make_test_segment();
         let cont = Continuation::capture(&seg, seg_id, None);
-        let captured_kind = cont
-            .segment()
-            .expect("captured continuation should have a segment snapshot")
-            .kind
-            .clone();
-        assert!(matches!(
-            captured_kind,
-            SegmentKind::InterceptorBoundary {
-                mode: InterceptMode::Include,
-                ..
-            }
-        ));
+        let handle = cont.clone_handle();
 
-        let resumed_seg = cont
-            .segment()
-            .expect("captured continuation should have a segment snapshot")
-            .clone();
-        assert!(matches!(
-            resumed_seg.kind,
-            SegmentKind::InterceptorBoundary {
-                mode: InterceptMode::Include,
-                ..
-            }
-        ));
+        assert_eq!(handle.cont_id, cont.cont_id);
+        assert_eq!(handle.fibers(), &[seg_id]);
+        assert!(!handle.owns_fibers());
     }
 
     #[test]
-    fn test_refresh_persistent_segment_state_updates_stale_snapshot() {
-        let (mut seg, seg_id) = make_test_segment();
-        seg.state_store.insert("count".to_string(), Value::Int(1));
-        seg.writer_log.push(Value::Int(10));
-        seg.persistent_epoch = 1;
-
-        let mut cont = Continuation::capture(&seg, seg_id, None);
-        let scope_id = seg.scope_id;
-        let scope_state_store = std::collections::HashMap::from([(
-            scope_id,
-            std::collections::HashMap::from([("count".to_string(), Value::Int(2))]),
-        )]);
-        let scope_writer_logs = std::collections::HashMap::from([(scope_id, vec![Value::Int(20)])]);
-        let scope_persistent_epochs = std::collections::HashMap::from([(scope_id, 2)]);
-
-        cont.refresh_persistent_segment_state(
-            &scope_state_store,
-            &scope_writer_logs,
-            &scope_persistent_epochs,
+    fn test_same_owned_fibers_compares_entire_fiber_chain() {
+        let cont = Continuation::with_id(
+            ContId::fresh(),
+            SegmentId::from_index(0),
+            Some(SegmentId::from_index(2)),
+            None,
         );
+        let mut extended = Continuation::with_id(
+            ContId::fresh(),
+            SegmentId::from_index(0),
+            Some(SegmentId::from_index(2)),
+            None,
+        );
+        extended.append_owned_fibers(Continuation::with_id(
+            ContId::fresh(),
+            SegmentId::from_index(1),
+            Some(SegmentId::from_index(2)),
+            None,
+        ));
 
-        let snapshot = cont.segment().expect("continuation snapshot must exist");
-        assert_eq!(snapshot.state_store.get("count"), Some(&Value::Int(2)));
-        assert_eq!(snapshot.writer_log, vec![Value::Int(20)]);
-        assert_eq!(snapshot.persistent_epoch, 2);
+        assert!(!cont.same_owned_fibers(&extended));
+        assert!(!extended.same_owned_fibers(&cont));
+    }
+
+    #[test]
+    fn test_create_unstarted_with_identities_keeps_handler_metadata() {
+        Python::attach(|py| {
+            let program = PyShared::new(py.None());
+            let handlers = vec![Arc::new(DummyKleisli) as KleisliRef];
+            let identities = vec![Some(PyShared::new(py.None()))];
+            let cont =
+                Continuation::create_unstarted_with_identities(program, handlers, identities);
+
+            assert!(cont.program().is_some());
+            assert_eq!(cont.handlers().map(|handlers| handlers.len()), Some(1));
+            assert_eq!(
+                cont.handler_identities().map(|identities| identities.len()),
+                Some(1)
+            );
+        });
     }
 
     #[test]

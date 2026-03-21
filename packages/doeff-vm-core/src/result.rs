@@ -96,6 +96,12 @@ impl PyResultErr {
 
     fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>, Py<PyAny>))> {
         let cls = py.get_type::<Self>().into_any().unbind();
-        Ok((cls, (self.error.clone_ref(py), self.captured_traceback.clone_ref(py))))
+        Ok((
+            cls,
+            (
+                self.error.clone_ref(py),
+                self.captured_traceback.clone_ref(py),
+            ),
+        ))
     }
 }

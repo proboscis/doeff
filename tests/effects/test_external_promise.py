@@ -80,9 +80,11 @@ class TestExternalPromiseCompletion:
                 time.sleep(0.01)  # Simulate work
                 promise.complete(42)
 
-            threading.Thread(target=worker).start()
+            thread = threading.Thread(target=worker)
+            thread.start()
 
             result = yield Wait(promise.future)
+            thread.join()
             return result
 
         result = run(program(), handlers=default_handlers())
@@ -100,9 +102,11 @@ class TestExternalPromiseCompletion:
                 time.sleep(0.01)
                 promise.fail(ValueError("external error"))
 
-            threading.Thread(target=worker).start()
+            thread = threading.Thread(target=worker)
+            thread.start()
 
             result = yield Wait(promise.future)
+            thread.join()
             return result
 
         result = run(program(), handlers=default_handlers())
@@ -120,9 +124,11 @@ class TestExternalPromiseCompletion:
             def worker():
                 promise.complete(None)
 
-            threading.Thread(target=worker).start()
+            thread = threading.Thread(target=worker)
+            thread.start()
 
             result = yield Wait(promise.future)
+            thread.join()
             return result
 
         result = run(program(), handlers=default_handlers())
@@ -145,9 +151,11 @@ class TestExternalPromiseWithAsyncRun:
                 time.sleep(0.01)
                 promise.complete("async result")
 
-            threading.Thread(target=worker).start()
+            thread = threading.Thread(target=worker)
+            thread.start()
 
             result = yield Wait(promise.future)
+            thread.join()
             return result
 
         result = await async_run(program(), handlers=default_handlers())
@@ -174,11 +182,15 @@ class TestExternalPromiseMultiple:
                 time.sleep(0.02)
                 promise2.complete("second")
 
-            threading.Thread(target=worker1).start()
-            threading.Thread(target=worker2).start()
+            thread1 = threading.Thread(target=worker1)
+            thread2 = threading.Thread(target=worker2)
+            thread1.start()
+            thread2.start()
 
             result1 = yield Wait(promise1.future)
             result2 = yield Wait(promise2.future)
+            thread1.join()
+            thread2.join()
             return (result1, result2)
 
         result = run(program(), handlers=default_handlers())
@@ -199,9 +211,11 @@ class TestExternalPromiseMultiple:
                 time.sleep(0.01)
                 promise2.complete("two")
 
-            threading.Thread(target=worker).start()
+            thread = threading.Thread(target=worker)
+            thread.start()
 
             results = yield gather(promise1.future, promise2.future)
+            thread.join()
             return tuple(results)
 
         result = _run_with_timeout(program, timeout=1.0)
@@ -236,8 +250,10 @@ class TestExternalPromiseRunIsolation:
                 time.sleep(0.01)
                 promise.complete(expected)
 
-            threading.Thread(target=worker).start()
+            thread = threading.Thread(target=worker)
+            thread.start()
             value = yield Wait(promise.future)
+            thread.join()
             return value
 
         first = _run_with_timeout(lambda: external_program("first"), timeout=1.0)

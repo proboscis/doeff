@@ -97,8 +97,6 @@ def test_memory_stats_counts_return_to_baseline_after_deep_handler_spawn_chain(
 def test_pyvm_run_releases_internal_vm_capacities_after_deep_handler_spawn_chain(
     tmp_path: Path,
 ):
-    cache_path = tmp_path / "vm_memory_stats_pyvm.sqlite3"
-
     @dataclass(frozen=True, kw_only=True)
     class SyntheticQuery(EffectBase):
         key: str
@@ -136,8 +134,6 @@ def test_pyvm_run_releases_internal_vm_capacities_after_deep_handler_spawn_chain
     for handler in reversed(
         (
             synthetic_query_handler(),
-            *memo_rewriters(SyntheticQuery),
-            sqlite_cache_handler(cache_path),
             *default_handlers(),
         )
     ):

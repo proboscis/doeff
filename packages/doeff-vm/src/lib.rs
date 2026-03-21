@@ -95,8 +95,7 @@ pub use error::VMError;
 pub use frame::Frame;
 pub use handler::*;
 pub use ids::{
-    ContId, DispatchId, FiberId, Marker, PromiseId, RunnableId, ScopeId, SegmentId, TaskId,
-    VarId,
+    ContId, DispatchId, FiberId, Marker, PromiseId, RunnableId, ScopeId, SegmentId, TaskId, VarId,
 };
 pub use ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream, StreamLocation};
 pub use kleisli::{Kleisli, KleisliDebugInfo, KleisliRef, PyKleisli, RustKleisli};
