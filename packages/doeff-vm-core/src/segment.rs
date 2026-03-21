@@ -8,6 +8,7 @@ use crate::frame::CallMetadata;
 use crate::frame::Frame;
 use crate::ids::{FiberId, Marker, ScopeId};
 use crate::kleisli::KleisliRef;
+use crate::memory_stats;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::step::PyException;
@@ -40,7 +41,7 @@ pub struct ScopeStore {
     pub scope_bindings: Vec<Arc<HashMap<HashedPyKey, Value>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Fiber {
     pub scope_id: ScopeId,
     pub persistent_epoch: u64,
@@ -58,6 +59,7 @@ pub struct Fiber {
 
 impl Fiber {
     pub fn new(marker: Marker, parent: Option<FiberId>) -> Self {
+        memory_stats::register_segment();
         Fiber {
             scope_id: ScopeId::fresh(),
             persistent_epoch: 0,
@@ -80,6 +82,7 @@ impl Fiber {
         handled_marker: Marker,
         handler: KleisliRef,
     ) -> Self {
+        memory_stats::register_segment();
         Fiber {
             scope_id: ScopeId::fresh(),
             persistent_epoch: 0,
@@ -107,6 +110,7 @@ impl Fiber {
         handler: KleisliRef,
         types: Option<Vec<PyShared>>,
     ) -> Self {
+        memory_stats::register_segment();
         Fiber {
             scope_id: ScopeId::fresh(),
             persistent_epoch: 0,
@@ -157,12 +161,39 @@ impl Fiber {
     }
 }
 
+impl Clone for Fiber {
+    fn clone(&self) -> Self {
+        memory_stats::register_segment();
+        Fiber {
+            scope_id: self.scope_id,
+            persistent_epoch: self.persistent_epoch,
+            marker: self.marker,
+            frames: self.frames.clone(),
+            parent: self.parent,
+            state_store: self.state_store.clone(),
+            writer_log: self.writer_log.clone(),
+            kind: self.kind.clone(),
+            pending_error_context: self.pending_error_context.clone(),
+            throw_parent: self.throw_parent.clone(),
+            interceptor_eval_depth: self.interceptor_eval_depth,
+            interceptor_skip_stack: self.interceptor_skip_stack.clone(),
+        }
+    }
+}
+
+impl Drop for Fiber {
+    fn drop(&mut self) {
+        memory_stats::unregister_segment();
+    }
+}
+
 pub type Segment = Fiber;
 pub type SegmentKind = FiberKind;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory_stats::live_object_counts;
     use pyo3::Python;
 
     use crate::do_ctrl::DoCtrl;
@@ -223,5 +254,21 @@ mod tests {
 
         assert!(!seg.has_frames());
         assert!(seg.pop_frame().is_none());
+    }
+
+    #[test]
+    fn test_segment_live_count_tracks_clones() {
+        let baseline = live_object_counts().live_segments;
+        let seg = Fiber::new(Marker::fresh(), None);
+        assert_eq!(live_object_counts().live_segments, baseline + 1);
+
+        let seg_clone = seg.clone();
+        assert_eq!(live_object_counts().live_segments, baseline + 2);
+
+        drop(seg_clone);
+        assert_eq!(live_object_counts().live_segments, baseline + 1);
+
+        drop(seg);
+        assert_eq!(live_object_counts().live_segments, baseline);
     }
 }

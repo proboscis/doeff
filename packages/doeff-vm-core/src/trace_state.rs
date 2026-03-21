@@ -75,6 +75,22 @@ impl Default for TraceState {
 }
 
 impl TraceState {
+    pub(crate) fn frame_stack_len(&self) -> usize {
+        self.frame_stack.len()
+    }
+
+    pub(crate) fn dispatch_display_count(&self) -> usize {
+        self.dispatch_displays.len()
+    }
+
+    pub(crate) fn frame_stack_capacity(&self) -> usize {
+        self.frame_stack.capacity()
+    }
+
+    pub(crate) fn dispatch_display_capacity(&self) -> usize {
+        self.dispatch_displays.capacity()
+    }
+
     pub(crate) fn dispatch_has_terminal_result(&self, dispatch_id: DispatchId) -> bool {
         self.dispatch_display(dispatch_id)
             .is_some_and(Self::dispatch_result_prevents_throw_overwrite)
@@ -82,6 +98,11 @@ impl TraceState {
 
     pub(crate) fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.frame_stack.shrink_to_fit();
+        self.dispatch_displays.shrink_to_fit();
     }
 
     pub(crate) fn finish_dispatch(&mut self, dispatch_id: DispatchId) {

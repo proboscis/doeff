@@ -8,14 +8,15 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
+use crate::ids::VarId;
 use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
 use crate::kleisli::KleisliRef;
+use crate::memory_stats;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
 use crate::segment::Segment;
 use crate::step::PyException;
 use crate::value::Value;
-use crate::ids::VarId;
 
 #[pyclass(name = "K")]
 pub struct PyK {
@@ -62,7 +63,7 @@ pub(crate) struct DispatchHandlerHint {
     pub(crate) prompt_seg_id: SegmentId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Continuation {
     pub cont_id: ContId,
     dispatch_id: Option<DispatchId>,
@@ -80,20 +81,7 @@ pub struct Continuation {
 
 impl Continuation {
     fn captured_segment_snapshot(segment: &Segment) -> Box<Segment> {
-        Box::new(Segment {
-            scope_id: segment.scope_id,
-            persistent_epoch: segment.persistent_epoch,
-            marker: segment.marker,
-            frames: segment.frames.clone(),
-            parent: segment.parent,
-            state_store: segment.state_store.clone(),
-            writer_log: segment.writer_log.clone(),
-            kind: segment.kind.clone(),
-            pending_error_context: segment.pending_error_context.clone(),
-            throw_parent: segment.throw_parent.clone(),
-            interceptor_eval_depth: segment.interceptor_eval_depth,
-            interceptor_skip_stack: segment.interceptor_skip_stack.clone(),
-        })
+        Box::new(segment.clone())
     }
 
     pub fn capture(
@@ -101,6 +89,7 @@ impl Continuation {
         segment_id: SegmentId,
         dispatch_id: Option<DispatchId>,
     ) -> Self {
+        memory_stats::register_continuation();
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id,
@@ -122,6 +111,7 @@ impl Continuation {
         segment_id: SegmentId,
         dispatch_id: Option<DispatchId>,
     ) -> Self {
+        memory_stats::register_continuation();
         Continuation {
             cont_id,
             dispatch_id,
@@ -148,6 +138,7 @@ impl Continuation {
         outside_scope: Option<SegmentId>,
     ) -> Self {
         let handler_count = handlers.len();
+        memory_stats::register_continuation();
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id: None,
@@ -190,6 +181,7 @@ impl Continuation {
         metadata: Option<CallMetadata>,
         outside_scope: Option<SegmentId>,
     ) -> Self {
+        memory_stats::register_continuation();
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id: None,
@@ -325,19 +317,10 @@ impl Continuation {
     }
 
     pub(crate) fn clone_for_dispatch(&self, dispatch_id: Option<DispatchId>) -> Self {
-        Continuation {
-            cont_id: ContId::fresh(),
-            dispatch_id,
-            resume_dispatch_id: self.resume_dispatch_id,
-            dispatch_handler_hint: self.dispatch_handler_hint,
-            segment_id: self.segment_id,
-            segment_snapshot: self.segment_snapshot.clone(),
-            scope_parent_snapshot: self.scope_parent_snapshot,
-            scope_bindings_snapshot: self.scope_bindings_snapshot.clone(),
-            var_overrides_snapshot: self.var_overrides_snapshot.clone(),
-            unstarted: self.unstarted.clone(),
-            parent: self.parent.clone(),
-        }
+        let mut cloned = self.clone();
+        cloned.cont_id = ContId::fresh();
+        cloned.dispatch_id = dispatch_id;
+        cloned
     }
 
     pub(crate) fn refresh_persistent_segment_state(
@@ -432,7 +415,7 @@ impl Continuation {
     }
 
     pub(crate) fn into_unstarted_parts(
-        self,
+        mut self,
     ) -> Option<(
         PyShared,
         Vec<KleisliRef>,
@@ -440,7 +423,7 @@ impl Continuation {
         Option<CallMetadata>,
         Option<SegmentId>,
     )> {
-        self.unstarted.map(
+        self.unstarted.take().map(
             |UnstartedContinuation {
                  program,
                  handlers,
@@ -486,6 +469,31 @@ impl Continuation {
     }
 }
 
+impl Clone for Continuation {
+    fn clone(&self) -> Self {
+        memory_stats::register_continuation();
+        Continuation {
+            cont_id: self.cont_id,
+            dispatch_id: self.dispatch_id,
+            resume_dispatch_id: self.resume_dispatch_id,
+            dispatch_handler_hint: self.dispatch_handler_hint,
+            segment_id: self.segment_id,
+            segment_snapshot: self.segment_snapshot.clone(),
+            scope_parent_snapshot: self.scope_parent_snapshot,
+            scope_bindings_snapshot: self.scope_bindings_snapshot.clone(),
+            var_overrides_snapshot: self.var_overrides_snapshot.clone(),
+            unstarted: self.unstarted.clone(),
+            parent: self.parent.clone(),
+        }
+    }
+}
+
+impl Drop for Continuation {
+    fn drop(&mut self) {
+        memory_stats::unregister_continuation();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,6 +501,7 @@ mod tests {
     use crate::error::VMError;
     use crate::ids::Marker;
     use crate::kleisli::{Kleisli, KleisliDebugInfo};
+    use crate::memory_stats::live_object_counts;
     use crate::segment::SegmentKind;
     use crate::value::Value;
 
@@ -551,11 +560,15 @@ mod tests {
     #[test]
     fn test_unstarted_continuation_has_no_segment_snapshot() {
         Python::attach(|py| {
+            let baseline = live_object_counts().live_continuations;
             let cont = Continuation::create_unstarted(PyShared::new(py.None()), Vec::new());
             assert!(!cont.is_started());
             assert!(cont.segment_id().is_none());
             assert!(cont.segment().is_none());
             assert!(cont.frames().is_none());
+            assert_eq!(live_object_counts().live_continuations, baseline + 1);
+            drop(cont);
+            assert_eq!(live_object_counts().live_continuations, baseline);
         });
     }
 
@@ -641,5 +654,22 @@ mod tests {
         assert_eq!(snapshot.state_store.get("count"), Some(&Value::Int(2)));
         assert_eq!(snapshot.writer_log, vec![Value::Int(20)]);
         assert_eq!(snapshot.persistent_epoch, 2);
+    }
+
+    #[test]
+    fn test_continuation_live_count_tracks_clone_lifetime() {
+        let baseline = live_object_counts().live_continuations;
+        let (seg, seg_id) = make_test_segment();
+        let cont = Continuation::capture(&seg, seg_id, None);
+        assert_eq!(live_object_counts().live_continuations, baseline + 1);
+
+        let cont_clone = cont.clone();
+        assert_eq!(live_object_counts().live_continuations, baseline + 2);
+
+        drop(cont_clone);
+        assert_eq!(live_object_counts().live_continuations, baseline + 1);
+
+        drop(cont);
+        assert_eq!(live_object_counts().live_continuations, baseline);
     }
 }
