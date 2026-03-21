@@ -288,8 +288,60 @@ class WGraph:
 FrozenDict = frozendict
 
 
+class Result(Generic[T_co]):
+    """Legacy Result base kept for older imports and persisted annotations."""
+
+    __slots__ = ()
+
+    def is_ok(self) -> bool:
+        return isinstance(self, Ok)
+
+    def is_err(self) -> bool:
+        return isinstance(self, Err)
+
+    def ok(self) -> T_co | None:
+        if isinstance(self, Ok):
+            return self.value
+        return None
+
+    def err(self) -> Any | None:
+        if isinstance(self, Err):
+            return self.error
+        return None
+
+    def expect(self, message: str) -> T_co:
+        if isinstance(self, Ok):
+            return self.value
+        if message:
+            raise RuntimeError(f"{message}: {self.error}") from self.error
+        raise self.error
+
+    def unwrap(self) -> T_co:
+        if isinstance(self, Ok):
+            return self.value
+        raise self.error
+
+    def unwrap_err(self) -> Any:
+        if isinstance(self, Err):
+            return self.error
+        raise RuntimeError("Called unwrap_err on Ok value")
+
+    def map(self, func: Callable[[T_co], U]) -> "Result[U]":
+        if isinstance(self, Ok):
+            return Ok(func(self.value))
+        return self
+
+    def map_err(self, func: Callable[[Any], Any]) -> "Result[T_co]":
+        if isinstance(self, Err):
+            return Err(func(self.error))
+        return self
+
+    def __bool__(self) -> bool:
+        return self.is_ok()
+
+
 @dataclass(frozen=True)
-class Ok(Generic[T_co]):
+class Ok(Result[T_co], Generic[T_co]):
     """Legacy Result shim kept for persisted pickles created before the Rust move."""
 
     value: T_co
@@ -305,7 +357,7 @@ class Ok(Generic[T_co]):
 
 
 @dataclass(frozen=True)
-class Err:
+class Err(Result[NoReturn]):
     """Legacy error shim kept for persisted pickles created before the Rust move."""
 
     error: Any
@@ -327,6 +379,7 @@ __all__ = [
     "Maybe",
     "Nothing",
     "Ok",
+    "Result",
     "Some",
     "TraceError",
     "WGraph",
