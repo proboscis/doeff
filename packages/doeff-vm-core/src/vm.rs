@@ -560,17 +560,22 @@ impl VM {
         let mut cursor = parent;
         let mut seen = HashSet::new();
         while let Some(seg_id) = cursor {
-            if self.segments.get(seg_id).is_some() {
-                return Some(seg_id);
-            }
             if !seen.insert(seg_id) {
                 return None;
             }
-            cursor = self
+            if let Some(next) = self
                 .segment_parent_redirects
                 .get(&seg_id)
                 .copied()
-                .flatten();
+                .flatten()
+            {
+                cursor = Some(next);
+                continue;
+            }
+            if self.segments.get(seg_id).is_some() {
+                return Some(seg_id);
+            }
+            cursor = None;
         }
         None
     }
@@ -582,6 +587,9 @@ impl VM {
         new_scope_parent: Option<SegmentId>,
     ) -> usize {
         let mut rewired = self.segments.reparent_children(old_parent, new_parent);
+        if rewired > 0 {
+            self.segment_parent_redirects.insert(old_parent, new_parent);
+        }
         for scope_parent in self.scope_parents.values_mut() {
             if *scope_parent == Some(old_parent) {
                 *scope_parent = new_scope_parent;
@@ -716,25 +724,19 @@ impl VM {
 
         let mut state = HashMap::new();
         let mut logs = Vec::new();
+        let mut seen_state_segments = HashSet::new();
+        let mut seen_log_segments = HashSet::new();
         for seg_id in chain {
-            let Some(seg) = self.segments.get(seg_id) else {
-                continue;
-            };
-            let shared_state = self
-                .scope_state_store
-                .get(&seg.scope_id)
-                .cloned()
-                .unwrap_or_else(|| seg.state_store.clone());
-            if !shared_state.is_empty() {
-                state.extend(shared_state);
+            if let Some((state_seg_id, shared_state)) = self.state_output_entries(seg_id) {
+                if seen_state_segments.insert(state_seg_id) && !shared_state.is_empty() {
+                    state.extend(shared_state);
+                }
             }
-            let shared_logs = self
-                .scope_writer_logs
-                .get(&seg.scope_id)
-                .cloned()
-                .unwrap_or_else(|| seg.writer_log.clone());
-            if !shared_logs.is_empty() {
-                logs.extend(shared_logs);
+
+            if let Some((log_seg_id, shared_logs)) = self.log_output_entries(seg_id) {
+                if seen_log_segments.insert(log_seg_id) && !shared_logs.is_empty() {
+                    logs.extend(shared_logs);
+                }
             }
         }
 
@@ -743,8 +745,12 @@ impl VM {
 
     pub(crate) fn store_completed_outputs_from(&mut self, start_seg_id: SegmentId) {
         let (state, logs) = self.collect_outputs_from_chain(start_seg_id);
-        self.completed_state_entries_snapshot = Some(state);
-        self.completed_log_entries_snapshot = Some(logs);
+        if !state.is_empty() || self.completed_state_entries_snapshot.is_none() {
+            self.completed_state_entries_snapshot = Some(state);
+        }
+        if !logs.is_empty() || self.completed_log_entries_snapshot.is_none() {
+            self.completed_log_entries_snapshot = Some(logs);
+        }
     }
 
     pub fn read_handler_state_at(
@@ -854,6 +860,57 @@ impl VM {
         prompt_seg_id
     }
 
+    fn canonical_output_segment_id(&self, seg_id: SegmentId) -> SegmentId {
+        let Some(seg) = self.segments.get(seg_id) else {
+            return seg_id;
+        };
+        let SegmentKind::PromptBoundary { handler, .. } = &seg.kind else {
+            return seg_id;
+        };
+        if matches!(handler.handler_name().as_str(), "StateHandler" | "WriterHandler") {
+            return self.shared_builtin_handler_prompt(seg_id);
+        }
+        seg_id
+    }
+
+    fn state_output_entries(&self, seg_id: SegmentId) -> Option<(SegmentId, HashMap<String, Value>)> {
+        let canonical_seg_id = self.canonical_output_segment_id(seg_id);
+        let seg = self.segments.get(canonical_seg_id)?;
+        match &seg.kind {
+            SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "StateHandler" => {
+                let shared_state = self
+                    .scope_state_store
+                    .get(&seg.scope_id)
+                    .cloned()
+                    .unwrap_or_else(|| seg.state_store.clone());
+                Some((canonical_seg_id, shared_state))
+            }
+            SegmentKind::PromptBoundary { .. }
+            | SegmentKind::Normal
+            | SegmentKind::InterceptorBoundary { .. }
+            | SegmentKind::MaskBoundary { .. } => None,
+        }
+    }
+
+    fn log_output_entries(&self, seg_id: SegmentId) -> Option<(SegmentId, Vec<Value>)> {
+        let canonical_seg_id = self.canonical_output_segment_id(seg_id);
+        let seg = self.segments.get(canonical_seg_id)?;
+        match &seg.kind {
+            SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "WriterHandler" => {
+                let shared_logs = self
+                    .scope_writer_logs
+                    .get(&seg.scope_id)
+                    .cloned()
+                    .unwrap_or_else(|| seg.writer_log.clone());
+                Some((canonical_seg_id, shared_logs))
+            }
+            SegmentKind::PromptBoundary { .. }
+            | SegmentKind::Normal
+            | SegmentKind::InterceptorBoundary { .. }
+            | SegmentKind::MaskBoundary { .. } => None,
+        }
+    }
+
     pub fn final_state_entries(&self) -> HashMap<String, Value> {
         if self.current_segment.is_none() {
             if let Some(state) = &self.completed_state_entries_snapshot {
@@ -876,17 +933,12 @@ impl VM {
         chain.reverse();
 
         let mut state = HashMap::new();
+        let mut seen_segments = HashSet::new();
         for seg_id in chain {
-            let Some(seg) = self.segments.get(seg_id) else {
-                continue;
-            };
-            let shared_state = self
-                .scope_state_store
-                .get(&seg.scope_id)
-                .cloned()
-                .unwrap_or_else(|| seg.state_store.clone());
-            if !shared_state.is_empty() {
-                state.extend(shared_state);
+            if let Some((canonical_seg_id, shared_state)) = self.state_output_entries(seg_id) {
+                if seen_segments.insert(canonical_seg_id) && !shared_state.is_empty() {
+                    state.extend(shared_state);
+                }
             }
         }
 
@@ -915,17 +967,12 @@ impl VM {
         chain.reverse();
 
         let mut logs = Vec::new();
+        let mut seen_segments = HashSet::new();
         for seg_id in chain {
-            let Some(seg) = self.segments.get(seg_id) else {
-                continue;
-            };
-            let shared_logs = self
-                .scope_writer_logs
-                .get(&seg.scope_id)
-                .cloned()
-                .unwrap_or_else(|| seg.writer_log.clone());
-            if !shared_logs.is_empty() {
-                logs.extend(shared_logs);
+            if let Some((canonical_seg_id, shared_logs)) = self.log_output_entries(seg_id) {
+                if seen_segments.insert(canonical_seg_id) && !shared_logs.is_empty() {
+                    logs.extend(shared_logs);
+                }
             }
         }
         logs

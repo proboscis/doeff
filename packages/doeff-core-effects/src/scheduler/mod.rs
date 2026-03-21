@@ -208,6 +208,7 @@ struct WaitRequest {
     remaining: usize,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
+    restore_waiting_store: bool,
 }
 
 impl WaitRequest {
@@ -286,6 +287,7 @@ struct ReadyRootResume {
     outcome: Result<Value, PyException>,
     waiting_task: Option<TaskId>,
     waiting_store: RustStore,
+    restore_waiting_store: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1712,6 +1714,7 @@ impl SchedulerState {
                 outcome,
                 waiting_task: None,
                 waiting_store: waiter.waiting_store,
+                restore_waiting_store: waiter.restore_waiting_store,
             },
         );
         self.enqueue_ready_root(waiter_id);
@@ -2028,6 +2031,7 @@ impl SchedulerState {
                 outcome: Err(fail_fast.error),
                 waiting_task: None,
                 waiting_store: waiter.waiting_store,
+                restore_waiting_store: waiter.restore_waiting_store,
             },
         );
         self.enqueue_ready_root(waiter_id);
@@ -2122,6 +2126,8 @@ impl SchedulerState {
         if pending_items.is_empty() {
             return;
         }
+        let restore_waiting_store =
+            self.current_task.is_none() && self.root_wait_should_restore_store(items);
 
         let owner = match self.current_task {
             Some(task_id) => WaitOwner::Task { task_id, cont_id },
@@ -2147,6 +2153,7 @@ impl SchedulerState {
             remaining,
             waiting_task: self.current_task,
             waiting_store: store.clone(),
+            restore_waiting_store,
         };
         self.wait_requests.insert(owner, waiter);
 
@@ -2176,6 +2183,10 @@ impl SchedulerState {
         store: &RustStore,
     ) {
         self.register_waiter(items, cont_id, continuation, store, WaitMode::Any);
+    }
+
+    fn root_wait_should_restore_store(&self, items: &[Waitable]) -> bool {
+        !items.iter().any(|item| matches!(item, Waitable::Task(_)))
     }
 
     fn is_done(&self, item: Waitable) -> bool {
@@ -2352,8 +2363,10 @@ impl SchedulerState {
                                 return TransferNextOutcome::Step(IRStreamStep::Throw(error));
                             }
                             self.current_task = Some(waiting_task);
-                        } else {
+                        } else if ready_root.restore_waiting_store {
                             *store = ready_root.waiting_store;
+                            self.current_task = None;
+                        } else {
                             self.current_task = None;
                         }
                         return TransferNextOutcome::Step(match ready_root.outcome {
@@ -2444,8 +2457,10 @@ impl SchedulerState {
                 if let Some(waiting_task) = ready_root.waiting_task {
                     self.load_task_store(waiting_task, store)?;
                     self.current_task = Some(waiting_task);
-                } else {
+                } else if ready_root.restore_waiting_store {
                     *store = ready_root.waiting_store;
+                    self.current_task = None;
+                } else {
                     self.current_task = None;
                 }
                 let step = match ready_root.outcome {
@@ -6215,6 +6230,63 @@ mod tests {
 
         assert!(store.get("ephemeral").is_none());
         assert_eq!(store.get("saved").and_then(Value::as_int), Some(123));
+    }
+
+    #[test]
+    fn test_top_level_waiter_on_shared_task_preserves_live_store() {
+        let mut state = SchedulerState::new();
+        let mut store = RustStore::new();
+        store.put("counter".to_string(), Value::Int(0));
+
+        let waiter_cont = make_test_continuation();
+        let task_id = state.alloc_task_id();
+        state.tasks.insert(
+            task_id,
+            TaskState::Pending {
+                cont: make_test_continuation(),
+                store: TaskStore::Shared,
+                resume_outcome: None,
+                priority: PRIORITY_NORMAL,
+                pending_log_merge_items: None,
+            },
+        );
+
+        state.wait_on_all(
+            &[Waitable::Task(task_id)],
+            waiter_cont.cont_id,
+            Some(waiter_cont.clone()),
+            &store,
+        );
+
+        // Shared child tasks update the live store while the root waiter is parked.
+        store.put("counter".to_string(), Value::Int(3));
+        state
+            .mark_task_done(task_id, Ok(Value::Int(7)))
+            .expect("shared task completion should succeed");
+        state.wake_waiters(Waitable::Task(task_id));
+
+        let foreign_owner = make_test_continuation();
+        let step = state.transfer_next_or(foreign_owner, &mut store);
+        match step {
+            IRStreamStep::Yield(DoCtrl::Resume {
+                continuation,
+                value,
+            })
+            | IRStreamStep::Yield(DoCtrl::Transfer {
+                continuation,
+                value,
+            })
+            | IRStreamStep::Yield(DoCtrl::ResumeContinuation {
+                continuation,
+                value,
+            }) => {
+                assert_eq!(continuation.cont_id, waiter_cont.cont_id);
+                assert_eq!(value.as_int(), Some(7));
+            }
+            other => panic!("expected shared-task waiter continuation to run, got {:?}", other),
+        }
+
+        assert_eq!(store.get("counter").and_then(Value::as_int), Some(3));
     }
 
     #[test]

@@ -90,11 +90,17 @@ impl TraceState {
             .dispatch_displays
             .get(&dispatch_id)
             .is_some_and(|display| matches!(display.result, EffectResult::Threw { .. }));
+        let keep_on_live_frames = self
+            .dispatch_displays
+            .get(&dispatch_id)
+            .is_some_and(|display| matches!(display.result, EffectResult::Resumed { .. }));
         if !keep_for_traceback {
             self.update_dispatch_display(dispatch_id, |display| {
                 display.cleanup_ready = true;
             });
-            self.clear_dispatch_display_from_frames(dispatch_id);
+            if !keep_on_live_frames {
+                self.clear_dispatch_display_from_frames(dispatch_id);
+            }
             self.cleanup_exited_dispatch_frames(dispatch_id);
             self.dispatch_displays.remove(&dispatch_id);
         }
@@ -928,7 +934,12 @@ impl TraceState {
             Self::finalize_unresolved_dispatches_as_threw(&mut frame_stack, exception);
         }
 
-        let entries = self.entries_from_active_chain_parts(&frame_stack, dispatch_stack, true);
+        let entries = self.entries_from_active_chain_parts(
+            &frame_stack,
+            dispatch_stack,
+            true,
+            false,
+        );
         let entries = Self::dedup_adjacent(entries);
         Self::inject_context(entries, exception)
     }
@@ -948,7 +959,12 @@ impl TraceState {
             Self::finalize_unresolved_dispatches_as_threw(&mut frame_stack, exception);
         }
 
-        let entries = self.entries_from_active_chain_parts(&frame_stack, dispatch_stack, false);
+        let entries = self.entries_from_active_chain_parts(
+            &frame_stack,
+            dispatch_stack,
+            false,
+            false,
+        );
         let entries = Self::dedup_adjacent(entries);
         Self::inject_context(entries, exception)
     }
@@ -1016,7 +1032,9 @@ impl TraceState {
             let Some(dispatch) = frame.dispatch_display.as_ref() else {
                 continue;
             };
-            if !Self::is_visible_dispatch(dispatch) {
+            if !(Self::is_visible_dispatch(dispatch)
+                || matches!(dispatch.result, EffectResult::Resumed { .. }))
+            {
                 continue;
             }
             let (handler_name, handler_kind, handler_source_file, handler_source_line) =
@@ -1322,8 +1340,10 @@ impl TraceState {
         frame_stack: &[ActiveChainFrameState],
         dispatch_stack: &[LiveDispatchSnapshot],
         include_orphan_threw_dispatches: bool,
+        include_resumed_dispatches: bool,
     ) -> Vec<ActiveChainEntry> {
-        let mut active_chain = self.entries_from_frame_stack(frame_stack);
+        let mut active_chain =
+            self.entries_from_frame_stack(frame_stack, include_resumed_dispatches);
         if active_chain.is_empty() {
             self.fallback_entries_when_chain_empty(
                 frame_stack,
@@ -1344,6 +1364,7 @@ impl TraceState {
     fn entries_from_frame_stack(
         &self,
         frame_stack: &[ActiveChainFrameState],
+        include_resumed_dispatches: bool,
     ) -> Vec<ActiveChainEntry> {
         let mut active_chain = Vec::new();
         let mut pending_transferred_handler: Option<ActiveChainEntry> = None;
@@ -1351,11 +1372,16 @@ impl TraceState {
             if let Some(dispatch) = frame
                 .dispatch_display
                 .as_ref()
-                .filter(|dispatch| Self::is_visible_dispatch(dispatch))
+                .filter(|dispatch| {
+                    Self::is_visible_dispatch(dispatch)
+                        || (include_resumed_dispatches
+                            && matches!(dispatch.result, EffectResult::Resumed { .. }))
+                })
             {
                 if matches!(
                     dispatch.result,
                     EffectResult::Active
+                        | EffectResult::Resumed { .. }
                         | EffectResult::Transferred { .. }
                         | EffectResult::Threw { .. }
                 ) {
