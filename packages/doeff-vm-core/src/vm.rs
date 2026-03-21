@@ -699,12 +699,6 @@ impl VM {
             return false;
         }
         if continuation
-            .segment_id()
-            .is_some_and(|seg_id| target_segments.contains(&seg_id))
-        {
-            return true;
-        }
-        if continuation
             .captured_caller()
             .is_some_and(|seg_id| target_segments.contains(&seg_id))
         {
