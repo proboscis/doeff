@@ -110,7 +110,9 @@ impl DispatchObserver {
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (DispatchId, &DispatchContext)> {
-        self.dispatches.iter().map(|(dispatch_id, ctx)| (*dispatch_id, ctx))
+        self.dispatches
+            .iter()
+            .map(|(dispatch_id, ctx)| (*dispatch_id, ctx))
     }
 }
 

@@ -383,7 +383,7 @@ impl TraceState {
                     exception_repr: exception_repr
                         .clone()
                         .unwrap_or_else(|| MISSING_EXCEPTION.to_string()),
-                    },
+                },
             };
             if matches!(action, HandlerAction::Resumed { .. }) {
                 dispatch.resumed_once = true;
@@ -443,7 +443,8 @@ impl TraceState {
             return;
         }
 
-        if let Some(dispatch) = Self::dispatch_display_mut_in_frames(&mut self.frame_stack, dispatch_id)
+        if let Some(dispatch) =
+            Self::dispatch_display_mut_in_frames(&mut self.frame_stack, dispatch_id)
         {
             update(dispatch);
             self.dispatch_displays.insert(dispatch_id, dispatch.clone());
@@ -492,7 +493,12 @@ impl TraceState {
         let referenced_dispatches: HashSet<_> = self
             .frame_stack
             .iter()
-            .filter_map(|frame| frame.dispatch_display.as_ref().map(|display| display.dispatch_id))
+            .filter_map(|frame| {
+                frame
+                    .dispatch_display
+                    .as_ref()
+                    .map(|display| display.dispatch_id)
+            })
             .collect();
         self.dispatch_displays.retain(|dispatch_id, display| {
             !matches!(display.result, EffectResult::Threw { .. })
@@ -922,8 +928,7 @@ impl TraceState {
             Self::finalize_unresolved_dispatches_as_threw(&mut frame_stack, exception);
         }
 
-        let entries =
-            self.entries_from_active_chain_parts(&frame_stack, dispatch_stack, true);
+        let entries = self.entries_from_active_chain_parts(&frame_stack, dispatch_stack, true);
         let entries = Self::dedup_adjacent(entries);
         Self::inject_context(entries, exception)
     }
@@ -943,8 +948,7 @@ impl TraceState {
             Self::finalize_unresolved_dispatches_as_threw(&mut frame_stack, exception);
         }
 
-        let entries =
-            self.entries_from_active_chain_parts(&frame_stack, dispatch_stack, false);
+        let entries = self.entries_from_active_chain_parts(&frame_stack, dispatch_stack, false);
         let entries = Self::dedup_adjacent(entries);
         Self::inject_context(entries, exception)
     }
@@ -1186,7 +1190,10 @@ impl TraceState {
 
     fn refresh_dispatch_displays_in_frames(&self, frame_stack: &mut [ActiveChainFrameState]) {
         for frame in frame_stack.iter_mut() {
-            let Some(dispatch_id) = frame.dispatch_display.as_ref().map(|display| display.dispatch_id)
+            let Some(dispatch_id) = frame
+                .dispatch_display
+                .as_ref()
+                .map(|display| display.dispatch_id)
             else {
                 continue;
             };
@@ -1353,8 +1360,11 @@ impl TraceState {
                         | EffectResult::Threw { .. }
                 ) {
                     Self::push_effect_yield_entry(&mut active_chain, dispatch, Some(frame));
-                    if !Self::has_visible_program_frame_for_handler(frame_stack, index + 1, dispatch)
-                    {
+                    if !Self::has_visible_program_frame_for_handler(
+                        frame_stack,
+                        index + 1,
+                        dispatch,
+                    ) {
                         if matches!(dispatch.result, EffectResult::Transferred { .. }) {
                             pending_transferred_handler =
                                 Self::synthetic_handler_program_entry(dispatch);
@@ -1521,10 +1531,13 @@ impl TraceState {
     ) -> Vec<&'a DispatchDisplayState> {
         let represented_in_frames = |dispatch_id: DispatchId| {
             frame_stack.iter().any(|frame| {
-                frame.dispatch_display.as_ref().is_some_and(|frame_display| {
-                    frame_display.dispatch_id == dispatch_id
-                        && Self::is_visible_dispatch(frame_display)
-                })
+                frame
+                    .dispatch_display
+                    .as_ref()
+                    .is_some_and(|frame_display| {
+                        frame_display.dispatch_id == dispatch_id
+                            && Self::is_visible_dispatch(frame_display)
+                    })
             })
         };
         let represented_in_stack = |dispatch_id: DispatchId| {

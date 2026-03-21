@@ -59,10 +59,15 @@ impl VM {
     }
 
     fn should_treat_python_handler_gen_return_as_handler_completion(&self) -> bool {
-        self.current_seg()
-            .frames
-            .iter()
-            .all(|frame| !matches!(frame, Frame::Program { handler_kind: Some(_), .. }))
+        self.current_seg().frames.iter().all(|frame| {
+            !matches!(
+                frame,
+                Frame::Program {
+                    handler_kind: Some(_),
+                    ..
+                }
+            )
+        })
     }
 
     /// Set mode to Throw with a RuntimeError and return Continue.
@@ -235,8 +240,7 @@ impl VM {
                 let caller = segment.parent;
                 let scope_parent = self.scope_parent(seg_id);
                 let throw_parent = segment.throw_parent.clone();
-                let mode =
-                    std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
+                let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
                 match mode {
                     Mode::Deliver(value) => {
                         // Don't free here — step_return reads the segment's caller.
@@ -263,19 +267,20 @@ impl VM {
                             let active_chain = self
                                 .assemble_active_chain(Some(&exc))
                                 .into_iter()
-                                .filter(|entry| !matches!(entry, ActiveChainEntry::ContextEntry { .. }))
+                                .filter(|entry| {
+                                    !matches!(entry, ActiveChainEntry::ContextEntry { .. })
+                                })
                                 .collect::<Vec<ActiveChainEntry>>();
-                            let exc =
-                                if Self::should_enrich_uncaught_exception_with_active_chain(
-                                    &active_chain,
-                                ) {
-                                    self.enrich_uncaught_exception_with_active_chain(
-                                        exc,
-                                        active_chain.clone(),
-                                    )
-                                } else {
-                                    exc
-                                };
+                            let exc = if Self::should_enrich_uncaught_exception_with_active_chain(
+                                &active_chain,
+                            ) {
+                                self.enrich_uncaught_exception_with_active_chain(
+                                    exc,
+                                    active_chain.clone(),
+                                )
+                            } else {
+                                exc
+                            };
                             self.completed_segment = Some(seg_id);
                             self.store_completed_outputs_from(seg_id);
                             self.reparent_children(seg_id, None, scope_parent);
@@ -460,8 +465,7 @@ impl VM {
         }
         match mode {
             Mode::Deliver(value) => {
-                self.mode =
-                    self.handle_interceptor_apply_result(continuation, value);
+                self.mode = self.handle_interceptor_apply_result(continuation, value);
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
@@ -487,8 +491,7 @@ impl VM {
         seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_sub(1);
         match mode {
             Mode::Deliver(value) => {
-                self.mode =
-                    self.handle_interceptor_eval_result(continuation, value);
+                self.mode = self.handle_interceptor_eval_result(continuation, value);
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
@@ -521,9 +524,7 @@ impl VM {
                     StepEvent::Continue
                 }
                 Mode::HandleYield(yielded) => {
-                    unreachable!(
-                        "tail-resume return frame received HandleYield mode: {yielded:?}"
-                    )
+                    unreachable!("tail-resume return frame received HandleYield mode: {yielded:?}")
                 }
                 Mode::Return(value) => {
                     unreachable!("tail-resume return frame received Return mode: {value:?}")
@@ -578,8 +579,7 @@ impl VM {
         }
         match mode {
             Mode::Deliver(value) => {
-                self.mode =
-                    self.mode_from_eval_return_continuation(continuation, value);
+                self.mode = self.mode_from_eval_return_continuation(continuation, value);
                 StepEvent::Continue
             }
             Mode::Throw(exc) => {
@@ -858,7 +858,10 @@ impl VM {
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
                     self.mode = Mode::HandleYield(
-                        if self.exact_dispatch_origin_for_continuation(&continuation).is_some() {
+                        if self
+                            .exact_dispatch_origin_for_continuation(&continuation)
+                            .is_some()
+                        {
                             DoCtrl::TransferThrow {
                                 continuation,
                                 exception: exc,
@@ -906,13 +909,12 @@ impl VM {
                         | PythonCall::EvalExpr { .. }
                         | PythonCall::CallAsync { .. } => None,
                     };
-                    self.pending_python =
-                        Some(PendingPython::StepUserGenerator {
-                            stream,
-                            metadata,
-                            handler_kind,
-                            incoming_throw,
-                        });
+                    self.pending_python = Some(PendingPython::StepUserGenerator {
+                        stream,
+                        metadata,
+                        handler_kind,
+                        incoming_throw,
+                    });
                     return StepEvent::NeedsPython(call);
                 }
 
@@ -953,8 +955,7 @@ impl VM {
                         self.capture_live_continuation(seg_id, self.current_segment_dispatch_id()),
                     )
                 };
-                self.pending_python =
-                    Some(PendingPython::RustProgramContinuation { marker, k });
+                self.pending_python = Some(PendingPython::RustProgramContinuation { marker, k });
                 StepEvent::NeedsPython(call)
             }
         }
@@ -1431,14 +1432,13 @@ impl VM {
     }
 
     fn step_handle_yield(&mut self) -> StepEvent {
-        let yielded =
-            match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
-                Mode::HandleYield(y) => y,
-                other => {
-                    self.mode = other;
-                    return StepEvent::Error(VMError::internal("invalid mode for handle_yield"));
-                }
-            };
+        let yielded = match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
+            Mode::HandleYield(y) => y,
+            other => {
+                self.mode = other;
+                return StepEvent::Error(VMError::internal("invalid mode for handle_yield"));
+            }
+        };
         match yielded {
             DoCtrl::Pure { value } => self.handle_yield_pure(value),
             DoCtrl::Map {
@@ -2242,14 +2242,13 @@ impl VM {
     }
 
     fn step_return(&mut self) -> StepEvent {
-        let value =
-            match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
-                Mode::Return(v) => v,
-                other => {
-                    self.mode = other;
-                    return StepEvent::Error(VMError::internal("invalid mode for return"));
-                }
-            };
+        let value = match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
+            Mode::Return(v) => v,
+            other => {
+                self.mode = other;
+                return StepEvent::Error(VMError::internal("invalid mode for return"));
+            }
+        };
 
         let seg_id = match self.current_segment {
             Some(id) => id,
@@ -2348,8 +2347,7 @@ impl VM {
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited_due_to_error(None, m, None, &exception);
                 }
-                self.mode =
-                    self.mode_after_generror(GenErrorSite::EvalExpr, exception, false);
+                self.mode = self.mode_after_generror(GenErrorSite::EvalExpr, exception, false);
             }
             PyCallOutcome::GenReturn(value) | PyCallOutcome::Value(value) => {
                 if metadata.is_some() && matches!(value, Value::Python(_)) {
@@ -2631,8 +2629,7 @@ impl VM {
             return;
         }
 
-        self.mode =
-            self.mode_after_generror(GenErrorSite::ExpandReturnProgram, exception, false);
+        self.mode = self.mode_after_generror(GenErrorSite::ExpandReturnProgram, exception, false);
     }
 
     fn receive_step_user_generator_result(
@@ -2656,8 +2653,7 @@ impl VM {
                     return;
                 }
                 self.propagate_auto_unwrap_program_context_to_yielded(metadata.as_ref(), &yielded);
-                let _ =
-                    self.handle_stream_yield(yielded, stream, metadata, effective_handler_kind);
+                let _ = self.handle_stream_yield(yielded, stream, metadata, effective_handler_kind);
             }
             PyCallOutcome::GenReturn(value) => {
                 if incoming_throw.is_some() {
@@ -2696,7 +2692,8 @@ impl VM {
                             .current_active_handler_dispatch_id()
                             .or_else(|| self.current_segment_dispatch_id_any())
                         {
-                            if let Some(original) = self.original_exception_for_dispatch(dispatch_id)
+                            if let Some(original) =
+                                self.original_exception_for_dispatch(dispatch_id)
                             {
                                 TraceState::set_exception_cause(&exception, &original);
                             }
@@ -2727,7 +2724,10 @@ impl VM {
                     self.handler_stream_throw_continuation(&stream, handler_kind)
                 {
                     self.mode = Mode::HandleYield(
-                        if self.exact_dispatch_origin_for_continuation(&continuation).is_some() {
+                        if self
+                            .exact_dispatch_origin_for_continuation(&continuation)
+                            .is_some()
+                        {
                             DoCtrl::TransferThrow {
                                 continuation,
                                 exception,
@@ -2816,8 +2816,7 @@ impl VM {
                 self.mode = Mode::Deliver(result);
             }
             PyCallOutcome::GenError(exception) => {
-                self.mode =
-                    self.mode_after_generror(GenErrorSite::AsyncEscape, exception, false);
+                self.mode = self.mode_after_generror(GenErrorSite::AsyncEscape, exception, false);
             }
             PyCallOutcome::GenYield(_) | PyCallOutcome::GenReturn(_) => {
                 self.receive_unexpected_outcome();

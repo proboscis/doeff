@@ -47,21 +47,24 @@ impl FiberArena {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (FiberId, &Fiber)> {
-        self.fibers.iter().enumerate().filter_map(|(idx, slot)| {
-            slot.as_ref()
-                .map(|fiber| (FiberId::from_index(idx), fiber))
-        })
+        self.fibers
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, slot)| slot.as_ref().map(|fiber| (FiberId::from_index(idx), fiber)))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (FiberId, &mut Fiber)> {
+        self.fibers
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| slot.as_mut().map(|fiber| (FiberId::from_index(idx), fiber)))
     }
 
     /// Rewire children that currently point at `old_parent` so they point to `new_parent`.
     ///
     /// This keeps parent chains valid when a completed parent fiber is freed while
     /// descendant fibers are still alive (for example across scheduler preemption).
-    pub fn reparent_children(
-        &mut self,
-        old_parent: FiberId,
-        new_parent: Option<FiberId>,
-    ) -> usize {
+    pub fn reparent_children(&mut self, old_parent: FiberId, new_parent: Option<FiberId>) -> usize {
         let mut rewired = 0usize;
         for slot in &mut self.fibers {
             let Some(fiber) = slot.as_mut() else {

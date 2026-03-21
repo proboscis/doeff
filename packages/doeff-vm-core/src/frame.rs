@@ -371,7 +371,9 @@ impl Clone for Frame {
             Frame::InterceptorEval(continuation) => {
                 Frame::InterceptorEval(Box::new((**continuation).clone()))
             }
-            Frame::EvalReturn(continuation) => Frame::EvalReturn(Box::new((**continuation).clone())),
+            Frame::EvalReturn(continuation) => {
+                Frame::EvalReturn(Box::new((**continuation).clone()))
+            }
             Frame::MapReturn {
                 mapper,
                 mapper_meta,

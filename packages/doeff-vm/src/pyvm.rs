@@ -1605,7 +1605,10 @@ fn scope_bindings_from_pyany(obj: &Bound<'_, PyAny>) -> PyResult<HashMap<HashedP
         .map_err(|_| PyTypeError::new_err("EvalInScope.bindings must be a dict"))?;
     let mut bindings = HashMap::new();
     for (key, value) in dict.iter() {
-        bindings.insert(HashedPyKey::from_bound(&key)?, Value::from_python_opaque(&value));
+        bindings.insert(
+            HashedPyKey::from_bound(&key)?,
+            Value::from_python_opaque(&value),
+        );
     }
     Ok(bindings)
 }
@@ -1702,11 +1705,11 @@ pub(crate) fn classify_yielded_bound(
                     .lookup_continuation(cont_id)
                     .map(|continuation| continuation.clone_handle())
                     .ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Discontinue with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                        PyRuntimeError::new_err(format!(
+                            "Discontinue with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    })?;
                 let bound_exception = d.exception.bind(py);
                 if !bound_exception.is_instance_of::<PyBaseException>() {
                     return Err(PyTypeError::new_err(
@@ -1893,11 +1896,11 @@ pub(crate) fn classify_yielded_bound(
                     .lookup_continuation(cont_id)
                     .map(|continuation| continuation.clone_handle())
                     .ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "GetTraceback with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                        PyRuntimeError::new_err(format!(
+                            "GetTraceback with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    })?;
                 Ok(DoCtrl::GetTraceback { continuation: k })
             }
             DoExprTag::GetCallStack => Ok(DoCtrl::GetCallStack),
@@ -1920,11 +1923,11 @@ pub(crate) fn classify_yielded_bound(
                     .lookup_continuation(cont_id)
                     .map(|continuation| continuation.clone_handle())
                     .ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "EvalInScope with unknown continuation id {}",
-                        cont_id.raw()
-                    ))
-                })?;
+                        PyRuntimeError::new_err(format!(
+                            "EvalInScope with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    })?;
                 Ok(DoCtrl::EvalInScope {
                     expr: PyShared::new(expr),
                     scope,
@@ -1940,16 +1943,22 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::ReadVar => {
                 let read: PyRef<'_, PyReadVar> = obj.extract()?;
-                let var: PyRef<'_, PyVar> = read.var.bind(py).extract().map_err(|_| {
-                    PyTypeError::new_err("ReadVar.var must be Var")
-                })?;
-                Ok(DoCtrl::ReadVar { var: var.to_var_id() })
+                let var: PyRef<'_, PyVar> = read
+                    .var
+                    .bind(py)
+                    .extract()
+                    .map_err(|_| PyTypeError::new_err("ReadVar.var must be Var"))?;
+                Ok(DoCtrl::ReadVar {
+                    var: var.to_var_id(),
+                })
             }
             DoExprTag::WriteVar => {
                 let write: PyRef<'_, PyWriteVar> = obj.extract()?;
-                let var: PyRef<'_, PyVar> = write.var.bind(py).extract().map_err(|_| {
-                    PyTypeError::new_err("WriteVar.var must be Var")
-                })?;
+                let var: PyRef<'_, PyVar> = write
+                    .var
+                    .bind(py)
+                    .extract()
+                    .map_err(|_| PyTypeError::new_err("WriteVar.var must be Var"))?;
                 Ok(DoCtrl::WriteVar {
                     var: var.to_var_id(),
                     value: Value::from_pyobject(write.value.bind(py)),
@@ -1957,9 +1966,11 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::WriteVarNonlocal => {
                 let write: PyRef<'_, PyWriteVarNonlocal> = obj.extract()?;
-                let var: PyRef<'_, PyVar> = write.var.bind(py).extract().map_err(|_| {
-                    PyTypeError::new_err("WriteVarNonlocal.var must be Var")
-                })?;
+                let var: PyRef<'_, PyVar> = write
+                    .var
+                    .bind(py)
+                    .extract()
+                    .map_err(|_| PyTypeError::new_err("WriteVarNonlocal.var must be Var"))?;
                 Ok(DoCtrl::WriteVarNonlocal {
                     var: var.to_var_id(),
                     value: Value::from_pyobject(write.value.bind(py)),
@@ -3475,7 +3486,7 @@ mod tests {
                     handlers_list.unbind().into(),
                     None,
                 )
-                    .unwrap(),
+                .unwrap(),
             )
             .unwrap()
             .into_any();
@@ -4097,7 +4108,6 @@ mod tests {
             );
         });
     }
-
 
     #[test]
     fn test_r13i_effect_base_tag() {
