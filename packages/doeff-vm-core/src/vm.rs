@@ -105,6 +105,14 @@ impl PyStore {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+struct FiberRuntimeState {
+    pending_error_context: Option<PyException>,
+    throw_parent: Option<Continuation>,
+    interceptor_eval_depth: usize,
+    interceptor_skip_stack: Vec<Marker>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugLevel {
     Off,
@@ -273,6 +281,7 @@ pub struct VM {
     pub(crate) trace_state: TraceState,
     pub(crate) dispatch_observer: DispatchObserver,
     pub continuation_registry: HashMap<ContId, Continuation>,
+    fiber_runtime: HashMap<SegmentId, FiberRuntimeState>,
     scope_ids: HashMap<SegmentId, ScopeId>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
     segment_parent_redirects: HashMap<SegmentId, Option<SegmentId>>,
@@ -300,6 +309,7 @@ impl VM {
             trace_state: TraceState::default(),
             dispatch_observer: DispatchObserver::default(),
             continuation_registry: HashMap::new(),
+            fiber_runtime: HashMap::new(),
             scope_ids: HashMap::new(),
             scope_parents: HashMap::new(),
             segment_parent_redirects: HashMap::new(),
@@ -331,6 +341,7 @@ impl VM {
         self.trace_state.clear();
         self.dispatch_observer.clear();
         self.run_handlers.clear();
+        self.fiber_runtime.clear();
         self.scope_ids.clear();
         self.scope_parents.clear();
         self.segment_parent_redirects.clear();
@@ -370,6 +381,8 @@ impl VM {
         self.trace_state.clear();
         self.trace_state.shrink_to_fit();
         self.debug.shrink_to_fit();
+        self.fiber_runtime.clear();
+        self.fiber_runtime.shrink_to_fit();
         self.scope_ids.clear();
         self.scope_ids.shrink_to_fit();
         self.scope_parents.clear();
@@ -459,6 +472,8 @@ impl VM {
         let seg_id = self.segments.alloc(segment);
         self.segment_parent_redirects.remove(&seg_id);
         self.var_store.init_segment(seg_id);
+        self.fiber_runtime
+            .insert(seg_id, FiberRuntimeState::default());
         self.scope_ids.insert(seg_id, ScopeId::fresh());
         let parent = self.segments.get(seg_id).and_then(|segment| segment.parent);
         self.scope_parents.insert(seg_id, parent);
@@ -473,6 +488,7 @@ impl VM {
         self.segment_parent_redirects.insert(id, parent);
         self.segments.free(id);
         self.var_store.remove_segment(id);
+        self.fiber_runtime.remove(&id);
         self.scope_ids.remove(&id);
         self.scope_parents.remove(&id);
     }
@@ -538,16 +554,119 @@ impl VM {
         &self,
         continuation: &Continuation,
     ) -> Option<&PyException> {
-        self.continuation_segment_ref(continuation)
-            .and_then(|segment| segment.pending_error_context.as_ref())
+        continuation
+            .segment_id()
+            .and_then(|seg_id| self.fiber_runtime.get(&seg_id))
+            .and_then(|state| state.pending_error_context.as_ref())
     }
 
     pub fn scope_parent(&self, seg_id: SegmentId) -> Option<SegmentId> {
         self.scope_parents.get(&seg_id).copied().flatten()
     }
 
+    fn fiber_runtime(&self, seg_id: SegmentId) -> Option<&FiberRuntimeState> {
+        self.fiber_runtime.get(&seg_id)
+    }
+
+    fn fiber_runtime_mut(&mut self, seg_id: SegmentId) -> Option<&mut FiberRuntimeState> {
+        self.fiber_runtime.get_mut(&seg_id)
+    }
+
     pub(crate) fn scope_id_for_segment(&self, seg_id: SegmentId) -> Option<ScopeId> {
         self.scope_ids.get(&seg_id).copied()
+    }
+
+    pub(crate) fn clear_pending_error_context(&mut self, seg_id: SegmentId) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.pending_error_context = None;
+        }
+    }
+
+    pub(crate) fn set_pending_error_context(&mut self, seg_id: SegmentId, exception: PyException) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.pending_error_context = Some(exception);
+        }
+    }
+
+    pub(crate) fn pending_error_context(&self, seg_id: SegmentId) -> Option<&PyException> {
+        self.fiber_runtime(seg_id)
+            .and_then(|state| state.pending_error_context.as_ref())
+    }
+
+    pub(crate) fn throw_parent(&self, seg_id: SegmentId) -> Option<&Continuation> {
+        self.fiber_runtime(seg_id)
+            .and_then(|state| state.throw_parent.as_ref())
+    }
+
+    pub(crate) fn clear_throw_parent(&mut self, seg_id: SegmentId) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.throw_parent = None;
+        }
+    }
+
+    pub(crate) fn interceptor_eval_depth(&self, seg_id: SegmentId) -> usize {
+        self.fiber_runtime(seg_id)
+            .map(|state| state.interceptor_eval_depth)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn increment_interceptor_eval_depth(&mut self, seg_id: SegmentId) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.interceptor_eval_depth = state.interceptor_eval_depth.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn decrement_interceptor_eval_depth(&mut self, seg_id: SegmentId) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.interceptor_eval_depth = state.interceptor_eval_depth.saturating_sub(1);
+        }
+    }
+
+    pub(crate) fn is_interceptor_skipped_on(&self, seg_id: SegmentId, marker: Marker) -> bool {
+        self.fiber_runtime(seg_id)
+            .is_some_and(|state| state.interceptor_skip_stack.contains(&marker))
+    }
+
+    pub(crate) fn push_interceptor_skip_on(&mut self, seg_id: SegmentId, marker: Marker) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.interceptor_skip_stack.push(marker);
+        }
+    }
+
+    pub(crate) fn pop_interceptor_skip_on(&mut self, seg_id: SegmentId, marker: Marker) {
+        let Some(state) = self.fiber_runtime_mut(seg_id) else {
+            return;
+        };
+        if let Some(pos) = state
+            .interceptor_skip_stack
+            .iter()
+            .rposition(|active| *active == marker)
+        {
+            state.interceptor_skip_stack.remove(pos);
+        }
+    }
+
+    pub(crate) fn interceptor_skip_stack_is_empty(&self, seg_id: SegmentId) -> bool {
+        self.fiber_runtime(seg_id)
+            .map_or(true, |state| state.interceptor_skip_stack.is_empty())
+    }
+
+    pub(crate) fn inherit_interceptor_guard_state(
+        &mut self,
+        source_seg_id: Option<SegmentId>,
+        child_seg_id: SegmentId,
+    ) {
+        let Some(source_seg_id) = source_seg_id else {
+            return;
+        };
+        let Some(source_state) = self.fiber_runtime(source_seg_id).cloned() else {
+            return;
+        };
+        let Some(child_state) = self.fiber_runtime_mut(child_seg_id) else {
+            return;
+        };
+        child_state.interceptor_eval_depth = source_state.interceptor_eval_depth;
+        child_state.interceptor_skip_stack = source_state.interceptor_skip_stack;
     }
 
     pub fn set_scope_parent(&mut self, seg_id: SegmentId, scope_parent: Option<SegmentId>) {

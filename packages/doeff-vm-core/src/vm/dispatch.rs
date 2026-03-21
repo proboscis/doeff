@@ -369,8 +369,9 @@ impl VM {
             return;
         };
         seg.frames.clear();
-        seg.pending_error_context = None;
-        seg.throw_parent = None;
+        let _ = seg;
+        self.clear_pending_error_context(seg_id);
+        self.clear_throw_parent(seg_id);
     }
 
     fn continuation_chain_contains_eval_in_scope_return(
@@ -689,20 +690,20 @@ impl VM {
         let installed = self.installed_handlers.clone();
         let mut outside_seg_id: Option<SegmentId> = None;
         for entry in installed.into_iter().rev() {
-            let mut prompt_seg = Segment::new_prompt(
+            let prompt_seg = Segment::new_prompt(
                 entry.marker,
                 outside_seg_id,
                 entry.marker,
                 entry.handler.clone(),
             );
-            self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
+            self.copy_interceptor_guard_state(outside_seg_id, prompt_seg_id);
             self.initialize_builtin_prompt_segment(&entry.handler, prompt_seg_id);
             self.track_run_handler(&entry.handler);
 
-            let mut body_seg = Segment::new(entry.marker, Some(prompt_seg_id));
-            self.copy_interceptor_guard_state(outside_seg_id, &mut body_seg);
+            let body_seg = Segment::new(entry.marker, Some(prompt_seg_id));
             let body_seg_id = self.alloc_segment(body_seg);
+            self.copy_interceptor_guard_state(outside_seg_id, body_seg_id);
             outside_seg_id = Some(body_seg_id);
         }
         outside_seg_id
@@ -738,18 +739,11 @@ impl VM {
     ///    when relevant continuation frames are no longer present locally.
     #[inline]
     pub(super) fn copy_interceptor_guard_state(
-        &self,
+        &mut self,
         source_seg_id: Option<SegmentId>,
-        child_seg: &mut Segment,
+        child_seg_id: SegmentId,
     ) {
-        let Some(source_seg_id) = source_seg_id else {
-            return;
-        };
-        let Some(source_seg) = self.segments.get(source_seg_id) else {
-            return;
-        };
-        child_seg.interceptor_eval_depth = source_seg.interceptor_eval_depth;
-        child_seg.interceptor_skip_stack = source_seg.interceptor_skip_stack.clone();
+        self.inherit_interceptor_guard_state(source_seg_id, child_seg_id);
     }
 
     pub fn is_one_shot_consumed(&self, cont_id: ContId) -> bool {
@@ -933,8 +927,8 @@ impl VM {
         // Scheduler/AST-stream paths rely on strict tail handoff (Transfer) and this exclusion
         // together to keep dispatch/switch behavior bounded under heavy task churn.
         let original_exception = self
-            .current_segment_ref()
-            .and_then(|seg| seg.pending_error_context.clone());
+            .current_segment
+            .and_then(|seg_id| self.pending_error_context(seg_id).cloned());
         let restricted_error_context_dispatch = Self::is_execution_context_effect(&effect)
             && original_exception
                 .as_ref()
@@ -1255,13 +1249,13 @@ impl VM {
         if let Some(return_to) = fallback_return_to {
             k_user.append_owned_fibers(return_to.clone_for_dispatch(Some(dispatch_id)));
         }
-        if let Some(seg) = self.current_segment_mut() {
-            seg.pending_error_context = None;
+        if let Some(seg_id) = self.current_segment {
+            self.clear_pending_error_context(seg_id);
         }
 
-        let mut handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-        self.copy_interceptor_guard_state(Some(seg_id), &mut handler_seg);
+        let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
         let handler_seg_id = self.alloc_segment(handler_seg);
+        self.copy_interceptor_guard_state(Some(seg_id), handler_seg_id);
         self.set_scope_parent(handler_seg_id, Some(seg_id));
         let handler_k = k_user.clone_handle();
         let origin_k = handler_k.clone_handle();
@@ -1437,11 +1431,11 @@ impl VM {
         dispatch_id: Option<DispatchId>,
     ) -> SegmentId {
         let mut anchor = Segment::new(Marker::fresh(), caller);
-        self.copy_interceptor_guard_state(self.current_segment, &mut anchor);
         anchor.push_frame(Frame::EvalReturn(Box::new(
             EvalReturnContinuation::ResumeToContinuation { continuation },
         )));
         let anchor_seg_id = self.alloc_segment(anchor);
+        self.copy_interceptor_guard_state(self.current_segment, anchor_seg_id);
         self.set_scope_parent(anchor_seg_id, caller);
         if let Some(dispatch_id) = dispatch_id {
             self.dispatch_observer
@@ -1456,11 +1450,11 @@ impl VM {
         dispatch_id: Option<DispatchId>,
     ) -> SegmentId {
         let mut anchor = Segment::new(Marker::fresh(), caller);
-        self.copy_interceptor_guard_state(self.current_segment, &mut anchor);
         anchor.push_frame(Frame::EvalReturn(Box::new(
             EvalReturnContinuation::TailResumeReturn,
         )));
         let anchor_seg_id = self.alloc_segment(anchor);
+        self.copy_interceptor_guard_state(self.current_segment, anchor_seg_id);
         self.set_scope_parent(anchor_seg_id, caller);
         if let Some(dispatch_id) = dispatch_id {
             self.dispatch_observer
@@ -1508,8 +1502,8 @@ impl VM {
                 return Some(current_seg_id);
             };
             if matches!(segment.kind, SegmentKind::InterceptorBoundary { .. })
-                || segment.interceptor_eval_depth > 0
-                || !segment.interceptor_skip_stack.is_empty()
+                || self.interceptor_eval_depth(cursor) > 0
+                || !self.interceptor_skip_stack_is_empty(cursor)
                 || segment.frames.iter().any(|frame| {
                     matches!(
                         frame,
@@ -1583,8 +1577,8 @@ impl VM {
                 return false;
             };
             if matches!(seg.kind, SegmentKind::InterceptorBoundary { .. })
-                || seg.interceptor_eval_depth > 0
-                || !seg.interceptor_skip_stack.is_empty()
+                || self.interceptor_eval_depth(seg_id) > 0
+                || !self.interceptor_skip_stack_is_empty(seg_id)
                 || seg.frames.iter().any(|frame| {
                     matches!(
                         frame,
@@ -1608,8 +1602,8 @@ impl VM {
                 return false;
             };
             if matches!(seg.kind, SegmentKind::InterceptorBoundary { .. })
-                || seg.interceptor_eval_depth > 0
-                || !seg.interceptor_skip_stack.is_empty()
+                || self.interceptor_eval_depth(seg_id) > 0
+                || !self.interceptor_skip_stack_is_empty(seg_id)
                 || seg.frames.iter().any(|frame| {
                     matches!(
                         frame,
@@ -1654,11 +1648,13 @@ impl VM {
                 continue;
             };
             seg.parent = fiber_ids.get(index + 1).copied().or(caller);
-            seg.throw_parent = None;
+        }
+        for fiber_id in &fiber_ids {
+            self.clear_throw_parent(*fiber_id);
             // The original exception lives on the active DispatchOrigin.k_origin.
             // Reinstalling it onto resumed continuation segments makes unrelated
             // nested Perform() calls look like fresh GetExecutionContext dispatches.
-            seg.pending_error_context = None;
+            self.clear_pending_error_context(*fiber_id);
         }
 
         match dispatch_id {
@@ -1987,21 +1983,21 @@ impl VM {
         };
         let prompt_handler = plan.handler.clone();
 
-        let mut prompt_seg = Segment::new_prompt_with_types(
+        let prompt_seg = Segment::new_prompt_with_types(
             plan.handler_marker,
             Some(plan.outside_seg_id),
             plan.handler_marker,
             prompt_handler.clone(),
             types,
         );
-        self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
         let prompt_seg_id = self.alloc_segment(prompt_seg);
+        self.copy_interceptor_guard_state(Some(plan.outside_seg_id), prompt_seg_id);
         self.initialize_builtin_prompt_segment(&prompt_handler, prompt_seg_id);
         self.track_run_handler(&prompt_handler);
 
-        let mut body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
-        self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut body_seg);
+        let body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
         let body_seg_id = self.alloc_segment(body_seg);
+        self.copy_interceptor_guard_state(Some(plan.outside_seg_id), body_seg_id);
 
         self.current_segment = Some(body_seg_id);
         self.evaluate(program)
@@ -2029,13 +2025,13 @@ impl VM {
             mode,
             metadata,
         };
-        self.copy_interceptor_guard_state(Some(outside_seg_id), &mut boundary_seg);
         let boundary_seg_id = self.alloc_segment(boundary_seg);
+        self.copy_interceptor_guard_state(Some(outside_seg_id), boundary_seg_id);
         self.set_scope_parent(boundary_seg_id, Some(outside_seg_id));
 
-        let mut body_seg = Segment::new(interceptor_marker, Some(boundary_seg_id));
-        self.copy_interceptor_guard_state(Some(outside_seg_id), &mut body_seg);
+        let body_seg = Segment::new(interceptor_marker, Some(boundary_seg_id));
         let body_seg_id = self.alloc_segment(body_seg);
+        self.copy_interceptor_guard_state(Some(outside_seg_id), body_seg_id);
         self.set_scope_parent(body_seg_id, Some(outside_seg_id));
 
         self.current_segment = Some(body_seg_id);
@@ -2103,7 +2099,6 @@ impl VM {
             handler,
             types,
         );
-        self.copy_interceptor_guard_state(Some(prompt_seg_id), &mut pass_seg);
         let captured_caller = wrapper_caller.or_else(|| {
             self.root_delegate_parent_segment_id(parent_k_user)
                 .or_else(|| self.continuation_chain_segment_id(parent_k_user))
@@ -2122,6 +2117,7 @@ impl VM {
         let pass_cont_id = ContId::fresh();
         pass_seg.parent = None;
         let pass_seg_id = self.alloc_segment(pass_seg);
+        self.copy_interceptor_guard_state(Some(prompt_seg_id), pass_seg_id);
         self.set_scope_parent(
             pass_seg_id,
             self.eval_in_scope_chain_start_segment(parent_k_user),
@@ -2294,9 +2290,9 @@ impl VM {
                     self.clear_forwarded_handler_segment(inner_seg_id);
                 }
 
-                let mut handler_seg = Segment::new(entry.marker, outer_caller);
-                self.copy_interceptor_guard_state(outer_caller, &mut handler_seg);
+                let handler_seg = Segment::new(entry.marker, outer_caller);
                 let handler_seg_id = self.alloc_segment(handler_seg);
+                self.copy_interceptor_guard_state(outer_caller, handler_seg_id);
                 self.set_scope_parent(handler_seg_id, Some(inner_seg_id));
                 let handler_k = next_k.clone_handle();
                 let observer_k = handler_k.clone_handle();
@@ -2748,7 +2744,6 @@ impl VM {
                 ));
             };
             let mut return_anchor = Segment::new(Marker::fresh(), Some(current_seg_id));
-            self.copy_interceptor_guard_state(Some(current_seg_id), &mut return_anchor);
             return_anchor.push_frame(Frame::EvalReturn(Box::new(
                 EvalReturnContinuation::ReturnToContinuation {
                     continuation: self
@@ -2756,6 +2751,7 @@ impl VM {
                 },
             )));
             let anchor_seg_id = self.alloc_segment(return_anchor);
+            self.copy_interceptor_guard_state(Some(current_seg_id), anchor_seg_id);
             self.set_scope_parent(anchor_seg_id, scope_outside);
             caller_outside = Some(anchor_seg_id);
         }
@@ -2769,27 +2765,27 @@ impl VM {
                 base_handler
             };
             let handler_marker = Marker::fresh();
-            let mut prompt_seg = Segment::new_prompt(
+            let prompt_seg = Segment::new_prompt(
                 handler_marker,
                 caller_outside,
                 handler_marker,
                 handler.clone(),
             );
-            self.copy_interceptor_guard_state(caller_outside, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
+            self.copy_interceptor_guard_state(caller_outside, prompt_seg_id);
             self.set_scope_parent(prompt_seg_id, scope_outside);
             self.track_run_handler(&handler);
-            let mut body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
-            self.copy_interceptor_guard_state(caller_outside, &mut body_seg);
+            let body_seg = Segment::new(handler_marker, Some(prompt_seg_id));
             let body_seg_id = self.alloc_segment(body_seg);
+            self.copy_interceptor_guard_state(caller_outside, body_seg_id);
             self.set_scope_parent(body_seg_id, scope_outside);
 
             caller_outside = Some(body_seg_id);
         }
 
-        let mut body_seg = Segment::new(Marker::fresh(), caller_outside);
-        self.copy_interceptor_guard_state(caller_outside, &mut body_seg);
+        let body_seg = Segment::new(Marker::fresh(), caller_outside);
         let body_seg_id = self.alloc_segment(body_seg);
+        self.copy_interceptor_guard_state(caller_outside, body_seg_id);
         self.set_scope_parent(body_seg_id, scope_outside);
         self.current_segment = Some(body_seg_id);
         self.pending_python = Some(PendingPython::EvalExpr {
