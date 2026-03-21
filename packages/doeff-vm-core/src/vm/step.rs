@@ -213,6 +213,8 @@ impl VM {
             other => unreachable!("invalid mode discriminator in VM::step: {other}"),
         };
 
+        self.cleanup_deferred_segment_roots();
+
         if self.debug.is_enabled() {
             self.debug_step_exit(&result);
         }
@@ -256,10 +258,18 @@ impl VM {
                             self.current_segment = caller;
                             return self.handle_transfer_throw_non_terminal(parent, exc);
                         } else if let Some(caller_id) = caller {
-                            self.reparent_children(seg_id, Some(caller_id), scope_parent);
                             self.current_segment = Some(caller_id);
                             self.mode = Mode::Throw(exc);
-                            self.free_segment(seg_id);
+                            let subtree = self.collect_segment_subtree(seg_id);
+                            let subtree_ids: HashSet<_> = subtree.iter().copied().collect();
+                            if self.subtree_has_external_segment_references(&subtree_ids) {
+                                let deferred_roots = self.direct_child_segments(seg_id);
+                                self.reparent_children(seg_id, Some(caller_id), scope_parent);
+                                self.free_segment(seg_id);
+                                self.defer_segment_cleanup_roots(deferred_roots);
+                            } else {
+                                self.free_segment_subtree(seg_id);
+                            }
                             return StepEvent::Continue;
                         } else {
                             self.finalize_active_dispatches_as_threw(&exc);
@@ -283,8 +293,14 @@ impl VM {
                             };
                             self.completed_segment = Some(seg_id);
                             self.store_completed_outputs_from(seg_id);
-                            self.reparent_children(seg_id, None, scope_parent);
-                            self.free_segment(seg_id);
+                            let subtree = self.collect_segment_subtree(seg_id);
+                            let subtree_ids: HashSet<_> = subtree.iter().copied().collect();
+                            if self.subtree_has_external_segment_references(&subtree_ids) {
+                                self.reparent_children(seg_id, None, scope_parent);
+                                self.free_segment(seg_id);
+                            } else {
+                                self.free_segment_subtree(seg_id);
+                            }
                             self.current_segment = None;
                             self.trace_state.cleanup_orphaned_threw_dispatch_displays();
                             return StepEvent::Error(VMError::uncaught_exception(
@@ -2271,17 +2287,31 @@ impl VM {
                         "caller segment not found in step_return",
                     ));
                 }
-                self.reparent_children(seg_id, Some(caller_id), scope_parent);
                 self.current_segment = Some(caller_id);
-                self.free_segment(seg_id);
+                let subtree = self.collect_segment_subtree(seg_id);
+                let subtree_ids: HashSet<_> = subtree.iter().copied().collect();
+                if self.subtree_has_external_segment_references(&subtree_ids) {
+                    let deferred_roots = self.direct_child_segments(seg_id);
+                    self.reparent_children(seg_id, Some(caller_id), scope_parent);
+                    self.free_segment(seg_id);
+                    self.defer_segment_cleanup_roots(deferred_roots);
+                } else {
+                    self.free_segment_subtree(seg_id);
+                }
                 self.mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
             None => {
-                self.reparent_children(seg_id, None, scope_parent);
                 self.completed_segment = Some(seg_id);
                 self.store_completed_outputs_from(seg_id);
-                self.free_segment(seg_id);
+                let subtree = self.collect_segment_subtree(seg_id);
+                let subtree_ids: HashSet<_> = subtree.iter().copied().collect();
+                if self.subtree_has_external_segment_references(&subtree_ids) {
+                    self.reparent_children(seg_id, None, scope_parent);
+                    self.free_segment(seg_id);
+                } else {
+                    self.free_segment_subtree(seg_id);
+                }
                 self.current_segment = None;
                 StepEvent::Done(value)
             }

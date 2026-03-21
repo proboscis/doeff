@@ -1797,7 +1797,7 @@ impl VM {
         }
     }
 
-    fn free_segment_subtree(&mut self, root_seg_id: SegmentId) {
+    pub(super) fn free_segment_subtree(&mut self, root_seg_id: SegmentId) {
         let order = self.collect_segment_subtree(root_seg_id);
 
         for seg_id in order.into_iter().rev() {
@@ -1805,7 +1805,7 @@ impl VM {
         }
     }
 
-    fn collect_segment_subtree(&self, root_seg_id: SegmentId) -> Vec<SegmentId> {
+    pub(super) fn collect_segment_subtree(&self, root_seg_id: SegmentId) -> Vec<SegmentId> {
         let mut stack = vec![root_seg_id];
         let mut order = Vec::new();
         let mut seen = HashSet::new();

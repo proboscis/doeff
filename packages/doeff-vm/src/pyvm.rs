@@ -30,7 +30,9 @@ use crate::segment::{Segment, SegmentKind};
 use crate::step::{Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent};
 use crate::value::Value;
 use crate::vm::VM;
-use doeff_core_effects::scheduler::{set_run_external_wait_mode, ExternalWaitMode};
+use doeff_core_effects::scheduler::{
+    debug_live_scheduler_counts, set_run_external_wait_mode, ExternalWaitMode,
+};
 use doeff_core_effects::sentinels::PyRustHandlerSentinel;
 use doeff_vm_core::{
     install_vm_hooks, live_object_counts, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK,
@@ -516,6 +518,7 @@ impl PyVM {
 
     pub fn memory_stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let counts = live_object_counts();
+        let scheduler_counts = debug_live_scheduler_counts();
         let mut normal_segments = 0usize;
         let mut prompt_segments = 0usize;
         let mut interceptor_segments = 0usize;
@@ -556,6 +559,24 @@ impl PyVM {
         dict.set_item("arena_slots", self.vm.segments.slot_count())?;
         dict.set_item("arena_capacity", self.vm.segments.capacity())?;
         dict.set_item("continuation_registry", self.vm.continuation_registry.len())?;
+        dict.set_item("scheduler_states", scheduler_counts.scheduler_states)?;
+        dict.set_item("scheduler_pending_tasks", scheduler_counts.pending_tasks)?;
+        dict.set_item("scheduler_done_tasks", scheduler_counts.done_tasks)?;
+        dict.set_item("scheduler_promises", scheduler_counts.promises)?;
+        dict.set_item("scheduler_waiter_buckets", scheduler_counts.waiter_buckets)?;
+        dict.set_item("scheduler_waiter_entries", scheduler_counts.waiter_entries)?;
+        dict.set_item("scheduler_wait_owners", scheduler_counts.wait_owners)?;
+        dict.set_item("scheduler_ready_tasks", scheduler_counts.ready_tasks)?;
+        dict.set_item("scheduler_ready_roots", scheduler_counts.ready_roots)?;
+        dict.set_item(
+            "scheduler_pending_gather_fail_fast",
+            scheduler_counts.pending_gather_fail_fast,
+        )?;
+        dict.set_item("scheduler_task_metadata", scheduler_counts.task_metadata)?;
+        dict.set_item(
+            "scheduler_cancel_requested",
+            scheduler_counts.cancel_requested,
+        )?;
         dict.set_item("dispatch_count", self.vm.dispatch_count())?;
         dict.set_item("dispatch_capacity", self.vm.dispatch_capacity())?;
         dict.set_item(
@@ -4590,6 +4611,7 @@ fn async_run<'py>(
 #[pyfunction]
 fn memory_stats(py: Python<'_>) -> PyResult<Py<PyAny>> {
     let counts = live_object_counts();
+    let scheduler_counts = debug_live_scheduler_counts();
     let dict = PyDict::new(py);
     dict.set_item("live_segments", counts.live_segments)?;
     dict.set_item("live_continuations", counts.live_continuations)?;
@@ -4598,6 +4620,24 @@ fn memory_stats(py: Python<'_>) -> PyResult<Py<PyAny>> {
     dict.set_item(
         "abandoned_transfer_branch_frees",
         counts.abandoned_transfer_branch_frees,
+    )?;
+    dict.set_item("scheduler_states", scheduler_counts.scheduler_states)?;
+    dict.set_item("scheduler_pending_tasks", scheduler_counts.pending_tasks)?;
+    dict.set_item("scheduler_done_tasks", scheduler_counts.done_tasks)?;
+    dict.set_item("scheduler_promises", scheduler_counts.promises)?;
+    dict.set_item("scheduler_waiter_buckets", scheduler_counts.waiter_buckets)?;
+    dict.set_item("scheduler_waiter_entries", scheduler_counts.waiter_entries)?;
+    dict.set_item("scheduler_wait_owners", scheduler_counts.wait_owners)?;
+    dict.set_item("scheduler_ready_tasks", scheduler_counts.ready_tasks)?;
+    dict.set_item("scheduler_ready_roots", scheduler_counts.ready_roots)?;
+    dict.set_item(
+        "scheduler_pending_gather_fail_fast",
+        scheduler_counts.pending_gather_fail_fast,
+    )?;
+    dict.set_item("scheduler_task_metadata", scheduler_counts.task_metadata)?;
+    dict.set_item(
+        "scheduler_cancel_requested",
+        scheduler_counts.cancel_requested,
     )?;
     dict.set_item("rust_heap_bytes", current_rust_heap_bytes())?;
     Ok(dict.into())
