@@ -57,3 +57,28 @@ def test_vm_runtime_source_does_not_keep_handler_state_side_tables() -> None:
         assert forbidden not in source, (
             "VM must not keep handler state/log side tables after they move into VarStore."
         )
+
+
+def test_fiber_runtime_source_does_not_store_scope_id_or_epoch() -> None:
+    source = _runtime_source(SEGMENT_RS)
+
+    assert "pub scope_id:" not in source, (
+        "Fiber must not carry scope_id. The VM should own the FiberId -> ScopeId mapping."
+    )
+    assert "pub persistent_epoch:" not in source, (
+        "Fiber must not carry persistent_epoch once Arc snapshot reconciliation is gone."
+    )
+
+
+def test_vm_runtime_source_owns_scope_ids_without_epoch_reconciliation() -> None:
+    source = _runtime_source(VM_RS)
+
+    assert "HashMap<SegmentId, ScopeId>" in source, (
+        "VM must own the FiberId -> ScopeId mapping after removing scope_id from Fiber."
+    )
+    assert "scope_persistent_epochs" not in source, (
+        "VM must not keep scope_persistent_epochs after removing persistent_epoch from Fiber."
+    )
+    assert "retired_scope_persistent_epochs" not in source, (
+        "VM must not keep retired epoch reconciliation tables after removing Arc snapshot state."
+    )

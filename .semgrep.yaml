@@ -3075,6 +3075,19 @@ rules:
         - "**/packages/doeff-vm-core/src/fiber.rs"
     pattern-regex: '\bstate_store:\s*HashMap\b|\bwriter_log:\s*Vec\b|\bnamed_bindings:\s*HashMap\b'
 
+  - id: vm-ocaml5-no-scope-id-on-fiber
+    languages: [generic]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: scope_id is VM-managed metadata, not a Fiber field.
+      OCaml 5 fibers carry stack frames + handler delimiter + parent pointer only.
+      Keep lexical scope tracking in a VM-owned FiberId -> ScopeId mapping.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bscope_id:\s*ScopeId\b'
+
   # CRITICAL: Dispatch creates new segments instead of detaching existing ones.
   # OCaml 5 perform = walk chain, detach fibers (pointer manipulation).
   # doeff start_dispatch = create new segment, clone into Arc, write HashMaps.
