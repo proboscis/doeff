@@ -18,6 +18,12 @@ impl VarStore {
         self.overrides_by_segment.clear();
     }
 
+    pub fn shrink_to_fit(&mut self) {
+        self.cells.shrink_to_fit();
+        self.bindings_by_segment.shrink_to_fit();
+        self.overrides_by_segment.shrink_to_fit();
+    }
+
     pub fn init_segment(&mut self, seg_id: SegmentId) {
         self.bindings_by_segment.entry(seg_id).or_default();
         self.overrides_by_segment.entry(seg_id).or_default();

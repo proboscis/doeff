@@ -20,6 +20,7 @@ vm_debug_logs = []
 pyo3 = { version = "0.28", features = ["py-clone"] }
 doeff-vm-core = { path = "../doeff-vm-core", features = ["python_bridge"] }
 doeff-core-effects = { path = "../doeff-core-effects" }
+libc = "0.2"
 
 [dev-dependencies]
 pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }

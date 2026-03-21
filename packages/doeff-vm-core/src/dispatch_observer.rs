@@ -33,6 +33,27 @@ impl DispatchObserver {
         self.segment_dispatch_ids.clear();
     }
 
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.dispatches.shrink_to_fit();
+        self.segment_dispatch_ids.shrink_to_fit();
+    }
+
+    pub(crate) fn dispatch_count(&self) -> usize {
+        self.dispatches.len()
+    }
+
+    pub(crate) fn segment_binding_count(&self) -> usize {
+        self.segment_dispatch_ids.len()
+    }
+
+    pub(crate) fn dispatch_capacity(&self) -> usize {
+        self.dispatches.capacity()
+    }
+
+    pub(crate) fn segment_binding_capacity(&self) -> usize {
+        self.segment_dispatch_ids.capacity()
+    }
+
     pub(crate) fn start_dispatch(
         &mut self,
         dispatch_id: DispatchId,
