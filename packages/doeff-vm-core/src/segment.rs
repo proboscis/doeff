@@ -43,7 +43,6 @@ pub struct ScopeStore {
 #[derive(Debug, Clone)]
 pub struct Fiber {
     pub scope_id: ScopeId,
-    pub persistent_epoch: u64,
     pub marker: Marker,
     pub frames: Vec<Frame>,
     pub parent: Option<FiberId>,
@@ -60,7 +59,6 @@ impl Fiber {
     pub fn new(marker: Marker, parent: Option<FiberId>) -> Self {
         Fiber {
             scope_id: ScopeId::fresh(),
-            persistent_epoch: 0,
             marker,
             frames: Vec::new(),
             parent,
@@ -82,7 +80,6 @@ impl Fiber {
     ) -> Self {
         Fiber {
             scope_id: ScopeId::fresh(),
-            persistent_epoch: 0,
             marker,
             frames: Vec::new(),
             parent,
@@ -109,7 +106,6 @@ impl Fiber {
     ) -> Self {
         Fiber {
             scope_id: ScopeId::fresh(),
-            persistent_epoch: 0,
             marker,
             frames: Vec::new(),
             parent,

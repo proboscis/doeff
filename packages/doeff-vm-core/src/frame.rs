@@ -131,7 +131,7 @@ pub struct InterceptorContinuation {
     pub guard_eval_depth: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum EvalReturnContinuation {
     ApplyResolveFunction {
         args: Vec<DoCtrl>,
@@ -183,7 +183,129 @@ pub enum EvalReturnContinuation {
     },
 }
 
-#[derive(Debug, Clone)]
+impl EvalReturnContinuation {
+    fn contains_started_continuation(&self) -> bool {
+        match self {
+            EvalReturnContinuation::ResumeToContinuation { continuation }
+            | EvalReturnContinuation::ReturnToContinuation { continuation }
+            | EvalReturnContinuation::EvalInScopeReturn { continuation } => {
+                continuation.is_started()
+            }
+            EvalReturnContinuation::ApplyResolveFunction { .. }
+            | EvalReturnContinuation::ApplyResolveArg { .. }
+            | EvalReturnContinuation::ApplyResolveKwarg { .. }
+            | EvalReturnContinuation::ExpandResolveFactory { .. }
+            | EvalReturnContinuation::ExpandResolveArg { .. }
+            | EvalReturnContinuation::ExpandResolveKwarg { .. }
+            | EvalReturnContinuation::TailResumeReturn => false,
+        }
+    }
+}
+
+impl Clone for EvalReturnContinuation {
+    #[track_caller]
+    fn clone(&self) -> Self {
+        if self.contains_started_continuation()
+            && std::env::var_os("DOEFF_PANIC_ON_STARTED_CONT_CLONE").is_some()
+        {
+            panic!(
+                "started continuation clone detected via EvalReturnContinuation at {}",
+                std::panic::Location::caller()
+            );
+        }
+
+        match self {
+            EvalReturnContinuation::ApplyResolveFunction {
+                args,
+                kwargs,
+                metadata,
+            } => EvalReturnContinuation::ApplyResolveFunction {
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+                metadata: metadata.clone(),
+            },
+            EvalReturnContinuation::ApplyResolveArg {
+                f,
+                args,
+                kwargs,
+                arg_idx,
+                metadata,
+            } => EvalReturnContinuation::ApplyResolveArg {
+                f: f.clone(),
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+                arg_idx: *arg_idx,
+                metadata: metadata.clone(),
+            },
+            EvalReturnContinuation::ApplyResolveKwarg {
+                f,
+                args,
+                kwargs,
+                kwarg_idx,
+                metadata,
+            } => EvalReturnContinuation::ApplyResolveKwarg {
+                f: f.clone(),
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+                kwarg_idx: *kwarg_idx,
+                metadata: metadata.clone(),
+            },
+            EvalReturnContinuation::ExpandResolveFactory {
+                args,
+                kwargs,
+                metadata,
+            } => EvalReturnContinuation::ExpandResolveFactory {
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+                metadata: metadata.clone(),
+            },
+            EvalReturnContinuation::ExpandResolveArg {
+                factory,
+                args,
+                kwargs,
+                arg_idx,
+                metadata,
+            } => EvalReturnContinuation::ExpandResolveArg {
+                factory: factory.clone(),
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+                arg_idx: *arg_idx,
+                metadata: metadata.clone(),
+            },
+            EvalReturnContinuation::ExpandResolveKwarg {
+                factory,
+                args,
+                kwargs,
+                kwarg_idx,
+                metadata,
+            } => EvalReturnContinuation::ExpandResolveKwarg {
+                factory: factory.clone(),
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+                kwarg_idx: *kwarg_idx,
+                metadata: metadata.clone(),
+            },
+            EvalReturnContinuation::ResumeToContinuation { continuation } => {
+                EvalReturnContinuation::ResumeToContinuation {
+                    continuation: continuation.clone(),
+                }
+            }
+            EvalReturnContinuation::TailResumeReturn => EvalReturnContinuation::TailResumeReturn,
+            EvalReturnContinuation::ReturnToContinuation { continuation } => {
+                EvalReturnContinuation::ReturnToContinuation {
+                    continuation: continuation.clone(),
+                }
+            }
+            EvalReturnContinuation::EvalInScopeReturn { continuation } => {
+                EvalReturnContinuation::EvalInScopeReturn {
+                    continuation: continuation.clone(),
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Frame {
     Program {
         stream: IRStreamRef,
@@ -205,6 +327,70 @@ pub enum Frame {
     InterceptBodyReturn {
         marker: Marker,
     },
+}
+
+impl Frame {
+    fn contains_started_continuation(&self) -> bool {
+        match self {
+            Frame::EvalReturn(continuation) => continuation.contains_started_continuation(),
+            Frame::Program { .. }
+            | Frame::InterceptorApply(_)
+            | Frame::InterceptorEval(_)
+            | Frame::MapReturn { .. }
+            | Frame::FlatMapBindResult
+            | Frame::FlatMapBindSource { .. }
+            | Frame::InterceptBodyReturn { .. } => false,
+        }
+    }
+}
+
+impl Clone for Frame {
+    #[track_caller]
+    fn clone(&self) -> Self {
+        if self.contains_started_continuation()
+            && std::env::var_os("DOEFF_PANIC_ON_STARTED_CONT_CLONE").is_some()
+        {
+            panic!(
+                "started continuation clone detected via Frame at {}",
+                std::panic::Location::caller()
+            );
+        }
+
+        match self {
+            Frame::Program {
+                stream,
+                metadata,
+                handler_kind,
+            } => Frame::Program {
+                stream: stream.clone(),
+                metadata: metadata.clone(),
+                handler_kind: *handler_kind,
+            },
+            Frame::InterceptorApply(continuation) => {
+                Frame::InterceptorApply(Box::new((**continuation).clone()))
+            }
+            Frame::InterceptorEval(continuation) => {
+                Frame::InterceptorEval(Box::new((**continuation).clone()))
+            }
+            Frame::EvalReturn(continuation) => Frame::EvalReturn(Box::new((**continuation).clone())),
+            Frame::MapReturn {
+                mapper,
+                mapper_meta,
+            } => Frame::MapReturn {
+                mapper: mapper.clone(),
+                mapper_meta: mapper_meta.clone(),
+            },
+            Frame::FlatMapBindResult => Frame::FlatMapBindResult,
+            Frame::FlatMapBindSource {
+                binder,
+                binder_meta,
+            } => Frame::FlatMapBindSource {
+                binder: binder.clone(),
+                binder_meta: binder_meta.clone(),
+            },
+            Frame::InterceptBodyReturn { marker } => Frame::InterceptBodyReturn { marker: *marker },
+        }
+    }
 }
 
 impl Frame {
