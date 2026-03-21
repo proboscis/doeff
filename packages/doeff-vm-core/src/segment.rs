@@ -15,19 +15,24 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum FiberKind {
-    Normal,
+    Normal {
+        marker: Marker,
+    },
     PromptBoundary {
+        marker: Marker,
         handled_marker: Marker,
         handler: KleisliRef,
         types: Option<Vec<PyShared>>,
     },
     InterceptorBoundary {
+        marker: Marker,
         interceptor: KleisliRef,
         types: Option<Vec<PyShared>>,
         mode: InterceptMode,
         metadata: Option<CallMetadata>,
     },
     MaskBoundary {
+        marker: Marker,
         masked_effects: Vec<PyShared>,
         behind: bool,
     },
@@ -41,7 +46,6 @@ pub struct ScopeStore {
 
 #[derive(Debug)]
 pub struct Fiber {
-    pub marker: Marker,
     pub frames: Vec<Frame>,
     pub parent: Option<FiberId>,
     pub kind: FiberKind,
@@ -51,10 +55,9 @@ impl Fiber {
     pub fn new(marker: Marker, parent: Option<FiberId>) -> Self {
         memory_stats::register_segment();
         Fiber {
-            marker,
             frames: Vec::new(),
             parent,
-            kind: FiberKind::Normal,
+            kind: FiberKind::Normal { marker },
         }
     }
 
@@ -66,10 +69,10 @@ impl Fiber {
     ) -> Self {
         memory_stats::register_segment();
         Fiber {
-            marker,
             frames: Vec::new(),
             parent,
             kind: FiberKind::PromptBoundary {
+                marker,
                 handled_marker,
                 handler,
                 types: None,
@@ -86,10 +89,10 @@ impl Fiber {
     ) -> Self {
         memory_stats::register_segment();
         Fiber {
-            marker,
             frames: Vec::new(),
             parent,
             kind: FiberKind::PromptBoundary {
+                marker,
                 handled_marker,
                 handler,
                 types,
@@ -117,10 +120,27 @@ impl Fiber {
         matches!(self.kind, FiberKind::PromptBoundary { .. })
     }
 
+    pub fn marker(&self) -> Marker {
+        match &self.kind {
+            FiberKind::Normal { marker }
+            | FiberKind::PromptBoundary { marker, .. }
+            | FiberKind::InterceptorBoundary { marker, .. }
+            | FiberKind::MaskBoundary { marker, .. } => *marker,
+        }
+    }
+
+    pub fn boundary_marker(&self) -> Option<Marker> {
+        match &self.kind {
+            FiberKind::PromptBoundary { marker, .. } => Some(*marker),
+            FiberKind::InterceptorBoundary { marker, .. } => Some(*marker),
+            FiberKind::Normal { .. } | FiberKind::MaskBoundary { .. } => None,
+        }
+    }
+
     pub fn handled_marker(&self) -> Option<Marker> {
         match &self.kind {
             FiberKind::PromptBoundary { handled_marker, .. } => Some(*handled_marker),
-            FiberKind::Normal
+            FiberKind::Normal { .. }
             | FiberKind::InterceptorBoundary { .. }
             | FiberKind::MaskBoundary { .. } => None,
         }
@@ -131,7 +151,6 @@ impl Clone for Fiber {
     fn clone(&self) -> Self {
         memory_stats::register_segment();
         Fiber {
-            marker: self.marker,
             frames: self.frames.clone(),
             parent: self.parent,
             kind: self.kind.clone(),
@@ -179,9 +198,10 @@ mod tests {
     fn test_segment_creation() {
         let marker = Marker::fresh();
         let seg = Fiber::new(marker, None);
-        assert_eq!(seg.marker, marker);
         assert!(seg.parent.is_none());
         assert!(!seg.is_prompt_boundary());
+        assert_eq!(seg.marker(), marker);
+        assert!(seg.boundary_marker().is_none());
         assert!(seg.handled_marker().is_none());
     }
 
@@ -191,6 +211,8 @@ mod tests {
         let handled = Marker::fresh();
         let seg = Fiber::new_prompt(marker, None, handled, std::sync::Arc::new(DummyKleisli));
         assert!(seg.is_prompt_boundary());
+        assert_eq!(seg.marker(), marker);
+        assert_eq!(seg.boundary_marker(), Some(marker));
         assert_eq!(seg.handled_marker(), Some(handled));
     }
 

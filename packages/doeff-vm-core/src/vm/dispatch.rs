@@ -292,7 +292,7 @@ impl VM {
             && self
                 .segments
                 .get(seg_id)
-                .is_some_and(|seg| seg.marker == dispatch.active_handler.marker)
+                .is_some_and(|seg| seg.marker() == dispatch.active_handler.marker)
     }
 
     pub(super) fn current_handler_dispatch(
@@ -1385,7 +1385,9 @@ impl VM {
             self.track_run_handler(&handler);
             return true;
         };
+        let seg_marker = seg.marker();
         seg.kind = SegmentKind::PromptBoundary {
+            marker: seg_marker,
             handled_marker: marker,
             handler: handler.clone(),
             types: None,
@@ -2020,6 +2022,7 @@ impl VM {
 
         let mut boundary_seg = Segment::new(interceptor_marker, Some(outside_seg_id));
         boundary_seg.kind = SegmentKind::InterceptorBoundary {
+            marker: interceptor_marker,
             interceptor,
             types,
             mode,
@@ -2073,7 +2076,7 @@ impl VM {
             SegmentKind::PromptBoundary { handler, types, .. } => {
                 (handler.clone(), types.clone(), prompt_seg.parent)
             }
-            SegmentKind::Normal
+            SegmentKind::Normal { .. }
             | SegmentKind::InterceptorBoundary { .. }
             | SegmentKind::MaskBoundary { .. } => {
                 return Err(VMError::internal(
