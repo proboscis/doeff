@@ -168,10 +168,10 @@ impl VM {
                 )));
             }
 
-            let stream = Arc::new(std::sync::Mutex::new(Box::new(PythonGeneratorStream::new(
+            let stream = IRStreamRef::new(Box::new(PythonGeneratorStream::new(
                 PyShared::new(wrapped.generator.clone_ref(py)),
                 PyShared::new(wrapped.get_frame.clone_ref(py)),
-            )) as Box<dyn IRStream>));
+            )) as Box<dyn IRStream>);
             Ok((
                 stream,
                 Self::merged_metadata_from_doeff(

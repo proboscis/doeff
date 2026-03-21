@@ -457,9 +457,7 @@ mod tests {
 
     #[test]
     fn test_program_frame_is_program() {
-        let stream = std::sync::Arc::new(std::sync::Mutex::new(
-            Box::new(DummyStream) as Box<dyn IRStream>
-        ));
+        let stream = IRStreamRef::new(Box::new(DummyStream) as Box<dyn IRStream>);
         let frame = Frame::program(stream, None);
         assert!(frame.is_program());
     }

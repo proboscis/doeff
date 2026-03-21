@@ -8,6 +8,7 @@ use pyo3::types::{PyDict, PyList};
 use crate::frame::CallMetadata;
 use crate::ids::{ContId, DispatchId, FiberId, Marker, SegmentId};
 use crate::kleisli::KleisliRef;
+use crate::memory_stats;
 use crate::py_shared::PyShared;
 use crate::segment::Segment;
 
@@ -75,6 +76,7 @@ impl Clone for Continuation {
             );
         }
 
+        memory_stats::register_continuation();
         Continuation {
             cont_id: self.cont_id,
             dispatch_id: self.dispatch_id,
@@ -91,6 +93,7 @@ impl Clone for Continuation {
 
 impl Continuation {
     pub fn placeholder(cont_id: ContId) -> Self {
+        memory_stats::register_continuation();
         Continuation {
             cont_id,
             dispatch_id: None,
@@ -110,6 +113,7 @@ impl Continuation {
         captured_caller: Option<SegmentId>,
         dispatch_id: Option<DispatchId>,
     ) -> Self {
+        memory_stats::register_continuation();
         Continuation {
             cont_id,
             dispatch_id,
@@ -169,6 +173,7 @@ impl Continuation {
         outside_scope: Option<SegmentId>,
     ) -> Self {
         let handler_count = handlers.len();
+        memory_stats::register_continuation();
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id: None,
@@ -209,6 +214,7 @@ impl Continuation {
         metadata: Option<CallMetadata>,
         outside_scope: Option<SegmentId>,
     ) -> Self {
+        memory_stats::register_continuation();
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id: None,
@@ -241,6 +247,7 @@ impl Continuation {
     }
 
     pub fn clone_handle(&self) -> Self {
+        memory_stats::register_continuation();
         Continuation {
             cont_id: self.cont_id,
             dispatch_id: self.dispatch_id,
@@ -383,6 +390,7 @@ impl Continuation {
         // under its existing `cont_id`. This is safe because the fork is only
         // used for dispatch bookkeeping; user-visible one-shot consumption is
         // still keyed by the fresh `cont_id` on the forwarded branch.
+        memory_stats::register_continuation();
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id,
@@ -405,7 +413,7 @@ impl Continuation {
         Option<CallMetadata>,
         Option<SegmentId>,
     )> {
-        self.unstarted.map(
+        self.unstarted.clone().map(
             |UnstartedContinuation {
                  program,
                  handlers,
@@ -451,6 +459,12 @@ impl Continuation {
     }
 }
 
+impl Drop for Continuation {
+    fn drop(&mut self) {
+        memory_stats::unregister_continuation();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,6 +474,7 @@ mod tests {
     use crate::error::VMError;
     use crate::ids::{Marker, SegmentId};
     use crate::kleisli::{Kleisli, KleisliDebugInfo};
+    use crate::memory_stats::live_object_counts;
 
     #[derive(Debug)]
     struct DummyKleisli;
@@ -513,11 +528,15 @@ mod tests {
     #[test]
     fn test_unstarted_continuation_has_no_captured_fibers() {
         Python::attach(|py| {
+            let baseline = live_object_counts().live_continuations;
             let cont = Continuation::create_unstarted(PyShared::new(py.None()), Vec::new());
             assert!(!cont.is_started());
             assert!(cont.segment_id().is_none());
             assert!(cont.fibers().is_empty());
             assert!(cont.program().is_some());
+            assert_eq!(live_object_counts().live_continuations, baseline + 1);
+            drop(cont);
+            assert_eq!(live_object_counts().live_continuations, baseline);
         });
     }
 
@@ -586,5 +605,22 @@ mod tests {
                 Some(1)
             );
         });
+    }
+
+    #[test]
+    fn test_continuation_live_count_tracks_clone_lifetime() {
+        let baseline = live_object_counts().live_continuations;
+        let (seg, seg_id) = make_test_segment();
+        let cont = Continuation::capture(&seg, seg_id, None);
+        assert_eq!(live_object_counts().live_continuations, baseline + 1);
+
+        let cont_clone = cont.clone();
+        assert_eq!(live_object_counts().live_continuations, baseline + 2);
+
+        drop(cont_clone);
+        assert_eq!(live_object_counts().live_continuations, baseline + 1);
+
+        drop(cont);
+        assert_eq!(live_object_counts().live_continuations, baseline);
     }
 }
