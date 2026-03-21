@@ -1,5 +1,7 @@
 //! Continuation types for detaching and reattaching fibers.
 
+use std::sync::OnceLock;
+
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -55,13 +57,16 @@ pub struct Continuation {
     unstarted: Option<UnstartedContinuation>,
 }
 
+pub(crate) fn panic_on_started_continuation_clone_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+
+    *ENABLED.get_or_init(|| std::env::var_os("DOEFF_PANIC_ON_STARTED_CONT_CLONE").is_some())
+}
+
 impl Clone for Continuation {
     #[track_caller]
     fn clone(&self) -> Self {
-        if self.is_started()
-            && self.owns_fibers
-            && std::env::var_os("DOEFF_PANIC_ON_STARTED_CONT_CLONE").is_some()
-        {
+        if self.is_started() && self.owns_fibers && panic_on_started_continuation_clone_enabled() {
             panic!(
                 "started continuation clone detected for cont_id {} at {}\n{}",
                 self.cont_id.raw(),
@@ -362,6 +367,11 @@ impl Continuation {
     }
 
     pub(crate) fn clone_for_dispatch(&self, dispatch_id: Option<DispatchId>) -> Self {
+        // Dispatch forwarding sometimes needs a fresh one-shot token for the
+        // same detached fiber chain while the original continuation survives
+        // under its existing `cont_id`. This is safe because the fork is only
+        // used for dispatch bookkeeping; user-visible one-shot consumption is
+        // still keyed by the fresh `cont_id` on the forwarded branch.
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id,
@@ -433,9 +443,11 @@ impl Continuation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
     use crate::do_ctrl::DoCtrl;
     use crate::error::VMError;
-    use crate::ids::Marker;
+    use crate::ids::{Marker, SegmentId};
     use crate::kleisli::{Kleisli, KleisliDebugInfo};
 
     #[derive(Debug)]
@@ -516,6 +528,31 @@ mod tests {
         assert_eq!(handle.cont_id, cont.cont_id);
         assert_eq!(handle.fibers(), &[seg_id]);
         assert!(!handle.owns_fibers());
+    }
+
+    #[test]
+    fn test_same_owned_fibers_compares_entire_fiber_chain() {
+        let cont = Continuation::with_id(
+            ContId::fresh(),
+            SegmentId::from_index(0),
+            Some(SegmentId::from_index(2)),
+            None,
+        );
+        let mut extended = Continuation::with_id(
+            ContId::fresh(),
+            SegmentId::from_index(0),
+            Some(SegmentId::from_index(2)),
+            None,
+        );
+        extended.append_owned_fibers(Continuation::with_id(
+            ContId::fresh(),
+            SegmentId::from_index(1),
+            Some(SegmentId::from_index(2)),
+            None,
+        ));
+
+        assert!(!cont.same_owned_fibers(&extended));
+        assert!(!extended.same_owned_fibers(&cont));
     }
 
     #[test]
