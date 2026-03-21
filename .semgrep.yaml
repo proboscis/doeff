@@ -3088,6 +3088,19 @@ rules:
         - "**/packages/doeff-vm-core/src/fiber.rs"
     pattern-regex: '\bscope_id:\s*ScopeId\b'
 
+  - id: vm-ocaml5-no-runtime-state-on-fiber
+    languages: [generic]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: execution-local runtime state must not live on Fiber.
+      Error context, throw-parent bookkeeping, and interceptor guard state are
+      VM-managed metadata while the Fiber itself shrinks to frames + handler + parent.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bpending_error_context:\s*Option<PyException>\b|\bthrow_parent:\s*Option<Continuation>\b|\binterceptor_eval_depth:\s*usize\b|\binterceptor_skip_stack:\s*Vec<Marker>\b'
+
   # CRITICAL: Dispatch creates new segments instead of detaching existing ones.
   # OCaml 5 perform = walk chain, detach fibers (pointer manipulation).
   # doeff start_dispatch = create new segment, clone into Arc, write HashMaps.

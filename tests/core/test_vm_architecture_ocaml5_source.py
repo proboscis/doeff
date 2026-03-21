@@ -82,3 +82,25 @@ def test_vm_runtime_source_owns_scope_ids_without_epoch_reconciliation() -> None
     assert "retired_scope_persistent_epochs" not in source, (
         "VM must not keep retired epoch reconciliation tables after removing Arc snapshot state."
     )
+
+
+def test_fiber_runtime_source_does_not_store_error_or_interceptor_runtime_state() -> None:
+    source = _runtime_source(SEGMENT_RS)
+
+    for forbidden in (
+        "pub pending_error_context:",
+        "pub throw_parent:",
+        "pub interceptor_eval_depth:",
+        "pub interceptor_skip_stack:",
+    ):
+        assert forbidden not in source, (
+            "Fiber must not keep execution-local error/interceptor runtime state."
+        )
+
+
+def test_vm_runtime_source_owns_fiber_runtime_side_table() -> None:
+    source = _runtime_source(VM_RS)
+
+    assert "HashMap<SegmentId, FiberRuntimeState>" in source, (
+        "VM must own per-fiber runtime state after removing error/interceptor fields from Fiber."
+    )
