@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SEGMENT_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "segment.rs"
+VAR_STORE_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "var_store.rs"
+VM_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "vm.rs"
+
+
+def _runtime_source(path: Path) -> str:
+    source = path.read_text(encoding="utf-8")
+    runtime_source, _, _ = source.rpartition("\n#[cfg(test)]")
+    if runtime_source:
+        return runtime_source
+    return source
+
+
+def test_fiber_runtime_source_does_not_store_handler_state_or_logs() -> None:
+    source = _runtime_source(SEGMENT_RS)
+
+    assert "pub state_store:" not in source, (
+        "Fiber must not own handler state. SPEC-VM-019 Rev 5 requires state to live in VarStore."
+    )
+    assert "pub writer_log:" not in source, (
+        "Fiber must not own writer logs. SPEC-VM-019 Rev 5 requires logs to live in VarStore."
+    )
+    assert "named_bindings" not in source, (
+        "Fiber must not own named bindings. Lexical bindings belong in VarStore."
+    )
+
+
+def test_var_store_runtime_source_owns_handler_state_logs_and_bindings() -> None:
+    source = _runtime_source(VAR_STORE_RS)
+
+    assert "HashMap<SegmentId, HashMap<String, Value>>" in source, (
+        "VarStore must own handler state entries after moving them off Fiber."
+    )
+    assert "HashMap<SegmentId, Vec<Value>>" in source, (
+        "VarStore must own writer log entries after moving them off Fiber."
+    )
+    assert "HashMap<SegmentId, HashMap<HashedPyKey, Value>>" in source, (
+        "VarStore must continue to own named bindings for lexical scope."
+    )
+
+
+def test_vm_runtime_source_does_not_keep_handler_state_side_tables() -> None:
+    source = _runtime_source(VM_RS)
+
+    for forbidden in (
+        "scope_state_store:",
+        "scope_writer_logs:",
+        "retired_scope_state_store:",
+        "retired_scope_writer_logs:",
+    ):
+        assert forbidden not in source, (
+            "VM must not keep handler state/log side tables after they move into VarStore."
+        )
