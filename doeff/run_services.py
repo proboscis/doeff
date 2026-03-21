@@ -164,6 +164,16 @@ class ProgramBuilder:
             reporter=_StderrDiscoveryReporter(),
         )
 
+    def resolve_envs(
+        self, env_sources: list[str], *, report_verbose: bool
+    ) -> dict[str, Any]:
+        del report_verbose
+        return resolve_env_paths_to_dict(
+            env_sources,
+            services=RunServicesProxy(self._merger),
+            reporter=_StderrDiscoveryReporter(),
+        )
+
     def apply_kleisli(self, program: Program[Any], context: ResolvedRunContext) -> Program[Any]:
         if not context.apply_path:
             return program
@@ -187,8 +197,8 @@ class RunCommand:
             print_profiling_status()
             _ = self.services
             resolved_context = self._resolve_context(self._initial_context)
-            program = self._prepare_program(resolved_context)
-            run_result, final_value = self._run_program(resolved_context, program)
+            program, env = self._prepare_program(resolved_context)
+            run_result, final_value = self._run_program(resolved_context, program, env)
 
         call_tree_ascii = _call_tree_ascii(run_result) if run_result is not None else None
         return resolved_context, RunExecutionResult(final_value, run_result, call_tree_ascii)
@@ -224,7 +234,9 @@ class RunCommand:
             report_verbose=context.report_verbose,
         )
 
-    def _prepare_program(self, context: ResolvedRunContext) -> Program[Any]:
+    def _prepare_program(
+        self, context: ResolvedRunContext
+    ) -> tuple[Program[Any], dict[str, Any] | None]:
         with profile("Load program", indent=1):
             program = self.builder.load(context)
         env_sources = self._resolve_env_sources(context)
@@ -247,23 +259,27 @@ class RunCommand:
                         file=sys.stderr,
                     )
 
+        merged_env: dict[str, Any] | None = None
         if env_sources:
             with profile("Merge environments", indent=1):
-                program = self.builder.inject_envs(
-                    program, env_sources, report_verbose=context.report_verbose
+                merged_env = self.builder.resolve_envs(
+                    env_sources, report_verbose=context.report_verbose
                 )
 
-        return program
+        return program, merged_env
 
     def _run_program(
-        self, context: ResolvedRunContext, program: Program[Any]
+        self,
+        context: ResolvedRunContext,
+        program: Program[Any],
+        env: dict[str, Any] | None,
     ) -> tuple[RunResult[Any] | None, Any]:
         with profile("Load and run interpreter", indent=1):
             interpreter_obj = self._resolver.resolve(context.interpreter_path)
             if not callable(interpreter_obj):
                 raise TypeError("--interpreter must resolve to a callable")
 
-            result = _call_interpreter(interpreter_obj, program)
+            result = _call_interpreter(interpreter_obj, program, env=env)
             final_value, run_result = _finalize_result(result)
             return run_result, final_value
 
@@ -357,6 +373,23 @@ def apply_runtime_envs(
         program = Local(merged_env, program)  # type: ignore[assignment]
 
     return program, env_sources
+
+
+def resolve_env_paths_to_dict(
+    env_sources: list[str],
+    *,
+    services: RunServices | RunServicesProxy | None = None,
+    reporter: DiscoveryReporter | None = None,
+) -> dict[str, Any]:
+    if not env_sources:
+        return {}
+
+    active_services = services or RunServices()
+    active_reporter = reporter or _NullDiscoveryReporter()
+    merged_env: dict[str, Any] = {}
+    for env_source in env_sources:
+        merged_env.update(_resolve_env_path_dict(env_source, active_services, active_reporter))
+    return merged_env
 
 
 def apply_resolved_env_paths(
@@ -491,14 +524,44 @@ def _ensure_transformer(obj: Any, description: str) -> Callable[[Program[Any]], 
     raise TypeError(f"{description} is not callable and cannot transform a Program.")
 
 
-def _call_interpreter(func: Callable[..., Any], program: Program[Any]) -> Any:
+def _call_interpreter(
+    func: Callable[..., Any],
+    program: Program[Any],
+    *,
+    env: dict[str, Any] | None = None,
+) -> Any:
     signature = inspect.signature(func)
+
+    # Check if interpreter accepts an 'env' keyword argument.
+    accepts_env = "env" in signature.parameters and signature.parameters[
+        "env"
+    ].kind in {
+        inspect.Parameter.KEYWORD_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    }
+
+    if accepts_env and env is not None:
+        # Pass env as a separate kwarg; interpreter controls where Local is applied.
+        effective_program = program
+    elif env is not None:
+        # Interpreter does not accept env — fall back to Local wrapping for
+        # backward compatibility.
+        from doeff.effects import Local
+
+        effective_program = Local(env, program)
+    else:
+        effective_program = program
+
     try:
-        bound = signature.bind_partial(program)
+        bound = signature.bind_partial(effective_program)
     except TypeError as exc:
         raise TypeError(
             "Interpreter must accept a Program as its first positional argument"
         ) from exc
+
+    if accepts_env and env is not None:
+        bound.arguments["env"] = env
+
     bound.apply_defaults()
     for param in signature.parameters.values():
         if (
