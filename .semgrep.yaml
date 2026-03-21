@@ -3101,6 +3101,19 @@ rules:
         - "**/packages/doeff-vm-core/src/fiber.rs"
     pattern-regex: '\bpending_error_context:\s*Option<PyException>\b|\bthrow_parent:\s*Option<Continuation>\b|\binterceptor_eval_depth:\s*usize\b|\binterceptor_skip_stack:\s*Vec<Marker>\b'
 
+  - id: vm-ocaml5-no-marker-on-fiber
+    languages: [generic]
+    severity: ERROR
+    message: |
+      SPEC-VM-019 Rev 5: Fiber must not store marker as a top-level field.
+      Fold handler/interceptor markers into the boundary/handler representation so
+      Fiber itself remains frames + handler/kind + parent only.
+    paths:
+      include:
+        - "**/packages/doeff-vm-core/src/segment.rs"
+        - "**/packages/doeff-vm-core/src/fiber.rs"
+    pattern-regex: '\bpub\s+marker:\s*Marker\b'
+
   # CRITICAL: Dispatch creates new segments instead of detaching existing ones.
   # OCaml 5 perform = walk chain, detach fibers (pointer manipulation).
   # doeff start_dispatch = create new segment, clone into Arc, write HashMaps.

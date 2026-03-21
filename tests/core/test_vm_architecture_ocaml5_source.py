@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -103,4 +104,23 @@ def test_vm_runtime_source_owns_fiber_runtime_side_table() -> None:
 
     assert "HashMap<SegmentId, FiberRuntimeState>" in source, (
         "VM must own per-fiber runtime state after removing error/interceptor fields from Fiber."
+    )
+
+
+def test_fiber_runtime_source_has_only_frames_parent_and_kind_fields() -> None:
+    source = _runtime_source(SEGMENT_RS)
+    fiber_match = re.search(r"pub struct Fiber \{(?P<body>.*?)\n\}", source, re.DOTALL)
+    assert fiber_match is not None, "Fiber struct definition must exist in segment.rs."
+
+    public_fields = re.findall(r"^\s*pub\s+([a-z_]+):", fiber_match.group("body"), re.MULTILINE)
+    assert public_fields == ["frames", "parent", "kind"], (
+        "SPEC-VM-019 Rev 5 requires Fiber to shrink to exactly frames + parent + handler/kind."
+    )
+
+
+def test_fiber_runtime_source_does_not_store_marker_field() -> None:
+    source = _runtime_source(SEGMENT_RS)
+
+    assert "pub marker:" not in source, (
+        "Fiber must not store marker directly. SPEC-VM-019 Rev 5 folds marker into handler state."
     )
