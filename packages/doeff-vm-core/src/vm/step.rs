@@ -237,6 +237,13 @@ impl VM {
             };
 
             if !segment.has_frames() {
+                if matches!(segment.kind, SegmentKind::InterceptorBoundary { .. }) {
+                    let caller = segment.parent;
+                    let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
+                    self.current_segment = caller;
+                    self.mode = mode;
+                    return StepEvent::Continue;
+                }
                 let caller = segment.parent;
                 let scope_parent = self.scope_parent(seg_id);
                 let throw_parent = segment.throw_parent.clone();

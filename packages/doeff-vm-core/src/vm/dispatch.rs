@@ -107,7 +107,8 @@ impl VM {
         seg_id: SegmentId,
     ) -> Option<(DispatchId, SegmentId)> {
         self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, _, k_origin, _| {
-            self.root_live_delegate_parent_segment_id(k_origin)
+            self.continuation_chain_segment_id(k_origin)
+                .or_else(|| self.root_live_delegate_parent_segment_id(k_origin))
                 .map(|segment_id| (dispatch_id, segment_id))
         })
     }
@@ -1451,7 +1452,24 @@ impl VM {
             if Some(cursor) == preserved_ancestor || continuation.fibers().contains(&cursor) {
                 return child_below_preserved;
             }
-            let parent = self.segments.get(cursor).and_then(|segment| segment.parent);
+            let Some(segment) = self.segments.get(cursor) else {
+                return Some(current_seg_id);
+            };
+            if matches!(segment.kind, SegmentKind::InterceptorBoundary { .. })
+                || segment.interceptor_eval_depth > 0
+                || !segment.interceptor_skip_stack.is_empty()
+                || segment.frames.iter().any(|frame| {
+                    matches!(
+                        frame,
+                        Frame::InterceptorApply(_)
+                            | Frame::InterceptorEval(_)
+                            | Frame::InterceptBodyReturn { .. }
+                    )
+                })
+            {
+                return child_below_preserved;
+            }
+            let parent = segment.parent;
             child_below_preserved = Some(cursor);
             match parent {
                 Some(parent_id) => cursor = parent_id,
@@ -1531,6 +1549,31 @@ impl VM {
         false
     }
 
+    fn chain_has_interceptor_context(&self, start: Option<SegmentId>) -> bool {
+        let mut cursor = start;
+        while let Some(seg_id) = cursor {
+            let Some(seg) = self.segments.get(seg_id) else {
+                return false;
+            };
+            if matches!(seg.kind, SegmentKind::InterceptorBoundary { .. })
+                || seg.interceptor_eval_depth > 0
+                || !seg.interceptor_skip_stack.is_empty()
+                || seg.frames.iter().any(|frame| {
+                    matches!(
+                        frame,
+                        Frame::InterceptorApply(_)
+                            | Frame::InterceptorEval(_)
+                            | Frame::InterceptBodyReturn { .. }
+                    )
+                })
+            {
+                return true;
+            }
+            cursor = seg.parent;
+        }
+        false
+    }
+
     fn enter_or_reenter_continuation_segment_with_dispatch(
         &mut self,
         k: &Continuation,
@@ -1540,6 +1583,14 @@ impl VM {
         let caller = self.normalize_live_parent_hint(caller);
         let Some(seg_id) = k.segment_id() else {
             return;
+        };
+        let existing_caller = self.segments.get(seg_id).and_then(|seg| seg.parent);
+        let caller = if self.chain_has_interceptor_context(existing_caller)
+            && !self.chain_has_interceptor_context(caller)
+        {
+            existing_caller
+        } else {
+            caller
         };
         let exact_origin_before_bind = dispatch_id.and_then(|dispatch_id| {
             (k.dispatch_id() == Some(dispatch_id))
@@ -1673,10 +1724,13 @@ impl VM {
             }
         };
         if kind.is_transferred() {
-            let preserved_ancestor = self
-                .current_handler_dispatch()
-                .map(|(_, _, _, _, prompt_seg_id)| prompt_seg_id)
-                .or(caller);
+            let preserved_ancestor = if self.chain_has_interceptor_context(caller) {
+                caller
+            } else {
+                self.current_handler_dispatch()
+                    .map(|(_, _, _, _, prompt_seg_id)| prompt_seg_id)
+                    .or(caller)
+            };
             if self.live_branch_requires_transfer_abandon(&k, preserved_ancestor) {
                 self.abandon_current_live_branch_for_transfer(&k, preserved_ancestor);
             }
@@ -2379,6 +2433,22 @@ impl VM {
             .collect()
     }
 
+    fn caller_visible_handler_chain_start(&self) -> Result<SegmentId, VMError> {
+        if let Some((_, _, continuation, _, _)) = self.current_handler_dispatch() {
+            return self
+                .continuation_handler_chain_start(&continuation)
+                .or_else(|| {
+                    self.current_dispatch_origin().and_then(|origin| {
+                        self.continuation_handler_chain_start(&origin.k_origin)
+                    })
+                })
+                .ok_or_else(|| VMError::internal("dispatch origin continuations must be captured"));
+        }
+
+        self.current_segment
+            .ok_or_else(|| VMError::internal("handler chain requested without current segment"))
+    }
+
     pub(super) fn handle_map(
         &mut self,
         source: PyShared,
@@ -2442,22 +2512,9 @@ impl VM {
         // visible chain from the running segment. During dispatch we keep the
         // existing Delegate-aware behavior so handler code sees the same
         // caller-visible stack as the effect site.
-        let chain_start = if let Some((_, _, continuation, _, _)) = self.current_handler_dispatch()
-        {
-            self.continuation_handler_chain_start(&continuation)
-                .or_else(|| {
-                    self.current_dispatch_origin().and_then(|origin| {
-                        self.continuation_handler_chain_start(&origin.k_origin)
-                    })
-                })
-                .expect("dispatch origin continuations must be captured")
-        } else {
-            let Some(seg_id) = self.current_segment else {
-                return StepEvent::Error(VMError::internal(
-                    "GetHandlers called without current segment",
-                ));
-            };
-            seg_id
+        let chain_start = match self.caller_visible_handler_chain_start() {
+            Ok(seg_id) => seg_id,
+            Err(err) => return StepEvent::Error(err),
         };
         let handlers = self
             .handlers_in_caller_chain(chain_start)
