@@ -107,8 +107,7 @@ impl VM {
         seg_id: SegmentId,
     ) -> Option<(DispatchId, SegmentId)> {
         self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, _, k_origin, _| {
-            self.continuation_chain_segment_id(k_origin)
-                .or_else(|| self.root_live_delegate_parent_segment_id(k_origin))
+            self.continuation_handler_chain_start(k_origin)
                 .map(|segment_id| (dispatch_id, segment_id))
         })
     }
@@ -946,7 +945,7 @@ impl VM {
                     self.dispatch_origin_for_dispatch_id(dispatch_id)
                         .map(|origin| {
                             self.handlers_in_caller_chain(
-                                self.root_live_delegate_parent_segment_id(&origin.k_origin)
+                                self.continuation_handler_chain_start(&origin.k_origin)
                                     .expect("dispatch origin continuations must be captured"),
                             )
                             .into_iter()
@@ -986,10 +985,7 @@ impl VM {
                     ))
                 })?;
 
-        let mut selected: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
-        let mut first_type_filtered_skip: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
-        let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
-        let mut handler_count = 0usize;
+        let mut current_entries: Vec<HandlerChainEntry> = Vec::new();
         let mut cursor = Some(seg_id);
         while let Some(cursor_id) = cursor {
             let Some(seg) = self.segments.get(cursor_id) else {
@@ -1003,53 +999,106 @@ impl VM {
                 ..
             } = &seg.kind
             {
+                let is_shared_spawn_writer = handler.handler_name() == "WriterHandler"
+                    && self.shared_builtin_handler_prompt(cursor_id) != cursor_id;
                 let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
-                if Some(cursor_id) != exclude_prompt && !restricted_excluded {
-                    let (name, kind, file, line) = Self::handler_trace_info(handler);
-                    handler_chain_snapshot.push(HandlerSnapshotEntry {
-                        handler_name: name,
-                        handler_kind: kind,
-                        source_file: file,
-                        source_line: line,
+                if Some(cursor_id) != exclude_prompt && !restricted_excluded && !is_shared_spawn_writer
+                {
+                    current_entries.push(HandlerChainEntry {
+                        marker: *handled_marker,
+                        prompt_seg_id: cursor_id,
+                        handler: handler.clone(),
+                        types: types.clone(),
                     });
-
-                    if handler.can_handle(&effect)? {
-                        let should_invoke = self
-                            .should_invoke_handler_types(types.as_ref(), &effect_obj)
-                            .map_err(|err| {
-                                VMError::python_error(format!(
-                                    "failed to evaluate WithHandler type filter: {err:?}"
-                                ))
-                            })?;
-                        if should_invoke {
-                            if selected.is_none() {
-                                selected = Some((
-                                    handler_count,
-                                    *handled_marker,
-                                    cursor_id,
-                                    handler.clone(),
-                                ));
-                            }
-                        } else if first_type_filtered_skip.is_none() {
-                            first_type_filtered_skip =
-                                Some((handler_count, *handled_marker, cursor_id, handler.clone()));
-                        }
-                    }
-
-                    handler_count += 1;
                 }
             }
             cursor = next;
         }
 
-        let fallback_return_to = (handler_count == 0)
+        let mut selected: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
+        let mut first_type_filtered_skip: Option<(usize, Marker, SegmentId, KleisliRef)> = None;
+        let mut handler_chain_snapshot: Vec<HandlerSnapshotEntry> = Vec::new();
+        let mut handler_count = 0usize;
+        for entry in &current_entries {
+            let handler = &entry.handler;
+            let (name, kind, file, line) = Self::handler_trace_info(handler);
+            handler_chain_snapshot.push(HandlerSnapshotEntry {
+                handler_name: name,
+                handler_kind: kind,
+                source_file: file,
+                source_line: line,
+            });
+
+            if handler.can_handle(&effect)? {
+                let should_invoke = self
+                    .should_invoke_handler_types(entry.types.as_ref(), &effect_obj)
+                    .map_err(|err| {
+                        VMError::python_error(format!(
+                            "failed to evaluate WithHandler type filter: {err:?}"
+                        ))
+                    })?;
+                if should_invoke {
+                    if selected.is_none() {
+                        selected = Some((
+                            handler_count,
+                            entry.marker,
+                            entry.prompt_seg_id,
+                            handler.clone(),
+                        ));
+                    }
+                } else if first_type_filtered_skip.is_none() {
+                    first_type_filtered_skip = Some((
+                        handler_count,
+                        entry.marker,
+                        entry.prompt_seg_id,
+                        handler.clone(),
+                    ));
+                }
+            }
+
+            handler_count += 1;
+        }
+
+        let full_current_entries = self.current_handler_chain();
+        let outer_entries = if self.current_handler_dispatch().is_none() {
+            self.return_to_continuation()
+                .and_then(|continuation| {
+                    self.live_handler_chain_start_for_return_to(&continuation)
+                        .or_else(|| self.continuation_handler_chain_start(&continuation))
+                })
+                .map(|outer_start| self.handlers_in_caller_chain(outer_start))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let outer_prefix_len = if outer_entries.is_empty() {
+            0
+        } else {
+            Self::outer_handler_prefix_len(&full_current_entries, &outer_entries)
+        };
+        let prefer_outer_fallback = outer_prefix_len > 0
+            && selected.as_ref().is_some_and(|(_, _, _, selected_handler)| {
+                outer_entries[outer_prefix_len..]
+                    .iter()
+                    .any(|entry| Arc::ptr_eq(&entry.handler, selected_handler))
+            });
+        if prefer_outer_fallback {
+            selected = None;
+            first_type_filtered_skip = None;
+            handler_count = 0;
+        }
+
+        let fallback_return_to = (selected.is_none())
             .then(|| self.return_to_continuation())
             .flatten();
 
-        if handler_count == 0 {
+        if selected.is_none() {
             let mut cursor = fallback_return_to
                 .as_ref()
-                .and_then(|continuation| self.continuation_handler_chain_start(continuation));
+                .and_then(|continuation| {
+                    self.live_handler_chain_start_for_return_to(continuation)
+                        .or_else(|| self.continuation_handler_chain_start(continuation))
+                });
             while let Some(cursor_id) = cursor {
                 let Some(seg) = self.segments.get(cursor_id) else {
                     break;
@@ -2108,19 +2157,42 @@ impl VM {
                 dispatch_id.raw()
             )));
         };
-        let handler_chain = self.handlers_in_caller_chain(
-            self.root_live_delegate_parent_segment_id(&origin.k_origin)
-                .expect("dispatch origin continuations must be captured"),
-        );
-        let Some(from_idx) = handler_chain
+        let handler_chain_start = match self.caller_visible_handler_chain_start() {
+            Ok(seg_id) => seg_id,
+            Err(err) => return StepEvent::Error(err),
+        };
+        let mut handler_chain = self.handlers_in_caller_chain(handler_chain_start);
+        let from_idx = if let Some(idx) = handler_chain
             .iter()
             .position(|entry| entry.marker == current_marker)
-        else {
-            return StepEvent::Error(VMError::internal(format!(
-                "{}: current handler marker {} not found in caller chain",
-                kind.missing_handler_context(),
-                current_marker.raw()
-            )));
+        {
+            idx
+        } else {
+            let Some(current_entry) = self.segments.get(current_prompt_seg_id).and_then(|seg| {
+                let SegmentKind::PromptBoundary {
+                    handled_marker,
+                    handler,
+                    types,
+                    ..
+                } = &seg.kind
+                else {
+                    return None;
+                };
+                Some(HandlerChainEntry {
+                    marker: *handled_marker,
+                    prompt_seg_id: current_prompt_seg_id,
+                    handler: handler.clone(),
+                    types: types.clone(),
+                })
+            }) else {
+                return StepEvent::Error(VMError::internal(format!(
+                    "{}: current handler marker {} not found in caller chain",
+                    kind.missing_handler_context(),
+                    current_marker.raw()
+                )));
+            };
+            handler_chain.insert(0, current_entry);
+            0
         };
         let outer_caller = self
             .segments
@@ -2433,6 +2505,69 @@ impl VM {
             .collect()
     }
 
+    fn same_handler_entry(a: &HandlerChainEntry, b: &HandlerChainEntry) -> bool {
+        Arc::ptr_eq(&a.handler, &b.handler)
+    }
+
+    fn outer_handler_prefix_len(
+        base_entries: &[HandlerChainEntry],
+        outer_entries: &[HandlerChainEntry],
+    ) -> usize {
+        if base_entries.is_empty() {
+            return outer_entries.len();
+        }
+
+        for prefix_len in 0..outer_entries.len() {
+            let overlap = &outer_entries[prefix_len..];
+            if overlap.is_empty() || overlap.len() > base_entries.len() {
+                continue;
+            }
+
+            let base_suffix = &base_entries[base_entries.len() - overlap.len()..];
+            if overlap
+                .iter()
+                .zip(base_suffix.iter())
+                .all(|(outer, base)| Self::same_handler_entry(outer, base))
+            {
+                return prefix_len;
+            }
+        }
+
+        0
+    }
+
+    fn current_handler_chain_with_live_prefix(&self) -> Vec<HandlerChainEntry> {
+        let base_entries = self.current_handler_chain();
+        let Some(return_to) = self.return_to_continuation() else {
+            return base_entries;
+        };
+        let Some(outer_start) = self
+            .live_handler_chain_start_for_return_to(&return_to)
+            .or_else(|| self.continuation_handler_chain_start(&return_to))
+        else {
+            return base_entries;
+        };
+        let outer_entries = self.handlers_in_caller_chain(outer_start);
+        let prefix_len = Self::outer_handler_prefix_len(&base_entries, &outer_entries);
+        if prefix_len == 0 {
+            return base_entries;
+        }
+
+        let mut merged = outer_entries[..prefix_len].to_vec();
+        merged.extend(base_entries);
+        merged
+    }
+
+    fn live_handler_chain_start_for_return_to(
+        &self,
+        continuation: &Continuation,
+    ) -> Option<SegmentId> {
+        continuation
+            .resume_dispatch_id()
+            .and_then(|dispatch_id| self.dispatch_origin_for_dispatch_id_anywhere(dispatch_id))
+            .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
+    }
+
     fn caller_visible_handler_chain_start(&self) -> Result<SegmentId, VMError> {
         if let Some((_, _, continuation, _, _)) = self.current_handler_dispatch() {
             return self
@@ -2512,12 +2647,16 @@ impl VM {
         // visible chain from the running segment. During dispatch we keep the
         // existing Delegate-aware behavior so handler code sees the same
         // caller-visible stack as the effect site.
-        let chain_start = match self.caller_visible_handler_chain_start() {
-            Ok(seg_id) => seg_id,
-            Err(err) => return StepEvent::Error(err),
+        let entries = if self.current_handler_dispatch().is_some() {
+            let chain_start = match self.caller_visible_handler_chain_start() {
+                Ok(seg_id) => seg_id,
+                Err(err) => return StepEvent::Error(err),
+            };
+            self.handlers_in_caller_chain(chain_start)
+        } else {
+            self.current_handler_chain_with_live_prefix()
         };
-        let handlers = self
-            .handlers_in_caller_chain(chain_start)
+        let handlers = entries
             .into_iter()
             .map(|entry| entry.handler)
             .collect::<Vec<_>>();
