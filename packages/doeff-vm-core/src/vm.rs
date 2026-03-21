@@ -27,7 +27,7 @@ use crate::error::VMError;
 use crate::frame::{
     CallMetadata, EvalReturnContinuation, Frame, InterceptorChainLink, InterceptorContinuation,
 };
-use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId, VarId};
+use crate::ids::{ContId, DispatchId, Marker, ScopeId, SegmentId};
 use crate::ir_stream::{IRStream, IRStreamRef, IRStreamStep, PythonGeneratorStream};
 use crate::kleisli::{IdentityKleisli, KleisliRef};
 use crate::py_key::HashedPyKey;
@@ -35,6 +35,7 @@ use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::{LiveDispatchSnapshot, TraceState};
+use crate::var_store::VarStore;
 use crate::value::Value;
 
 pub use crate::rust_store::RustStore;
@@ -54,6 +55,9 @@ mod step_impl;
 
 #[path = "vm/vm_trace.rs"]
 mod vm_trace_impl;
+
+#[path = "vm/var_store.rs"]
+mod var_store_impl;
 
 #[derive(Debug, Clone, Copy)]
 enum GenErrorSite {
@@ -99,11 +103,6 @@ impl PyStore {
             dict: PyDict::new(py).unbind(),
         }
     }
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct VarStore {
-    pub cells: HashMap<VarId, Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,9 +273,7 @@ pub struct VM {
     pub(crate) trace_state: TraceState,
     pub(crate) dispatch_observer: DispatchObserver,
     pub continuation_registry: HashMap<ContId, Continuation>,
-    scope_bindings: HashMap<SegmentId, HashMap<HashedPyKey, Value>>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
-    scope_var_overrides: HashMap<SegmentId, HashMap<VarId, Value>>,
     scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
     scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
     scope_persistent_epochs: HashMap<ScopeId, u64>,
@@ -307,9 +304,7 @@ impl VM {
             trace_state: TraceState::default(),
             dispatch_observer: DispatchObserver::default(),
             continuation_registry: HashMap::new(),
-            scope_bindings: HashMap::new(),
             scope_parents: HashMap::new(),
-            scope_var_overrides: HashMap::new(),
             scope_state_store: HashMap::new(),
             scope_writer_logs: HashMap::new(),
             scope_persistent_epochs: HashMap::new(),
@@ -336,7 +331,7 @@ impl VM {
         let token = NEXT_RUN_TOKEN.fetch_add(1, Ordering::Relaxed);
         self.active_run_token = Some(token);
         self.segments.clear();
-        self.var_store.cells.clear();
+        self.var_store.clear();
         self.mode = Mode::Deliver(Value::Unit);
         self.pending_python = None;
         self.current_segment = None;
@@ -344,9 +339,7 @@ impl VM {
         self.trace_state.clear();
         self.dispatch_observer.clear();
         self.run_handlers.clear();
-        self.scope_bindings.clear();
         self.scope_parents.clear();
-        self.scope_var_overrides.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
         self.scope_persistent_epochs.clear();
@@ -374,12 +367,10 @@ impl VM {
         self.continuation_registry.clear();
         self.consumed_cont_ids.clear();
         self.dispatch_observer.clear();
-        self.var_store.cells.clear();
+        self.var_store.clear();
         self.mode = Mode::Deliver(Value::Unit);
         self.pending_python = None;
-        self.scope_bindings.clear();
         self.scope_parents.clear();
-        self.scope_var_overrides.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
         self.scope_persistent_epochs.clear();
@@ -413,9 +404,8 @@ impl VM {
     pub fn alloc_segment(&mut self, segment: Segment) -> SegmentId {
         self.register_segment_persistent_state(&segment);
         let seg_id = self.segments.alloc(segment.clone());
-        self.scope_bindings.entry(seg_id).or_default();
+        self.var_store.init_segment(seg_id);
         self.scope_parents.insert(seg_id, segment.parent);
-        self.scope_var_overrides.entry(seg_id).or_default();
         seg_id
     }
 
@@ -425,9 +415,8 @@ impl VM {
         };
         self.dispatch_observer.unbind_segment(id);
         self.segments.free(id);
-        self.scope_bindings.remove(&id);
+        self.var_store.remove_segment(id);
         self.scope_parents.remove(&id);
-        self.scope_var_overrides.remove(&id);
         self.maybe_cleanup_scope_state(scope_id);
     }
 
@@ -446,30 +435,6 @@ impl VM {
 
     pub fn set_scope_parent(&mut self, seg_id: SegmentId, scope_parent: Option<SegmentId>) {
         self.scope_parents.insert(seg_id, scope_parent);
-    }
-
-    pub fn replace_scope_bindings(
-        &mut self,
-        seg_id: SegmentId,
-        bindings: HashMap<HashedPyKey, Value>,
-    ) {
-        self.scope_bindings.insert(seg_id, bindings);
-    }
-
-    pub fn scope_bindings(&self, seg_id: SegmentId) -> Option<&HashMap<HashedPyKey, Value>> {
-        self.scope_bindings.get(&seg_id)
-    }
-
-    pub fn replace_segment_var_overrides(
-        &mut self,
-        seg_id: SegmentId,
-        overrides: HashMap<VarId, Value>,
-    ) {
-        self.scope_var_overrides.insert(seg_id, overrides);
-    }
-
-    pub fn segment_var_overrides(&self, seg_id: SegmentId) -> Option<&HashMap<VarId, Value>> {
-        self.scope_var_overrides.get(&seg_id)
     }
 
     pub fn reparent_children(
@@ -695,103 +660,6 @@ impl VM {
         }
         self.completed_state_entries_snapshot = Some(state);
         self.completed_log_entries_snapshot = Some(logs);
-    }
-
-    pub fn alloc_scoped_var_in_segment(&mut self, seg_id: SegmentId, initial: Value) -> VarId {
-        let scope_id = self
-            .segments
-            .get(seg_id)
-            .expect("alloc_scoped_var_in_segment requires a live segment")
-            .scope_id;
-        let var = VarId::fresh(scope_id);
-        self.var_store.cells.insert(var, initial);
-        var
-    }
-
-    pub fn read_scoped_var_from(&self, start_seg_id: SegmentId, var: VarId) -> Option<Value> {
-        let mut cursor = Some(start_seg_id);
-        while let Some(seg_id) = cursor {
-            if let Some(value) = self
-                .scope_var_overrides
-                .get(&seg_id)
-                .and_then(|overrides| overrides.get(&var))
-            {
-                return Some(value.clone());
-            }
-            let seg = self.segments.get(seg_id)?;
-            if seg.scope_id == var.owner_scope() {
-                return self.var_store.cells.get(&var).cloned();
-            }
-            cursor = self.scope_parent(seg_id);
-        }
-        self.var_store.cells.get(&var).cloned()
-    }
-
-    pub fn write_scoped_var_in_current_segment(
-        &mut self,
-        seg_id: SegmentId,
-        var: VarId,
-        value: Value,
-    ) -> bool {
-        let Some(seg) = self.segments.get(seg_id) else {
-            return false;
-        };
-        if seg.scope_id == var.owner_scope() {
-            self.var_store.cells.insert(var, value);
-        } else {
-            self.scope_var_overrides
-                .entry(seg_id)
-                .or_default()
-                .insert(var, value);
-        }
-        true
-    }
-
-    pub fn write_scoped_var_nonlocal(
-        &mut self,
-        start_seg_id: SegmentId,
-        var: VarId,
-        value: Value,
-    ) -> bool {
-        let mut cursor = Some(start_seg_id);
-        while let Some(seg_id) = cursor {
-            let Some(seg) = self.segments.get(seg_id) else {
-                return false;
-            };
-            if seg.scope_id == var.owner_scope() {
-                self.var_store.cells.insert(var, value);
-                return true;
-            }
-            if self
-                .scope_var_overrides
-                .get(&seg_id)
-                .is_some_and(|overrides| overrides.contains_key(&var))
-            {
-                self.scope_var_overrides
-                    .entry(seg_id)
-                    .or_default()
-                    .insert(var, value);
-                return true;
-            }
-            cursor = self.scope_parent(seg_id);
-        }
-        false
-    }
-
-    pub fn read_scope_binding_from(
-        &self,
-        start_seg_id: SegmentId,
-        key: &HashedPyKey,
-    ) -> Option<Value> {
-        let mut cursor = Some(start_seg_id);
-        while let Some(seg_id) = cursor {
-            if let Some(value) = self.scope_bindings.get(&seg_id).and_then(|bindings| bindings.get(key))
-            {
-                return Some(value.clone());
-            }
-            cursor = self.scope_parent(seg_id);
-        }
-        self.env_store.get(key).cloned()
     }
 
     pub fn read_handler_state_at(
