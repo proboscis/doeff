@@ -15,7 +15,9 @@ def add_three(program: Program[int]) -> Program[int]:
     return program.map(lambda value: value + 3)
 
 
-def sync_interpreter(program: Program[int]) -> int:
+def sync_interpreter(program: Program[int] | tuple[Program[int], object]) -> int:
+    if isinstance(program, tuple):
+        program = program[0]
     result = run(program, handlers=default_handlers())
     return result.value
 

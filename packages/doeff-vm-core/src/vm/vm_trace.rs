@@ -1,21 +1,23 @@
 use super::*;
-use crate::capture::EffectCreationSite;
+use crate::capture::{EffectCreationSite, TraceHop};
 
 impl VM {
-    fn continuation_uses_stream(continuation: &Continuation, stream: &IRStreamRef) -> bool {
-        continuation.frames().is_some_and(|frames| {
-            frames.iter().any(|frame| match frame {
-                Frame::Program {
-                    stream: snapshot_stream,
-                    ..
-                } => IRStreamRef::ptr_eq(snapshot_stream, stream),
-                Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
-                | Frame::EvalReturn(_)
-                | Frame::MapReturn { .. }
-                | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => false,
+    fn continuation_uses_stream(&self, continuation: &Continuation, stream: &IRStreamRef) -> bool {
+        continuation.fibers().iter().any(|fiber_id| {
+            self.segments.get(*fiber_id).is_some_and(|segment| {
+                segment.frames.iter().any(|frame| match frame {
+                    Frame::Program {
+                        stream: snapshot_stream,
+                        ..
+                    } => IRStreamRef::ptr_eq(snapshot_stream, stream),
+                    Frame::InterceptorApply(_)
+                    | Frame::InterceptorEval(_)
+                    | Frame::EvalReturn(_)
+                    | Frame::MapReturn { .. }
+                    | Frame::FlatMapBindResult
+                    | Frame::FlatMapBindSource { .. }
+                    | Frame::InterceptBodyReturn { .. } => false,
+                })
             })
         })
     }
@@ -87,15 +89,30 @@ impl VM {
     }
 
     pub(super) fn effect_creation_site_from_continuation(
+        &self,
         k: &Continuation,
     ) -> Option<EffectCreationSite> {
+        let frames = self.continuation_frame_stack(k);
         let (_, function_name, source_file, source_line) =
-            TraceState::effect_site_from_continuation(k)?;
+            TraceState::effect_site_from_frames(&frames)?;
         Some(EffectCreationSite {
             function_name,
             source_file,
             source_line,
         })
+    }
+
+    pub(super) fn collect_traceback(&self, continuation: &Continuation) -> Vec<TraceHop> {
+        continuation
+            .fibers()
+            .iter()
+            .map(|fiber_id| {
+                self.segments
+                    .get(*fiber_id)
+                    .map(|segment| TraceState::traceback_hop_from_frames(&segment.frames))
+                    .unwrap_or_else(|| TraceHop { frames: Vec::new() })
+            })
+            .collect()
     }
 
     pub(super) fn handler_trace_info(
@@ -166,14 +183,21 @@ impl VM {
         dispatch_id: DispatchId,
     ) -> Option<(usize, String)> {
         let marker = self
-            .active_handler_marker_for_dispatch(dispatch_id)
+            .dispatch_observer
+            .dispatch(dispatch_id)
+            .map(|dispatch| dispatch.active_handler.marker)
+            .or_else(|| self.active_handler_marker_for_dispatch(dispatch_id))
             .or_else(|| {
                 (self.current_segment_dispatch_id() == Some(dispatch_id))
                     .then(|| self.current_segment_ref().map(|seg| seg.marker))
                     .flatten()
             })?;
         let (name, _, _, _) = self.marker_handler_trace_info(marker)?;
-        let origin_seg_id = self.dispatch_origin_user_segment_id(dispatch_id)?;
+        let origin_seg_id = self
+            .dispatch_observer
+            .dispatch(dispatch_id)
+            .and_then(|dispatch| self.continuation_handler_chain_start(&dispatch.k_origin))
+            .or_else(|| self.dispatch_origin_user_segment_id(dispatch_id))?;
         let handler_idx = self.handler_index_in_caller_chain(origin_seg_id, marker)?;
         Some((handler_idx, name))
     }
@@ -219,7 +243,19 @@ impl VM {
     ) -> bool {
         self.dispatch_origin_for_dispatch_id(dispatch_id)
             .map(|origin| origin.k_origin)
-            .is_some_and(|continuation| Self::continuation_uses_stream(&continuation, stream))
+            .is_some_and(|continuation| self.continuation_uses_stream(&continuation, stream))
+    }
+
+    pub(super) fn user_continuation_dispatch_for_stream(
+        &self,
+        stream: &IRStreamRef,
+    ) -> Option<DispatchId> {
+        self.dispatch_observer
+            .iter()
+            .find_map(|(dispatch_id, dispatch)| {
+                self.continuation_uses_stream(&dispatch.k_origin, stream)
+                    .then_some(dispatch_id)
+            })
     }
 
     pub(super) fn handler_stream_throw_continuation(
@@ -227,7 +263,7 @@ impl VM {
         stream: &IRStreamRef,
         handler_kind: Option<HandlerKind>,
     ) -> Option<Continuation> {
-        let handler_kind = handler_kind?;
+        handler_kind?;
 
         let dispatch_id = self
             .current_active_handler_dispatch_id()
@@ -241,10 +277,9 @@ impl VM {
         } else if let Some((_, active_handler_continuation, _)) =
             self.active_handler_dispatch_for(dispatch_id)
         {
-            if Self::continuation_uses_stream(&active_handler_continuation, stream) {
+            if self.continuation_uses_stream(&active_handler_continuation, stream) {
                 active_handler_continuation
-                    .parent()
-                    .cloned()
+                    .tail_owned_fibers()
                     .unwrap_or(origin.k_origin)
             } else {
                 active_handler_continuation
@@ -391,7 +426,9 @@ impl VM {
         dispatch_id: DispatchId,
         exc: &PyException,
     ) {
-        if self.trace_state.dispatch_has_terminal_result(dispatch_id) {
+        let is_live_handler_throw = self.current_active_handler_dispatch_id() == Some(dispatch_id)
+            || self.current_segment_is_active_handler_for_dispatch(dispatch_id);
+        if self.trace_state.dispatch_has_terminal_result(dispatch_id) && !is_live_handler_throw {
             return;
         }
         let handler_identity = self
@@ -425,8 +462,9 @@ impl VM {
         continuation: &Continuation,
         transferred: bool,
     ) {
+        let frames = self.continuation_frame_stack(continuation);
         if let Some((resumed_function_name, source_file, source_line)) =
-            TraceState::continuation_resume_location(continuation)
+            TraceState::continuation_resume_location_from_frames(&frames)
         {
             if transferred {
                 self.trace_state.record_transfer_target(

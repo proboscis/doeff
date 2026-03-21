@@ -38,7 +38,14 @@ impl PyTraceFrame {
 
     fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (String, String, u32))> {
         let cls = py.get_type::<Self>().into_any().unbind();
-        Ok((cls, (self.func_name.clone(), self.source_file.clone(), self.source_line)))
+        Ok((
+            cls,
+            (
+                self.func_name.clone(),
+                self.source_file.clone(),
+                self.source_line,
+            ),
+        ))
     }
 }
 
