@@ -176,6 +176,7 @@ run = _ext.run
 
 
 async_run = _ext.async_run
+memory_stats = _ext.memory_stats
 
 
 state = _ext.state
