@@ -2,34 +2,37 @@
 
 use std::sync::Arc;
 
-use crate::continuation::Continuation;
 use crate::do_ctrl::InterceptMode;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{FiberId, Marker, ScopeId};
+use crate::ids::{FiberId, Marker};
 use crate::kleisli::KleisliRef;
 use crate::memory_stats;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::step::PyException;
 use crate::value::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum FiberKind {
-    Normal,
+    Normal {
+        marker: Marker,
+    },
     PromptBoundary {
+        marker: Marker,
         handled_marker: Marker,
         handler: KleisliRef,
         types: Option<Vec<PyShared>>,
     },
     InterceptorBoundary {
+        marker: Marker,
         interceptor: KleisliRef,
         types: Option<Vec<PyShared>>,
         mode: InterceptMode,
         metadata: Option<CallMetadata>,
     },
     MaskBoundary {
+        marker: Marker,
         masked_effects: Vec<PyShared>,
         behind: bool,
     },
@@ -43,36 +46,18 @@ pub struct ScopeStore {
 
 #[derive(Debug)]
 pub struct Fiber {
-    pub scope_id: ScopeId,
-    pub persistent_epoch: u64,
-    pub marker: Marker,
     pub frames: Vec<Frame>,
     pub parent: Option<FiberId>,
-    pub state_store: HashMap<String, Value>,
-    pub writer_log: Vec<Value>,
     pub kind: FiberKind,
-    pub pending_error_context: Option<PyException>,
-    pub throw_parent: Option<Continuation>,
-    pub interceptor_eval_depth: usize,
-    pub interceptor_skip_stack: Vec<Marker>,
 }
 
 impl Fiber {
     pub fn new(marker: Marker, parent: Option<FiberId>) -> Self {
         memory_stats::register_segment();
         Fiber {
-            scope_id: ScopeId::fresh(),
-            persistent_epoch: 0,
-            marker,
             frames: Vec::new(),
             parent,
-            state_store: HashMap::new(),
-            writer_log: Vec::new(),
-            kind: FiberKind::Normal,
-            pending_error_context: None,
-            throw_parent: None,
-            interceptor_eval_depth: 0,
-            interceptor_skip_stack: Vec::new(),
+            kind: FiberKind::Normal { marker },
         }
     }
 
@@ -84,22 +69,14 @@ impl Fiber {
     ) -> Self {
         memory_stats::register_segment();
         Fiber {
-            scope_id: ScopeId::fresh(),
-            persistent_epoch: 0,
-            marker,
             frames: Vec::new(),
             parent,
-            state_store: HashMap::new(),
-            writer_log: Vec::new(),
             kind: FiberKind::PromptBoundary {
+                marker,
                 handled_marker,
                 handler,
                 types: None,
             },
-            pending_error_context: None,
-            throw_parent: None,
-            interceptor_eval_depth: 0,
-            interceptor_skip_stack: Vec::new(),
         }
     }
 
@@ -112,22 +89,14 @@ impl Fiber {
     ) -> Self {
         memory_stats::register_segment();
         Fiber {
-            scope_id: ScopeId::fresh(),
-            persistent_epoch: 0,
-            marker,
             frames: Vec::new(),
             parent,
-            state_store: HashMap::new(),
-            writer_log: Vec::new(),
             kind: FiberKind::PromptBoundary {
+                marker,
                 handled_marker,
                 handler,
                 types,
             },
-            pending_error_context: None,
-            throw_parent: None,
-            interceptor_eval_depth: 0,
-            interceptor_skip_stack: Vec::new(),
         }
     }
 
@@ -151,10 +120,27 @@ impl Fiber {
         matches!(self.kind, FiberKind::PromptBoundary { .. })
     }
 
+    pub fn marker(&self) -> Marker {
+        match &self.kind {
+            FiberKind::Normal { marker }
+            | FiberKind::PromptBoundary { marker, .. }
+            | FiberKind::InterceptorBoundary { marker, .. }
+            | FiberKind::MaskBoundary { marker, .. } => *marker,
+        }
+    }
+
+    pub fn boundary_marker(&self) -> Option<Marker> {
+        match &self.kind {
+            FiberKind::PromptBoundary { marker, .. } => Some(*marker),
+            FiberKind::InterceptorBoundary { marker, .. } => Some(*marker),
+            FiberKind::Normal { .. } | FiberKind::MaskBoundary { .. } => None,
+        }
+    }
+
     pub fn handled_marker(&self) -> Option<Marker> {
         match &self.kind {
             FiberKind::PromptBoundary { handled_marker, .. } => Some(*handled_marker),
-            FiberKind::Normal
+            FiberKind::Normal { .. }
             | FiberKind::InterceptorBoundary { .. }
             | FiberKind::MaskBoundary { .. } => None,
         }
@@ -165,18 +151,9 @@ impl Clone for Fiber {
     fn clone(&self) -> Self {
         memory_stats::register_segment();
         Fiber {
-            scope_id: self.scope_id,
-            persistent_epoch: self.persistent_epoch,
-            marker: self.marker,
             frames: self.frames.clone(),
             parent: self.parent,
-            state_store: self.state_store.clone(),
-            writer_log: self.writer_log.clone(),
             kind: self.kind.clone(),
-            pending_error_context: self.pending_error_context.clone(),
-            throw_parent: self.throw_parent.clone(),
-            interceptor_eval_depth: self.interceptor_eval_depth,
-            interceptor_skip_stack: self.interceptor_skip_stack.clone(),
         }
     }
 }
@@ -221,9 +198,10 @@ mod tests {
     fn test_segment_creation() {
         let marker = Marker::fresh();
         let seg = Fiber::new(marker, None);
-        assert_eq!(seg.marker, marker);
         assert!(seg.parent.is_none());
         assert!(!seg.is_prompt_boundary());
+        assert_eq!(seg.marker(), marker);
+        assert!(seg.boundary_marker().is_none());
         assert!(seg.handled_marker().is_none());
     }
 
@@ -233,6 +211,8 @@ mod tests {
         let handled = Marker::fresh();
         let seg = Fiber::new_prompt(marker, None, handled, std::sync::Arc::new(DummyKleisli));
         assert!(seg.is_prompt_boundary());
+        assert_eq!(seg.marker(), marker);
+        assert_eq!(seg.boundary_marker(), Some(marker));
         assert_eq!(seg.handled_marker(), Some(handled));
     }
 

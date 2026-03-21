@@ -528,7 +528,7 @@ impl PyVM {
         let mut other_frames = 0usize;
         for (_, segment) in self.vm.segments.iter() {
             match &segment.kind {
-                SegmentKind::Normal => normal_segments += 1,
+                SegmentKind::Normal { .. } => normal_segments += 1,
                 SegmentKind::PromptBoundary { .. } => prompt_segments += 1,
                 SegmentKind::InterceptorBoundary { .. } => interceptor_segments += 1,
                 SegmentKind::MaskBoundary { .. } => mask_segments += 1,
@@ -589,30 +589,12 @@ impl PyVM {
         )?;
         dict.set_item("scope_epoch_count", self.vm.scope_epoch_count())?;
         dict.set_item("scope_epoch_capacity", self.vm.scope_epoch_capacity())?;
-        dict.set_item(
-            "retired_scope_state_count",
-            self.vm.retired_scope_state_count(),
-        )?;
-        dict.set_item(
-            "retired_scope_state_capacity",
-            self.vm.retired_scope_state_capacity(),
-        )?;
-        dict.set_item(
-            "retired_scope_writer_log_count",
-            self.vm.retired_scope_writer_log_count(),
-        )?;
-        dict.set_item(
-            "retired_scope_writer_log_capacity",
-            self.vm.retired_scope_writer_log_capacity(),
-        )?;
-        dict.set_item(
-            "retired_scope_epoch_count",
-            self.vm.retired_scope_epoch_count(),
-        )?;
-        dict.set_item(
-            "retired_scope_epoch_capacity",
-            self.vm.retired_scope_epoch_capacity(),
-        )?;
+        dict.set_item("retired_scope_state_count", 0)?;
+        dict.set_item("retired_scope_state_capacity", 0)?;
+        dict.set_item("retired_scope_writer_log_count", 0)?;
+        dict.set_item("retired_scope_writer_log_capacity", 0)?;
+        dict.set_item("retired_scope_epoch_count", 0)?;
+        dict.set_item("retired_scope_epoch_capacity", 0)?;
         dict.set_item("normal_segments", normal_segments)?;
         dict.set_item("prompt_segments", prompt_segments)?;
         dict.set_item("interceptor_segments", interceptor_segments)?;
@@ -862,8 +844,7 @@ impl PyVM {
         }
 
         let outside_seg_id = self.vm.instantiate_installed_handlers();
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, outside_seg_id);
+        let seg = Segment::new(Marker::fresh(), outside_seg_id);
         let seg_id = self.vm.alloc_segment(seg);
         self.vm.current_segment = Some(seg_id);
         if self.vm.current_segment_mut().is_none() {
@@ -3475,8 +3456,7 @@ mod tests {
         Python::attach(|py| {
             let mut pyvm = PyVM { vm: VM::new() };
 
-            let root_marker = Marker::fresh();
-            let root_seg = Segment::new(root_marker, None);
+            let root_seg = Segment::new(Marker::fresh(), None);
             let root_seg_id = pyvm.vm.alloc_segment(root_seg);
             pyvm.vm.current_segment = Some(root_seg_id);
 
@@ -3794,8 +3774,7 @@ mod tests {
     fn test_get_traceback_classifies_to_doctrl() {
         Python::attach(|py| {
             let mut pyvm = PyVM { vm: VM::new() };
-            let marker = crate::ids::Marker::fresh();
-            let seg = crate::segment::Segment::new(marker, None);
+            let seg = crate::segment::Segment::new(crate::ids::Marker::fresh(), None);
             let continuation = crate::continuation::Continuation::capture(
                 &seg,
                 crate::ids::SegmentId::from_index(0),
@@ -4169,8 +4148,7 @@ mod tests {
             );
 
             // GetTraceback → DoCtrl::GetTraceback
-            let marker = crate::ids::Marker::fresh();
-            let seg = crate::segment::Segment::new(marker, None);
+            let seg = crate::segment::Segment::new(crate::ids::Marker::fresh(), None);
             let continuation = crate::continuation::Continuation::capture(
                 &seg,
                 crate::ids::SegmentId::from_index(0),
