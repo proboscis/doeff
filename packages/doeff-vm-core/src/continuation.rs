@@ -498,8 +498,7 @@ mod tests {
     }
 
     fn make_test_segment() -> (Segment, SegmentId) {
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None);
+        let seg = Segment::new(Marker::fresh(), None);
         let seg_id = SegmentId::from_index(0);
         (seg, seg_id)
     }

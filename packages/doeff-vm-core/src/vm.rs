@@ -105,6 +105,14 @@ impl PyStore {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+struct FiberRuntimeState {
+    pending_error_context: Option<PyException>,
+    throw_parent: Option<Continuation>,
+    interceptor_eval_depth: usize,
+    interceptor_skip_stack: Vec<Marker>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugLevel {
     Off,
@@ -273,14 +281,10 @@ pub struct VM {
     pub(crate) trace_state: TraceState,
     pub(crate) dispatch_observer: DispatchObserver,
     pub continuation_registry: HashMap<ContId, Continuation>,
+    fiber_runtime: HashMap<SegmentId, FiberRuntimeState>,
+    scope_ids: HashMap<SegmentId, ScopeId>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
     segment_parent_redirects: HashMap<SegmentId, Option<SegmentId>>,
-    scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
-    scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
-    scope_persistent_epochs: HashMap<ScopeId, u64>,
-    retired_scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
-    retired_scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
-    retired_scope_persistent_epochs: HashMap<ScopeId, u64>,
     completed_state_entries_snapshot: Option<HashMap<String, Value>>,
     completed_log_entries_snapshot: Option<Vec<Value>>,
     pub active_run_token: Option<u64>,
@@ -305,14 +309,10 @@ impl VM {
             trace_state: TraceState::default(),
             dispatch_observer: DispatchObserver::default(),
             continuation_registry: HashMap::new(),
+            fiber_runtime: HashMap::new(),
+            scope_ids: HashMap::new(),
             scope_parents: HashMap::new(),
             segment_parent_redirects: HashMap::new(),
-            scope_state_store: HashMap::new(),
-            scope_writer_logs: HashMap::new(),
-            scope_persistent_epochs: HashMap::new(),
-            retired_scope_state_store: HashMap::new(),
-            retired_scope_writer_logs: HashMap::new(),
-            retired_scope_persistent_epochs: HashMap::new(),
             completed_state_entries_snapshot: None,
             completed_log_entries_snapshot: None,
             active_run_token: None,
@@ -341,14 +341,10 @@ impl VM {
         self.trace_state.clear();
         self.dispatch_observer.clear();
         self.run_handlers.clear();
+        self.fiber_runtime.clear();
+        self.scope_ids.clear();
         self.scope_parents.clear();
         self.segment_parent_redirects.clear();
-        self.scope_state_store.clear();
-        self.scope_writer_logs.clear();
-        self.scope_persistent_epochs.clear();
-        self.retired_scope_state_store.clear();
-        self.retired_scope_writer_logs.clear();
-        self.retired_scope_persistent_epochs.clear();
         self.completed_state_entries_snapshot = None;
         self.completed_log_entries_snapshot = None;
         token
@@ -385,21 +381,13 @@ impl VM {
         self.trace_state.clear();
         self.trace_state.shrink_to_fit();
         self.debug.shrink_to_fit();
+        self.fiber_runtime.clear();
+        self.fiber_runtime.shrink_to_fit();
+        self.scope_ids.clear();
+        self.scope_ids.shrink_to_fit();
         self.scope_parents.clear();
         self.segment_parent_redirects.clear();
         self.scope_parents.shrink_to_fit();
-        self.scope_state_store.clear();
-        self.scope_state_store.shrink_to_fit();
-        self.scope_writer_logs.clear();
-        self.scope_writer_logs.shrink_to_fit();
-        self.scope_persistent_epochs.clear();
-        self.scope_persistent_epochs.shrink_to_fit();
-        self.retired_scope_state_store.clear();
-        self.retired_scope_state_store.shrink_to_fit();
-        self.retired_scope_writer_logs.clear();
-        self.retired_scope_writer_logs.shrink_to_fit();
-        self.retired_scope_persistent_epochs.clear();
-        self.retired_scope_persistent_epochs.shrink_to_fit();
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -443,51 +431,27 @@ impl VM {
     }
 
     pub fn scope_state_count(&self) -> usize {
-        self.scope_state_store.len()
+        self.var_store.handler_state_count()
     }
 
     pub fn scope_writer_log_count(&self) -> usize {
-        self.scope_writer_logs.len()
+        self.var_store.writer_log_count()
     }
 
     pub fn scope_epoch_count(&self) -> usize {
-        self.scope_persistent_epochs.len()
-    }
-
-    pub fn retired_scope_state_count(&self) -> usize {
-        self.retired_scope_state_store.len()
-    }
-
-    pub fn retired_scope_writer_log_count(&self) -> usize {
-        self.retired_scope_writer_logs.len()
-    }
-
-    pub fn retired_scope_epoch_count(&self) -> usize {
-        self.retired_scope_persistent_epochs.len()
+        0
     }
 
     pub fn scope_state_capacity(&self) -> usize {
-        self.scope_state_store.capacity()
+        self.var_store.handler_state_capacity()
     }
 
     pub fn scope_writer_log_capacity(&self) -> usize {
-        self.scope_writer_logs.capacity()
+        self.var_store.writer_log_capacity()
     }
 
     pub fn scope_epoch_capacity(&self) -> usize {
-        self.scope_persistent_epochs.capacity()
-    }
-
-    pub fn retired_scope_state_capacity(&self) -> usize {
-        self.retired_scope_state_store.capacity()
-    }
-
-    pub fn retired_scope_writer_log_capacity(&self) -> usize {
-        self.retired_scope_writer_logs.capacity()
-    }
-
-    pub fn retired_scope_epoch_capacity(&self) -> usize {
-        self.retired_scope_persistent_epochs.capacity()
+        0
     }
 
     pub fn py_store(&self) -> Option<&PyStore> {
@@ -505,29 +469,28 @@ impl VM {
     }
 
     pub fn alloc_segment(&mut self, segment: Segment) -> SegmentId {
-        self.register_segment_scope_state(&segment);
         let seg_id = self.segments.alloc(segment);
         self.segment_parent_redirects.remove(&seg_id);
         self.var_store.init_segment(seg_id);
+        self.fiber_runtime
+            .insert(seg_id, FiberRuntimeState::default());
+        self.scope_ids.insert(seg_id, ScopeId::fresh());
         let parent = self.segments.get(seg_id).and_then(|segment| segment.parent);
         self.scope_parents.insert(seg_id, parent);
         seg_id
     }
 
     pub fn free_segment(&mut self, id: SegmentId) {
-        let Some((scope_id, parent)) = self
-            .segments
-            .get(id)
-            .map(|segment| (segment.scope_id, segment.parent))
-        else {
+        let Some(parent) = self.segments.get(id).map(|segment| segment.parent) else {
             return;
         };
         self.dispatch_observer.unbind_segment(id);
         self.segment_parent_redirects.insert(id, parent);
         self.segments.free(id);
         self.var_store.remove_segment(id);
+        self.fiber_runtime.remove(&id);
+        self.scope_ids.remove(&id);
         self.scope_parents.remove(&id);
-        self.maybe_cleanup_scope_state(scope_id);
     }
 
     pub fn current_segment_mut(&mut self) -> Option<&mut Segment> {
@@ -591,12 +554,119 @@ impl VM {
         &self,
         continuation: &Continuation,
     ) -> Option<&PyException> {
-        self.continuation_segment_ref(continuation)
-            .and_then(|segment| segment.pending_error_context.as_ref())
+        continuation
+            .segment_id()
+            .and_then(|seg_id| self.fiber_runtime.get(&seg_id))
+            .and_then(|state| state.pending_error_context.as_ref())
     }
 
     pub fn scope_parent(&self, seg_id: SegmentId) -> Option<SegmentId> {
         self.scope_parents.get(&seg_id).copied().flatten()
+    }
+
+    fn fiber_runtime(&self, seg_id: SegmentId) -> Option<&FiberRuntimeState> {
+        self.fiber_runtime.get(&seg_id)
+    }
+
+    fn fiber_runtime_mut(&mut self, seg_id: SegmentId) -> Option<&mut FiberRuntimeState> {
+        self.fiber_runtime.get_mut(&seg_id)
+    }
+
+    pub(crate) fn scope_id_for_segment(&self, seg_id: SegmentId) -> Option<ScopeId> {
+        self.scope_ids.get(&seg_id).copied()
+    }
+
+    pub(crate) fn clear_pending_error_context(&mut self, seg_id: SegmentId) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.pending_error_context = None;
+        }
+    }
+
+    pub(crate) fn set_pending_error_context(&mut self, seg_id: SegmentId, exception: PyException) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.pending_error_context = Some(exception);
+        }
+    }
+
+    pub(crate) fn pending_error_context(&self, seg_id: SegmentId) -> Option<&PyException> {
+        self.fiber_runtime(seg_id)
+            .and_then(|state| state.pending_error_context.as_ref())
+    }
+
+    pub(crate) fn throw_parent(&self, seg_id: SegmentId) -> Option<&Continuation> {
+        self.fiber_runtime(seg_id)
+            .and_then(|state| state.throw_parent.as_ref())
+    }
+
+    pub(crate) fn clear_throw_parent(&mut self, seg_id: SegmentId) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.throw_parent = None;
+        }
+    }
+
+    pub(crate) fn interceptor_eval_depth(&self, seg_id: SegmentId) -> usize {
+        self.fiber_runtime(seg_id)
+            .map(|state| state.interceptor_eval_depth)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn increment_interceptor_eval_depth(&mut self, seg_id: SegmentId) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.interceptor_eval_depth = state.interceptor_eval_depth.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn decrement_interceptor_eval_depth(&mut self, seg_id: SegmentId) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.interceptor_eval_depth = state.interceptor_eval_depth.saturating_sub(1);
+        }
+    }
+
+    pub(crate) fn is_interceptor_skipped_on(&self, seg_id: SegmentId, marker: Marker) -> bool {
+        self.fiber_runtime(seg_id)
+            .is_some_and(|state| state.interceptor_skip_stack.contains(&marker))
+    }
+
+    pub(crate) fn push_interceptor_skip_on(&mut self, seg_id: SegmentId, marker: Marker) {
+        if let Some(state) = self.fiber_runtime_mut(seg_id) {
+            state.interceptor_skip_stack.push(marker);
+        }
+    }
+
+    pub(crate) fn pop_interceptor_skip_on(&mut self, seg_id: SegmentId, marker: Marker) {
+        let Some(state) = self.fiber_runtime_mut(seg_id) else {
+            return;
+        };
+        if let Some(pos) = state
+            .interceptor_skip_stack
+            .iter()
+            .rposition(|active| *active == marker)
+        {
+            state.interceptor_skip_stack.remove(pos);
+        }
+    }
+
+    pub(crate) fn interceptor_skip_stack_is_empty(&self, seg_id: SegmentId) -> bool {
+        self.fiber_runtime(seg_id)
+            .map_or(true, |state| state.interceptor_skip_stack.is_empty())
+    }
+
+    pub(crate) fn inherit_interceptor_guard_state(
+        &mut self,
+        source_seg_id: Option<SegmentId>,
+        child_seg_id: SegmentId,
+    ) {
+        let Some(source_seg_id) = source_seg_id else {
+            return;
+        };
+        let Some(source_state) = self.fiber_runtime(source_seg_id).cloned() else {
+            return;
+        };
+        let Some(child_state) = self.fiber_runtime_mut(child_seg_id) else {
+            return;
+        };
+        child_state.interceptor_eval_depth = source_state.interceptor_eval_depth;
+        child_state.interceptor_skip_stack = source_state.interceptor_skip_stack;
     }
 
     pub fn set_scope_parent(&mut self, seg_id: SegmentId, scope_parent: Option<SegmentId>) {
@@ -715,123 +785,6 @@ impl VM {
         rewired
     }
 
-    fn register_segment_scope_state(&mut self, segment: &Segment) {
-        self.scope_state_store
-            .entry(segment.scope_id)
-            .or_insert_with(|| segment.state_store.clone());
-        self.scope_writer_logs
-            .entry(segment.scope_id)
-            .or_insert_with(|| segment.writer_log.clone());
-        self.scope_persistent_epochs
-            .entry(segment.scope_id)
-            .or_insert(segment.persistent_epoch);
-    }
-
-    fn maybe_cleanup_scope_state(&mut self, scope_id: ScopeId) {
-        if self.scope_is_still_referenced(scope_id) {
-            return;
-        }
-        if let Some(state_store) = self.scope_state_store.remove(&scope_id) {
-            self.retired_scope_state_store.insert(scope_id, state_store);
-        }
-        if let Some(writer_log) = self.scope_writer_logs.remove(&scope_id) {
-            self.retired_scope_writer_logs.insert(scope_id, writer_log);
-        }
-        if let Some(epoch) = self.scope_persistent_epochs.remove(&scope_id) {
-            self.retired_scope_persistent_epochs.insert(scope_id, epoch);
-        }
-    }
-
-    fn scope_is_still_referenced(&self, scope_id: ScopeId) -> bool {
-        // TODO(vm-shared-handlers): This scans live segments and registered
-        // continuations on every segment free. Replace it with refcount-style
-        // scope tracking if cleanup cost becomes visible in long-running VMs.
-        let mut visited = HashSet::new();
-        self.segments
-            .iter()
-            .any(|(_, segment)| self.segment_references_scope(segment, scope_id, &mut visited))
-            || self.continuation_registry.values().any(|continuation| {
-                self.continuation_references_scope(continuation, scope_id, &mut visited)
-            })
-            || self.dispatch_observer.iter().any(|(_, dispatch)| {
-                self.continuation_references_scope(&dispatch.k_origin, scope_id, &mut visited)
-                    || self.continuation_references_scope(
-                        &dispatch.active_handler.continuation,
-                        scope_id,
-                        &mut visited,
-                    )
-            })
-    }
-
-    fn segment_references_scope(
-        &self,
-        segment: &Segment,
-        scope_id: ScopeId,
-        visited: &mut HashSet<ContId>,
-    ) -> bool {
-        if segment.scope_id == scope_id {
-            return true;
-        }
-        if segment.throw_parent.as_ref().is_some_and(|continuation| {
-            self.continuation_references_scope(continuation, scope_id, visited)
-        }) {
-            return true;
-        }
-        for frame in &segment.frames {
-            let referenced = match frame {
-                Frame::EvalReturn(eval_return) => {
-                    self.eval_return_references_scope(eval_return.as_ref(), scope_id, visited)
-                }
-                Frame::Program { .. }
-                | Frame::InterceptorApply(_)
-                | Frame::InterceptorEval(_)
-                | Frame::MapReturn { .. }
-                | Frame::FlatMapBindResult
-                | Frame::FlatMapBindSource { .. }
-                | Frame::InterceptBodyReturn { .. } => false,
-            };
-            if referenced {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn continuation_references_scope(
-        &self,
-        continuation: &Continuation,
-        scope_id: ScopeId,
-        visited: &mut HashSet<ContId>,
-    ) -> bool {
-        if !visited.insert(continuation.cont_id) {
-            return false;
-        }
-        if continuation.fibers().iter().any(|fiber_id| {
-            self.segments
-                .get(*fiber_id)
-                .is_some_and(|segment| self.segment_references_scope(segment, scope_id, visited))
-        }) {
-            return true;
-        }
-        false
-    }
-
-    fn eval_return_references_scope(
-        &self,
-        eval_return: &EvalReturnContinuation,
-        scope_id: ScopeId,
-        visited: &mut HashSet<ContId>,
-    ) -> bool {
-        match eval_return {
-            EvalReturnContinuation::ResumeToContinuation { continuation }
-            | EvalReturnContinuation::EvalInScopeReturn { continuation }
-            | EvalReturnContinuation::ReturnToContinuation { continuation } => {
-                self.continuation_references_scope(continuation, scope_id, visited)
-            }
-            _ => false,
-        }
-    }
-
     fn collect_outputs_from_chain(
         &self,
         start_seg_id: SegmentId,
@@ -885,14 +838,11 @@ impl VM {
         missing_is_none: bool,
     ) -> Option<Value> {
         let prompt_seg_id = self.shared_builtin_handler_prompt(prompt_seg_id);
-        self.segments.get(prompt_seg_id).and_then(|seg| {
-            self.scope_state_store
-                .get(&seg.scope_id)
-                .and_then(|state| state.get(key))
-                .cloned()
-                .or_else(|| seg.state_store.get(key).cloned())
-                .or_else(|| missing_is_none.then_some(Value::None))
-        })
+        self.var_store
+            .handler_state(prompt_seg_id)
+            .and_then(|state| state.get(key))
+            .cloned()
+            .or_else(|| missing_is_none.then_some(Value::None))
     }
 
     pub fn write_handler_state_at(
@@ -902,26 +852,19 @@ impl VM {
         value: Value,
     ) -> bool {
         let prompt_seg_id = self.shared_builtin_handler_prompt(prompt_seg_id);
-        let Some((scope_id, sync_rust_store)) = self.segments.get(prompt_seg_id).map(|seg| {
-            (
-                seg.scope_id,
-                matches!(
-                    &seg.kind,
-                    SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "StateHandler"
-                ),
+        let Some(sync_rust_store) = self.segments.get(prompt_seg_id).map(|seg| {
+            matches!(
+                &seg.kind,
+                SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "StateHandler"
             )
         }) else {
             return false;
         };
 
-        self.scope_state_store
-            .entry(scope_id)
-            .or_default()
-            .insert(key.clone(), value.clone());
-        let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
+        let Some(state) = self.var_store.handler_state_mut(prompt_seg_id) else {
             return false;
         };
-        seg.state_store.insert(key.clone(), value.clone());
+        state.insert(key.clone(), value.clone());
         if sync_rust_store {
             self.rust_store.entries.insert(key, value);
         }
@@ -930,18 +873,7 @@ impl VM {
 
     pub fn append_handler_log_at(&mut self, prompt_seg_id: SegmentId, message: Value) -> bool {
         let prompt_seg_id = self.shared_builtin_handler_prompt(prompt_seg_id);
-        let Some(scope_id) = self.segments.get(prompt_seg_id).map(|seg| seg.scope_id) else {
-            return false;
-        };
-        self.scope_writer_logs
-            .entry(scope_id)
-            .or_default()
-            .push(message.clone());
-        let Some(seg) = self.segments.get_mut(prompt_seg_id) else {
-            return false;
-        };
-        seg.writer_log.push(message);
-        true
+        self.var_store.append_writer_log(prompt_seg_id, message)
     }
 
     fn shared_builtin_handler_prompt(&self, prompt_seg_id: SegmentId) -> SegmentId {
@@ -1008,14 +940,14 @@ impl VM {
                 if handler.handler_name() == "StateHandler" =>
             {
                 let shared_state = self
-                    .scope_state_store
-                    .get(&seg.scope_id)
+                    .var_store
+                    .handler_state(canonical_seg_id)
                     .cloned()
-                    .unwrap_or_else(|| seg.state_store.clone());
+                    .unwrap_or_default();
                 Some((canonical_seg_id, shared_state))
             }
             SegmentKind::PromptBoundary { .. }
-            | SegmentKind::Normal
+            | SegmentKind::Normal { .. }
             | SegmentKind::InterceptorBoundary { .. }
             | SegmentKind::MaskBoundary { .. } => None,
         }
@@ -1029,14 +961,14 @@ impl VM {
                 if handler.handler_name() == "WriterHandler" =>
             {
                 let shared_logs = self
-                    .scope_writer_logs
-                    .get(&seg.scope_id)
+                    .var_store
+                    .writer_log(canonical_seg_id)
                     .cloned()
-                    .unwrap_or_else(|| seg.writer_log.clone());
+                    .unwrap_or_default();
                 Some((canonical_seg_id, shared_logs))
             }
             SegmentKind::PromptBoundary { .. }
-            | SegmentKind::Normal
+            | SegmentKind::Normal { .. }
             | SegmentKind::InterceptorBoundary { .. }
             | SegmentKind::MaskBoundary { .. } => None,
         }

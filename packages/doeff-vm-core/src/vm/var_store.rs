@@ -31,10 +31,8 @@ impl VM {
 
     pub fn alloc_scoped_var_in_segment(&mut self, seg_id: SegmentId, initial: Value) -> VarId {
         let scope_id = self
-            .segments
-            .get(seg_id)
-            .expect("alloc_scoped_var_in_segment requires a live segment")
-            .scope_id;
+            .scope_id_for_segment(seg_id)
+            .expect("alloc_scoped_var_in_segment requires a live segment");
         let var = VarId::fresh(scope_id);
         self.var_store.cells.insert(var, initial);
         var
@@ -50,8 +48,7 @@ impl VM {
             {
                 return Some(value.clone());
             }
-            let seg = self.segments.get(seg_id)?;
-            if seg.scope_id == var.owner_scope() {
+            if self.scope_id_for_segment(seg_id) == Some(var.owner_scope()) {
                 return self.var_store.cells.get(&var).cloned();
             }
             cursor = self.scope_parent(seg_id);
@@ -65,10 +62,10 @@ impl VM {
         var: VarId,
         value: Value,
     ) -> bool {
-        let Some(seg) = self.segments.get(seg_id) else {
+        if self.segments.get(seg_id).is_none() {
             return false;
-        };
-        if seg.scope_id == var.owner_scope() {
+        }
+        if self.scope_id_for_segment(seg_id) == Some(var.owner_scope()) {
             self.var_store.cells.insert(var, value);
         } else {
             self.var_store
@@ -87,10 +84,10 @@ impl VM {
     ) -> bool {
         let mut cursor = Some(start_seg_id);
         while let Some(seg_id) = cursor {
-            let Some(seg) = self.segments.get(seg_id) else {
+            if self.segments.get(seg_id).is_none() {
                 return false;
-            };
-            if seg.scope_id == var.owner_scope() {
+            }
+            if self.scope_id_for_segment(seg_id) == Some(var.owner_scope()) {
                 self.var_store.cells.insert(var, value);
                 return true;
             }
