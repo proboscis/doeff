@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use crate::continuation::Continuation;
 use crate::do_ctrl::InterceptMode;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
@@ -11,7 +10,6 @@ use crate::kleisli::KleisliRef;
 use crate::memory_stats;
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
-use crate::step::PyException;
 use crate::value::Value;
 use std::collections::HashMap;
 
@@ -47,10 +45,6 @@ pub struct Fiber {
     pub frames: Vec<Frame>,
     pub parent: Option<FiberId>,
     pub kind: FiberKind,
-    pub pending_error_context: Option<PyException>,
-    pub throw_parent: Option<Continuation>,
-    pub interceptor_eval_depth: usize,
-    pub interceptor_skip_stack: Vec<Marker>,
 }
 
 impl Fiber {
@@ -61,10 +55,6 @@ impl Fiber {
             frames: Vec::new(),
             parent,
             kind: FiberKind::Normal,
-            pending_error_context: None,
-            throw_parent: None,
-            interceptor_eval_depth: 0,
-            interceptor_skip_stack: Vec::new(),
         }
     }
 
@@ -84,10 +74,6 @@ impl Fiber {
                 handler,
                 types: None,
             },
-            pending_error_context: None,
-            throw_parent: None,
-            interceptor_eval_depth: 0,
-            interceptor_skip_stack: Vec::new(),
         }
     }
 
@@ -108,10 +94,6 @@ impl Fiber {
                 handler,
                 types,
             },
-            pending_error_context: None,
-            throw_parent: None,
-            interceptor_eval_depth: 0,
-            interceptor_skip_stack: Vec::new(),
         }
     }
 
@@ -153,10 +135,6 @@ impl Clone for Fiber {
             frames: self.frames.clone(),
             parent: self.parent,
             kind: self.kind.clone(),
-            pending_error_context: self.pending_error_context.clone(),
-            throw_parent: self.throw_parent.clone(),
-            interceptor_eval_depth: self.interceptor_eval_depth,
-            interceptor_skip_stack: self.interceptor_skip_stack.clone(),
         }
     }
 }

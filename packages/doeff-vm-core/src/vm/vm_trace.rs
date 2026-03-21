@@ -375,7 +375,9 @@ impl VM {
 
         match make_get_execution_context_effect() {
             Ok(effect) => {
-                self.current_seg_mut().pending_error_context = Some(exception.clone());
+                if let Some(seg_id) = self.current_segment {
+                    self.set_pending_error_context(seg_id, exception.clone());
+                }
                 Mode::HandleYield(DoCtrl::Perform { effect })
             }
             Err(_) => Mode::Throw(exception),
