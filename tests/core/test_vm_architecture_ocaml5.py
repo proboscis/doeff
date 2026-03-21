@@ -13,6 +13,7 @@ If these tests fail, the architecture has regressed.
 import pytest
 from doeff import (
     Effect,
+    EffectBase,
     Pass,
     Resume,
     Spawn,
@@ -30,16 +31,16 @@ from doeff import (
 
 
 @do
-def _capture_and_check_handler(effect, k):
+def _capture_and_check_handler(effect: Effect, k):
     """Handler that captures k and returns it for inspection."""
-    yield Resume(k, "handled")
+    return (yield Resume(k, "handled"))
 
 
 @do
 def _simple_effect_program():
     """Program that yields one effect."""
 
-    class Ping(Effect):
+    class Ping(EffectBase):
         pass
 
     result = yield Ping()
@@ -55,12 +56,12 @@ def test_resume_returns_to_same_execution_context():
     """
 
     @do
-    def _handler(effect, k):
-        yield Resume(k, "resumed_value")
+    def _handler(effect: Effect, k):
+        return (yield Resume(k, "resumed_value"))
 
     @do
     def _program():
-        class MyEffect(Effect):
+        class MyEffect(EffectBase):
             pass
 
         val = yield MyEffect()
@@ -79,13 +80,13 @@ def test_continuation_is_one_shot():
     """
 
     @do
-    def _double_resume_handler(effect, k):
+    def _double_resume_handler(effect: Effect, k):
         yield Resume(k, "first")
         yield Resume(k, "second")  # should fail: one-shot violation
 
     @do
     def _program():
-        class MyEffect(Effect):
+        class MyEffect(EffectBase):
             pass
 
         return (yield MyEffect())
@@ -105,7 +106,7 @@ def test_continuation_is_one_shot():
 # ---------------------------------------------------------------------------
 
 
-class SharedState(Effect):
+class SharedState(EffectBase):
     pass
 
 
@@ -130,12 +131,12 @@ def test_spawned_tasks_share_handler_state():
     shared = {"value": 0}
 
     @do
-    def _shared_handler(effect, k):
+    def _shared_handler(effect: Effect, k):
         if isinstance(effect, GetShared):
-            yield Resume(k, shared["value"])
+            return (yield Resume(k, shared["value"]))
         elif isinstance(effect, PutShared):
             shared["value"] = effect.value
-            yield Resume(k, None)
+            return (yield Resume(k, None))
         else:
             yield Pass()
 
@@ -160,7 +161,7 @@ def test_spawned_tasks_share_handler_state():
         WithHandler(_shared_handler, _program()), handlers=default_handlers()
     )
     assert result.is_ok()
-    assert result.value == 42, f"Spawned task should see Put(42), got {result.value}"
+    assert result.value == [42], f"Spawned task should see Put(42), got {result.value}"
 
 
 def test_spawn_does_not_duplicate_handlers():
@@ -172,13 +173,16 @@ def test_spawn_does_not_duplicate_handlers():
 
     handler_call_count = {"n": 0}
 
-    @do
-    def _counting_handler(effect, k):
-        handler_call_count["n"] += 1
-        yield Resume(k, handler_call_count["n"])
-
-    class CountEffect(Effect):
+    class CountEffect(EffectBase):
         pass
+
+    @do
+    def _counting_handler(effect: Effect, k):
+        if not isinstance(effect, CountEffect):
+            yield Pass()
+            return
+        handler_call_count["n"] += 1
+        return (yield Resume(k, handler_call_count["n"]))
 
     @do
     def _task():
@@ -213,15 +217,15 @@ def test_dispatch_does_not_corrupt_shared_handler_chain():
     bug fixed in PR #354.
     """
 
-    class TaskEffect(Effect):
+    class TaskEffect(EffectBase):
         pass
 
     results = []
 
     @do
-    def _handler(effect, k):
+    def _handler(effect: Effect, k):
         if isinstance(effect, TaskEffect):
-            yield Resume(k, "ok")
+            return (yield Resume(k, "ok"))
         else:
             yield Pass()
 
@@ -258,21 +262,21 @@ def test_handler_state_survives_across_multiple_dispatches():
     handler closure. Multiple perform/continue cycles access the same ref.
     """
 
-    class Inc(Effect):
+    class Inc(EffectBase):
         pass
 
-    class GetCount(Effect):
+    class GetCount(EffectBase):
         pass
 
     counter = {"n": 0}
 
     @do
-    def _counter_handler(effect, k):
+    def _counter_handler(effect: Effect, k):
         if isinstance(effect, Inc):
             counter["n"] += 1
-            yield Resume(k, None)
+            return (yield Resume(k, None))
         elif isinstance(effect, GetCount):
-            yield Resume(k, counter["n"])
+            return (yield Resume(k, counter["n"]))
         else:
             yield Pass()
 

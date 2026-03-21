@@ -210,8 +210,8 @@ fn lookup_continuation_for_control(
     cont_id: crate::ids::ContId,
     control_name: &str,
 ) -> PyResult<doeff_vm_core::Continuation> {
-    if let Some(k) = vm.lookup_continuation(cont_id).cloned() {
-        return Ok(k);
+    if let Some(k) = vm.lookup_continuation(cont_id) {
+        return Ok(k.clone_handle());
     }
     if vm.is_one_shot_consumed(cont_id) {
         return Err(PyRuntimeError::new_err(format!(
@@ -1698,7 +1698,10 @@ pub(crate) fn classify_yielded_bound(
                     )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
-                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                let k = vm
+                    .lookup_continuation(cont_id)
+                    .map(|continuation| continuation.clone_handle())
+                    .ok_or_else(|| {
                     PyRuntimeError::new_err(format!(
                         "Discontinue with unknown continuation id {}",
                         cont_id.raw()
@@ -1886,7 +1889,10 @@ pub(crate) fn classify_yielded_bound(
                     )
                 })?;
                 let cont_id = k_pyobj.borrow().cont_id;
-                let k = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                let k = vm
+                    .lookup_continuation(cont_id)
+                    .map(|continuation| continuation.clone_handle())
+                    .ok_or_else(|| {
                     PyRuntimeError::new_err(format!(
                         "GetTraceback with unknown continuation id {}",
                         cont_id.raw()
@@ -1910,7 +1916,10 @@ pub(crate) fn classify_yielded_bound(
                     PyTypeError::new_err("EvalInScope.scope must be K (opaque continuation handle)")
                 })?;
                 let cont_id = scope_obj.borrow().cont_id;
-                let scope = vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                let scope = vm
+                    .lookup_continuation(cont_id)
+                    .map(|continuation| continuation.clone_handle())
+                    .ok_or_else(|| {
                     PyRuntimeError::new_err(format!(
                         "EvalInScope with unknown continuation id {}",
                         cont_id.raw()
