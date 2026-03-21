@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use pyo3::exceptions::{
     PyAttributeError, PyBaseException, PyRuntimeError, PyStopIteration, PyTypeError,
@@ -21,7 +21,7 @@ use crate::effect::{
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::ids::{Marker, SegmentId};
-use crate::ir_stream::{IRStream, PythonGeneratorStream};
+use crate::ir_stream::{IRStream, IRStreamRef, PythonGeneratorStream};
 use crate::kleisli::{DgfnKleisli, IdentityKleisli, KleisliRef, PyKleisli};
 use crate::py_key::HashedPyKey;
 use crate::py_shared::PyShared;
@@ -33,8 +33,8 @@ use crate::vm::VM;
 use doeff_core_effects::scheduler::{set_run_external_wait_mode, ExternalWaitMode};
 use doeff_core_effects::sentinels::PyRustHandlerSentinel;
 use doeff_vm_core::{
-    install_vm_hooks, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK, PyResultErr,
-    PyResultOk, PyTraceFrame, PyTraceHop, PyVar, VmHooks,
+    install_vm_hooks, live_object_counts, DoExprTag, PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyK,
+    PyResultErr, PyResultOk, PyTraceFrame, PyTraceHop, PyVar, VmHooks,
 };
 
 fn ensure_vm_core_hooks_installed() {
@@ -42,6 +42,17 @@ fn ensure_vm_core_hooks_installed() {
         classify_yielded: classify_yielded_for_vm,
         doctrl_to_pyexpr: doctrl_to_pyexpr_for_vm,
     });
+}
+
+#[cfg(target_os = "linux")]
+fn current_rust_heap_bytes() -> usize {
+    let info = unsafe { libc::mallinfo2() };
+    (info.uordblks as usize).saturating_add(info.hblkhd as usize)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_rust_heap_bytes() -> usize {
+    0
 }
 
 fn build_traceback_data_pyobject(
@@ -501,6 +512,127 @@ impl PyVM {
 
     pub fn _continuation_count(&self) -> usize {
         self.vm.continuation_registry.len()
+    }
+
+    pub fn memory_stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let counts = live_object_counts();
+        let mut normal_segments = 0usize;
+        let mut prompt_segments = 0usize;
+        let mut interceptor_segments = 0usize;
+        let mut mask_segments = 0usize;
+        let mut segments_with_frames = 0usize;
+        let mut empty_segments = 0usize;
+        let mut program_frames = 0usize;
+        let mut interceptor_frames = 0usize;
+        let mut eval_return_frames = 0usize;
+        let mut other_frames = 0usize;
+        for (_, segment) in self.vm.segments.iter() {
+            match &segment.kind {
+                SegmentKind::Normal => normal_segments += 1,
+                SegmentKind::PromptBoundary { .. } => prompt_segments += 1,
+                SegmentKind::InterceptorBoundary { .. } => interceptor_segments += 1,
+                SegmentKind::MaskBoundary { .. } => mask_segments += 1,
+            }
+            if segment.frames.is_empty() {
+                empty_segments += 1;
+            } else {
+                segments_with_frames += 1;
+            }
+            for frame in &segment.frames {
+                match frame {
+                    crate::frame::Frame::Program { .. } => program_frames += 1,
+                    crate::frame::Frame::InterceptorApply(_)
+                    | crate::frame::Frame::InterceptorEval(_) => interceptor_frames += 1,
+                    crate::frame::Frame::EvalReturn(_) => eval_return_frames += 1,
+                    crate::frame::Frame::MapReturn { .. }
+                    | crate::frame::Frame::FlatMapBindResult
+                    | crate::frame::Frame::FlatMapBindSource { .. }
+                    | crate::frame::Frame::InterceptBodyReturn { .. } => other_frames += 1,
+                }
+            }
+        }
+        let dict = PyDict::new(py);
+        dict.set_item("arena_segments", self.vm.segments.len())?;
+        dict.set_item("arena_slots", self.vm.segments.slot_count())?;
+        dict.set_item("arena_capacity", self.vm.segments.capacity())?;
+        dict.set_item("continuation_registry", self.vm.continuation_registry.len())?;
+        dict.set_item("dispatch_count", self.vm.dispatch_count())?;
+        dict.set_item("dispatch_capacity", self.vm.dispatch_capacity())?;
+        dict.set_item(
+            "segment_dispatch_bindings",
+            self.vm.segment_dispatch_binding_count(),
+        )?;
+        dict.set_item(
+            "segment_dispatch_binding_capacity",
+            self.vm.segment_dispatch_binding_capacity(),
+        )?;
+        dict.set_item("trace_frame_stack", self.vm.trace_frame_stack_count())?;
+        dict.set_item(
+            "trace_frame_stack_capacity",
+            self.vm.trace_frame_stack_capacity(),
+        )?;
+        dict.set_item(
+            "trace_dispatch_displays",
+            self.vm.trace_dispatch_display_count(),
+        )?;
+        dict.set_item(
+            "trace_dispatch_display_capacity",
+            self.vm.trace_dispatch_display_capacity(),
+        )?;
+        dict.set_item("debug_trace_events", self.vm.trace_events().len())?;
+        dict.set_item("scope_state_count", self.vm.scope_state_count())?;
+        dict.set_item("scope_state_capacity", self.vm.scope_state_capacity())?;
+        dict.set_item("scope_writer_log_count", self.vm.scope_writer_log_count())?;
+        dict.set_item(
+            "scope_writer_log_capacity",
+            self.vm.scope_writer_log_capacity(),
+        )?;
+        dict.set_item("scope_epoch_count", self.vm.scope_epoch_count())?;
+        dict.set_item("scope_epoch_capacity", self.vm.scope_epoch_capacity())?;
+        dict.set_item(
+            "retired_scope_state_count",
+            self.vm.retired_scope_state_count(),
+        )?;
+        dict.set_item(
+            "retired_scope_state_capacity",
+            self.vm.retired_scope_state_capacity(),
+        )?;
+        dict.set_item(
+            "retired_scope_writer_log_count",
+            self.vm.retired_scope_writer_log_count(),
+        )?;
+        dict.set_item(
+            "retired_scope_writer_log_capacity",
+            self.vm.retired_scope_writer_log_capacity(),
+        )?;
+        dict.set_item(
+            "retired_scope_epoch_count",
+            self.vm.retired_scope_epoch_count(),
+        )?;
+        dict.set_item(
+            "retired_scope_epoch_capacity",
+            self.vm.retired_scope_epoch_capacity(),
+        )?;
+        dict.set_item("normal_segments", normal_segments)?;
+        dict.set_item("prompt_segments", prompt_segments)?;
+        dict.set_item("interceptor_segments", interceptor_segments)?;
+        dict.set_item("mask_segments", mask_segments)?;
+        dict.set_item("segments_with_frames", segments_with_frames)?;
+        dict.set_item("empty_segments", empty_segments)?;
+        dict.set_item("program_frames", program_frames)?;
+        dict.set_item("interceptor_frames", interceptor_frames)?;
+        dict.set_item("eval_return_frames", eval_return_frames)?;
+        dict.set_item("other_frames", other_frames)?;
+        dict.set_item("live_segments", counts.live_segments)?;
+        dict.set_item("live_continuations", counts.live_continuations)?;
+        dict.set_item("live_ir_streams", counts.live_ir_streams)?;
+        dict.set_item("in_place_reentries", counts.in_place_reentries)?;
+        dict.set_item(
+            "abandoned_transfer_branch_frees",
+            counts.abandoned_transfer_branch_frees,
+        )?;
+        dict.set_item("rust_heap_bytes", current_rust_heap_bytes())?;
+        Ok(dict.into())
     }
 
     pub fn enable_debug(&mut self, level: String) {
@@ -1605,7 +1737,10 @@ fn scope_bindings_from_pyany(obj: &Bound<'_, PyAny>) -> PyResult<HashMap<HashedP
         .map_err(|_| PyTypeError::new_err("EvalInScope.bindings must be a dict"))?;
     let mut bindings = HashMap::new();
     for (key, value) in dict.iter() {
-        bindings.insert(HashedPyKey::from_bound(&key)?, Value::from_python_opaque(&value));
+        bindings.insert(
+            HashedPyKey::from_bound(&key)?,
+            Value::from_python_opaque(&value),
+        );
     }
     Ok(bindings)
 }
@@ -1631,11 +1766,10 @@ fn classify_doeff_generator_as_irstream(
         )));
     }
 
-    let stream: Arc<Mutex<Box<dyn IRStream>>> =
-        Arc::new(Mutex::new(Box::new(PythonGeneratorStream::new(
-            PyShared::new(wrapped.generator.clone_ref(py)),
-            PyShared::new(wrapped.get_frame.clone_ref(py)),
-        )) as Box<dyn IRStream>));
+    let stream = IRStreamRef::new(Box::new(PythonGeneratorStream::new(
+        PyShared::new(wrapped.generator.clone_ref(py)),
+        PyShared::new(wrapped.get_frame.clone_ref(py)),
+    )) as Box<dyn IRStream>);
 
     Ok(DoCtrl::IRStream {
         stream,
@@ -1931,16 +2065,22 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::ReadVar => {
                 let read: PyRef<'_, PyReadVar> = obj.extract()?;
-                let var: PyRef<'_, PyVar> = read.var.bind(py).extract().map_err(|_| {
-                    PyTypeError::new_err("ReadVar.var must be Var")
-                })?;
-                Ok(DoCtrl::ReadVar { var: var.to_var_id() })
+                let var: PyRef<'_, PyVar> = read
+                    .var
+                    .bind(py)
+                    .extract()
+                    .map_err(|_| PyTypeError::new_err("ReadVar.var must be Var"))?;
+                Ok(DoCtrl::ReadVar {
+                    var: var.to_var_id(),
+                })
             }
             DoExprTag::WriteVar => {
                 let write: PyRef<'_, PyWriteVar> = obj.extract()?;
-                let var: PyRef<'_, PyVar> = write.var.bind(py).extract().map_err(|_| {
-                    PyTypeError::new_err("WriteVar.var must be Var")
-                })?;
+                let var: PyRef<'_, PyVar> = write
+                    .var
+                    .bind(py)
+                    .extract()
+                    .map_err(|_| PyTypeError::new_err("WriteVar.var must be Var"))?;
                 Ok(DoCtrl::WriteVar {
                     var: var.to_var_id(),
                     value: Value::from_pyobject(write.value.bind(py)),
@@ -1948,9 +2088,11 @@ pub(crate) fn classify_yielded_bound(
             }
             DoExprTag::WriteVarNonlocal => {
                 let write: PyRef<'_, PyWriteVarNonlocal> = obj.extract()?;
-                let var: PyRef<'_, PyVar> = write.var.bind(py).extract().map_err(|_| {
-                    PyTypeError::new_err("WriteVarNonlocal.var must be Var")
-                })?;
+                let var: PyRef<'_, PyVar> = write
+                    .var
+                    .bind(py)
+                    .extract()
+                    .map_err(|_| PyTypeError::new_err("WriteVarNonlocal.var must be Var"))?;
                 Ok(DoCtrl::WriteVarNonlocal {
                     var: var.to_var_id(),
                     value: Value::from_pyobject(write.value.bind(py)),
@@ -3466,7 +3608,7 @@ mod tests {
                     handlers_list.unbind().into(),
                     None,
                 )
-                    .unwrap(),
+                .unwrap(),
             )
             .unwrap()
             .into_any();
@@ -4089,7 +4231,6 @@ mod tests {
         });
     }
 
-
     #[test]
     fn test_r13i_effect_base_tag() {
         Python::attach(|py| {
@@ -4446,6 +4587,22 @@ fn async_run<'py>(
     Ok(ns.get_item("_coro")?.unwrap().into_any())
 }
 
+#[pyfunction]
+fn memory_stats(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let counts = live_object_counts();
+    let dict = PyDict::new(py);
+    dict.set_item("live_segments", counts.live_segments)?;
+    dict.set_item("live_continuations", counts.live_continuations)?;
+    dict.set_item("live_ir_streams", counts.live_ir_streams)?;
+    dict.set_item("in_place_reentries", counts.in_place_reentries)?;
+    dict.set_item(
+        "abandoned_transfer_branch_frees",
+        counts.abandoned_transfer_branch_frees,
+    )?;
+    dict.set_item("rust_heap_bytes", current_rust_heap_bytes())?;
+    Ok(dict.into())
+}
+
 #[pymodule]
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ensure_vm_core_hooks_installed();
@@ -4544,5 +4701,6 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_UNKNOWN", DoExprTag::Unknown as u8)?;
     m.add_function(wrap_pyfunction!(run, m)?)?;
     m.add_function(wrap_pyfunction!(async_run, m)?)?;
+    m.add_function(wrap_pyfunction!(memory_stats, m)?)?;
     Ok(())
 }

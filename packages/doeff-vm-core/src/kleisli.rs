@@ -1,6 +1,6 @@
 //! Kleisli arrow types for IR-level callables (SPEC-VM-017).
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -447,7 +447,7 @@ impl Kleisli for PyKleisli {
         };
 
         let stream = PythonGeneratorStream::new(generator, get_frame);
-        let stream_ref: IRStreamRef = Arc::new(Mutex::new(Box::new(stream)));
+        let stream_ref = IRStreamRef::new(Box::new(stream));
         let metadata = CallMetadata::new(
             self.name.clone(),
             self.file.clone().unwrap_or_else(|| "<unknown>".to_string()),
@@ -714,11 +714,11 @@ impl Kleisli for RustKleisli {
         };
 
         let program = self.factory.create_program_for_run(run_token);
-        let stream: IRStreamRef = Arc::new(Mutex::new(Box::new(RustKleisliStream::new(
+        let stream = IRStreamRef::new(Box::new(RustKleisliStream::new(
             program,
             effect,
             continuation,
-        ))));
+        )));
 
         Ok(DoCtrl::IRStream {
             stream,
