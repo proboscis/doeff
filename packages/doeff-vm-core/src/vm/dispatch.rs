@@ -98,11 +98,8 @@ impl VM {
         seg_id: SegmentId,
     ) -> Option<(DispatchId, SegmentId)> {
         self.dispatch_origin_in_segment_by(seg_id, |dispatch_id, _, k_origin, _| {
-            self.root_live_delegate_parent_segment_id(
-                k_origin,
-                "dispatch origin parent chain must be Delegate-created continuations",
-            )
-            .map(|segment_id| (dispatch_id, segment_id))
+            self.root_live_delegate_parent_segment_id(k_origin)
+                .map(|segment_id| (dispatch_id, segment_id))
         })
     }
 
@@ -529,12 +526,7 @@ impl VM {
         self.continuation_chain_segment_id(scope)
     }
 
-    fn root_delegate_parent_segment_id(
-        &self,
-        continuation: &Continuation,
-        assert_message: &str,
-    ) -> Option<SegmentId> {
-        let _ = assert_message;
+    fn root_delegate_parent_segment_id(&self, continuation: &Continuation) -> Option<SegmentId> {
         continuation
             .outermost_fiber_id()
             .filter(|seg_id| self.segments.get(*seg_id).is_some())
@@ -548,9 +540,7 @@ impl VM {
     fn root_live_delegate_parent_segment_id(
         &self,
         continuation: &Continuation,
-        assert_message: &str,
     ) -> Option<SegmentId> {
-        let _ = assert_message;
         continuation
             .captured_caller()
             .filter(|seg_id| self.segments.get(*seg_id).is_some())
@@ -656,10 +646,7 @@ impl VM {
     }
 
     fn delegate_return_continuation(&mut self, continuation: &Continuation) -> Option<Continuation> {
-        let seg_id = self.root_live_delegate_parent_segment_id(
-            continuation,
-            "Delegate parent chain must be Delegate-created dispatch continuations",
-        )?;
+        let seg_id = self.root_live_delegate_parent_segment_id(continuation)?;
         if let Some(dispatch_id) = self.dispatch_observer.segment_dispatch_id(seg_id) {
             if let Some((active_seg_id, continuation, _)) = self.handler_dispatch_for_any(dispatch_id)
             {
@@ -739,296 +726,6 @@ impl VM {
         };
         child_seg.interceptor_eval_depth = source_seg.interceptor_eval_depth;
         child_seg.interceptor_skip_stack = source_seg.interceptor_skip_stack.clone();
-    }
-
-    fn remap_interceptor_skip_markers(seg: &mut Segment, marker_remap: &HashMap<Marker, Marker>) {
-        if marker_remap.is_empty() {
-            return;
-        }
-        for marker in &mut seg.interceptor_skip_stack {
-            if let Some(remapped) = marker_remap.get(marker) {
-                *marker = *remapped;
-            }
-        }
-    }
-
-    fn remap_marker(marker: &mut Marker, marker_remap: &HashMap<Marker, Marker>) {
-        if let Some(remapped) = marker_remap.get(marker) {
-            *marker = *remapped;
-        }
-    }
-
-    fn remap_interceptor_markers_in_doctrl(
-        ctrl: &mut DoCtrl,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
-        match ctrl {
-            DoCtrl::Pure { .. } => {}
-            DoCtrl::Map { .. } => {}
-            DoCtrl::FlatMap { .. } => {}
-            DoCtrl::Perform { .. } => {}
-            DoCtrl::Resume { continuation, .. } => {
-                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
-            }
-            DoCtrl::Transfer { continuation, .. } => {
-                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
-            }
-            DoCtrl::TransferThrow { continuation, .. } => {
-                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
-            }
-            DoCtrl::ResumeThrow { continuation, .. } => {
-                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
-            }
-            DoCtrl::WithHandler { body, .. } => {
-                Self::remap_interceptor_markers_in_doctrl(body, marker_remap);
-            }
-            DoCtrl::WithIntercept { body, .. } => {
-                Self::remap_interceptor_markers_in_doctrl(body, marker_remap);
-            }
-            DoCtrl::Discontinue { continuation, .. } => {
-                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
-            }
-            DoCtrl::Delegate { .. } => {}
-            DoCtrl::Pass { .. } => {}
-            DoCtrl::GetContinuation => {}
-            DoCtrl::GetHandlers => {}
-            DoCtrl::GetTraceback { continuation } => {
-                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
-            }
-            DoCtrl::CreateContinuation { .. } => {}
-            DoCtrl::ResumeContinuation { continuation, .. } => {
-                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
-            }
-            DoCtrl::PythonAsyncSyntaxEscape { .. } => {}
-            DoCtrl::EvalInScope { scope, .. } => {
-                Self::remap_interceptor_markers_in_continuation(scope, marker_remap);
-            }
-            DoCtrl::AllocVar { .. }
-            | DoCtrl::ReadVar { .. }
-            | DoCtrl::WriteVar { .. }
-            | DoCtrl::WriteVarNonlocal { .. }
-            | DoCtrl::ReadHandlerState { .. }
-            | DoCtrl::WriteHandlerState { .. }
-            | DoCtrl::AppendHandlerLog { .. } => {}
-            DoCtrl::Apply {
-                f, args, kwargs, ..
-            } => {
-                Self::remap_interceptor_markers_in_doctrl(f, marker_remap);
-                for arg in args {
-                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
-                }
-                for (_, kwarg) in kwargs {
-                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
-                }
-            }
-            DoCtrl::Expand {
-                factory,
-                args,
-                kwargs,
-                ..
-            } => {
-                Self::remap_interceptor_markers_in_doctrl(factory, marker_remap);
-                for arg in args {
-                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
-                }
-                for (_, kwarg) in kwargs {
-                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
-                }
-            }
-            DoCtrl::IRStream { .. } => {}
-            DoCtrl::Eval { .. } => {}
-            DoCtrl::GetCallStack => {}
-        }
-    }
-
-    fn remap_interceptor_markers_in_interceptor_continuation(
-        continuation: &mut InterceptorContinuation,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
-        Self::remap_marker(&mut continuation.marker, marker_remap);
-        let remapped_chain: Vec<InterceptorChainLink> = continuation
-            .chain
-            .iter()
-            .cloned()
-            .map(|mut link| {
-                Self::remap_marker(&mut link.marker, marker_remap);
-                link
-            })
-            .collect();
-        continuation.chain = Arc::new(remapped_chain);
-        Self::remap_interceptor_markers_in_doctrl(&mut continuation.original_yielded, marker_remap);
-    }
-
-    fn remap_interceptor_markers_in_eval_return_continuation(
-        continuation: &mut EvalReturnContinuation,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
-        match continuation {
-            EvalReturnContinuation::ResumeToContinuation { continuation }
-            | EvalReturnContinuation::ReturnToContinuation { continuation }
-            | EvalReturnContinuation::EvalInScopeReturn { continuation } => {
-                Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
-            }
-            EvalReturnContinuation::TailResumeReturn => {}
-            EvalReturnContinuation::ApplyResolveFunction { args, kwargs, .. }
-            | EvalReturnContinuation::ExpandResolveFactory { args, kwargs, .. } => {
-                for arg in args {
-                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
-                }
-                for (_, kwarg) in kwargs {
-                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
-                }
-            }
-            EvalReturnContinuation::ApplyResolveArg {
-                f, args, kwargs, ..
-            } => {
-                Self::remap_interceptor_markers_in_doctrl(f, marker_remap);
-                for arg in args {
-                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
-                }
-                for (_, kwarg) in kwargs {
-                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
-                }
-            }
-            EvalReturnContinuation::ApplyResolveKwarg {
-                f, args, kwargs, ..
-            } => {
-                Self::remap_interceptor_markers_in_doctrl(f, marker_remap);
-                for arg in args {
-                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
-                }
-                for (_, kwarg) in kwargs {
-                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
-                }
-            }
-            EvalReturnContinuation::ExpandResolveArg {
-                factory,
-                args,
-                kwargs,
-                ..
-            }
-            | EvalReturnContinuation::ExpandResolveKwarg {
-                factory,
-                args,
-                kwargs,
-                ..
-            } => {
-                Self::remap_interceptor_markers_in_doctrl(factory, marker_remap);
-                for arg in args {
-                    Self::remap_interceptor_markers_in_doctrl(arg, marker_remap);
-                }
-                for (_, kwarg) in kwargs {
-                    Self::remap_interceptor_markers_in_doctrl(kwarg, marker_remap);
-                }
-            }
-        }
-    }
-
-    fn remap_interceptor_markers_in_frame(
-        frame: &mut Frame,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
-        match frame {
-            Frame::Program { .. } => {}
-            Frame::InterceptorApply(interceptor_continuation) => {
-                Self::remap_interceptor_markers_in_interceptor_continuation(
-                    interceptor_continuation.as_mut(),
-                    marker_remap,
-                );
-            }
-            Frame::InterceptorEval(interceptor_continuation) => {
-                Self::remap_interceptor_markers_in_interceptor_continuation(
-                    interceptor_continuation.as_mut(),
-                    marker_remap,
-                );
-            }
-            Frame::EvalReturn(eval_continuation) => {
-                Self::remap_interceptor_markers_in_eval_return_continuation(
-                    eval_continuation.as_mut(),
-                    marker_remap,
-                );
-            }
-            Frame::MapReturn { .. } => {}
-            Frame::FlatMapBindResult => {}
-            Frame::FlatMapBindSource { .. } => {}
-            Frame::InterceptBodyReturn { marker } => {
-                Self::remap_marker(marker, marker_remap);
-            }
-        }
-    }
-
-    pub(super) fn remap_interceptor_markers_in_continuation(
-        continuation: &mut Continuation,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
-        if marker_remap.is_empty() {
-            return;
-        }
-        let _ = continuation;
-    }
-
-    fn remap_interceptor_markers_in_segment(
-        seg: &mut Segment,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
-        if marker_remap.is_empty() {
-            return;
-        }
-        Self::remap_marker(&mut seg.marker, marker_remap);
-        Self::remap_interceptor_skip_markers(seg, marker_remap);
-        Self::remap_interceptor_markers_in_segment_kind(&mut seg.kind, marker_remap);
-        for frame in &mut seg.frames {
-            Self::remap_interceptor_markers_in_frame(frame, marker_remap);
-        }
-    }
-
-    fn remap_interceptor_markers_in_segment_kind(
-        kind: &mut SegmentKind,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
-        if marker_remap.is_empty() {
-            return;
-        }
-        if let SegmentKind::PromptBoundary { handled_marker, .. } = kind {
-            Self::remap_marker(handled_marker, marker_remap);
-        }
-    }
-
-    pub(super) fn remap_interceptor_markers_in_runtime_state(
-        &mut self,
-        marker_remap: &HashMap<Marker, Marker>,
-    ) {
-        if marker_remap.is_empty() {
-            return;
-        }
-
-        let seg_ids: Vec<SegmentId> = self.segments.iter().map(|(seg_id, _)| seg_id).collect();
-        for seg_id in seg_ids {
-            let Some(seg) = self.segments.get_mut(seg_id) else {
-                continue;
-            };
-            Self::remap_interceptor_markers_in_segment(seg, marker_remap);
-        }
-
-        for continuation in self.continuation_registry.values_mut() {
-            Self::remap_interceptor_markers_in_continuation(continuation, marker_remap);
-        }
-        let dispatch_ids: Vec<DispatchId> = self
-            .dispatch_observer
-            .iter()
-            .map(|(dispatch_id, _)| dispatch_id)
-            .collect();
-        for dispatch_id in dispatch_ids {
-            let Some(dispatch) = self.dispatch_observer.dispatch_mut(dispatch_id) else {
-                continue;
-            };
-            Self::remap_marker(&mut dispatch.active_handler.marker, marker_remap);
-            Self::remap_interceptor_markers_in_continuation(&mut dispatch.k_origin, marker_remap);
-            Self::remap_interceptor_markers_in_continuation(
-                &mut dispatch.active_handler.continuation,
-                marker_remap,
-            );
-        }
     }
 
     pub fn is_one_shot_consumed(&self, cont_id: ContId) -> bool {
@@ -1223,10 +920,7 @@ impl VM {
                 .and_then(|dispatch_id| {
                     self.dispatch_origin_for_dispatch_id(dispatch_id).map(|origin| {
                         self.handlers_in_caller_chain(
-                            self.root_live_delegate_parent_segment_id(
-                                &origin.k_origin,
-                                "dispatch origin continuations must be captured",
-                            )
+                            self.root_live_delegate_parent_segment_id(&origin.k_origin)
                                 .expect("dispatch origin continuations must be captured"),
                         )
                         .into_iter()
@@ -2166,11 +1860,8 @@ impl VM {
         );
         self.copy_interceptor_guard_state(Some(prompt_seg_id), &mut pass_seg);
         let captured_caller = wrapper_caller.or_else(|| {
-            self.root_delegate_parent_segment_id(
-                parent_k_user,
-                "Pass parent chain must be Delegate-created dispatch continuations",
-            )
-            .or_else(|| self.continuation_chain_segment_id(parent_k_user))
+            self.root_delegate_parent_segment_id(parent_k_user)
+                .or_else(|| self.continuation_chain_segment_id(parent_k_user))
         });
         let eval_return = if self.continuation_chain_contains_return_to_continuation(parent_k_user) {
             EvalReturnContinuation::ReturnToContinuation {
@@ -2222,10 +1913,7 @@ impl VM {
             )));
         };
         let handler_chain = self.handlers_in_caller_chain(
-            self.root_live_delegate_parent_segment_id(
-                &origin.k_origin,
-                "dispatch origin continuations must be captured",
-            )
+            self.root_live_delegate_parent_segment_id(&origin.k_origin)
                 .expect("dispatch origin continuations must be captured"),
         );
         let Some(from_idx) = handler_chain
@@ -2615,17 +2303,11 @@ impl VM {
         // existing Delegate-aware behavior so handler code sees the same
         // caller-visible stack as the effect site.
         let chain_start = if let Some((_, _, continuation, _, _)) = self.current_handler_dispatch() {
-            self.root_live_delegate_parent_segment_id(
-                &continuation,
-                "GetHandlers parent chain must be Delegate-created continuations",
-            )
+            self.root_live_delegate_parent_segment_id(&continuation)
             .or_else(|| {
                 self.current_dispatch_origin()
                     .and_then(|origin| {
-                        self.root_live_delegate_parent_segment_id(
-                            &origin.k_origin,
-                            "GetHandlers parent chain must be Delegate-created continuations",
-                        )
+                        self.root_live_delegate_parent_segment_id(&origin.k_origin)
                     })
             })
             .expect("dispatch origin continuations must be captured")

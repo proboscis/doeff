@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::capture::HandlerKind;
+use crate::continuation::panic_on_started_continuation_clone_enabled;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
 use crate::ids::Marker;
 use crate::ir_stream::IRStreamRef;
@@ -347,9 +348,7 @@ impl Frame {
 impl Clone for Frame {
     #[track_caller]
     fn clone(&self) -> Self {
-        if self.contains_started_continuation()
-            && std::env::var_os("DOEFF_PANIC_ON_STARTED_CONT_CLONE").is_some()
-        {
+        if self.contains_started_continuation() && panic_on_started_continuation_clone_enabled() {
             panic!(
                 "started continuation clone detected via Frame at {}",
                 std::panic::Location::caller()
