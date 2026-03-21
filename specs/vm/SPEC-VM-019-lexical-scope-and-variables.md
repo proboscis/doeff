@@ -286,27 +286,107 @@ No `dispatch_origin`, no `dispatch_id`, no accumulated maps.
 - allow: parent pointer changes during detach/reattach only
 ```
 
-## Current State vs Target
+## Current State vs Target (Audit 2026-03-21)
 
-### Done
+### What's been done (surface)
 
-| Phase | PR | What |
-|-------|----|------|
-| 1 | #356 | Moved dispatch frames to segment fields (intermediate) |
-| 2 | #354 | Shared handlers via caller chain |
-| 3 | #353 | Scoped variables API (AllocVar/ReadVar/WriteVar) |
+| PR | What |
+|----|------|
+| #353 | Scoped variables API (AllocVar/ReadVar/WriteVar) |
+| #354 | Shared handlers via caller chain |
+| #356 | Dispatch frames → segment fields (intermediate) |
+| #358 | Dispatch state off segments → DispatchObserver side-table |
+| #359 | Segment→Fiber rename + memory leak fix |
+| #360 | scope_bindings → VarStore module |
 
-### Remaining
+### Honest architectural gap
 
-| Phase | What |
-|-------|------|
-| 4 | Rename Segment→Fiber, caller→parent, eliminate non-OCaml fields |
-| 4 | Move variables from fibers to VarStore (separate heap) |
-| 4 | Move mode/pending_python from fibers to VM registers |
-| 4 | Replace Arc<Segment> snapshots with move semantics (Continuation owns FiberIds) |
-| 4 | Remove handler_dispatch/dispatch_origin/dispatch_id from fibers |
-| 4 | Semgrep enforcement of fiber immutability |
-| 5 | Clean up: remove DispatchId, simplify Mode, remove dead infrastructure |
+Despite 6 PRs, the VM architecture is fundamentally different from OCaml 5:
+
+**Fiber has 21 fields. OCaml 5 fiber has 3.**
+
+```
+Current Fiber (21 fields):           Target Fiber (3 fields):
+  frames ✅                            frames
+  kind ✅                              handler
+  caller ✅ (renamed parent)           parent
+  mode ❌ VM register
+  pending_python ❌ VM register
+  variables ❌ VarStore heap
+  named_bindings ❌ VarStore heap
+  state_store ❌ VarStore heap
+  writer_log ❌ VarStore heap
+  scope_id ❌ remove
+  scope_parent ❌ remove
+  persistent_epoch ❌ remove
+  marker ❌ fold into handler
+  handler_dispatch ❌ remove
+  dispatch_origin ❌ remove
+  dispatch_id ❌ remove
+  pending_error_context ❌ remove
+  throw_parent ❌ remove
+  interceptor_eval_depth ❌ remove
+  interceptor_skip_stack ❌ remove
+```
+
+**VM has 22 fields. Target has ~5.**
+13 fields are dispatch side-tables (dispatch_effects, dispatch_error_contexts,
+continuation_registry, installed_handlers, etc.) that should not exist.
+
+**Continuation uses Arc<Segment> deep-clone. OCaml 5 uses move semantics.**
+- Capture = deep clone segment into Arc snapshot (creates copy)
+- Resume = deep clone Arc snapshot into new arena segment (creates another copy)
+- A fiber exists simultaneously in the chain AND in a continuation (violates invariant)
+- OCaml: capture = detach (move pointer), resume = reattach (move pointer), zero copies
+
+**Dispatch is not pointer manipulation.**
+`start_dispatch` creates new segments, deep-clones, writes to 3+ HashMaps, calls
+Python for type filters. `activate_continuation` materializes snapshots into new
+segments. Neither is "walk, detach, reattach."
+
+**mode is per-segment, not a VM register.**
+Each segment carries its own `mode: Mode`. The VM reads `self.current_seg().mode`
+instead of `self.mode`. This means the VM is not a register machine — every segment
+is a mini-VM.
+
+**Variables are dual-written.**
+AllocVar writes to both `segment.variables` AND `vm.scope_variables`. The segment
+copy exists for continuation snapshots (Arc clone captures it). The VM copy exists
+for scope resolution. This dual-write is a symptom of Arc snapshots — with move
+semantics, variables would live only in VarStore.
+
+### Root cause: Arc<Segment> snapshots
+
+Most of the architectural complexity traces back to **continuation capture via
+Arc<Segment> deep clone**. Because capture copies segment data:
+
+1. Variables must be dual-written (segment copy for snapshot, VM copy for resolution)
+2. state_store/writer_log live on segments (for snapshot capture)
+3. persistent_epoch exists to reconcile stale snapshots with live state
+4. retired_scope_* maps exist to preserve state after segments are freed
+5. dispatch_origin/handler_dispatch live on segments (copied into snapshot)
+6. refresh_persistent_segment_state walks continuation chains updating state
+
+**Fix Arc→move and most other problems dissolve.** With move semantics:
+- Variables live only in VarStore (no dual-write, no reconciliation)
+- State/logs live only in VarStore
+- No persistent_epoch, no retired_scope_*, no refresh_persistent_segment_state
+- No dispatch state on fibers (dispatch is topology change)
+- Fiber becomes frames + handler + parent (3 fields)
+
+### Migration order
+
+The root cause analysis dictates the migration order:
+
+1. **Move semantics first** — replace Arc<Segment> with detach/reattach. This is
+   the keystone change that enables all subsequent simplification.
+2. **Consolidate to VarStore** — once snapshots don't copy variables, remove them
+   from fibers and use VarStore exclusively.
+3. **Mode as register** — once fibers don't carry per-segment mode, move to VM.
+4. **Strip remaining fields** — remove everything else from Fiber until only
+   frames + handler + parent remain.
+5. **Eliminate dispatch side-tables** — with move semantics, dispatch is topology
+   change. Remove DispatchObserver, dispatch_effects, etc.
 
 ## Open Questions
 
