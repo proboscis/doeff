@@ -695,9 +695,9 @@ impl VM {
                 entry.marker,
                 entry.handler.clone(),
             );
-            self.initialize_builtin_prompt_segment(&entry.handler, &mut prompt_seg);
             self.copy_interceptor_guard_state(outside_seg_id, &mut prompt_seg);
             let prompt_seg_id = self.alloc_segment(prompt_seg);
+            self.initialize_builtin_prompt_segment(&entry.handler, prompt_seg_id);
             self.track_run_handler(&entry.handler);
 
             let mut body_seg = Segment::new(entry.marker, Some(prompt_seg_id));
@@ -708,9 +708,10 @@ impl VM {
         outside_seg_id
     }
 
-    fn initialize_builtin_prompt_segment(&self, handler: &KleisliRef, prompt_seg: &mut Segment) {
+    fn initialize_builtin_prompt_segment(&mut self, handler: &KleisliRef, prompt_seg_id: SegmentId) {
         if handler.handler_name() == "StateHandler" {
-            prompt_seg.state_store = self.rust_store.entries.clone();
+            self.var_store
+                .replace_handler_state(prompt_seg_id, self.rust_store.entries.clone());
         }
     }
 
@@ -1993,9 +1994,9 @@ impl VM {
             prompt_handler.clone(),
             types,
         );
-        self.initialize_builtin_prompt_segment(&prompt_handler, &mut prompt_seg);
         self.copy_interceptor_guard_state(Some(plan.outside_seg_id), &mut prompt_seg);
         let prompt_seg_id = self.alloc_segment(prompt_seg);
+        self.initialize_builtin_prompt_segment(&prompt_handler, prompt_seg_id);
         self.track_run_handler(&prompt_handler);
 
         let mut body_seg = Segment::new(plan.handler_marker, Some(prompt_seg_id));
