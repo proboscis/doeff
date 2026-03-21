@@ -652,6 +652,182 @@ impl VM {
             .is_some_and(|parent| Self::continuation_references_scope(parent, scope_id, visited))
     }
 
+    fn segment_references_segment_ids(
+        segment: &Segment,
+        target_segments: &HashSet<SegmentId>,
+        visited: &mut HashSet<ContId>,
+    ) -> bool {
+        if segment
+            .parent
+            .is_some_and(|seg_id| target_segments.contains(&seg_id))
+        {
+            return true;
+        }
+        if segment.throw_parent.as_ref().is_some_and(|continuation| {
+            Self::continuation_references_segment_ids(continuation, target_segments, visited)
+        }) {
+            return true;
+        }
+        for frame in &segment.frames {
+            let referenced = match frame {
+                Frame::EvalReturn(eval_return) => Self::eval_return_references_segment_ids(
+                    eval_return.as_ref(),
+                    target_segments,
+                    visited,
+                ),
+                Frame::Program { .. }
+                | Frame::InterceptorApply(_)
+                | Frame::InterceptorEval(_)
+                | Frame::MapReturn { .. }
+                | Frame::FlatMapBindResult
+                | Frame::FlatMapBindSource { .. }
+                | Frame::InterceptBodyReturn { .. } => false,
+            };
+            if referenced {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn continuation_references_segment_ids(
+        continuation: &Continuation,
+        target_segments: &HashSet<SegmentId>,
+        visited: &mut HashSet<ContId>,
+    ) -> bool {
+        if !visited.insert(continuation.cont_id) {
+            return false;
+        }
+        if continuation
+            .segment_id()
+            .is_some_and(|seg_id| target_segments.contains(&seg_id))
+        {
+            return true;
+        }
+        if continuation
+            .captured_caller()
+            .is_some_and(|seg_id| target_segments.contains(&seg_id))
+        {
+            return true;
+        }
+        if continuation
+            .scope_parent_snapshot()
+            .is_some_and(|seg_id| target_segments.contains(&seg_id))
+        {
+            return true;
+        }
+        if continuation
+            .outside_scope()
+            .is_some_and(|seg_id| target_segments.contains(&seg_id))
+        {
+            return true;
+        }
+        if continuation.segment().is_some_and(|segment| {
+            Self::segment_references_segment_ids(segment, target_segments, visited)
+        }) {
+            return true;
+        }
+        continuation.parent().is_some_and(|parent| {
+            Self::continuation_references_segment_ids(parent, target_segments, visited)
+        })
+    }
+
+    fn eval_return_references_segment_ids(
+        eval_return: &EvalReturnContinuation,
+        target_segments: &HashSet<SegmentId>,
+        visited: &mut HashSet<ContId>,
+    ) -> bool {
+        match eval_return {
+            EvalReturnContinuation::ResumeToContinuation { continuation }
+            | EvalReturnContinuation::EvalInScopeReturn { continuation }
+            | EvalReturnContinuation::ReturnToContinuation { continuation } => {
+                Self::continuation_references_segment_ids(continuation, target_segments, visited)
+            }
+            EvalReturnContinuation::ApplyResolveFunction { .. }
+            | EvalReturnContinuation::ApplyResolveArg { .. }
+            | EvalReturnContinuation::ApplyResolveKwarg { .. }
+            | EvalReturnContinuation::ExpandResolveFactory { .. }
+            | EvalReturnContinuation::ExpandResolveArg { .. }
+            | EvalReturnContinuation::ExpandResolveKwarg { .. }
+            | EvalReturnContinuation::TailResumeReturn => false,
+        }
+    }
+
+    fn pending_python_references_segment_ids(
+        pending_python: &PendingPython,
+        target_segments: &HashSet<SegmentId>,
+    ) -> bool {
+        match pending_python {
+            PendingPython::RustProgramContinuation { k, .. } => {
+                let mut visited = HashSet::new();
+                Self::continuation_references_segment_ids(k, target_segments, &mut visited)
+            }
+            PendingPython::EvalExpr { .. }
+            | PendingPython::CallFuncReturn
+            | PendingPython::StepUserGenerator { .. }
+            | PendingPython::ExpandReturn { .. }
+            | PendingPython::AsyncEscape => false,
+        }
+    }
+
+    fn subtree_has_external_segment_references(
+        &self,
+        target_segments: &HashSet<SegmentId>,
+    ) -> bool {
+        for (seg_id, segment) in self.segments.iter() {
+            if target_segments.contains(&seg_id) {
+                continue;
+            }
+            if self
+                .scope_parent(seg_id)
+                .is_some_and(|scope_parent| target_segments.contains(&scope_parent))
+            {
+                return true;
+            }
+            let mut visited = HashSet::new();
+            if Self::segment_references_segment_ids(segment, target_segments, &mut visited) {
+                return true;
+            }
+        }
+
+        for continuation in self.continuation_registry.values() {
+            let mut visited = HashSet::new();
+            if Self::continuation_references_segment_ids(continuation, target_segments, &mut visited)
+            {
+                return true;
+            }
+        }
+
+        for (_, dispatch) in self.dispatch_observer.iter() {
+            if target_segments.contains(&dispatch.active_handler.segment_id) {
+                continue;
+            }
+            if target_segments.contains(&dispatch.active_handler.prompt_seg_id) {
+                return true;
+            }
+            let mut visited = HashSet::new();
+            if Self::continuation_references_segment_ids(
+                &dispatch.k_origin,
+                target_segments,
+                &mut visited,
+            ) {
+                return true;
+            }
+            let mut visited = HashSet::new();
+            if Self::continuation_references_segment_ids(
+                &dispatch.active_handler.continuation,
+                target_segments,
+                &mut visited,
+            ) {
+                return true;
+            }
+        }
+
+        self.pending_python.as_ref().is_some_and(|pending_python| {
+            Self::pending_python_references_segment_ids(pending_python, target_segments)
+        })
+    }
+
     fn eval_return_references_scope(
         eval_return: &EvalReturnContinuation,
         scope_id: ScopeId,

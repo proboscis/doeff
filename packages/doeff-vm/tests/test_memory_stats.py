@@ -2,7 +2,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import doeff_vm
-from doeff import Gather, Pass, Resume, Spawn, WithHandler, do
+from doeff import Gather, Pass, Resume, Spawn, WithHandler, WithIntercept, do, slog
+from doeff.effects import WriterTellEffect
 from doeff.effects.base import Effect, EffectBase
 from doeff.handlers import sqlite_cache_handler
 from doeff.handlers.cache_handlers import memo_rewriters
@@ -154,3 +155,85 @@ def test_pyvm_run_releases_internal_vm_capacities_after_deep_handler_spawn_chain
     assert after["scope_writer_log_capacity"] == 0
     assert after["retired_scope_state_capacity"] == 0
     assert after["retired_scope_writer_log_capacity"] == 0
+
+
+def test_intercepted_spawn_chain_keeps_follow_up_dispatch_alive_after_gather(
+    tmp_path: Path,
+):
+    cache_path = tmp_path / "vm_memory_stats_follow_up.sqlite3"
+
+    @dataclass(frozen=True, kw_only=True)
+    class SyntheticQuery(EffectBase):
+        key: str
+
+    def synthetic_query_handler():
+        @do
+        def _handler(effect: Effect, k):
+            if not isinstance(effect, SyntheticQuery):
+                yield Pass()
+                return
+            return (yield Resume(k, effect.key))
+
+        return _handler
+
+    @do
+    def writer_interceptor(effect: WriterTellEffect):
+        return effect
+
+    @do
+    def worker(batch_index: int, task_index: int):
+        return (yield SyntheticQuery(key=f"{batch_index}:{task_index}"))
+
+    @do
+    def follow_up(batch_index: int):
+        yield slog(msg=f"follow-up-start-{batch_index}")
+        value = yield SyntheticQuery(key=f"follow-up:{batch_index}")
+        yield slog(msg=f"follow-up-end-{batch_index}")
+        return value
+
+    @do
+    def scenario():
+        for batch_index in range(2):
+            yield slog(msg=f"batch-start-{batch_index}")
+            tasks = []
+            for task_index in range(20):
+                task = yield Spawn(
+                    worker(batch_index=batch_index, task_index=task_index),
+                    daemon=False,
+                )
+                tasks.append(task)
+            values = yield Gather(*tasks)
+            if len(values) != 20:
+                raise AssertionError(f"expected 20 values, got {len(values)}")
+            value = yield follow_up(batch_index=batch_index)
+            if value != f"follow-up:{batch_index}":
+                raise AssertionError(
+                    "follow-up dispatch must remain valid after Spawn/Gather"
+                )
+            yield slog(msg=f"batch-end-{batch_index}")
+        return None
+
+    wrapped = scenario()
+    for handler in reversed(
+        (
+            synthetic_query_handler(),
+            *memo_rewriters(SyntheticQuery),
+            sqlite_cache_handler(cache_path),
+        )
+    ):
+        wrapped = WithHandler(handler, wrapped)
+    wrapped = WithIntercept(
+        writer_interceptor,
+        wrapped,
+        (WriterTellEffect,),
+        "include",
+    )
+
+    before = doeff_vm.memory_stats()
+    result = vm_run(wrapped, handlers=default_handlers())
+    after = doeff_vm.memory_stats()
+
+    assert result.is_ok()
+    assert after["live_segments"] == before["live_segments"]
+    assert after["live_continuations"] == before["live_continuations"]
+    assert after["live_ir_streams"] == before["live_ir_streams"]

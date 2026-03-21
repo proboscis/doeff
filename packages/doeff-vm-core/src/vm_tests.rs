@@ -257,6 +257,40 @@ fn test_transfer_throw_uses_captured_caller_instead_of_reused_sibling_segment() 
 }
 
 #[test]
+fn test_transfer_branch_cleanup_skips_segments_referenced_by_external_continuation() {
+    let mut vm = VM::new();
+
+    let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
+    let branch_parent_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
+    let branch_leaf_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(branch_parent_id)));
+    vm.current_segment = Some(branch_leaf_id);
+
+    let external_segment = Segment::new(Marker::fresh(), Some(branch_leaf_id));
+    let external_continuation =
+        Continuation::capture(&external_segment, SegmentId::from_index(9_999), None);
+    vm.continuation_registry.insert(
+        external_continuation.cont_id,
+        external_continuation,
+    );
+
+    vm.abandon_current_live_branch_for_transfer(Some(root_id));
+
+    assert_eq!(
+        vm.current_segment,
+        Some(branch_leaf_id),
+        "cleanup must keep current branch intact while an external continuation still points into it"
+    );
+    assert!(
+        vm.segments.get(branch_parent_id).is_some(),
+        "branch parent must stay live while referenced externally"
+    );
+    assert!(
+        vm.segments.get(branch_leaf_id).is_some(),
+        "branch leaf must stay live while referenced externally"
+    );
+}
+
+#[test]
 fn test_eval_in_scope_uses_scope_chain_for_dynamic_handler_lookup() {
     let mut vm = VM::new();
 

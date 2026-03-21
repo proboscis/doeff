@@ -1798,6 +1798,14 @@ impl VM {
     }
 
     fn free_segment_subtree(&mut self, root_seg_id: SegmentId) {
+        let order = self.collect_segment_subtree(root_seg_id);
+
+        for seg_id in order.into_iter().rev() {
+            self.free_segment(seg_id);
+        }
+    }
+
+    fn collect_segment_subtree(&self, root_seg_id: SegmentId) -> Vec<SegmentId> {
         let mut stack = vec![root_seg_id];
         let mut order = Vec::new();
         let mut seen = HashSet::new();
@@ -1814,17 +1822,22 @@ impl VM {
             }
         }
 
-        for seg_id in order.into_iter().rev() {
-            self.free_segment(seg_id);
-        }
+        order
     }
 
     fn abandon_current_live_branch_for_transfer(&mut self, preserved_ancestor: Option<SegmentId>) {
         let Some(root_seg_id) = self.abandoned_branch_root_for_transfer(preserved_ancestor) else {
             return;
         };
+        let subtree = self.collect_segment_subtree(root_seg_id);
+        let subtree_ids: HashSet<_> = subtree.iter().copied().collect();
+        if self.subtree_has_external_segment_references(&subtree_ids) {
+            return;
+        }
         crate::memory_stats::record_abandoned_transfer_branch_free();
-        self.free_segment_subtree(root_seg_id);
+        for seg_id in subtree.into_iter().rev() {
+            self.free_segment(seg_id);
+        }
         self.current_segment =
             preserved_ancestor.filter(|seg_id| self.segments.get(*seg_id).is_some());
     }
