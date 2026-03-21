@@ -237,6 +237,13 @@ impl VM {
             };
 
             if !segment.has_frames() {
+                if matches!(segment.kind, SegmentKind::InterceptorBoundary { .. }) {
+                    let caller = segment.parent;
+                    let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
+                    self.current_segment = caller;
+                    self.mode = mode;
+                    return StepEvent::Continue;
+                }
                 let caller = segment.parent;
                 let scope_parent = self.scope_parent(seg_id);
                 let throw_parent = segment.throw_parent.clone();
@@ -952,11 +959,7 @@ impl VM {
                     };
                     (
                         seg.marker,
-                        self.capture_live_continuation(
-                            seg,
-                            seg_id,
-                            self.current_segment_dispatch_id(),
-                        ),
+                        self.capture_live_continuation(seg_id, self.current_segment_dispatch_id()),
                     )
                 };
                 self.pending_python = Some(PendingPython::RustProgramContinuation { marker, k });
@@ -1086,7 +1089,7 @@ impl VM {
                         chain.push(link);
                     }
                 }
-                cursor = vm.scope_parent(seg_id);
+                cursor = seg.parent;
             }
         }
 
@@ -1955,25 +1958,23 @@ impl VM {
                 "EvalInScope called without current segment",
             ));
         };
-        let Some(current_seg) = self.segments.get(current_seg_id) else {
+        let Some(_current_seg) = self.segments.get(current_seg_id) else {
             return StepEvent::Error(VMError::internal("EvalInScope current segment not found"));
         };
         let current_dispatch_id = self.current_segment_dispatch_id();
-        let mut return_to =
-            self.capture_live_continuation(current_seg, current_seg_id, current_dispatch_id);
+        let return_to = self.capture_live_continuation(current_seg_id, current_dispatch_id);
         let Some(scope_parent_seg_id) = self.eval_in_scope_chain_start_segment(&scope) else {
             return StepEvent::Error(VMError::internal(
                 "EvalInScope received scope from unknown segment",
             ));
         };
-        let child_caller_seg_id = scope
-            .segment_id()
-            .filter(|seg_id| self.segments.get(*seg_id).is_some())
+        let child_caller_seg_id = self
+            .continuation_handler_chain_start(&scope)
             .unwrap_or(scope_parent_seg_id);
 
-        // EvalInScope is a lexical child scope. It must point at the live scope
-        // chain so reads/nonlocal writes reach the original segments instead of
-        // a replay copy.
+        // EvalInScope is a lexical child scope. The scope parent continues to
+        // point at the captured lexical scope chain; the dynamic parent stays
+        // anchored at the captured scope entry segment.
         let mut child_seg = Segment::new(Marker::fresh(), Some(child_caller_seg_id));
         self.copy_interceptor_guard_state(Some(current_seg_id), &mut child_seg);
         child_seg.push_frame(Frame::EvalReturn(Box::new(
@@ -2646,6 +2647,10 @@ impl VM {
         incoming_throw: Option<PyException>,
         outcome: PyCallOutcome,
     ) {
+        let user_continuation_dispatch_id = self.user_continuation_dispatch_for_stream(&stream);
+        let effective_handler_kind = user_continuation_dispatch_id
+            .map(|_| None)
+            .unwrap_or(handler_kind);
         match outcome {
             PyCallOutcome::GenYield(yielded) => {
                 if incoming_throw.is_some() {
@@ -2655,7 +2660,7 @@ impl VM {
                     return;
                 }
                 self.propagate_auto_unwrap_program_context_to_yielded(metadata.as_ref(), &yielded);
-                let _ = self.handle_stream_yield(yielded, stream, metadata, handler_kind);
+                let _ = self.handle_stream_yield(yielded, stream, metadata, effective_handler_kind);
             }
             PyCallOutcome::GenReturn(value) => {
                 if incoming_throw.is_some() {
@@ -2664,7 +2669,7 @@ impl VM {
                 if let Some(ref m) = metadata {
                     self.emit_frame_exited(m);
                 }
-                if handler_kind == Some(HandlerKind::Python)
+                if effective_handler_kind == Some(HandlerKind::Python)
                     && self.should_treat_python_handler_gen_return_as_handler_completion()
                 {
                     if let Some(exception) = Self::returned_control_primitive_exception(&value) {
@@ -2678,9 +2683,30 @@ impl VM {
             }
             PyCallOutcome::GenError(exception) => {
                 if let Some(ref m) = metadata {
-                    self.emit_frame_exited_due_to_error(Some(&stream), m, handler_kind, &exception);
+                    self.emit_frame_exited_due_to_error(
+                        Some(&stream),
+                        m,
+                        effective_handler_kind,
+                        &exception,
+                    );
                 }
-                if self.should_throw_into_live_handler_frame(handler_kind) {
+                if self.should_throw_into_live_handler_frame(effective_handler_kind) {
+                    let propagated_throw = incoming_throw
+                        .as_ref()
+                        .is_some_and(|original| Self::same_exception(original, &exception));
+                    if !propagated_throw {
+                        if let Some(dispatch_id) = self
+                            .current_active_handler_dispatch_id()
+                            .or_else(|| self.current_segment_dispatch_id_any())
+                        {
+                            if let Some(original) =
+                                self.original_exception_for_dispatch(dispatch_id)
+                            {
+                                TraceState::set_exception_cause(&exception, &original);
+                            }
+                            self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
+                        }
+                    }
                     self.mode = Mode::Throw(exception);
                     return;
                 }
@@ -2691,7 +2717,7 @@ impl VM {
                     let propagated_throw = incoming_throw
                         .as_ref()
                         .is_some_and(|original| Self::same_exception(original, &exception));
-                    if handler_kind.is_some()
+                    if effective_handler_kind.is_some()
                         && !self.dispatch_uses_user_continuation_stream(dispatch_id, &stream)
                         && !propagated_throw
                     {
@@ -2749,7 +2775,7 @@ impl VM {
                             TraceState::set_exception_cause(&exception, &original);
                         }
                         self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
-                    } else if handler_kind.is_some()
+                    } else if effective_handler_kind.is_some()
                         && self
                             .current_segment_dispatch_id_any()
                             .is_some_and(|current_dispatch_id| current_dispatch_id == dispatch_id)
@@ -2760,7 +2786,7 @@ impl VM {
                         self.emit_handler_threw_for_dispatch(dispatch_id, &exception);
                     }
                 }
-                if handler_kind.is_none() {
+                if effective_handler_kind.is_none() {
                     self.mode = Mode::Throw(exception);
                     return;
                 }

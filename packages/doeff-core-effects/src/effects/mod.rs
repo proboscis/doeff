@@ -312,8 +312,7 @@ impl PySpawn {
         .add_subclass(PySpawn {
             program,
             options: options.unwrap_or_else(|| pyo3::types::PyDict::new(py).into_any().unbind()),
-            handlers: handlers
-                .unwrap_or_else(|| pyo3::types::PyList::empty(py).into_any().unbind()),
+            handlers: handlers.unwrap_or_else(|| py.None()),
             store_mode: store_mode.unwrap_or_else(|| py.None()),
             priority: priority.unwrap_or_else(|| py.None()),
         })
