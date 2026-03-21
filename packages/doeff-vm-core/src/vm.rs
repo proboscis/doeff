@@ -364,23 +364,38 @@ impl VM {
             handler.on_run_end(run_token);
         }
         self.run_handlers.clear();
+        self.run_handlers.shrink_to_fit();
         self.continuation_registry.clear();
+        self.continuation_registry.shrink_to_fit();
         self.consumed_cont_ids.clear();
+        self.consumed_cont_ids.shrink_to_fit();
         self.dispatch_observer.clear();
+        self.dispatch_observer.shrink_to_fit();
         self.segments.clear();
+        self.segments.shrink_to_fit();
         self.var_store.clear();
+        self.var_store.shrink_to_fit();
         self.mode = Mode::Deliver(Value::Unit);
         self.pending_python = None;
         self.current_segment = None;
         self.completed_segment = None;
         self.trace_state.clear();
+        self.trace_state.shrink_to_fit();
+        self.debug.shrink_to_fit();
         self.scope_parents.clear();
+        self.scope_parents.shrink_to_fit();
         self.scope_state_store.clear();
+        self.scope_state_store.shrink_to_fit();
         self.scope_writer_logs.clear();
+        self.scope_writer_logs.shrink_to_fit();
         self.scope_persistent_epochs.clear();
+        self.scope_persistent_epochs.shrink_to_fit();
         self.retired_scope_state_store.clear();
+        self.retired_scope_state_store.shrink_to_fit();
         self.retired_scope_writer_logs.clear();
+        self.retired_scope_writer_logs.shrink_to_fit();
         self.retired_scope_persistent_epochs.clear();
+        self.retired_scope_persistent_epochs.shrink_to_fit();
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -389,6 +404,86 @@ impl VM {
 
     pub fn trace_events(&self) -> &[TraceEvent] {
         self.debug.trace_events()
+    }
+
+    pub fn dispatch_count(&self) -> usize {
+        self.dispatch_observer.dispatch_count()
+    }
+
+    pub fn segment_dispatch_binding_count(&self) -> usize {
+        self.dispatch_observer.segment_binding_count()
+    }
+
+    pub fn dispatch_capacity(&self) -> usize {
+        self.dispatch_observer.dispatch_capacity()
+    }
+
+    pub fn segment_dispatch_binding_capacity(&self) -> usize {
+        self.dispatch_observer.segment_binding_capacity()
+    }
+
+    pub fn trace_frame_stack_count(&self) -> usize {
+        self.trace_state.frame_stack_len()
+    }
+
+    pub fn trace_dispatch_display_count(&self) -> usize {
+        self.trace_state.dispatch_display_count()
+    }
+
+    pub fn trace_frame_stack_capacity(&self) -> usize {
+        self.trace_state.frame_stack_capacity()
+    }
+
+    pub fn trace_dispatch_display_capacity(&self) -> usize {
+        self.trace_state.dispatch_display_capacity()
+    }
+
+    pub fn scope_state_count(&self) -> usize {
+        self.scope_state_store.len()
+    }
+
+    pub fn scope_writer_log_count(&self) -> usize {
+        self.scope_writer_logs.len()
+    }
+
+    pub fn scope_epoch_count(&self) -> usize {
+        self.scope_persistent_epochs.len()
+    }
+
+    pub fn retired_scope_state_count(&self) -> usize {
+        self.retired_scope_state_store.len()
+    }
+
+    pub fn retired_scope_writer_log_count(&self) -> usize {
+        self.retired_scope_writer_logs.len()
+    }
+
+    pub fn retired_scope_epoch_count(&self) -> usize {
+        self.retired_scope_persistent_epochs.len()
+    }
+
+    pub fn scope_state_capacity(&self) -> usize {
+        self.scope_state_store.capacity()
+    }
+
+    pub fn scope_writer_log_capacity(&self) -> usize {
+        self.scope_writer_logs.capacity()
+    }
+
+    pub fn scope_epoch_capacity(&self) -> usize {
+        self.scope_persistent_epochs.capacity()
+    }
+
+    pub fn retired_scope_state_capacity(&self) -> usize {
+        self.retired_scope_state_store.capacity()
+    }
+
+    pub fn retired_scope_writer_log_capacity(&self) -> usize {
+        self.retired_scope_writer_logs.capacity()
+    }
+
+    pub fn retired_scope_epoch_capacity(&self) -> usize {
+        self.retired_scope_persistent_epochs.capacity()
     }
 
     pub fn py_store(&self) -> Option<&PyStore> {
