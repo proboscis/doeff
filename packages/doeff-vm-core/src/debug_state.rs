@@ -46,6 +46,10 @@ impl DebugState {
         self.trace_events.clear();
     }
 
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.trace_events.shrink_to_fit();
+    }
+
     pub(crate) fn trace_events(&self) -> &[TraceEvent] {
         &self.trace_events
     }

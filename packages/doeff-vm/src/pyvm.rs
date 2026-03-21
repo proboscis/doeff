@@ -553,7 +553,66 @@ impl PyVM {
         }
         let dict = PyDict::new(py);
         dict.set_item("arena_segments", self.vm.segments.len())?;
+        dict.set_item("arena_slots", self.vm.segments.slot_count())?;
+        dict.set_item("arena_capacity", self.vm.segments.capacity())?;
         dict.set_item("continuation_registry", self.vm.continuation_registry.len())?;
+        dict.set_item("dispatch_count", self.vm.dispatch_count())?;
+        dict.set_item("dispatch_capacity", self.vm.dispatch_capacity())?;
+        dict.set_item(
+            "segment_dispatch_bindings",
+            self.vm.segment_dispatch_binding_count(),
+        )?;
+        dict.set_item(
+            "segment_dispatch_binding_capacity",
+            self.vm.segment_dispatch_binding_capacity(),
+        )?;
+        dict.set_item("trace_frame_stack", self.vm.trace_frame_stack_count())?;
+        dict.set_item(
+            "trace_frame_stack_capacity",
+            self.vm.trace_frame_stack_capacity(),
+        )?;
+        dict.set_item(
+            "trace_dispatch_displays",
+            self.vm.trace_dispatch_display_count(),
+        )?;
+        dict.set_item(
+            "trace_dispatch_display_capacity",
+            self.vm.trace_dispatch_display_capacity(),
+        )?;
+        dict.set_item("debug_trace_events", self.vm.trace_events().len())?;
+        dict.set_item("scope_state_count", self.vm.scope_state_count())?;
+        dict.set_item("scope_state_capacity", self.vm.scope_state_capacity())?;
+        dict.set_item("scope_writer_log_count", self.vm.scope_writer_log_count())?;
+        dict.set_item(
+            "scope_writer_log_capacity",
+            self.vm.scope_writer_log_capacity(),
+        )?;
+        dict.set_item("scope_epoch_count", self.vm.scope_epoch_count())?;
+        dict.set_item("scope_epoch_capacity", self.vm.scope_epoch_capacity())?;
+        dict.set_item(
+            "retired_scope_state_count",
+            self.vm.retired_scope_state_count(),
+        )?;
+        dict.set_item(
+            "retired_scope_state_capacity",
+            self.vm.retired_scope_state_capacity(),
+        )?;
+        dict.set_item(
+            "retired_scope_writer_log_count",
+            self.vm.retired_scope_writer_log_count(),
+        )?;
+        dict.set_item(
+            "retired_scope_writer_log_capacity",
+            self.vm.retired_scope_writer_log_capacity(),
+        )?;
+        dict.set_item(
+            "retired_scope_epoch_count",
+            self.vm.retired_scope_epoch_count(),
+        )?;
+        dict.set_item(
+            "retired_scope_epoch_capacity",
+            self.vm.retired_scope_epoch_capacity(),
+        )?;
         dict.set_item("normal_segments", normal_segments)?;
         dict.set_item("prompt_segments", prompt_segments)?;
         dict.set_item("interceptor_segments", interceptor_segments)?;
