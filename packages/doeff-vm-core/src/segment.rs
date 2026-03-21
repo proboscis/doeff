@@ -6,7 +6,7 @@ use crate::continuation::Continuation;
 use crate::do_ctrl::InterceptMode;
 use crate::frame::CallMetadata;
 use crate::frame::Frame;
-use crate::ids::{FiberId, Marker, ScopeId};
+use crate::ids::{FiberId, Marker};
 use crate::kleisli::KleisliRef;
 use crate::memory_stats;
 use crate::py_key::HashedPyKey;
@@ -43,8 +43,6 @@ pub struct ScopeStore {
 
 #[derive(Debug)]
 pub struct Fiber {
-    pub scope_id: ScopeId,
-    pub persistent_epoch: u64,
     pub marker: Marker,
     pub frames: Vec<Frame>,
     pub parent: Option<FiberId>,
@@ -59,8 +57,6 @@ impl Fiber {
     pub fn new(marker: Marker, parent: Option<FiberId>) -> Self {
         memory_stats::register_segment();
         Fiber {
-            scope_id: ScopeId::fresh(),
-            persistent_epoch: 0,
             marker,
             frames: Vec::new(),
             parent,
@@ -80,8 +76,6 @@ impl Fiber {
     ) -> Self {
         memory_stats::register_segment();
         Fiber {
-            scope_id: ScopeId::fresh(),
-            persistent_epoch: 0,
             marker,
             frames: Vec::new(),
             parent,
@@ -106,8 +100,6 @@ impl Fiber {
     ) -> Self {
         memory_stats::register_segment();
         Fiber {
-            scope_id: ScopeId::fresh(),
-            persistent_epoch: 0,
             marker,
             frames: Vec::new(),
             parent,
@@ -157,8 +149,6 @@ impl Clone for Fiber {
     fn clone(&self) -> Self {
         memory_stats::register_segment();
         Fiber {
-            scope_id: self.scope_id,
-            persistent_epoch: self.persistent_epoch,
             marker: self.marker,
             frames: self.frames.clone(),
             parent: self.parent,

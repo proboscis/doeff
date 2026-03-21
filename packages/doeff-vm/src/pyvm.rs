@@ -589,30 +589,12 @@ impl PyVM {
         )?;
         dict.set_item("scope_epoch_count", self.vm.scope_epoch_count())?;
         dict.set_item("scope_epoch_capacity", self.vm.scope_epoch_capacity())?;
-        dict.set_item(
-            "retired_scope_state_count",
-            self.vm.retired_scope_state_count(),
-        )?;
-        dict.set_item(
-            "retired_scope_state_capacity",
-            self.vm.retired_scope_state_capacity(),
-        )?;
-        dict.set_item(
-            "retired_scope_writer_log_count",
-            self.vm.retired_scope_writer_log_count(),
-        )?;
-        dict.set_item(
-            "retired_scope_writer_log_capacity",
-            self.vm.retired_scope_writer_log_capacity(),
-        )?;
-        dict.set_item(
-            "retired_scope_epoch_count",
-            self.vm.retired_scope_epoch_count(),
-        )?;
-        dict.set_item(
-            "retired_scope_epoch_capacity",
-            self.vm.retired_scope_epoch_capacity(),
-        )?;
+        dict.set_item("retired_scope_state_count", 0)?;
+        dict.set_item("retired_scope_state_capacity", 0)?;
+        dict.set_item("retired_scope_writer_log_count", 0)?;
+        dict.set_item("retired_scope_writer_log_capacity", 0)?;
+        dict.set_item("retired_scope_epoch_count", 0)?;
+        dict.set_item("retired_scope_epoch_capacity", 0)?;
         dict.set_item("normal_segments", normal_segments)?;
         dict.set_item("prompt_segments", prompt_segments)?;
         dict.set_item("interceptor_segments", interceptor_segments)?;
