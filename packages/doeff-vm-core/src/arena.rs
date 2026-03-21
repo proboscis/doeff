@@ -120,27 +120,23 @@ mod tests {
     fn test_arena_alloc_and_get() {
         let mut arena = FiberArena::new();
 
-        let marker1 = Marker::fresh();
-        let seg1 = Fiber::new(marker1, None);
+        let seg1 = Fiber::new(Marker::fresh(), None);
         let id1 = arena.alloc(seg1);
 
-        let marker2 = Marker::fresh();
-        let seg2 = Fiber::new(marker2, None);
+        let seg2 = Fiber::new(Marker::fresh(), None);
         let id2 = arena.alloc(seg2);
 
         assert_ne!(id1, id2);
         assert_eq!(arena.len(), 2);
 
-        let retrieved = arena.get(id1).unwrap();
-        assert_eq!(retrieved.marker, marker1);
+        assert!(arena.get(id1).is_some());
     }
 
     #[test]
     fn test_arena_free_releases_slot_and_reuses_id() {
         let mut arena = FiberArena::new();
 
-        let marker1 = Marker::fresh();
-        let seg1 = Fiber::new(marker1, None);
+        let seg1 = Fiber::new(Marker::fresh(), None);
         let id1 = arena.alloc(seg1);
 
         assert_eq!(arena.len(), 1);
@@ -149,23 +145,20 @@ mod tests {
         assert_eq!(arena.len(), 0);
         assert!(arena.get(id1).is_none());
 
-        let marker2 = Marker::fresh();
-        let seg2 = Fiber::new(marker2, None);
+        let seg2 = Fiber::new(Marker::fresh(), None);
         let id2 = arena.alloc(seg2);
 
         assert_eq!(id1, id2);
         assert_eq!(arena.len(), 1);
 
-        let retrieved = arena.get(id2).unwrap();
-        assert_eq!(retrieved.marker, marker2);
+        assert!(arena.get(id2).is_some());
     }
 
     #[test]
     fn test_arena_get_mut() {
         let mut arena = FiberArena::new();
 
-        let marker = Marker::fresh();
-        let seg = Fiber::new(marker, None);
+        let seg = Fiber::new(Marker::fresh(), None);
         let id = arena.alloc(seg);
 
         {
@@ -181,13 +174,12 @@ mod tests {
     #[test]
     fn test_reparent_children() {
         let mut arena = FiberArena::new();
-        let marker = Marker::fresh();
 
-        let parent = arena.alloc(Fiber::new(marker, None));
-        let caller = arena.alloc(Fiber::new(marker, None));
-        let child_a = arena.alloc(Fiber::new(marker, Some(parent)));
-        let child_b = arena.alloc(Fiber::new(marker, Some(parent)));
-        let unrelated = arena.alloc(Fiber::new(marker, Some(caller)));
+        let parent = arena.alloc(Fiber::new(Marker::fresh(), None));
+        let caller = arena.alloc(Fiber::new(Marker::fresh(), None));
+        let child_a = arena.alloc(Fiber::new(Marker::fresh(), Some(parent)));
+        let child_b = arena.alloc(Fiber::new(Marker::fresh(), Some(parent)));
+        let unrelated = arena.alloc(Fiber::new(Marker::fresh(), Some(caller)));
 
         let rewired = arena.reparent_children(parent, Some(caller));
         assert_eq!(rewired, 2);

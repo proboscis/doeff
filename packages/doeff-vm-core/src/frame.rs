@@ -79,21 +79,22 @@ pub struct InterceptorChainLink {
 }
 
 impl InterceptorChainLink {
-    pub fn from_boundary(marker: Marker, boundary: &SegmentKind) -> Option<Self> {
+    pub fn from_boundary(boundary: &SegmentKind) -> Option<Self> {
         match boundary {
             SegmentKind::InterceptorBoundary {
+                marker,
                 interceptor,
                 types,
                 mode,
                 metadata,
             } => Some(Self {
-                marker,
+                marker: *marker,
                 interceptor: interceptor.clone(),
                 types: types.clone(),
                 mode: *mode,
                 metadata: metadata.clone(),
             }),
-            SegmentKind::Normal
+            SegmentKind::Normal { .. }
             | SegmentKind::PromptBoundary { .. }
             | SegmentKind::MaskBoundary { .. } => None,
         }
@@ -101,6 +102,7 @@ impl InterceptorChainLink {
 
     pub fn into_boundary(self) -> SegmentKind {
         SegmentKind::InterceptorBoundary {
+            marker: self.marker,
             interceptor: self.interceptor,
             types: self.types,
             mode: self.mode,

@@ -20,6 +20,11 @@ impl VM {
         None
     }
 
+    pub(super) fn handler_marker_in_caller_chain(&self, start_seg_id: SegmentId) -> Option<Marker> {
+        self.first_handler_hint_in_caller_chain(start_seg_id)
+            .map(|hint| hint.marker)
+    }
+
     pub(super) fn visible_scope_store(
         &self,
         start_seg_id: SegmentId,
@@ -67,7 +72,7 @@ impl VM {
                     ..
                 } if *handled_marker == marker => Some((seg_id, handler.clone(), types.clone())),
                 SegmentKind::PromptBoundary { .. }
-                | SegmentKind::Normal
+                | SegmentKind::Normal { .. }
                 | SegmentKind::InterceptorBoundary { .. }
                 | SegmentKind::MaskBoundary { .. } => None,
             })
@@ -125,11 +130,11 @@ impl VM {
                     types: types.clone(),
                 })),
                 SegmentKind::InterceptorBoundary { .. } => {
-                    let link = InterceptorChainLink::from_boundary(seg.marker, &seg.kind)
+                    let link = InterceptorChainLink::from_boundary(&seg.kind)
                         .expect("InterceptorBoundary should always produce a chain link");
                     chain.push(CallerChainEntry::Interceptor(link));
                 }
-                SegmentKind::Normal | SegmentKind::MaskBoundary { .. } => {}
+                SegmentKind::Normal { .. } | SegmentKind::MaskBoundary { .. } => {}
             }
             cursor = seg.parent;
         }

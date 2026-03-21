@@ -246,7 +246,7 @@ impl VM {
                 }
                 let caller = segment.parent;
                 let scope_parent = self.scope_parent(seg_id);
-                let throw_parent = segment.throw_parent.clone();
+                let throw_parent = self.throw_parent(seg_id).cloned();
                 let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
                 match mode {
                     Mode::Deliver(value) => {
@@ -464,8 +464,9 @@ impl VM {
         mode: Mode,
     ) -> StepEvent {
         if continuation.guard_eval_depth {
-            let seg = self.current_seg_mut();
-            seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_sub(1);
+            if let Some(seg_id) = self.current_segment {
+                self.decrement_interceptor_eval_depth(seg_id);
+            }
         }
         if let Some(metadata) = continuation.interceptor_metadata.as_ref() {
             self.emit_frame_exited(metadata);
@@ -494,8 +495,9 @@ impl VM {
         continuation: InterceptorContinuation,
         mode: Mode,
     ) -> StepEvent {
-        let seg = self.current_seg_mut();
-        seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_sub(1);
+        if let Some(seg_id) = self.current_segment {
+            self.decrement_interceptor_eval_depth(seg_id);
+        }
         match mode {
             Mode::Deliver(value) => {
                 self.mode = self.handle_interceptor_eval_result(continuation, value);
@@ -952,13 +954,14 @@ impl VM {
                             "RustProgramContinuation without current segment",
                         ));
                     };
-                    let Some(seg) = self.segments.get(seg_id) else {
+                    if self.segments.get(seg_id).is_none() {
                         return StepEvent::Error(VMError::invalid_segment(
                             "RustProgramContinuation segment not found",
                         ));
-                    };
+                    }
                     (
-                        seg.marker,
+                        self.handler_marker_in_caller_chain(seg_id)
+                            .unwrap_or_else(Marker::fresh),
                         self.capture_live_continuation(seg_id, self.current_segment_dispatch_id()),
                     )
                 };
@@ -1084,8 +1087,8 @@ impl VM {
                 let Some(seg) = vm.segments.get(seg_id) else {
                     break;
                 };
-                if let Some(link) = InterceptorChainLink::from_boundary(seg.marker, &seg.kind) {
-                    if seen.insert(seg.marker) {
+                if let Some(link) = InterceptorChainLink::from_boundary(&seg.kind) {
+                    if seen.insert(link.marker) {
                         chain.push(link);
                     }
                 }
@@ -1116,22 +1119,20 @@ impl VM {
     }
 
     fn is_interceptor_skipped(&self, marker: Marker) -> bool {
-        self.current_seg().interceptor_skip_stack.contains(&marker)
+        self.current_segment
+            .is_some_and(|seg_id| self.is_interceptor_skipped_on(seg_id, marker))
     }
 
     fn pop_interceptor_skip(&mut self, marker: Marker) {
-        let seg = self.current_seg_mut();
-        if let Some(pos) = seg
-            .interceptor_skip_stack
-            .iter()
-            .rposition(|active| *active == marker)
-        {
-            seg.interceptor_skip_stack.remove(pos);
+        if let Some(seg_id) = self.current_segment {
+            self.pop_interceptor_skip_on(seg_id, marker);
         }
     }
 
     fn push_interceptor_skip(&mut self, marker: Marker) {
-        self.current_seg_mut().interceptor_skip_stack.push(marker);
+        if let Some(seg_id) = self.current_segment {
+            self.push_interceptor_skip_on(seg_id, marker);
+        }
     }
 
     fn classify_interceptor_result_shape(result_obj: &PyShared) -> (bool, bool) {
@@ -1298,15 +1299,21 @@ impl VM {
             interceptor_metadata: interceptor_meta,
             guard_eval_depth,
         };
-        let Some(seg) = self.current_segment_mut() else {
+        let Some(seg_id) = self.current_segment else {
             self.pop_interceptor_skip(marker);
             return self.contextual_internal_throw_mode(PyException::runtime_error(
                 "current_segment_mut() returned None while invoking interceptor",
             ));
         };
         if guard_eval_depth {
-            seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_add(1);
+            self.increment_interceptor_eval_depth(seg_id);
         }
+        let Some(seg) = self.segments.get_mut(seg_id) else {
+            self.pop_interceptor_skip(marker);
+            return self.contextual_internal_throw_mode(PyException::runtime_error(
+                "current_segment_mut() returned None while invoking interceptor",
+            ));
+        };
         seg.push_frame(Frame::InterceptorApply(Box::new(continuation)));
 
         Mode::HandleYield(DoCtrl::Apply {
@@ -1371,13 +1378,19 @@ impl VM {
         }
 
         if is_doexpr {
-            let Some(seg) = self.current_segment_mut() else {
+            let Some(seg_id) = self.current_segment else {
                 self.pop_interceptor_skip(marker);
                 return self.contextual_internal_throw_mode(PyException::runtime_error(
                     "current_segment_mut() returned None while evaluating interceptor result",
                 ));
             };
-            seg.interceptor_eval_depth = seg.interceptor_eval_depth.saturating_add(1);
+            self.increment_interceptor_eval_depth(seg_id);
+            let Some(seg) = self.segments.get_mut(seg_id) else {
+                self.pop_interceptor_skip(marker);
+                return self.contextual_internal_throw_mode(PyException::runtime_error(
+                    "current_segment_mut() returned None while evaluating interceptor result",
+                ));
+            };
             seg.push_frame(Frame::InterceptorEval(Box::new(InterceptorContinuation {
                 marker,
                 original_yielded,
@@ -1976,13 +1989,13 @@ impl VM {
         // point at the captured lexical scope chain; the dynamic parent stays
         // anchored at the captured scope entry segment.
         let mut child_seg = Segment::new(Marker::fresh(), Some(child_caller_seg_id));
-        self.copy_interceptor_guard_state(Some(current_seg_id), &mut child_seg);
         child_seg.push_frame(Frame::EvalReturn(Box::new(
             EvalReturnContinuation::EvalInScopeReturn {
                 continuation: return_to,
             },
         )));
         let child_seg_id = self.alloc_segment(child_seg);
+        self.inherit_interceptor_guard_state(Some(current_seg_id), child_seg_id);
         self.set_scope_parent(child_seg_id, Some(scope_parent_seg_id));
         self.replace_scope_bindings(child_seg_id, bindings);
 

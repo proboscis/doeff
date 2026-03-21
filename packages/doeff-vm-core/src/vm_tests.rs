@@ -143,7 +143,8 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
 
     let root_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
     let captured_caller_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(root_id)));
-    let effect_site_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(captured_caller_id)));
+    let effect_site_id =
+        vm.alloc_segment(Segment::new(Marker::fresh(), Some(captured_caller_id)));
     let effect_site_segment = vm
         .segments
         .get(effect_site_id)
@@ -300,7 +301,8 @@ fn test_resume_unstarted_continuation_inserts_return_anchor_above_outside_scope(
     let mut vm = VM::new();
 
     let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    let scheduler_seg_id =
+        vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
     vm.current_segment = Some(scheduler_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
@@ -355,7 +357,8 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
     let mut vm = VM::new();
 
     let outside_scope_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
-    let scheduler_seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
+    let scheduler_seg_id =
+        vm.alloc_segment(Segment::new(Marker::fresh(), Some(outside_scope_id)));
     vm.current_segment = Some(scheduler_seg_id);
 
     let expr = Python::attach(|py| PyShared::new(py.None()));
