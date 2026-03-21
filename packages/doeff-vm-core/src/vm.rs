@@ -35,8 +35,8 @@ use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::segment::{Segment, SegmentKind};
 use crate::trace_state::{LiveDispatchSnapshot, TraceState};
-use crate::var_store::VarStore;
 use crate::value::Value;
+use crate::var_store::VarStore;
 
 pub use crate::rust_store::RustStore;
 
@@ -273,6 +273,7 @@ pub struct VM {
     pub(crate) trace_state: TraceState,
     pub(crate) dispatch_observer: DispatchObserver,
     pub continuation_registry: HashMap<ContId, Continuation>,
+    deferred_segment_cleanup_roots: HashSet<SegmentId>,
     scope_parents: HashMap<SegmentId, Option<SegmentId>>,
     scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
     scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
@@ -304,6 +305,7 @@ impl VM {
             trace_state: TraceState::default(),
             dispatch_observer: DispatchObserver::default(),
             continuation_registry: HashMap::new(),
+            deferred_segment_cleanup_roots: HashSet::new(),
             scope_parents: HashMap::new(),
             scope_state_store: HashMap::new(),
             scope_writer_logs: HashMap::new(),
@@ -338,6 +340,7 @@ impl VM {
         self.completed_segment = None;
         self.trace_state.clear();
         self.dispatch_observer.clear();
+        self.deferred_segment_cleanup_roots.clear();
         self.run_handlers.clear();
         self.scope_parents.clear();
         self.scope_state_store.clear();
@@ -369,6 +372,8 @@ impl VM {
         self.continuation_registry.shrink_to_fit();
         self.consumed_cont_ids.clear();
         self.consumed_cont_ids.shrink_to_fit();
+        self.deferred_segment_cleanup_roots.clear();
+        self.deferred_segment_cleanup_roots.shrink_to_fit();
         self.dispatch_observer.clear();
         self.dispatch_observer.shrink_to_fit();
         self.segments.clear();
@@ -786,8 +791,11 @@ impl VM {
 
         for continuation in self.continuation_registry.values() {
             let mut visited = HashSet::new();
-            if Self::continuation_references_segment_ids(continuation, target_segments, &mut visited)
-            {
+            if Self::continuation_references_segment_ids(
+                continuation,
+                target_segments,
+                &mut visited,
+            ) {
                 return true;
             }
         }
@@ -820,6 +828,53 @@ impl VM {
         self.pending_python.as_ref().is_some_and(|pending_python| {
             Self::pending_python_references_segment_ids(pending_python, target_segments)
         })
+    }
+
+    fn direct_child_segments(&self, parent_seg_id: SegmentId) -> Vec<SegmentId> {
+        self.segments
+            .iter()
+            .filter_map(|(seg_id, segment)| {
+                (segment.parent == Some(parent_seg_id)).then_some(seg_id)
+            })
+            .collect()
+    }
+
+    fn defer_segment_cleanup_roots(&mut self, roots: impl IntoIterator<Item = SegmentId>) {
+        for root in roots {
+            if self.segments.get(root).is_some() {
+                self.deferred_segment_cleanup_roots.insert(root);
+            }
+        }
+    }
+
+    fn cleanup_deferred_segment_roots(&mut self) {
+        if self.deferred_segment_cleanup_roots.is_empty() {
+            return;
+        }
+
+        let roots: Vec<_> = self
+            .deferred_segment_cleanup_roots
+            .iter()
+            .copied()
+            .collect();
+        for root_seg_id in roots {
+            if self.segments.get(root_seg_id).is_none() {
+                self.deferred_segment_cleanup_roots.remove(&root_seg_id);
+                continue;
+            }
+
+            let subtree = self.collect_segment_subtree(root_seg_id);
+            let subtree_ids: HashSet<_> = subtree.iter().copied().collect();
+            if subtree_ids.is_empty() || self.subtree_has_external_segment_references(&subtree_ids)
+            {
+                continue;
+            }
+
+            for seg_id in &subtree_ids {
+                self.deferred_segment_cleanup_roots.remove(seg_id);
+            }
+            self.free_segment_subtree(root_seg_id);
+        }
     }
 
     fn eval_return_references_scope(

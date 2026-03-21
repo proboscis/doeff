@@ -283,6 +283,39 @@ struct WokenTask {
     priority: u32,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SchedulerLiveDebugCounts {
+    pub scheduler_states: usize,
+    pub pending_tasks: usize,
+    pub done_tasks: usize,
+    pub promises: usize,
+    pub waiter_buckets: usize,
+    pub waiter_entries: usize,
+    pub wait_owners: usize,
+    pub ready_tasks: usize,
+    pub ready_roots: usize,
+    pub pending_gather_fail_fast: usize,
+    pub task_metadata: usize,
+    pub cancel_requested: usize,
+}
+
+impl SchedulerLiveDebugCounts {
+    fn accumulate(&mut self, other: Self) {
+        self.scheduler_states += other.scheduler_states;
+        self.pending_tasks += other.pending_tasks;
+        self.done_tasks += other.done_tasks;
+        self.promises += other.promises;
+        self.waiter_buckets += other.waiter_buckets;
+        self.waiter_entries += other.waiter_entries;
+        self.wait_owners += other.wait_owners;
+        self.ready_tasks += other.ready_tasks;
+        self.ready_roots += other.ready_roots;
+        self.pending_gather_fail_fast += other.pending_gather_fail_fast;
+        self.task_metadata += other.task_metadata;
+        self.cancel_requested += other.cancel_requested;
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ReadyRootResume {
     continuation: Continuation,
@@ -548,6 +581,41 @@ pub fn debug_semaphore_count_for_state(state_id: u64) -> Option<usize> {
     let mut state = state.lock().expect("Scheduler lock poisoned");
     state.process_semaphore_drop_notifications();
     Some(state.semaphores.len())
+}
+
+pub fn debug_live_scheduler_counts() -> SchedulerLiveDebugCounts {
+    let mut stale_state_ids: Vec<u64> = Vec::new();
+    let live_states: Vec<Arc<Mutex<SchedulerState>>> = {
+        let registry = scheduler_state_registry()
+            .lock()
+            .expect("Scheduler lock poisoned");
+        registry
+            .iter()
+            .filter_map(|(state_id, weak_state)| {
+                weak_state.upgrade().or_else(|| {
+                    stale_state_ids.push(*state_id);
+                    None
+                })
+            })
+            .collect()
+    };
+
+    if !stale_state_ids.is_empty() {
+        let mut registry = scheduler_state_registry()
+            .lock()
+            .expect("Scheduler lock poisoned");
+        for state_id in stale_state_ids {
+            registry.remove(&state_id);
+        }
+    }
+
+    let mut counts = SchedulerLiveDebugCounts::default();
+    for state in live_states {
+        let mut state = state.lock().expect("Scheduler lock poisoned");
+        state.process_semaphore_drop_notifications();
+        counts.accumulate(state.debug_live_counts());
+    }
+    counts
 }
 
 pub fn debug_semaphore_exists(semaphore_id: u64) -> bool {
@@ -950,9 +1018,9 @@ fn task_cancelled_error() -> PyException {
 
 fn is_task_cancelled_exception(error: &PyException) -> bool {
     match error {
-        PyException::Materialized { exc_value, .. } => Python::attach(|py| {
-            exc_value.bind(py).is_instance_of::<TaskCancelledError>()
-        }),
+        PyException::Materialized { exc_value, .. } => {
+            Python::attach(|py| exc_value.bind(py).is_instance_of::<TaskCancelledError>())
+        }
         PyException::RuntimeError { message, .. } => message == "Task was cancelled",
         PyException::TypeError { .. } => false,
     }
@@ -1009,6 +1077,34 @@ fn make_async_external_wait_step() -> Result<IRStreamStep, PyException> {
 // ---------------------------------------------------------------------------
 
 impl SchedulerState {
+    fn debug_live_counts(&self) -> SchedulerLiveDebugCounts {
+        let (pending_tasks, done_tasks) =
+            self.tasks
+                .values()
+                .fold(
+                    (0usize, 0usize),
+                    |(pending, done), task_state| match task_state {
+                        TaskState::Pending { .. } => (pending + 1, done),
+                        TaskState::Done { .. } => (pending, done + 1),
+                    },
+                );
+
+        SchedulerLiveDebugCounts {
+            scheduler_states: 1,
+            pending_tasks,
+            done_tasks,
+            promises: self.promises.len(),
+            waiter_buckets: self.waiters.len(),
+            waiter_entries: self.waiters.values().map(Vec::len).sum(),
+            wait_owners: self.waitables_by_owner.len(),
+            ready_tasks: self.ready_task_ids.len(),
+            ready_roots: self.ready_root_resumes.len(),
+            pending_gather_fail_fast: self.pending_gather_fail_fast.len(),
+            task_metadata: self.task_metadata.len(),
+            cancel_requested: self.cancel_requested.len(),
+        }
+    }
+
     pub fn process_semaphore_drop_notifications(&mut self) {
         let dropped = {
             let mut notifications = semaphore_drop_notifications()
@@ -1372,7 +1468,9 @@ impl SchedulerState {
         }
 
         let (cont_id, priority, started) = match task_state {
-            TaskState::Pending { cont, priority, .. } => (cont.cont_id, *priority, cont.is_started()),
+            TaskState::Pending { cont, priority, .. } => {
+                (cont.cont_id, *priority, cont.is_started())
+            }
             TaskState::Done { .. } => return false,
         };
         if !started {
@@ -1607,8 +1705,8 @@ impl SchedulerState {
             scheduler_internal_error(format!("mark_task_done: task {} not found", task_id.raw()))
         })?;
         let task_store = match state {
-            TaskState::Pending { store, .. } => store,
-            TaskState::Done { store, .. } => store,
+            TaskState::Pending { store, .. } => Self::compact_completed_task_store(store),
+            TaskState::Done { store, .. } => Self::compact_completed_task_store(store),
         };
         self.tasks.insert(
             task_id,
@@ -1618,6 +1716,16 @@ impl SchedulerState {
             },
         );
         Ok(())
+    }
+
+    fn compact_completed_task_store(store: TaskStore) -> TaskStore {
+        match store {
+            // Completed task results are retrieved through TaskState::Done.result; retaining the
+            // isolated store snapshot after completion only keeps per-task Rust/Python object
+            // graphs alive across later batches.
+            TaskStore::Isolated { .. } => TaskStore::Shared,
+            TaskStore::Shared => TaskStore::Shared,
+        }
     }
 
     fn suspend_task_for_wait(
@@ -2222,28 +2330,27 @@ impl SchedulerState {
                             self.finalize_task_cancellation(task_id);
                             continue;
                         }
-                        let (task_k, resume_outcome) =
-                            match self.tasks.get_mut(&task_id) {
-                                Some(TaskState::Pending {
-                                    cont,
-                                    resume_outcome,
-                                    pending_log_merge_items,
-                                    ..
-                                }) => {
-                                    let continuation = cont.clone();
-                                    let outcome = resume_outcome.take();
-                                    pending_log_merge_items.take();
-                                    (continuation, outcome)
-                                }
-                                Some(TaskState::Done { .. }) | None => {
-                                    return TransferNextOutcome::Step(IRStreamStep::Throw(
-                                        scheduler_internal_error(format!(
-                                            "transfer_next: ready task {} has no continuation",
-                                            task_id.raw()
-                                        )),
-                                    ))
-                                }
-                            };
+                        let (task_k, resume_outcome) = match self.tasks.get_mut(&task_id) {
+                            Some(TaskState::Pending {
+                                cont,
+                                resume_outcome,
+                                pending_log_merge_items,
+                                ..
+                            }) => {
+                                let continuation = cont.clone();
+                                let outcome = resume_outcome.take();
+                                pending_log_merge_items.take();
+                                (continuation, outcome)
+                            }
+                            Some(TaskState::Done { .. }) | None => {
+                                return TransferNextOutcome::Step(IRStreamStep::Throw(
+                                    scheduler_internal_error(format!(
+                                        "transfer_next: ready task {} has no continuation",
+                                        task_id.raw()
+                                    )),
+                                ))
+                            }
+                        };
 
                         // Save current task's store before switching away.
                         if let Some(old_id) = self.current_task {
@@ -2270,7 +2377,7 @@ impl SchedulerState {
                                 }
                                 return TransferNextOutcome::Step(throw_to_continuation(
                                     task_k, error,
-                                ))
+                                ));
                             }
                             Some(Ok(value)) => {
                                 return TransferNextOutcome::Step(resume_to_continuation(
@@ -2807,9 +2914,7 @@ impl SchedulerProgram {
         if let Some(aggregate) = state.collect_all_result(&items) {
             state.clear_waiters_for_owner(waiting_task, k_user.cont_id);
             return match aggregate {
-                Ok(results) => {
-                    resume_to_continuation(k_user, results)
-                }
+                Ok(results) => resume_to_continuation(k_user, results),
                 Err(error) => throw_to_continuation(k_user, error),
             };
         }
@@ -3248,8 +3353,11 @@ impl IRStreamProgram for SchedulerProgram {
                             }
                         }
                         state.wait_on_any(&items, k_user.clone(), store);
-                        let owner =
-                            self.wait_owner(waiting_task, k_user.cont_id, state.active_driver_owner);
+                        let owner = self.wait_owner(
+                            waiting_task,
+                            k_user.cont_id,
+                            state.active_driver_owner,
+                        );
                         drop(state);
                         self.continue_wait_transfer(
                             owner,
