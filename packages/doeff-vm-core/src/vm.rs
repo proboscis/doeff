@@ -367,9 +367,13 @@ impl VM {
         self.continuation_registry.clear();
         self.consumed_cont_ids.clear();
         self.dispatch_observer.clear();
+        self.segments.clear();
         self.var_store.clear();
         self.mode = Mode::Deliver(Value::Unit);
         self.pending_python = None;
+        self.current_segment = None;
+        self.completed_segment = None;
+        self.trace_state.clear();
         self.scope_parents.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
