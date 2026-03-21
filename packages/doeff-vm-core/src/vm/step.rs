@@ -1,4 +1,5 @@
 use super::*;
+use crate::ids::VarId;
 
 impl VM {
     fn has_live_handler_program_frame(&self) -> bool {
