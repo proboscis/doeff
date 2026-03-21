@@ -29,19 +29,20 @@ def _run_spawn_gather(n: int) -> tuple[object, int, int]:
 def test_spawn_gather_releases_spawn_segments_after_completion() -> None:
     baseline_result, baseline_segments, baseline_continuations = _run_spawn_gather(0)
     assert str(baseline_result) == "Ok([])"
+    assert baseline_segments == 0
     assert baseline_continuations == 0
 
     result_1, segments_1, continuations_1 = _run_spawn_gather(1)
     assert str(result_1) == "Ok([0])"
+    assert segments_1 == baseline_segments
     assert continuations_1 == 0
 
     result_10, segments_10, continuations_10 = _run_spawn_gather(10)
     assert str(result_10) == "Ok([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])"
+    assert segments_10 == baseline_segments
     assert continuations_10 == 0
-    assert segments_10 > baseline_segments
 
     result_100, segments_100, continuations_100 = _run_spawn_gather(100)
     assert str(result_100).startswith("Ok([0, 1, 2, 3, 4")
+    assert segments_100 == baseline_segments
     assert continuations_100 == 0
-    assert segments_100 > segments_10
-    assert segments_100 <= baseline_segments + 11 * (segments_10 - baseline_segments)
