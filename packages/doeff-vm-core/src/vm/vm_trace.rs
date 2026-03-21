@@ -9,7 +9,7 @@ impl VM {
                     Frame::Program {
                         stream: snapshot_stream,
                         ..
-                    } => Arc::ptr_eq(&snapshot_stream, stream),
+                    } => IRStreamRef::ptr_eq(snapshot_stream, stream),
                     Frame::InterceptorApply(_)
                     | Frame::InterceptorEval(_)
                     | Frame::EvalReturn(_)

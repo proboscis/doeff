@@ -277,6 +277,10 @@ pub struct VM {
     segment_parent_redirects: HashMap<SegmentId, Option<SegmentId>>,
     scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
     scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
+    scope_persistent_epochs: HashMap<ScopeId, u64>,
+    retired_scope_state_store: HashMap<ScopeId, HashMap<String, Value>>,
+    retired_scope_writer_logs: HashMap<ScopeId, Vec<Value>>,
+    retired_scope_persistent_epochs: HashMap<ScopeId, u64>,
     completed_state_entries_snapshot: Option<HashMap<String, Value>>,
     completed_log_entries_snapshot: Option<Vec<Value>>,
     pub active_run_token: Option<u64>,
@@ -305,6 +309,10 @@ impl VM {
             segment_parent_redirects: HashMap::new(),
             scope_state_store: HashMap::new(),
             scope_writer_logs: HashMap::new(),
+            scope_persistent_epochs: HashMap::new(),
+            retired_scope_state_store: HashMap::new(),
+            retired_scope_writer_logs: HashMap::new(),
+            retired_scope_persistent_epochs: HashMap::new(),
             completed_state_entries_snapshot: None,
             completed_log_entries_snapshot: None,
             active_run_token: None,
@@ -337,6 +345,10 @@ impl VM {
         self.segment_parent_redirects.clear();
         self.scope_state_store.clear();
         self.scope_writer_logs.clear();
+        self.scope_persistent_epochs.clear();
+        self.retired_scope_state_store.clear();
+        self.retired_scope_writer_logs.clear();
+        self.retired_scope_persistent_epochs.clear();
         self.completed_state_entries_snapshot = None;
         self.completed_log_entries_snapshot = None;
         token
@@ -355,16 +367,39 @@ impl VM {
             handler.on_run_end(run_token);
         }
         self.run_handlers.clear();
+        self.run_handlers.shrink_to_fit();
         self.continuation_registry.clear();
+        self.continuation_registry.shrink_to_fit();
         self.consumed_cont_ids.clear();
+        self.consumed_cont_ids.shrink_to_fit();
         self.dispatch_observer.clear();
+        self.dispatch_observer.shrink_to_fit();
+        self.segments.clear();
+        self.segments.shrink_to_fit();
         self.var_store.clear();
+        self.var_store.shrink_to_fit();
         self.mode = Mode::Deliver(Value::Unit);
         self.pending_python = None;
+        self.current_segment = None;
+        self.completed_segment = None;
+        self.trace_state.clear();
+        self.trace_state.shrink_to_fit();
+        self.debug.shrink_to_fit();
         self.scope_parents.clear();
         self.segment_parent_redirects.clear();
+        self.scope_parents.shrink_to_fit();
         self.scope_state_store.clear();
+        self.scope_state_store.shrink_to_fit();
         self.scope_writer_logs.clear();
+        self.scope_writer_logs.shrink_to_fit();
+        self.scope_persistent_epochs.clear();
+        self.scope_persistent_epochs.shrink_to_fit();
+        self.retired_scope_state_store.clear();
+        self.retired_scope_state_store.shrink_to_fit();
+        self.retired_scope_writer_logs.clear();
+        self.retired_scope_writer_logs.shrink_to_fit();
+        self.retired_scope_persistent_epochs.clear();
+        self.retired_scope_persistent_epochs.shrink_to_fit();
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -373,6 +408,86 @@ impl VM {
 
     pub fn trace_events(&self) -> &[TraceEvent] {
         self.debug.trace_events()
+    }
+
+    pub fn dispatch_count(&self) -> usize {
+        self.dispatch_observer.dispatch_count()
+    }
+
+    pub fn segment_dispatch_binding_count(&self) -> usize {
+        self.dispatch_observer.segment_binding_count()
+    }
+
+    pub fn dispatch_capacity(&self) -> usize {
+        self.dispatch_observer.dispatch_capacity()
+    }
+
+    pub fn segment_dispatch_binding_capacity(&self) -> usize {
+        self.dispatch_observer.segment_binding_capacity()
+    }
+
+    pub fn trace_frame_stack_count(&self) -> usize {
+        self.trace_state.frame_stack_len()
+    }
+
+    pub fn trace_dispatch_display_count(&self) -> usize {
+        self.trace_state.dispatch_display_count()
+    }
+
+    pub fn trace_frame_stack_capacity(&self) -> usize {
+        self.trace_state.frame_stack_capacity()
+    }
+
+    pub fn trace_dispatch_display_capacity(&self) -> usize {
+        self.trace_state.dispatch_display_capacity()
+    }
+
+    pub fn scope_state_count(&self) -> usize {
+        self.scope_state_store.len()
+    }
+
+    pub fn scope_writer_log_count(&self) -> usize {
+        self.scope_writer_logs.len()
+    }
+
+    pub fn scope_epoch_count(&self) -> usize {
+        self.scope_persistent_epochs.len()
+    }
+
+    pub fn retired_scope_state_count(&self) -> usize {
+        self.retired_scope_state_store.len()
+    }
+
+    pub fn retired_scope_writer_log_count(&self) -> usize {
+        self.retired_scope_writer_logs.len()
+    }
+
+    pub fn retired_scope_epoch_count(&self) -> usize {
+        self.retired_scope_persistent_epochs.len()
+    }
+
+    pub fn scope_state_capacity(&self) -> usize {
+        self.scope_state_store.capacity()
+    }
+
+    pub fn scope_writer_log_capacity(&self) -> usize {
+        self.scope_writer_logs.capacity()
+    }
+
+    pub fn scope_epoch_capacity(&self) -> usize {
+        self.scope_persistent_epochs.capacity()
+    }
+
+    pub fn retired_scope_state_capacity(&self) -> usize {
+        self.retired_scope_state_store.capacity()
+    }
+
+    pub fn retired_scope_writer_log_capacity(&self) -> usize {
+        self.retired_scope_writer_logs.capacity()
+    }
+
+    pub fn retired_scope_epoch_capacity(&self) -> usize {
+        self.retired_scope_persistent_epochs.capacity()
     }
 
     pub fn py_store(&self) -> Option<&PyStore> {
@@ -607,14 +722,24 @@ impl VM {
         self.scope_writer_logs
             .entry(segment.scope_id)
             .or_insert_with(|| segment.writer_log.clone());
+        self.scope_persistent_epochs
+            .entry(segment.scope_id)
+            .or_insert(segment.persistent_epoch);
     }
 
     fn maybe_cleanup_scope_state(&mut self, scope_id: ScopeId) {
         if self.scope_is_still_referenced(scope_id) {
             return;
         }
-        self.scope_state_store.remove(&scope_id);
-        self.scope_writer_logs.remove(&scope_id);
+        if let Some(state_store) = self.scope_state_store.remove(&scope_id) {
+            self.retired_scope_state_store.insert(scope_id, state_store);
+        }
+        if let Some(writer_log) = self.scope_writer_logs.remove(&scope_id) {
+            self.retired_scope_writer_logs.insert(scope_id, writer_log);
+        }
+        if let Some(epoch) = self.scope_persistent_epochs.remove(&scope_id) {
+            self.retired_scope_persistent_epochs.insert(scope_id, epoch);
+        }
     }
 
     fn scope_is_still_referenced(&self, scope_id: ScopeId) -> bool {
@@ -765,11 +890,7 @@ impl VM {
                 .get(&seg.scope_id)
                 .and_then(|state| state.get(key))
                 .cloned()
-                .or_else(|| {
-                    seg.state_store
-                .get(key)
-                .cloned()
-                })
+                .or_else(|| seg.state_store.get(key).cloned())
                 .or_else(|| missing_is_none.then_some(Value::None))
         })
     }
@@ -867,17 +988,25 @@ impl VM {
         let SegmentKind::PromptBoundary { handler, .. } = &seg.kind else {
             return seg_id;
         };
-        if matches!(handler.handler_name().as_str(), "StateHandler" | "WriterHandler") {
+        if matches!(
+            handler.handler_name().as_str(),
+            "StateHandler" | "WriterHandler"
+        ) {
             return self.shared_builtin_handler_prompt(seg_id);
         }
         seg_id
     }
 
-    fn state_output_entries(&self, seg_id: SegmentId) -> Option<(SegmentId, HashMap<String, Value>)> {
+    fn state_output_entries(
+        &self,
+        seg_id: SegmentId,
+    ) -> Option<(SegmentId, HashMap<String, Value>)> {
         let canonical_seg_id = self.canonical_output_segment_id(seg_id);
         let seg = self.segments.get(canonical_seg_id)?;
         match &seg.kind {
-            SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "StateHandler" => {
+            SegmentKind::PromptBoundary { handler, .. }
+                if handler.handler_name() == "StateHandler" =>
+            {
                 let shared_state = self
                     .scope_state_store
                     .get(&seg.scope_id)
@@ -896,7 +1025,9 @@ impl VM {
         let canonical_seg_id = self.canonical_output_segment_id(seg_id);
         let seg = self.segments.get(canonical_seg_id)?;
         match &seg.kind {
-            SegmentKind::PromptBoundary { handler, .. } if handler.handler_name() == "WriterHandler" => {
+            SegmentKind::PromptBoundary { handler, .. }
+                if handler.handler_name() == "WriterHandler" =>
+            {
                 let shared_logs = self
                     .scope_writer_logs
                     .get(&seg.scope_id)

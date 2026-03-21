@@ -87,12 +87,21 @@ impl FiberArena {
     }
 
     pub fn capacity(&self) -> usize {
+        self.fibers.capacity()
+    }
+
+    pub fn slot_count(&self) -> usize {
         self.fibers.len()
     }
 
     pub fn clear(&mut self) {
         self.fibers.clear();
         self.free_list.clear();
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.fibers.shrink_to_fit();
+        self.free_list.shrink_to_fit();
     }
 }
 

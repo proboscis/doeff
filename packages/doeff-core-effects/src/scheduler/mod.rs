@@ -6283,7 +6283,10 @@ mod tests {
                 assert_eq!(continuation.cont_id, waiter_cont.cont_id);
                 assert_eq!(value.as_int(), Some(7));
             }
-            other => panic!("expected shared-task waiter continuation to run, got {:?}", other),
+            other => panic!(
+                "expected shared-task waiter continuation to run, got {:?}",
+                other
+            ),
         }
 
         assert_eq!(store.get("counter").and_then(Value::as_int), Some(3));

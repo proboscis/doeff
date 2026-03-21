@@ -1002,7 +1002,9 @@ impl VM {
                 let is_shared_spawn_writer = handler.handler_name() == "WriterHandler"
                     && self.shared_builtin_handler_prompt(cursor_id) != cursor_id;
                 let restricted_excluded = restricted_excluded_prompts.contains(&cursor_id);
-                if Some(cursor_id) != exclude_prompt && !restricted_excluded && !is_shared_spawn_writer
+                if Some(cursor_id) != exclude_prompt
+                    && !restricted_excluded
+                    && !is_shared_spawn_writer
                 {
                     current_entries.push(HandlerChainEntry {
                         marker: *handled_marker,
@@ -1077,11 +1079,13 @@ impl VM {
             Self::outer_handler_prefix_len(&full_current_entries, &outer_entries)
         };
         let prefer_outer_fallback = outer_prefix_len > 0
-            && selected.as_ref().is_some_and(|(_, _, _, selected_handler)| {
-                outer_entries[outer_prefix_len..]
-                    .iter()
-                    .any(|entry| Arc::ptr_eq(&entry.handler, selected_handler))
-            });
+            && selected
+                .as_ref()
+                .is_some_and(|(_, _, _, selected_handler)| {
+                    outer_entries[outer_prefix_len..]
+                        .iter()
+                        .any(|entry| Arc::ptr_eq(&entry.handler, selected_handler))
+                });
         if prefer_outer_fallback {
             selected = None;
             first_type_filtered_skip = None;
@@ -1093,12 +1097,10 @@ impl VM {
             .flatten();
 
         if selected.is_none() {
-            let mut cursor = fallback_return_to
-                .as_ref()
-                .and_then(|continuation| {
-                    self.live_handler_chain_start_for_return_to(continuation)
-                        .or_else(|| self.continuation_handler_chain_start(continuation))
-                });
+            let mut cursor = fallback_return_to.as_ref().and_then(|continuation| {
+                self.live_handler_chain_start_for_return_to(continuation)
+                    .or_else(|| self.continuation_handler_chain_start(continuation))
+            });
             while let Some(cursor_id) = cursor {
                 let Some(seg) = self.segments.get(cursor_id) else {
                     break;
@@ -2573,11 +2575,12 @@ impl VM {
             return self
                 .continuation_handler_chain_start(&continuation)
                 .or_else(|| {
-                    self.current_dispatch_origin().and_then(|origin| {
-                        self.continuation_handler_chain_start(&origin.k_origin)
-                    })
+                    self.current_dispatch_origin()
+                        .and_then(|origin| self.continuation_handler_chain_start(&origin.k_origin))
                 })
-                .ok_or_else(|| VMError::internal("dispatch origin continuations must be captured"));
+                .ok_or_else(|| {
+                    VMError::internal("dispatch origin continuations must be captured")
+                });
         }
 
         self.current_segment

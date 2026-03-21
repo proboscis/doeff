@@ -76,6 +76,22 @@ impl Default for TraceState {
 }
 
 impl TraceState {
+    pub(crate) fn frame_stack_len(&self) -> usize {
+        self.frame_stack.len()
+    }
+
+    pub(crate) fn dispatch_display_count(&self) -> usize {
+        self.dispatch_displays.len()
+    }
+
+    pub(crate) fn frame_stack_capacity(&self) -> usize {
+        self.frame_stack.capacity()
+    }
+
+    pub(crate) fn dispatch_display_capacity(&self) -> usize {
+        self.dispatch_displays.capacity()
+    }
+
     pub(crate) fn dispatch_has_terminal_result(&self, dispatch_id: DispatchId) -> bool {
         self.dispatch_display(dispatch_id)
             .is_some_and(Self::dispatch_result_prevents_throw_overwrite)
@@ -83,6 +99,11 @@ impl TraceState {
 
     pub(crate) fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.frame_stack.shrink_to_fit();
+        self.dispatch_displays.shrink_to_fit();
     }
 
     pub(crate) fn finish_dispatch(&mut self, dispatch_id: DispatchId) {
@@ -934,12 +955,8 @@ impl TraceState {
             Self::finalize_unresolved_dispatches_as_threw(&mut frame_stack, exception);
         }
 
-        let entries = self.entries_from_active_chain_parts(
-            &frame_stack,
-            dispatch_stack,
-            true,
-            false,
-        );
+        let entries =
+            self.entries_from_active_chain_parts(&frame_stack, dispatch_stack, true, false);
         let entries = Self::dedup_adjacent(entries);
         Self::inject_context(entries, exception)
     }
@@ -959,12 +976,8 @@ impl TraceState {
             Self::finalize_unresolved_dispatches_as_threw(&mut frame_stack, exception);
         }
 
-        let entries = self.entries_from_active_chain_parts(
-            &frame_stack,
-            dispatch_stack,
-            false,
-            false,
-        );
+        let entries =
+            self.entries_from_active_chain_parts(&frame_stack, dispatch_stack, false, false);
         let entries = Self::dedup_adjacent(entries);
         Self::inject_context(entries, exception)
     }
@@ -1369,15 +1382,11 @@ impl TraceState {
         let mut active_chain = Vec::new();
         let mut pending_transferred_handler: Option<ActiveChainEntry> = None;
         for (index, frame) in frame_stack.iter().enumerate() {
-            if let Some(dispatch) = frame
-                .dispatch_display
-                .as_ref()
-                .filter(|dispatch| {
-                    Self::is_visible_dispatch(dispatch)
-                        || (include_resumed_dispatches
-                            && matches!(dispatch.result, EffectResult::Resumed { .. }))
-                })
-            {
+            if let Some(dispatch) = frame.dispatch_display.as_ref().filter(|dispatch| {
+                Self::is_visible_dispatch(dispatch)
+                    || (include_resumed_dispatches
+                        && matches!(dispatch.result, EffectResult::Resumed { .. }))
+            }) {
                 if matches!(
                     dispatch.result,
                     EffectResult::Active

@@ -1,12 +1,14 @@
 //! Stream abstraction for stepping AST/program sources.
 
 use std::fmt;
+use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
 
 use crate::do_ctrl::DoCtrl;
 use crate::driver::PyException;
+use crate::memory_stats;
 use crate::py_shared::PyShared;
 use crate::python_call::PythonCall;
 use crate::segment::ScopeStore;
@@ -37,7 +39,44 @@ pub trait IRStream: fmt::Debug + Send {
     }
 }
 
-pub type IRStreamRef = Arc<Mutex<Box<dyn IRStream>>>;
+#[derive(Debug)]
+struct TrackedIRStream {
+    stream: Mutex<Box<dyn IRStream>>,
+}
+
+impl Drop for TrackedIRStream {
+    fn drop(&mut self) {
+        memory_stats::unregister_ir_stream();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IRStreamRef(Arc<TrackedIRStream>);
+
+impl IRStreamRef {
+    pub fn new(stream: Box<dyn IRStream>) -> Self {
+        memory_stats::register_ir_stream();
+        IRStreamRef(Arc::new(TrackedIRStream {
+            stream: Mutex::new(stream),
+        }))
+    }
+
+    pub fn ptr_eq(lhs: &Self, rhs: &Self) -> bool {
+        Arc::ptr_eq(&lhs.0, &rhs.0)
+    }
+
+    pub fn strong_count(&self) -> usize {
+        Arc::strong_count(&self.0)
+    }
+}
+
+impl Deref for IRStreamRef {
+    type Target = Mutex<Box<dyn IRStream>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.stream
+    }
+}
 
 #[derive(Debug)]
 pub enum IRStreamStep {
@@ -178,6 +217,7 @@ impl IRStream for PythonGeneratorStream {
 
 #[cfg(test)]
 mod tests {
+    use crate::memory_stats::live_object_counts;
     use pyo3::types::PyDict;
 
     use super::*;
@@ -291,5 +331,45 @@ mod tests {
             assert!(location.source_line > 0);
             assert_eq!(location.phase, None);
         });
+    }
+
+    #[test]
+    fn test_ir_stream_live_count_tracks_underlying_stream() {
+        #[derive(Debug)]
+        struct DummyStream;
+
+        impl IRStream for DummyStream {
+            fn resume(
+                &mut self,
+                _value: Value,
+                _store: &mut RustStore,
+                _scope: &mut ScopeStore,
+            ) -> IRStreamStep {
+                IRStreamStep::Return(Value::Unit)
+            }
+
+            fn throw(
+                &mut self,
+                exc: PyException,
+                _store: &mut RustStore,
+                _scope: &mut ScopeStore,
+            ) -> IRStreamStep {
+                IRStreamStep::Throw(exc)
+            }
+        }
+
+        let baseline = live_object_counts().live_ir_streams;
+        let stream = IRStreamRef::new(Box::new(DummyStream));
+        assert_eq!(live_object_counts().live_ir_streams, baseline + 1);
+
+        let stream_clone = stream.clone();
+        assert_eq!(live_object_counts().live_ir_streams, baseline + 1);
+        assert_eq!(stream_clone.strong_count(), 2);
+
+        drop(stream_clone);
+        assert_eq!(live_object_counts().live_ir_streams, baseline + 1);
+
+        drop(stream);
+        assert_eq!(live_object_counts().live_ir_streams, baseline);
     }
 }
