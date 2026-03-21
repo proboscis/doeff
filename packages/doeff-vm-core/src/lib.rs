@@ -54,6 +54,8 @@ mod trace_state;
 #[cfg(feature = "python_bridge")]
 pub mod value;
 #[cfg(feature = "python_bridge")]
+pub mod var_store;
+#[cfg(feature = "python_bridge")]
 mod vm;
 #[cfg(feature = "python_bridge")]
 mod vm_logging;
@@ -113,5 +115,7 @@ pub use segment::{Fiber, FiberKind, Segment, SegmentKind};
 pub use step::PyException;
 #[cfg(feature = "python_bridge")]
 pub use value::{PyTraceFrame, PyTraceHop, PyVar, Value};
+#[cfg(feature = "python_bridge")]
+pub use var_store::VarStore;
 #[cfg(feature = "python_bridge")]
 pub use vm::{DebugConfig, DebugLevel, TraceEvent, VM};
