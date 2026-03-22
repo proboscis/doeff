@@ -147,17 +147,6 @@ impl Fiber {
     }
 }
 
-impl Clone for Fiber {
-    fn clone(&self) -> Self {
-        memory_stats::register_segment();
-        Fiber {
-            frames: self.frames.clone(),
-            parent: self.parent,
-            kind: self.kind.clone(),
-        }
-    }
-}
-
 impl Drop for Fiber {
     fn drop(&mut self) {
         memory_stats::unregister_segment();
@@ -237,18 +226,18 @@ mod tests {
     }
 
     #[test]
-    fn test_segment_live_count_tracks_clones() {
+    fn test_segment_live_count_tracks_live_instances() {
         let baseline = live_object_counts().live_segments;
-        let seg = Fiber::new(Marker::fresh(), None);
+        let seg_a = Fiber::new(Marker::fresh(), None);
         assert_eq!(live_object_counts().live_segments, baseline + 1);
 
-        let seg_clone = seg.clone();
+        let seg_b = Fiber::new(Marker::fresh(), None);
         assert_eq!(live_object_counts().live_segments, baseline + 2);
 
-        drop(seg_clone);
+        drop(seg_b);
         assert_eq!(live_object_counts().live_segments, baseline + 1);
 
-        drop(seg);
+        drop(seg_a);
         assert_eq!(live_object_counts().live_segments, baseline);
     }
 }
