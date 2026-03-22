@@ -30,6 +30,20 @@ impl PyK {
     pub fn continuation(&self) -> Continuation {
         self.continuation.clone_handle()
     }
+
+    pub fn cont_id(&self) -> ContId {
+        self.continuation.cont_id
+    }
+
+    pub fn is_exhausted(&self) -> bool {
+        self.continuation.is_placeholder() || self.continuation.consumed()
+    }
+
+    pub fn take_continuation(&mut self) -> Continuation {
+        let mut placeholder = Continuation::placeholder(self.continuation.cont_id);
+        placeholder.mark_consumed();
+        std::mem::replace(&mut self.continuation, placeholder)
+    }
 }
 
 #[pymethods]
@@ -63,14 +77,18 @@ struct ContinuationMetadata {
 }
 
 #[derive(Debug)]
+struct ContinuationSharedState {
+    consumed: AtomicBool,
+    metadata: Mutex<ContinuationMetadata>,
+}
+
+#[derive(Debug)]
 pub struct Continuation {
     pub cont_id: ContId,
     dispatch_id: Option<DispatchId>,
-    fibers: Arc<Vec<FiberId>>,
-    owns_fibers: bool,
+    fibers: Vec<FiberId>,
     consumed: bool,
-    consumed_state: Arc<AtomicBool>,
-    metadata_state: Arc<Mutex<ContinuationMetadata>>,
+    shared: Arc<ContinuationSharedState>,
     unstarted: Option<UnstartedContinuation>,
 }
 
@@ -81,22 +99,25 @@ pub(crate) fn panic_on_started_continuation_clone_enabled() -> bool {
 }
 
 impl Continuation {
-    fn new_consumed_state(consumed: bool) -> Arc<AtomicBool> {
-        Arc::new(AtomicBool::new(consumed))
-    }
-
-    fn new_metadata_state(captured_caller: Option<SegmentId>) -> Arc<Mutex<ContinuationMetadata>> {
-        Arc::new(Mutex::new(ContinuationMetadata {
-            resume_dispatch_id: None,
-            dispatch_handler_hint: None,
-            dispatch_frame_hint: None,
-            captured_caller,
-        }))
+    fn new_shared_state(
+        consumed: bool,
+        captured_caller: Option<SegmentId>,
+    ) -> Arc<ContinuationSharedState> {
+        Arc::new(ContinuationSharedState {
+            consumed: AtomicBool::new(consumed),
+            metadata: Mutex::new(ContinuationMetadata {
+                resume_dispatch_id: None,
+                dispatch_handler_hint: None,
+                dispatch_frame_hint: None,
+                captured_caller,
+            }),
+        })
     }
 
     fn shared_metadata(&self) -> ContinuationMetadata {
         *self
-            .metadata_state
+            .shared
+            .metadata
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -106,11 +127,9 @@ impl Continuation {
         Continuation {
             cont_id,
             dispatch_id: None,
-            fibers: Arc::new(Vec::new()),
-            owns_fibers: false,
+            fibers: Vec::new(),
             consumed: false,
-            consumed_state: Self::new_consumed_state(false),
-            metadata_state: Self::new_metadata_state(None),
+            shared: Self::new_shared_state(false, None),
             unstarted: None,
         }
     }
@@ -125,11 +144,9 @@ impl Continuation {
         Continuation {
             cont_id,
             dispatch_id,
-            fibers: Arc::new(fibers),
-            owns_fibers: true,
+            fibers,
             consumed: false,
-            consumed_state: Self::new_consumed_state(false),
-            metadata_state: Self::new_metadata_state(captured_caller),
+            shared: Self::new_shared_state(false, captured_caller),
             unstarted: None,
         }
     }
@@ -184,11 +201,9 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id: None,
-            fibers: Arc::new(Vec::new()),
-            owns_fibers: true,
+            fibers: Vec::new(),
             consumed: false,
-            consumed_state: Self::new_consumed_state(false),
-            metadata_state: Self::new_metadata_state(None),
+            shared: Self::new_shared_state(false, None),
             unstarted: Some(UnstartedContinuation {
                 program: expr,
                 handlers,
@@ -224,11 +239,9 @@ impl Continuation {
         Continuation {
             cont_id: ContId::fresh(),
             dispatch_id: None,
-            fibers: Arc::new(Vec::new()),
-            owns_fibers: true,
+            fibers: Vec::new(),
             consumed: false,
-            consumed_state: Self::new_consumed_state(false),
-            metadata_state: Self::new_metadata_state(None),
+            shared: Self::new_shared_state(false, None),
             unstarted: Some(UnstartedContinuation {
                 program: expr,
                 handlers,
@@ -247,27 +260,16 @@ impl Continuation {
         self.fibers.is_empty() && self.unstarted.is_none()
     }
 
-    pub fn owns_fibers(&self) -> bool {
-        self.owns_fibers
-    }
-
     pub fn clone_handle(&self) -> Self {
         memory_stats::register_continuation();
         Continuation {
             cont_id: self.cont_id,
             dispatch_id: self.dispatch_id,
-            fibers: Arc::clone(&self.fibers),
-            owns_fibers: false,
+            fibers: self.fibers.clone(),
             consumed: self.consumed(),
-            consumed_state: Arc::clone(&self.consumed_state),
-            metadata_state: Arc::clone(&self.metadata_state),
+            shared: Arc::clone(&self.shared),
             unstarted: self.unstarted.clone(),
         }
-    }
-
-    pub(crate) fn into_owned(mut self) -> Self {
-        self.owns_fibers = true;
-        self
     }
 
     pub fn segment_id(&self) -> Option<SegmentId> {
@@ -287,25 +289,17 @@ impl Continuation {
             && self.captured_caller() == other.captured_caller()
     }
 
-    pub(crate) fn append_owned_fibers(&mut self, mut other: Continuation) {
+    pub(crate) fn append_owned_fibers(&mut self, other: Continuation) {
         debug_assert!(
             self.unstarted.is_none(),
             "cannot append fibers to unstarted continuation"
         );
         debug_assert!(
-            self.owns_fibers,
-            "cannot append fibers to non-owning continuation handle"
-        );
-        debug_assert!(
             other.unstarted.is_none(),
             "cannot append unstarted continuation fibers"
         );
-        debug_assert!(
-            other.owns_fibers,
-            "cannot append non-owning continuation handle fibers"
-        );
         if !other.fibers.is_empty() {
-            Arc::make_mut(&mut self.fibers).extend(other.fibers.iter().copied());
+            self.fibers.extend(other.fibers.iter().copied());
         }
         self.set_captured_caller(other.captured_caller().or(self.captured_caller()));
     }
@@ -330,12 +324,17 @@ impl Continuation {
         self.dispatch_id
     }
 
+    pub(crate) fn set_dispatch_id(&mut self, dispatch_id: Option<DispatchId>) {
+        self.dispatch_id = dispatch_id;
+    }
+
     pub(crate) fn resume_dispatch_id(&self) -> Option<DispatchId> {
         self.shared_metadata().resume_dispatch_id
     }
 
     pub(crate) fn set_resume_dispatch_id(&mut self, dispatch_id: Option<DispatchId>) {
-        self.metadata_state
+        self.shared
+            .metadata
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .resume_dispatch_id = dispatch_id;
@@ -346,7 +345,8 @@ impl Continuation {
     }
 
     pub(crate) fn set_dispatch_handler_hint(&mut self, hint: Option<DispatchHandlerHint>) {
-        self.metadata_state
+        self.shared
+            .metadata
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .dispatch_handler_hint = hint;
@@ -357,7 +357,8 @@ impl Continuation {
     }
 
     pub(crate) fn set_dispatch_frame_hint(&mut self, hint: Option<SegmentId>) {
-        self.metadata_state
+        self.shared
+            .metadata
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .dispatch_frame_hint = hint;
@@ -368,19 +369,20 @@ impl Continuation {
     }
 
     pub(crate) fn set_captured_caller(&mut self, captured_caller: Option<SegmentId>) {
-        self.metadata_state
+        self.shared
+            .metadata
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .captured_caller = captured_caller;
     }
 
     pub fn consumed(&self) -> bool {
-        self.consumed || self.consumed_state.load(Ordering::Relaxed)
+        self.consumed || self.shared.consumed.load(Ordering::Relaxed)
     }
 
     pub(crate) fn mark_consumed(&mut self) {
         self.consumed = true;
-        self.consumed_state.store(true, Ordering::Relaxed);
+        self.shared.consumed.store(true, Ordering::Relaxed);
     }
 
     pub fn program(&self) -> Option<&PyShared> {
@@ -425,30 +427,6 @@ impl Continuation {
         self.unstarted
             .as_ref()
             .and_then(|unstarted| unstarted.outside_scope)
-    }
-
-    pub(crate) fn clone_for_dispatch(&self, dispatch_id: Option<DispatchId>) -> Self {
-        // Dispatch forwarding sometimes needs a fresh one-shot token for the
-        // same detached fiber chain while the original continuation survives
-        // under its existing `cont_id`. This is safe because the fork is only
-        // used for dispatch bookkeeping; user-visible one-shot consumption is
-        // still keyed by the fresh `cont_id` on the forwarded branch.
-        let metadata = self.shared_metadata();
-        memory_stats::register_continuation();
-        let mut continuation = Continuation {
-            cont_id: ContId::fresh(),
-            dispatch_id,
-            fibers: Arc::clone(&self.fibers),
-            owns_fibers: true,
-            consumed: self.consumed(),
-            consumed_state: Self::new_consumed_state(self.consumed()),
-            metadata_state: Self::new_metadata_state(metadata.captured_caller),
-            unstarted: self.unstarted.clone(),
-        };
-        continuation.set_resume_dispatch_id(metadata.resume_dispatch_id);
-        continuation.set_dispatch_handler_hint(metadata.dispatch_handler_hint);
-        continuation.set_dispatch_frame_hint(metadata.dispatch_frame_hint);
-        continuation
     }
 
     pub(crate) fn into_unstarted_parts(
@@ -559,7 +537,6 @@ mod tests {
         assert_eq!(cont.fibers(), &[seg_id]);
         assert_eq!(cont.captured_caller(), seg.parent);
         assert!(cont.is_started());
-        assert!(cont.owns_fibers());
         assert!(!cont.consumed());
     }
 
@@ -587,39 +564,13 @@ mod tests {
     }
 
     #[test]
-    fn test_clone_for_dispatch_keeps_same_fiber_id_but_fresh_cont_id() {
-        let (seg, seg_id) = make_test_segment();
-        let cont = Continuation::capture(&seg, seg_id, None);
-        let cloned = cont.clone_for_dispatch(Some(DispatchId::fresh()));
-
-        assert_eq!(cloned.segment_id(), Some(seg_id));
-        assert_eq!(cloned.fibers(), &[seg_id]);
-        assert_ne!(cloned.cont_id, cont.cont_id);
-        assert!(cloned.dispatch_id().is_some());
-        assert!(cloned.owns_fibers());
-    }
-
-    #[test]
-    fn test_clone_for_dispatch_copies_dispatch_frame_hint() {
-        let (seg, seg_id) = make_test_segment();
-        let mut cont = Continuation::capture(&seg, seg_id, None);
-        let hint = SegmentId::from_index(9);
-        cont.set_dispatch_frame_hint(Some(hint));
-
-        let cloned = cont.clone_for_dispatch(Some(DispatchId::fresh()));
-
-        assert_eq!(cloned.dispatch_frame_hint(), Some(hint));
-    }
-
-    #[test]
-    fn test_clone_handle_keeps_fiber_ids_without_ownership() {
+    fn test_clone_handle_keeps_fiber_ids_and_cont_id() {
         let (seg, seg_id) = make_test_segment();
         let cont = Continuation::capture(&seg, seg_id, None);
         let handle = cont.clone_handle();
 
         assert_eq!(handle.cont_id, cont.cont_id);
         assert_eq!(handle.fibers(), &[seg_id]);
-        assert!(!handle.owns_fibers());
     }
 
     #[test]

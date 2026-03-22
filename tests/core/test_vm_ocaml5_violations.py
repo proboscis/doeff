@@ -197,7 +197,6 @@ def test_v21_no_throw_parent():
 # ============================================================================
 
 
-@pytest.mark.xfail(reason="V24: owns_fibers bool (non-move ownership)", strict=False)
 def test_v24_no_owns_fibers():
     """Continuation must not have owns_fibers. With move semantics, one owner always."""
     src = _src(CONTINUATION_RS)
@@ -205,7 +204,6 @@ def test_v24_no_owns_fibers():
         "owns_fibers implies multiple copies can exist — violates move semantics"
 
 
-@pytest.mark.xfail(reason="V25: Arc<AtomicBool> shared consumed flag", strict=False)
 def test_v25_no_arc_consumed():
     """One-shot is consumed:bool on the single owner. No shared Arc needed."""
     src = _src(CONTINUATION_RS)
@@ -213,7 +211,6 @@ def test_v25_no_arc_consumed():
         "Arc<AtomicBool> consumed_state only needed when multiple copies exist"
 
 
-@pytest.mark.xfail(reason="V26: Arc<Mutex<ContinuationMetadata>>", strict=False)
 def test_v26_no_arc_mutex_metadata():
     """No shared mutable metadata. Continuation is owned, metadata is plain fields."""
     src = _src(CONTINUATION_RS)
@@ -238,7 +235,6 @@ def test_v28_continuation_not_clone():
         "Continuation must not impl Clone — move semantics means one owner"
 
 
-@pytest.mark.xfail(reason="V29: clone_for_dispatch creates dual ownership", strict=False)
 def test_v29_no_clone_for_dispatch():
     """No forking continuations. One set of fibers, one owner."""
     src = _src(CONTINUATION_RS)
