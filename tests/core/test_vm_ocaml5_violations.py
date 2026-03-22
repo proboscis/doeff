@@ -318,7 +318,6 @@ def test_v38_frame_not_clone():
 # ============================================================================
 
 
-@pytest.mark.xfail(reason="V39: state_by_segment on VarStore", strict=False)
 def test_v39_no_segment_keyed_state():
     """VarStore state should be VarId-addressed, not segment-keyed."""
     src = _src(VAR_STORE_RS)
