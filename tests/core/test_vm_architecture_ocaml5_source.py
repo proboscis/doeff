@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SEGMENT_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "segment.rs"
@@ -123,4 +125,93 @@ def test_fiber_runtime_source_does_not_store_marker_field() -> None:
 
     assert "pub marker:" not in source, (
         "Fiber must not store marker directly. SPEC-VM-019 Rev 5 folds marker into handler state."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: VM side-tables that must be eliminated
+#
+# OCaml 5 VM has ~5 fields: arena, current_fiber, heap, mode, pending.
+# doeff VM still has dispatch side-tables that accumulate mutable state
+# instead of deriving it from the fiber chain topology.
+# These tests are xfail until Phase 5 completes.
+# ---------------------------------------------------------------------------
+
+DISPATCH_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "vm" / "dispatch.rs"
+DISPATCH_OBSERVER_RS = ROOT / "packages" / "doeff-vm-core" / "src" / "dispatch_observer.rs"
+
+
+@pytest.mark.xfail(reason="Phase 5: DispatchObserver must be eliminated — derive from stack", strict=False)
+def test_vm_source_does_not_have_dispatch_observer() -> None:
+    """DispatchObserver is a side-table tracking dispatch state outside the stack.
+
+    In OCaml 5, dispatch IS the topology change. There is no side-table.
+    All dispatch context should be derivable from the fiber chain:
+    - Walk chain, find handler fibers with active Program frames
+    - Program frame effect_repr tells which effect triggered it
+    - Error enrichment assembled on-demand from chain walk
+    """
+    source = _runtime_source(VM_RS)
+    assert "dispatch_observer:" not in source, (
+        "VM must not have a DispatchObserver. Dispatch context should be derived "
+        "from the fiber chain topology, not accumulated in a side-table."
+    )
+
+
+@pytest.mark.xfail(reason="Phase 5: dispatch_observer.rs must not exist", strict=False)
+def test_dispatch_observer_module_does_not_exist() -> None:
+    """The dispatch_observer module should not exist.
+
+    All dispatch tracking should be derivable from the stack structure.
+    """
+    assert not DISPATCH_OBSERVER_RS.exists(), (
+        "dispatch_observer.rs must not exist. Dispatch state should be derived "
+        "from the fiber chain, not tracked in a separate module."
+    )
+
+
+@pytest.mark.xfail(reason="Phase 5: continuation_registry must be eliminated", strict=False)
+def test_vm_source_does_not_have_continuation_registry() -> None:
+    """continuation_registry is a HashMap tracking continuations by ContId.
+
+    In OCaml 5, continuations are owned values (moved fibers). They don't
+    need a registry — ownership IS the tracking. A fiber is in the chain
+    or in a continuation, tracked by the Continuation value itself.
+    """
+    source = _runtime_source(VM_RS)
+    assert "continuation_registry:" not in source, (
+        "VM must not have a continuation_registry. Continuation ownership "
+        "should be tracked by the Continuation value itself, not a HashMap."
+    )
+
+
+@pytest.mark.xfail(reason="Phase 5: consumed_cont_ids must move to Continuation.consumed", strict=False)
+def test_vm_source_does_not_have_consumed_cont_ids() -> None:
+    """consumed_cont_ids is a HashSet tracking one-shot enforcement.
+
+    In OCaml 5, one-shot is a flag on the continuation object itself
+    (consumed: bool). Not a VM-level set.
+    """
+    source = _runtime_source(VM_RS)
+    assert "consumed_cont_ids:" not in source, (
+        "VM must not track consumed continuations in a HashSet. "
+        "One-shot enforcement should be Continuation.consumed: bool."
+    )
+
+
+@pytest.mark.xfail(reason="Phase 5: installed_handlers/run_handlers should be on fiber chain", strict=False)
+def test_vm_source_does_not_have_handler_lists() -> None:
+    """installed_handlers and run_handlers are VM-level lists.
+
+    In OCaml 5, handler visibility is determined by walking the fiber chain
+    and finding handler delimiters. No separate handler list needed.
+    """
+    source = _runtime_source(VM_RS)
+    assert "installed_handlers:" not in source, (
+        "VM must not keep a separate installed_handlers list. "
+        "Handler visibility comes from walking the fiber chain."
+    )
+    assert "run_handlers:" not in source, (
+        "VM must not keep a separate run_handlers list. "
+        "Handler visibility comes from walking the fiber chain."
     )
