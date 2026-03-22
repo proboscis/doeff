@@ -99,13 +99,13 @@ fn test_dispatch_resume_uses_current_handler_segment_as_caller() {
     let handler_marker = Marker::fresh();
     let handler_seg = Segment::new(handler_marker, Some(parent_id));
     let handler_seg_id = vm.alloc_segment(handler_seg);
-    vm.dispatch_observer.start_dispatch(
+    vm.dispatch_state.start_dispatch(
         dispatch_id,
         crate::effect::make_get_execution_context_effect()
             .expect("test dispatch effect should be constructible"),
         continuation.clone(),
         None,
-        crate::dispatch_observer::ActiveHandlerContext {
+        crate::dispatch_state::ActiveHandlerContext {
             segment_id: handler_seg_id,
             continuation: continuation.clone(),
             marker: handler_marker,
@@ -157,13 +157,13 @@ fn test_dispatch_resume_keeps_handler_segment_on_prompt_boundary_chain() {
     let handler_marker = Marker::fresh();
     let handler_seg = Segment::new(handler_marker, Some(prompt_seg_id));
     let handler_seg_id = vm.alloc_segment(handler_seg);
-    vm.dispatch_observer.start_dispatch(
+    vm.dispatch_state.start_dispatch(
         dispatch_id,
         crate::effect::make_get_execution_context_effect()
             .expect("test dispatch effect should be constructible"),
         continuation.clone(),
         None,
-        crate::dispatch_observer::ActiveHandlerContext {
+        crate::dispatch_state::ActiveHandlerContext {
             segment_id: handler_seg_id,
             continuation: continuation.clone(),
             marker: handler_marker,
@@ -420,13 +420,13 @@ fn test_resume_unstarted_continuation_keeps_scope_parent_outside_handler_wrapper
 }
 
 #[test]
-#[should_panic(expected = "observer has no context")]
+#[should_panic(expected = "state has no context")]
 fn test_dispatch_origin_scan_fails_fast_on_orphaned_segment_dispatch_index() {
     let mut vm = VM::new();
     let seg_id = vm.alloc_segment(Segment::new(Marker::fresh(), None));
     vm.current_segment = Some(seg_id);
 
-    vm.dispatch_observer
+    vm.dispatch_state
         .bind_segment(seg_id, DispatchId::fresh());
 
     let _ = vm.dispatch_origins();
