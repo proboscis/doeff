@@ -91,7 +91,6 @@ def test_v06_no_scope_store_in_segment():
     assert "struct ScopeStore" not in src, "ScopeStore does not belong in segment module"
 
 
-@pytest.mark.xfail(reason="V7: Fiber implements Clone", strict=False)
 def test_v07_fiber_not_clone():
     """Fiber must not implement Clone. Fibers are moved, never copied."""
     src = _src(SEGMENT_RS)
