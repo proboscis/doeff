@@ -4,9 +4,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::capture::HandlerKind;
+use crate::continuation::Continuation;
 use crate::continuation::panic_on_started_continuation_clone_enabled;
 use crate::do_ctrl::{DoCtrl, InterceptMode};
-use crate::ids::Marker;
+use crate::driver::PyException;
+use crate::effect::DispatchEffect;
+use crate::ids::{DispatchId, Marker};
 use crate::ir_stream::IRStreamRef;
 use crate::kleisli::KleisliRef;
 use crate::py_shared::PyShared;
@@ -109,6 +112,15 @@ impl InterceptorChainLink {
             metadata: self.metadata,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProgramDispatch {
+    pub dispatch_id: DispatchId,
+    pub effect: DispatchEffect,
+    pub origin: Continuation,
+    pub handler_continuation: Continuation,
+    pub original_exception: Option<PyException>,
 }
 
 /// A frame in the continuation stack.
@@ -314,6 +326,7 @@ pub enum Frame {
         stream: IRStreamRef,
         metadata: Option<CallMetadata>,
         handler_kind: Option<HandlerKind>,
+        dispatch: Option<ProgramDispatch>,
     },
     InterceptorApply(Box<InterceptorContinuation>),
     InterceptorEval(Box<InterceptorContinuation>),
@@ -362,10 +375,12 @@ impl Clone for Frame {
                 stream,
                 metadata,
                 handler_kind,
+                dispatch,
             } => Frame::Program {
                 stream: stream.clone(),
                 metadata: metadata.clone(),
                 handler_kind: *handler_kind,
+                dispatch: dispatch.clone(),
             },
             Frame::InterceptorApply(continuation) => {
                 Frame::InterceptorApply(Box::new((**continuation).clone()))
@@ -402,6 +417,7 @@ impl Frame {
             stream,
             metadata,
             handler_kind: None,
+            dispatch: None,
         }
     }
 
